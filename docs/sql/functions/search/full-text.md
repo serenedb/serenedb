@@ -271,7 +271,11 @@ Range match between two bounds, with explicit control over each end's inclusivit
 | `min_incl` | `BOOLEAN` | — *(required)* | `true` includes `min` (`>=`), `false` excludes it (`>`). |
 | `max_incl` | `BOOLEAN` | — *(required)* | `true` includes `max` (`<=`), `false` excludes it (`<`). |
 
-**How it works.** `ts_between` performs a range scan over a numeric, temporal or verbatim-text (`keyword`-analyzed) column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** — there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every indexed value. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+**How it works.** `ts_between` performs a range scan over a numeric, temporal, boolean, text or `BLOB` column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** -- there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every row, including rows where the column is `NULL`. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+
+On text and `BLOB` columns, each non-`NULL` bound is analyzed with the column's dictionary, just like the one-sided functions. A bound must produce one token: multiple tokens are an error, and no tokens makes the range match nothing. An empty-string token is still a valid bound. This supports `keyword`, `normalize_tokens` and `collate_tokens` dictionaries, as well as tokenizing dictionaries when each bound produces one token. Comparisons use the resulting token bytes, so `collate_tokens` ranges follow the dictionary's locale order.
+
+A row matches when an indexed token satisfies both bounds. For dictionaries that emit one token per value, this agrees with combining the corresponding one-sided functions using `&&`. With multiple indexed tokens, the two separate comparisons can match different tokens in the same row. Inside a [`##` phrase](#a--b-phrase), `ts_between` bounds remain verbatim token bytes at that phrase position.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

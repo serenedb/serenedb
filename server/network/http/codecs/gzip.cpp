@@ -20,129 +20,149 @@
 
 #include <zlib.h>
 
+#include <iresearch/utils/assert.hpp>
+
 #include "network/http/codecs/codec.h"
 
 namespace sdb::network::http {
 namespace {
 
+inline constexpr int kDefaultLevel = 6;
+
+static_assert(kDeflateLevels.min == Z_BEST_SPEED &&
+              kDeflateLevels.max == Z_BEST_COMPRESSION);
+
 // https://www.zlib.net/manual.html#Advanced : windowBits 15 + 16 selects the
 // gzip wrapper around deflate.
-class GzipEncoder final : public ContentEncoder {
- public:
-  GzipEncoder() {
-    const int rc = deflateInit2(&_stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
-                                15 + 16, 8, Z_DEFAULT_STRATEGY);
-    if (rc != Z_OK) {
-      ThrowCodecError("gzip", zError(rc));
-    }
-    _initialized = true;
+int WindowBits(ContentCoding coding) {
+  SDB_ASSERT(coding == ContentCoding::Gzip || coding == ContentCoding::Deflate);
+  return coding == ContentCoding::Gzip ? 15 + 16 : 15;
+}
+
+bool IsZlibHeader(std::string_view in) {
+  const auto cmf = static_cast<uint8_t>(in[0]);
+  if ((cmf & 0x0F) != Z_DEFLATED || (cmf >> 4) > 7) {
+    return false;
   }
-
-  ~GzipEncoder() override {
-    if (_initialized) {
-      deflateEnd(&_stream);
-    }
-  }
-
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
-    _stream.next_in =
-      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
-    _stream.avail_in = static_cast<uInt>(in.size());
-    const int flush = finish ? Z_FINISH : Z_NO_FLUSH;
-    do {
-      _stream.next_out = _out.data();
-      _stream.avail_out = static_cast<uInt>(_out.size());
-      const int rc = deflate(&_stream, flush);
-      // Z_BUF_ERROR only reports "no progress possible", which is expected
-      // once the input is drained; anything else is fatal.
-      if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
-        ThrowCodecError("gzip", zError(rc));
-      }
-      const size_t produced = _out.size() - _stream.avail_out;
-      if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
-      }
-      if (rc == Z_BUF_ERROR) {
-        break;
-      }
-    } while (_stream.avail_out == 0);
-    if (_stream.avail_in != 0) {
-      ThrowCodecError("gzip", "input not consumed");
-    }
-  }
-
- private:
-  z_stream _stream{};
-  bool _initialized = false;
-  std::array<uint8_t, kOutBlock> _out;
-};
-
-class GzipDecoder final : public ContentDecoder {
- public:
-  GzipDecoder() {
-    if (inflateInit2(&_stream, 16 + MAX_WBITS) != Z_OK) {
-      ThrowCodecError("gzip", "cannot initialize the decoder");
-    }
-  }
-
-  ~GzipDecoder() override { inflateEnd(&_stream); }
-
-  void Decode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
-    _stream.next_in =
-      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
-    _stream.avail_in = static_cast<uInt>(in.size());
-    for (;;) {
-      if (_done) {
-        if (_stream.avail_in == 0) {
-          break;
-        }
-        if (inflateReset(&_stream) != Z_OK) {
-          ThrowCorrupt("gzip", "cannot start the next member");
-        }
-        _done = false;
-      }
-      _stream.next_out = _out.data();
-      _stream.avail_out = static_cast<uInt>(_out.size());
-      const int rc = inflate(&_stream, Z_NO_FLUSH);
-      const size_t produced = _out.size() - _stream.avail_out;
-      if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
-      }
-      if (rc == Z_STREAM_END) {
-        _done = true;
-        continue;
-      }
-      if (rc == Z_BUF_ERROR) {
-        break;
-      }
-      if (rc != Z_OK) {
-        ThrowCorrupt("gzip", _stream.msg ? _stream.msg : zError(rc));
-      }
-      if (_stream.avail_in == 0 && _stream.avail_out != 0) {
-        break;
-      }
-    }
-    if (finish && !_done) {
-      ThrowCorrupt("gzip", "truncated body");
-    }
-  }
-
- private:
-  z_stream _stream{};
-  bool _done = false;
-  std::array<uint8_t, kOutBlock> _out;
-};
+  return in.size() < 2 || (cmf * 256 + static_cast<uint8_t>(in[1])) % 31 == 0;
+}
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeGzipEncoder() {
-  return std::make_unique<GzipEncoder>();
+ZlibEncoder::ZlibEncoder(ContentCoding coding, int level)
+  : _stream{}, _coding{coding} {
+  SDB_ASSERT(kDeflateLevels.Contains(level));
+  const int rc =
+    deflateInit2(&_stream, level == kNoLevel ? kDefaultLevel : level,
+                 Z_DEFLATED, WindowBits(coding), 8, Z_DEFAULT_STRATEGY);
+  if (rc != Z_OK) {
+    ThrowCodecError(ContentCodingToken(coding), zError(rc));
+  }
 }
 
-std::unique_ptr<ContentDecoder> MakeGzipDecoder() {
-  return std::make_unique<GzipDecoder>();
+ZlibEncoder::~ZlibEncoder() { deflateEnd(&_stream); }
+
+void ZlibEncoder::Encode(std::string_view in, bool finish,
+                         message::Writer& out) {
+  auto& stream = _stream;
+  stream.next_in =
+    const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
+  stream.avail_in = static_cast<uInt>(in.size());
+  const int flush = finish ? Z_FINISH : Z_NO_FLUSH;
+  int rc = Z_OK;
+  do {
+    out.Write(kOutBlock, [&](uint8_t* dst) {
+      stream.next_out = dst;
+      stream.avail_out = static_cast<uInt>(kOutBlock);
+      rc = deflate(&stream, flush);
+      // Z_BUF_ERROR only reports "no progress possible", which is expected
+      // once the input is drained; anything else is fatal.
+      if (rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) {
+        ThrowCodecError(ContentCodingToken(_coding), zError(rc));
+      }
+      return kOutBlock - stream.avail_out;
+    });
+  } while (rc != Z_BUF_ERROR && stream.avail_out == 0);
+  if (stream.avail_in != 0) {
+    ThrowCodecError(ContentCodingToken(_coding), "input not consumed");
+  }
+}
+
+void ZlibEncoder::EncodeAll(std::string_view in, message::Writer& out) {
+  auto& stream = _stream;
+  const size_t bound = deflateBound(&stream, in.size());
+  out.Write(bound, [&](uint8_t* dst) {
+    stream.next_in =
+      const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
+    stream.avail_in = static_cast<uInt>(in.size());
+    stream.next_out = dst;
+    stream.avail_out = static_cast<uInt>(bound);
+    if (deflate(&stream, Z_FINISH) != Z_STREAM_END) {
+      ThrowCodecError(ContentCodingToken(_coding),
+                      "output exceeds the deflate bound");
+    }
+    return bound - stream.avail_out;
+  });
+}
+
+ZlibDecoder::ZlibDecoder(ContentCoding coding) : _stream{}, _coding{coding} {
+  if (inflateInit2(&_stream, WindowBits(coding)) != Z_OK) {
+    ThrowCodecError(ContentCodingToken(coding),
+                    "cannot initialize the decoder");
+  }
+}
+
+ZlibDecoder::~ZlibDecoder() { inflateEnd(&_stream); }
+
+void ZlibDecoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
+  auto& stream = _stream;
+  const auto name = ContentCodingToken(_coding);
+  if (_coding == ContentCoding::Deflate && !_started && !in.empty()) {
+    _started = true;
+    if (!IsZlibHeader(in) && inflateReset2(&stream, -15) != Z_OK) {
+      ThrowCorrupt(name, "cannot initialize the decoder");
+    }
+  }
+  stream.next_in =
+    const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
+  stream.avail_in = static_cast<uInt>(in.size());
+  for (;;) {
+    if (_done) {
+      if (stream.avail_in == 0) {
+        break;
+      }
+      if (_coding != ContentCoding::Gzip) {
+        ThrowCorrupt(name, "data after the end of the stream");
+      }
+      if (inflateReset(&stream) != Z_OK) {
+        ThrowCorrupt(name, "cannot start the next member");
+      }
+      _done = false;
+    }
+    stream.next_out = _out.data();
+    stream.avail_out = static_cast<uInt>(_out.size());
+    const int rc = inflate(&stream, Z_NO_FLUSH);
+    const size_t produced = _out.size() - stream.avail_out;
+    if (produced != 0) {
+      sink({reinterpret_cast<const char*>(_out.data()), produced});
+    }
+    if (rc == Z_STREAM_END) {
+      _done = true;
+      continue;
+    }
+    if (rc == Z_BUF_ERROR) {
+      break;
+    }
+    if (rc != Z_OK) {
+      ThrowCorrupt(name, stream.msg ? stream.msg : zError(rc));
+    }
+    if (stream.avail_in == 0 && stream.avail_out != 0) {
+      break;
+    }
+  }
+  if (finish && !_done) {
+    ThrowCorrupt(name, "truncated body");
+  }
 }
 
 }  // namespace sdb::network::http

@@ -394,7 +394,6 @@ set(IResearch_core_sources
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
     ./utils/string_utils.cpp
-    ./utils/zstd_context.cpp
 )
 
 find_package(FLEX)

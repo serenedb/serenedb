@@ -71,7 +71,7 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
-#include "search/search_table.h"
+#include "search/index_durability.h"
 
 namespace sdb::docs {
 namespace {
@@ -216,7 +216,8 @@ class SpanDirectory final : public irs::Directory {
   }
 
   bool exists(bool& result, std::string_view name) const noexcept final {
-    result = std::ranges::contains(_files, name, &IndexFile::name);
+    result = absl::c_any_of(
+      _files, [&](const IndexFile& file) { return file.name == name; });
     return true;
   }
 
@@ -260,7 +261,8 @@ class SpanDirectory final : public irs::Directory {
 
  private:
   const IndexFile* Find(std::string_view name) const noexcept {
-    const auto it = std::ranges::find(_files, name, &IndexFile::name);
+    const auto it = absl::c_find_if(
+      _files, [&](const IndexFile& file) { return file.name == name; });
     return it == _files.end() ? nullptr : &*it;
   }
 
@@ -273,7 +275,7 @@ class EmbeddedIndex {
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
     : _dir{files, kResourceManager},
       _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::SearchTable::ReadCommittedTick(payload);
+                search::IndexStamp::Read(payload);
               }} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
@@ -543,8 +545,9 @@ std::vector<Object> MatchingObjects(const DocsIndex& index,
     [&](ObjectFetcher& fetcher, irs::doc_id_t doc) {
       objects.push_back(fetcher.Fetch(doc));
     });
-  std::ranges::sort(objects, {}, [](const Object& object) {
-    return std::tie(object.kind, object.name, object.signature, object.path);
+  absl::c_sort(objects, [](const Object& lhs, const Object& rhs) {
+    return std::tie(lhs.kind, lhs.name, lhs.signature, lhs.path) <
+           std::tie(rhs.kind, rhs.name, rhs.signature, rhs.path);
   });
   return objects;
 }
@@ -573,7 +576,9 @@ std::vector<Entry> CollectMatches(const DocsIndex& index,
 }
 
 std::vector<Entry> SortedByPath(std::vector<Entry> hits) {
-  std::ranges::sort(hits, {}, &Entry::path);
+  absl::c_sort(hits, [](const Entry& lhs, const Entry& rhs) {
+    return lhs.path < rhs.path;
+  });
   return hits;
 }
 
@@ -784,8 +789,9 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
                                         /*score_prune=*/false, std::span{hits});
 
   hits.resize(std::min(matched, capacity));
-  std::ranges::sort(hits, {}, [](const irs::ScoreDoc& hit) {
-    return std::tie(hit.segment_idx, hit.doc);
+  absl::c_sort(hits, [](const irs::ScoreDoc& lhs, const irs::ScoreDoc& rhs) {
+    return std::tie(lhs.segment_idx, lhs.doc) <
+           std::tie(rhs.segment_idx, rhs.doc);
   });
 
   std::vector<std::optional<EntryFetcher<BlobReader>>> fetchers(reader.size());
@@ -925,8 +931,9 @@ std::vector<Object> NamedObjects(const DocsIndex& index, std::string_view name,
           absl::AsciiStrToLower(absl::StripAsciiWhitespace(CallName(name)))));
   std::erase_if(found,
                 [&](const Object& object) { return !OfKind(object, wanted); });
-  std::ranges::sort(found, {}, [](const Object& object) {
-    return std::tie(object.kind, object.path, object.signature);
+  absl::c_sort(found, [](const Object& lhs, const Object& rhs) {
+    return std::tie(lhs.kind, lhs.path, lhs.signature) <
+           std::tie(rhs.kind, rhs.path, rhs.signature);
   });
   return found;
 }
@@ -1241,9 +1248,10 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
       absl::c_for_each(Aliases(object.aliases), offer);
     }
     absl::c_for_each(extra, offer);
-    std::ranges::stable_sort(names, {}, [](const std::string& name) {
-      return absl::AsciiStrToLower(name);
-    });
+    absl::c_stable_sort(
+      names, [](const std::string& lhs, const std::string& rhs) {
+        return absl::AsciiStrToLower(lhs) < absl::AsciiStrToLower(rhs);
+      });
     if (names.size() > limit) {
       names.resize(limit);
     }

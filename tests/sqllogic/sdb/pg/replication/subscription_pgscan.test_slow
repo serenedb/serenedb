@@ -1,0 +1,256 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpub_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsub_basic''');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DROP PUBLICATION IF EXISTS rsub_basic_pub');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DROP TABLE IF EXISTS rsub_items, rsub_shift, rsub_child, rsub_parent CASCADE');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'CREATE TABLE rsub_items (id integer PRIMARY KEY, name text, qty integer)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'CREATE TABLE rsub_shift (id integer PRIMARY KEY DEFERRABLE INITIALLY DEFERRED, v text)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'ALTER TABLE rsub_shift REPLICA IDENTITY FULL');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'CREATE TABLE rsub_parent (id integer PRIMARY KEY)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'CREATE TABLE rsub_child (id integer PRIMARY KEY, parent_id integer REFERENCES rsub_parent(id))');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (1, ''one'', 10), (2, ''two'', 20)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'CREATE PUBLICATION rsub_basic_pub FOR TABLE rsub_items, rsub_shift, rsub_parent, rsub_child');
+
+
+statement ok
+CREATE TABLE rsub_items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER);
+
+
+statement ok
+CREATE TABLE rsub_shift (id INTEGER PRIMARY KEY DEFERRED, v TEXT);
+
+
+statement ok
+CREATE TABLE rsub_parent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rsub_child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES rsub_parent(id));
+
+
+statement ok
+CREATE SUBSCRIPTION rsub_basic CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsub_basic_pub;
+
+
+query ok retry 120 backoff 250ms
+SELECT id, name, qty FROM rsub_items ORDER BY id;
+----
+id	name	qty
+1	one	10
+2	two	20
+
+
+query ok retry 120 backoff 250ms
+SELECT subname, worker_type FROM pg_stat_subscription;
+----
+subname	worker_type
+rsub_basic	apply
+
+
+query ok retry 120 backoff 250ms
+SELECT srsubstate, count(*) AS n FROM pg_subscription_rel GROUP BY srsubstate;
+----
+srsubstate	n
+r	4
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (3, ''three'', 30)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'UPDATE rsub_items SET name = ''TWO'', qty = qty + 1 WHERE id = 2');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DELETE FROM rsub_items WHERE id = 1');
+
+
+query ok retry 120 backoff 250ms
+SELECT id, name, qty FROM rsub_items ORDER BY id;
+----
+id	name	qty
+2	TWO	21
+3	three	30
+
+
+query ok retry 120 backoff 250ms
+SELECT latest_end_lsn <> '0/0' AS advanced FROM pg_stat_subscription WHERE subname = 'rsub_basic';
+----
+advanced
+t
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items SELECT g, ''bulk'' || g, g FROM generate_series(10, 2009) g');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n, sum(id) AS ids FROM rsub_items WHERE name LIKE 'bulk%';
+----
+n	ids
+2000	2019000
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_shift SELECT g, ''v'' || g FROM generate_series(1, 3000) g');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsub_shift;
+----
+n
+3000
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'UPDATE rsub_shift SET id = id + 1');
+
+
+query ok retry 120 backoff 250ms
+SELECT min(id) AS lo, max(id) AS hi, count(*) AS n, count(*) FILTER (WHERE v = 'v' || (id - 1)) AS shifted FROM rsub_shift;
+----
+lo	hi	n	shifted
+2	3001	3000	3000
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_parent VALUES (1), (2)');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_child VALUES (1, 1), (2, 1), (3, 2)');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsub_child;
+----
+n
+3
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DO $$ BEGIN DELETE FROM rsub_child WHERE parent_id = 1; DELETE FROM rsub_parent WHERE id = 1; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rsub_child) AS children, (SELECT count(*) FROM rsub_parent) AS parents;
+----
+children	parents
+1	1
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'TRUNCATE rsub_items');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsub_items;
+----
+n
+0
+
+
+statement ok
+ALTER SUBSCRIPTION rsub_basic DISABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n, count(pid) AS workers FROM pg_stat_subscription WHERE subname = 'rsub_basic';
+----
+n	workers
+1	0
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (100, ''while disabled'', 1)');
+
+
+sleep 2s
+
+
+query
+SELECT count(*) AS n FROM rsub_items;
+----
+n
+0
+
+
+statement ok
+ALTER SUBSCRIPTION rsub_basic ENABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT id, name FROM rsub_items;
+----
+id	name
+100	while disabled
+
+
+statement ok
+DROP SUBSCRIPTION rsub_basic;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rpub_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_basic''');
+----
+n
+0
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'INSERT INTO rsub_items VALUES (101, ''after drop'', 1)');
+
+
+sleep 2s
+
+
+query
+SELECT count(*) AS n FROM rsub_items;
+----
+n
+1
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DROP PUBLICATION rsub_basic_pub');
+
+
+statement ok
+CALL postgres_execute('rpub_${__DATABASE__}', 'DROP TABLE rsub_items, rsub_shift, rsub_child, rsub_parent');
+
+
+statement ok
+DETACH rpub_${__DATABASE__};

@@ -6,9 +6,7 @@
 # individual privilege, by REVOKE ALL, or by dropping the table itself.
 #
 # The grantee here is always a role distinct from the table owner (the table is
-# owned by the superuser that creates it). DETAIL wording differs across engines
-# (PG says "privileges for table ...", serenedb says "N object(s) ... depend on
-# role ...") so it is swallowed with <slt:ignore>.
+# owned by the superuser that creates it).
 #
 # Column-level grants (GRANT SELECT (col) ...) are deliberately NOT covered:
 # real PG refuses DROP ROLE while a column grant exists, but serenedb does not
@@ -48,10 +46,18 @@ statement ok
 GRANT SELECT ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -71,10 +77,18 @@ statement ok
 GRANT INSERT ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -94,10 +108,18 @@ statement ok
 GRANT UPDATE ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -117,10 +139,18 @@ statement ok
 GRANT DELETE ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -140,10 +170,18 @@ statement ok
 GRANT TRUNCATE ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -163,10 +201,18 @@ statement ok
 GRANT REFERENCES ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -186,10 +232,18 @@ statement ok
 GRANT TRIGGER ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -209,10 +263,18 @@ statement ok
 GRANT ALL ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -232,10 +294,18 @@ statement ok
 GRANT SELECT ON dat_iceberg TO dat_vedernikoff WITH GRANT OPTION;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -255,10 +325,18 @@ statement ok
 GRANT SELECT, INSERT, UPDATE ON dat_iceberg TO dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke just SELECT -- INSERT and UPDATE remain, so still refused.
@@ -266,10 +344,18 @@ statement ok
 REVOKE SELECT ON dat_iceberg FROM dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke INSERT too -- UPDATE still remains, still refused.
@@ -277,10 +363,18 @@ statement ok
 REVOKE INSERT ON dat_iceberg FROM dat_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # REVOKE ALL sweeps the remaining UPDATE -- now the drop succeeds.
@@ -301,10 +395,18 @@ statement ok
 GRANT SELECT, INSERT ON dat_iceberg TO dat_kostya;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_kostya;
 ----
 db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_kostya;
+----
+db error: ERROR: Cannot drop entry "dat_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -332,10 +434,18 @@ statement ok
 GRANT SELECT ON dat_iceberg TO dat_clickclack;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
 db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoking vedernikoff's grant frees only vedernikoff.
@@ -348,10 +458,18 @@ DROP ROLE dat_vedernikoff;
 
 
 # clickclack's grant is untouched, so clickclack is still refused.
+skipif serenedb
 statement error
 DROP ROLE dat_clickclack;
 ----
 db error: ERROR: role "dat_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_clickclack;
+----
+db error: ERROR: Cannot drop entry "dat_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -389,10 +507,18 @@ statement ok
 GRANT INSERT ON dat_iceberg TO dat_kostya;
 
 
+skipif serenedb
 statement error
 DROP ROLE dat_kostya;
 ----
 db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dat_kostya;
+----
+db error: ERROR: Cannot drop entry "dat_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 # Dropping the table drops the ACL with it, removing the dependency.

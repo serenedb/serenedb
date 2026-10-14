@@ -1655,7 +1655,8 @@ CompactionResult IndexWriter::Compact(
                                /*env=*/nullptr));
 }
 
-void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
+void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,
+                               const SourcePosition& position) {
   IndexSegment segment;
   segment.filename = meta_file;
   segment_meta::Read(_dir, segment.meta, meta_file);
@@ -1686,6 +1687,7 @@ void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
   // lock due to context modification
   std::lock_guard lock{flush->pending_mutex};
 
+  flush->position = std::max(flush->position, position);
   flush->incoming.emplace_back(std::move(segment), tick, std::move(refs),
                                std::move(adopted_reader));
 }

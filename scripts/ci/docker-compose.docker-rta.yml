@@ -74,7 +74,7 @@ services:
           --host serenedb \
           --single-port 7890 \
           --fast \
-          --skip "encrypted|text_tokenizer|log_level|pg_typeof" \
+          --skip "text_tokenizer|log_level|pg_typeof" \
           --runner=/sqllogictest-rs \
           --junit /logs/docker-rta-tests
       '

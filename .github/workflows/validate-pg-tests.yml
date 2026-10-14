@@ -113,6 +113,6 @@ jobs:
           name: validate-pg-results-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             out/logs/*
-            **/tests/sqllogic/*.xml
+            tests/sqllogic/*.xml
           if-no-files-found: ignore
           retention-days: 30

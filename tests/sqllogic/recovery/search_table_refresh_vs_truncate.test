@@ -14,7 +14,7 @@ statement ok
 VACUUM (REFRESH_TABLE) rvt;
 
 statement ok
-SET sdb_faults = 'pause_search_refresh_after_tick';
+SET sdb_faults = 'pause_index_refresh';
 
 connection refresher
 statement async ok
@@ -22,7 +22,7 @@ VACUUM (REFRESH_TABLE) rvt;
 
 connection default
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_refresh_after_tick:parked';
+SET sdb_faults = '-pause_index_refresh:parked';
 
 connection truncater
 statement async ok
@@ -36,7 +36,7 @@ sleep 1s
 
 connection default
 statement ok
-SET sdb_faults = 'pause_search_refresh_after_tick:release';
+SET sdb_faults = 'pause_index_refresh:release';
 
 wait
 

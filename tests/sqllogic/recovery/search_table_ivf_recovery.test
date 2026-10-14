@@ -29,7 +29,7 @@ VACUUM (REFRESH_TABLE) v;
 # Crash AFTER the WAL commit: (3,[0,0,0]) is fsynced into the WAL but never
 # refresh-published; recovery must rebuild it into the IVF.
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO v VALUES (3, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));

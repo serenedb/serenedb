@@ -44,7 +44,7 @@ struct PgSubscription {
 
   Oid oid;
   Oid subdbid;
-  PgLsn subskiplsn;
+  Text subskiplsn;
   Name subname;
   Oid subowner;
   bool subenabled;
@@ -62,5 +62,8 @@ struct PgSubscription {
   Text suborigin;
 };
 // NOLINTEND
+
+template<>
+MaterializedData SystemTableSnapshot<PgSubscription>::GetTableData();
 
 }  // namespace sdb::pg

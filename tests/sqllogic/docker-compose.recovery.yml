@@ -24,6 +24,14 @@ services:
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_DB=postgres
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=64
+      - -c
+      - max_wal_senders=64
     healthcheck:
       test:
         - CMD-SHELL

@@ -18,7 +18,7 @@ Add an HTTP listener with `?api=es`:
 serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es'
 ```
 
-`--listen` takes every endpoint in one comma-separated value, so keep the PostgreSQL endpoint in the same list.
+`--listen` takes every endpoint in one comma-separated value, so keep the PostgreSQL endpoint in the same list. An `http://` or `https://` endpoint without a port listens on 80 or 443, while a `postgres://` endpoint needs an explicit port. A path after the port, as in `postgres://127.0.0.1:7890/postgres`, is ignored, and a `\` in an `http://` or `https://` endpoint stops the server at startup.
 
 Indices live in the listener's database, which is `postgres` unless `db=` names another one, as in `?api=es&db=shop`. That database must exist, or the server does not start and logs `database 'shop' does not exist`.
 
@@ -180,7 +180,7 @@ EOF
 ### Refresh and request bodies
 
 - `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write refreshes the index before the response returns, so the new documents are searchable at once. `POST /<index>/_refresh` refreshes one index and `POST /_refresh` all of them. See [Visibility](#visibility).
-- A request body is at most 64 MiB. A larger one gets `413`.
+- A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`. A listener that also serves other APIs (`?api=es&api=otel`) applies the largest of their limits to every request.
 - A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
 ## Reading documents
@@ -500,4 +500,4 @@ Errors use the Elasticsearch envelope:
 | 409 | `version_conflict_engine_exception` | a document with that ID already exists |
 | 500 | `exception` | any other failure |
 
-A few answers have no envelope: `401` with `{"error":"unauthorized"}` for missing or wrong credentials, `404` with `{"error":"not_found"}` for a path the API does not serve, `413` for a body over 64 MiB and, as in Elasticsearch, the `404` with `"found": false` for a missing document on `GET /<index>/_doc/<id>`.
+A few answers have no envelope: `401` with `{"error":"unauthorized"}` for missing or wrong credentials, `404` with `{"error":"not_found"}` for a path the API does not serve, `413` for a body over 100 MiB and, as in Elasticsearch, the `404` with `"found": false` for a missing document on `GET /<index>/_doc/<id>`.

@@ -41,9 +41,9 @@ class SearchTable;
 // Templated on the storage type so the same loops drive both an inverted index
 // and a search table (both expose the maintenance interface in maintenance.h).
 // Instantiated only for the two types below.
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak);
 
 extern template yaclib::Future<> RefreshLoop(
@@ -53,10 +53,5 @@ extern template yaclib::Future<> CompactionCoordinator(
 extern template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 extern template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<SearchTable>);
-yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak);
-
-using ReindexRunner = std::function<absl::StatusOr<bool>(
-  duckdb::idx_t database_id, duckdb::idx_t index_id)>;
-void SetReindexRunner(ReindexRunner runner);
 
 }  // namespace sdb::search

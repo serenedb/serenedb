@@ -458,13 +458,15 @@ a
 3
 4
 
-# RANGE on a VARCHAR column with a non-keyword analyzer (tsq_english
-# lowercases / stems) is rejected at the standalone level: the indexed
-# tokens don't match the raw bound bytes meaningfully. Use an identity-
-# analyzed column or wrap in `##` (where the bounds are interpreted
-# against the analyzed terms at a phrase position).
-statement error
-SELECT a FROM tsq_idx WHERE b @@ ts_between('a', 'm', true, true);
+# Standalone RANGE analyzes both bounds with the column's dictionary.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_between('A', 'M', true, true) ORDER BY a;
+----
+a
+1
+2
+3
+4
 
 # RANGE as a phrase part (## context) is allowed on an analyzed
 # column -- the bounds match against indexed tokens at that phrase
@@ -484,6 +486,12 @@ SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between('brown', 'red', true, fa
 ----
 a
 1
+
+# Phrase-part bounds remain verbatim, unlike standalone range bounds.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between('BROWN', 'RED', true, true)) ORDER BY a;
+----
+a
 
 # Open-ended bound inside `##`: any token >= 'r' after 'quick'.
 query

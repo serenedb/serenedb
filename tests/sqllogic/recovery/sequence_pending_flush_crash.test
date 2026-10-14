@@ -12,10 +12,6 @@ statement ok
 CREATE TABLE spf_ids (id BIGINT PRIMARY KEY, src TEXT);
 
 
-statement ok
-SET sdb_faults = 'pause_catalog_log_sync';
-
-
 statement count 20000
 INSERT INTO spf_ids SELECT nextval('spf_seq'), 'paused flush' FROM generate_series(1, 20000);
 
@@ -78,18 +74,8 @@ t
 
 
 connection after_crash
-statement ok
-SET sdb_faults = 'pause_catalog_log_sync';
-
-
-connection after_crash
 statement count 20000
 INSERT INTO spf_ids SELECT nextval('spf_seq'), 'before shutdown' FROM generate_series(1, 20000);
-
-
-connection after_crash
-statement ok
-SET sdb_faults = '-pause_catalog_log_sync';
 
 
 connection after_crash

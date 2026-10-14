@@ -29,6 +29,7 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -78,7 +79,7 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 
   // Segments the sink threads flushed + fsynced, for the WAL to reference.
-  std::vector<search::SearchDbWal::SegmentRef> flushed_segments;
+  std::vector<std::string> flushed_segments;
 };
 
 struct SearchInsertSourceState final : duckdb::GlobalSourceState {
@@ -134,7 +135,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table, table->name);
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table, *table);
 
   const auto& columns = table->GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
@@ -144,7 +145,8 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->chunk_types = columns.GetColumnTypes();
   state->generated_pk_seq = table->GeneratedPkSequence(context);
   SDB_ASSERT(state->generated_pk_seq);
-  state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
+  state->write_buffer_max_bytes =
+    duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -245,10 +247,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
 
   // On the worker, in parallel with the others, rather than deferring the tail
   // to the single-threaded refresh commit; the fsync is what lets the WAL
-  // reference these by name instead of copying the rows. The tick is still
-  // assigned serially in SearchTableTransaction::Commit -- so this only
-  // flushes -- and the returned span points into the segment context.
-  std::vector<search::SearchDbWal::SegmentRef> segments;
+  // reference these by name instead of copying the rows.
+  std::vector<std::string> segments;
   const bool owns_segment = lstate->bulk && lstate->search_trx != nullptr;
   if (owns_segment) {
     const auto flushed = lstate->search_trx->FlushAndFsync();
@@ -256,8 +256,7 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
                "sink thread with rows but no flushed segment");
     segments.reserve(flushed.size());
     for (const auto& segment : flushed) {
-      segments.push_back(
-        search::SearchDbWal::SegmentRef{.meta_file = segment.filename});
+      segments.push_back(segment.filename);
     }
   }
 
@@ -278,10 +277,12 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (!gstate.flushed_segments.empty()) {
-    gstate.sdb_txn->SearchTxn().AddSegments(gstate.search_table,
-                                            std::move(gstate.flushed_segments));
+    search_txn.AddSegments(gstate.search_table,
+                           std::move(gstate.flushed_segments));
   }
+  search_txn.FlushBufferTransaction(gstate.table_id);
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }

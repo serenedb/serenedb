@@ -41,6 +41,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
@@ -194,6 +196,20 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
   return {HttpStatus::InternalError, kCodeInternal, std::move(sql.errmsg)};
 }
 
+yaclib::Task<InsertOutcome> RunTransaction(RequestContext& ctx,
+                                           PreparedSlotId slot,
+                                           std::string_view sql) {
+  auto prepared = network::PrepareCached(ctx, slot, sql);
+  if (prepared.error) {
+    co_return Failed(*prepared.error);
+  }
+  auto result = co_await ctx.RunPrepared(*prepared.statement);
+  if (!result->HasError()) {
+    co_return InsertOutcome{};
+  }
+  co_return Failed(result->GetErrorObject());
+}
+
 template<typename Signal>
 yaclib::Task<InsertOutcome> RunSourceInsert(
   RequestContext& ctx, size_t target, const typename Signal::Request& request) {
@@ -202,17 +218,17 @@ yaclib::Task<InsertOutcome> RunSourceInsert(
   using Request = const typename Signal::Request;
   const auto schema = ctx.Schema();
   const auto table = Signal::kTargets[target];
-  auto& entry = ctx.PreparedSlot(Signal::kSlots[target]);
-  if (auto error = network::EnsurePrepared(
-        ctx, entry, InsertSql(schema, table, Signal::kSources[target]))) {
-    co_return Failed(*error);
+  const auto sql = InsertSql(schema, table, Signal::kSources[target]);
+  auto prepared = network::PrepareCached(ctx, Signal::kSlots[target], sql);
+  if (prepared.error) {
+    co_return Failed(*prepared.error);
   }
   auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
   connection.SetSideChannel(&request);
   const absl::Cleanup clear = [&] {
     connection.SetSideChannel<Request>(nullptr);
   };
-  auto result = co_await ctx.RunPrepared(*entry.statement);
+  auto result = co_await ctx.RunPrepared(*prepared.statement);
   if (!result->HasError()) {
     co_return InsertOutcome{};
   }
@@ -282,6 +298,26 @@ struct MetricsSignal {
       ParseMetricsRequest(raw, parser, out, /*padded=*/true);
     }
   }
+
+  static std::array<bool, kSlots.size()> Present(const Request& request) {
+    std::array<bool, kSlots.size()> present{};
+    for (const auto& resource : request.resources) {
+      for (const auto& scope : resource.scopes) {
+        for (const auto& metric : scope.records) {
+          std::visit(
+            [&]<typename Data>(const Data& data) {
+              if constexpr (!std::is_same_v<Data, std::monostate>) {
+                if (!data.data_points.empty()) {
+                  present[metric.data.index() - 1] = true;
+                }
+              }
+            },
+            metric.data);
+        }
+      }
+    }
+    return present;
+  }
 };
 
 // Answers a failed insert; false when there is nothing to answer.
@@ -321,14 +357,41 @@ class ExportHandler final : public HttpHandler {
     typename Signal::Request decoded;
     try {
       Signal::Decode(raw, protobuf, parser, decoded);
+      decoded.wire_bytes = raw.size();
     } catch (const std::exception& error) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   error.what(), protobuf);
       co_return {};
     }
-    for (size_t target = 0; target < Signal::kTargets.size(); ++target) {
-      const auto outcome =
-        co_await RunSourceInsert<Signal>(ctx, target, decoded);
+    if constexpr (Signal::kTargets.size() == 1) {
+      const auto outcome = co_await RunSourceInsert<Signal>(ctx, 0, decoded);
+      if (WriteFailure(writer, outcome, protobuf)) {
+        co_return {};
+      }
+    } else {
+      const auto present = Signal::Present(decoded);
+      const bool transaction =
+        std::count(present.begin(), present.end(), true) > 1;
+      InsertOutcome outcome;
+      if (transaction) {
+        outcome = co_await RunTransaction(ctx, PreparedSlotId::Begin, "BEGIN");
+      }
+      for (size_t target = 0;
+           outcome.status == HttpStatus::Ok && target < Signal::kTargets.size();
+           ++target) {
+        if (present[target]) {
+          outcome = co_await RunSourceInsert<Signal>(ctx, target, decoded);
+        }
+      }
+      if (transaction) {
+        if (outcome.status == HttpStatus::Ok) {
+          outcome =
+            co_await RunTransaction(ctx, PreparedSlotId::Commit, "COMMIT");
+        }
+        if (outcome.status != HttpStatus::Ok) {
+          co_await RunTransaction(ctx, PreparedSlotId::Rollback, "ROLLBACK");
+        }
+      }
       if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }

@@ -1,0 +1,137 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpk_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rpk\_%''');
+
+
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rpk_pub; DROP TABLE IF EXISTS rpk_rows; CREATE TABLE rpk_rows (id int PRIMARY KEY); CREATE PUBLICATION rpk_pub FOR TABLE rpk_rows; END $$');
+
+
+statement ok
+CREATE TABLE rpk_rows (id INTEGER);
+
+
+statement ok
+CREATE SUBSCRIPTION rpk_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} options=''-c logical_decoding_work_mem=64kB''' PUBLICATION rpk_pub WITH (slot_name = 'rpk_sub', streaming = on);
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_subscription_rel WHERE srsubstate = 'r';
+----
+n
+1
+
+
+connection pg_writer
+statement ok
+BEGIN;
+
+
+connection pg_writer
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'INSERT INTO rpk_rows SELECT generate_series(1, 20000)');
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT * FROM postgres_query('rpk_${__DATABASE__}', 'SELECT stream_txns > 0 AS streamed FROM pg_stat_replication_slots WHERE slot_name = ''rpk_sub''');
+----
+streamed
+t
+
+
+sleep 1s
+
+
+statement ok
+ALTER SUBSCRIPTION rpk_sub DISABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rpk_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rpk_sub'' AND NOT active');
+----
+n
+1
+
+
+query ok
+SELECT count(*) AS n FROM rpk_rows;
+----
+n
+0
+
+
+statement ok
+ALTER SUBSCRIPTION rpk_sub ENABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rpk_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rpk_sub'' AND active');
+----
+n
+1
+
+
+sleep 1s
+
+
+connection pg_writer
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'INSERT INTO rpk_rows SELECT generate_series(20001, 30000)');
+
+
+connection pg_writer
+statement ok
+COMMIT;
+
+
+connection default
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM rpk_rows;
+----
+n	ids	lo	hi
+30000	30000	1	30000
+
+
+connection pg_writer
+statement ok
+BEGIN;
+
+
+connection pg_writer
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'INSERT INTO rpk_rows SELECT generate_series(100001, 120000)');
+
+
+sleep 2s
+
+
+connection default
+statement ok
+DROP SUBSCRIPTION rpk_sub;
+
+
+query ok
+SELECT count(*) AS n FROM rpk_rows;
+----
+n
+30000
+
+
+connection pg_writer
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+CALL postgres_execute('rpk_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rpk_pub; DROP TABLE rpk_rows; END $$');
+
+
+statement ok
+DETACH rpk_${__DATABASE__};

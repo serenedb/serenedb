@@ -2,7 +2,7 @@
 """Pre-commit hook: forbid raw `throw` in server/ -- use the throw macros.
 
 A raw exception loses its PG sqlstate on the way to the client: only a typed
-irs::SqlException (built by THROW_SQL_ERROR / SDB_THROW) carries the
+irs::SqlException (built by THROW_SQL_ERROR) carries the
 errcode/detail/hint through ErrorData::Throw() to the wire, while anything
 else is flattened through a lossy per-type mapping. Server code must not
 `throw` directly.
@@ -88,9 +88,9 @@ def main() -> int:
     if failed:
         print(
             "\nRaw `throw` in server code. Use "
-            "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) (or "
-            "SDB_THROW) so the PG sqlstate survives to the client "
-            "(pg/sql_exception_macro.h). Sanctioned: bare `throw;`, "
+            "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) so the PG "
+            "sqlstate survives to the client "
+            "(iresearch/utils/pg/sql_exception_macro.hpp). Sanctioned: bare `throw;`, "
             "`throw irs::SqlException{...}`, "
             "`throw duckdb::NotImplementedException`, and the allowlisted "
             "subsystems in scripts/check_no_raw_throw.py.",

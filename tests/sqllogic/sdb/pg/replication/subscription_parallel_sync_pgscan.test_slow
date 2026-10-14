@@ -1,0 +1,84 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpar_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rpar_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rpar\_%''');
+
+
+statement ok
+CALL postgres_execute('rpar_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN DROP PUBLICATION IF EXISTS rpar_pub; FOREACH t IN ARRAY ARRAY[''rpar_a'', ''rpar_b'', ''rpar_c'', ''rpar_d'', ''rpar_e''] LOOP EXECUTE format(''DROP TABLE IF EXISTS %I'', t); END LOOP; END $$');
+
+
+statement ok
+CALL postgres_execute('rpar_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY[''rpar_a'', ''rpar_b'', ''rpar_c'', ''rpar_d'', ''rpar_e''] LOOP EXECUTE format(''CREATE TABLE %I (id int PRIMARY KEY, v text)'', t); EXECUTE format(''INSERT INTO %I SELECT g, md5(g::text) FROM generate_series(1, 50000) g'', t); END LOOP; CREATE PUBLICATION rpar_pub FOR TABLE rpar_a, rpar_b, rpar_c, rpar_d, rpar_e; END $$');
+
+
+statement ok
+CREATE TABLE rpar_a (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpar_b (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpar_c (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpar_d (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpar_e (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE SUBSCRIPTION rpar_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rpar_pub WITH (slot_name = 'rpar_sub');
+
+
+query ok retry 480 backoff 250ms
+SELECT count(*) FILTER (WHERE r.srsubstate = 'r') AS ready, count(DISTINCT r.srsublsn) AS lsns FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'rpar_sub';
+----
+ready	lsns
+5	1
+
+
+statement ok
+CALL postgres_execute('rpar_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY[''rpar_a'', ''rpar_b'', ''rpar_c'', ''rpar_d'', ''rpar_e''] LOOP EXECUTE format(''INSERT INTO %I VALUES (50001, ''''after'''')'', t); END LOOP; END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM rpar_a) AS a, (SELECT count(*) FROM rpar_b) AS b, (SELECT count(*) FROM rpar_c) AS c, (SELECT count(*) FROM rpar_d) AS d, (SELECT count(*) FROM rpar_e) AS e;
+----
+a	b	c	d	e
+50001	50001	50001	50001	50001
+
+
+query
+SELECT count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi, count(*) FILTER (WHERE v = md5(id::text)) AS copied FROM rpar_c;
+----
+ids	lo	hi	copied
+50001	1	50001	50000
+
+
+query
+SELECT sync_error_count, apply_error_count FROM pg_stat_subscription_stats WHERE subname = 'rpar_sub';
+----
+sync_error_count	apply_error_count
+0	0
+
+
+statement ok
+DROP SUBSCRIPTION rpar_sub;
+
+
+statement ok
+CALL postgres_execute('rpar_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN DROP PUBLICATION rpar_pub; FOREACH t IN ARRAY ARRAY[''rpar_a'', ''rpar_b'', ''rpar_c'', ''rpar_d'', ''rpar_e''] LOOP EXECUTE format(''DROP TABLE %I'', t); END LOOP; END $$');
+
+
+statement ok
+DETACH rpar_${__DATABASE__};

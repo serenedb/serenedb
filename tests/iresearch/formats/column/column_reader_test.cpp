@@ -1723,8 +1723,7 @@ TEST_F(ColumnReaderTest, ReproDensePkWithSparseSibling) {
 
 // Repro: many short all-valid BLOB strings sharing a tight common prefix
 // ("row_0".."row_499") -- the shape that triggers dict_fsst. Written densely,
-// point-read scattered rows. Catches dict_fsst point-read (fetch_row)
-// corruption.
+// point-read scattered rows. Catches dict_fsst point-read corruption.
 TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
   constexpr irs::field_id kB = 72;
   constexpr uint64_t kRows = 500;

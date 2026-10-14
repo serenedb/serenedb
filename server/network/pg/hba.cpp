@@ -20,6 +20,7 @@
 
 #include "network/pg/hba.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
 #include <fast_float/fast_float.h>
@@ -894,13 +895,13 @@ std::optional<ParseError> SetHbaFromText(std::string_view text) {
   // we don't duplicate them.
   const bool already_safe =
     parsed->rules.size() >= combined.rules.size() &&
-    std::ranges::equal(combined.rules,
-                       parsed->rules | std::views::take(combined.rules.size()),
-                       {}, &Rule::raw, &Rule::raw);
+    absl::c_equal(
+      combined.rules, parsed->rules | std::views::take(combined.rules.size()),
+      [](const Rule& lhs, const Rule& rhs) { return lhs.raw == rhs.raw; });
   if (already_safe) {
     combined = std::move(*parsed);
   } else {
-    std::ranges::move(parsed->rules, std::back_inserter(combined.rules));
+    absl::c_move(parsed->rules, std::back_inserter(combined.rules));
   }
   Renumber(combined);
   SetHbaRuleset(std::make_shared<const Ruleset>(std::move(combined)));
@@ -1052,12 +1053,13 @@ std::vector<RenderedRule> RenderHbaRules() {
     r.rule_number = rule.seq + 1;  // 1-based, like PG
     r.file_name = file;
     r.type = ConnTypeName(rule.conntype);
-    std::ranges::transform(rule.database.tokens,
-                           std::back_inserter(r.databases), &AuthToken::value);
-    std::ranges::transform(rule.role.tokens, std::back_inserter(r.roles),
-                           &AuthToken::value);
+    const auto token_value = [](const AuthToken& token) { return token.value; };
+    absl::c_transform(rule.database.tokens, std::back_inserter(r.databases),
+                      token_value);
+    absl::c_transform(rule.role.tokens, std::back_inserter(r.roles),
+                      token_value);
     r.auth_method = MethodName(rule.method);
-    std::ranges::transform(
+    absl::c_transform(
       rule.options, std::back_inserter(r.options),
       [](const MethodOption& o) { return absl::StrCat(o.name, "=", o.value); });
     switch (rule.address.kind) {

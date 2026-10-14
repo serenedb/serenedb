@@ -226,7 +226,7 @@ CREATE TABLE u (x INTEGER, y TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO u

@@ -1,0 +1,85 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE stt (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stt VALUES (1, 'a');
+
+
+statement ok
+INSERT INTO stt VALUES (2, 'b');
+
+
+statement ok
+INSERT INTO stt VALUES (3, 'c');
+
+
+statement ok
+INSERT INTO stt VALUES (4, 'd');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stt;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+connection after_crash
+statement ok
+INSERT INTO stt VALUES (5, 'e');
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) stt;
+
+
+connection after_crash_2
+query
+SELECT id, tag FROM stt ORDER BY id;
+----
+id	tag
+1	a
+2	b
+3	c
+4	d
+5	e
+
+
+connection after_crash_2
+statement ok
+DROP TABLE stt;

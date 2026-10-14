@@ -1,0 +1,336 @@
+hash-threshold 100
+
+# Regression for #1473: range bounds use the same dictionary as indexed values.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY range_sv AS collate_tokens('sv');
+
+statement ok
+CREATE TABLE range_words (id INT PRIMARY KEY, w TEXT);
+
+statement ok
+INSERT INTO range_words VALUES (1, 'Apa'), (2, 'Mus'), (3, 'Zebra'), (4, 'Ål');
+
+statement ok
+CREATE INDEX range_words_idx ON range_words USING inverted (id, w range_sv);
+
+statement ok
+VACUUM (REFRESH_TABLE) range_words;
+
+# Swedish sort keys put Ål after Zebra.
+
+query
+SELECT id FROM range_words_idx WHERE w @@ (ts_ge('Mus') && ts_le('Ål')) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between('Mus', 'Ål', true, true) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between('Mus', 'Ål', true, false) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between('Mus', 'Ål', false, true) ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between('Mus', 'Ål', false, false) ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between('Mus', NULL, true, false) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM range_words_idx WHERE w @@ ts_between(NULL, 'Mus', false, true) ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY range_lower AS normalize_tokens(case := 'lower');
+
+statement ok
+CREATE TABLE range_tags (id INT PRIMARY KEY, t TEXT, b BLOB);
+
+statement ok
+INSERT INTO range_tags VALUES (1, 'Apple', 'Apple'), (2, 'banana', 'banana'), (3, 'Cherry', 'Cherry'), (4, '', ''), (5, NULL, NULL);
+
+statement ok
+CREATE INDEX range_tags_idx ON range_tags USING inverted (id, t range_lower, b range_lower);
+
+statement ok
+VACUUM (REFRESH_TABLE) range_tags;
+
+# Both endpoints must be normalized, including the upper endpoint.
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ (ts_ge('APPLE') && ts_lt('CHERRY')) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'CHERRY', true, true) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'CHERRY', true, false) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'CHERRY', false, true) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'CHERRY', false, false) ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between(NULL, 'BANANA', true, false) ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('BANANA', NULL, false, true) ORDER BY id;
+----
+id
+3
+
+# Both NULL bounds retain match-all semantics, including NULL-valued rows.
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between(NULL, NULL, false, false) ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+# Equal analyzed bounds can have different source bytes.
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'apple', true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('APPLE', 'apple', false, true) ORDER BY id;
+----
+id
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('CHERRY', 'APPLE', true, true) ORDER BY id;
+----
+id
+
+# An empty token is still a token; it is not zero tokens or NULL.
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ ts_between('', '', true, true) ORDER BY id;
+----
+id
+4
+
+query
+SELECT id FROM range_tags_idx WHERE t @@ !!ts_between('APPLE', 'CHERRY', true, false) ORDER BY id;
+----
+id
+3
+4
+
+# BLOB uses the same analyzed-bound path, for both BLOB and VARCHAR literals.
+
+query
+SELECT id FROM range_tags_idx WHERE b @@ ts_between('APPLE'::BLOB, 'CHERRY'::BLOB, true, false) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM range_tags_idx WHERE b @@ ts_between(NULL, 'BANANA', false, true) ORDER BY id;
+----
+id
+1
+2
+4
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY range_split AS split_text(case := 'lower') | remove_stopwords(['skip']) WITH (frequency, position);
+
+statement ok
+CREATE TABLE range_docs (id INT PRIMARY KEY, t TEXT);
+
+statement ok
+INSERT INTO range_docs VALUES (1, 'Apple'), (2, 'banana'), (3, 'Cherry'), (4, 'apple zebra'), (5, 'skip'), (6, NULL);
+
+statement ok
+CREATE INDEX range_docs_idx ON range_docs USING inverted (id, t range_split);
+
+statement ok
+VACUUM (REFRESH_TABLE) range_docs;
+
+# A single indexed term must satisfy both bounds, even on multi-token documents.
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('BANANA', 'CHERRY', true, true) ORDER BY id;
+----
+id
+2
+3
+
+# A non-NULL bound producing no tokens matches nothing.
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('skip', 'CHERRY', true, true) ORDER BY id;
+----
+id
+
+# A non-NULL bound producing no tokens matches nothing.
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('APPLE', 'skip', true, true) ORDER BY id;
+----
+id
+
+# A non-NULL bound producing no tokens matches nothing.
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('skip', NULL, true, true) ORDER BY id;
+----
+id
+
+# A non-NULL bound producing no tokens matches nothing.
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_between(NULL, 'skip', true, true) ORDER BY id;
+----
+id
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ ts_ge('skip') ORDER BY id;
+----
+id
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ !!ts_between('skip', 'CHERRY', true, true) ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id FROM range_docs_idx WHERE t @@ !!ts_between('APPLE', 'skip', true, true) ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('apple banana', 'CHERRY', true, true);
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('APPLE', 'banana cherry', true, true);
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('apple banana', NULL, true, true);
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between(NULL, 'banana cherry', true, true);
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('skip', 'banana cherry', true, true);
+
+statement error ts_between produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_between('apple banana', 'skip', true, true);
+
+statement error ts_ge produced multiple tokens; range comparison requires a single token
+SELECT id FROM range_docs_idx WHERE t @@ ts_ge('apple banana');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY range_reject AS (lambda x: nullif(x, 'reject'));
+
+statement ok
+CREATE INDEX range_reject_idx ON range_tags USING inverted (t range_reject);
+
+statement error ts_between failed to analyse 'reject'
+SELECT id FROM range_reject_idx WHERE t @@ ts_between('reject', 'z', true, true);
+
+statement error ts_between failed to analyse 'reject'
+SELECT id FROM range_reject_idx WHERE t @@ ts_between('a', 'reject', true, true);
+
+statement error ts_ge failed to analyse 'reject'
+SELECT id FROM range_reject_idx WHERE t @@ ts_ge('reject');
+
+# Long normalized terms exercise owned bound storage across tokenizer reuse.
+statement ok
+CREATE TABLE range_long (id INT PRIMARY KEY, t TEXT);
+
+statement ok
+INSERT INTO range_long VALUES
+  (1, 'common prefix apple'), (2, 'common prefix banana'),
+  (3, 'common prefix cherry'), (4, 'common prefix zebra');
+
+statement ok
+CREATE INDEX range_long_idx ON range_long USING inverted (t range_lower);
+
+statement ok
+VACUUM (REFRESH_TABLE) range_long;
+
+query
+SELECT id FROM range_long_idx
+WHERE t @@ ts_between('COMMON PREFIX APPLE', 'COMMON PREFIX CHERRY', true, true)
+ORDER BY id;
+----
+id
+1
+2
+3

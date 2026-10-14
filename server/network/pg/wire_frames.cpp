@@ -390,6 +390,87 @@ void WriteCopyDone(message::Buffer& out) {
   w.Commit(false);
 }
 
+namespace {
+
+template<typename Body>
+void WriteFrame(message::Buffer& out, char type, Body&& body) {
+  message::Writer w{out};
+  const auto start = w.Written();
+  auto* prefix = w.Alloc(kFrameHeader);
+  std::forward<Body>(body)(w);
+  prefix[0] = static_cast<uint8_t>(type);
+  absl::big_endian::Store32(
+    prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));
+  w.Commit(false);
+}
+
+template<typename Body>
+void WriteUntypedFrame(message::Buffer& out, Body&& body) {
+  message::Writer w{out};
+  const auto start = w.Written();
+  auto* prefix = w.Alloc(kInt32);
+  std::forward<Body>(body)(w);
+  absl::big_endian::Store32(prefix, static_cast<int32_t>(w.Written() - start));
+  w.Commit(false);
+}
+
+}  // namespace
+
+void WriteSslRequest(message::Buffer& out) {
+  WriteUntypedFrame(out, [](message::Writer& w) {
+    absl::big_endian::Store32(w.Alloc(kInt32), NEGOTIATE_SSL_CODE);
+  });
+}
+
+void WriteStartupMessage(
+  message::Buffer& out,
+  std::span<const std::pair<std::string_view, std::string_view>> parameters) {
+  WriteUntypedFrame(out, [&](message::Writer& w) {
+    absl::big_endian::Store32(w.Alloc(kInt32), PG_PROTOCOL_LATEST);
+    for (const auto& [name, value] : parameters) {
+      w.Write(name);
+      w.Write(kNull);
+      w.Write(value);
+      w.Write(kNull);
+    }
+    w.Write(kNull);
+  });
+}
+
+void WriteQuery(message::Buffer& out, std::string_view query) {
+  WriteFrame(out, PQ_MSG_QUERY, [&](message::Writer& w) {
+    w.Write(query);
+    w.Write(kNull);
+  });
+}
+
+void WritePasswordMessage(message::Buffer& out, std::string_view password) {
+  WriteFrame(out, PQ_MSG_PASSWORD_MESSAGE, [&](message::Writer& w) {
+    w.Write(password);
+    w.Write(kNull);
+  });
+}
+
+void WriteSaslInitialResponse(message::Buffer& out, std::string_view mechanism,
+                              std::string_view data) {
+  WriteFrame(out, PQ_MSG_SASL_INITIAL_RESPONSE, [&](message::Writer& w) {
+    w.Write(mechanism);
+    w.Write(kNull);
+    absl::big_endian::Store32(w.Alloc(kInt32),
+                              static_cast<int32_t>(data.size()));
+    w.Write(data);
+  });
+}
+
+void WriteSaslResponse(message::Buffer& out, std::string_view data) {
+  WriteFrame(out, PQ_MSG_SASL_RESPONSE,
+             [&](message::Writer& w) { w.Write(data); });
+}
+
+void WriteCopyData(message::Buffer& out, std::string_view data) {
+  WriteFrame(out, PQ_MSG_COPY_DATA, [&](message::Writer& w) { w.Write(data); });
+}
+
 void WriteParameterStatus(message::Buffer& out, std::string_view name,
                           std::string_view value) {
   message::Writer w{out};
@@ -500,6 +581,41 @@ void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
   w.Commit(false);
 }
 
+irs::pg::SqlErrorData ParseErrorResponse(std::string_view body) {
+  irs::pg::SqlErrorData error;
+  error.errcode = ERRCODE_INTERNAL_ERROR;
+  while (body.size() > 1) {
+    const char field = body.front();
+    body.remove_prefix(1);
+    const auto end = body.find('\0');
+    const auto value = body.substr(0, end);
+    body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
+    switch (field) {
+      case 'C':
+        if (value.size() == 5) {
+          error.errcode =
+            MAKE_SQLSTATE(value[0], value[1], value[2], value[3], value[4]);
+        }
+        break;
+      case 'M':
+        error.errmsg = value;
+        break;
+      case 'D':
+        error.errdetail = value;
+        break;
+      case 'H':
+        error.errhint = value;
+        break;
+      case 'W':
+        error.context = value;
+        break;
+      default:
+        break;
+    }
+  }
+  return error;
+}
+
 void WriteErrorResponse(message::Buffer& out,
                         const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "ERROR", error);
@@ -512,7 +628,10 @@ void WriteFatalResponse(message::Buffer& out,
 
 void WriteNoticeResponse(message::Buffer& out,
                          const irs::pg::SqlErrorData& notice) {
-  WriteDiagnostic(out, PQ_MSG_NOTICE_RESPONSE, "WARNING", notice);
+  WriteDiagnostic(
+    out, PQ_MSG_NOTICE_RESPONSE,
+    notice.errcode == ERRCODE_SUCCESSFUL_COMPLETION ? "NOTICE" : "WARNING",
+    notice);
 }
 
 irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {

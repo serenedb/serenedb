@@ -20,7 +20,8 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <deque>
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
@@ -117,7 +118,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       for (duckdb::idx_t i = 0; i < macro->parameters.size(); ++i) {
         argnames.push_back(MacroParameterName(*macro, i));
       }
-      const bool named = std::ranges::any_of(
+      const bool named = absl::c_any_of(
         argnames, [](const std::string& name) { return !name.empty(); });
       auto& argname_views =
         argnames_views.emplace_back(argnames.begin(), argnames.end());

@@ -1,0 +1,188 @@
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE repro_src AS SELECT range AS id FROM range(300000);
+
+
+statement ok
+CREATE TABLE repro_st (id BIGINT, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+
+statement ok
+INSERT INTO repro_st VALUES (-1, 'seed');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_st;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE repro_st;
+
+
+statement count 10
+INSERT INTO repro_st SELECT id, 'bulk' FROM repro_src WHERE id < 10;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_st;
+
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM repro_st;
+----
+n	lo	hi
+10	0	9
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE repro_st;
+
+
+statement count 10
+INSERT INTO repro_st SELECT id + 100, 'bulk' FROM repro_src WHERE id < 10;
+
+
+statement ok
+INSERT INTO repro_st VALUES (1000, 'inline');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_st;
+
+
+query
+SELECT count(*) FILTER (WHERE b = 'bulk') AS bulk,
+       count(*) FILTER (WHERE b = 'inline') AS inline,
+       min(id) AS lo, max(id) AS hi
+FROM repro_st;
+----
+bulk	inline	lo	hi
+10	1	100	1000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE repro_st;
+
+
+statement count 10
+INSERT INTO repro_st SELECT id + 200, 'bulk' FROM repro_src WHERE id < 10;
+
+
+statement count 5000
+INSERT INTO repro_st SELECT i, 'serial' || repeat('x', 200) FROM range(10000, 15000) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_st;
+
+
+query
+SELECT count(*) FILTER (WHERE b = 'bulk') AS bulk,
+       count(*) FILTER (WHERE b LIKE 'serial%') AS serial,
+       min(id) AS lo, max(id) AS hi
+FROM repro_st;
+----
+bulk	serial	lo	hi
+10	5000	200	14999
+
+
+statement ok
+CREATE TABLE repro_rf (id BIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO repro_rf VALUES (1);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_rf;
+
+
+statement ok
+INSERT INTO repro_rf VALUES (2);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+TRUNCATE repro_rf;
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) repro_rf;
+
+
+connection s2
+query
+SELECT count(*) AS n FROM repro_rf;
+----
+n
+2
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) repro_rf;
+
+
+connection s2
+query
+SELECT count(*) AS n FROM repro_rf;
+----
+n
+0
+
+
+statement ok
+DROP TABLE repro_rf;
+
+
+statement ok
+DROP TABLE repro_st;
+
+
+statement ok
+DROP TABLE repro_src;
+
+
+statement ok
+RESET threads;

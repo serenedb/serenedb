@@ -185,9 +185,6 @@ PhysicalOperator &ClickHouseCatalog::PlanInsert(ClientContext &context, Physical
 	if (op.return_chunk) {
 		throw BinderException("RETURNING clause not supported for insertion into ClickHouse table");
 	}
-	if (op.on_conflict_info.action_type != OnConflictAction::THROW) {
-		throw BinderException("ON CONFLICT clause not supported for insertion into ClickHouse table");
-	}
 	D_ASSERT(plan);
 	auto &insert = planner.Make<ClickHouseInsert>(op, op.table, op.column_index_map);
 	insert.children.push_back(*plan);

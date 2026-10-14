@@ -1,0 +1,122 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE repro_src AS SELECT range AS id FROM range(300000);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE repro_st (id BIGINT, b TEXT)
+  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+
+
+statement ok
+INSERT INTO repro_st VALUES (-1, 'seed');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) repro_st;
+
+
+statement ok
+SET threads = 4;
+
+
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE repro_st;
+
+
+statement count 10
+INSERT INTO repro_st SELECT id, 'bulk' FROM repro_src WHERE id < 10;
+
+
+statement ok
+INSERT INTO repro_st VALUES (1000, 'inline');
+
+
+statement error connection closed
+COMMIT;
+
+
+connection after_first_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FILTER (WHERE b = 'bulk') AS bulk,
+       count(*) FILTER (WHERE b = 'inline') AS inline,
+       min(id) AS lo, max(id) AS hi
+FROM repro_st;
+----
+bulk	inline	lo	hi
+10	1	0	1000
+
+
+connection after_first_crash
+statement ok
+SET threads = 4;
+
+
+connection after_first_crash
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+
+connection after_first_crash
+statement ok
+BEGIN;
+
+
+connection after_first_crash
+statement ok
+TRUNCATE repro_st;
+
+
+connection after_first_crash
+statement count 10
+INSERT INTO repro_st SELECT id + 100, 'bulk' FROM repro_src WHERE id < 10;
+
+
+connection after_first_crash
+statement count 5000
+INSERT INTO repro_st SELECT i, 'serial' || repeat('x', 200) FROM range(10000, 15000) t(i);
+
+
+connection after_first_crash
+statement error connection closed
+COMMIT;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FILTER (WHERE b = 'bulk') AS bulk,
+       count(*) FILTER (WHERE b LIKE 'serial%') AS serial,
+       min(id) AS lo, max(id) AS hi
+FROM repro_st;
+----
+bulk	serial	lo	hi
+10	5000	100	14999
+
+
+connection after_second_crash
+statement ok
+DROP TABLE repro_st;
+
+
+connection after_second_crash
+statement ok
+DROP TABLE repro_src;
+
+
+connection after_second_crash
+statement ok
+RESET threads;

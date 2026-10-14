@@ -942,6 +942,19 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
+void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
+                         std::span<const int64_t> rows) {
+  SearchSinkDeleteBaseImpl remover{trx};
+  remover.InitImpl(rows.size());
+  std::string key;
+  for (const auto row : rows) {
+    key.clear();
+    primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
+    remover.DeleteRowImpl(key);
+  }
+  remover.FinishImpl();
+}
+
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {

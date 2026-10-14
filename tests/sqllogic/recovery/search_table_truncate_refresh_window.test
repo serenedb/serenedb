@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE trw (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO trw VALUES (1, 'refreshed');
+
+statement ok
+VACUUM (REFRESH_TABLE) trw;
+
+statement ok
+INSERT INTO trw VALUES (2, 'pending');
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async error connection closed
+TRUNCATE trw;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection refresher
+statement ok
+VACUUM (REFRESH_TABLE) trw;
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM trw;
+----
+n
+0
+
+connection after_crash
+statement ok
+DROP TABLE trw;

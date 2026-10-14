@@ -157,7 +157,7 @@ void Transaction::PreCommit() {
   // here leaves the SET LOCAL overlays for RollbackVariables to undo on the
   // rollback this refusal turns into.
   if (_search_txn) {
-    _search_txn->FlushPending(GetClientContext());
+    _search_txn->PrepareCommit(GetClientContext());
   }
   // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
   // transaction is still active so custom-impl settings (search_path,
@@ -202,6 +202,9 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }
+  if (_search_txn) {
+    _search_txn->Stage(position, database);
+  }
 }
 
 void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
@@ -225,25 +228,14 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
     }
   }
   absl::erase_if(_search_transactions, in_scope);
+  if (_search_txn) {
+    _search_txn->Publish(database);
+  }
 }
 
 void Transaction::Commit() {
   for (auto& action : _on_commit) {
     action();
-  }
-
-  // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
-  // crash boundaries + the single multi-shard WAL fsync that is the atomic
-  // commit point live in SearchTableTransaction::Commit.
-  if (_search_txn && !_search_txn->Empty()) {
-    try {
-      _search_txn->Commit();
-    } catch (const std::exception& e) {
-      _search_txn->Abort();
-      Destroy();
-      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ",
-                              duckdb::ErrorData{e}.RawMessage()));
-    }
   }
 
   Destroy();

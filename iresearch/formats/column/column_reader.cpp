@@ -765,8 +765,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   if (validity) {
     _validity_window = validity->Locate(row, _validity_window);
     if (_validity_window.block != _cached_validity_block) {
-      _validity_block = validity->Open(_validity_window, _ctx);
       _validity_fetch_state = duckdb::ColumnFetchState{};
+      _validity_block = validity->Open(_validity_window, _ctx);
       _cached_validity_block = _validity_window.block;
     }
     _validity_block->FetchRow(
@@ -779,8 +779,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   }
   _window = _reader->Locate(row, _window);
   if (_window.block != _cached_block) {
-    _block = _reader->Open(_window, _ctx);
     _fetch_state = duckdb::ColumnFetchState{};
+    _block = _reader->Open(_window, _ctx);
     _cached_block = _window.block;
   }
   _block->FetchRow(_fetch_state,

@@ -104,6 +104,29 @@ def test_recovery_summary_after_a_crash(tmp_path: Path) -> None:
             "index(es)" in restarted.output()), restarted.output()
 
 
+def test_search_table_recovery_summary_after_a_crash(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with psycopg.connect(host="127.0.0.1", port=server.port,
+                             user="postgres", dbname="postgres",
+                             autocommit=True) as conn:
+            conn.execute("CREATE TABLE tusk (id INT, body TEXT) "
+                         "WITH (storage = 'search', refresh_interval = 0)")
+            conn.execute("CREATE TABLE idle (id INT) "
+                         "WITH (storage = 'search', refresh_interval = 0)")
+            conn.execute("INSERT INTO tusk SELECT i, 'ice ' || i "
+                         "FROM range(100) t(i)")
+    finally:
+        server.proc.kill()
+        server.proc.wait(timeout=60)
+
+    restarted = _run_until_ready(datadir)
+    assert ("search index recovery: replayed the WAL into 1 of 2 search "
+            "table(s) in " in restarted.output()), restarted.output()
+
+
 def test_second_instance_on_the_same_datadir(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     first = _Server(datadir)

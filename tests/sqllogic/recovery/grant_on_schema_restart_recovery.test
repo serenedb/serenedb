@@ -1,0 +1,67 @@
+control substitution on
+
+statement ok
+CREATE ROLE gos_role;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO gos_role;
+
+
+statement ok
+CREATE TABLE gos_t (a INTEGER PRIMARY KEY);
+
+
+statement ok
+INSERT INTO gos_t VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_wal
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM gos_t;
+----
+n
+1
+
+
+connection after_wal
+statement ok
+INSERT INTO gos_t VALUES (2);
+
+
+connection after_wal
+statement ok
+CHECKPOINT;
+
+
+connection after_wal
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_wal
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM gos_t;
+----
+n
+2
+
+
+connection after_checkpoint
+statement error
+INSERT INTO gos_t VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.

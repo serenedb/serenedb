@@ -225,3 +225,186 @@ RESET sdb_disable_top_k_optimization;
 
 statement ok
 DROP TABLE wtf;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wtf_words AS split_text() WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE wtw AS
+SELECT g AS id, (g // 300) % 2 AS n,
+       'w' || (g % 7) || ' w' || (g % 11) || ' ' || repeat('w' || (g % 5) || ' ', g % 9) || 'w' || (g % 3) AS body
+FROM range(1, 40001) t(g);
+
+
+statement ok
+CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wtw;
+
+
+query
+EXPLAIN SELECT BM25(wtw_idx.tableoid) FROM wtw_idx
+WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: wtw_idx                        │
+│ Index Filter:                         │
+│ ╭─ Or ─────────────────────╮          │
+│ ╰─────────────┬────────────╯          │
+│ ╭─ Terms ─────┴────────────╮          │
+│ │ Field: body(string)      │          │
+│ │ Values: 'w2', 'w4', 'w6' │          │
+│ ╰──────────────────────────╯          │
+│ Column Filter: n = 1                  │
+│ Score: bm25(k1=1.2, b=0.75)           │
+│ Top: 5, optimized                     │
+│ Projections: sdb_inverted_index_score │
+│ ~4,000 rows                           │
+╰───────────────────────────────────────╯
+
+
+query
+SELECT round(BM25(wtw_idx.tableoid)::numeric, 4) AS score FROM wtw_idx
+WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
+----
+score
+2.014
+2.014
+2.014
+2.014
+2.014
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.765	2.014
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.150	1.204
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE body @@ 'w2' AND NOT body @@ 'w4' AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	0.480	0.491
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND BM25(wtw_idx.tableoid) < 2.5 AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.765	2.014
+
+
+statement ok
+DELETE FROM wtw WHERE id % 1000 = 7;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wtw;
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.765	2.014
+
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query
+SELECT round(BM25(wtw_idx.tableoid)::numeric, 4) AS score FROM wtw_idx
+WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 5;
+----
+score
+2.014
+2.014
+2.014
+2.014
+2.014
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.765	2.014
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.150	1.204
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE body @@ 'w2' AND NOT body @@ 'w4' AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	0.480	0.491
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE (body @@ 'w2' OR body @@ 'w4' OR body @@ 'w6') AND BM25(wtw_idx.tableoid) < 2.5 AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.765	2.014
+
+
+statement ok
+RESET sdb_disable_top_k_optimization;
+
+
+statement ok
+DROP TABLE wtw;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wtf_words;

@@ -51,6 +51,7 @@
 #include "pg/pg_catalog/pg_namespace.h"
 #include "pg/pg_catalog/pg_proc.h"
 #include "pg/pg_catalog/pg_rewrite.h"
+#include "pg/pg_catalog/pg_subscription.h"
 #include "pg/pg_catalog/pg_ts_dict.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_types.h"
@@ -73,6 +74,8 @@ Oid CatalogClassOid(duckdb::CatalogType type) {
       return Oid{PgAuthid::kId};
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
       return Oid{PgForeignServer::kId};
+    case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
+      return Oid{PgSubscription::kId};
     case duckdb::CatalogType::TOKENIZER_ENTRY:
       return Oid{PgTsDict::kId};
     default:

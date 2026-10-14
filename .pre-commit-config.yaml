@@ -85,7 +85,7 @@ repos:
         language: python
         entry: python3 scripts/generate_pg_catalog.py --check
         pass_filenames: false
-        files: (^server/pg/catalog/tables/|^server/pg/catalog/generated/registry\.gen\.inc$|system_table_claims\.test$|system-table-compatibility\.md$|^scripts/generate_pg_catalog\.py$|^scripts/pg_catalog/)
+        files: (^server/pg/catalog/(tables|views|generated)/|^server/pg/types\.cpp$|^server/pg/catalog/builtin/builtin\.h$|system_table_claims\.test$|system-table-compatibility\.md$|^scripts/generate_pg_catalog\.py$|^scripts/pg_catalog/)
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python

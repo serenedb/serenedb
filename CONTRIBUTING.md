@@ -80,26 +80,27 @@ Steps 3 and 4 run every time `serened` is linked, which includes every change to
 
 Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: the built-in types SereneDB supports and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL and lookup key), `pg_catalog` and `information_schema` view definitions, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/generated/*.gen.inc`, and nothing else lives in that directory. Only what PostgreSQL defines is copied; what describes SereneDB itself, such as which types exist or what a setting's value is, is written by hand.
 
-`scripts/generate_pg_catalog.py` reads a running PostgreSQL and its source tree of the same version:
+`scripts/generate_pg_catalog.py` reads the PostgreSQL source in the `third_party/postgres` submodule. It runs PostgreSQL's own `genbki.pl` over the catalog headers and `.dat` files and reads the `postgres.bki` it writes, the same file initdb bootstraps from. It also reads the SQL files initdb runs after bootstrap (`system_views.sql`, `information_schema.sql`, `system_functions.sql`), the privileges `initdb.c` sets and the keywords in `kwlist.h`. It needs Perl and no PostgreSQL server:
 
 ```bash
-docker run -d --name pg18 -e POSTGRES_HOST_AUTH_METHOD=trust -p 55433:5432 postgres:18.6
-git clone --depth 1 -b REL_18_6 https://github.com/postgres/postgres pg-src
-python3 scripts/generate_pg_catalog.py --pg 127.0.0.1:55433 --pg-src pg-src
+git submodule update --init third_party/postgres
+python3 scripts/generate_pg_catalog.py
 ```
+
+initdb numbers the objects it creates from those SQL files while it runs, so the source holds no OIDs for them. The generator numbers them itself, in initdb's order from `FirstUnpinnedObjectId` (`scripts/pg_catalog/initdb.py`): the system views, `information_schema` and its domains and tables have SereneDB's OIDs, and every other object has PostgreSQL's.
 
 What SereneDB decides on its own is kept apart from the generated output:
 
 - `scripts/pg_catalog/config.py` names the PostgreSQL objects SereneDB refers to by constant (schemas, databases, tablespaces, access methods, languages, procedures, collations), the pseudo-types SereneDB's own rows use, and the stub functions with the few PostgreSQL types it substitutes in them.
-- `server/pg/types.cpp` maps each PostgreSQL type SereneDB supports to a DuckDB type; the generator lists exactly those built-in types in `pg_type`, with their arrays. `server/pg/types.h` says how each column type is stored. `server/pg/catalog/builtin/builtin.cpp` defines SereneDB's own types; a PostgreSQL type of the same name, such as `tsquery`, is not copied.
+- `server/pg/types.cpp` maps each PostgreSQL type SereneDB supports to a DuckDB type; the generator lists exactly those built-in types in `pg_type`, with their arrays. `server/pg/types.h` says how each column type is stored. `server/pg/catalog/builtin/builtin.h` defines SereneDB's own types; a PostgreSQL type of the same name, such as `tsquery`, is not copied.
 - `server/query/config_variables.cpp` lists every setting SereneDB accepts, with its value, description and what `pg_settings` shows for it; a PostgreSQL setting SereneDB does not implement is accepted only when clients or `pg_dump` scripts set it, and its description says it has no effect.
 - `server/pg/catalog/views/{pg_catalog,information_schema}/<view>.cpp` holds the SQL of a PostgreSQL view whose body SereneDB rewrites, as a C++ string constant; the generated views keep PostgreSQL's bodies and the registry uses the file's SQL in their place. `views/sdb/<view>.cpp` defines one of SereneDB's own views whole, with its oid from `oids.h`. The generator registers every such file in `generated/registry.gen.inc` and stops on a file in the PostgreSQL folders named after no view.
 - `server/pg/catalog/functions/{pg_catalog,information_schema}/` holds the functions of each schema, grouped by the PostgreSQL source file that defines them (`acl.cpp`, `dbsize.cpp`, `format_type.cpp`, `regproc.cpp`, `ruleutils.cpp`, the rest in `misc.cpp`); `functions/functions.cpp` registers them. `macros.cpp` holds the functions SereneDB writes in SQL, as C++ string constants; the `pg_catalog` one also takes in the generated stubs of the set-returning functions SereneDB does not implement.
 - `server/pg/catalog/tables/{pg_catalog,information_schema,sdb}/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values; a NOT NULL column a row leaves unset reads as its type's zero, any other as NULL. The table's class also states the row estimate the planner sees (`kRows`), lookup keys PostgreSQL does not declare (`kColumnKeys`) and whether only superusers may read it (`kSuperuserOnly`). A file named after a PostgreSQL view makes that view a table, as `pg_settings` is. The rows of the `information_schema.sql_*` tables are SereneDB's own claims, written there by hand, and `sql_features`, which would list a claim per SQL standard feature, has none; `sdb/` holds SereneDB's own `sdb_*` tables, which live in `pg_catalog` and define their columns and oid themselves. The generator registers every such file in `generated/registry.gen.inc` and stops on a file in the PostgreSQL folders named after no catalog table or view. A catalog without a file exists with no rows.
 
-The same script owns the two outputs that come from this repository alone: `generated/registry.gen.inc` and `tests/sqllogic/sdb/pg/site_docs/compatibility/system_table_claims.test`, which checks what `docs/compatibility/system-table-compatibility.md` claims for each relation. Without `--pg` it rewrites only those two, so adding a table file or editing the docs page needs no PostgreSQL; pre-commit runs `python3 scripts/generate_pg_catalog.py --check`, which fails while either is stale.
+The same script owns the two outputs that come from this repository alone: `generated/registry.gen.inc` and `tests/sqllogic/sdb/pg/site_docs/compatibility/system_table_claims.test`, which checks what `docs/compatibility/system-table-compatibility.md` claims for each relation. Pre-commit runs `python3 scripts/generate_pg_catalog.py --check`, which fails while any output is stale; without the submodule checked out it checks only those two.
 
-To move to a new PostgreSQL release, rerun the generator against that release and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
+To move to a new PostgreSQL release, bring that release's files into `third_party/postgres` (a pull request to a version branch of serenedb/postgres), rerun the generator and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
 
 ### Launch
 

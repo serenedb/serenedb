@@ -5,8 +5,8 @@ oid	nspname	nspowner	nspacl	oid	nspname	nspowner	nspacl
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}
@@ -20,8 +20,8 @@ a	b	c	d	x	y	z	w
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}
@@ -35,8 +35,8 @@ x	y	z	w	x	y	z	w
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}
 <slt:ignore>	information_schema	16384	{postgres=UC/postgres,=U/postgres}	<slt:ignore>	public	16384	{postgres=UC/postgres,=U/postgres}

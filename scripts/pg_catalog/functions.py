@@ -1,19 +1,7 @@
 from . import config
-from .common import cpp_bool
+from .common import array, cpp_bool, oid
 
-STUBS_SQL = """
-SELECT p.proname, p.proargnames, p.proargmodes,
-       coalesce(p.proallargtypes, p.proargtypes::oid[])::int8[],
-       p.prorettype::int8, p.provolatile
-FROM pg_proc p
-WHERE p.pronamespace = 'pg_catalog'::regnamespace AND p.proname = ANY(%s)
-ORDER BY p.proname
-"""
-
-TYPE_SQL = """
-SELECT t.oid::int8, coalesce(e.typname || '[]', t.typname)
-FROM pg_type t LEFT JOIN pg_type e ON e.oid = t.typelem AND e.typarray = t.oid
-"""
+PG_CATALOG = '11'
 
 STABILITIES = {
     'i': 'CONSISTENT',
@@ -22,11 +10,27 @@ STABILITIES = {
 }
 
 
-def generate(gen, constants):
-    names = dict(gen.query(TYPE_SQL))
+def stub(row):
+    types = (array(row['proallargtypes']) if row['proallargtypes'] is not None
+             else row['proargtypes'].split())
+    return (row['proname'], array(row['proargnames']) or None,
+            array(row['proargmodes']) or None, [int(t) for t in types],
+            oid(row['prorettype']), row['provolatile'])
+
+
+def generate(gen, constants, all_types):
+    names = {}
+    for type_oid, row in all_types.items():
+        element = all_types.get(row[10])
+        names[type_oid] = (element[1] + '[]'
+                           if element and element[11] == type_oid
+                           else row[1])
     stubs = (config.STUB_FUNCTIONS + config.ZERO_STUB_FUNCTIONS +
              config.NULL_STUB_FUNCTIONS)
-    rows = {row[0]: row for row in gen.query(STUBS_SQL, (list(stubs),))}
+    rows = {row['proname']: stub(row) for row in sorted(
+        (row for row in gen.rows['pg_proc']
+         if row['pronamespace'] == PG_CATALOG and row['proname'] in stubs),
+        key=lambda row: row['proname'])}
     missing = [name for name in stubs if name not in rows]
     if missing:
         raise SystemExit(f'functions unknown to PostgreSQL: {missing}')

@@ -79,7 +79,7 @@ SELECT 'C'::regcollation;
 query
 SELECT t.typname, c.collname
 FROM pg_type t JOIN pg_collation c ON c.oid = t.typcollation
-WHERE t.oid IN (19, 25, 1043, 13312)
+WHERE t.oid IN (19, 25, 1043, 12246)
 ORDER BY t.oid;
 ----
 typname	collname

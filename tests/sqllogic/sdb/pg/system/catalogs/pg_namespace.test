@@ -39,12 +39,12 @@ nspacl	aclitem[]	f
 
 
 query
-SELECT oid, nspname FROM pg_namespace WHERE oid IN (11, 2200, 13293) ORDER BY oid;
+SELECT oid, nspname FROM pg_namespace WHERE oid IN (11, 2200, 12240) ORDER BY oid;
 ----
 oid	nspname
 11	pg_catalog
 2200	public
-13293	information_schema
+12240	information_schema
 
 
 query
@@ -53,7 +53,7 @@ SELECT oid, nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'public', 
 oid	nspname
 11	pg_catalog
 2200	public
-13293	information_schema
+12240	information_schema
 
 
 query
@@ -62,7 +62,7 @@ SELECT oid, nspname FROM pg_namespace WHERE nspname || '' IN ('pg_catalog', 'pub
 oid	nspname
 11	pg_catalog
 2200	public
-13293	information_schema
+12240	information_schema
 
 
 query
@@ -70,7 +70,7 @@ SELECT 'pg_catalog'::regnamespace::oid AS pg_catalog, 'public'::regnamespace::oi
        'information_schema'::regnamespace::oid AS information_schema;
 ----
 pg_catalog	public	information_schema
-11	2200	13293
+11	2200	12240
 
 
 query

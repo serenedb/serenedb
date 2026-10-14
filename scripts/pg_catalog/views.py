@@ -1,54 +1,7 @@
 import re
 
 from . import relations
-from .common import SUPERUSER_ONLY_SQL, cpp_bool
-
-VIEW_OIDS_SQL = f"""
-SELECT n.nspname, c.relname, c.oid::int8, c.reltype::int4,
-       coalesce(t.typarray, 0)::int4, {SUPERUSER_ONLY_SQL},
-       coalesce(array_to_string(c.reloptions, ','), '')
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-LEFT JOIN pg_type t ON t.oid = c.reltype
-WHERE c.relkind = 'v' AND n.nspname IN ('pg_catalog', 'information_schema')
-"""
-
-CREATE_VIEW = re.compile(
-    r'^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)'
-    r'(?:\s+WITH\s*\([^)]*\))?\s+AS\s*$', re.M)
-
-
-def statements(text):
-    out, start, quote, i = [], 0, False, 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            if ch == "'":
-                quote = False
-        elif ch == "'":
-            quote = True
-        elif text.startswith('--', i):
-            i = text.find('\n', i)
-            if i < 0:
-                break
-        elif text.startswith('/*', i):
-            i = text.find('*/', i)
-            if i < 0:
-                break
-            i += 1
-        elif ch == ';':
-            out.append(text[start:i])
-            start = i + 1
-        i += 1
-    return out
-
-
-def views(path):
-    with open(path) as source:
-        text = source.read()
-    for statement in statements(text):
-        match = CREATE_VIEW.search(statement)
-        if match:
-            yield match.group(1), statement[match.end():].strip('\n')
+from .common import cpp_bool
 
 
 def dedent(body):
@@ -79,25 +32,25 @@ def entry(schema, name, oid, row_type, row_array_type, superuser, options,
 
 
 def generate(gen):
-    oids = {(s, n): (oid, row_type, row_array_type, superuser, options)
-            for s, n, oid, row_type, row_array_type, superuser, options
-            in gen.query(VIEW_OIDS_SQL)}
-    pg = list(views(gen.source('src/backend/catalog/system_views.sql')))
-    info = list(views(gen.source('src/backend/catalog/information_schema.sql')))
-    info_names = {name for name, _ in info if not name.startswith('_pg_')}
+    info_names = {view.name for view in gen.initdb.views
+                  if view.schema == 'information_schema' and
+                  not view.name.startswith('_pg_')}
     native = set(relations.table_files())
     files = set(relations.view_files())
     out, defined = [], set()
-    for schema, items in (('pg_catalog', pg), ('information_schema', info)):
-        for name, body in items:
-            if (schema, name) in native:
-                continue
-            defined.add((schema, name))
-            if (schema, name) in files:
-                body = None
-            elif schema == 'information_schema':
-                body = qualify(body, info_names)
-            out.append(entry(schema, name, *oids[(schema, name)], body))
+    for view in gen.initdb.views:
+        if (view.schema, view.name) in native:
+            continue
+        defined.add((view.schema, view.name))
+        body = view.body
+        if (view.schema, view.name) in files:
+            body = None
+        elif view.schema == 'information_schema':
+            body = qualify(body, info_names)
+        out.append(entry(view.schema, view.name, view.oid, view.row_type,
+                         view.row_array_type,
+                         gen.initdb.superuser_only(view.schema, view.name),
+                         view.options, body))
     if stale := sorted(files - defined):
         raise SystemExit(f'view files for views PostgreSQL does not have: {stale}')
     gen.write('system_views.gen.inc', out)

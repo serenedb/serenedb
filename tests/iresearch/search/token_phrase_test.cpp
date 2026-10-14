@@ -1699,7 +1699,7 @@ TEST(TokenPhraseIndexTest, positions_win_over_tokens) {
                                     Tokens<DenseWords>(irs::field_id{42}))));
 }
 
-TEST(TokenPhraseIndexTest, word_stats_sample_the_largest_segments) {
+TEST(TokenPhraseIndexTest, word_stats_sum_every_segment) {
   std::vector<std::string> docs(19, "quick brown");
   docs[0].clear();
   docs[1].clear();
@@ -1711,8 +1711,8 @@ TEST(TokenPhraseIndexTest, word_stats_sample_the_largest_segments) {
     irs::PhraseWordStats(Phrase("quick brown"), index.Reader(), kPlainId);
   ASSERT_EQ(2U, stats.size());
   for (const auto& stat : stats) {
-    EXPECT_EQ(16U, stat.docs);
-    EXPECT_EQ(16U, stat.freq);
+    EXPECT_EQ(17U, stat.docs);
+    EXPECT_EQ(17U, stat.freq);
   }
 }
 

@@ -21,6 +21,7 @@
 #include "iresearch/search/detail/token_phrase.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/overload.h>
 
 #include <algorithm>
 #include <cstring>
@@ -46,6 +47,27 @@ size_t WordCount(const ByPhraseOptions& phrase) noexcept {
   return count;
 }
 
+void AddWordStats(const ByPhraseOptions& phrase, const TermReader& reader,
+                  std::span<PhraseWordStat> words) {
+  auto* stat = words.data();
+  const auto lookup = [&](bytes_view word) {
+    const auto meta = reader.Lookup(word);
+    stat->docs += meta.docs_count;
+    stat->freq += meta.freq;
+    ++stat;
+  };
+  for (const auto& info : phrase) {
+    std::visit(absl::Overload{
+                 [&](const ShingleOptions& shingle) {
+                   absl::c_for_each(shingle.words, lookup);
+                 },
+                 [&](const ByTermOptions& word) { lookup(word.term); },
+                 [&](const auto&) { ++stat; },
+               },
+               info.part);
+  }
+}
+
 }  // namespace
 
 bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
@@ -55,53 +77,31 @@ bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
                        [](const auto& info) { return info.offs_min == 0; }));
 }
 
-std::vector<PhraseWordStat> PhraseWordStats(
-  const ByPhraseOptions& phrase, std::span<const TermReader* const> readers) {
+std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
+                                            const TermReader& reader) {
   std::vector<PhraseWordStat> words;
   if (!IsAnchored(phrase)) {
     return words;
   }
   words.resize(WordCount(phrase));
-  for (const auto* reader : readers) {
-    auto* stat = words.data();
-    const auto lookup = [&](bytes_view word) {
-      const auto meta = reader->Lookup(word);
-      stat->docs += meta.docs_count;
-      stat->freq += meta.freq;
-      ++stat;
-    };
-    for (const auto& info : phrase) {
-      if (const auto* shingle = std::get_if<ShingleOptions>(&info.part)) {
-        absl::c_for_each(shingle->words, lookup);
-      } else if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
-        lookup(word->term);
-      } else {
-        ++stat;
-      }
-    }
-  }
+  AddWordStats(phrase, reader, words);
   return words;
 }
 
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const IndexReader& index,
                                             field_id field) {
-  constexpr size_t kSampled = 8;
-  std::vector<const TermReader*> readers;
-  readers.reserve(index.size());
+  std::vector<PhraseWordStat> words;
+  if (!IsAnchored(phrase)) {
+    return words;
+  }
+  words.resize(WordCount(phrase));
   for (const auto& segment : index) {
     if (const auto* reader = segment.field(field)) {
-      readers.emplace_back(reader);
+      AddWordStats(phrase, *reader, words);
     }
   }
-  if (readers.size() > kSampled) {
-    absl::c_nth_element(readers, readers.begin() + kSampled,
-                        [](const TermReader* lhs, const TermReader* rhs) {
-                          return lhs->docs_count() > rhs->docs_count();
-                        });
-    readers.resize(kSampled);
-  }
-  return PhraseWordStats(phrase, readers);
+  return words;
 }
 
 bool IsStandalone(const ByPhraseOptions& phrase) noexcept {

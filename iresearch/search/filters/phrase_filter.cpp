@@ -494,8 +494,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   auto approx = builder.Finish();
   SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
   if (covered) {
-    const TermReader* readers[] = {&reader};
-    stats = PhraseWordStats(options, readers);
+    stats = PhraseWordStats(options, reader);
   }
   auto query = memory::make_tracked<TokenPhraseQuery>(
     ctx.memory, segment, reader, std::move(approx), options.tokenizer(), column,

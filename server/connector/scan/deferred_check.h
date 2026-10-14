@@ -36,7 +36,7 @@ namespace sdb::connector {
 struct ScanGlobalState;
 
 struct DeferredCheck {
-  std::shared_ptr<const irs::Filter> source;
+  const irs::Filter* source;
   irs::field_id column;
   std::shared_ptr<const duckdb::TableFilter> check;
 };
@@ -65,29 +65,25 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitCheck(
     *bind_data->Cast<SharedCheckBind<Data>>().data);
 }
 
-std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral,
-                                      std::shared_ptr<const irs::Filter> tree);
+std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral);
 
 void AddDeferredChecks(ScanGlobalState& state,
                        std::span<const DeferredCheck> checks);
 
-DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
-                    irs::field_id column, const duckdb::LogicalType& type,
-                    std::string_view name, duckdb::scalar_function_t function,
+DeferredCheck Split(const irs::Filter& source, irs::field_id column,
+                    const duckdb::LogicalType& type, std::string_view name,
+                    duckdb::scalar_function_t function,
                     duckdb::unique_ptr<duckdb::FunctionData> bind,
                     duckdb::init_local_state_t init = nullptr);
 
-DeferredCheck MakeWildcardCheck(std::shared_ptr<const irs::Filter> source,
-                                irs::field_id column,
+DeferredCheck MakeWildcardCheck(const irs::Filter& source, irs::field_id column,
                                 const duckdb::LogicalType& type);
 
-DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
-                              irs::field_id column,
+DeferredCheck MakePhraseCheck(irs::Filter::ptr source, irs::field_id column,
                               const duckdb::LogicalType& type,
                               const irs::IndexReader& reader);
 
-DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
-                           irs::field_id column,
+DeferredCheck MakeGeoCheck(const irs::Filter& source, irs::field_id column,
                            const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

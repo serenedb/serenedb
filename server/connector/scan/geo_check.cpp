@@ -35,7 +35,6 @@ namespace sdb::connector {
 namespace {
 
 struct GeoCheckData {
-  std::shared_ptr<const irs::Filter> source;
   irs::GeoParser parser;
   irs::GeoAcceptor acceptor;
 };
@@ -69,28 +68,25 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 template<typename GeoFilter>
-DeferredCheck MakeGeoCheckOf(std::shared_ptr<const irs::Filter> source,
-                             irs::field_id column,
+DeferredCheck MakeGeoCheckOf(const irs::Filter& source, irs::field_id column,
                              const duckdb::LogicalType& type) {
-  const auto& options = irs::utils::downCast<GeoFilter>(*source).options();
+  const auto& options = irs::utils::downCast<GeoFilter>(source).options();
   SDB_ASSERT(options.plan);
   auto bind =
     duckdb::make_uniq<GeoCheckBind>(std::make_shared<const GeoCheckData>(
-      GeoCheckData{source, irs::ParserOf(options), options.plan->acceptor}));
-  return Split(std::move(source), column, type, "sdb_geo_check", CheckGeo,
-               std::move(bind), InitCheck<GeoCheckState, GeoCheckData>);
+      GeoCheckData{irs::ParserOf(options), options.plan->acceptor}));
+  return Split(source, column, type, "sdb_geo_check", CheckGeo, std::move(bind),
+               InitCheck<GeoCheckState, GeoCheckData>);
 }
 
 }  // namespace
 
-DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
-                           irs::field_id column,
+DeferredCheck MakeGeoCheck(const irs::Filter& source, irs::field_id column,
                            const duckdb::LogicalType& type) {
-  if (source->type() == irs::Type<irs::GeoFilter>::id()) {
-    return MakeGeoCheckOf<irs::GeoFilter>(std::move(source), column, type);
+  if (source.type() == irs::Type<irs::GeoFilter>::id()) {
+    return MakeGeoCheckOf<irs::GeoFilter>(source, column, type);
   }
-  return MakeGeoCheckOf<irs::GeoDistanceFilter>(std::move(source), column,
-                                                type);
+  return MakeGeoCheckOf<irs::GeoDistanceFilter>(source, column, type);
 }
 
 }  // namespace sdb::connector

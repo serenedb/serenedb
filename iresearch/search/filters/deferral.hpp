@@ -34,12 +34,12 @@ struct DeferredFilter {
   const Filter* filter;
   field_id column;
   duckdb::LogicalType type;
+  Filter::ptr owned;
 };
 
 struct Deferral {
   const IndexReader& reader;
   std::vector<DeferredFilter> filters;
-  std::vector<Filter::ptr> owned;
 };
 
 namespace optimizer {

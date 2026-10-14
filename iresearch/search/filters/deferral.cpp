@@ -96,9 +96,8 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
-  const auto& original =
-    ctx.deferral->owned.emplace_back(std::exchange(slot, std::move(index)));
-  ctx.deferral->filters.emplace_back(original.get(), column, *std::move(type));
+  ctx.deferral->filters.emplace_back(&phrase, column, *std::move(type),
+                                     std::exchange(slot, std::move(index)));
   return true;
 }
 

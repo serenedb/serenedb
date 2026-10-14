@@ -34,12 +34,20 @@ namespace sdb::connector {
 namespace {
 
 struct PhraseCheckData {
-  PhraseCheckData(const irs::ByPhraseOptions& phrase,
-                  std::span<const irs::PhraseWordStat> words)
-    : tokenizer{phrase.tokenizer()},
-      compiled{phrase, phrase.word_separator(), words} {}
+  PhraseCheckData(irs::Filter::ptr source, const irs::IndexReader& reader)
+    : source{std::move(source)},
+      compiled{Options(), Options().word_separator(),
+               irs::PhraseWordStats(Options(), reader, Phrase().field_id())} {}
 
-  irs::ByPhraseOptions::TokenizerFactory tokenizer;
+  const irs::ByPhrase& Phrase() const noexcept {
+    return irs::utils::downCast<irs::ByPhrase>(*source);
+  }
+
+  const irs::ByPhraseOptions& Options() const noexcept {
+    return Phrase().options();
+  }
+
+  irs::Filter::ptr source;
   irs::CompiledPhrase compiled;
 };
 
@@ -47,7 +55,7 @@ using PhraseCheckBind = SharedCheckBind<PhraseCheckData>;
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckData& data)
-    : check{data.compiled, data.tokenizer, false} {}
+    : check{data.compiled, data.Options().tokenizer(), false} {}
 
   irs::PhraseCheck check;
 };
@@ -67,17 +75,15 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 }  // namespace
 
-DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
-                              irs::field_id column,
+DeferredCheck MakePhraseCheck(irs::Filter::ptr source, irs::field_id column,
                               const duckdb::LogicalType& type,
                               const irs::IndexReader& reader) {
-  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*source);
-  const auto& options = phrase.options();
-  auto bind =
-    duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
-      options, irs::PhraseWordStats(options, reader, phrase.field_id())));
-  return Split(std::move(source), column, type, "sdb_phrase_check", CheckPhrase,
-               std::move(bind), InitCheck<PhraseCheckState, PhraseCheckData>);
+  auto data =
+    std::make_shared<const PhraseCheckData>(std::move(source), reader);
+  const auto& phrase = data->Phrase();
+  return Split(phrase, column, type, "sdb_phrase_check", CheckPhrase,
+               duckdb::make_uniq<PhraseCheckBind>(std::move(data)),
+               InitCheck<PhraseCheckState, PhraseCheckData>);
 }
 
 }  // namespace sdb::connector

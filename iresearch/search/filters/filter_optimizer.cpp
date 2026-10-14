@@ -20,7 +20,6 @@
 
 #include "filter_optimizer.hpp"
 
-#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -147,9 +146,7 @@ void AssertDeferredAlive(Filter::ptr& root, const OptimizeContext& ctx) {
     return;
   }
   for (const auto& deferred : ctx.deferral->filters) {
-    bool found = std::ranges::any_of(
-      ctx.deferral->owned,
-      [&](const Filter::ptr& owned) { return owned.get() == deferred.filter; });
+    bool found = deferred.owned.get() == deferred.filter;
     TraverseFilter(root, [&](Filter::ptr& slot, bool) {
       found |= slot.get() == deferred.filter;
     });

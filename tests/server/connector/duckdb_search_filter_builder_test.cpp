@@ -7478,8 +7478,8 @@ TEST(DeferredCheckTest, wildcard_check_copies_and_compares) {
     irs::ByWildcardNGramOptions{"foo%bar", analyzer, false};
   wildcard->mutable_options()->store_field_id = 1;
   ASSERT_NE(nullptr, wildcard->options().matcher);
-  const auto check = sdb::connector::MakeWildcardCheck(
-    std::move(wildcard), 1, duckdb::LogicalType::BLOB);
+  const auto check =
+    sdb::connector::MakeWildcardCheck(*wildcard, 1, duckdb::LogicalType::BLOB);
   const auto& original = check.check->Cast<duckdb::ExpressionFilter>();
   const auto copy = original.Copy();
   EXPECT_TRUE(copy->Equals(original));

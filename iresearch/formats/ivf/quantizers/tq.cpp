@@ -352,6 +352,53 @@ int32_t TurboQuantDot8(const uint8_t* code, const TurboQuantInt8Seg& seg,
   return sum;
 }
 
+#if defined(__x86_64__)
+bool HasAvx512Vnni() noexcept {
+  static const bool kHas = __builtin_cpu_supports("avx512f") &&
+                           __builtin_cpu_supports("avx512bw") &&
+                           __builtin_cpu_supports("avx512vnni");
+  return kHas;
+}
+
+template<uint32_t Bits>
+__attribute__((target("avx512f,avx512bw,avx512vnni"))) int32_t
+TurboQuantDot8Vnni(const uint8_t* code, const TurboQuantInt8Seg& seg,
+                   const int8_t* q) noexcept {
+  constexpr uint32_t kPlanes = 8 / Bits;
+  constexpr auto kMask = static_cast<uint8_t>((1U << Bits) - 1);
+  const uint32_t bytes = seg.bytes;
+  const __m512i tc = _mm512_broadcast_i32x4(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.c8.data())));
+  const __m512i ta = _mm512_broadcast_i32x4(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.a8.data())));
+  const __m512i mask = _mm512_set1_epi8(static_cast<char>(kMask));
+  const __m512i zero = _mm512_setzero_si512();
+  __m512i acc = zero;
+  uint32_t p = 0;
+  for (; p + 64 <= bytes; p += 64) {
+    const __m512i v = _mm512_loadu_si512(code + p);
+    for (uint32_t t = 0; t < kPlanes; ++t) {
+      const __m512i idx = _mm512_and_si512(
+        _mm512_srli_epi16(v, static_cast<unsigned>(t * Bits)), mask);
+      const __m512i a = _mm512_shuffle_epi8(ta, idx);
+      const __m512i c = _mm512_shuffle_epi8(tc, idx);
+      const __m512i qv = _mm512_loadu_si512(q + size_t{t} * bytes + p);
+      acc = _mm512_dpbusd_epi32(
+        acc, a, _mm512_mask_sub_epi8(qv, _mm512_movepi8_mask(c), zero, qv));
+    }
+  }
+  int32_t sum = _mm512_reduce_add_epi32(acc);
+  for (; p < bytes; ++p) {
+    const uint8_t b = code[p];
+    for (uint32_t t = 0; t < kPlanes; ++t) {
+      sum += int32_t{q[size_t{t} * bytes + p]} *
+             int32_t{seg.c8[(b >> (t * Bits)) & kMask]};
+    }
+  }
+  return sum;
+}
+#endif
+
 template<uint32_t Bits>
 int32_t TurboQuantPairDot8(const uint8_t* a, const uint8_t* b,
                            const TurboQuantInt8Seg& seg) noexcept {
@@ -1253,9 +1300,21 @@ class TurboQuantizerReader final : public QuantizerReader {
           dot = TurboQuantDot1(code + seg.byte0, seg, q);
           break;
         case 2:
+#if defined(__x86_64__)
+          if (HasAvx512Vnni()) {
+            dot = TurboQuantDot8Vnni<2>(code + seg.byte0, seg, q);
+            break;
+          }
+#endif
           dot = TurboQuantDot8<2>(code + seg.byte0, seg, q);
           break;
         default:
+#if defined(__x86_64__)
+          if (HasAvx512Vnni()) {
+            dot = TurboQuantDot8Vnni<4>(code + seg.byte0, seg, q);
+            break;
+          }
+#endif
           dot = TurboQuantDot8<4>(code + seg.byte0, seg, q);
           break;
       }

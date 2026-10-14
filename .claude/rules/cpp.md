@@ -16,7 +16,6 @@ Three kinds of code, with these rules in common: our own (`server/`, `iresearch/
 - Dependencies use each other (our libc++ inside DuckDB, DuckDB's ICU inside our RE2): reuse the copy we have instead of adding another.
 - Our libc++ defaults `std::map`/`std::set` to `std::less<>`: their lookups (`find`, `contains`, `count`, `lower_bound`, `upper_bound`, `equal_range`) take the key you have, never a temporary; `operator[]`, `at`, `try_emplace` and `erase` still need a `key_type`.
 - Formatting comes from each code's own tooling, never by hand: pre-commit for our code, `scripts/duckdb_family.sh` for the DuckDB family, a submodule's own `.clang-format` where it has one.
-- No comments ([CLAUDE.md](../../CLAUDE.md)).
 - Generated files change only through their generator.
 - No forward declarations to avoid an include: include the header that defines the type.
 - A hook, virtual function, field, setting or mode arrives with the code that uses it; a setting nothing reads anymore is deleted.

@@ -18,12 +18,12 @@ paths:
 
 ## When a change needs one
 
-- A bug fix, always: the test is written and run first, and fails for the reason the fix claims. A bug a plain test can't reach (a race, an error or a crash at one spot) gets a fault point.
+- A bug fix, always ([CLAUDE.md](../../CLAUDE.md), "Evidence"); a bug a plain test can't reach (a race, an error or a crash at one spot) gets a fault point.
 - A new feature or behaviour change: a sqllogic test in the right subtree, plus a gtest for isolated logic worth pinning.
 - A change to plan shape or to which execution path runs: tests pin both `EXPLAIN` and the results, across the shapes it affects.
 - Shared low-level code: run its whole sibling test file, and add adversarial inputs (a NULL first row, an all-NULL chunk, boundaries).
 - Anything checked by hand (a crash loop, a driver check) becomes a committed recovery or driver test.
-- Never edit a test or an expectation to make a failure go away. A failing test you didn't touch is still a bug to fix, in the code or in the test.
+- Never edit a test or an expectation to make a failure go away.
 - After a DuckDB update, a changed error text is fine (update the test); an internal error, an assertion or ok -> error is a regression; for error -> ok, find out why before changing the expectation.
 - Removed code takes its gtests with it; a sqllogic test changes only when the behaviour it pins changes. No tests that only assert something is gone.
 

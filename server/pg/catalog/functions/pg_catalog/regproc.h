@@ -62,6 +62,8 @@ std::string_view SqlTypeName(int32_t oid);
 
 OutText FormatTypeOut(const Session& session, uint64_t oid,
                       std::optional<int32_t> typmod);
+std::string TypeIdentity(const Session& session, uint64_t oid);
+std::string ProcIdentity(const Session& session, uint64_t oid);
 
 template<RegKind Kind>
 std::string_view RegOut(const Session& session, uint64_t oid);

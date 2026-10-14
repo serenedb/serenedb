@@ -225,8 +225,7 @@ ObjectIdentity IdentifyRelation(const Session& session, uint64_t oid,
 }
 
 ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
-  const auto visible = FunctionIsVisible(session, oid);
-  if (!visible) {
+  if (!FunctionIsVisible(session, oid)) {
     return Missing("routine");
   }
   const auto builtins = GetBuiltinFunctions(*session.context);
@@ -247,28 +246,31 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
   } else if (kind == 'p') {
     type = "procedure";
   }
-  const std::string signature{RegOut<RegKind::Procedure>(session, oid)};
   return ObjectIdentity{
     .type = std::string{type},
-    .description = absl::StrCat("function ", signature),
+    .description =
+      absl::StrCat("function ", RegOut<RegKind::Procedure>(session, oid)),
     .schema = schema,
-    .identity = *visible ? absl::StrCat(QuoteIdentifier(schema), ".", signature)
-                         : signature};
+    .identity = ProcIdentity(session, oid)};
 }
 
 ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
   if (!TypeIsVisible(session, oid)) {
     return Missing("type");
   }
-  const std::string formatted{RegOut<RegKind::Type>(session, oid)};
-  ObjectIdentity identity{.type = "type",
-                          .description = absl::StrCat("type ", formatted),
-                          .identity = formatted};
+  ObjectIdentity identity{
+    .type = "type",
+    .description = absl::StrCat("type ", RegOut<RegKind::Type>(session, oid)),
+    .identity = TypeIdentity(session, oid)};
   if (const auto object = TypeObject(session, oid)) {
     identity.schema = std::string{object->schema};
     identity.name = std::string{object->name};
-    if (formatted == object->name) {
-      identity.identity = QualifiedOutName(object->schema, object->name);
+  } else if (const auto element = ArrayElementOid(session, oid);
+             element != kInvalidOid) {
+    if (const auto entry = EntryByOid(session, element)) {
+      identity.schema =
+        std::string{NameOf(*session.transaction, *entry).schema};
+      identity.name = ArrayTypeName(*session.transaction, *entry);
     }
   }
   return identity;

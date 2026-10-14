@@ -1507,6 +1507,46 @@ constexpr std::array kTypmodlessTypes{kBool,   kInt2,   kInt4, kInt8,
 
 }  // namespace
 
+std::string TypeIdentity(const Session& session, uint64_t oid) {
+  if (oid < kMaxSystem) {
+    const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
+    if (!builtin) {
+      return absl::StrCat(oid);
+    }
+    if (builtin->IsArray()) {
+      return absl::StrCat(
+        TypeIdentity(session, static_cast<uint64_t>(builtin->elem)), "[]");
+    }
+    if (const auto name = SqlTypeName(builtin->oid);
+        !name.empty() && name != QuoteIdentifier(builtin->name)) {
+      return std::string{name};
+    }
+    return QualifiedOutName(
+      FindSystemObject(kSystemNamespaces, builtin->nsp)->name, builtin->name);
+  }
+  if (const auto element = ArrayElementOid(session, oid);
+      element != kInvalidOid) {
+    return absl::StrCat(TypeIdentity(session, element), "[]");
+  }
+  const auto object = TypeObject(session, oid);
+  return object ? QualifiedOutName(object->schema, object->name)
+                : absl::StrCat(oid);
+}
+
+std::string ProcIdentity(const Session& session, uint64_t oid) {
+  const auto builtins = GetBuiltinFunctions(*session.context);
+  const auto info = FindProc(session, *builtins, oid);
+  if (!info) {
+    return absl::StrCat(oid);
+  }
+  return absl::StrCat(QualifiedOutName(info->schema, info->name), "(",
+                      absl::StrJoin(info->args, ",",
+                                    [&](std::string* out, duckdb::idx_t arg) {
+                                      out->append(TypeIdentity(session, arg));
+                                    }),
+                      ")");
+}
+
 OutText FormatTypeOut(const Session& session, uint64_t oid,
                       std::optional<int32_t> typmod) {
   if (oid == kInvalidOid) {

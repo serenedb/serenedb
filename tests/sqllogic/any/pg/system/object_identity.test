@@ -296,6 +296,37 @@ rule	NULL	NULL	"_RETURN" on ident_s.w	rule _RETURN on view ident_s.w
 
 
 query
+SELECT t, (pg_identify_object('pg_type'::regclass, t::regtype, 0)).*
+FROM (VALUES (1, 'text[]'), (2, '"char"'), (3, 'numeric'), (4, 'integer[]'), (5, 'ident_s.mood[]')) v(i, t) ORDER BY i;
+----
+t	type	schema	name	identity
+text[]	type	pg_catalog	_text	pg_catalog.text[]
+"char"	type	pg_catalog	"char"	pg_catalog."char"
+numeric	type	pg_catalog	"numeric"	numeric
+integer[]	type	pg_catalog	_int4	integer[]
+ident_s.mood[]	type	ident_s	_mood	ident_s.mood[]
+
+
+statement ok
+CREATE FUNCTION ident_s.g(a text, b ident_s.mood) RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+SET search_path = ident_s, public;
+
+
+query
+SELECT (pg_identify_object('pg_proc'::regclass, 'g'::regproc, 0)).identity AS g, (pg_identify_object('pg_type'::regclass, 'mood[]'::regtype, 0)).identity AS moods;
+----
+g	moods
+ident_s.g(pg_catalog.text,ident_s.mood)	ident_s.mood[]
+
+
+statement ok
+RESET search_path;
+
+
+query
 SELECT (pg_identify_object('pg_database'::regclass, 999999999, 0)).type AS database,
        (pg_identify_object('pg_rewrite'::regclass, 999999999, 0)).type AS rule,
        (pg_identify_object('pg_collation'::regclass, 999999999, 0)).identity IS NULL AS no_collation,

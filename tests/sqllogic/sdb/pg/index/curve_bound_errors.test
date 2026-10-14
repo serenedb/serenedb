@@ -1,0 +1,32 @@
+statement ok
+CREATE TABLE curve_bound_errors(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_bound_errors VALUES (1, 0, 0);
+
+statement ok
+CREATE INDEX curve_bound_errors_idx ON curve_bound_errors USING inverted(id, (curve(x, y))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_bound_errors;
+
+statement error ts_between: bound DOUBLE does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(0, 0.5::DOUBLE), ROW(NULL, NULL), true, true);
+
+statement error ts_between: bound DOUBLE does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(9223372036854775807, 0.5::DOUBLE), ROW(NULL, NULL), false, true);
+
+statement error ts_between: bound DOUBLE does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(NULL, 0.5::DOUBLE), ROW('-9223372036854775808'::BIGINT, NULL), true, false);
+
+statement error ts_between: bound VARCHAR does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(0, '0'), ROW(NULL, NULL), true, true);
+
+statement error ts_between: bound VARCHAR does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(9223372036854775807, '0'), ROW(NULL, NULL), false, true);
+
+statement error ts_between: bound VARCHAR does not match coordinate 2 of type BIGINT; cast the bound explicitly
+SELECT id FROM curve_bound_errors_idx WHERE curve(x, y) @@ ts_between(ROW(NULL, '0'), ROW('-9223372036854775808'::BIGINT, NULL), true, false);
+
+statement ok
+DROP TABLE curve_bound_errors;

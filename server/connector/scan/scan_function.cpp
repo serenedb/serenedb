@@ -334,7 +334,8 @@ void IResearchScanFunction(duckdb::ClientContext& context,
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
   const auto& l = input.local_state->Cast<ScanLocalState>();
-  input.operator_metrics.rows_scanned = l.produced_rows;
+  input.operator_metrics.rows_scanned =
+    std::max(l.produced_rows, l.candidate_rows);
   input.operator_metrics.row_groups_scanned = l.rg_units;
 }
 

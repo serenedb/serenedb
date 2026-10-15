@@ -1040,28 +1040,18 @@ duckdb::optional_ptr<const duckdb::BoundColumnRefExpression> AsColumnRef(
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
 }
 
-void DeriveKeys(
+std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   const duckdb::IndexCatalogEntry& entry, duckdb::ClientContext& context,
   duckdb::CatalogEntry& relation,
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
-  InvertedIndexConfig& config) {
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs) {
   const auto* search_table =
     dynamic_cast<const catalog::SearchTableEntry*>(&relation);
-  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
-                        ? &relation.Cast<duckdb::TableCatalogEntry>()
-                        : nullptr;
-  std::vector<connector::ColumnId> relation_column_ids;
-  relation_column_ids.reserve(entry.column_ids.size());
-  for (const auto column : entry.column_ids) {
-    relation_column_ids.push_back(
-      table ? connector::TableColumnId(
-                table->GetColumns().GetColumn(duckdb::LogicalIndex(column)))
-            : connector::ColumnId{column});
-  }
+  const auto relation_column_ids = KeyColumnIds(relation, entry.column_ids);
   const std::span<const connector::ColumnId> column_ids{relation_column_ids};
 
-  const size_t keys = entry.parsed_expressions.size();
-  config.keys.reserve(keys);
+  const size_t count = entry.parsed_expressions.size();
+  std::vector<InvertedIndexKey> keys;
+  keys.reserve(count);
   // Per field, not per key: a column listed twice -- `inverted(a, a
   // included(...))` -- is two keys contributing to one field's config.
   InvertedIndexFields entries;
@@ -1069,7 +1059,7 @@ void DeriveKeys(
   irs::containers::FlatHashMap<connector::ColumnId, irs::field_id> term_fields;
   auto& db_manager = duckdb::DatabaseManager::Get(context);
 
-  for (size_t i = 0; i < keys; ++i) {
+  for (size_t i = 0; i < count; ++i) {
     InvertedIndexKey record;
     duckdb::LogicalType value_type;
     std::string label;
@@ -1135,9 +1125,8 @@ void DeriveKeys(
     }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
-        const auto [title, kind] = bare_column
-                                     ? std::pair{"Column", "column"}
-                                     : std::pair{"Expression", "expression"};
+        const std::string_view title = bare_column ? "Column" : "Expression";
+        const std::string_view kind = bare_column ? "column" : "expression";
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG(title, " '", label,
@@ -1159,12 +1148,28 @@ void DeriveKeys(
       ivf->postings_id = record.field_id;
     }
 
-    config.keys.emplace_back(std::move(record));
+    keys.emplace_back(std::move(record));
   }
-  config.fields = std::move(entries);
+  return std::make_shared<InvertedIndexConfig>(std::move(keys),
+                                               std::move(entries));
 }
 
 }  // namespace
+
+std::vector<ColumnId> KeyColumnIds(const duckdb::CatalogEntry& relation,
+                                   std::span<const duckdb::column_t> columns) {
+  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
+  std::vector<ColumnId> ids;
+  ids.reserve(columns.size());
+  for (const auto column : columns) {
+    ids.emplace_back(table ? TableColumnId(table->GetColumns().GetColumn(
+                               duckdb::LogicalIndex(column)))
+                           : ColumnId{column});
+  }
+  return ids;
+}
 
 std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::ClientContext& context, const duckdb::IndexCatalogEntry& entry,
@@ -1173,19 +1178,19 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
-  auto config = std::make_shared<InvertedIndexConfig>();
-  if (const auto* row_group_size =
-        catalog::FindOption(entry.options, kRowGroupSizeSetting)) {
-    config->row_group_size = row_group_size->GetValue<uint32_t>();
-  }
-  config->top_k_scorer = catalog::TopKScorer(context, entry.options);
-  config->pk = ResolvePkPolicy(
+  auto top_k_scorer = catalog::TopKScorer(context, entry.options);
+  const auto pk = ResolvePkPolicy(
     entry.options, table_backed,
     table_backed || generated_pk_type.id() != duckdb::LogicalTypeId::INVALID,
     generated_pk_type.id() != duckdb::LogicalTypeId::STRUCT,
     generated_pk_type == FileIndexRowNumberStructType());
-  DeriveKeys(entry, context, relation, bound_expressions, *config);
-  config->BuildLookups();
+  auto config = DeriveKeys(entry, context, relation, bound_expressions);
+  if (const auto* row_group_size =
+        catalog::FindOption(entry.options, kRowGroupSizeSetting)) {
+    config->row_group_size = row_group_size->GetValue<uint32_t>();
+  }
+  config->top_k_scorer = std::move(top_k_scorer);
+  config->pk = pk;
   return config;
 }
 

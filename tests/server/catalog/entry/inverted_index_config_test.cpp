@@ -26,18 +26,21 @@ namespace sdb::catalog {
 namespace {
 
 TEST(InvertedIndexConfigTest, StoresExpressionNeedsAStoredField) {
-  InvertedIndexConfig config;
-  config.keys.push_back({{.field_id = 7,
-                          .type = duckdb::LogicalType::VARCHAR,
-                          .normalized_expression = "lower(title)"},
-                         "lower(title)"});
-  config.BuildLookups();
-  EXPECT_FALSE(config.StoresExpression(7));
-  EXPECT_FALSE(config.StoresExpressions());
-  config.fields.emplace(7, InvertedIndexField{{.store_values = true}});
-  config.BuildLookups();
-  EXPECT_TRUE(config.StoresExpression(7));
-  EXPECT_TRUE(config.StoresExpressions());
+  const auto keys = [] {
+    return std::vector<InvertedIndexKey>{
+      {{.field_id = 7,
+        .type = duckdb::LogicalType::VARCHAR,
+        .normalized_expression = "lower(title)"},
+       "lower(title)"}};
+  };
+  const InvertedIndexConfig unstored{keys(), {}};
+  EXPECT_FALSE(unstored.StoresExpression(7));
+  EXPECT_FALSE(unstored.StoresExpressions());
+  InvertedIndexFields fields;
+  fields.emplace(7, InvertedIndexField{{.store_values = true}});
+  const InvertedIndexConfig stored{keys(), std::move(fields)};
+  EXPECT_TRUE(stored.StoresExpression(7));
+  EXPECT_TRUE(stored.StoresExpressions());
 }
 
 TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
@@ -54,22 +57,24 @@ TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
                              .normalized_expression = expression},
                             expression};
   };
-  InvertedIndexConfig config;
-  config.keys = {key(kColumn, kColumn, ""), key(kColumn, kColumn, ""),
-                 key(kTerms, irs::field_limits::invalid(), "e"),
-                 key(kStored, irs::field_limits::invalid(), "e"),
-                 key(kBoth, irs::field_limits::invalid(), "e")};
-  config.fields.emplace(
-    kColumn,
-    InvertedIndexField{{.null_field_id = kNull, .indexed_term_dict = true}});
-  config.fields.emplace(kTerms,
-                        InvertedIndexField{{.indexed_term_dict = true}});
-  config.fields.emplace(kStored, InvertedIndexField{{.store_values = true}});
-  config.fields.emplace(kBoth, InvertedIndexField{{.store_values = true,
-                                                   .indexed_term_dict = true}});
-  config.BuildLookups();
+  InvertedIndexFields fields;
+  fields.emplace(kColumn, InvertedIndexField{{.null_field_id = kNull,
+                                              .indexed_term_dict = true}});
+  fields.emplace(kTerms, InvertedIndexField{{.indexed_term_dict = true}});
+  fields.emplace(kStored, InvertedIndexField{{.store_values = true}});
+  fields.emplace(kBoth, InvertedIndexField{
+                          {.store_values = true, .indexed_term_dict = true}});
+  const InvertedIndexConfig config{
+    {key(kColumn, kColumn, ""), key(kColumn, kColumn, ""),
+     key(kTerms, irs::field_limits::invalid(), "e"),
+     key(kStored, irs::field_limits::invalid(), "e"),
+     key(kBoth, irs::field_limits::invalid(), "e")},
+    std::move(fields)};
 
   EXPECT_EQ(&config.keys[0], config.FindKey(kColumn));
+  EXPECT_TRUE(config.WritesField(config.keys[0]));
+  EXPECT_FALSE(config.WritesField(config.keys[1]));
+  EXPECT_TRUE(config.WritesField(config.keys[2]));
   EXPECT_EQ(&config.keys[2], config.FindKey(kTerms));
   EXPECT_EQ(nullptr, config.FindKey(99));
   EXPECT_EQ(kColumn, config.TermField(kColumn));

@@ -58,6 +58,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -70,6 +71,7 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
+#include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
@@ -393,14 +395,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         continue;
       }
       const auto& key = config.keys[k];
-      const bool writes = config.FindKey(key.field_id) == &key;
-      SDB_ASSERT(
-        writes == std::none_of(
-                    _bound_expressions.begin(), _bound_expressions.begin() + k,
-                    [&](const auto& earlier) { return earlier->Equals(expr); }),
-        "the backfill projection and the index config disagree on "
-        "a repeated key");
-      if (writes) {
+      if (config.WritesField(key)) {
         state->expression_slots.emplace_back(key.field_id, slot);
       }
       ++slot;
@@ -725,23 +720,27 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     op.table.ParentSchema(input.context).Cast<duckdb::DuckSchemaEntry>();
   auto database_id = table_catalog.Cast<catalog::SereneDBCatalog>().GetOid();
 
+  const auto column_ids = KeyColumnIds(op.table, op.info->column_ids);
+  irs::containers::FlatHashSet<std::string> projected;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
     SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
     SDB_ASSERT(i < op.unbound_expressions.size());
-    if (op.unbound_expressions[i]->GetExpressionClass() ==
+    const auto& unbound = *op.unbound_expressions[i];
+    if (unbound.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       continue;
     }
     const auto& expr = *op.expressions[i];
-    if (std::any_of(
-          op.expressions.begin(), op.expressions.begin() + i,
-          [&](const auto& earlier) { return earlier->Equals(expr); })) {
+    if (projected
+          .emplace(NormalizedExpression(unbound, op.table.oid, column_ids,
+                                        input.context))
+          .second) {
+      projected_exprs.emplace_back(expr.Copy());
+    } else {
       projected_exprs.emplace_back(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(
           duckdb::Value{expr.GetReturnType()}));
-    } else {
-      projected_exprs.emplace_back(expr.Copy());
     }
   }
   const auto scan_column_count = input.table_scan.types.size();

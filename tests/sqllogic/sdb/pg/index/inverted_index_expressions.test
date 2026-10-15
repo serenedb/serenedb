@@ -1898,6 +1898,50 @@ SELECT b::BIT AS bits FROM inc_e_bytea_idx;
 bits
 011000010110001001100011
 
+# --- A TIMETZ cast follows TimeZone, so it is computed from the row as well.
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_timetz(id INT PRIMARY KEY, ts TIMESTAMPTZ);
+
+statement ok
+CREATE INDEX inc_e_timetz_idx ON inc_e_timetz USING inverted(id, (ts::TIMETZ) included());
+
+statement ok
+INSERT INTO inc_e_timetz VALUES (1, '2026-01-01 23:30:00+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_timetz;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT ts::TIMETZ AS t FROM inc_e_timetz_idx;
+----
+t
+08:30:00+09
+
+query
+EXPLAIN SELECT ts::TIMETZ AS t FROM inc_e_timetz_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────╮
+│ Projections: t          │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: inc_e_timetz_idx │
+│ Lookup: table           │
+│ Projections: ts         │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+statement ok
+RESET TimeZone;
+
 statement ok
 CREATE TABLE inc_e_dict(id INT PRIMARY KEY, cat VARCHAR, title VARCHAR);
 
@@ -2416,3 +2460,25 @@ SELECT id, round(BM25(twice_once.tableoid)::numeric, 4) AS s FROM twice_once WHE
 id	s
 1	0.203
 3	0.203
+
+statement ok
+CREATE TABLE twice_spelled (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO twice_spelled VALUES (1, 'Quick Brown Fox'), (2, 'lazy dog');
+
+statement ok
+CREATE INDEX twice_spelled_idx ON twice_spelled USING inverted (id, (substr(body, 1)) twice_words, (substr(body, CAST(1 AS INTEGER))) included());
+
+statement ok
+INSERT INTO twice_spelled VALUES (3, 'Quick Red Fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) twice_spelled;
+
+query
+SELECT id, substr(body, CAST(1 AS INTEGER)) AS b FROM twice_spelled_idx WHERE substr(body, 1) @@ 'fox' ORDER BY id;
+----
+id	b
+1	Quick Brown Fox
+3	Quick Red Fox

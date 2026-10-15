@@ -172,8 +172,7 @@ duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> FieldExpressions(
   const InvertedIndexConfig& config) {
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> fields;
   for (size_t i = 0; i < expressions.size(); ++i) {
-    if (i >= config.keys.size() ||
-        config.FindKey(config.keys[i].field_id) == &config.keys[i]) {
+    if (i >= config.keys.size() || config.WritesField(config.keys[i])) {
       fields.emplace_back(expressions[i]->Copy());
     }
   }
@@ -424,7 +423,7 @@ InvertedStoreIndex::InvertedStoreIndex(
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
   for (const auto& key : _config->keys) {
-    if (_config->FindKey(key.field_id) != &key) {
+    if (!_config->WritesField(key)) {
       continue;
     }
     const duckdb::idx_t slot = _columns.size() + _expressions.size();

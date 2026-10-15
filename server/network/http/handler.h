@@ -25,6 +25,7 @@
 #include <duckdb/main/query_result.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
+#include <string_view>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
@@ -33,6 +34,7 @@
 
 #include "network/http/request.h"
 #include "network/http/response_writer.h"
+#include "query/prepared_cache.h"
 
 namespace duckdb {
 
@@ -51,15 +53,21 @@ enum class PreparedSlotId : uint8_t {
   OtelMetricsExponentialHistogram,
   OtelMetricsSummary,
   EsBulk,
+  Begin,
+  Commit,
+  Rollback,
 };
 
 inline constexpr size_t kPreparedSlots =
   magic_enum::enum_count<PreparedSlotId>();
 
-struct PreparedEntry {
-  std::string sql;
-  duckdb::unique_ptr<duckdb::PreparedStatement> statement;
-};
+inline constexpr size_t kEsBulkStatements = 8;
+
+constexpr size_t PreparedSlotCapacity(PreparedSlotId slot) noexcept {
+  return slot == PreparedSlotId::EsBulk ? kEsBulkStatements : 1;
+}
+
+using PreparedCache = query::PreparedCache<std::string>;
 
 // Session-scoped services a handler may need; implemented by the session and
 // valid for the duration of one Handle call (on the session's duckdb task).
@@ -77,13 +85,13 @@ class RequestContext {
   // own parallel sub-tasks keep progressing). `writes` arms the storage
   // transaction. The result may carry an error (check HasError()).
   virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
-    std::string sql, bool writes) = 0;
+    std::string_view sql, bool writes) = 0;
   // RunQuery for a statement prepared on Connection(), with no parameters.
   virtual yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
     duckdb::PreparedStatement& statement) = 0;
   // A per-session slot for a statement prepared on Connection(); a handler
   // prepares into it once and re-executes it on later requests.
-  virtual PreparedEntry& PreparedSlot(PreparedSlotId slot) = 0;
+  virtual PreparedCache& PreparedSlot(PreparedSlotId slot) = 0;
   virtual std::string_view Schema() const = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;

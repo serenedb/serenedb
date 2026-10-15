@@ -91,7 +91,7 @@
 #include "network/socket.h"
 #include "pg/command_tag.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
+#include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
@@ -325,7 +325,7 @@ class PgWireSession
   // writes the bytes, the session frames them.
   yaclib::Task<> RunCopyToStdoutViaFormat(
     duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format);
-  yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge,
+  yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBatches& batches,
                                  CopyFormat format);
   yaclib::Task<> WaitCopyInput();
   void HandleParse(std::string_view payload);

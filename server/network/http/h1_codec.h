@@ -53,7 +53,7 @@ struct H1BodyResult {
 
 struct H1Limits {
   size_t max_head_bytes = 64u * 1024;
-  uint64_t max_body_bytes = 64ull * 1024 * 1024;
+  uint64_t max_body_bytes = http::kEsMaxBodyBytes;
 };
 
 class H1Codec final {

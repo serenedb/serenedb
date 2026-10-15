@@ -142,11 +142,11 @@ ORDER BY emb <-> $query_vector
 LIMIT 10;
 ```
 
-How a rejected row is treated is [`sdb_hnsw_filter_mode`](./maintenance.md#session-settings). `auto`, the default, decides per segment from the predicate's estimated selectivity: a predicate that admits few enough rows is answered by scoring exactly those rows, which is both faster and exact; otherwise the graph is walked. Where the vectors' codes are long -- longer than a row's links plus the fixed cost of visiting it, about 320 bytes, as with 1024 dimensions at 8 bits -- the walk is `twohop`: it scores admitted rows only and crosses a rejected one through its neighbours, because reading a rejected row's links is then cheaper than scoring its code. Shorter codes are cheap enough to score, and the walk passes through rejected rows as `walk` does. The remaining values force one shape and exist for measurement:
+How a rejected row is treated is [`sdb_hnsw_filter_mode`](./maintenance.md#session-settings). `auto`, the default, decides per segment from the predicate's estimated selectivity: a predicate that admits few enough rows is answered by scoring exactly those rows, which is both faster and exact; otherwise the graph is walked. Where the vectors' codes are long -- longer than a row's links plus the fixed cost of visiting it, about 320 bytes, as with 1024 dimensions at 8 bits, unquantized vectors, or `pq` codes longer than 64 bytes -- the walk is `twohop`: it scores admitted rows only and crosses a rejected one through its neighbours, because reading a rejected row's links is then cheaper than scoring its code. Shorter codes are cheap enough to score, and the walk starts by passing through rejected rows as `walk` does; once the rows it has scored are admitted at well under the predicate's share, as when the predicate keeps rows far from the query, it crosses rejected rows as `twohop` does for the rest of the walk. The remaining values force one shape and exist for measurement:
 
 | Mode | The walk |
 |---|---|
-| `auto` | Picks by estimated selectivity; walks as `twohop` where codes are long and as `walk` where they are short. The default |
+| `auto` | Picks by estimated selectivity; walks as `twohop` where codes are long, and where they are short as `walk` until the rows it scores turn out mostly rejected. The default |
 | `scan` | Scores every row the predicate admits; no graph |
 | `walk` | Scores every neighbour and passes through rejected rows |
 | `prune` | Scores and expands admitted rows only |

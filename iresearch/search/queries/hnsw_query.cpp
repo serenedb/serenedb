@@ -425,9 +425,14 @@ long double ScanCandidateCost(uint32_t record_size) noexcept {
   return r / (r + kWalkCandidateOverhead);
 }
 
-uint32_t HnswCandidateBytes(uint32_t record_size, uint32_t d) noexcept {
-  return record_size != 0 ? record_size
-                          : d * static_cast<uint32_t>(sizeof(float));
+uint32_t HnswCandidateBytes(uint32_t record_size, uint32_t d,
+                            const QuantizerStats* stats) noexcept {
+  if (record_size == 0) {
+    return d * static_cast<uint32_t>(sizeof(float));
+  }
+  return stats && stats->Kind() == VectorQuantization::PQ
+           ? record_size * static_cast<uint32_t>(1 + sizeof(float))
+           : record_size;
 }
 
 inline constexpr uint64_t kTwoHopAdmittedNeighbours = 2;
@@ -559,7 +564,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     matches = _inner->EstimateMax();
   }
   auto mode = _filter_mode;
-  const auto record = HnswCandidateBytes(_record_size, _d);
+  const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
   const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
                        HnswBridgeRejected(record, graph.M0());
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
@@ -617,6 +622,11 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   if (two_hop && mode == HnswFilterMode::Walk && !ask_per_hop) {
     mode = HnswFilterMode::TwoHop;
   }
+  const bool adaptive = _filter_mode == HnswFilterMode::Auto &&
+                        mode == HnswFilterMode::Walk && !ask_per_hop;
+  scratch.admit_share =
+    std::min(1.0, static_cast<double>(matches) /
+                    static_cast<double>(std::max<uint64_t>(1, graph.Size())));
   const auto walked = [&](bool complete) {
     return complete && (scratch.nearest.size() >= _ef ||
                         (bounded && scratch.nearest.size() >= matches));
@@ -624,6 +634,10 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   const auto run = [&](const auto& acc) {
     switch (mode) {
       case HnswFilterMode::Walk:
+        if (adaptive) {
+          return walked(HnswSearchTopK<HnswWalk::Adaptive>(
+            graph, dist, _ef, scratch, acc, budget));
+        }
         return walked(HnswSearchTopK<HnswWalk::Through>(graph, dist, _ef,
                                                         scratch, acc, budget));
       case HnswFilterMode::Prune:
@@ -702,7 +716,7 @@ bool HnswQuery::ScansByColumn() const {
     return _filter_mode == HnswFilterMode::Scan;
   }
   const auto& graph = _data->graph;
-  const auto record = HnswCandidateBytes(_record_size, _d);
+  const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
   return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), record,
                         HnswBridgeRejected(record, graph.M0()));
 }

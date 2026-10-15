@@ -170,6 +170,9 @@ struct HnswSearchScratch {
   std::vector<score_t> scores;
   // Distances computed by the level walk of the current search.
   uint64_t scored = 0;
+  double admit_share = 1.0;
+  uint64_t admitted = 0;
+  bool two_hop = false;
 };
 
 // The predicate of an unfiltered search: every node may enter the result.
@@ -193,7 +196,15 @@ enum class HnswWalk : uint8_t {
   // scores its admitted neighbours, so rejected regions are crossed but not
   // explored.
   Bridge,
+  Adaptive,
 };
+
+inline constexpr uint64_t kHnswAdaptiveProbe = 32;
+inline constexpr uint64_t kHnswAdaptiveScarcity = 4;
+
+template<HnswWalk Walk>
+inline constexpr bool kHnswHops =
+  Walk == HnswWalk::TwoHop || Walk == HnswWalk::Adaptive;
 
 inline constexpr uint64_t kHnswNoBudget = std::numeric_limits<uint64_t>::max();
 
@@ -529,11 +540,11 @@ void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
     if (accept(id)) {
       s.batch.push_back(id);
       dist.Prefetch(id);
-    } else if constexpr (Walk == HnswWalk::TwoHop) {
+    } else if constexpr (kHnswHops<Walk>) {
       bridges.push_back(id);
     }
   }
-  if constexpr (Walk == HnswWalk::TwoHop) {
+  if constexpr (kHnswHops<Walk>) {
     auto& hop2 = s.hop2;
     hop2.clear();
     for (const auto id : bridges) {
@@ -592,6 +603,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     // Bridge: a node reached through a rejected one only offers its admitted
     // neighbours; an admitted node offers them all, as Through does.
     const bool through = Walk == HnswWalk::Through ||
+                         (Walk == HnswWalk::Adaptive && !s.two_hop) ||
                          (Walk == HnswWalk::Bridge && accept(cur.node));
     bool asked = false;
     if constexpr (Walk != HnswWalk::Through &&
@@ -619,7 +631,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
         dist.Prefetch(id);
         continue;
       }
-      if constexpr (Walk == HnswWalk::TwoHop) {
+      if constexpr (kHnswHops<Walk>) {
         // The rejected node is a bridge: its admitted neighbours stand in
         // for it, at most one level width of them.
         const auto limit = s.batch.size() + width;
@@ -658,13 +670,24 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
       accept.Prepare(std::span<const uint32_t>{s.batch});
     }
+    if constexpr (Walk == HnswWalk::Adaptive) {
+      if (!s.two_hop) {
+        for (const auto id : s.batch) {
+          s.admitted += accept(id) ? 1 : 0;
+        }
+        s.two_hop = s.scored >= kHnswAdaptiveProbe &&
+                    static_cast<double>(s.admitted * kHnswAdaptiveScarcity) <
+                      static_cast<double>(s.scored) * s.admit_share;
+      }
+    }
 
     for (size_t i = 0; i < s.batch.size(); ++i) {
       const HnswCandidate cand{s.scores[i], s.batch[i]};
       if (nearest.size() >= ef && cand.score <= nearest.front().score) {
         continue;
       }
-      if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge) ||
+      if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge &&
+           Walk != HnswWalk::Adaptive) ||
           accept(cand.node)) {
         nearest.push_back(cand);
         std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
@@ -1011,6 +1034,8 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   s.nearest.clear();
   s.frontier.clear();
   s.scored = 0;
+  s.admitted = 0;
+  s.two_hop = false;
   if (graph.Empty()) {
     return true;
   }
@@ -1018,7 +1043,7 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
 
   s.visited.Reset(graph.Size());
-  if constexpr (Walk == HnswWalk::TwoHop) {
+  if constexpr (kHnswHops<Walk>) {
     s.visited_hop2.Reset(graph.Size());
   }
   HnswCandidate cur{dist.One(entry), entry};
@@ -1044,8 +1069,10 @@ bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
   s.nearest.clear();
   s.frontier.clear();
   s.scored = 0;
+  s.admitted = 0;
+  s.two_hop = false;
   s.visited.Reset(graph.Size());
-  if constexpr (Walk == HnswWalk::TwoHop) {
+  if constexpr (kHnswHops<Walk>) {
     s.visited_hop2.Reset(graph.Size());
   }
   s.visited.Next();

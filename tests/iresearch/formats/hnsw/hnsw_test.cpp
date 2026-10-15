@@ -1175,6 +1175,100 @@ TEST(HnswWalkTest, BridgeAsksTheAcceptorPerHop) {
   CheckWalkAsksPerHop<irs::HnswWalk::Bridge>();
 }
 
+TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
+  constexpr uint32_t kD = 8;
+  constexpr uint32_t kNodes = 3000;
+  constexpr uint32_t kM = 8;
+  constexpr uint32_t kEf = 64;
+  constexpr size_t kK = 10;
+  constexpr size_t kQueries = 30;
+  pcg32 rng{20261015};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> pts(size_t{kNodes} * kD);
+  for (float& v : pts) {
+    v = nd(rng);
+  }
+  irs::HnswGraphWriter writer;
+  writer.Reset(kNodes, kM);
+  pcg32 levels{irs::kHnswBuildSeed};
+  uint32_t entry = 0;
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    writer.SetLevel(i, irs::HnswRandomLevel(levels, kM));
+    if (writer.LevelOf(i) > writer.LevelOf(entry)) {
+      entry = i;
+    }
+  }
+  writer.AllocateLinks();
+  writer.SetEntryPoint(entry);
+  WalkDist build{.pts = &pts, .d = kD};
+  irs::HnswBuildScratch scratch;
+  scratch.search.visited.Reset(kNodes);
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    if (i != entry) {
+      build.SetQuery(i);
+      irs::HnswInsert(writer, i, build, kEf, scratch);
+    }
+  }
+  const auto& graph = writer.Graph();
+
+  std::vector<float> query(kD);
+  WalkDist dist{.pts = &pts, .d = kD, .q = query.data()};
+  irs::HnswSearchScratch s;
+  s.admit_share = 0.25;
+  size_t crossed_random = 0;
+  size_t crossed_far = 0;
+  size_t found_adaptive = 0;
+  size_t found_two_hop = 0;
+  for (size_t qi = 0; qi < kQueries; ++qi) {
+    for (float& v : query) {
+      v = nd(rng);
+    }
+    std::vector<uint8_t> random(kNodes);
+    for (auto& a : random) {
+      a = rng() % 4 == 0 ? 1 : 0;
+    }
+    irs::HnswSearchTopK<irs::HnswWalk::Adaptive>(
+      graph, dist, kEf, s, [&](uint32_t n) { return random[n] != 0; });
+    crossed_random += s.two_hop ? 1 : 0;
+    for (const auto& c : s.nearest) {
+      EXPECT_NE(random[c.node], 0) << "node " << c.node;
+    }
+
+    std::vector<std::pair<irs::score_t, uint32_t>> by_score;
+    for (uint32_t n = 0; n < kNodes; ++n) {
+      by_score.emplace_back(dist.One(n), n);
+    }
+    std::ranges::sort(by_score);
+    std::vector<uint8_t> far(kNodes, 0);
+    for (size_t i = 0; i < kNodes / 4; ++i) {
+      far[by_score[i].second] = 1;
+    }
+    std::vector<uint32_t> truth;
+    for (size_t i = kNodes / 4; i-- > kNodes / 4 - kK;) {
+      truth.push_back(by_score[i].second);
+    }
+    const auto hits = [&] {
+      size_t hit = 0;
+      for (const auto& c : s.nearest) {
+        EXPECT_NE(far[c.node], 0) << "node " << c.node;
+        hit += std::ranges::find(truth, c.node) != truth.end() ? 1 : 0;
+      }
+      return hit;
+    };
+    irs::HnswSearchTopK<irs::HnswWalk::Adaptive>(
+      graph, dist, kEf, s, [&](uint32_t n) { return far[n] != 0; });
+    crossed_far += s.two_hop ? 1 : 0;
+    found_adaptive += hits();
+    irs::HnswSearchTopK<irs::HnswWalk::TwoHop>(
+      graph, dist, kEf, s, [&](uint32_t n) { return far[n] != 0; });
+    found_two_hop += hits();
+  }
+  EXPECT_EQ(crossed_random, 0U);
+  EXPECT_EQ(crossed_far, kQueries);
+  EXPECT_GE(found_adaptive + kQueries, found_two_hop)
+    << "adaptive " << found_adaptive << " twohop " << found_two_hop;
+}
+
 class HnswBuildWorkersTest
   : public ::testing::TestWithParam<irs::AnnInfo::Quantizer> {};
 

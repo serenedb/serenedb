@@ -31,6 +31,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
@@ -97,6 +98,20 @@ struct HnswCodeDist {
 
   void Prefetch(uint32_t id) const noexcept {
     __builtin_prefetch(Row(id), 0, 3);
+  }
+};
+
+struct HnswColumnDist {
+  detail::RawVectorReader* reader;
+  std::vector<doc_id_t>* docs;
+
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t = kHnswNoThreshold) {
+    docs->clear();
+    for (const auto id : ids) {
+      docs->push_back(static_cast<doc_id_t>(id) + doc_limits::min());
+    }
+    reader->ComputeDistances(*docs, {out, ids.size()});
   }
 };
 
@@ -378,6 +393,8 @@ inline constexpr long double kVectorPointReadFoldRatio = 456;
 // thirty thousand docs, a twentieth of a millisecond on a million-row segment.
 inline constexpr uint32_t kCountSampleWindows = 8;
 
+inline constexpr uint64_t kHnswColumnScanShare = 16;
+
 // What one scanned row costs against one walked candidate. They are not the
 // same work, and the difference is not a constant. Both read one row's codes,
 // so both carry `record_size` bytes; on top of that a walked candidate arrives
@@ -642,11 +659,61 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   HnswScanTopK(set, graph, dist, _ef, scratch);
 }
 
+void HnswQuery::Rotate() const {
+  absl::call_once(_rotated, [&] {
+    if (!_data->rotation || _panorama) {
+      return;
+    }
+    _panorama =
+      _cache
+        ? _cache->Get(_data->rotation, _data->half_rotation, _query)
+        : AnnQueryCache{}.Get(_data->rotation, _data->half_rotation, _query);
+    if (_data->stats) {
+      _codebook = _cache ? _cache->Codebook(*_data->stats, _panorama->rotated)
+                         : _data->stats->MakeCodebook(_panorama->rotated);
+    }
+  });
+}
+
+bool HnswQuery::ScansByColumn() const {
+  if (_ef == 0 || !_exact || !_data->rotation || !_inner ||
+      _inner->Kind() == QueryKind::Boolean || !_segment.GetColReader()) {
+    return false;
+  }
+  const auto matches = _inner->EstimateMax();
+  const uint64_t share =
+    _data->half_rotation ? 2 * kHnswColumnScanShare : kHnswColumnScanShare;
+  if (matches * share > _d) {
+    return false;
+  }
+  if (_filter_mode != HnswFilterMode::Auto) {
+    return _filter_mode == HnswFilterMode::Scan;
+  }
+  const auto& graph = _data->graph;
+  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
+                        HnswBridgeRejected(_record_size, graph.M0()));
+}
+
+void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
+  auto set = MakeSet(_inner.get(), nullptr,
+                     static_cast<doc_id_t>(_segment.docs_count()));
+  detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
+  reader.SetQuery(_query, _metric);
+  std::vector<doc_id_t> docs;
+  HnswColumnDist dist{.reader = &reader, .docs = &docs};
+  HnswScanTopK(set, _data->graph, dist, _ef, s);
+}
+
 std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   HnswSearchScratch scratch;
   if (table && !table->Foldable()) {
     table = nullptr;
   }
+  if (!table && ScansByColumn()) {
+    ScanColumn(scratch);
+    return CollectHits(scratch.nearest, _segment);
+  }
+  Rotate();
   WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
                  if (_inner || table) {

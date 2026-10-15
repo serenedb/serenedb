@@ -107,6 +107,58 @@ SELECT count(*) FROM (
 count
 0
 
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+statement ok
+SET sdb_hnsw_ef_search = 64;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_l2 WHERE id BETWEEN 1000 AND 1600 ORDER BY emb <-> rot_vec(1300) LIMIT 7)
+  EXCEPT (SELECT id FROM rot WHERE id BETWEEN 1000 AND 1600 ORDER BY emb <-> rot_vec(1300) LIMIT 7)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_ip_idx WHERE id BETWEEN 200 AND 900 ORDER BY emb <#> rot_vec(450) LIMIT 7)
+  EXCEPT (SELECT id FROM rot_ip WHERE id BETWEEN 200 AND 900 ORDER BY emb <#> rot_vec(450) LIMIT 7)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_l2 WHERE id BETWEEN 2000 AND 2012 ORDER BY emb <-> rot_vec(2006) LIMIT 7)
+  EXCEPT (SELECT id FROM rot WHERE id BETWEEN 2000 AND 2012 ORDER BY emb <-> rot_vec(2006) LIMIT 7)) t;
+----
+count
+0
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_cos_idx WHERE id BETWEEN 100 AND 112 ORDER BY emb <=> rot_vec(1500.5) LIMIT 7)
+  EXCEPT (SELECT id FROM rot_cos WHERE id BETWEEN 100 AND 112 ORDER BY emb <=> rot_vec(1500.5) LIMIT 7)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_ip_idx WHERE id BETWEEN 2900 AND 2915 ORDER BY emb <#> rot_vec(10.5) LIMIT 7)
+  EXCEPT (SELECT id FROM rot_ip WHERE id BETWEEN 2900 AND 2915 ORDER BY emb <#> rot_vec(10.5) LIMIT 7)) t;
+----
+count
+0
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
 query
 SELECT (SELECT count(*) FROM rot_l2 WHERE emb <-> rot_vec(900.5) < 0.5)
      = (SELECT count(*) FROM rot WHERE emb <-> rot_vec(900.5) < 0.5) AS same;
@@ -312,6 +364,14 @@ query
 SELECT count(*) FROM (
   (SELECT id FROM rot_sq8_cos ORDER BY emb <=> rot_vec(42.5) LIMIT 25)
   EXCEPT (SELECT i FROM range(5000) t(i) ORDER BY rot_vec(i) <=> rot_vec(42.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8 WHERE id BETWEEN 3000 AND 3007 ORDER BY emb <#> rot_vec(3004) LIMIT 3)
+  EXCEPT (SELECT i FROM range(3000, 3008) t(i) ORDER BY rot_vec(i) <#> rot_vec(3004) LIMIT 3)) t;
 ----
 count
 0

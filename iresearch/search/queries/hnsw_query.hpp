@@ -49,11 +49,13 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswFilterMode filter_mode = HnswFilterMode::Auto,
             HnswColumnFilter column_filter = HnswColumnFilter::Auto,
             const ColumnReader* exact = nullptr,
-            std::shared_ptr<const PanoramaQuery> panorama = nullptr)
+            std::shared_ptr<const PanoramaQuery> panorama = nullptr,
+            AnnQueryCache* cache = nullptr)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
       _panorama{std::move(panorama)},
+      _cache{cache},
       _inner{std::move(inner)},
       _exact{exact},
       _query{query.size(),
@@ -88,9 +90,17 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   void RunFiltered(Dist& dist, detail::TableFilter* table,
                    HnswSearchScratch& scratch) const;
 
+  void Rotate() const;
+
+  bool ScansByColumn() const;
+
+  void ScanColumn(HnswSearchScratch& scratch) const;
+
   std::shared_ptr<const HnswData> _data;
-  std::shared_ptr<const QuantizerCodebook> _codebook;
-  std::shared_ptr<const PanoramaQuery> _panorama;
+  mutable std::shared_ptr<const QuantizerCodebook> _codebook;
+  mutable std::shared_ptr<const PanoramaQuery> _panorama;
+  mutable absl::once_flag _rotated;
+  AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   const ColumnReader* _exact;
   containers::Fixed<float> _query;

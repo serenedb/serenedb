@@ -100,7 +100,11 @@ class PhraseVariadicPositions {
     auto min = pos_limits::eof();
     for (uint32_t i = 0; i != _size; ++i) {
       auto& pos = *_live[i];
-      if (pos.value() <= _value && pos_limits::eof(pos.seek(_value + 1))) {
+      const auto at = pos.value();
+      if (at == _value && !pos.next()) {
+        continue;
+      }
+      if (at < _value && pos_limits::eof(pos.seek(_value + 1))) {
         continue;
       }
       if (pos.value() < min) {

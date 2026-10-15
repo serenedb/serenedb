@@ -37,6 +37,8 @@
 
 #include "utf8proc_wrapper.hpp"
 
+#include <arpa/inet.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -61,8 +63,6 @@ static int64_t FloorDiv(int64_t value, int64_t divisor) {
 }
 
 // ClickHouse String carries raw bytes while DuckDB VARCHAR requires UTF-8.
-// Both decode paths (bulk scan and per-row lookup) must agree on the same
-// bytes, so both reject invalid payloads with the same escape hatch.
 static void VerifyStringUtf8(const char *data, size_t size) {
 	if (!Utf8Proc::IsValid(data, size)) {
 		throw InvalidInputException("ClickHouse String value contains invalid UTF-8; set "
@@ -71,7 +71,7 @@ static void VerifyStringUtf8(const char *data, size_t size) {
 }
 
 // ClickHouse DateTime64(p) stores an integer tick count at 10^-p seconds;
-// DuckDB TIMESTAMP is microseconds (10^-6). Shared by the scalar and bulk decode.
+// DuckDB TIMESTAMP is microseconds (10^-6).
 static int64_t DateTime64TicksToMicros(int64_t ticks, int precision) {
 	return (precision <= 6) ? ticks * Pow10(6 - precision) : FloorDiv(ticks, Pow10(precision - 6));
 }
@@ -200,240 +200,212 @@ LogicalType ClickHouseTypeStringToLogicalType(const string &type_str) {
 	return ClickHouseToLogicalType(*column->Type());
 }
 
-static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row);
+template <class T, class CHColumn, class F>
+static void CopyConverted(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset,
+                          F &&convert) {
+	auto typed = col.As<CHColumn>();
+	auto data = FlatVector::GetDataMutable<T>(out);
+	for (idx_t row = 0; row < count; row++) {
+		data[dst_offset + row] = convert(typed->At(src_offset + row));
+	}
+}
 
-template <class CHColumn>
-static Value StringValueAt(const clickhouse::Column &col, idx_t row) {
-	auto view = col.As<CHColumn>()->At(row);
-	VerifyStringUtf8(view.data(), view.size());
-	return Value(string(view.data(), view.size()));
+template <class T>
+static void CopyDecimal(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
+	CopyConverted<T, clickhouse::ColumnDecimal>(col, out, src_offset, count, dst_offset,
+	                                            [](const clickhouse::Int128 &unscaled) {
+		                                            if constexpr (std::is_same_v<T, hugeint_t>) {
+			                                            return ClickHouseInt128ToHugeint(unscaled);
+		                                            } else {
+			                                            return static_cast<T>(unscaled);
+		                                            }
+	                                            });
 }
 
 // NameAt() does std::map::at on the ordinal -> throws (aborting the whole scan)
 // if the stored ordinal is outside the current Enum definition (e.g. after an
 // ALTER). Read the raw ordinal and only resolve the name when it is defined.
 template <class CHColumn>
-static Value EnumValueAt(const clickhouse::Column &col, idx_t row) {
-	int16_t ordinal = col.As<CHColumn>()->At(row);
+static void CopyEnum(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
+	auto typed = col.As<CHColumn>();
 	auto enum_type = col.Type()->As<clickhouse::EnumType>();
-	if (enum_type && enum_type->HasEnumValue(ordinal)) {
-		return Value(string(enum_type->GetEnumName(ordinal)));
-	}
-	return Value(absl::StrCat(ordinal));
-}
-
-static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
-	switch (col.Type()->GetCode()) {
-	case clickhouse::Type::UInt8:
-		return Value::UTINYINT(col.As<clickhouse::ColumnUInt8>()->At(row));
-	case clickhouse::Type::UInt16:
-		return Value::USMALLINT(col.As<clickhouse::ColumnUInt16>()->At(row));
-	case clickhouse::Type::UInt32:
-		return Value::UINTEGER(col.As<clickhouse::ColumnUInt32>()->At(row));
-	case clickhouse::Type::UInt64:
-		return Value::UBIGINT(col.As<clickhouse::ColumnUInt64>()->At(row));
-	case clickhouse::Type::Int8:
-		return Value::TINYINT(col.As<clickhouse::ColumnInt8>()->At(row));
-	case clickhouse::Type::Int16:
-		return Value::SMALLINT(col.As<clickhouse::ColumnInt16>()->At(row));
-	case clickhouse::Type::Int32:
-		return Value::INTEGER(col.As<clickhouse::ColumnInt32>()->At(row));
-	case clickhouse::Type::Int64:
-		return Value::BIGINT(col.As<clickhouse::ColumnInt64>()->At(row));
-	case clickhouse::Type::Int128:
-		return Value::HUGEINT(ClickHouseInt128ToHugeint(col.As<clickhouse::ColumnInt128>()->At(row)));
-	case clickhouse::Type::UInt128:
-		return Value::UHUGEINT(ClickHouseUInt128ToUhugeint(col.As<clickhouse::ColumnUInt128>()->At(row)));
-	case clickhouse::Type::Float32:
-		return Value::FLOAT(col.As<clickhouse::ColumnFloat32>()->At(row));
-	case clickhouse::Type::Float64:
-		return Value::DOUBLE(col.As<clickhouse::ColumnFloat64>()->At(row));
-	case clickhouse::Type::Bool:
-		return Value::BOOLEAN(col.As<clickhouse::ColumnBool>()->At(row));
-	case clickhouse::Type::String:
-		return StringValueAt<clickhouse::ColumnString>(col, row);
-	case clickhouse::Type::FixedString:
-		return StringValueAt<clickhouse::ColumnFixedString>(col, row);
-	case clickhouse::Type::Date:
-		return Value::DATE(date_t(static_cast<int32_t>(col.As<clickhouse::ColumnDate>()->RawAt(row))));
-	case clickhouse::Type::Date32:
-		return Value::DATE(date_t(col.As<clickhouse::ColumnDate32>()->RawAt(row)));
-	case clickhouse::Type::DateTime: {
-		auto seconds = static_cast<int64_t>(col.As<clickhouse::ColumnDateTime>()->RawAt(row));
-		return Value::TIMESTAMP(Timestamp::FromEpochMicroSeconds(seconds * 1000000));
-	}
-	case clickhouse::Type::DateTime64: {
-		auto datetime = col.As<clickhouse::ColumnDateTime64>();
-		auto ticks = datetime->At(row);
-		auto precision = static_cast<int>(datetime->GetPrecision());
-		return Value::TIMESTAMP(Timestamp::FromEpochMicroSeconds(DateTime64TicksToMicros(ticks, precision)));
-	}
-	case clickhouse::Type::Decimal:
-	case clickhouse::Type::Decimal32:
-	case clickhouse::Type::Decimal64:
-	case clickhouse::Type::Decimal128: {
-		auto decimal = col.As<clickhouse::ColumnDecimal>();
-		auto unscaled = decimal->At(row);
-		auto precision = decimal->GetPrecision();
-		auto scale = decimal->GetScale();
-		if (precision <= 18) {
-			return Value::DECIMAL(static_cast<int64_t>(unscaled), static_cast<uint8_t>(precision),
-			                      static_cast<uint8_t>(scale));
+	auto data = FlatVector::GetDataMutable<string_t>(out);
+	for (idx_t row = 0; row < count; row++) {
+		const int16_t ordinal = typed->At(src_offset + row);
+		if (enum_type && enum_type->HasEnumValue(ordinal)) {
+			const auto name = enum_type->GetEnumName(ordinal);
+			VerifyStringUtf8(name.data(), name.size());
+			data[dst_offset + row] = StringVector::AddString(out, name);
+		} else {
+			data[dst_offset + row] = StringVector::AddString(out, absl::StrCat(ordinal));
 		}
-		return Value::DECIMAL(ClickHouseInt128ToHugeint(unscaled), static_cast<uint8_t>(precision),
-		                      static_cast<uint8_t>(scale));
-	}
-	case clickhouse::Type::Enum8:
-		return EnumValueAt<clickhouse::ColumnEnum8>(col, row);
-	case clickhouse::Type::Enum16:
-		return EnumValueAt<clickhouse::ColumnEnum16>(col, row);
-	case clickhouse::Type::UUID: {
-		auto uuid = col.As<clickhouse::ColumnUUID>()->At(row);
-		return Value::UUID(hugeint_t(static_cast<int64_t>(uuid.first ^ (static_cast<uint64_t>(1) << 63)), uuid.second));
-	}
-	case clickhouse::Type::IPv4:
-		return Value(col.As<clickhouse::ColumnIPv4>()->AsString(row));
-	case clickhouse::Type::IPv6:
-		return Value(col.As<clickhouse::ColumnIPv6>()->AsString(row));
-	case clickhouse::Type::JSON:
-		// ColumnJSON is a sibling of ColumnString (both derive from Column), not a
-		// subclass, so As<ColumnString>() would return nullptr and ->At() segfault.
-		return Value(string(col.As<clickhouse::ColumnJSON>()->At(row)));
-	case clickhouse::Type::Void:
-		return Value();
-	default:
-		throw NotImplementedException("Unsupported ClickHouse type: %s", col.Type()->GetName());
 	}
 }
 
-static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
-	switch (col.Type()->GetCode()) {
-	case clickhouse::Type::Nullable: {
-		auto nullable = col.As<clickhouse::ColumnNullable>();
-		auto nested = nullable->Nested();
-		if (nullable->IsNull(row)) {
-			return Value(ClickHouseToLogicalType(*nested->Type()));
-		}
-		return ClickHouseColumnValueAt(*nested, row);
-	}
-	case clickhouse::Type::LowCardinality: {
-		auto lc = col.As<clickhouse::ColumnLowCardinality>();
-		auto nested_type = lc->GetNestedType();
-		bool nested_nullable = nested_type->GetCode() == clickhouse::Type::Nullable;
-		if (nested_nullable) {
-			nested_type = nested_type->As<clickhouse::NullableType>()->GetNestedType();
-		}
-		auto item = lc->GetItem(row);
+template <class T, class F>
+static void CopyLowCardinality(const clickhouse::ColumnLowCardinality &lc, bool nested_nullable, Vector &out,
+                               idx_t src_offset, idx_t count, idx_t dst_offset, F &&write) {
+	auto data = FlatVector::GetDataMutable<T>(out);
+	for (idx_t row = 0; row < count; row++) {
+		const auto target = dst_offset + row;
+		auto item = lc.GetItem(src_offset + row);
 		if (nested_nullable && item.type == clickhouse::Type::Void) {
-			return Value(ClickHouseToLogicalType(*nested_type));
+			FlatVector::SetNull(out, target, true);
+			continue;
 		}
-		auto view = item.AsBinaryData();
-		switch (nested_type->GetCode()) {
-		case clickhouse::Type::String:
-		case clickhouse::Type::FixedString: {
-			// The NULL placeholder of an LC(Nullable(String)) is a nullptr view (an
-			// empty string keeps a valid pointer).
-			if (nested_nullable && view.data() == nullptr) {
-				return Value(ClickHouseToLogicalType(*nested_type));
-			}
-			VerifyStringUtf8(view.data(), view.size());
-			return Value(string(view.data(), view.size()));
-		}
-		default:
-			break;
-		}
-		// Fixed-width payloads: clickhouse-cpp materializes the NULL placeholder of
-		// an LC(Nullable(T)) as a ZERO-BYTE view (get<T>'s size validator would
-		// throw on it); detect it structurally instead of catching, so a genuine
-		// decode error on a non-null row still surfaces.
-		if (nested_nullable && view.size() == 0) {
-			return Value(ClickHouseToLogicalType(*nested_type));
-		}
-		switch (nested_type->GetCode()) {
-		case clickhouse::Type::UInt8:
-			return Value::UTINYINT(item.get<uint8_t>());
-		case clickhouse::Type::UInt16:
-			return Value::USMALLINT(item.get<uint16_t>());
-		case clickhouse::Type::UInt32:
-			return Value::UINTEGER(item.get<uint32_t>());
-		case clickhouse::Type::UInt64:
-			return Value::UBIGINT(item.get<uint64_t>());
-		case clickhouse::Type::Int8:
-			return Value::TINYINT(item.get<int8_t>());
-		case clickhouse::Type::Int16:
-			return Value::SMALLINT(item.get<int16_t>());
-		case clickhouse::Type::Int32:
-			return Value::INTEGER(item.get<int32_t>());
-		case clickhouse::Type::Int64:
-			return Value::BIGINT(item.get<int64_t>());
-		case clickhouse::Type::Float32:
-			return Value::FLOAT(item.get<float>());
-		case clickhouse::Type::Float64:
-			return Value::DOUBLE(item.get<double>());
-		case clickhouse::Type::Date:
-			return Value::DATE(date_t(static_cast<int32_t>(item.get<uint16_t>())));
-		case clickhouse::Type::Date32:
-			return Value::DATE(date_t(item.get<int32_t>()));
-		case clickhouse::Type::DateTime:
-			return Value::TIMESTAMP(
-			    Timestamp::FromEpochMicroSeconds(static_cast<int64_t>(item.get<uint32_t>()) * 1000000));
-		default:
-			throw NotImplementedException("Unsupported ClickHouse LowCardinality nested type: %s",
-			                              nested_type->GetName());
+		if (!write(item, data[target])) {
+			FlatVector::SetNull(out, target, true);
 		}
 	}
-	case clickhouse::Type::Array: {
-		auto array = col.As<clickhouse::ColumnArray>();
-		auto child = array->GetData();
-		auto offset = array->GetOffset(row);
-		auto size = array->GetSize(row);
-		auto child_type = ClickHouseToLogicalType(*child->Type());
-		vector<Value> values;
-		values.reserve(size);
-		for (idx_t i = 0; i < size; i++) {
-			values.push_back(ClickHouseColumnValueAt(*child, offset + i));
-		}
-		return Value::LIST(child_type, std::move(values));
+}
+
+template <class T>
+static void CopyLowCardinalityFixed(const clickhouse::ColumnLowCardinality &lc, bool nested_nullable, Vector &out,
+                                    idx_t src_offset, idx_t count, idx_t dst_offset) {
+	CopyLowCardinality<T>(lc, nested_nullable, out, src_offset, count, dst_offset,
+	                      [&](const clickhouse::ItemView &item, T &target) {
+		                      // Fixed-width payloads: clickhouse-cpp materializes the NULL placeholder of
+		                      // an LC(Nullable(T)) as a ZERO-BYTE view (get<T>'s size validator would
+		                      // throw on it); detect it structurally instead of catching, so a genuine
+		                      // decode error on a non-null row still surfaces.
+		                      if (nested_nullable && item.AsBinaryData().size() == 0) {
+			                      return false;
+		                      }
+		                      target = item.get<T>();
+		                      return true;
+	                      });
+}
+
+static void CopyLowCardinality(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
+                               idx_t dst_offset) {
+	auto lc = col.As<clickhouse::ColumnLowCardinality>();
+	auto nested_type = lc->GetNestedType();
+	const bool nested_nullable = nested_type->GetCode() == clickhouse::Type::Nullable;
+	if (nested_nullable) {
+		nested_type = nested_type->As<clickhouse::NullableType>()->GetNestedType();
 	}
-	case clickhouse::Type::Tuple: {
-		auto tuple = col.As<clickhouse::ColumnTuple>();
-		auto &tuple_type = *col.Type()->As<clickhouse::TupleType>();
-		auto &item_names = tuple_type.GetItemNames();
-		child_list_t<Value> children;
-		for (idx_t i = 0; i < tuple->TupleSize(); i++) {
-			string name = i < item_names.size() ? item_names[i] : absl::StrCat("entry_", i);
-			children.push_back(make_pair(Identifier(std::move(name)), ClickHouseColumnValueAt(*tuple->At(i), row)));
-		}
-		return Value::STRUCT(std::move(children));
-	}
-	case clickhouse::Type::Map: {
-		auto map = col.As<clickhouse::ColumnMap>();
-		auto &map_type = *col.Type()->As<clickhouse::MapType>();
-		auto key_type = ClickHouseToLogicalType(*map_type.GetKeyType());
-		auto value_type = ClickHouseToLogicalType(*map_type.GetValueType());
-		auto entries = map->GetAsColumn(row);
-		auto tuple = entries->As<clickhouse::ColumnTuple>();
-		auto keys_col = tuple->At(0);
-		auto values_col = tuple->At(1);
-		vector<Value> keys;
-		vector<Value> values;
-		keys.reserve(keys_col->Size());
-		values.reserve(values_col->Size());
-		for (idx_t i = 0; i < keys_col->Size(); i++) {
-			keys.push_back(ClickHouseColumnValueAt(*keys_col, i));
-			values.push_back(ClickHouseColumnValueAt(*values_col, i));
-		}
-		return Value::MAP(key_type, value_type, std::move(keys), std::move(values));
-	}
+	switch (nested_type->GetCode()) {
+	case clickhouse::Type::String:
+	case clickhouse::Type::FixedString:
+		return CopyLowCardinality<string_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
+		                                    [&](const clickhouse::ItemView &item, string_t &target) {
+			                                    auto view = item.AsBinaryData();
+			                                    // The NULL placeholder of an LC(Nullable(String)) is a nullptr
+			                                    // view (an empty string keeps a valid pointer).
+			                                    if (nested_nullable && view.data() == nullptr) {
+				                                    return false;
+			                                    }
+			                                    VerifyStringUtf8(view.data(), view.size());
+			                                    target = StringVector::AddString(out, view.data(), view.size());
+			                                    return true;
+		                                    });
+	case clickhouse::Type::UInt8:
+		return CopyLowCardinalityFixed<uint8_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::UInt16:
+		return CopyLowCardinalityFixed<uint16_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::UInt32:
+		return CopyLowCardinalityFixed<uint32_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::UInt64:
+		return CopyLowCardinalityFixed<uint64_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Int8:
+		return CopyLowCardinalityFixed<int8_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Int16:
+		return CopyLowCardinalityFixed<int16_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Int32:
+		return CopyLowCardinalityFixed<int32_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Int64:
+		return CopyLowCardinalityFixed<int64_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Float32:
+		return CopyLowCardinalityFixed<float>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Float64:
+		return CopyLowCardinalityFixed<double>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Date:
+		return CopyLowCardinality<date_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
+		                                  [&](const clickhouse::ItemView &item, date_t &target) {
+			                                  if (nested_nullable && item.AsBinaryData().size() == 0) {
+				                                  return false;
+			                                  }
+			                                  target = date_t(static_cast<int32_t>(item.get<uint16_t>()));
+			                                  return true;
+		                                  });
+	case clickhouse::Type::Date32:
+		return CopyLowCardinality<date_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
+		                                  [&](const clickhouse::ItemView &item, date_t &target) {
+			                                  if (nested_nullable && item.AsBinaryData().size() == 0) {
+				                                  return false;
+			                                  }
+			                                  target = date_t(item.get<int32_t>());
+			                                  return true;
+		                                  });
+	case clickhouse::Type::DateTime:
+		return CopyLowCardinality<timestamp_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
+		                                       [&](const clickhouse::ItemView &item, timestamp_t &target) {
+			                                       if (nested_nullable && item.AsBinaryData().size() == 0) {
+				                                       return false;
+			                                       }
+			                                       target = Timestamp::FromEpochMicroSeconds(
+			                                           static_cast<int64_t>(item.get<uint32_t>()) * 1000000);
+			                                       return true;
+		                                       });
 	default:
-		return ClickHouseScalarValueAt(col, row);
+		for (idx_t row = 0; row < count; row++) {
+			auto item = lc->GetItem(src_offset + row);
+			if (!nested_nullable || (item.type != clickhouse::Type::Void && item.AsBinaryData().size() != 0)) {
+				throw NotImplementedException("Unsupported ClickHouse LowCardinality nested type: %s",
+				                              nested_type->GetName());
+			}
+			FlatVector::SetNull(out, dst_offset + row, true);
+		}
+		return;
+	}
+}
+
+static void CopyArray(const clickhouse::ColumnArray &array, Vector &out, idx_t src_offset, idx_t count,
+                      idx_t dst_offset) {
+	auto list_data = FlatVector::GetDataMutable<list_entry_t>(out);
+	const auto child_offset = ListVector::GetListSize(out);
+	idx_t total = 0;
+	for (idx_t row = 0; row < count; row++) {
+		const auto size = array.GetSize(src_offset + row);
+		list_data[dst_offset + row] = list_entry_t(child_offset + total, size);
+		total += size;
+	}
+	if (total == 0) {
+		return;
+	}
+	ListVector::Reserve(out, child_offset + total);
+	ClickHouseColumnToVector(*array.GetData(), ListVector::GetChildMutable(out), array.GetOffset(src_offset), total,
+	                         child_offset);
+	ListVector::SetListSize(out, child_offset + total);
+}
+
+static void CopyTuple(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
+	auto tuple = col.As<clickhouse::ColumnTuple>();
+	auto &entries = StructVector::GetEntries(out);
+	D_ASSERT(entries.size() == tuple->TupleSize());
+	for (idx_t i = 0; i < tuple->TupleSize(); i++) {
+		ClickHouseColumnToVector(*tuple->At(i), entries[i], src_offset, count, dst_offset);
+	}
+}
+
+template <class CHColumn, int FAMILY, idx_t SIZE>
+static void CopyAddresses(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
+	auto typed = col.As<CHColumn>();
+	auto data = FlatVector::GetDataMutable<string_t>(out);
+	char buffer[SIZE];
+	for (idx_t row = 0; row < count; row++) {
+		const auto address = typed->At(src_offset + row);
+		const auto text = inet_ntop(FAMILY, &address, buffer, SIZE);
+		if (!text) {
+			throw InternalException("Failed to format a ClickHouse IP address");
+		}
+		data[dst_offset + row] = StringVector::AddString(out, text);
 	}
 }
 
 // Bulk-copy a fixed-width ClickHouse numeric column straight into the DuckDB
 // FlatVector. ColumnVector<T> stores T contiguously and matches the FlatVector
-// physical layout for these types, so a single memcpy replaces a per-cell
-// dynamic_cast + Value box + SetValue.
+// physical layout for these types.
 template <class CHColumn, class T>
 static void BulkCopyNumeric(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
                             idx_t dst_offset) {
@@ -474,9 +446,6 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
 		}
 		return;
 	}
-	// Fast paths: cast the column once and write directly into the FlatVector,
-	// avoiding the per-cell dynamic_cast (col.As<>), Value boxing and SetValue
-	// that dominated the scan profile.
 	case clickhouse::Type::UInt8:
 		return BulkCopyNumeric<clickhouse::ColumnUInt8, uint8_t>(col, out, src_offset, count, dst_offset);
 	case clickhouse::Type::UInt16:
@@ -536,13 +505,60 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
 		}
 		return;
 	}
-	default:
-		// Complex / long-tail types (Decimal, UUID, Enum, IP, Array, Map, Tuple,
-		// LowCardinality, Int128/UInt128, ...) keep the per-cell Value path.
+	case clickhouse::Type::Int128:
+		return CopyConverted<hugeint_t, clickhouse::ColumnInt128>(col, out, src_offset, count, dst_offset,
+		                                                          ClickHouseInt128ToHugeint);
+	case clickhouse::Type::UInt128:
+		return CopyConverted<uhugeint_t, clickhouse::ColumnUInt128>(col, out, src_offset, count, dst_offset,
+		                                                            ClickHouseUInt128ToUhugeint);
+	case clickhouse::Type::Bool:
+		return CopyConverted<bool, clickhouse::ColumnBool>(col, out, src_offset, count, dst_offset,
+		                                                   [](bool value) { return value; });
+	case clickhouse::Type::Decimal:
+	case clickhouse::Type::Decimal32:
+	case clickhouse::Type::Decimal64:
+	case clickhouse::Type::Decimal128:
+		switch (out.GetType().InternalType()) {
+		case PhysicalType::INT16:
+			return CopyDecimal<int16_t>(col, out, src_offset, count, dst_offset);
+		case PhysicalType::INT32:
+			return CopyDecimal<int32_t>(col, out, src_offset, count, dst_offset);
+		case PhysicalType::INT64:
+			return CopyDecimal<int64_t>(col, out, src_offset, count, dst_offset);
+		default:
+			return CopyDecimal<hugeint_t>(col, out, src_offset, count, dst_offset);
+		}
+	case clickhouse::Type::Enum8:
+		return CopyEnum<clickhouse::ColumnEnum8>(col, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Enum16:
+		return CopyEnum<clickhouse::ColumnEnum16>(col, out, src_offset, count, dst_offset);
+	case clickhouse::Type::UUID:
+		return CopyConverted<hugeint_t, clickhouse::ColumnUUID>(
+		    col, out, src_offset, count, dst_offset, [](const clickhouse::UUID &uuid) {
+			    return hugeint_t(static_cast<int64_t>(uuid.first ^ (static_cast<uint64_t>(1) << 63)), uuid.second);
+		    });
+	case clickhouse::Type::IPv4:
+		return CopyAddresses<clickhouse::ColumnIPv4, AF_INET, INET_ADDRSTRLEN>(col, out, src_offset, count, dst_offset);
+	case clickhouse::Type::IPv6:
+		return CopyAddresses<clickhouse::ColumnIPv6, AF_INET6, INET6_ADDRSTRLEN>(col, out, src_offset, count,
+		                                                                         dst_offset);
+	case clickhouse::Type::JSON:
+		return BulkCopyString<clickhouse::ColumnJSON>(col, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Void:
 		for (idx_t row = 0; row < count; row++) {
-			out.SetValue(dst_offset + row, ClickHouseColumnValueAt(col, src_offset + row));
+			FlatVector::SetNull(out, dst_offset + row, true);
 		}
 		return;
+	case clickhouse::Type::LowCardinality:
+		return CopyLowCardinality(col, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Array:
+		return CopyArray(*col.As<clickhouse::ColumnArray>(), out, src_offset, count, dst_offset);
+	case clickhouse::Type::Map:
+		return CopyArray(*col.As<clickhouse::ColumnMap>()->GetData(), out, src_offset, count, dst_offset);
+	case clickhouse::Type::Tuple:
+		return CopyTuple(col, out, src_offset, count, dst_offset);
+	default:
+		throw NotImplementedException("Unsupported ClickHouse type: %s", col.Type()->GetName());
 	}
 }
 
@@ -710,9 +726,8 @@ string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
 		break;
 	case LogicalTypeId::ENUM: {
 		// ClickHouse Enum8 values are int8 (fits <=127 positive ordinals), Enum16 are
-		// int16. Members get 1-based ordinals; INSERT and read map by NAME (see the
-		// Enum cases in AppendScalarColumn / ClickHouseColumnValueAt), so the numeric
-		// ordinals are internal and need only be distinct + in range.
+		// int16. Members get 1-based ordinals; INSERT and read map by NAME, so the
+		// numeric ordinals are internal and need only be distinct + in range.
 		auto size = EnumType::GetSize(type);
 		// Enum8 fits 127 one-based ordinals; anything larger renders as Enum16. A member
 		// count beyond Int16 is delegated to ClickHouse, which rejects the DDL loudly on

@@ -322,3 +322,13 @@ statement error
 SELECT regexp_instr('abc', (1 / 0)::text);
 ----
 db error: ERROR: <slt:ignore>
+
+
+# '.' matches a newline unless the 'n' flag is given
+query
+SELECT regexp_match(E'a\nb', 'a.b') IS NOT NULL AS dot_newline,
+       regexp_count(E'a\nb a\nb', 'a.b') AS count,
+       regexp_count(E'a\nb a\nb', 'a.b', 1, 'n') AS newline_sensitive;
+----
+dot_newline	count	newline_sensitive
+t	2	0

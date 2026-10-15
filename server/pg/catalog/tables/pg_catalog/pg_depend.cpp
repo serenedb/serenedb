@@ -136,13 +136,15 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void Row(duckdb::TableCatalogEntry& table) {
     Namespace(table);
     RowType(table.oid);
-    for (const auto& constraint :
-         table.GetConstraints() | std::views::filter(IsPgConstraint)) {
-      Constraint(table, *constraint);
+    for (const auto& constraint : table.GetConstraints()) {
+      if (IsPgConstraint(constraint)) {
+        Constraint(table, *constraint);
+      }
     }
-    for (const auto& column :
-         table.GetColumns().Logical() | std::views::filter(HasAttrdef)) {
-      Attrdef(table, column);
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (HasAttrdef(column)) {
+        Attrdef(table, column);
+      }
     }
     if (!Allows<"deptype">('n') && !Allows<"deptype">('a')) {
       return;
@@ -461,12 +463,11 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void Sequence(const duckdb::TableCatalogEntry& table,
                 const duckdb::CatalogEntry& sequence, bool owned_by) {
     int32_t owner_column = 0;
-    for (const auto& column :
-         table.GetColumns().Logical() |
-           std::views::filter([&](const duckdb::ColumnDefinition& column) {
-             return HasAttrdef(column) &&
-                    NamesSequence(DefaultExpression(column), sequence.name);
-           })) {
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (!HasAttrdef(column) ||
+          !NamesSequence(DefaultExpression(column), sequence.name)) {
+        continue;
+      }
       Depend(kPgAttrdefTable, column.CatalogOid(), 0, kPgClassTable,
              sequence.oid, 0, 'n');
       owner_column = Attnum(column);

@@ -1,0 +1,76 @@
+# Enum settings accept PostgreSQL's hidden spellings and show the value they stand for
+statement ok
+SET client_min_messages = debug;
+
+
+query
+SHOW client_min_messages;
+----
+client_min_messages
+debug2
+
+
+statement ok
+SET client_min_messages = INFO;
+
+
+query
+SHOW client_min_messages;
+----
+client_min_messages
+info
+
+
+statement ok
+SET client_min_messages = 'Warning';
+
+
+query
+SHOW client_min_messages;
+----
+client_min_messages
+warning
+
+
+statement ok
+RESET client_min_messages;
+
+
+statement ok
+SET synchronous_commit = yes;
+
+
+query
+SHOW synchronous_commit;
+----
+synchronous_commit
+on
+
+
+statement ok
+SET synchronous_commit = '0';
+
+
+query
+SELECT current_setting('synchronous_commit') AS value;
+----
+value
+off
+
+
+statement ok
+RESET synchronous_commit;
+
+
+query
+SELECT 'info' = ANY(enumvals) AS info_listed, 'debug' = ANY(enumvals) AS debug_listed FROM pg_settings WHERE name = 'client_min_messages';
+----
+info_listed	debug_listed
+f	f
+
+
+statement error
+SET client_min_messages = 'verbose';
+----
+db error: ERROR: invalid value for parameter "client_min_messages": "verbose"
+HINT: Available values: debug5, debug4, debug3, debug2, debug1, log, notice, warning, error.

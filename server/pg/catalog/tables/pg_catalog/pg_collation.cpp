@@ -29,41 +29,25 @@ SystemRows<BuiltinCollation> LoadCollations(SystemScan&) {
   return BuiltinCollations();
 }
 
-class PgCollation final : public SystemTableScan<kPgCollationSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr duckdb::idx_t kRows = 10;
-
-  static constexpr std::tuple kSources{
-    ArraySource<BuiltinCollation>{&LoadCollations, {}, {}}};
-
-  static constexpr auto kCollation = Shape<kSql, const BuiltinCollation>(
-    Col<"oid">(&BuiltinCollation::oid),
-    Col<"collname">(&BuiltinCollation::name),
-    Col<"collnamespace">([](const auto&) { return kPgCatalogSchema; }),
-    Col<"collowner">([](const auto&) { return kRootUser; }),
-    Col<"collprovider">(&BuiltinCollation::provider),
-    Col<"collisdeterministic">(&BuiltinCollation::deterministic),
-    Col<"collencoding">([](const auto&) { return -1; }),
-    Col<"collcollate">([](const auto& collation) {
-      return collation.provider == 'c' ? NonEmpty(collation.locale)
-                                       : std::nullopt;
-    }),
-    Col<"collctype">([](const auto& collation) {
-      return collation.provider == 'c' ? NonEmpty(collation.locale)
-                                       : std::nullopt;
-    }),
-    Col<"colllocale">([](const auto& collation) {
-      return collation.provider == 'i' ? NonEmpty(collation.locale)
-                                       : std::nullopt;
-    }));
-
-  void Row(const BuiltinCollation& collation) { Emit<kCollation>(collation); }
+template<char Provider>
+constexpr auto kLocale = [](const BuiltinCollation& collation) {
+  return collation.provider == Provider ? NonEmpty(collation.locale)
+                                        : std::nullopt;
 };
+
+constexpr auto kCollation = Shape<kPgCollationSql, const BuiltinCollation>(
+  Col<"oid">(&BuiltinCollation::oid), Col<"collname">(&BuiltinCollation::name),
+  Col<"collnamespace">([](const auto&) { return kPgCatalogSchema; }),
+  Col<"collowner">([](const auto&) { return kRootUser; }),
+  Col<"collprovider">(&BuiltinCollation::provider),
+  Col<"collisdeterministic">(&BuiltinCollation::deterministic),
+  Col<"collencoding">([](const auto&) { return -1; }),
+  Col<"collcollate">(kLocale<'c'>), Col<"collctype">(kLocale<'c'>),
+  Col<"colllocale">(kLocale<'i'>));
 
 }  // namespace
 
-SystemTable gPgCollation = SystemTableOf<PgCollation>();
+SystemTable gPgCollation =
+  SystemTableOf<ArrayTable<kCollation, &LoadCollations, 10>>();
 
 }  // namespace sdb::pg

@@ -36,17 +36,12 @@
 #include <string_view>
 #include <vector>
 
+#include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
 #include "pg/catalog/utils/session.h"
 
-namespace sdb {
-namespace catalog {
-
-class RoleCatalogEntry;
-
-}  // namespace catalog
-namespace pg {
+namespace sdb::pg {
 
 inline constexpr std::array kSchemaObjectTypes{
   duckdb::CatalogType::TABLE_ENTRY,       duckdb::CatalogType::VIEW_ENTRY,
@@ -119,10 +114,6 @@ class ArrayTypeNames final {
   bool _unprefixed = false;
 };
 
-const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
-                                          std::string_view name);
-std::optional<duckdb::idx_t> RoleOrPublic(duckdb::ClientContext& context,
-                                          std::string_view name);
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
   duckdb::ClientContext& context, std::string_view name);
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
@@ -137,8 +128,6 @@ SubObject FindKeyIndex(const Session& session, uint64_t oid);
 SubObject FindKeyIndex(duckdb::ClientContext& context,
                        duckdb::SchemaCatalogEntry& schema,
                        std::string_view name);
-
-struct StaticView;
 
 struct Relation {
   duckdb::optional_ptr<duckdb::CatalogEntry> entry;
@@ -159,5 +148,4 @@ struct RelationAccess : Relation {
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid);
 
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::pg

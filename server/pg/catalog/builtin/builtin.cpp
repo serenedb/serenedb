@@ -21,7 +21,6 @@
 #include "pg/catalog/builtin/builtin.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -29,12 +28,12 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <vector>
 
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
-#include "pg/types.h"
 
 namespace sdb::pg {
 namespace {
@@ -59,18 +58,9 @@ static_assert(absl::c_all_of(kFrozenCollations, [](const FrozenOid& row) {
   return row.oid >= kFirstCollation && row.oid < kFirstUnfrozenCollation;
 }));
 
-static_assert(absl::c_is_sorted(kBuiltinTypes,
-                                [](const auto& lhs, const auto& rhs) {
-                                  return lhs.oid < rhs.oid;
-                                }) &&
-              absl::c_is_sorted(kProcs,
-                                [](const auto& lhs, const auto& rhs) {
-                                  return lhs.oid < rhs.oid;
-                                }) &&
-              absl::c_is_sorted(kCollations,
-                                [](const auto& lhs, const auto& rhs) {
-                                  return lhs.oid < rhs.oid;
-                                }));
+static_assert(absl::c_is_sorted(kBuiltinTypes, kByOid) &&
+              absl::c_is_sorted(kProcs, kByOid) &&
+              absl::c_is_sorted(kCollations, kByOid));
 
 constexpr void VisitRowTypes(auto&& visit) {
   for (const auto* sql : kGeneratedTables) {
@@ -87,19 +77,23 @@ constexpr void VisitRowTypes(auto&& visit) {
   }
 }
 
+struct RowTypeNames {
+  size_t count;
+  size_t chars;
+};
+
 constexpr auto kRowTypeNames = [] {
-  size_t rows = 0;
-  size_t chars = 0;
+  RowTypeNames names{0, 0};
   VisitRowTypes([&](duckdb::idx_t, std::string_view, std::string_view name,
                     int32_t, int32_t) {
-    ++rows;
-    chars += name.size() + 1;
+    ++names.count;
+    names.chars += name.size() + 1;
   });
-  return std::pair{rows, chars};
+  return names;
 }();
 
 constexpr auto kArrayNames = [] {
-  std::array<char, kRowTypeNames.second> names{};
+  std::array<char, kRowTypeNames.chars> names{};
   size_t at = 0;
   VisitRowTypes([&](duckdb::idx_t, std::string_view, std::string_view name,
                     int32_t, int32_t) {
@@ -112,7 +106,7 @@ constexpr auto kArrayNames = [] {
 }();
 
 constexpr auto kAllTypes = [] {
-  std::array<BuiltinType, std::size(kBuiltinTypes) + 2 * kRowTypeNames.first>
+  std::array<BuiltinType, std::size(kBuiltinTypes) + 2 * kRowTypeNames.count>
     types{};
   auto out = absl::c_copy(kBuiltinTypes, types.begin());
   const auto* array_name = kArrayNames.data();
@@ -128,18 +122,14 @@ constexpr auto kAllTypes = [] {
     row.array = array;
     row.relid = static_cast<int32_t>(relid);
     *out++ = row;
-    auto element = *FindByOid(kPgTypes, kInt4Array);
-    element.oid = array;
-    element.name = std::string_view{array_name, name.size() + 1};
+    auto element =
+      SdbArray(array, std::string_view{array_name, name.size() + 1}, oid);
     array_name += name.size() + 1;
     element.nsp = nsp;
-    element.elem = oid;
     element.align = 'd';
     *out++ = element;
   });
-  absl::c_sort(types, [](const BuiltinType& lhs, const BuiltinType& rhs) {
-    return lhs.oid < rhs.oid;
-  });
+  absl::c_sort(types, kByOid);
   return types;
 }();
 
@@ -179,18 +169,12 @@ const std::vector<BuiltinCollation>& Collations() {
       const bool icu =
         absl::StartsWith(entry->function.name.GetIdentifierName(), "collate_");
       const auto frozen = FindFrozenOid(kFrozenCollations, name);
-      collations.emplace_back(
-        BuiltinCollation{.oid = frozen != kInvalidOid ? frozen : unfrozen++,
-                         .name = name,
-                         .provider = icu ? 'i' : 'b',
-                         .locale = icu ? name : std::string_view{},
-                         .deterministic = entry->not_required_for_equality});
+      collations.emplace_back(frozen != kInvalidOid ? frozen : unfrozen++, name,
+                              icu ? 'i' : 'b', icu ? name : std::string_view{},
+                              entry->not_required_for_equality);
     }
     SDB_ASSERT(unfrozen <= kFirstBuiltinFunction);
-    absl::c_sort(collations,
-                 [](const BuiltinCollation& lhs, const BuiltinCollation& rhs) {
-                   return lhs.oid < rhs.oid;
-                 });
+    absl::c_sort(collations, kByOid);
     return collations;
   }();
   return kAll;
@@ -200,17 +184,17 @@ static_assert(absl::c_all_of(kBuiltinTypes, [](const BuiltinType& type) {
   return type.type != 'd' || FindByOid(kBuiltinTypes, type.basetype);
 }));
 
-template<typename Key, typename Row>
-const Row* Find(const absl::flat_hash_map<Key, const Row*>& index, Key key) {
+template<typename Map>
+auto Find(const Map& index, const typename Map::key_type& key) {
   const auto it = index.find(key);
   return it == index.end() ? nullptr : it->second;
 }
 
 struct TypeIndex {
-  absl::flat_hash_map<std::pair<duckdb::idx_t, std::string_view>,
-                      const BuiltinType*>
+  irs::containers::FlatHashMap<std::pair<duckdb::idx_t, std::string_view>,
+                               const BuiltinType*>
     by_name;
-  absl::flat_hash_map<duckdb::idx_t, const BuiltinType*> by_relid;
+  irs::containers::FlatHashMap<duckdb::idx_t, const BuiltinType*> by_relid;
 };
 
 const TypeIndex& Types() {
@@ -231,7 +215,7 @@ const TypeIndex& Types() {
 
 std::span<const BuiltinType> BuiltinTypes() { return kAllTypes; }
 
-const BuiltinType* FindBuiltinType(int32_t oid) {
+const BuiltinType* FindBuiltinType(int64_t oid) {
   return FindByOid(kAllTypes, kTypeIndex, oid);
 }
 
@@ -264,10 +248,9 @@ int32_t CollationOid(std::string_view collation) {
   }
   const auto& collations = Collations();
   const auto it = absl::c_find_if(collations, [&](const BuiltinCollation& row) {
-    return row.provider != 'd' && row.provider != 'c' &&
-           absl::EqualsIgnoreCase(row.name, collation);
+    return row.provider != 'd' && absl::EqualsIgnoreCase(row.name, collation);
   });
-  return it == collations.end() ? 0 : it->oid;
+  return it == collations.end() ? static_cast<int32_t>(kInvalidOid) : it->oid;
 }
 
 }  // namespace sdb::pg

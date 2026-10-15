@@ -21,6 +21,7 @@
 #include "pg/catalog/functions/functions.h"
 
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 
 namespace sdb::pg {
@@ -42,7 +43,7 @@ void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
 void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
                     std::string_view name, duckdb::FunctionStability stability,
                     duckdb::init_local_state_t init,
-                    std::initializer_list<duckdb::ScalarFunction> functions) {
+                    std::span<const duckdb::ScalarFunction> functions) {
   duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
   for (auto function : functions) {
     if (init) {
@@ -51,6 +52,14 @@ void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
     set.AddFunction(std::move(function));
   }
   Register(loader, schema, stability, std::move(set));
+}
+
+void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,
+                   duckdb::TableFunction function) {
+  duckdb::CreateTableFunctionInfo info{std::move(function)};
+  info.SetSchema(duckdb::Identifier{schema});
+  info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  loader.RegisterFunction(std::move(info));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BindNull(

@@ -28,13 +28,10 @@
 
 #include <algorithm>
 #include <array>
-#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <duckdb/common/operator/add.hpp>
-#include <duckdb/common/operator/multiply.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/decimal.hpp>
 #include <duckdb/common/types/interval.hpp>
@@ -88,6 +85,9 @@ constexpr size_t kZoneTokenMaxLength = 10;
 constexpr uint8_t kNumericWidth = duckdb::Decimal::MAX_WIDTH_DECIMAL;
 constexpr uint8_t kNumericDefaultScale = 3;
 constexpr int32_t kNumericMinSignificantDigits = 16;
+constexpr size_t kCommaYearDigits = 3;
+constexpr fast_float::parse_options kSignedInteger{
+  fast_float::chars_format::allow_leading_plus};
 
 constexpr std::string_view kMonthsFull[] = {
   "January", "February", "March",     "April",   "May",      "June",
@@ -1424,13 +1424,11 @@ int32_t FromCharParseIntLength(int32_t* dest, const char*& src, int32_t length,
   const auto remaining = std::strlen(src);
   const std::string copy{src, std::min<size_t>(length, remaining)};
   auto used = static_cast<int32_t>(remaining);
-  constexpr fast_float::parse_options kSigned{
-    fast_float::chars_format::allow_leading_plus};
   int64_t result = 0;
   std::errc ec{};
   if ((node.suffix & kSuffixFillMode) || IsNextSeparator(nodes, index)) {
-    const auto parsed =
-      fast_float::from_chars_advanced(src, src + remaining, result, kSigned);
+    const auto parsed = fast_float::from_chars_advanced(src, src + remaining,
+                                                        result, kSignedInteger);
     ec = parsed.ec;
     src = ec == std::errc::invalid_argument ? init : parsed.ptr;
   } else {
@@ -1445,7 +1443,7 @@ int32_t FromCharParseIntLength(int32_t* dest, const char*& src, int32_t length,
                  "\"FM\" modifier."));
     }
     const auto parsed = fast_float::from_chars_advanced(
-      copy.data(), copy.data() + copy.size(), result, kSigned);
+      copy.data(), copy.data() + copy.size(), result, kSignedInteger);
     ec = parsed.ec;
     used = ec == std::errc::invalid_argument
              ? 0
@@ -1577,23 +1575,43 @@ bool ParseZoneAbbreviation(const char*& src, TmFromChar& out,
   return false;
 }
 
+const char* ScanInteger(const char* src, const char* end, size_t width,
+                        int64_t& value) {
+  while (src != end && absl::ascii_isspace(*src)) {
+    ++src;
+  }
+  const auto parsed = fast_float::from_chars_advanced(
+    src, src + std::min<size_t>(end - src, width), value, kSignedInteger);
+  if (parsed.ec == std::errc::result_out_of_range) {
+    value = *src == '-' ? std::numeric_limits<int64_t>::min()
+                        : std::numeric_limits<int64_t>::max();
+  }
+  return parsed.ec == std::errc::invalid_argument ? nullptr : parsed.ptr;
+}
+
 void ParseCommaYear(const char*& src, TmFromChar& out, const DchNode& node) {
-  int32_t millennia = 0;
-  int32_t years = 0;
-  int32_t consumed = 0;
-  if (std::sscanf(src, "%d,%03d%n", &millennia, &years, &consumed) < 2) {
+  const char* const end = src + std::strlen(src);
+  int64_t millennia = 0;
+  int64_t years = 0;
+  const char* next =
+    ScanInteger(src, end, std::numeric_limits<size_t>::max(), millennia);
+  next = next && *next == ','
+           ? ScanInteger(next + 1, end, kCommaYearDigits, years)
+           : nullptr;
+  if (!next) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_DATETIME_FORMAT),
                     ERR_MSG("invalid value \"", src, "\" for \"Y,YYY\""));
   }
-  if (__builtin_mul_overflow(millennia, 1000, &millennia) ||
-      __builtin_add_overflow(years, millennia, &years)) {
+  int32_t year = 0;
+  if (__builtin_mul_overflow(static_cast<int32_t>(millennia), 1000, &year) ||
+      __builtin_add_overflow(static_cast<int32_t>(years), year, &year)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATETIME_FIELD_OVERFLOW),
       ERR_MSG("value for \"Y,YYY\" in source string is out of range"));
   }
-  FromCharSetInt(out.year, years, node);
+  FromCharSetInt(out.year, year, node);
   out.yysz = 4;
-  src += consumed;
+  src = next;
 }
 
 void ParseShortYear(const char*& src, TmFromChar& out,
@@ -3225,8 +3243,8 @@ void TimestampTzToCharFunction(duckdb::DataChunk& args,
       }
       const auto offset = local.zone->OffsetSeconds(value.value);
       int64_t wall = 0;
-      if (!duckdb::TryAddOperator::Operation(
-            value.value, int64_t{offset} * kUsecsPerSec, wall) ||
+      if (__builtin_add_overflow(value.value, int64_t{offset} * kUsecsPerSec,
+                                 &wall) ||
           !duckdb::timestamp_t{wall}.IsFinite()) {
         ThrowTimestampOutOfRange();
       }
@@ -3477,14 +3495,14 @@ void ToTimestampFunction(duckdb::DataChunk& args,
           kUsecsPerSec +
         parsed.fsec;
       int64_t wall = 0;
-      if (!duckdb::TryMultiplyOperator::Operation(days, kUsecsPerDay, wall) ||
-          !duckdb::TryAddOperator::Operation(wall, time, wall)) {
+      if (__builtin_mul_overflow(days, kUsecsPerDay, &wall) ||
+          __builtin_add_overflow(wall, time, &wall)) {
         ThrowTimestampOutOfRange();
       }
       int64_t instant = 0;
       if (parsed.has_tz) {
-        if (!duckdb::TryAddOperator::Operation(
-              wall, int64_t{parsed.gmtoffset} * kUsecsPerSec, instant)) {
+        if (__builtin_add_overflow(
+              wall, int64_t{parsed.gmtoffset} * kUsecsPerSec, &instant)) {
           ThrowTimestampOutOfRange();
         }
       } else {
@@ -3514,7 +3532,7 @@ void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
   };
   duckdb::ExtensionLoader loader{db, "serenedb"};
   const auto add = [&](std::string_view name,
-                       std::initializer_list<Overload> overloads) {
+                       std::span<const Overload> overloads) {
     const duckdb::Identifier identifier{name};
     duckdb::ScalarFunctionSet set{identifier};
     for (const auto& overload : overloads) {

@@ -184,6 +184,42 @@ search_path
 some_schema
 
 
+# set_config returns the new value as SHOW displays it
+statement ok
+BEGIN;
+
+
+query
+SELECT set_config('default_transaction_read_only', 'on', true) AS on_value;
+----
+on_value
+on
+
+
+query
+SELECT set_config('default_transaction_read_only', 'off', true) AS off_value;
+----
+off_value
+off
+
+
+statement ok
+ROLLBACK;
+
+
+# A value the setting rejects is an ordinary error
+statement ok
+BEGIN;
+
+
+statement error db error: ERROR: (parameter "default_transaction_read_only" requires a Boolean value|Failed to cast value: Could not convert string 'maybe' to BOOL)
+SELECT set_config('default_transaction_read_only', 'maybe', true);
+
+
+statement ok
+ROLLBACK;
+
+
 # --- SET GLOBAL is not rolled back ---
 # Moved to tests/sqllogic/recovery/settings_global_scope.test so the global
 # state mutation runs against an isolated serened instance. Keeping it here

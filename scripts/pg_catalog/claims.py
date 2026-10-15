@@ -1,7 +1,7 @@
 import pathlib
 import re
 
-from .common import REPO_ROOT
+from .common import PG_CATALOG, REPO_ROOT
 
 REPO = pathlib.Path(REPO_ROOT)
 DOCS = REPO / "docs/compatibility/system-table-compatibility.md"
@@ -12,7 +12,7 @@ TYPE_DOCS = REPO / "docs/compatibility/data-type-compatibility.md"
 TYPE_TEST = (
     REPO / "tests/sqllogic/sdb/pg/site_docs/compatibility/data_type_claims.test"
 )
-TYPE_ROW = re.compile(r"\|\s*([a-z_0-9]+)\s*\|\s*(🟢|🟡|🔴)\s*\|")
+CLAIM_ROW = re.compile(r"\|\s*([a-z_][a-z_0-9]*)\s*\|\s*(🟢|🟡|🔴)\s*\|")
 
 SECTIONS = {
     "## System Tables": ("sys_tables", "pg_catalog"),
@@ -184,7 +184,7 @@ def parse(path):
         for heading, value in SECTIONS.items():
             if line.startswith(heading):
                 section = value
-        match = re.match(r"\|\s*([a-z_][a-z_0-9]*)\s*\|\s*(🟢|🟡|🔴)\s*\|", line)
+        match = CLAIM_ROW.match(line)
         if match and section:
             rows.append((section[0], section[1], match.group(1), match.group(2)))
     return rows
@@ -230,7 +230,7 @@ def output():
 def type_rows():
     rows = [match.groups()
             for line in TYPE_DOCS.read_text(encoding="utf-8").splitlines()
-            if (match := TYPE_ROW.match(line))]
+            if (match := CLAIM_ROW.match(line))]
     if not rows:
         raise SystemExit("no type rows parsed from " + str(TYPE_DOCS))
     return rows
@@ -239,8 +239,8 @@ def type_rows():
 def check_types(gen):
     arrays = {row["typarray"] for row in gen.rows["pg_type"]}
     expected = {row["typname"] for row in gen.rows["pg_type"]
-                if row["typnamespace"] == "11" and row["typtype"] in "brm"
-                and row["oid"] not in arrays}
+                if row["typnamespace"] == PG_CATALOG
+                and row["typtype"] in "brm" and row["oid"] not in arrays}
     documented = [name for name, _ in type_rows()]
     if len(documented) != len(set(documented)):
         raise SystemExit(f"{TYPE_DOCS.name} lists a type twice")

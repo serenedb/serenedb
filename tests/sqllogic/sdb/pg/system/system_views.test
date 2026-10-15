@@ -1,4 +1,4 @@
-# Tests that all system views defined in system_views.h can be queried without errors
+# Tests that all system views can be queried without errors
 #
 # Each view is tested with SELECT COUNT(*) >= 0 to verify it is queryable
 

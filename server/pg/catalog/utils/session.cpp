@@ -71,14 +71,13 @@ Session MakeSession(duckdb::ClientContext* context) {
         })) {
       return;
     }
-    session.search_path.emplace_back(SessionSchema{
-      .name = std::string{name},
-      .entry = session.database
-                 ? session.database->GetSchema(
-                     *session.transaction, duckdb::Identifier{name},
-                     duckdb::OnEntryNotFound::RETURN_NULL)
-                 : nullptr,
-      .system = FindSystemObject(kSystemNamespaces, name) != nullptr});
+    session.search_path.emplace_back(
+      std::string{name},
+      session.database ? session.database->GetSchema(
+                           *session.transaction, duckdb::Identifier{name},
+                           duckdb::OnEntryNotFound::RETURN_NULL)
+                       : nullptr,
+      static_cast<bool>(FindSystemObject(kSystemNamespaces, name)));
   };
   const auto& search_path =
     *duckdb::ClientData::Get(*context).catalog_search_path;

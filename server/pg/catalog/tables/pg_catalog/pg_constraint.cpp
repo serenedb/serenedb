@@ -156,8 +156,10 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
     if (!Allows<"conrelid">(table.oid)) {
       return;
     }
-    for (const auto& constraint :
-         table.GetConstraints() | std::views::filter(IsPgConstraint)) {
+    for (const auto& constraint : table.GetConstraints()) {
+      if (!IsPgConstraint(constraint)) {
+        continue;
+      }
       switch (constraint->type) {
         case CHECK:
           Emit<kCheck>({table, *constraint});

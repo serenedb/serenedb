@@ -28,23 +28,14 @@ SystemRows<ReplicationOrigin> LoadOrigins(SystemScan& scan) {
   return ReplicationOrigins(*scan.Context().db);
 }
 
-class PgReplicationOrigin final
-  : public SystemTableScan<kPgReplicationOriginSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<ReplicationOrigin>{&LoadOrigins, {}, {}}};
-
-  static constexpr auto kOrigin = Shape<kSql, const ReplicationOrigin>(
+constexpr auto kOrigin =
+  Shape<kPgReplicationOriginSql, const ReplicationOrigin>(
     Col<"roident">(&ReplicationOrigin::id),
     Col<"roname">(&ReplicationOrigin::name));
 
-  void Row(const ReplicationOrigin& origin) { Emit<kOrigin>(origin); }
-};
-
 }  // namespace
 
-SystemTable gPgReplicationOrigin = SystemTableOf<PgReplicationOrigin>();
+SystemTable gPgReplicationOrigin =
+  SystemTableOf<ArrayTable<kOrigin, &LoadOrigins>>();
 
 }  // namespace sdb::pg

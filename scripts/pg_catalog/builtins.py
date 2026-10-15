@@ -1,13 +1,24 @@
+import collections
 import os
 import re
 
 from . import config
-from .common import REPO_ROOT, camel, cpp_bool, cpp_char, cpp_str, oid
+from .common import (PG_CATALOG, REPO_ROOT, camel, cpp_bool, cpp_char,
+                     cpp_str, oid)
 
-PG_CATALOG = '11'
+TypeRow = collections.namedtuple('TypeRow', (
+    'oid', 'typname', 'namespace', 'typlen', 'typbyval', 'typtype',
+    'typcategory', 'typispreferred', 'typdelim', 'typsubscript', 'typelem',
+    'typarray', 'typinput', 'typoutput', 'typreceive', 'typsend', 'typmodin',
+    'typmodout', 'typanalyze', 'typalign', 'typstorage', 'typcollation',
+    'typbasetype', 'typrelid', 'typtypmod', 'typnotnull', 'typdefault'))
+Procedure = collections.namedtuple('Procedure', (
+    'oid', 'proname', 'pronargs', 'prorettype', 'proargtypes', 'prokind',
+    'proretset', 'provolatile', 'proisstrict', 'prolang', 'prosrc'))
 
-PROC_COLUMNS = (9, 12, 13, 14, 15, 16, 17, 18)
-REFERENCE_COLUMNS = (10, 11, 22)
+PROC_COLUMNS = ('typsubscript', 'typinput', 'typoutput', 'typreceive',
+                'typsend', 'typmodin', 'typmodout', 'typanalyze')
+REFERENCE_COLUMNS = ('typelem', 'typarray', 'typbasetype')
 RANGE_COLUMNS = ('rngtypid', 'rngsubtype', 'rngmultitypid', 'rngcollation',
                  'rngsubopc', 'rngcanonical', 'rngsubdiff')
 RANGE_PROCS = ('rngcanonical', 'rngsubdiff')
@@ -33,24 +44,29 @@ def sdb_types():
 
 
 def array_element(row, by_oid):
-    element = by_oid.get(row[10])
-    if element and element[11] == row[0] and row[1].startswith('_'):
+    element = by_oid.get(row.typelem)
+    if (element and element.typarray == row.oid and
+            row.typname.startswith('_')):
         return element
     return None
 
 
 def bki_type(row):
-    return (int(row['oid']), row['typname'], 'pg_catalog', int(row['typlen']),
-            row['typbyval'] == 't', row['typtype'], row['typcategory'],
-            row['typispreferred'] == 't', row['typdelim'],
-            oid(row['typsubscript']), oid(row['typelem']),
-            oid(row['typarray']), oid(row['typinput']),
-            oid(row['typoutput']), oid(row['typreceive']),
-            oid(row['typsend']), oid(row['typmodin']), oid(row['typmodout']),
-            oid(row['typanalyze']), row['typalign'], row['typstorage'],
-            oid(row['typcollation']), oid(row['typbasetype']),
-            oid(row['typrelid']), int(row['typtypmod']),
-            row['typnotnull'] == 't', row['typdefault'] or '')
+    return TypeRow(
+        oid=int(row['oid']), typname=row['typname'], namespace='pg_catalog',
+        typlen=int(row['typlen']), typbyval=row['typbyval'] == 't',
+        typtype=row['typtype'], typcategory=row['typcategory'],
+        typispreferred=row['typispreferred'] == 't',
+        typdelim=row['typdelim'], typsubscript=oid(row['typsubscript']),
+        typelem=oid(row['typelem']), typarray=oid(row['typarray']),
+        typinput=oid(row['typinput']), typoutput=oid(row['typoutput']),
+        typreceive=oid(row['typreceive']), typsend=oid(row['typsend']),
+        typmodin=oid(row['typmodin']), typmodout=oid(row['typmodout']),
+        typanalyze=oid(row['typanalyze']), typalign=row['typalign'],
+        typstorage=row['typstorage'], typcollation=oid(row['typcollation']),
+        typbasetype=oid(row['typbasetype']), typrelid=oid(row['typrelid']),
+        typtypmod=int(row['typtypmod']), typnotnull=row['typnotnull'] == 't',
+        typdefault=row['typdefault'] or '')
 
 
 def domain_types(gen, by_name):
@@ -61,29 +77,41 @@ def domain_types(gen, by_name):
     for domain in gen.initdb.domains:
         base = by_name[domain.base]
         collation = (int(gen.one('pg_collation', collname=domain.collation)
-                         ['oid']) if domain.collation else base[21])
-        out.append((domain.array, '_' + domain.name, 'information_schema') +
-                   template[3:10] + (domain.oid, 0) + template[12:19] +
-                   ('d' if base[19] == 'd' else 'i', template[20],
-                    collation) + template[22:])
-        out.append((domain.oid, domain.name, 'information_schema', base[3],
-                    base[4], 'd', base[6], False, ',', 0, 0, domain.array,
-                    domain_in, base[13], domain_recv, base[15], 0, 0, 0,
-                    base[19], base[20], collation, base[0], 0, domain.typmod,
-                    False, domain.default))
+                         ['oid']) if domain.collation else base.typcollation)
+        out.append(template._replace(
+            oid=domain.array, typname='_' + domain.name,
+            namespace='information_schema', typelem=domain.oid, typarray=0,
+            typalign='d' if base.typalign == 'd' else 'i',
+            typcollation=collation))
+        out.append(TypeRow(
+            oid=domain.oid, typname=domain.name,
+            namespace='information_schema', typlen=base.typlen,
+            typbyval=base.typbyval, typtype='d',
+            typcategory=base.typcategory, typispreferred=False, typdelim=',',
+            typsubscript=0, typelem=0, typarray=domain.array,
+            typinput=domain_in, typoutput=base.typoutput,
+            typreceive=domain_recv, typsend=base.typsend, typmodin=0,
+            typmodout=0, typanalyze=0, typalign=base.typalign,
+            typstorage=base.typstorage, typcollation=collation,
+            typbasetype=base.oid, typrelid=0, typtypmod=domain.typmod,
+            typnotnull=False, typdefault=domain.default))
     return out
 
 
 def procedure(row):
-    return (int(row['oid']), row['proname'], int(row['pronargs']),
-            oid(row['prorettype']),
-            [int(arg) for arg in row['proargtypes'].split()],
-            row['prokind'], row['proretset'] == 't', row['provolatile'],
-            row['proisstrict'] == 't', oid(row['prolang']), row['prosrc'])
+    return Procedure(
+        oid=int(row['oid']), proname=row['proname'],
+        pronargs=int(row['pronargs']), prorettype=oid(row['prorettype']),
+        proargtypes=[int(arg) for arg in row['proargtypes'].split()],
+        prokind=row['prokind'], proretset=row['proretset'] == 't',
+        provolatile=row['provolatile'],
+        proisstrict=row['proisstrict'] == 't', prolang=oid(row['prolang']),
+        prosrc=row['prosrc'])
 
 
 def procedures(gen, types):
-    oids = {row[i] for row in types for i in PROC_COLUMNS if row[i]}
+    oids = {getattr(row, column) for row in types for column in PROC_COLUMNS
+            if getattr(row, column)}
     oids |= {oid(am['amhandler']) for am in gen.rows['pg_am']
              if am['amname'] in config.ACCESS_METHODS}
     oids |= {oid(language[column]) for language in gen.rows['pg_language']
@@ -101,22 +129,24 @@ def supported_types(gen):
     excluded = set(sdb_types())
     types = [bki_type(row) for row in gen.rows['pg_type']
              if row['typname'] not in excluded]
-    types = sorted(types + domain_types(gen, {row[1]: row for row in types}))
-    by_oid = {row[0]: row for row in types}
+    types = sorted(types + domain_types(
+        gen, {row.typname: row for row in types}))
+    by_oid = {row.oid: row for row in types}
     kept = [row for row in types
-            if (array_element(row, by_oid) or row)[5] != 'c']
-    keep = {row[0] for row in kept}
+            if (array_element(row, by_oid) or row).typtype != 'c']
+    keep = {row.oid for row in kept}
     procs = procedures(gen, kept)
     if missing := {oid for proc in procs
-                   for oid in (proc[3], *proc[4])} - keep:
+                   for oid in (proc.prorettype, *proc.proargtypes)} - keep:
         raise SystemExit(f'procedures refer to types SereneDB owns: '
                          f'{sorted(missing)}')
     for row in kept:
         for column in REFERENCE_COLUMNS:
-            if row[column] and row[column] not in keep:
-                raise SystemExit(f'type {row[1]} refers to type '
-                                 f'{by_oid[row[column]][1]}, which SereneDB '
-                                 f'does not list')
+            reference = getattr(row, column)
+            if reference and reference not in keep:
+                raise SystemExit(f'type {row.typname} refers to type '
+                                 f'{by_oid[reference].typname}, which '
+                                 f'SereneDB does not list')
     return kept, by_oid, procs
 
 
@@ -124,8 +154,8 @@ def type_constants(types, by_oid):
     constants = {}
     for row in types:
         element = array_element(row, by_oid)
-        base = camel((element or row)[1])
-        constants[row[0]] = f'k{base}{"Array" if element else ""}'
+        base = camel((element or row).typname)
+        constants[row.oid] = f'k{base}{"Array" if element else ""}'
     return constants
 
 
@@ -165,4 +195,4 @@ def generate(gen):
     gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])
-    return constants, by_oid, [proc[0] for proc in procs]
+    return constants, by_oid, [proc.oid for proc in procs]

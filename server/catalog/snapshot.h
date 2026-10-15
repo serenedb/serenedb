@@ -23,22 +23,17 @@
 #include <absl/base/call_once.h>
 #include <absl/synchronization/mutex.h>
 
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/dependency.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <string_view>
-#include <utility>
 #include <vector>
 
-namespace duckdb {
-
-class TableCatalogEntry;
-class UniqueConstraint;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
 template<typename T>
@@ -55,18 +50,25 @@ class Derived final {
   mutable T _value;
 };
 
+struct CatalogKey {
+  duckdb::TableCatalogEntry* table;
+  const duckdb::UniqueConstraint* constraint;
+};
+
+struct CatalogEdge {
+  duckdb::CatalogEntry* subject;
+  duckdb::DependencyDependentFlags flags;
+
+  bool operator==(const CatalogEdge&) const = default;
+};
+
 struct CatalogSnapshot {
   std::vector<duckdb::CatalogEntry*> entries;
-  Derived<irs::containers::FlatHashMap<
-    std::string_view,
-    std::pair<duckdb::TableCatalogEntry*, const duckdb::UniqueConstraint*>>>
-    keys;
+  Derived<irs::containers::FlatHashMap<std::string_view, CatalogKey>> keys;
   Derived<irs::containers::FlatHashSet<duckdb::idx_t>> indexed;
   Derived<irs::containers::FlatHashSet<duckdb::idx_t>> triggered;
-  Derived<irs::containers::FlatHashMap<
-    const duckdb::CatalogEntry*,
-    std::vector<
-      std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>>>
+  Derived<irs::containers::FlatHashMap<const duckdb::CatalogEntry*,
+                                       std::vector<CatalogEdge>>>
     subjects;
 };
 

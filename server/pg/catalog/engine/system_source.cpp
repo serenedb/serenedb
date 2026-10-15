@@ -29,9 +29,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
-#include <ranges>
 
-#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
@@ -40,10 +38,6 @@
 
 namespace sdb::pg {
 namespace {
-
-constexpr auto kMemberType = [](duckdb::CatalogType type) {
-  return type != duckdb::CatalogType::SCHEMA_ENTRY;
-};
 
 std::string_view ScanPrefix(const SystemCondition<std::string>& condition) {
   if (!condition.lower || !condition.upper) {
@@ -130,12 +124,11 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
     }
     switch (index.lookup) {
       case SystemLookup::Kind: {
-        const bool text = _table.Sql().columns[index.column].physical ==
-                          duckdb::PhysicalType::VARCHAR;
+        const bool chars = _table.Sql().columns[index.column].type == kChar;
         for (const auto type : source.types) {
           if (absl::c_none_of(index.kinds, [&](const SystemKindTypes& kind) {
                 return absl::c_linear_search(kind.types, type) &&
-                       (text
+                       (chars
                           ? Passes(index.column, static_cast<char>(kind.kind))
                           : Passes(index.column, kind.kind));
               })) {
@@ -148,8 +141,8 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
         break;
       case SystemLookup::Object:
       case SystemLookup::Dependents:
-        numbers = numbers || filter->numbers.keys.has_value();
-        names = names || filter->texts.keys.has_value();
+        numbers = numbers || filter->numbers.keys;
+        names = names || filter->texts.keys;
         break;
     }
   }
@@ -186,7 +179,7 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
     }
   }
   const auto wanted_member = [&](duckdb::CatalogType type) {
-    return kMemberType(type) && wanted.test(std::to_underlying(type));
+    return type != SCHEMA_ENTRY && wanted.test(std::to_underlying(type));
   };
   const auto* index =
     Choose(source.indexes,
@@ -203,7 +196,10 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
     if (!schemas.empty()) {
       auto& first = schemas.front()->Cast<duckdb::DuckSchemaEntry>();
       absl::InlinedVector<const duckdb::CatalogSet*, 8> walked;
-      for (const auto type : source.types | std::views::filter(wanted_member)) {
+      for (const auto type : source.types) {
+        if (!wanted_member(type)) {
+          continue;
+        }
         if (const auto* set = &first.GetCatalogSet(type);
             !absl::c_linear_search(walked, set)) {
           walked.emplace_back(set);
@@ -268,10 +264,10 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
   return result;
 }
 
-std::span<const SystemEdge> SystemScan::WalkedSubjects(
+std::span<const catalog::CatalogEdge> SystemScan::WalkedSubjects(
   duckdb::CatalogEntry& entry) const {
   const auto collect = [&](duckdb::CatalogEntry& member) {
-    std::vector<SystemEdge> edges;
+    std::vector<catalog::CatalogEdge> edges;
     Dependencies().ScanEdges(
       Transaction(), member, true,
       [&](duckdb::CatalogEntry& subject,
@@ -287,7 +283,7 @@ std::span<const SystemEdge> SystemScan::WalkedSubjects(
       }
     }
   });
-  std::span<const SystemEdge> edges;
+  std::span<const catalog::CatalogEdge> edges;
   if (const auto it = subjects.find(&entry); it != subjects.end()) {
     edges = it->second;
   }
@@ -313,7 +309,7 @@ bool SystemScan::Indexed(duckdb::CatalogEntry& relation) const {
       indexed.insert(entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
     }
   });
-  return !indexed.empty() && indexed.contains(relation.oid);
+  return indexed.contains(relation.oid);
 }
 
 bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
@@ -334,7 +330,7 @@ bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
       }
     }
   });
-  return !triggered.empty() && triggered.contains(table.oid);
+  return triggered.contains(table.oid);
 }
 
 SystemEntries SystemScan::Resolve(const CatalogSetSource& source) const {
@@ -421,11 +417,10 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
       }
     }
   }
-  for (auto& schema : _database.GetSchemas(_context) |
-                        std::views::filter([](const auto& schema) {
-                          return !schema.get().internal;
-                        })) {
-    schemas.emplace_back(&schema.get());
+  for (auto& schema : _database.GetSchemas(_context)) {
+    if (!schema.get().internal) {
+      schemas.emplace_back(&schema.get());
+    }
   }
   return schemas;
 }
@@ -436,18 +431,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SystemScan::FindOwned(
     if (const auto* schema = FindSystemObject(kSystemNamespaces, oid)) {
       return FindSchema(schema->name, system).get();
     }
-    std::pair<std::string_view, std::string_view> relation;
-    if (const auto* table = FindSystemTable(oid)) {
-      relation = {table->Sql().schema, table->Sql().name};
-    } else if (const auto* view = FindSystemView(oid)) {
-      relation = {view->schema, view->name};
-    }
-    if (!relation.second.empty()) {
-      auto schema = FindSchema(relation.first, system);
+    const auto member = [&](std::string_view schema_name,
+                            std::string_view name) {
+      auto schema = FindSchema(schema_name, system);
       return schema ? FindMember(Transaction(), *schema,
                                  duckdb::CatalogType::TABLE_ENTRY,
-                                 duckdb::Identifier{relation.second})
+                                 duckdb::Identifier{name})
                     : nullptr;
+    };
+    if (const auto* table = FindSystemTable(oid)) {
+      return member(table->Sql().schema, table->Sql().name);
+    }
+    if (const auto* view = FindSystemView(oid)) {
+      return member(view->schema, view->name);
     }
   }
   if (oid & kRowTypeOidBit) {
@@ -471,9 +467,8 @@ void SystemScan::VisitNamed(
   const duckdb::Identifier identifier{name};
   for (auto* schema : entries.schemas) {
     const duckdb::CatalogEntry* table = nullptr;
-    for (const auto type :
-         entries.keys.source->types | std::views::filter(kMemberType)) {
-      if (!wanted.test(std::to_underlying(type))) {
+    for (const auto type : entries.keys.source->types) {
+      if (type == SCHEMA_ENTRY || !wanted.test(std::to_underlying(type))) {
         continue;
       }
       if (auto entry = FindMember(Transaction(), *schema, type, identifier);

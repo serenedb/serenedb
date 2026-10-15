@@ -348,8 +348,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
                 -1};
       }
       if (type.HasAlias()) {
+        const auto& alias = type.GetTypeInfo().alias;
         for (const auto& schema : kSystemNamespaces) {
-          if (const auto* row = FindBuiltinType(schema.oid, type.GetAlias());
+          if (const auto* row = FindBuiltinType(schema.oid, alias);
               row && row->relid != 0) {
             return make(*row);
           }
@@ -415,12 +416,17 @@ uint32_t Type2Oid(const duckdb::LogicalType& type) {
 
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
   if (oid < kMaxSystem) {
-    if (const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid))) {
-      if (auto type = BuiltinLogicalType(*builtin);
-          type.id() != TypeId::INVALID) {
-        return type;
-      }
+    const auto* builtin = FindBuiltinType(oid);
+    if (!builtin) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("cache lookup failed for type ", oid));
     }
+    if (auto type = BuiltinLogicalType(*builtin);
+        type.id() != TypeId::INVALID) {
+      return type;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("type ", builtin->name, " is not supported"));
   }
   const auto session = MakeSession(&context);
   if (auto entry = EntryByOid(session, oid);

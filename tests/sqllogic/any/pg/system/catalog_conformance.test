@@ -8846,7 +8846,7 @@ ORDER BY q.typname::text COLLATE "C"
 ----
 nspname	oid	typname	typtype	typnotnull	elemtypoid
 pg_catalog	geometry[]	_geometry	a	f	geometry
-pg_catalog	union[]	_union	a	f	union
+pg_catalog	"union"[]	_union	a	f	"union"
 pg_catalog	variant[]	_variant	a	f	variant
 pg_catalog	datemultirange	datemultirange	m	f	daterange
 pg_catalog	daterange	daterange	r	f	date
@@ -8861,7 +8861,7 @@ pg_catalog	tsmultirange	tsmultirange	m	f	tsrange
 pg_catalog	tsrange	tsrange	r	f	timestamp without time zone
 pg_catalog	tstzmultirange	tstzmultirange	m	f	tstzrange
 pg_catalog	tstzrange	tstzrange	r	f	timestamp with time zone
-pg_catalog	union	union	b	f	NULL
+pg_catalog	"union"	union	b	f	NULL
 pg_catalog	variant	variant	b	f	NULL
 
 
@@ -9416,7 +9416,7 @@ query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
 select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
 ) q
-WHERE q.oid::regtype::text NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', 'union',
+WHERE q.oid::regtype::text NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', '"union"', 'union',
     'variant')
 ORDER BY q.oid::regtype::text COLLATE "C"
 ----
@@ -9733,7 +9733,7 @@ query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
 select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
 ) q
-WHERE q.oid::regtype::text NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', 'union',
+WHERE q.oid::regtype::text NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', '"union"', 'union',
     'variant')
 ORDER BY q.oid::regtype::text COLLATE "C"
 ----
@@ -10050,7 +10050,7 @@ query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
 select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
 ) q
-WHERE q.oid::regtype::text IN ('geometry', 'information_schema."columns"', 'information_schema.columns', 'union', 'variant')
+WHERE q.oid::regtype::text IN ('geometry', 'information_schema."columns"', 'information_schema.columns', '"union"', 'union', 'variant')
 ORDER BY q.oid::regtype::text COLLATE "C"
 ----
 oid	typarray
@@ -10062,13 +10062,13 @@ query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
 select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
 ) q
-WHERE q.oid::regtype::text IN ('geometry', 'information_schema."columns"', 'information_schema.columns', 'union', 'variant')
+WHERE q.oid::regtype::text IN ('geometry', 'information_schema."columns"', 'information_schema.columns', '"union"', 'union', 'variant')
 ORDER BY q.oid::regtype::text COLLATE "C"
 ----
 oid	typarray
+"union"	"union"[]
 geometry	geometry[]
 information_schema."columns"	information_schema."columns"[]
-union	union[]
 variant	variant[]
 
 
@@ -11012,7 +11012,7 @@ ORDER BY q.typname::text COLLATE "C"
 oid	typname	typelem	typdelim	typinput	rngsubtype	typtype	typbasetype
 information_schema."columns"[]	_columns	information_schema."columns"	,	array_in	NULL	b	0
 geometry[]	_geometry	geometry	,	array_in	NULL	b	0
-union[]	_union	union	,	array_in	NULL	b	0
+"union"[]	_union	"union"	,	array_in	NULL	b	0
 variant[]	_variant	variant	,	array_in	NULL	b	0
 daterange	daterange	-	,	range_in	1082	r	0
 int4range	int4range	-	,	range_in	23	r	0

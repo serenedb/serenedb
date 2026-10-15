@@ -147,7 +147,7 @@ inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
 
 inline bool IsInet(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
-         type.GetAlias() == kInetAlias;
+         type.GetTypeInfo().alias == kInetAlias;
 }
 
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
@@ -156,7 +156,7 @@ inline constexpr std::string_view kCidrAlias = "cidr";
 
 inline bool IsCidr(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
-         type.GetAlias() == kCidrAlias;
+         type.GetTypeInfo().alias == kCidrAlias;
 }
 
 inline duckdb::LogicalType CIDR() {

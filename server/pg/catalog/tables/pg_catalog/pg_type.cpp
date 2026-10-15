@@ -79,8 +79,8 @@ constexpr SystemFact kBuiltinFacts[] = {
 };
 
 const BuiltinType kComposite = *FindBuiltinRowType(kPgClassTable);
-const BuiltinType kArray = *FindBuiltinType(kInt4Array);
-const BuiltinType kDomain = *FindBuiltinType(kCardinalNumber);
+constexpr BuiltinType kArray = *FindByOid(kBuiltinTypes, kInt4Array);
+constexpr BuiltinType kDomain = *FindByOid(kBuiltinTypes, kCardinalNumber);
 
 consteval auto TypeColumns(auto base, auto align) {
   return std::tuple{
@@ -100,11 +100,13 @@ consteval auto TypeColumns(auto base, auto align) {
 
 class UserType {
  public:
-  explicit UserType(const duckdb::TypeCatalogEntry& entry) : entry{entry} {}
+  explicit UserType(const duckdb::TypeCatalogEntry& entry) : _entry{entry} {}
+
+  const duckdb::TypeCatalogEntry& Entry() const noexcept { return _entry; }
 
   const ColumnType& Base() const {
     if (!_base) {
-      _base = DescribeColumnType(entry.user_type);
+      _base = DescribeColumnType(_entry.user_type);
     }
     return *_base;
   }
@@ -117,11 +119,10 @@ class UserType {
     return *_builtin;
   }
 
-  const duckdb::TypeCatalogEntry& entry;
-
  private:
   static constexpr BuiltinType kNoBuiltin{.category = 'U'};
 
+  const duckdb::TypeCatalogEntry& _entry;
   mutable std::optional<ColumnType> _base;
   mutable const BuiltinType* _builtin = nullptr;
 };
@@ -137,18 +138,28 @@ struct ArrayType {
 };
 
 constexpr std::tuple kUserTypeColumns{
-  Col<"oid">([](const auto& row) { return row.entry.oid; }),
-  Col<"typname">([](const auto& row) -> const auto& { return row.entry.name; }),
+  Col<"oid">([](const auto& row) { return row.Entry().oid; }),
+  Col<"typname">(
+    [](const auto& row) -> const auto& { return row.Entry().name; }),
   Col<"typnamespace">(
-    [](const auto& row) { return row.entry.ParentSchemaOid(); }),
-  Col<"typowner">([](const auto& row) { return row.entry.permissions.owner; }),
-  Col<"typarray">([](const auto& row) { return TypeArrayOid(row.entry.oid); }),
-  Col<"typacl">(
-    [](const auto& row) -> const auto& { return row.entry.permissions.acl; })};
+    [](const auto& row) { return row.Entry().ParentSchemaOid(); }),
+  Col<"typowner">(
+    [](const auto& row) { return row.Entry().permissions.owner; }),
+  Col<"typarray">(
+    [](const auto& row) { return TypeArrayOid(row.Entry().oid); }),
+  Col<"typacl">([](const auto& row) -> const auto& {
+    return row.Entry().permissions.acl;
+  })};
 
 constexpr std::tuple kTypeTraits{
   Col<"typisdefined">([](const auto&) { return true; }),
   Col<"typdelim">([](const auto&) { return ','; })};
+
+auto Visible(duckdb::idx_t oid) {
+  return [oid](const Session& session) {
+    return TypeIsVisible(session, oid).value_or(false);
+  };
+}
 
 class PgType final : public SystemTableScan<kPgTypeSql> {
  public:
@@ -199,7 +210,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     kUserTypeColumns, kTypeTraits,
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },
                 [](const auto&) { return kComposite.align; }),
-    Col<"typrelid">([](const auto& row) { return row.entry.oid; }),
+    Col<"typrelid">([](const auto& row) { return row.Entry().oid; }),
     Col<"typtypmod">([](const auto&) { return -1; }));
 
   static constexpr auto kDomainType = Shape<kSql, const UserType>(
@@ -258,24 +269,23 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
   };
 
   void Row(const BuiltinType& type) {
-    Emit<kBuiltinType>(type, [&] { return Visible(type.oid); });
+    Emit<kBuiltinType>(type, Visible(type.oid));
   }
 
   void Row(const duckdb::TypeCatalogEntry& entry) {
     const UserType type{entry};
     const auto id = entry.user_type.id();
+    const auto array = Visible(TypeArrayOid(entry.oid));
     if (id == duckdb::LogicalTypeId::ENUM) {
-      Emit<kEnumType>(type, [&] { return Visible(entry.oid); });
-      Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays},
-                       [&] { return Visible(TypeArrayOid(entry.oid)); });
+      Emit<kEnumType>(type, Visible(entry.oid));
+      Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays}, array);
     } else if (duckdb::StructType::IsStruct(id)) {
-      Emit<kStructType>(type, [&] { return Visible(entry.oid); });
+      Emit<kStructType>(type, Visible(entry.oid));
       Emit<kArrayType>({entry, entry.oid, kComposite.align, nullptr, _arrays},
-                       [&] { return Visible(TypeArrayOid(entry.oid)); });
+                       array);
     } else {
-      Emit<kDomainType>(type, [&] { return Visible(entry.oid); });
-      Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays},
-                       [&] { return Visible(TypeArrayOid(entry.oid)); });
+      Emit<kDomainType>(type, Visible(entry.oid));
+      Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays}, array);
     }
   }
 
@@ -284,19 +294,13 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
              std::is_same_v<Relation, duckdb::ViewCatalogEntry>
   void Row(const Relation& relation) {
     const auto oid = RowTypeOid(relation.oid);
-    Emit<kRowType>(relation, [&] { return Visible(oid); });
+    Emit<kRowType>(relation, Visible(oid));
     Emit<kArrayType>({relation, oid, kComposite.align, nullptr, _arrays},
-                     [&] { return Visible(TypeArrayOid(oid)); });
+                     Visible(TypeArrayOid(oid)));
   }
 
  private:
-  bool Visible(duckdb::idx_t oid) const {
-    return TypeIsVisible(*_session, oid).value_or(false);
-  }
-
   ArrayTypeNames _arrays{*this};
-  std::optional<Session> _session =
-    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

@@ -87,15 +87,13 @@ void VisitDefaultAcls(
   }
   auto& catalog = attached->GetCatalog().Cast<duckdb::DuckCatalog>();
   const auto view = catalog.GetCatalogTransaction(context).view;
-  for (const auto& [oid, row] :
-       std::views::zip(std::views::iota(duckdb::idx_t{1}),
-                       database.permissions.defaults) |
-         std::views::filter([&](const auto& item) {
-           const auto scope = std::get<1>(item).scope;
-           return scope == kInvalidOid ||
-                  catalog.GetOidIndex().GetVisible(scope, view);
-         })) {
-    visitor(oid, row);
+  duckdb::idx_t oid = 0;
+  for (const auto& row : database.permissions.defaults) {
+    ++oid;
+    if (row.scope == kInvalidOid ||
+        catalog.GetOidIndex().GetVisible(row.scope, view)) {
+      visitor(oid, row);
+    }
   }
 }
 

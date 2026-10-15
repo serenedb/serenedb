@@ -23,6 +23,9 @@
 #include <absl/strings/escaping.h>
 #include <fast_float/fast_float.h>
 
+#include <duckdb/common/operator/cast_operators.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
@@ -36,9 +39,9 @@
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
-#include "pg/commands/create_subscription.h"
 #include "pg/inet.h"
 #include "pg/serialize.h"
+#include "pg/types/pg_lsn.h"
 
 namespace sdb::connector {
 namespace {
@@ -209,8 +212,8 @@ bool PgVarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
       continue;
     }
     const auto& text = value.GetValue();
-    dst_data[i] = static_cast<int64_t>(*pg::RegIn<Kind>(
-      session, std::string_view{text.GetData(), text.GetSize()}, false));
+    dst_data[i] = static_cast<int64_t>(*pg::RegIn(
+      session, Kind, std::string_view{text.GetData(), text.GetSize()}, false));
   }
   return true;
 }
@@ -229,27 +232,47 @@ bool PgRegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
       continue;
     }
     const auto text =
-      pg::RegOut<Kind>(session, static_cast<uint64_t>(value.GetValue()));
+      pg::RegOut(session, Kind, static_cast<uint64_t>(value.GetValue()));
     dst_data[i] =
       duckdb::StringVector::AddString(result, text.data(), text.size());
   }
   return true;
 }
 
+void InputError(irs::pg::SqlErrorData&& error,
+                duckdb::CastParameters& parameters) {
+  if (!parameters.error_message) {
+    THROW_SQL_ERROR_FROM_DATA(std::move(error));
+  }
+  duckdb::HandleCastError::AssignError(error.errmsg, parameters);
+}
+
 bool PgVarcharToLsnCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count, duckdb::CastParameters&) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, uint64_t>(
-    source, result, count, [](duckdb::string_t input) {
-      const std::string_view text{input.GetData(), input.GetSize()};
-      const auto lsn = pg::ParseLsn(text);
-      if (!lsn) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-          ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\""));
-      }
-      return *lsn;
-    });
-  return true;
+                        duckdb::idx_t count,
+                        duckdb::CastParameters& parameters) {
+  auto texts = source.Values<duckdb::string_t>();
+  auto writer = duckdb::FlatVector::Writer<uint64_t>(result, count);
+  bool converted = true;
+  for (auto entry : texts) {
+    if (!entry.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto& raw = entry.GetValue();
+    const std::string_view text{raw.GetData(), raw.GetSize()};
+    if (const auto lsn = pg::ParseLsn(text)) {
+      writer.WriteValue(*lsn);
+      continue;
+    }
+    InputError(
+      SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\"")),
+      parameters);
+    converted = false;
+    writer.WriteNull();
+  }
+  return converted;
 }
 
 bool PgLsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -262,8 +285,10 @@ bool PgLsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 bool PgVarcharToCidrCast(duckdb::Vector& source, duckdb::Vector& result,
-                         duckdb::idx_t count, duckdb::CastParameters&) {
+                         duckdb::idx_t count,
+                         duckdb::CastParameters& parameters) {
   auto src = source.Values<duckdb::string_t>();
+  bool converted = true;
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto value = src[i];
     if (!value.IsValid()) {
@@ -271,11 +296,17 @@ bool PgVarcharToCidrCast(duckdb::Vector& source, duckdb::Vector& result,
       continue;
     }
     const auto& text = value.GetValue();
-    const auto inet = pg::ParseCidr({text.GetData(), text.GetSize()});
+    INET_IPAddress inet{};
+    if (auto error = pg::TryParseCidr({text.GetData(), text.GetSize()}, inet)) {
+      InputError(std::move(*error), parameters);
+      converted = false;
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
     pg::StoreInet(result, i, inet.type, inet.address.upper, inet.address.lower,
                   inet.mask);
   }
-  return true;
+  return converted;
 }
 
 template<bool kToText>

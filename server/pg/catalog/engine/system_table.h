@@ -51,6 +51,9 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/parser/column_list.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
@@ -74,21 +77,14 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/subscription.h"
+#include "catalog/snapshot.h"
+#include "pg/catalog/utils/session.h"
 #include "pg/types.h"
 
-namespace duckdb {
-
-class Expression;
-class TableFilter;
-struct TableFilterState;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
 class TokenizerCatalogEntry;
-class SubscriptionCatalogEntry;
-class SnapshotCatalog;
-struct CatalogSnapshot;
 
 }  // namespace sdb::catalog
 namespace sdb::pg {
@@ -274,6 +270,9 @@ class SystemTable {
       _rows{rows},
       _superuser_only{sql.superuser_only || superuser_only} {}
 
+  template<typename T>
+  explicit SystemTable(std::type_identity<T>, const SystemSql& sql);
+
   SystemTable(const SystemTable&) = delete;
   SystemTable& operator=(const SystemTable&) = delete;
 
@@ -336,13 +335,14 @@ struct SystemOptional<std::optional<V>> : std::true_type {
 
 struct SystemConcatText {
   std::array<std::string_view, 4> parts;
-
-  friend std::strong_ordering operator<=>(const SystemConcatText& text,
-                                          std::string_view other);
-  friend bool operator==(const SystemConcatText& text, std::string_view other) {
-    return (text <=> other) == 0;
-  }
 };
+
+std::strong_ordering operator<=>(const SystemConcatText& text,
+                                 std::string_view other);
+
+inline bool operator==(const SystemConcatText& text, std::string_view other) {
+  return (text <=> other) == 0;
+}
 
 using SystemText =
   std::variant<std::string_view, SystemConcatText, std::string>;
@@ -364,9 +364,6 @@ struct SystemPrefix {
   duckdb::Identifier lower;
   duckdb::Identifier upper;
 };
-
-using SystemEdge =
-  std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>;
 
 struct SystemSet {
   std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
@@ -411,11 +408,7 @@ class SystemRows {
   }
 
   std::span<const Row> Rows() const noexcept { return _rows; }
-  const auto& Owner() const noexcept
-    requires(!std::is_void_v<Holder>)
-  {
-    return *_owner;
-  }
+  const auto& Owner() const noexcept { return *_owner; }
 
  private:
   std::span<const Row> _rows;
@@ -503,6 +496,11 @@ struct SystemVector {
   duckdb::ValidityMask* validity;
 };
 
+struct SystemConstant {
+  uint32_t place;
+  duckdb::Value value;
+};
+
 struct SystemStableText {
   std::string_view text;
 };
@@ -585,9 +583,6 @@ class SystemScan {
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
   }
-  duckdb::DependencyManager& Dependencies() const {
-    return *_database.GetDependencyManager();
-  }
 
   SystemEntries Resolve(const CatalogSource& source) const;
   SystemEntries Resolve(const CatalogSetSource& source) const;
@@ -608,7 +603,8 @@ class SystemScan {
         std::vector<const Row*> picked;
         key.find(rows, *filter, picked);
         absl::c_sort(picked);
-        picked.erase(std::unique(picked.begin(), picked.end()), picked.end());
+        const auto duplicates = std::ranges::unique(picked);
+        picked.erase(duplicates.begin(), duplicates.end());
         return {std::move(rows), std::move(picked)};
       }
     }
@@ -651,7 +647,7 @@ class SystemScan {
 
   template<const auto& Shape>
   bool Emit(typename SystemShapeOf<Shape>::Context& ctx) {
-    return Emit<Shape>(ctx, [] { return true; });
+    return Emit<Shape>(ctx, [](const Session&) { return true; });
   }
 
   template<const auto& Shape, typename Visible>
@@ -675,7 +671,7 @@ class SystemScan {
         return false;
       }
     }
-    if (_visible_only && !visible()) {
+    if (_session && !visible(*_session)) {
       return false;
     }
     if (_skip != 0) {
@@ -733,17 +729,20 @@ class SystemScan {
     return (((_needed | _filtered) >> column) & 1) != 0;
   }
 
-  bool VisibleOnly() const noexcept { return _visible_only; }
-
  private:
   IRS_FORCE_INLINE bool Needs(uint32_t column) const noexcept {
     return ((_needed >> column) & 1) != 0;
   }
 
+  duckdb::DependencyManager& Dependencies() const {
+    return *_database.GetDependencyManager();
+  }
+
   SystemSet SetOf(catalog::SnapshotCatalog& catalog, duckdb::CatalogSet& set,
                   const duckdb::CatalogTransaction& transaction) const;
 
-  std::span<const SystemEdge> WalkedSubjects(duckdb::CatalogEntry& entry) const;
+  std::span<const catalog::CatalogEdge> WalkedSubjects(
+    duckdb::CatalogEntry& entry) const;
 
   template<typename Get, typename Ctx>
   IRS_FORCE_INLINE decltype(auto) Value(const Get& get, Ctx& ctx) {
@@ -781,8 +780,7 @@ class SystemScan {
         SDB_ASSERT(scan._table.Holds(kColumn, Integer<int64_t>(value)));
       }
       if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
-        scan.PutList<kMeta.element, kNullDefault && !kMeta.not_null>(target,
-                                                                     value);
+        scan.PutList<kMeta.element, !kMeta.not_null>(target, value);
       } else {
         scan.Put<kMeta.physical>(target, scan._row, value);
       }
@@ -881,31 +879,30 @@ class SystemScan {
   template<duckdb::PhysicalType P, typename V>
   IRS_FORCE_INLINE void Put(const SystemVector& target, duckdb::idx_t row,
                             const V& value) {
-    using enum duckdb::PhysicalType;
-    if constexpr (P == BOOL) {
+    if constexpr (P == duckdb::PhysicalType::BOOL) {
       static_assert(std::is_convertible_v<const V&, bool> &&
                       !std::is_pointer_v<V> &&
                       !std::is_convertible_v<const V&, std::string_view>,
                     "bool column needs a bool");
       Cells<bool>(target)[row] = static_cast<bool>(value);
-    } else if constexpr (P == INT16) {
+    } else if constexpr (P == duckdb::PhysicalType::INT16) {
       Cells<int16_t>(target)[row] = Integer<int16_t>(value);
-    } else if constexpr (P == INT32) {
+    } else if constexpr (P == duckdb::PhysicalType::INT32) {
       Cells<int32_t>(target)[row] = Integer<int32_t>(value);
-    } else if constexpr (P == INT64 &&
+    } else if constexpr (P == duckdb::PhysicalType::INT64 &&
                          std::is_same_v<V, duckdb::timestamp_tz_t>) {
       Cells<duckdb::timestamp_tz_t>(target)[row] = value;
-    } else if constexpr (P == INT64) {
+    } else if constexpr (P == duckdb::PhysicalType::INT64) {
       Cells<int64_t>(target)[row] = Integer<int64_t>(value);
-    } else if constexpr (P == UINT64) {
+    } else if constexpr (P == duckdb::PhysicalType::UINT64) {
       Cells<uint64_t>(target)[row] = Integer<uint64_t>(value);
-    } else if constexpr (P == FLOAT) {
+    } else if constexpr (P == duckdb::PhysicalType::FLOAT) {
       static_assert(std::is_arithmetic_v<V>, "real column needs a number");
       Cells<float>(target)[row] = static_cast<float>(value);
-    } else if constexpr (P == DOUBLE) {
+    } else if constexpr (P == duckdb::PhysicalType::DOUBLE) {
       static_assert(std::is_arithmetic_v<V>, "real column needs a number");
       Cells<double>(target)[row] = static_cast<double>(value);
-    } else if constexpr (P == VARCHAR) {
+    } else if constexpr (P == duckdb::PhysicalType::VARCHAR) {
       if constexpr (std::is_same_v<V, char>) {
         PutText(target, row, std::string_view{&value, value ? 1U : 0U});
       } else if constexpr (std::is_same_v<V, SystemStableText>) {
@@ -954,13 +951,12 @@ class SystemScan {
 
   template<const SystemSql& Sql, uint32_t C>
   void PutDefault() {
-    using enum duckdb::PhysicalType;
     constexpr auto& kMeta = Sql.columns[C];
     const auto& target = _vectors[_slots[C]];
     if constexpr (!kMeta.zero_default) {
       target.validity->SetInvalid(_row);
-    } else if constexpr (kMeta.physical == VARCHAR) {
-      Put<VARCHAR>(target, _row, SystemStableText{});
+    } else if constexpr (kMeta.physical == duckdb::PhysicalType::VARCHAR) {
+      Put<duckdb::PhysicalType::VARCHAR>(target, _row, SystemStableText{});
     } else {
       Put<kMeta.physical>(target, _row, 0);
     }
@@ -1000,7 +996,7 @@ class SystemScan {
   std::shared_ptr<const auth::RoleGraph> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
-  std::vector<std::pair<uint32_t, duckdb::Value>> _constants;
+  std::vector<SystemConstant> _constants;
   std::vector<SystemVector> _vectors;
   duckdb::idx_t _row = 0;
   size_t _skip = 0;
@@ -1012,7 +1008,7 @@ class SystemScan {
   uint64_t _pruned = 0;
   std::vector<SystemPrune> _prunes;
   std::string _text;
-  bool _visible_only = false;
+  std::optional<Session> _session;
   const catalog::CatalogSnapshot* _walked = nullptr;
 #ifdef SDB_DEV
   duckdb::CatalogType _visiting = duckdb::CatalogType::INVALID;
@@ -1059,53 +1055,52 @@ void Visit(T& table, duckdb::CatalogEntry& entry) {
 
 template<typename T>
 void Dispatch(T& table, duckdb::CatalogEntry& entry) {
-  using enum duckdb::CatalogType;
   switch (entry.type) {
-    case TABLE_ENTRY:
+    case duckdb::CatalogType::TABLE_ENTRY:
       return Visit<duckdb::TableCatalogEntry>(table, entry);
-    case VIEW_ENTRY:
+    case duckdb::CatalogType::VIEW_ENTRY:
       return Visit<duckdb::ViewCatalogEntry>(table, entry);
-    case INDEX_ENTRY:
+    case duckdb::CatalogType::INDEX_ENTRY:
       return Visit<duckdb::IndexCatalogEntry>(table, entry);
-    case SEQUENCE_ENTRY:
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
       return Visit<duckdb::SequenceCatalogEntry>(table, entry);
-    case TYPE_ENTRY:
+    case duckdb::CatalogType::TYPE_ENTRY:
       return Visit<duckdb::TypeCatalogEntry>(table, entry);
-    case SCHEMA_ENTRY:
+    case duckdb::CatalogType::SCHEMA_ENTRY:
       return Visit<duckdb::SchemaCatalogEntry>(table, entry);
-    case MACRO_ENTRY:
-    case TABLE_MACRO_ENTRY:
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
       return Visit<duckdb::MacroCatalogEntry>(table, entry);
-    case TRIGGER_ENTRY:
+    case duckdb::CatalogType::TRIGGER_ENTRY:
       return Visit<duckdb::TriggerCatalogEntry>(table, entry);
-    case ROLE_ENTRY:
+    case duckdb::CatalogType::ROLE_ENTRY:
       return Visit<catalog::RoleCatalogEntry>(table, entry);
-    case DATABASE_ENTRY:
+    case duckdb::CatalogType::DATABASE_ENTRY:
       return Visit<catalog::DatabaseCatalogEntry>(table, entry);
-    case FOREIGN_SERVER_ENTRY:
+    case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
       return Visit<catalog::ForeignServerCatalogEntry>(table, entry);
-    case TOKENIZER_ENTRY:
+    case duckdb::CatalogType::TOKENIZER_ENTRY:
       return Visit<catalog::TokenizerCatalogEntry>(table, entry);
-    case SUBSCRIPTION_ENTRY:
+    case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
       return Visit<catalog::SubscriptionCatalogEntry>(table, entry);
-    case INVALID:
-    case PREPARED_STATEMENT:
-    case COLLATION_ENTRY:
-    case COORDINATE_SYSTEM_ENTRY:
-    case JOB_ENTRY:
-    case REPLICATION_ORIGIN_ENTRY:
-    case TABLE_FUNCTION_ENTRY:
-    case SCALAR_FUNCTION_ENTRY:
-    case AGGREGATE_FUNCTION_ENTRY:
-    case PRAGMA_FUNCTION_ENTRY:
-    case COPY_FUNCTION_ENTRY:
-    case WINDOW_FUNCTION_ENTRY:
-    case DELETED_ENTRY:
-    case RENAMED_ENTRY:
-    case SECRET_ENTRY:
-    case SECRET_TYPE_ENTRY:
-    case SECRET_FUNCTION_ENTRY:
-    case DEPENDENCY_ENTRY:
+    case duckdb::CatalogType::INVALID:
+    case duckdb::CatalogType::PREPARED_STATEMENT:
+    case duckdb::CatalogType::COLLATION_ENTRY:
+    case duckdb::CatalogType::COORDINATE_SYSTEM_ENTRY:
+    case duckdb::CatalogType::JOB_ENTRY:
+    case duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY:
+    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
+    case duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY:
+    case duckdb::CatalogType::COPY_FUNCTION_ENTRY:
+    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
+    case duckdb::CatalogType::DELETED_ENTRY:
+    case duckdb::CatalogType::RENAMED_ENTRY:
+    case duckdb::CatalogType::SECRET_ENTRY:
+    case duckdb::CatalogType::SECRET_TYPE_ENTRY:
+    case duckdb::CatalogType::SECRET_FUNCTION_ENTRY:
+    case duckdb::CatalogType::DEPENDENCY_ENTRY:
       return Visit<duckdb::CatalogEntry>(table, entry);
   }
 }
@@ -1182,37 +1177,38 @@ class SystemCursor<SystemEntries> final {
   template<typename T>
   bool Walk(T& table, duckdb::SchemaCatalogEntry& schema,
             duckdb::CatalogType type) {
-    using enum duckdb::CatalogType;
-    if (type == SCHEMA_ENTRY) {
+    if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
       return table.Step(
         [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); });
     }
+    const bool relations = type == duckdb::CatalogType::TABLE_ENTRY ||
+                           type == duckdb::CatalogType::VIEW_ENTRY;
     if (!_set.snapshot) {
-      const bool keyed = (type == TABLE_ENTRY || type == VIEW_ENTRY) &&
-                         _entries.wanted.test(std::to_underlying(INDEX_ENTRY));
+      const bool keyed = relations && _entries.wanted.test(std::to_underlying(
+                                        duckdb::CatalogType::INDEX_ENTRY));
       _set = table.MemberSet(
         schema, type, _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
     }
-    if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
+    if (relations) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
-        if (entry.type == TABLE_ENTRY) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
           Visit<duckdb::TableCatalogEntry>(table, entry);
         } else {
           Visit<duckdb::ViewCatalogEntry>(table, entry);
         }
       });
     }
-    if (type == INDEX_ENTRY) {
+    if (type == duckdb::CatalogType::INDEX_ENTRY) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
         Visit<duckdb::IndexCatalogEntry>(table, entry);
       });
     }
-    if (type == SEQUENCE_ENTRY) {
+    if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
         Visit<duckdb::SequenceCatalogEntry>(table, entry);
       });
     }
-    if (type == TYPE_ENTRY) {
+    if (type == duckdb::CatalogType::TYPE_ENTRY) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
         Visit<duckdb::TypeCatalogEntry>(table, entry);
       });
@@ -1308,11 +1304,19 @@ void SystemScanRun(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 }
 
 template<typename T>
+SystemTable::SystemTable(std::type_identity<T>, const SystemSql& sql)
+  : SystemTable{sql,
+                {&SystemScanInit<T>, &SystemScanRun<T>},
+                T::kFacts,
+                T::kVisibility,
+                T::kTypeShapes,
+                T::kColumnKeys,
+                T::kRows,
+                T::kSuperuserOnly} {}
+
+template<typename T>
 SystemTable SystemTableOf() {
-  return SystemTable{T::kSql,        {&SystemScanInit<T>, &SystemScanRun<T>},
-                     T::kFacts,      T::kVisibility,
-                     T::kTypeShapes, T::kColumnKeys,
-                     T::kRows,       T::kSuperuserOnly};
+  return SystemTable{std::type_identity<T>{}, T::kSql};
 }
 
 }  // namespace sdb::pg

@@ -70,14 +70,15 @@ std::optional<std::vector<std::string>> Reloptions(
   return NonEmpty(std::move(result));
 }
 
-std::vector<std::string> Reloptions(const duckdb::IndexCatalogEntry& index) {
+std::optional<std::vector<std::string>> Reloptions(
+  const duckdb::IndexCatalogEntry& index) {
   std::vector<std::string> result;
   for (const auto name : catalog::kInvertedIndexSettings) {
     if (const auto it = index.options.find(name); it != index.options.end()) {
       result.emplace_back(absl::StrCat(name, "=", it->second.ToString()));
     }
   }
-  return result;
+  return NonEmpty(std::move(result));
 }
 
 uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
@@ -123,6 +124,14 @@ struct Index {
   const duckdb::IndexCatalogEntry& index;
   const irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t>& owners;
 };
+
+auto Shown(const SystemScan& scan, const duckdb::CatalogEntry& owner,
+           std::string_view name) {
+  return [&scan, &owner, name](const Session& session) {
+    return RelationVisible(session, NameOf(scan.Transaction(), owner).schema,
+                           name);
+  };
+}
 
 class PgClass final : public SystemTableScan<kPgClassSql> {
  public:
@@ -217,7 +226,6 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'i'; }),
     Col<"relam">([](const auto&) { return kPgAmSecondary; }),
-    Col<"reltuples">([](const auto&) { return 0.0F; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
     }));
@@ -234,12 +242,11 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                ? kPgAmInverted
                : kPgAmSecondary;
     }),
-    Col<"reltuples">([](const auto&) { return 0.0F; }),
     Col<"relnatts">(
       [](const auto& row) { return row.index.parsed_expressions.size(); }),
     Col<"reloptions">([](const auto& row) {
       return row.index.index_type == catalog::kInvertedIndexTypeName
-               ? std::optional{Reloptions(row.index)}
+               ? Reloptions(row.index)
                : std::nullopt;
     }),
     Col<"relowner">([](const auto& row, SystemScan& scan) {
@@ -301,74 +308,47 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   };
 
   void Row(duckdb::TableCatalogEntry& table) {
-    if (table.internal) {
-      if (const auto* system =
-            dynamic_cast<const catalog::SystemTableEntry*>(&table)) {
-        if (Visible(table, table.name.GetIdentifierName())) {
-          Emit<kSystem>(*system);
-        }
-        return;
-      }
+    const auto shown = Shown(*this, table, table.name.GetIdentifierName());
+    if (table.internal && FindSystemTable(table.oid)) {
+      Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
+      return;
     }
-    const bool emitted =
-      Visible(table, table.name.GetIdentifierName()) &&
-      Emit<kOrdinary>(
-        {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)});
+    Emit<kOrdinary>(
+      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
     if (Allows<"relkind">('i')) {
-      if (emitted && Reads<"relowner">()) {
+      if (Reads<"relowner">()) {
         _owners.emplace(table.oid, table.permissions.owner);
       }
       for (const auto& key : KeyIndexes(table)) {
-        if (Visible(table, key.constraint_name)) {
-          Emit<kKeyIndex>({table, key});
-        }
+        Emit<kKeyIndex>({table, key}, Shown(*this, table, key.constraint_name));
       }
     }
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
-    if (Visible(view, view.name.GetIdentifierName())) {
-      Emit<kView>(view);
-    }
+    Emit<kView>(view, Shown(*this, view, view.name.GetIdentifierName()));
   }
 
   void Row(const duckdb::IndexCatalogEntry& index) {
-    if (Visible(index, index.name.GetIdentifierName())) {
-      Emit<kIndex>({index, _owners});
-    }
+    Emit<kIndex>({index, _owners},
+                 Shown(*this, index, index.name.GetIdentifierName()));
   }
 
   void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!NumbersRows(sequence) &&
-        Visible(sequence, sequence.name.GetIdentifierName())) {
-      Emit<kSequence>(sequence);
+    if (!NumbersRows(sequence)) {
+      Emit<kSequence>(
+        sequence, Shown(*this, sequence, sequence.name.GetIdentifierName()));
     }
   }
 
   void Row(const duckdb::TypeCatalogEntry& type) {
-    if (duckdb::StructType::IsStruct(type.user_type) &&
-        Visible(type, type.name.GetIdentifierName())) {
-      Emit<kComposite>(type);
+    if (duckdb::StructType::IsStruct(type.user_type)) {
+      Emit<kComposite>(type, Shown(*this, type, type.name.GetIdentifierName()));
     }
   }
 
  private:
-  bool Visible(const duckdb::CatalogEntry& owner, std::string_view name) const {
-    if (!_session) [[likely]] {
-      return true;
-    }
-    return Shown(owner, name);
-  }
-
-  IRS_NO_INLINE bool Shown(const duckdb::CatalogEntry& owner,
-                           std::string_view name) const {
-    return RelationVisible(*_session, NameOf(Transaction(), owner).schema,
-                           name);
-  }
-
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners;
-  std::optional<Session> _session =
-    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

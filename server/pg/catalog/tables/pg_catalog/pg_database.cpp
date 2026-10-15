@@ -30,6 +30,10 @@ constexpr SystemIndex kDatabaseIndexes[] = {
   {kPgDatabaseSql["datname"], SystemLookup::Object},
 };
 
+constexpr auto kLocale = [](const auto&) {
+  return std::string_view{"C.UTF-8"};
+};
+
 class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -51,9 +55,7 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
       Col<"datallowconn">([](const auto&) { return true; }),
       Col<"datconnlimit">([](const auto&) { return -1; }),
       Col<"dattablespace">([](const auto&) { return kPgDefaultTablespace; }),
-      Col<"datcollate">(
-        [](const auto&) { return std::string_view{"C.UTF-8"}; }),
-      Col<"datctype">([](const auto&) { return std::string_view{"C.UTF-8"}; }),
+      Col<"datcollate">(kLocale), Col<"datctype">(kLocale),
       Col<"datacl">([](const auto& database) -> const auto& {
         return database.permissions.acl;
       }));

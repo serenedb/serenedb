@@ -23,9 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
@@ -46,6 +44,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "pg/sql_utils.h"
+#include "query/config.h"
 #include "replication/conninfo.h"
 #include "replication/publisher_session.h"
 #include "replication/subscription_engine.h"
@@ -195,14 +194,8 @@ SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
     }
     if (name == "synchronous_commit" &&
         Has(allowed, Allowed::SynchronousCommit)) {
-      auto level = absl::AsciiStrToLower(value.ToString());
-      if (level != "off" && level != "local" && level != "remote_write" &&
-          level != "remote_apply" && level != "on") {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("invalid value for parameter \"synchronous_commit\": \"",
-                  level, "\""));
-      }
+      auto level = value.ToString();
+      NormalizePgValue(name, FindVariable(name)->pg, level);
       result.synchronous_commit = std::move(level);
       continue;
     }
@@ -686,26 +679,6 @@ void CheckPublicationNames(const std::vector<std::string>& publications) {
 }
 
 }  // namespace
-
-std::optional<uint64_t> ParseLsn(std::string_view text) {
-  const auto slash = text.find('/');
-  if (slash == std::string_view::npos || slash == 0 ||
-      slash + 1 == text.size() || slash > 8 || text.size() - slash - 1 > 8) {
-    return std::nullopt;
-  }
-  uint32_t high = 0;
-  uint32_t low = 0;
-  if (!absl::SimpleHexAtoi(text.substr(0, slash), &high) ||
-      !absl::SimpleHexAtoi(text.substr(slash + 1), &low)) {
-    return std::nullopt;
-  }
-  return (static_cast<uint64_t>(high) << 32) | low;
-}
-
-std::string FormatLsn(uint64_t lsn) {
-  return absl::StrFormat("%X/%X", static_cast<uint32_t>(lsn >> 32),
-                         static_cast<uint32_t>(lsn));
-}
 
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
                         std::string_view conninfo,

@@ -42,7 +42,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <ranges>
 #include <tuple>
 #include <vector>
 
@@ -84,12 +83,22 @@ duckdb::idx_t TypeOid(const duckdb::LogicalType& type) {
 
 std::vector<duckdb::idx_t> ArgTypes(
   const duckdb::FunctionSignature& signature) {
-  return signature.GetParameters() |
-         std::views::filter(
-           [](const auto& parameter) { return !parameter.IsVariadic(); }) |
-         std::views::transform(
-           [](const auto& parameter) { return TypeOid(parameter.GetType()); }) |
-         std::ranges::to<std::vector>();
+  std::vector<duckdb::idx_t> types;
+  for (const auto& parameter : signature.GetParameters()) {
+    if (!parameter.IsVariadic()) {
+      types.emplace_back(TypeOid(parameter.GetType()));
+    }
+  }
+  return types;
+}
+
+std::vector<duckdb::idx_t> ArgTypes(const duckdb::MacroFunction& macro) {
+  std::vector<duckdb::idx_t> types;
+  types.reserve(macro.types.size());
+  for (const auto& type : macro.types) {
+    types.emplace_back(TypeOid(type));
+  }
+  return types;
 }
 
 char Volatility(duckdb::FunctionStability stability) {
@@ -105,7 +114,7 @@ char Volatility(duckdb::FunctionStability stability) {
 
 bool Exact(const duckdb::LogicalType& type) {
   const auto oid = TypeOid(type);
-  const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
+  const auto* builtin = FindBuiltinType(oid);
   return oid != kUnknown && builtin && BuiltinLogicalType(*builtin) == type;
 }
 
@@ -162,12 +171,9 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
   duckdb::Catalog::GetSystemCatalog(context).ScanSchemas(
     context, [&](duckdb::SchemaCatalogEntry& schema) {
       const auto collect = [&](duckdb::CatalogEntry& entry) {
-        sources.emplace_back(
-          BuiltinSource{.schema = schema.name.GetIdentifierName(),
-                        .name = entry.name.GetIdentifierName(),
-                        .type = entry.type,
-                        .entry = &entry,
-                        .macro = nullptr});
+        sources.emplace_back(schema.name.GetIdentifierName(),
+                             entry.name.GetIdentifierName(), entry.type, &entry,
+                             nullptr);
       };
       schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
       schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
@@ -179,14 +185,11 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
       VisitSystemFunctions(
         schema.name, kind,
         [&](std::string_view name, const duckdb::CreateMacroInfo& info) {
-          sources.emplace_back(
-            BuiltinSource{.schema = schema.name,
-                          .name = name,
-                          .type = kind == duckdb::MacroType::SCALAR_MACRO
-                                    ? duckdb::CatalogType::MACRO_ENTRY
-                                    : duckdb::CatalogType::TABLE_MACRO_ENTRY,
-                          .entry = nullptr,
-                          .macro = &info});
+          sources.emplace_back(schema.name, name,
+                               kind == duckdb::MacroType::SCALAR_MACRO
+                                 ? duckdb::CatalogType::MACRO_ENTRY
+                                 : duckdb::CatalogType::TABLE_MACRO_ENTRY,
+                               nullptr, &info);
         });
     }
   }
@@ -217,8 +220,7 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
           .argtypes = std::move(argtypes),
           .retset = retset,
           .strict = strict,
-          .volatility = volatility,
-          .src = std::string{source.name}}});
+          .volatility = volatility}});
     };
     const auto emit_macros =
       [&](std::string_view kind_name,
@@ -228,9 +230,8 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
           emit(kind_name, Parameters(*macro), Exact(*macro), 'f',
                macro->return_types.empty() ? kUnknown
                                            : TypeOid(macro->return_types[0]),
-               macro->types | std::views::transform(TypeOid) |
-                 std::ranges::to<std::vector>(),
-               macro->type == duckdb::MacroType::TABLE_MACRO, false, 'i');
+               ArgTypes(*macro), macro->type == duckdb::MacroType::TABLE_MACRO,
+               false, 'i');
         }
       };
     const auto emit_signatures = [&](std::string_view kind_name, char kind,
@@ -286,18 +287,13 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
   duckdb::ClientContext& context) {
   std::vector<BuiltinFunction> functions;
   for (const auto& proc : BuiltinProcs()) {
-    functions.emplace_back(BuiltinFunction{
-      .oid = static_cast<duckdb::idx_t>(proc.oid),
-      .name = std::string{proc.name},
-      .nsp = kPgCatalogSchema,
-      .kind = proc.kind,
-      .lang = static_cast<duckdb::idx_t>(proc.lang),
-      .rettype = static_cast<duckdb::idx_t>(proc.rettype),
-      .argtypes = {proc.argtypes.begin(), proc.argtypes.begin() + proc.nargs},
-      .retset = proc.retset,
-      .strict = proc.strict,
-      .volatility = proc.volatility,
-      .src = std::string{proc.src}});
+    functions.emplace_back(
+      static_cast<duckdb::idx_t>(proc.oid), std::string{proc.name},
+      kPgCatalogSchema, proc.kind, static_cast<duckdb::idx_t>(proc.lang),
+      static_cast<duckdb::idx_t>(proc.rettype),
+      std::vector<duckdb::idx_t>{proc.argtypes.begin(),
+                                 proc.argtypes.begin() + proc.nargs},
+      proc.retset, proc.strict, proc.volatility, proc.src);
   }
   auto unfrozen = kFirstUnfrozenFunction;
   VisitBuiltinOverloads(context, [&](BuiltinOverload&& overload) {
@@ -306,10 +302,11 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
     functions.emplace_back(std::move(overload.function));
   });
   SDB_ASSERT(unfrozen <= duckdb::DatabaseManager::FIRST_SYSTEM_OID);
-  absl::c_sort(functions,
-               [](const BuiltinFunction& lhs, const BuiltinFunction& rhs) {
-                 return lhs.oid < rhs.oid;
-               });
+  absl::c_sort(functions, kByOid);
+  SDB_ASSERT(absl::c_adjacent_find(functions, [](const BuiltinFunction& lhs,
+                                                 const BuiltinFunction& rhs) {
+               return lhs.oid == rhs.oid;
+             }) == functions.end());
   return functions;
 }
 
@@ -319,24 +316,27 @@ std::shared_ptr<const BuiltinFunctions> gBuiltins
 
 }  // namespace
 
+BuiltinFunctions::BuiltinFunctions(duckdb::idx_t version,
+                                   std::vector<BuiltinFunction> functions)
+  : _version{version}, _functions{std::move(functions)} {
+  for (uint32_t i = 0; i < _functions.size(); ++i) {
+    _by_name[_functions[i].name].emplace_back(i);
+  }
+}
+
 std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   duckdb::ClientContext& context) {
-  const auto system_version =
-    duckdb::Catalog::GetSystemCatalog(context).GetCatalogVersion(context);
-  const auto version =
-    system_version.IsValid() ? system_version.GetIndex() : duckdb::idx_t{0};
+  const auto version = duckdb::Catalog::GetSystemCatalog(context)
+                         .GetCatalogVersion(context)
+                         .GetIndex();
   {
     absl::ReaderMutexLock guard{&gBuiltinsLock};
-    if (gBuiltins && gBuiltins->_version == version) {
+    if (gBuiltins && gBuiltins->Version() == version) {
       return gBuiltins;
     }
   }
-  auto built = std::make_shared<BuiltinFunctions>();
-  built->_version = version;
-  built->_functions = CollectBuiltinFunctions(context);
-  for (uint32_t i = 0; i < built->_functions.size(); ++i) {
-    built->_by_name[built->_functions[i].name].emplace_back(i);
-  }
+  auto built = std::make_shared<const BuiltinFunctions>(
+    version, CollectBuiltinFunctions(context));
   absl::MutexLock guard{&gBuiltinsLock};
   gBuiltins = std::move(built);
   return gBuiltins;

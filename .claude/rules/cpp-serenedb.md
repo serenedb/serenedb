@@ -43,7 +43,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - Never reimplement what abseil, `server/utils/`, `iresearch/utils/` or DuckDB has: use, extend or patch it. No pass-through wrappers around a library call.
 - Algorithms: `absl::c_*` over `std::ranges` and iterator pairs (`check-banned-calls`); a projection becomes a lambda; `std::ranges` only for what absl lacks (`unique`, `min`, `to`, views). Loops over `std::views` pipelines.
 - Strings: `absl::StrCat`/`StrAppend`/`StrJoin`/`StrSplit`, `absl::Substitute` for repeated arguments, `absl::StrFormat`/`FPrintF`/`SNPrintF` for printf-like formatting, `fmt` only where none fits. Never the printf family or `std::format` (`check-banned-calls`; the crash handler's `snprintf` is the exception). No streams.
-- Numbers: `fast_float::from_chars`, checking `ec`; never `std::sto*`, `std::from_chars`, `strto*`, `ato*` (`check-banned-calls`).
+- Numbers: `fast_float::from_chars`, checking `ec`; never `std::sto*`, `std::from_chars`, `strto*`, `ato*` or the scanf family (`check-banned-calls`).
 - `magic_enum` for enum names; `std::span<const T>` over `std::initializer_list<T>` parameters; no RTTI.
 
 ## Strings and containers

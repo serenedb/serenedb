@@ -45,38 +45,20 @@ struct Attribute {
   std::string_view name;
   int16_t attnum;
   const duckdb::LogicalType& type;
+  const SystemSqlColumn* system = nullptr;
   mutable std::optional<ColumnType> described = std::nullopt;
 
-  duckdb::idx_t Relid() const noexcept { return relid; }
-  std::string_view Name() const noexcept { return name; }
-  int16_t Number() const noexcept { return attnum; }
   const ColumnType& Described() const {
     if (!described) {
-      described = DescribeColumnType(type);
+      described = DescribeColumn(type, system);
     }
     return *described;
   }
 };
 
-struct TableAttribute {
-  duckdb::idx_t relid;
+struct TableAttribute : Attribute {
   const duckdb::ColumnDefinition& column;
   const std::vector<bool>& not_null;
-  std::span<const SystemSqlColumn> system;
-  mutable std::optional<ColumnType> described = std::nullopt;
-
-  duckdb::idx_t Relid() const noexcept { return relid; }
-  std::string_view Name() const noexcept {
-    return column.Name().GetIdentifierName();
-  }
-  int16_t Number() const noexcept { return Attnum(column); }
-  bool NotNull() const { return not_null[column.Logical().index]; }
-  const ColumnType& Described() const {
-    if (!described) {
-      described = DescribeColumn(column, system);
-    }
-    return *described;
-  }
 };
 
 char Generated(const duckdb::ColumnDefinition& column) {
@@ -91,9 +73,8 @@ char Generated(const duckdb::ColumnDefinition& column) {
 }
 
 constexpr std::tuple kAttribute{
-  Col<"attrelid">([](const auto& row) { return row.Relid(); }),
-  Col<"attname">([](const auto& row) { return row.Name(); }),
-  Col<"attnum">([](const auto& row) { return row.Number(); }),
+  Col<"attrelid">(&Attribute::relid),
+  Col<"attnum">(&Attribute::attnum),
   Col<"atttypid">([](const auto& row) { return row.Described().oid; }),
   Col<"attlen">([](const auto& row) { return row.Described().len; }),
   Col<"atttypmod">([](const auto& row) { return row.Described().typmod; }),
@@ -119,18 +100,23 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     {kSql["attisdropped"], 0, 0},
   };
 
-  static constexpr auto kColumn = Shape<kSql, const Attribute>(kAttribute);
+  static constexpr auto kColumn =
+    Shape<kSql, const Attribute>(kAttribute, Col<"attname">(&Attribute::name));
 
   static constexpr auto kTableColumn = Shape<kSql, const TableAttribute>(
-    kAttribute,
-    Col<"attnotnull">([](const auto& row) { return row.NotNull(); }),
+    kAttribute, Col<"attname">([](const auto& row) -> const auto& {
+      return row.column.Name();
+    }),
+    Col<"attnotnull">(
+      [](const auto& row) { return row.not_null[row.column.Logical().index]; }),
     Col<"atthasdef">([](const auto& row) { return HasAttrdef(row.column); }),
     Col<"attgenerated">([](const auto& row) { return Generated(row.column); }),
     Col<"attacl">(
       [](const auto& row) -> const auto& { return row.column.Acl(); }));
 
   static constexpr auto kSequenceColumn = Shape<kSql, const Attribute>(
-    kAttribute, Col<"attnotnull">([](const auto&) { return true; }));
+    kAttribute, Col<"attname">(&Attribute::name),
+    Col<"attnotnull">([](const auto&) { return true; }));
 
   static constexpr SystemTypeShape kTypeShapes[] = {
     {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kTableColumn>::kProvided},
@@ -149,12 +135,20 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
         Reads<"attnotnull">() ? NotNullColumns(table) : std::vector<bool>{};
       const auto system = SystemColumns(table);
       for (const auto& column : table.GetColumns().Logical()) {
-        Emit<kTableColumn>({table.oid, column, not_null, system});
+        Emit<kTableColumn>(
+          {{table.oid,
+            {},
+            Attnum(column),
+            column.Type(),
+            system.empty() ? nullptr : &system[column.Logical().index]},
+           column,
+           not_null});
       }
     }
     for (const auto& key : KeyIndexes(table)) {
       if (Allows<"attrelid">(key.index_oid)) {
-        IndexColumns(key.index_oid, table, KeyAttnums(table.GetColumns(), key));
+        IndexColumns(key.index_oid, table, KeyAttnums(table.GetColumns(), key),
+                     {});
       }
     }
   }
@@ -184,7 +178,8 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
             ? duckdb::optional_ptr<duckdb::CatalogEntry>{it->second}
             : FindById(index.table_oid)) {
       IndexColumns(index.oid, *relation,
-                   IndexAttnums(Context(), index, *relation));
+                   IndexAttnums(Context(), index, *relation),
+                   IndexExpressions(index));
     }
   }
 
@@ -192,12 +187,12 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     if (!Allows<"attrelid">(sequence.oid) || NumbersRows(sequence)) {
       return;
     }
-    const std::array types{duckdb::LogicalType::BIGINT,
-                           duckdb::LogicalType::BIGINT,
-                           duckdb::LogicalType::BOOLEAN};
+    static const std::array<duckdb::LogicalType, 3> kTypes{
+      duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT,
+      duckdb::LogicalType::BOOLEAN};
     for (size_t i = 0; i < kSequenceColumns.size(); ++i) {
       Emit<kSequenceColumn>({sequence.oid, kSequenceColumns[i],
-                             static_cast<int16_t>(i + 1), types[i]});
+                             static_cast<int16_t>(i + 1), kTypes[i]});
     }
   }
 
@@ -222,16 +217,22 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
 
  private:
   template<typename R>
-  void IndexColumns(duckdb::idx_t oid, duckdb::CatalogEntry& relation,
-                    const R& attnums) {
+  void IndexColumns(
+    duckdb::idx_t oid, duckdb::CatalogEntry& relation, const R& attnums,
+    std::span<const duckdb::ParsedExpression* const> expressions) {
     const auto columns =
       relation.type == duckdb::CatalogType::VIEW_ENTRY
         ? ViewColumns(Context(), relation.Cast<duckdb::ViewCatalogEntry>())
         : nullptr;
+    IndexColumnNames names;
     int16_t attnum = 0;
     for (const int16_t key : attnums) {
       const auto column = IndexColumnAt(relation, columns.get(), key);
-      Emit<kColumn>({oid, column.name, ++attnum, column.type});
+      const auto name =
+        names.Add(key == 0 ? std::string_view{IndexExpressionName(
+                               *expressions[static_cast<size_t>(attnum)])}
+                           : column.name);
+      Emit<kColumn>({oid, name, ++attnum, column.type});
     }
   }
 

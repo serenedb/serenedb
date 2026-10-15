@@ -21,6 +21,7 @@
 #include "pg/catalog/utils/columns.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/parser/constraint.hpp>
@@ -78,20 +79,20 @@ int16_t ViewAttnum(duckdb::ClientContext& context,
 
 std::vector<bool> NotNullColumns(const duckdb::TableCatalogEntry& table) {
   std::vector<bool> not_null(table.GetColumns().LogicalColumnCount());
-  for (const auto& constraint :
-       table.GetConstraints() | std::views::filter([](const auto& constraint) {
-         return constraint->type == duckdb::ConstraintType::NOT_NULL;
-       })) {
-    not_null[constraint->Cast<duckdb::NotNullConstraint>().index.index] = true;
+  for (const auto& constraint : table.GetConstraints()) {
+    if (constraint->type == duckdb::ConstraintType::NOT_NULL) {
+      not_null[constraint->Cast<duckdb::NotNullConstraint>().index.index] =
+        true;
+    }
   }
   return not_null;
 }
 
 namespace {
 
-template<typename T, typename F>
+template<typename T>
 std::vector<T> MapIndexExpressions(const duckdb::IndexCatalogEntry& index,
-                                   F&& map) {
+                                   const auto& map) {
   std::vector<T> result;
   result.reserve(index.parsed_expressions.size());
   for (const bool included : {false, true}) {
@@ -142,6 +143,38 @@ std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
                           .GetColumnName())
                : 0;
     });
+}
+
+IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
+                          const duckdb::ViewColumnInfo* columns,
+                          int16_t attnum) {
+  static const duckdb::LogicalType kExpression{duckdb::LogicalTypeId::VARCHAR};
+  if (attnum == 0) {
+    return {"expr", kExpression};
+  }
+  const auto column = static_cast<duckdb::idx_t>(attnum - 1);
+  if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
+    return {relation.Cast<duckdb::ViewCatalogEntry>()
+              .ColumnName(*columns, column)
+              .GetIdentifierName(),
+            columns->types[column]};
+  }
+  const auto& definition = relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
+    duckdb::LogicalIndex{column});
+  return {definition.Name().GetIdentifierName(), definition.Type()};
+}
+
+std::string IndexExpressionName(const duckdb::ParsedExpression& expression) {
+  auto name = expression.GetColumnName();
+  return name == duckdb::BaseExpression::ANONYMOUS_COLUMN_NAME ? "expr" : name;
+}
+
+std::string_view IndexColumnNames::Add(std::string_view name) {
+  std::string unique{name};
+  for (size_t i = 1; absl::c_linear_search(_names, unique); ++i) {
+    unique = absl::StrCat(name, i);
+  }
+  return _names.emplace_back(std::move(unique));
 }
 
 std::vector<int16_t> ExpressionAttnums(

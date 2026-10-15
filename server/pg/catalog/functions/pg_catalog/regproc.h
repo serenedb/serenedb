@@ -21,17 +21,17 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
 
+#include "pg/catalog/utils/session.h"
 #include "pg/types.h"
 
 namespace sdb::pg {
-
-struct Session;
 
 enum class RegKind : uint8_t {
   Proc,
@@ -65,11 +65,12 @@ OutText FormatTypeOut(const Session& session, uint64_t oid,
 std::string TypeIdentity(const Session& session, uint64_t oid);
 std::string ProcIdentity(const Session& session, uint64_t oid);
 
-template<RegKind Kind>
-std::string_view RegOut(const Session& session, uint64_t oid);
-template<RegKind Kind>
-std::optional<uint64_t> RegIn(const Session& session, std::string_view text,
-                              bool missing_ok);
+std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid);
+std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
+                              std::string_view text, bool missing_ok);
+
+const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
+                                           uint64_t oid);
 
 std::optional<uint64_t> SchemaOid(const Session& session,
                                   std::string_view schema, bool missing_ok);
@@ -81,6 +82,7 @@ OutText RelationName(const Session& session, std::string_view schema,
 bool RelationVisible(const Session& session, std::string_view schema,
                      std::string_view name);
 std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid);
+bool TypeExists(const Session& session, uint64_t oid);
 std::optional<bool> TypeIsVisible(const Session& session, uint64_t oid);
 std::optional<bool> FunctionIsVisible(const Session& session, uint64_t oid);
 

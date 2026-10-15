@@ -23,7 +23,9 @@
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/shared.hpp>
+#include <optional>
 #include <string_view>
 
 namespace sdb::pg {
@@ -56,6 +58,8 @@ void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
 
 bool IsNetwork(const INET_IPAddress& inet);
 
+std::optional<irs::pg::SqlErrorData> TryParseCidr(std::string_view text,
+                                                  INET_IPAddress& inet);
 INET_IPAddress ParseCidr(std::string_view text);
 
 size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size);

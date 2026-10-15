@@ -1,9 +1,7 @@
 import re
 
 from . import builtins
-from .common import array, camel, oid
-
-PG_CATALOG = '11'
+from .common import PG_CATALOG, array, camel, oid
 
 STABILITIES = {
     'i': 'CONSISTENT',
@@ -26,14 +24,14 @@ def stub(row):
 def generate(gen, constants, all_types, bodies):
     names = {}
     for type_oid, row in all_types.items():
-        element = all_types.get(row[10])
-        names[type_oid] = (element[1] + '[]'
-                           if element and element[11] == type_oid
-                           else row[1])
+        element = all_types.get(row.typelem)
+        names[type_oid] = (element.typname + '[]'
+                           if element and element.typarray == type_oid
+                           else row.typname)
     mapped = builtins.mapped_types()
     usable = {type_oid for type_oid, row in all_types.items()
-              if row[5] != 'p' and
-              camel((builtins.array_element(row, all_types) or row)[1])
+              if row.typtype != 'p' and
+              camel((builtins.array_element(row, all_types) or row).typname)
               in mapped}
     called = {name.lower() for body in bodies for name in CALL.findall(body)}
     rows = [stub(row) for row in sorted(

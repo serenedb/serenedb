@@ -2297,12 +2297,14 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    if (i < client_oids.size() && client_oids[i] != 0) {
+    if (i < client_oids.size() && client_oids[i] != 0 &&
+        client_oids[i] != sdb::pg::kUnknown) {
       oids.emplace_back(client_oids[i]);
       continue;
     }
     oids.emplace_back(
-      sdb::pg::Type2Oid(ResolveExpectedType(prepared, stmt.TypeHints(), i)));
+      sdb::pg::WireType(ResolveExpectedType(prepared, stmt.TypeHints(), i))
+        .oid);
   }
   WriteParameterDescription(this->_send, oids);
 
@@ -2943,6 +2945,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

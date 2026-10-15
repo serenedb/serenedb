@@ -25,7 +25,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string_view>
-#include <utility>
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
@@ -111,20 +110,24 @@ void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader) {
     irs::StaticStrings::kInformationSchema;
 
   for (const auto& [name, function] : {
-         std::pair{"_pg_char_max_length", &TypmodFunction<CharMaxLength>},
-         std::pair{"_pg_char_octet_length", &TypmodFunction<CharOctetLength>},
-         std::pair{"_pg_numeric_precision", &TypmodFunction<NumericPrecision>},
-         std::pair{"_pg_numeric_precision_radix",
-                   &TypmodFunction<NumericPrecisionRadix>},
-         std::pair{"_pg_numeric_scale", &TypmodFunction<NumericScale>},
-         std::pair{"_pg_datetime_precision",
-                   &TypmodFunction<DatetimePrecision>},
+         NamedScalar{.name = "_pg_char_max_length",
+                     .function = TypmodFunction<CharMaxLength>},
+         NamedScalar{.name = "_pg_char_octet_length",
+                     .function = TypmodFunction<CharOctetLength>},
+         NamedScalar{.name = "_pg_numeric_precision",
+                     .function = TypmodFunction<NumericPrecision>},
+         NamedScalar{.name = "_pg_numeric_precision_radix",
+                     .function = TypmodFunction<NumericPrecisionRadix>},
+         NamedScalar{.name = "_pg_numeric_scale",
+                     .function = TypmodFunction<NumericScale>},
+         NamedScalar{.name = "_pg_datetime_precision",
+                     .function = TypmodFunction<DatetimePrecision>},
        }) {
-    RegisterScalar(loader, information_schema, name, CONSISTENT,
+    RegisterScalar(loader, information_schema, name, CONSISTENT, nullptr,
                    {duckdb::ScalarFunction{{oid, int4}, int4, function}});
   }
   RegisterScalar(
-    loader, information_schema, "_pg_interval_type", CONSISTENT,
+    loader, information_schema, "_pg_interval_type", CONSISTENT, nullptr,
     {duckdb::ScalarFunction{{oid, int4}, text, IntervalTypeFunction}});
   RegisterScalar(
     loader, information_schema, "_pg_index_position", CONSISTENT_WITHIN_QUERY,

@@ -19,18 +19,20 @@ same order.
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
 objects SereneDB names), in server/pg/types.cpp (which PostgreSQL types
 SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
-views are tables) and in server/pg/catalog/views/<schema>/<view>.cpp (view
-bodies SereneDB writes).
+views are tables), in server/pg/catalog/table_functions/pg_catalog/<name>.cpp
+(the set-returning functions behind PostgreSQL views) and in
+server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
 Those outputs are server/pg/catalog/generated/*.gen.inc.
 
 Three outputs come from this repository alone: generated/registry.gen.inc,
-which registers each server/pg/catalog/tables/<folder>/<table>.cpp and
-server/pg/catalog/views/<folder>/<view>.cpp, and the sqllogic tests that
-check the claims of docs/compatibility/system-table-compatibility.md and
+which registers each file in server/pg/catalog/tables, table_functions and
+views, and the sqllogic tests that check the claims of
+docs/compatibility/system-table-compatibility.md and
 docs/compatibility/data-type-compatibility.md; the type page must list
 every PostgreSQL type. --check verifies every output is current without
-writing anything; without the third_party/postgres submodule it checks those
-three only.
+writing anything; without the third_party/postgres submodule it checks only
+those three, server/pg/catalog/system_oids.lock and the two OID tables
+generated from it, and not whether the type page lists every PostgreSQL type.
 """
 
 import argparse
@@ -40,7 +42,8 @@ import sys
 import tempfile
 
 from pg_catalog import builtins, claims, functions, relations, source, views
-from pg_catalog.common import REPO_ROOT, Generator, write
+from pg_catalog.common import REPO_ROOT, write
+from pg_catalog.generator import Generator
 from pg_catalog.lock import Lock
 
 

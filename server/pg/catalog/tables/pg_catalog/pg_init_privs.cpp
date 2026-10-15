@@ -52,26 +52,17 @@ SystemRows<InitPrivilege> LoadInitPrivileges(SystemScan&) {
   return std::span{kPrivileges};
 }
 
-class PgInitPrivs final : public SystemTableScan<kPgInitPrivsSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<InitPrivilege>{&LoadInitPrivileges, {}, {}}};
-
-  static constexpr auto kPrivilege = Shape<kSql, const InitPrivilege>(
-    Col<"objoid">(&InitPrivilege::objoid),
-    Col<"classoid">(&InitPrivilege::classoid),
-    Col<"privtype">([](const auto&) { return 'i'; }),
-    Col<"initprivs">([](const auto& privilege) -> const auto& {
-      return privilege.permissions.acl;
-    }));
-
-  void Row(const InitPrivilege& privilege) { Emit<kPrivilege>(privilege); }
-};
+constexpr auto kPrivilege = Shape<kPgInitPrivsSql, const InitPrivilege>(
+  Col<"objoid">(&InitPrivilege::objoid),
+  Col<"classoid">(&InitPrivilege::classoid),
+  Col<"privtype">([](const auto&) { return 'i'; }),
+  Col<"initprivs">([](const auto& privilege) -> const auto& {
+    return privilege.permissions.acl;
+  }));
 
 }  // namespace
 
-SystemTable gPgInitPrivs = SystemTableOf<PgInitPrivs>();
+SystemTable gPgInitPrivs =
+  SystemTableOf<ArrayTable<kPrivilege, &LoadInitPrivileges>>();
 
 }  // namespace sdb::pg

@@ -110,7 +110,7 @@ inline constexpr std::array kSystemAccessMethods{
   SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
 };
 
-inline constexpr const SystemObject* FindSystemObject(
+constexpr const SystemObject* FindSystemObject(
   std::span<const SystemObject> objects, duckdb::idx_t oid) {
   for (const auto& object : objects) {
     if (object.oid == oid) {
@@ -120,7 +120,7 @@ inline constexpr const SystemObject* FindSystemObject(
   return nullptr;
 }
 
-inline constexpr const SystemObject* FindSystemObject(
+constexpr const SystemObject* FindSystemObject(
   std::span<const SystemObject> objects, std::string_view name) {
   for (const auto& object : objects) {
     if (object.name == name) {
@@ -139,21 +139,21 @@ inline constexpr duckdb::idx_t kFirstUnfrozenFunction = kMinSystem + 26'000;
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;
 inline constexpr uint64_t kRowArrayTypeOidBit = uint64_t{1} << 31;
 
-inline constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
+constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
   return element_oid & kRowTypeOidBit ? element_oid | kRowArrayTypeOidBit
                                       : element_oid - 1;
 }
 
-inline constexpr uint64_t TypeElementOid(uint64_t array_oid) {
+constexpr uint64_t TypeElementOid(uint64_t array_oid) {
   return array_oid & kRowTypeOidBit ? array_oid & ~kRowArrayTypeOidBit
                                     : array_oid + 1;
 }
 
-inline constexpr uint64_t RowTypeOid(uint64_t relation_oid) {
+constexpr uint64_t RowTypeOid(uint64_t relation_oid) {
   return relation_oid | kRowTypeOidBit;
 }
 
-inline constexpr uint64_t RowTypeRelation(uint64_t oid) {
+constexpr uint64_t RowTypeRelation(uint64_t oid) {
   return oid & ~(kRowTypeOidBit | kRowArrayTypeOidBit);
 }
 

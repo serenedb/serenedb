@@ -23,7 +23,6 @@
 #include <absl/flags/flag.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
@@ -247,19 +246,18 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
-                     const duckdb::Value& value) {
-  duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{name}, current)) {
-    return;
-  }
+void NoticeIfNotDefault(duckdb::ClientContext& ctx, std::string_view name,
+                        const duckdb::Value& value) {
+  const auto* variable = FindVariable(name);
+  SDB_ASSERT(variable && variable->default_value);
+  const auto enforced = variable->default_value();
   bool equal = false;
-  if (current.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+  if (enforced.type().id() == duckdb::LogicalTypeId::VARCHAR &&
       value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
-      !current.IsNull() && !value.IsNull()) {
-    equal = absl::EqualsIgnoreCase(current.ToString(), value.ToString());
+      !enforced.IsNull() && !value.IsNull()) {
+    equal = absl::EqualsIgnoreCase(enforced.ToString(), value.ToString());
   } else {
-    equal = duckdb::Value::NotDistinctFrom(current, value);
+    equal = duckdb::Value::NotDistinctFrom(enforced, value);
   }
   if (equal) {
     return;
@@ -298,10 +296,9 @@ int64_t CheckPgInteger(std::string_view name, const PgSetting& pg,
                               : kTimeUnitsHint));
   }
   const auto rounded = std::round(*value);
-  double min = 0;
-  double max = 0;
-  if (!absl::SimpleAtod(pg.min_val, &min) ||
-      !absl::SimpleAtod(pg.max_val, &max) || rounded < min || rounded > max) {
+  const auto min = PgBaseValue({}, pg.min_val);
+  const auto max = PgBaseValue({}, pg.max_val);
+  if (!min || !max || rounded < *min || rounded > *max) {
     const auto unit =
       pg.unit.empty() ? std::string{} : absl::StrCat(" ", pg.unit);
     THROW_SQL_ERROR(
@@ -312,6 +309,8 @@ int64_t CheckPgInteger(std::string_view name, const PgSetting& pg,
   }
   return static_cast<int64_t>(rounded);
 }
+
+}  // namespace
 
 std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
                              std::string_view text) {
@@ -326,6 +325,13 @@ std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
     if (it != pg.enumvals.end()) {
       return std::string{*it};
     }
+    const auto alias =
+      absl::c_find_if(pg.hidden_enumvals, [&](const PgEnumAlias& alias) {
+        return absl::EqualsIgnoreCase(alias.name, value);
+      });
+    if (alias != pg.hidden_enumvals.end()) {
+      return std::string{alias->value};
+    }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
@@ -333,6 +339,8 @@ std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
   }
   return std::string{text};
 }
+
+namespace {
 
 template<irs::utils::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
@@ -342,7 +350,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
     value = duckdb::Value{
       NormalizePgValue(kName, FindVariable(kName)->pg, value.ToString())};
   }
-  NoticeIfChanged(ctx, kName, value);
+  NoticeIfNotDefault(ctx, kName, value);
 }
 
 void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
@@ -596,7 +604,7 @@ void CheckDateStyle(duckdb::ClientContext& ctx, duckdb::SetScope,
     date_style.order = "DMY";
   }
   value = duckdb::Value{absl::StrCat(date_style.style, ", ", date_style.order)};
-  NoticeIfChanged(ctx, "DateStyle", value);
+  NoticeIfNotDefault(ctx, "DateStyle", value);
 }
 
 void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
@@ -638,6 +646,12 @@ constexpr std::string_view kIntervalStyles[] = {"postgres", "postgres_verbose",
 constexpr std::string_view kMessageLevels[] = {"debug5", "debug4",  "debug3",
                                                "debug2", "debug1",  "log",
                                                "notice", "warning", "error"};
+constexpr PgEnumAlias kHiddenMessageLevels[] = {{"debug", "debug2"},
+                                                {"info", "info"}};
+constexpr PgEnumAlias kHiddenOnOff[] = {
+  {"true", "on"}, {"false", "off"}, {"yes", "on"},
+  {"no", "off"},  {"1", "on"},      {"0", "off"},
+};
 constexpr std::string_view kPasswordEncryptions[] = {"md5", "scram-sha-256"};
 constexpr std::string_view kSynchronousCommits[] = {
   "local", "remote_write", "remote_apply", "on", "off"};
@@ -1463,7 +1477,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         .type = LogicalTypeId::VARCHAR,
         .description = "Shows the server version.",
-        .default_value = [] { return duckdb::Value{"18.6"}; },
+        .default_value = [] { return duckdb::Value{pg::kPgServerVersion}; },
         .pg = {.vartype = "string",
                .category = kPresetOptions,
                .context = "internal"},
@@ -1474,12 +1488,13 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         .type = LogicalTypeId::INTEGER,
         .description = "Shows the server version as an integer.",
-        .default_value = [] { return duckdb::Value::INTEGER(180006); },
+        .default_value =
+          [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
         .pg = {.vartype = "integer",
                .category = kPresetOptions,
                .context = "internal",
-               .min_val = "180006",
-               .max_val = "180006"},
+               .min_val = pg::kPgServerVersionNumText,
+               .max_val = pg::kPgServerVersionNumText},
       },
     },
     {
@@ -1503,7 +1518,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         .set_callback = NoOverwrite<"client_min_messages">,
         .pg = {.vartype = "enum",
                .category = kStatementBehavior,
-               .enumvals = kMessageLevels},
+               .enumvals = kMessageLevels,
+               .hidden_enumvals = kHiddenMessageLevels},
       },
     },
     {
@@ -1860,7 +1876,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         .set_callback = NoOverwrite<"synchronous_commit">,
         .pg = {.vartype = "enum",
                .category = "Write-Ahead Log / Settings",
-               .enumvals = kSynchronousCommits},
+               .enumvals = kSynchronousCommits,
+               .hidden_enumvals = kHiddenOnOff},
       },
     },
     {

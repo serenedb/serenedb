@@ -94,23 +94,31 @@ bool IsNetwork(const INET_IPAddress& inet) {
          network.address.lower == inet.address.lower;
 }
 
-INET_IPAddress ParseCidr(std::string_view text) {
+std::optional<irs::pg::SqlErrorData> TryParseCidr(std::string_view text,
+                                                  INET_IPAddress& inet) {
   const auto input = Unabbreviate(text);
-  INET_IPAddress inet{};
   try {
     inet = ipaddress_from_string(input.data(), input.size());
   } catch (const std::exception&) {
     inet.type = INET_IP_ADDRESS_INVALID;
   }
   if (inet.type == INET_IP_ADDRESS_INVALID) {
-    THROW_SQL_ERROR(
+    return SQL_ERROR_DATA(
       ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
       ERR_MSG("invalid input syntax for type cidr: \"", text, "\""));
   }
   if (!IsNetwork(inet)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG("invalid cidr value: \"", text, "\""),
-                    ERR_DETAIL("Value has bits set to right of mask."));
+    return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                          ERR_MSG("invalid cidr value: \"", text, "\""),
+                          ERR_DETAIL("Value has bits set to right of mask."));
+  }
+  return std::nullopt;
+}
+
+INET_IPAddress ParseCidr(std::string_view text) {
+  INET_IPAddress inet{};
+  if (auto error = TryParseCidr(text, inet)) {
+    THROW_SQL_ERROR_FROM_DATA(std::move(*error));
   }
   return inet;
 }

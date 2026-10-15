@@ -33,7 +33,6 @@
 #include <duckdb/storage/statistics/node_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <optional>
 
 #include "auth/role_closure.h"
 #include "catalog/entry/system_table.h"
@@ -42,13 +41,13 @@
 #include "pg/catalog/engine/system_table.h"
 #include "pg/connection_context.h"
 
-namespace sdb::connector {
+namespace sdb::pg {
 namespace {
 
 struct SystemFunctionInfo final : duckdb::TableFunctionInfo {
-  explicit SystemFunctionInfo(const pg::SystemTable& table) : table{table} {}
+  explicit SystemFunctionInfo(const SystemTable& table) : table{table} {}
 
-  const pg::SystemTable& table;
+  const SystemTable& table;
 };
 
 duckdb::BindInfo SystemTableGetBindInfo(
@@ -76,15 +75,15 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableStatistics(
   const auto* fact = table.FactOf(static_cast<uint32_t>(column));
   duckdb::idx_t distinct = 0;
   switch (table.KeyOf(static_cast<uint32_t>(column))) {
-    case pg::SystemKey::None:
+    case SystemKey::None:
       if (!fact) {
         return nullptr;
       }
       break;
-    case pg::SystemKey::Unique:
+    case SystemKey::Unique:
       distinct = table.Rows();
       break;
-    case pg::SystemKey::Indexed:
+    case SystemKey::Indexed:
       distinct = std::max<duckdb::idx_t>(table.Rows() / 10, 1);
       break;
   }
@@ -109,20 +108,19 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableStatistics(
 bool SystemTablePushdownExpression(duckdb::ClientContext&,
                                    const duckdb::LogicalGet& get,
                                    duckdb::Expression& expr) {
-  std::optional<duckdb::column_t> column;
+  duckdb::column_t column = duckdb::DConstants::INVALID_INDEX;
   duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
     expr, [&](const duckdb::BoundColumnRefExpression& ref) {
       column = get.GetColumnIndex(ref.Binding()).GetPrimaryIndex();
     });
-  return column && pg::SystemPushdown(
-                     get.bind_data->Cast<SystemTableBindData>().table, *column,
-                     expr) != duckdb::TableFilterPushdown::Reject;
+  return SystemPushdown(get.bind_data->Cast<SystemTableBindData>().table,
+                        column, expr) != duckdb::TableFilterPushdown::Reject;
 }
 
 duckdb::TableFilterPushdown SystemTableSupportsPushdownFilter(
   duckdb::FunctionData& bind_data, duckdb::idx_t column,
   duckdb::TableFilter& filter) {
-  return pg::SystemPushdown(
+  return SystemPushdown(
     bind_data.Cast<SystemTableBindData>().table, column,
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr);
 }
@@ -158,22 +156,28 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
   const auto& functions = entry.Table().Functions();
   function.init_global = functions.init;
   function.function = functions.scan;
-  return duckdb::make_uniq<SystemTableBindData>(
-    entry.Table(), entry.catalog.Cast<duckdb::DuckCatalog>(), &entry);
+  return duckdb::make_uniq<SystemTableBindData>(entry);
 }
 
-duckdb::TableFunction CreateSystemTableScanFunction(
-  const pg::SystemScanFunctions& functions) {
+duckdb::TableFunction SystemScanFunction(duckdb::Identifier name,
+                                         const SystemScanFunctions& functions) {
   duckdb::TableFunction func{
-    "system_table_scan", {}, functions.scan, nullptr, functions.init};
+    std::move(name), {}, functions.scan, nullptr, functions.init};
   func.projection_pushdown = true;
   func.filter_pushdown = true;
   func.filter_prune = true;
   func.pushdown_expression = SystemTablePushdownExpression;
   func.supports_pushdown_filter = SystemTableSupportsPushdownFilter;
-  func.get_virtual_columns = SystemTableVirtualColumns;
   func.cardinality = SystemTableCardinality;
   func.statistics_extended = SystemTableStatistics;
+  return func;
+}
+
+duckdb::TableFunction SystemEntryScanFunction(
+  const SystemScanFunctions& functions) {
+  auto func =
+    SystemScanFunction(duckdb::Identifier{"system_table_scan"}, functions);
+  func.get_virtual_columns = SystemTableVirtualColumns;
   func.get_bind_info = SystemTableGetBindInfo;
   func.serialize = SystemTableScanSerialize;
   func.deserialize = SystemTableScanDeserialize;
@@ -186,11 +190,9 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
   if (table.SuperuserOnly()) {
-    const auto state = context.registered_state->Get<SereneDBClientState>(
-      kSereneDBClientStateKey);
-    if (state &&
-        !auth::ClosureFor(&context, state->GetConnectionContext().GetRoleId())
-           ->is_superuser) {
+    const auto* connection = connector::GetSereneDBContextPtr(context);
+    if (connection &&
+        !auth::ClosureFor(&context, connection->GetRoleId())->is_superuser) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for function ", table.Sql().name));
@@ -213,25 +215,20 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  bind_data = duckdb::make_uniq<SystemTableBindData>(
-    entry.Table(), entry.catalog.Cast<duckdb::DuckCatalog>(), &entry);
-  return CreateSystemTableScanFunction(entry.Table().Functions());
+  bind_data = duckdb::make_uniq<SystemTableBindData>(entry);
+  return SystemEntryScanFunction(entry.Table().Functions());
 }
 
 void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader(db, "serenedb");
+  duckdb::ExtensionLoader loader{db, "serenedb"};
   loader.RegisterFunction(
-    CreateSystemTableScanFunction({nullptr, &SystemTableNoScan}));
-  for (const auto* table : pg::SystemTableFunctions()) {
-    auto function = CreateSystemTableScanFunction(table->Functions());
-    function.name = duckdb::Identifier{table->Sql().name};
+    SystemEntryScanFunction({nullptr, &SystemTableNoScan}));
+  for (const auto* table : SystemTableFunctions()) {
+    auto function = SystemScanFunction(duckdb::Identifier{table->Sql().name},
+                                       table->Functions());
     function.bind = SystemFunctionBind;
     function.function_info =
       duckdb::make_shared_ptr<SystemFunctionInfo>(*table);
-    function.get_virtual_columns = nullptr;
-    function.get_bind_info = nullptr;
-    function.serialize = nullptr;
-    function.deserialize = nullptr;
     duckdb::CreateTableFunctionInfo info{std::move(function)};
     info.SetSchema(duckdb::Identifier{table->Sql().schema});
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
@@ -239,4 +236,4 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
   }
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::pg

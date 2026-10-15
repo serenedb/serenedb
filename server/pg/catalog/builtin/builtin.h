@@ -46,6 +46,10 @@ enum PgTypeOID : int32_t {
 
 inline constexpr int32_t kBuiltinTypeOidLimit = kGeometryArray + 1;
 
+inline constexpr auto kByOid = [](const auto& lhs, const auto& rhs) {
+  return lhs.oid < rhs.oid;
+};
+
 template<typename Rows, typename Key>
 constexpr const auto* FindByOid(const Rows& rows, Key oid) {
   const auto it = absl::c_lower_bound(
@@ -76,12 +80,11 @@ constexpr auto OidIndex(const Rows& rows) {
 }
 
 template<typename Rows, typename Index>
-constexpr auto FindByOid(const Rows& rows, const Index& index, int64_t oid)
-  -> decltype(&rows[0]) {
-  if (oid < 0 || oid >= kBuiltinTypeOidLimit || index[oid] == 0) {
-    return nullptr;
-  }
-  return &rows[index[oid] - 1];
+constexpr const auto* FindByOid(const Rows& rows, const Index& index,
+                                int64_t oid) {
+  return oid < 0 || oid >= kBuiltinTypeOidLimit || index[oid] == 0
+           ? nullptr
+           : &rows[index[oid] - 1];
 }
 
 struct BuiltinType {
@@ -188,7 +191,7 @@ struct BuiltinCollation {
 };
 
 std::span<const BuiltinType> BuiltinTypes();
-const BuiltinType* FindBuiltinType(int32_t oid);
+const BuiltinType* FindBuiltinType(int64_t oid);
 const BuiltinType* FindBuiltinType(duckdb::idx_t nsp, std::string_view name);
 const BuiltinType* FindBuiltinRowType(duckdb::idx_t relid);
 

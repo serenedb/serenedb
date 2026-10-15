@@ -79,11 +79,12 @@ using FunctionKey =
 
 irs::containers::FlatHashMap<Key, const SystemTable*> gTablesByName;
 irs::containers::FlatHashMap<duckdb::idx_t, const SystemTable*> gTablesByOid;
-irs::containers::NodeHashMap<FunctionKey, StaticFunction> gFunctions;
+irs::containers::NodeHashMap<FunctionKey,
+                             duckdb::unique_ptr<duckdb::CreateMacroInfo>>
+  gFunctions;
 std::vector<StaticView> gViews;
 irs::containers::FlatHashMap<Key, const StaticView*> gViewsByName;
 irs::containers::FlatHashMap<duckdb::idx_t, const StaticView*> gViewsByOid;
-irs::containers::FlatHashMap<Key, duckdb::idx_t> gRelationOids;
 
 std::string_view ViewSql(const SystemView& view) {
   const auto* written =
@@ -102,18 +103,11 @@ void AddSystemView(duckdb::Parser& parser, const SystemView& view) {
   info->internal = true;
   parser.statements.clear();
   info->query = duckdb::CreateViewInfo::ParseSelect(parser, info->sql);
-  const auto& stored = gViews.emplace_back(StaticView{
-    .schema = view.schema,
-    .name = view.name,
-    .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-    .permissions = SystemPermissions(view.superuser_only),
-    .oid = view.oid,
-    .options = view.options,
-    .binding = std::make_shared<ViewBinding>(),
-  });
+  const auto& stored = gViews.emplace_back(
+    view.schema, view.name, std::move(info),
+    SystemPermissions(view.superuser_only), view.oid, view.options);
   gViewsByName.emplace(Key{view.schema, view.name}, &stored);
   gViewsByOid.emplace(view.oid, &stored);
-  gRelationOids.emplace(Key{view.schema, view.name}, view.oid);
 }
 
 duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
@@ -177,8 +171,10 @@ duckdb::unique_ptr<duckdb::Expression> BindZero(
     input.context, std::move(input.children), std::move(zero));
 }
 
-std::vector<duckdb::DefaultType>& ExternalTypeList() {
-  static std::vector<duckdb::DefaultType> gTypes = [] {
+}  // namespace
+
+std::span<const duckdb::DefaultType> ExternalTypes() {
+  static const std::vector<duckdb::DefaultType> kTypes = [] {
     std::vector<duckdb::DefaultType> result;
     for (const auto& mapping : PgTypeMappings()) {
       if (mapping.ddl) {
@@ -186,19 +182,15 @@ std::vector<duckdb::DefaultType>& ExternalTypeList() {
                             mapping.logical(), nullptr);
       }
     }
-    result.emplace_back("pg_statistic", duckdb::LogicalType::INVALID, nullptr);
+    result.emplace_back(
+      "pg_statistic", SystemRowType(kPgStatisticSql).WithAlias("pg_statistic"),
+      nullptr);
     result.emplace_back("serial", SERIAL(), nullptr);
     result.emplace_back("bigserial", BIGSERIAL(), nullptr);
     result.emplace_back("smallserial", SMALLSERIAL(), nullptr);
     return result;
   }();
-  return gTypes;
-}
-
-}  // namespace
-
-std::span<const duckdb::DefaultType> ExternalTypes() {
-  return ExternalTypeList();
+  return kTypes;
 }
 
 void InitSystemTables() {
@@ -207,31 +199,20 @@ void InitSystemTables() {
     gTablesByOid.emplace(table->Sql().oid, table);
   }
   for (const auto* sql : kGeneratedTables) {
-    if (!gTablesByOid.contains(sql->oid)) {
-      auto* table = &gEmptyTables.emplace_back(
-        *sql,
-        SystemScanFunctions{&SystemScanInit<SystemEmptyScan>,
-                            &SystemScanRun<SystemEmptyScan>},
-        SystemEmptyScan::kFacts, SystemEmptyScan::kVisibility,
-        SystemEmptyScan::kTypeShapes, SystemEmptyScan::kColumnKeys,
-        SystemEmptyScan::kRows, SystemEmptyScan::kSuperuserOnly);
-      gTables.emplace_back(table);
-      gTablesByOid.emplace(sql->oid, table);
+    if (const auto [it, inserted] = gTablesByOid.try_emplace(sql->oid);
+        inserted) {
+      auto& table =
+        gEmptyTables.emplace_back(std::type_identity<SystemEmptyScan>{}, *sql);
+      gTables.emplace_back(&table);
+      it->second = &table;
     }
   }
   for (auto* table : gTables) {
     table->Init();
     gTablesByName.emplace(Key{table->Sql().schema, table->Sql().name}, table);
-    gRelationOids.emplace(Key{table->Sql().schema, table->Sql().name},
-                          table->Sql().oid);
   }
   for (auto* table : kSystemTableFunctions) {
     table->Init();
-  }
-  for (auto& type : ExternalTypeList()) {
-    if (std::string_view{type.name} == kPgStatisticSql.name) {
-      type.type = SystemRowType(kPgStatisticSql).WithAlias(type.name);
-    }
   }
 }
 
@@ -246,13 +227,11 @@ void InitSystemViews(duckdb::Parser& parser) {
 }
 
 void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
-  irs::containers::NodeHashMap<FunctionKey,
-                               duckdb::unique_ptr<duckdb::CreateMacroInfo>>
-    built;
   const auto add = [&](const SystemMacro& macro) {
     auto info = ParseMacro(parser, macro);
     const FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
-    if (const auto [it, inserted] = built.try_emplace(key, std::move(info));
+    if (const auto [it, inserted] =
+          gFunctions.try_emplace(key, std::move(info));
         !inserted) {
       for (auto& m : info->macros) {
         it->second->macros.emplace_back(std::move(m));
@@ -264,7 +243,7 @@ void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
   }
 
   irs::containers::FlatHashSet<std::string> defined;
-  for (const auto& [key, info] : built) {
+  for (const auto& [key, info] : gFunctions) {
     defined.emplace(std::get<1>(key));
   }
   auto& catalog =
@@ -317,10 +296,6 @@ void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
     Register(loader, irs::StaticStrings::kPgCatalogSchema,
              stubs.front().stability, std::move(set));
   }
-
-  for (auto& [key, info] : built) {
-    gFunctions.emplace(key, StaticFunction{info.release()});
-  }
 }
 
 const SystemTable* GetSystemTable(std::string_view schema,
@@ -351,33 +326,40 @@ const StaticView* FindSystemView(duckdb::idx_t oid) {
 
 duckdb::idx_t SystemRelationOid(std::string_view schema,
                                 std::string_view name) {
-  const auto it = gRelationOids.find(Key{schema, name});
-  return it == gRelationOids.end() ? kInvalidOid : it->second;
-}
-
-StaticFunction GetSystemFunction(std::string_view schema, std::string_view name,
-                                 duckdb::MacroType kind) {
-  const auto it = gFunctions.find(FunctionKey{schema, name, kind});
-  return it == gFunctions.end() ? StaticFunction{} : it->second;
-}
-
-duckdb::Permissions SystemPermissions(bool superuser_only) {
-  duckdb::Permissions permissions{.owner = kRootUser};
-  permissions.acl.emplace_back(kOwnerAcl);
-  if (!superuser_only) {
-    permissions.acl.emplace_back(kPublicSelect);
+  if (const auto* table = GetSystemTable(schema, name)) {
+    return table->Sql().oid;
   }
-  return permissions;
+  if (const auto* view = GetSystemView(schema, name)) {
+    return view->oid;
+  }
+  return kInvalidOid;
 }
 
-duckdb::Permissions SchemaPermissions() {
-  return {.owner = kRootUser,
-          .acl = {{.grantee = kRootUser,
-                   .grantor = kRootUser,
-                   .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-                  {.grantee = kPublicGrantee,
-                   .grantor = kRootUser,
-                   .privs = duckdb::AclMode::Usage}}};
+const duckdb::CreateMacroInfo* GetSystemFunction(std::string_view schema,
+                                                 std::string_view name,
+                                                 duckdb::MacroType kind) {
+  const auto it = gFunctions.find(FunctionKey{schema, name, kind});
+  return it == gFunctions.end() ? nullptr : it->second.get();
+}
+
+const duckdb::Permissions& SystemPermissions(bool superuser_only) {
+  static const duckdb::Permissions kPublic{.owner = kRootUser,
+                                           .acl = {kOwnerAcl, kPublicSelect}};
+  static const duckdb::Permissions kSuperuser{.owner = kRootUser,
+                                              .acl = {kOwnerAcl}};
+  return superuser_only ? kSuperuser : kPublic;
+}
+
+const duckdb::Permissions& SchemaPermissions() {
+  static const duckdb::Permissions kPermissions{
+    .owner = kRootUser,
+    .acl = {{.grantee = kRootUser,
+             .grantor = kRootUser,
+             .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
+            {.grantee = kPublicGrantee,
+             .grantor = kRootUser,
+             .privs = duckdb::AclMode::Usage}}};
+  return kPermissions;
 }
 
 void VisitSystemTables(std::string_view schema,

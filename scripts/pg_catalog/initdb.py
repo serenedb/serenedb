@@ -175,10 +175,6 @@ class Initdb:
         elif match := CREATE_SCHEMA.search(statement):
             self.namespace = self.allocate('namespace', match.group(1), 0)
 
-    def view(self, schema, name):
-        return next(view for view in self.views
-                    if (view.schema, view.name) == (schema, name))
-
     def superuser_only(self, schema, name):
         if schema == 'information_schema':
             return name not in self.granted

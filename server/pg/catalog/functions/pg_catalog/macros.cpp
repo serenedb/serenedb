@@ -282,13 +282,8 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog","array_upper",
    R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE len(arr) END)"},
 
-  // regexp_like: alias registered in duckdb functions.json -> regexp_matches
-
-  // overlay(string placing string from int for int) -> string
-  // Parser transforms: overlay(s PLACING r FROM p FOR n) -> overlay(s, r, p, n)
   {"pg_catalog","overlay",
    R"((s, repl, start, count) AS substr(s, 1, start - 1) || repl || substr(s, start + count))"},
-  // 3-arg form: overlay(string placing string from int) -- count defaults to length of replacement
   {"pg_catalog","overlay",
    R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
 
@@ -299,8 +294,6 @@ constexpr SystemMacro kMacros[] = {
 
   // PG math functions missing from DuckDB
 
-  // div: registered as C++ function in connector/functions/math.cpp
-
   // Degree-based trigonometric functions
   {"pg_catalog","sind",
    R"((x) AS sin(radians(x)))"},
@@ -310,9 +303,6 @@ constexpr SystemMacro kMacros[] = {
 
   {"pg_catalog","tand",
    R"((x) AS tan(radians(x)))"},
-
-  // cotd is registered as a scalar function in RegisterPgMathFunctions
-  // with PG-compatible division-by-zero error handling.
 
   {"pg_catalog","asind",
    R"((x) AS degrees(asin(x)))"},
@@ -410,7 +400,6 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "getdatabaseencoding", "() AS 'UTF8'"},
   // Always UTF-8 -> max 4 bytes per character. Argument ignored.
   {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
-  // No temp schemas supported yet.
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
   {"pg_catalog", "make_interval",
    R"((years INTEGER := 0, months INTEGER := 0, weeks INTEGER := 0,
@@ -476,8 +465,6 @@ constexpr SystemMacro kMacros[] = {
                   CASE WHEN key IS NULL OR value IS NOT NULL
                        THEN sdb_json_member(key, value) END, ', '), '') ||
                 ' }' AS JSON) END)"},
-  // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
-  // per-connection backend PID from the ConnectionContext.
   // clang-format on
 };
 

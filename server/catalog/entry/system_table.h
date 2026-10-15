@@ -23,7 +23,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
-#include <memory>
 
 #include "pg/catalog/engine/registry.h"
 
@@ -69,8 +68,7 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
 class SystemViewEntry final : public duckdb::ViewCatalogEntry {
  public:
   SystemViewEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                  duckdb::CreateViewInfo& info,
-                  std::shared_ptr<pg::ViewBinding> binding);
+                  duckdb::CreateViewInfo& info, const pg::StaticView& view);
 
   duckdb::shared_ptr<duckdb::ViewColumnInfo> GetColumnInfo() const final;
 
@@ -81,7 +79,7 @@ class SystemViewEntry final : public duckdb::ViewCatalogEntry {
                      const duckdb::vector<duckdb::Identifier>& names) final;
 
  private:
-  std::shared_ptr<pg::ViewBinding> _binding;
+  const pg::StaticView& _view;
 };
 
 void MountSystemSchemas(SereneDBCatalog& catalog);

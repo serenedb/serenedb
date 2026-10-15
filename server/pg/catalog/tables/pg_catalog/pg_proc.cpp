@@ -141,6 +141,12 @@ struct Macro {
   const duckdb::MacroFunction& macro;
 };
 
+auto Visible(duckdb::idx_t oid) {
+  return [oid](const Session& session) {
+    return FunctionIsVisible(session, oid).value_or(false);
+  };
+}
+
 class PgProc final : public SystemTableScan<kPgProcSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -172,7 +178,9 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       [](const auto& function) { return function.argtypes.size(); }),
     Col<"prorettype">(&BuiltinFunction::rettype),
     Col<"proargtypes">(&BuiltinFunction::argtypes),
-    Col<"prosrc">(&BuiltinFunction::src));
+    Col<"prosrc">([](const auto& function) -> std::string_view {
+      return function.src.empty() ? function.name : function.src;
+    }));
 
   static constexpr auto kMacro = Shape<kSql, const Macro>(
     Col<"oid">([](const auto& row) { return row.entry.oid; }),
@@ -188,7 +196,6 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       [](const auto& row) { return ReturnsSet(row.macro) ? 1000.0F : 0.0F; }),
     Col<"prokind">(
       [](const auto& row) { return row.macro.is_procedure ? 'p' : 'f'; }),
-    Col<"proisstrict">([](const auto&) { return false; }),
     Col<"proretset">([](const auto& row) { return ReturnsSet(row.macro); }),
     Col<"provolatile">([](const auto&) { return 'v'; }),
     Col<"proparallel">([](const auto&) { return 'u'; }),
@@ -229,22 +236,14 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     }));
 
   void Row(const BuiltinFunction& function) {
-    Emit<kBuiltin>(function, [&] { return Visible(function.oid); });
+    Emit<kBuiltin>(function, Visible(function.oid));
   }
 
   void Row(const duckdb::MacroCatalogEntry& entry) {
     for (const auto& macro : entry.macros) {
-      Emit<kMacro>({entry, *macro}, [&] { return Visible(entry.oid); });
+      Emit<kMacro>({entry, *macro}, Visible(entry.oid));
     }
   }
-
- private:
-  bool Visible(duckdb::idx_t oid) const {
-    return FunctionIsVisible(*_session, oid).value_or(false);
-  }
-
-  std::optional<Session> _session =
-    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

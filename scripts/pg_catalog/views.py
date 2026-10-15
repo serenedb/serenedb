@@ -11,13 +11,18 @@ def dedent(body):
     return [l[indent:].rstrip() for l in lines]
 
 
+COMMENT_OR_STRING = r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'"
+
+
 def qualify(sql, names):
-    sql = re.sub(r'(?<!information_schema\.)(?<!\w)(_pg_\w+)',
-                 r'information_schema.\1', sql)
-    for name in sorted(names, key=len, reverse=True):
-        sql = re.sub(r'(?<![\w.])' + re.escape(name) + r'(?!\w)',
-                     'information_schema.' + name, sql)
-    return sql
+    views = '|'.join(re.escape(name)
+                     for name in sorted(names, key=len, reverse=True))
+    pattern = re.compile(
+        rf'{COMMENT_OR_STRING}|(?<!information_schema\.)(?<!\w)(_pg_\w+)'
+        rf'|(?<![\w.])({views})(?!\w)', re.S)
+    return pattern.sub(
+        lambda match: match.group(0) if match.lastindex is None
+        else 'information_schema.' + match.group(match.lastindex), sql)
 
 
 def entry(schema, name, oid, row_type, row_array_type, superuser, options,

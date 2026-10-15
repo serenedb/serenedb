@@ -24,15 +24,12 @@
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -46,11 +43,8 @@
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/query_node/set_operation_node.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <span>
@@ -61,6 +55,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/common.h"
+#include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
@@ -77,29 +72,29 @@ namespace {
 using Definition = std::optional<std::string>;
 
 template<typename T>
-const T* EntryByOid(const pg::Session& session, duckdb::CatalogType type,
+const T* TypedEntry(const Session& session, duckdb::CatalogType type,
                     int64_t oid) {
-  auto entry = pg::EntryByOid(session, static_cast<uint64_t>(oid));
+  auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   return entry && entry->type == type ? &entry->Cast<T>() : nullptr;
 }
 
-std::string RelationName(const pg::Session& session, std::string_view schema,
+std::string RelationName(const Session& session, std::string_view schema,
                          std::string_view name, bool qualified) {
   if (qualified) {
-    return pg::QualifiedOutName(schema, name);
+    return QualifiedOutName(schema, name);
   }
-  return std::string{pg::AsView(pg::RelationName(session, schema, name))};
+  return std::string{AsView(pg::RelationName(session, schema, name))};
 }
 
-std::string RelationName(const pg::Session& session,
+std::string RelationName(const Session& session,
                          const duckdb::CatalogEntry& relation, bool qualified) {
-  const auto [schema, name] = pg::NameOf(*session.transaction, relation);
+  const auto [schema, name] = NameOf(*session.transaction, relation);
   return RelationName(session, schema, name, qualified);
 }
 
 template<typename Index>
 std::string ColumnName(const duckdb::TableCatalogEntry& table, Index index) {
-  return pg::QuoteIdentifier(
+  return QuoteIdentifier(
     table.GetColumns().GetColumn(index).Name().GetIdentifierName());
 }
 
@@ -110,13 +105,13 @@ std::vector<std::string> KeyColumns(const duckdb::TableCatalogEntry& table,
   }
   std::vector<std::string> columns;
   for (const auto& name : unique.GetColumnNames()) {
-    columns.emplace_back(pg::QuoteIdentifier(name.GetIdentifierName()));
+    columns.emplace_back(QuoteIdentifier(name.GetIdentifierName()));
   }
   return columns;
 }
 
 std::string OptionValue(std::string_view value) {
-  if (!pg::RequiresQuotes(value)) {
+  if (!RequiresQuotes(value)) {
     return std::string{value};
   }
   return duckdb::KeywordHelper::WriteQuoted(value, '\'');
@@ -143,22 +138,21 @@ std::string Options(
   });
   return absl::StrJoin(shown, ", ", [](std::string* out, const Option* option) {
     const auto& [name, value] = *option;
-    out->append(pg::QuoteIdentifier(name));
+    out->append(QuoteIdentifier(name));
     if (!value.IsNull()) {
       absl::StrAppend(out, "=", OptionValue(value.ToString()));
     }
   });
 }
 
-const duckdb::ViewCatalogEntry* UserView(const pg::Session& session,
-                                         int64_t oid) {
-  const auto* view = EntryByOid<duckdb::ViewCatalogEntry>(
+const duckdb::ViewCatalogEntry* UserView(const Session& session, int64_t oid) {
+  const auto* view = TypedEntry<duckdb::ViewCatalogEntry>(
     session, duckdb::CatalogType::VIEW_ENTRY, oid);
   if (!view) {
     return nullptr;
   }
-  if (pg::FindSystemObject(pg::kSystemNamespaces,
-                           pg::NameOf(*session.transaction, *view).schema)) {
+  if (FindSystemObject(kSystemNamespaces,
+                       NameOf(*session.transaction, *view).schema)) {
     return nullptr;
   }
   return view;
@@ -190,8 +184,8 @@ std::string ViewQuery(const duckdb::ViewCatalogEntry& view) {
   return query->ToString();
 }
 
-Definition ViewDefinition(const pg::Session& session, int64_t oid) {
-  if (const auto* system = pg::FindSystemView(oid)) {
+Definition ViewDefinition(const Session& session, int64_t oid) {
+  if (const auto* system = FindSystemView(oid)) {
     return absl::StrCat(system->info->query->ToString(), ";");
   }
   const auto* view = UserView(session, oid);
@@ -201,11 +195,10 @@ Definition ViewDefinition(const pg::Session& session, int64_t oid) {
   return absl::StrCat(ViewQuery(*view), ";");
 }
 
-Definition RuleDefinition(const pg::Session& session, int64_t oid,
-                          bool pretty) {
+Definition RuleDefinition(const Session& session, int64_t oid, bool pretty) {
   std::string relation;
   std::string query;
-  if (const auto* system = pg::FindSystemView(oid)) {
+  if (const auto* system = FindSystemView(oid)) {
     relation = RelationName(session, system->schema, system->name, !pretty);
     query = system->info->query->ToString();
   } else if (const auto* view = UserView(session, oid)) {
@@ -218,10 +211,10 @@ Definition RuleDefinition(const pg::Session& session, int64_t oid,
                       " DO INSTEAD  ", query, ";");
 }
 
-std::string ForeignKeyDefinition(const pg::Session& session,
+std::string ForeignKeyDefinition(const Session& session,
                                  const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk) {
-  const auto target = pg::ReferencedTable(*session.transaction, table, fk);
+  const auto target = ReferencedTable(*session.transaction, table, fk);
   const auto columns = [](const duckdb::TableCatalogEntry& owner,
                           std::span<const duckdb::PhysicalIndex> keys) {
     return absl::StrJoin(keys, ", ",
@@ -235,20 +228,20 @@ std::string ForeignKeyDefinition(const pg::Session& session,
     pk_columns = columns(*target, fk.info.pk_keys);
     target_name = RelationName(session, *target, false);
   } else {
-    pk_columns = absl::StrJoin(
-      fk.pk_columns, ", ",
-      [](std::string* out, const duckdb::Identifier& name) {
-        out->append(pg::QuoteIdentifier(name.GetIdentifierName()));
-      });
-    target_name = pg::QualifiedOutName(fk.info.schema.GetIdentifierName(),
-                                       fk.info.table.GetIdentifierName());
+    pk_columns =
+      absl::StrJoin(fk.pk_columns, ", ",
+                    [](std::string* out, const duckdb::Identifier& name) {
+                      out->append(QuoteIdentifier(name.GetIdentifierName()));
+                    });
+    target_name = QualifiedOutName(fk.info.schema.GetIdentifierName(),
+                                   fk.info.table.GetIdentifierName());
   }
   return absl::StrCat("FOREIGN KEY (", columns(table, fk.info.fk_keys),
                       ") REFERENCES ", target_name, "(", pk_columns, ")");
 }
 
-Definition ConstraintDefinition(const pg::Session& session, int64_t oid) {
-  const auto owner = pg::OwnerTable(session, static_cast<uint64_t>(oid));
+Definition ConstraintDefinition(const Session& session, int64_t oid) {
+  const auto owner = OwnerTable(session, static_cast<uint64_t>(oid));
   if (!owner) {
     return std::nullopt;
   }
@@ -257,7 +250,7 @@ Definition ConstraintDefinition(const pg::Session& session, int64_t oid) {
     table.GetConstraints(),
     [&](const duckdb::unique_ptr<duckdb::Constraint>& constraint) {
       return constraint->oid == static_cast<duckdb::idx_t>(oid) &&
-             pg::IsPgConstraint(constraint);
+             IsPgConstraint(constraint);
     });
   if (found == table.GetConstraints().end()) {
     return std::nullopt;
@@ -303,11 +296,11 @@ struct IndexShape {
 
 std::string IndexAttribute(const duckdb::ParsedExpression& expression) {
   if (expression.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-    return pg::QuoteIdentifier(expression.Cast<duckdb::ColumnRefExpression>()
-                                 .GetColumnName()
-                                 .GetIdentifierName());
+    return QuoteIdentifier(expression.Cast<duckdb::ColumnRefExpression>()
+                             .GetColumnName()
+                             .GetIdentifierName());
   }
-  auto text = pg::ExpressionText(expression);
+  auto text = ExpressionText(expression);
   const bool function_like =
     expression.GetExpressionType() ==
       duckdb::ExpressionType::OPERATOR_COALESCE ||
@@ -322,17 +315,17 @@ std::string IndexAttribute(const duckdb::ParsedExpression& expression) {
 std::string OpclassName(std::string_view opclass) {
   return absl::StrJoin(absl::StrSplit(opclass, '.'), ".",
                        [](std::string* out, std::string_view part) {
-                         out->append(pg::QuoteIdentifier(part));
+                         out->append(QuoteIdentifier(part));
                        });
 }
 
-IndexShape ShapeOf(const pg::Session& session,
+IndexShape ShapeOf(const Session& session,
                    const duckdb::IndexCatalogEntry& index) {
   IndexShape shape{
     .name = index.name.GetIdentifierName(),
     .unique = index.IsUnique(),
     .relation = index.GetRelation(*session.transaction).get(),
-    .method = dynamic_cast<const catalog::InvertedIndexEntry*>(&index)
+    .method = connector::IsInvertedIndex(index)
                 ? std::string_view{catalog::kInvertedIndexTypeName}
                 : std::string_view{"secondary"},
     .options = Options(index.options),
@@ -360,7 +353,7 @@ IndexShape ShapeOf(const pg::Session& session,
     (included ? shape.includes : shape.keys).emplace_back(std::move(element));
   }
   if (index.where_clause) {
-    shape.where = pg::ExpressionText(*index.where_clause);
+    shape.where = ExpressionText(*index.where_clause);
   }
   return shape;
 }
@@ -380,14 +373,13 @@ IndexShape ShapeOf(const duckdb::TableCatalogEntry& table,
   return shape;
 }
 
-Definition IndexDefinition(const pg::Session& session, int64_t oid,
-                           int64_t column, bool pretty) {
+Definition IndexDefinition(const Session& session, int64_t oid, int64_t column,
+                           bool pretty) {
   std::optional<IndexShape> shape;
-  if (const auto* index = EntryByOid<duckdb::IndexCatalogEntry>(
+  if (const auto* index = TypedEntry<duckdb::IndexCatalogEntry>(
         session, duckdb::CatalogType::INDEX_ENTRY, oid)) {
     shape = ShapeOf(session, *index);
-  } else if (const auto key =
-               pg::FindKeyIndex(session, static_cast<uint64_t>(oid));
+  } else if (const auto key = FindKeyIndex(session, static_cast<uint64_t>(oid));
              key.table) {
     shape = ShapeOf(*key.table, *key.key_index);
   }
@@ -416,7 +408,7 @@ Definition IndexDefinition(const pg::Session& session, int64_t oid,
   };
   auto definition =
     absl::StrCat("CREATE ", shape->unique ? "UNIQUE " : "", "INDEX ",
-                 pg::QuoteIdentifier(shape->name), " ON ",
+                 QuoteIdentifier(shape->name), " ON ",
                  RelationName(session, *shape->relation, !pretty), " USING ",
                  shape->method, " (", definitions(shape->keys), ")");
   if (!shape->includes.empty()) {
@@ -432,21 +424,20 @@ Definition IndexDefinition(const pg::Session& session, int64_t oid,
   return definition;
 }
 
-Definition TriggerDefinition(const pg::Session& session, int64_t oid,
-                             bool pretty) {
-  const auto* found = EntryByOid<duckdb::TriggerCatalogEntry>(
+Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
+  const auto* found = TypedEntry<duckdb::TriggerCatalogEntry>(
     session, duckdb::CatalogType::TRIGGER_ENTRY, oid);
   if (!found) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto table = pg::SiblingTable(*session.transaction, trigger,
-                                      trigger.base_table->Table());
+  const auto table =
+    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
   if (!table) {
     return std::nullopt;
   }
   auto definition = absl::StrCat(
-    "CREATE TRIGGER ", pg::QuoteIdentifier(trigger.name.GetIdentifierName()));
+    "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {
     case duckdb::TriggerTiming::BEFORE:
       absl::StrAppend(&definition, " BEFORE");
@@ -474,8 +465,7 @@ Definition TriggerDefinition(const pg::Session& session, int64_t oid,
       &definition, " OF ",
       absl::StrJoin(trigger.columns, ", ",
                     [](std::string* out, const duckdb::Identifier& name) {
-                      out->append(
-                        pg::QuoteIdentifier(name.GetIdentifierName()));
+                      out->append(QuoteIdentifier(name.GetIdentifierName()));
                     }));
   }
   absl::StrAppend(&definition, " ON ", RelationName(session, *table, !pretty));
@@ -485,12 +475,12 @@ Definition TriggerDefinition(const pg::Session& session, int64_t oid,
     if (!trigger.referencing_old_table.empty()) {
       absl::StrAppend(
         &definition, " OLD TABLE AS ",
-        pg::QuoteIdentifier(trigger.referencing_old_table.GetIdentifierName()));
+        QuoteIdentifier(trigger.referencing_old_table.GetIdentifierName()));
     }
     if (!trigger.referencing_new_table.empty()) {
       absl::StrAppend(
         &definition, " NEW TABLE AS ",
-        pg::QuoteIdentifier(trigger.referencing_new_table.GetIdentifierName()));
+        QuoteIdentifier(trigger.referencing_new_table.GetIdentifierName()));
     }
   }
   absl::StrAppend(
@@ -500,19 +490,9 @@ Definition TriggerDefinition(const pg::Session& session, int64_t oid,
   return definition;
 }
 
-const duckdb::MacroCatalogEntry* FindMacro(const pg::Session& session,
-                                           int64_t oid) {
-  auto entry = pg::EntryByOid(session, static_cast<uint64_t>(oid));
-  if (!entry || pg::CatalogClassOid(entry->type) != pg::kPgProcTable) {
-    return nullptr;
-  }
-  const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
-  return macro.macros.empty() ? nullptr : &macro;
-}
-
-std::string_view FormatType(const pg::Session& session,
+std::string_view FormatType(const Session& session,
                             const duckdb::LogicalType& type) {
-  return pg::RegOut<pg::RegKind::Type>(session, pg::Type2Oid(type));
+  return RegOut(session, RegKind::Type, Type2Oid(type));
 }
 
 const duckdb::ParsedExpression* ParameterDefault(
@@ -524,7 +504,7 @@ const duckdb::ParsedExpression* ParameterDefault(
   return it == macro.default_parameters.end() ? nullptr : it->second.get();
 }
 
-std::string Arguments(const pg::Session& session,
+std::string Arguments(const Session& session,
                       const duckdb::MacroFunction& macro, bool defaults) {
   const auto& modes = macro.parameter_modes;
   const auto count = modes.empty() ? macro.parameters.size() : modes.size();
@@ -537,8 +517,8 @@ std::string Arguments(const pg::Session& session,
     std::vector<std::string> parts;
     if (mode == 'o') {
       arguments.emplace_back(
-        absl::StrCat("OUT ", pg::QuoteIdentifier(macro.return_names[output]),
-                     " ", FormatType(session, macro.return_types[output])));
+        absl::StrCat("OUT ", QuoteIdentifier(macro.return_names[output]), " ",
+                     FormatType(session, macro.return_types[output])));
       ++output;
       continue;
     }
@@ -548,9 +528,9 @@ std::string Arguments(const pg::Session& session,
     } else if (macro.is_procedure) {
       parts.emplace_back("IN");
     }
-    const auto name = pg::MacroParameterName(macro, i);
+    const auto name = MacroParameterName(macro, i);
     if (!name.empty()) {
-      parts.emplace_back(pg::QuoteIdentifier(name));
+      parts.emplace_back(QuoteIdentifier(name));
     }
     if (i < macro.types.size() &&
         macro.types[i].id() != duckdb::LogicalTypeId::UNKNOWN) {
@@ -566,7 +546,7 @@ std::string Arguments(const pg::Session& session,
   return absl::StrJoin(arguments, ", ");
 }
 
-Definition FunctionResult(const pg::Session& session,
+Definition FunctionResult(const Session& session,
                           const duckdb::MacroFunction& macro) {
   if (macro.is_procedure || macro.return_types.empty()) {
     return std::nullopt;
@@ -582,17 +562,17 @@ Definition FunctionResult(const pg::Session& session,
   std::vector<std::string> columns;
   columns.reserve(macro.return_types.size());
   for (duckdb::idx_t i = 0; i < macro.return_types.size(); ++i) {
-    columns.emplace_back(absl::StrCat(
-      pg::QuoteIdentifier(i < macro.return_names.size()
-                            ? std::string_view{macro.return_names[i]}
-                            : std::string_view{}),
-      " ", FormatType(session, macro.return_types[i])));
+    columns.emplace_back(
+      absl::StrCat(QuoteIdentifier(i < macro.return_names.size()
+                                     ? std::string_view{macro.return_names[i]}
+                                     : std::string_view{}),
+                   " ", FormatType(session, macro.return_types[i])));
   }
   return absl::StrCat("TABLE(", absl::StrJoin(columns, ", "), ")");
 }
 
-Definition FunctionDefinition(const pg::Session& session, int64_t oid) {
-  const auto* entry = FindMacro(session, oid);
+Definition FunctionDefinition(const Session& session, int64_t oid) {
+  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
   if (!entry) {
     return std::nullopt;
   }
@@ -607,29 +587,29 @@ Definition FunctionDefinition(const pg::Session& session, int64_t oid) {
   const std::string_view kind = macro.is_procedure ? "PROCEDURE" : "FUNCTION";
   const std::string_view tag =
     macro.is_procedure ? "$procedure$" : "$function$";
-  const auto [schema, name] = pg::NameOf(*session.transaction, *entry);
+  const auto [schema, name] = NameOf(*session.transaction, *entry);
   auto definition = absl::StrCat("CREATE OR REPLACE ", kind, " ",
-                                 pg::QualifiedOutName(schema, name), "(",
+                                 QualifiedOutName(schema, name), "(",
                                  Arguments(session, macro, true), ")\n");
   if (const auto result = FunctionResult(session, macro)) {
     absl::StrAppend(&definition, " RETURNS ", *result, "\n");
   }
-  absl::StrAppend(&definition, " LANGUAGE sql\nAS ", tag, pg::MacroBody(macro),
-                  tag, "\n");
+  absl::StrAppend(&definition, " LANGUAGE sql\nAS ", tag, MacroBody(macro), tag,
+                  "\n");
   return definition;
 }
 
-Definition BuiltinArguments(const pg::Session& session,
-                            const pg::BuiltinFunction& builtin) {
-  return absl::StrJoin(
-    builtin.argtypes, ", ", [&](std::string* out, duckdb::idx_t type) {
-      out->append(pg::RegOut<pg::RegKind::Type>(session, type));
-    });
+Definition BuiltinArguments(const Session& session,
+                            const BuiltinFunction& builtin) {
+  return absl::StrJoin(builtin.argtypes, ", ",
+                       [&](std::string* out, duckdb::idx_t type) {
+                         out->append(RegOut(session, RegKind::Type, type));
+                       });
 }
 
-Definition BuiltinResult(const pg::Session& session,
-                         const pg::BuiltinFunction& builtin) {
-  const auto type = pg::RegOut<pg::RegKind::Type>(session, builtin.rettype);
+Definition BuiltinResult(const Session& session,
+                         const BuiltinFunction& builtin) {
+  const auto type = RegOut(session, RegKind::Type, builtin.rettype);
   return builtin.retset ? absl::StrCat("SETOF ", type) : std::string{type};
 }
 
@@ -647,16 +627,17 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
   return [macro_renderer, builtin_renderer](duckdb::DataChunk& args,
                                             duckdb::ExpressionState& state,
                                             duckdb::Vector& result) {
-    const auto& session = pg::SessionOf(state);
-    std::shared_ptr<const pg::BuiltinFunctions> builtins;
+    const auto& session = SessionOf(state);
+    std::shared_ptr<const BuiltinFunctions> builtins;
     duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
       args.data[0], result, args.size(), [&](int64_t oid) {
         Definition definition;
-        if (const auto* macro = FindMacro(session, oid)) {
+        if (const auto* macro =
+              FindMacro(session, static_cast<uint64_t>(oid))) {
           definition = macro_renderer(session, *macro->macros.front());
         } else if (oid > 0) {
           if (!builtins) {
-            builtins = pg::GetBuiltinFunctions(state.GetContext());
+            builtins = GetBuiltinFunctions(state.GetContext());
           }
           if (const auto* builtin =
                 builtins->Find(static_cast<duckdb::idx_t>(oid))) {
@@ -668,9 +649,9 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
   };
 }
 
-Definition FunctionArgDefault(const pg::Session& session, int64_t oid,
+Definition FunctionArgDefault(const Session& session, int64_t oid,
                               int64_t argument) {
-  const auto* entry = FindMacro(session, oid);
+  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
   if (!entry || argument < 1) {
     return std::nullopt;
   }
@@ -680,15 +661,13 @@ Definition FunctionArgDefault(const pg::Session& session, int64_t oid,
     if (index >= modes.size() || modes[index] == 'o') {
       return std::nullopt;
     }
-    index = static_cast<duckdb::idx_t>(
-      std::count_if(modes.begin(), modes.begin() + index,
-                    [](char mode) { return mode != 'o'; }));
+    index = static_cast<duckdb::idx_t>(absl::c_count_if(
+      std::span{modes}.first(index), [](char mode) { return mode != 'o'; }));
   }
   if (index >= macro.parameters.size()) {
     return std::nullopt;
   }
-  const auto* value =
-    ParameterDefault(macro, pg::MacroParameterName(macro, index));
+  const auto* value = ParameterDefault(macro, MacroParameterName(macro, index));
   if (!value) {
     return std::nullopt;
   }
@@ -699,7 +678,7 @@ template<typename Builder>
 duckdb::scalar_function_t OidFunction(Builder builder) {
   return [builder](duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
-    const auto& session = pg::SessionOf(state);
+    const auto& session = SessionOf(state);
     duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
       args.data[0], result, args.size(),
       [&](int64_t oid) { return Emit(result, builder(session, oid)); });
@@ -710,7 +689,7 @@ template<typename Arg, typename Builder>
 duckdb::scalar_function_t OidArgFunction(Builder builder) {
   return [builder](duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
-    const auto& session = pg::SessionOf(state);
+    const auto& session = SessionOf(state);
     duckdb::BinaryExecutor::Execute<int64_t, Arg, duckdb::string_t>(
       args.data[0], args.data[1], result, args.size(),
       [&](int64_t oid, Arg arg) {
@@ -719,32 +698,23 @@ duckdb::scalar_function_t OidArgFunction(Builder builder) {
   };
 }
 
-uint64_t ViewOid(const pg::Session& session, duckdb::string_t name) {
-  const auto oid = pg::ResolveRelation(
-    session, duckdb::QualifiedName::Parse(connector::AsView(name)));
-  if (oid == pg::kInvalidOid) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG("relation \"", connector::AsView(name), "\" does not exist"));
-  }
-  return oid;
-}
-
 template<typename... Pretty>
 void PgGetViewdefByName(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  const auto& session = pg::SessionOf(state);
+  const auto& session = SessionOf(state);
   duckdb::VariadicExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                     Pretty...>(
     args, result, [&](duckdb::string_t name, Pretty...) {
-      return Emit(result, ViewDefinition(session, ViewOid(session, name)));
+      const auto oid =
+        *RegIn(session, RegKind::Class, connector::AsView(name), false);
+      return Emit(result, ViewDefinition(session, static_cast<int64_t>(oid)));
     });
 }
 
 void PgGetIndexdefColumn(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  const auto& session = pg::SessionOf(state);
+  const auto& session = SessionOf(state);
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int64_t, bool>(
     args, result, [&](int64_t oid, int64_t column, bool pretty) {
       return Emit(result, IndexDefinition(session, oid, column, pretty));
@@ -755,7 +725,7 @@ void PgGetIndexdefColumn(duckdb::DataChunk& args,
 
 void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
-  const auto oid = pg::OID();
+  const auto oid = OID();
   const auto text = duckdb::LogicalType::VARCHAR;
   const auto boolean = duckdb::LogicalType::BOOLEAN;
   const auto bigint = duckdb::LogicalType::BIGINT;
@@ -820,7 +790,7 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
       {oid},
       text,
       FunctionInfo(
-        [](const pg::Session& session, const duckdb::MacroFunction& macro)
+        [](const Session& session, const duckdb::MacroFunction& macro)
           -> Definition { return Arguments(session, macro, true); },
         BuiltinArguments)}});
   RegisterScalar(
@@ -830,7 +800,7 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
       {oid},
       text,
       FunctionInfo(
-        [](const pg::Session& session, const duckdb::MacroFunction& macro)
+        [](const Session& session, const duckdb::MacroFunction& macro)
           -> Definition { return Arguments(session, macro, false); },
         BuiltinArguments)}});
   RegisterScalar(loader, pg_catalog, "pg_get_function_result", stability,
@@ -845,7 +815,7 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
                           "pg_get_statisticsobjdef_columns"}) {
     duckdb::ScalarFunction function{{oid}, text, nullptr};
     function.SetBindExpressionCallback(BindNull);
-    RegisterScalar(loader, pg_catalog, name, stability, {function});
+    RegisterScalar(loader, pg_catalog, name, stability, nullptr, {function});
   }
 }
 

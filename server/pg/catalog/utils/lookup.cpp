@@ -36,12 +36,10 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/static_strings.hpp>
 #include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "catalog/entry/subscription.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
@@ -124,26 +122,6 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   return owner->Cast<duckdb::TableCatalogEntry>();
 }
 
-const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
-                                          std::string_view name) {
-  auto& cluster = catalog::ClusterOf(context);
-  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                 .GetEntry(cluster.GetCatalogTransaction(context),
-                           duckdb::Identifier{name});
-  return entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
-}
-
-std::optional<duckdb::idx_t> RoleOrPublic(duckdb::ClientContext& context,
-                                          std::string_view name) {
-  if (name == irs::StaticStrings::kPublic) {
-    return kPublicGrantee;
-  }
-  if (const auto* role = FindRole(context, name)) {
-    return role->oid;
-  }
-  return std::nullopt;
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
   duckdb::ClientContext& context, std::string_view name) {
   auto& cluster = catalog::ClusterOf(context);
@@ -213,16 +191,6 @@ const duckdb::ColumnList* TableColumns(const Relation& relation) {
   return &relation.entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
 }
 
-namespace {
-
-const duckdb::Permissions& SystemTablePermissions(const SystemTable& table) {
-  static const auto kPublic = SystemPermissions(false);
-  static const auto kSuperuser = SystemPermissions(true);
-  return table.SuperuserOnly() ? kSuperuser : kPublic;
-}
-
-}  // namespace
-
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid) {
   auto relation = FindRelation(session, oid);
@@ -230,8 +198,8 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
     return std::nullopt;
   }
   if (relation->system) {
-    return RelationAccess{{*relation},
-                          &SystemTablePermissions(*relation->system)};
+    return RelationAccess{
+      {*relation}, &SystemPermissions(relation->system->SuperuserOnly())};
   }
   if (relation->view) {
     const auto entry = session.retriever->GetEntry(
@@ -336,7 +304,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
     return NameOf(*session.transaction, *relation);
   }
   if (oid < kMaxSystem) {
-    if (const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid))) {
+    if (const auto* builtin = FindBuiltinType(oid)) {
       return ObjectName{FindSystemObject(kSystemNamespaces, builtin->nsp)->name,
                         builtin->name};
     }
@@ -369,20 +337,17 @@ std::vector<ReplicationOrigin> ReplicationOrigins(
     catalog.Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
-        origins.emplace_back(ReplicationOrigin{
-          .id = entry.oid,
-          .name = absl::StrCat("pg_", entry.oid),
-          .remote_lsn =
-            entry.Cast<catalog::SubscriptionCatalogEntry>().RemoteLsn()});
+        origins.emplace_back(
+          entry.oid, absl::StrCat("pg_", entry.oid),
+          entry.Cast<catalog::SubscriptionCatalogEntry>().RemoteLsn());
       });
   }
   catalog::ClusterOf(db)
     .GetCatalogSet(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
     .Scan([&](duckdb::CatalogEntry& entry) {
-      origins.emplace_back(ReplicationOrigin{
-        .id = entry.oid,
-        .name = entry.name.GetIdentifierName(),
-        .remote_lsn = entry.Cast<duckdb::ReplicationLsnEntry>().RemoteLsn()});
+      origins.emplace_back(
+        entry.oid, entry.name.GetIdentifierName(),
+        entry.Cast<duckdb::ReplicationLsnEntry>().RemoteLsn());
     });
   return origins;
 }
@@ -447,7 +412,7 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
     }
   });
   if (const auto it = keys.find(name); it != keys.end()) {
-    found = {.table = it->second.first, .key_index = it->second.second};
+    found = {.table = it->second.table, .key_index = it->second.constraint};
   }
   return found;
 }

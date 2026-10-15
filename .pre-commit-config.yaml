@@ -91,11 +91,11 @@ repos:
         entry: python3 scripts/check_banned_calls.py
         files: ^(server|iresearch)/.*\.(cpp|cc|hpp|hh|h|ipp|tpp)$
       - id: check-system-table-generated
-        name: Check generated system-table registry and claims
+        name: Check the outputs of scripts/generate_pg_catalog.py
         language: python
         entry: python3 scripts/generate_pg_catalog.py --check
         pass_filenames: false
-        files: (^server/pg/catalog/(tables|views|generated)/|^server/pg/catalog/system_oids\.lock$|^server/pg/catalog/oids\.h$|^server/pg/types\.cpp$|^server/pg/catalog/builtin/builtin\.h$|system_table_claims\.test$|system-table-compatibility\.md$|^scripts/generate_pg_catalog\.py$|^scripts/pg_catalog/)
+        always_run: true
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python

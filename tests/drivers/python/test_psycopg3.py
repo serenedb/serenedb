@@ -644,6 +644,27 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         c.close()
 
 
+def test_unenforced_setting_warns_only_away_from_its_default():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SET DateStyle = 'German'")
+            cur.execute("RESET DateStyle")
+            cur.execute("SET IntervalStyle = 'sql_standard'")
+            cur.execute("SET IntervalStyle = 'postgres'")
+            cur.execute("SET client_min_messages = warning")
+            cur.execute("RESET ALL")
+        assert notices == [
+            f'parameter "{name}" is accepted for compatibility but is not '
+            "enforced by serened"
+            for name in ("DateStyle", "IntervalStyle", "client_min_messages")
+        ], notices
+    finally:
+        c.close()
+
+
 def test_offset_without_guaranteed_order_warns():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     diags: list[tuple] = []

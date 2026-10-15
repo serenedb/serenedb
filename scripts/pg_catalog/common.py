@@ -6,6 +6,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
 CATALOG_DIR = os.path.join(REPO_ROOT, 'server', 'pg', 'catalog')
 GENERATED_DIR = os.path.join(CATALOG_DIR, 'generated')
 
+PG_CATALOG = '11'
+
 
 def cpp_str(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
@@ -45,28 +47,3 @@ def oid(value):
 def array(value):
     items = '' if value is None else value.strip('{}')
     return [item.strip().strip('"') for item in items.split(',')] if items else []
-
-
-class Generator:
-    def __init__(self, lock):
-        from . import initdb, source
-
-        self.version = f'PostgreSQL {source.version()} in third_party/postgres'
-        self.relations, self.rows, self.indexes = source.bki()
-        self.row_types = source.row_types(self.relations, self.rows['pg_type'])
-        self.initdb = initdb.Initdb(lock)
-        self.outputs = {}
-
-    def find(self, catalog, **match):
-        return [row for row in self.rows[catalog]
-                if all(row[key] == value for key, value in match.items())]
-
-    def one(self, catalog, **match):
-        rows = self.find(catalog, **match)
-        if len(rows) != 1:
-            raise SystemExit(f'{catalog} has {len(rows)} rows for {match}')
-        return rows[0]
-
-    def write(self, name, lines):
-        self.outputs[os.path.join(GENERATED_DIR, name)] = generated(
-            self.version, lines)

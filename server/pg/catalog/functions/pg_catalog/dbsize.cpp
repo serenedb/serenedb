@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -35,13 +36,14 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
+#include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
-#include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
 #include "search/inverted_index_storage.h"
@@ -120,8 +122,6 @@ int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
   return total;
 }
 
-// Every entry of one kind across the catalog's schemas, which is duckdb's own
-// two-level scan rather than anything of ours.
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                   duckdb::CatalogType type, std::string_view only_schema,
                   absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
@@ -141,16 +141,16 @@ void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
 
 int64_t RelationDataBytes(duckdb::ClientContext& context,
                           duckdb::TableCatalogEntry& table) {
-  const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
-  return search ? SearchTableBytes(*search)
-                : StoreTableDataSize(context, table).bytes;
+  if (table.GetLogStorage()) {
+    return SearchTableBytes(table.Cast<catalog::SearchTableEntry>());
+  }
+  return StoreTableDataSize(context, table).bytes;
 }
 
 int64_t IndexEntryBytes(duckdb::ClientContext& context,
                         const duckdb::DuckIndexEntry& index) {
-  if (const auto* inverted =
-        dynamic_cast<const catalog::InvertedIndexEntry*>(&index)) {
-    const auto& storage = inverted->Storage();
+  if (connector::IsInvertedIndex(index)) {
+    const auto& storage = index.Cast<catalog::InvertedIndexEntry>().Storage();
     if (!storage) {
       return 0;
     }
@@ -208,26 +208,24 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
   int64_t blocks = 0;
   VisitEntries(context, catalog, duckdb::CatalogType::TABLE_ENTRY, only_schema,
                [&](duckdb::CatalogEntry& entry) {
-                 // Views and the index-name-as-table wrappers share this set
-                 // and own no rows of their own; the cast is the filter.
-                 auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(&entry);
-                 if (!table) {
+                 if (entry.type != duckdb::CatalogType::TABLE_ENTRY) {
                    return;
                  }
-                 if (const auto* search =
-                       dynamic_cast<const catalog::SearchTableEntry*>(table)) {
-                   bytes += SearchTableBytes(*search);
+                 auto& table = entry.Cast<duckdb::TableCatalogEntry>();
+                 if (table.GetLogStorage()) {
+                   bytes +=
+                     SearchTableBytes(table.Cast<catalog::SearchTableEntry>());
                    return;
                  }
-                 const auto data = StoreTableDataSize(context, *table);
-                 bytes += data.bytes + StoreTableIndexBytes(context, *table);
+                 const auto data = StoreTableDataSize(context, table);
+                 bytes += data.bytes + StoreTableIndexBytes(context, table);
                  blocks += data.persistent_blocks;
                });
   VisitEntries(context, catalog, duckdb::CatalogType::INDEX_ENTRY, only_schema,
                [&](duckdb::CatalogEntry& entry) {
-                 auto* index = dynamic_cast<duckdb::DuckIndexEntry*>(&entry);
-                 if (index && connector::IsInvertedIndex(*index)) {
-                   bytes += IndexEntryBytes(context, *index);
+                 const auto& index = entry.Cast<duckdb::DuckIndexEntry>();
+                 if (connector::IsInvertedIndex(index)) {
+                   bytes += IndexEntryBytes(context, index);
                  }
                });
   result.bytes = static_cast<duckdb::idx_t>(bytes);
@@ -236,9 +234,9 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
   return result;
 }
 
-std::optional<int64_t> RelationBytes(const pg::Session& session, uint64_t oid,
+std::optional<int64_t> RelationBytes(const Session& session, uint64_t oid,
                                      bool data, bool indexes) {
-  auto relation = pg::FindRelation(session, oid);
+  auto relation = FindRelation(session, oid);
   if (!relation) {
     return std::nullopt;
   }
@@ -249,14 +247,18 @@ std::optional<int64_t> RelationBytes(const pg::Session& session, uint64_t oid,
                     *relation->key)
                 : 0;
   }
-  if (auto* table =
-        dynamic_cast<duckdb::TableCatalogEntry*>(relation->entry.get())) {
-    return (data ? RelationDataBytes(context, *table) : 0) +
-           (indexes ? TableIndexesTotalBytes(context, *table) : 0);
+  if (!relation->entry) {
+    return 0;
   }
-  if (auto* index =
-        dynamic_cast<duckdb::DuckIndexEntry*>(relation->entry.get())) {
-    return data ? IndexEntryBytes(context, *index) : 0;
+  auto& entry = *relation->entry;
+  if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+    auto& table = entry.Cast<duckdb::TableCatalogEntry>();
+    return (data ? RelationDataBytes(context, table) : 0) +
+           (indexes ? TableIndexesTotalBytes(context, table) : 0);
+  }
+  if (entry.type == duckdb::CatalogType::INDEX_ENTRY) {
+    return data ? IndexEntryBytes(context, entry.Cast<duckdb::DuckIndexEntry>())
+                : 0;
   }
   return 0;
 }
@@ -265,7 +267,7 @@ template<bool Data, bool Indexes>
 void RelationBytesFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
-  const auto& session = pg::SessionOf(state);
+  const auto& session = SessionOf(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -288,7 +290,7 @@ constexpr std::string_view kForkNames[] = {"main", "fsm", "vm", "init"};
 void RelationForkBytesFunction(duckdb::DataChunk& args,
                                duckdb::ExpressionState& state,
                                duckdb::Vector& result) {
-  const auto& session = pg::SessionOf(state);
+  const auto& session = SessionOf(state);
   const auto oids = args.data[0].Values<int64_t>();
   const auto forks = args.data[1].Values<duckdb::string_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
@@ -316,92 +318,69 @@ void RelationForkBytesFunction(duckdb::DataChunk& args,
   }
 }
 
-// pg_database_size(name) -> bigint
-void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState& state,
-                                duckdb::Vector& result) {
-  auto& context = state.GetContext();
+std::string KeyText(duckdb::string_t name) {
+  return absl::StrCat("\"", connector::AsView(name), "\"");
+}
 
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
-      const auto db_name = connector::AsView(input);
-      const auto entry = FindDatabase(context, db_name);
+std::string KeyText(int64_t oid) { return absl::StrCat("with OID ", oid); }
+
+duckdb::optional_ptr<duckdb::CatalogEntry> DatabaseEntry(
+  duckdb::ClientContext& context, duckdb::string_t name) {
+  return FindDatabase(context, connector::AsView(name));
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> DatabaseEntry(
+  duckdb::ClientContext& context, int64_t oid) {
+  return FindDatabaseById(context, static_cast<duckdb::idx_t>(oid));
+}
+
+template<typename Key>
+void DatabaseSizeFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
+                          duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<Key, int64_t>(
+    args.data[0], result, args.size(), [&](Key key) -> int64_t {
+      const auto entry = DatabaseEntry(context, key);
       duckdb::optional_ptr<duckdb::Catalog> database =
         entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
               : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-                        ERR_MSG("database \"", db_name, "\" does not exist"));
+                        ERR_MSG("database ", KeyText(key), " does not exist"));
       }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);
     });
 }
 
-// pg_database_size(oid) -> bigint
-void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
-                               duckdb::ExpressionState& state,
-                               duckdb::Vector& result) {
-  auto& context = state.GetContext();
-
-  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-    args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      const auto entry = FindDatabaseById(context, static_cast<uint64_t>(oid));
-      duckdb::optional_ptr<duckdb::Catalog> database =
-        entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-              : nullptr;
-      if (!database) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-                        ERR_MSG("database with OID ", oid, " does not exist"));
-      }
-      return static_cast<int64_t>(
-        DatabaseStorageSize(context, *database, {}).bytes);
-    });
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
+  const Session& session, duckdb::string_t name) {
+  return session.database->GetSchema(
+    *session.transaction, duckdb::Identifier{connector::AsView(name)},
+    duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
-// pg_schema_size(name) -> bigint -- non-standard, included for SereneDB tests.
-void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState& state,
-                              duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto database = SessionCatalog(context);
-  SDB_ASSERT(database);
-
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
-      const auto schema_name = connector::AsView(input);
-      auto schema =
-        database->GetSchema(context, duckdb::Identifier{schema_name},
-                            duckdb::OnEntryNotFound::RETURN_NULL);
-      if (!schema) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                        ERR_MSG("schema \"", schema_name, "\" does not exist"));
-      }
-      return static_cast<int64_t>(
-        DatabaseStorageSize(context, *database, schema_name).bytes);
-    });
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
+  const Session& session, int64_t oid) {
+  return session.database->FindSchemaById(*session.transaction,
+                                          static_cast<duckdb::idx_t>(oid));
 }
 
-// pg_schema_size(oid) -> bigint
-void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
-                             duckdb::ExpressionState& state,
-                             duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  // A schema oid resolves in the session's own database, as it does in pg.
-  auto database = SessionCatalog(context);
-  SDB_ASSERT(database);
-  const auto transaction = database->GetCatalogTransaction(context);
-
-  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-    args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto schema =
-        database->FindSchemaById(transaction, static_cast<duckdb::idx_t>(oid));
+template<typename Key>
+void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                        duckdb::Vector& result) {
+  const auto& session = SessionOf(state);
+  duckdb::UnaryExecutor::Execute<Key, int64_t>(
+    args.data[0], result, args.size(), [&](Key key) -> int64_t {
+      const auto schema =
+        session.database ? SchemaEntry(session, key) : nullptr;
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                        ERR_MSG("schema with OID ", oid, " does not exist"));
+                        ERR_MSG("schema ", KeyText(key), " does not exist"));
       }
       return static_cast<int64_t>(
-        DatabaseStorageSize(context, *database,
+        DatabaseStorageSize(*session.context, *session.database,
                             schema->name.GetIdentifierName())
           .bytes);
     });
@@ -410,45 +389,35 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
 }  // namespace
 
 void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
-  const auto regclass = pg::REGCLASS();
+  const auto regclass = REGCLASS();
   const auto text = duckdb::LogicalType::VARCHAR;
   const auto int8 = duckdb::LogicalType::BIGINT;
   const std::string_view main = DEFAULT_SCHEMA;
   const auto stability = duckdb::FunctionStability::VOLATILE;
 
-  // pg_relation_size(regclass) and pg_relation_size(regclass, text)
   RegisterScalar(loader, main, "pg_relation_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                     {regclass}, int8, RelationBytesFunction<true, false>},
                   duckdb::ScalarFunction{
                     {regclass, text}, int8, RelationForkBytesFunction}});
-
-  // pg_table_size(regclass)
   RegisterScalar(loader, main, "pg_table_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<true, false>}});
-
-  // pg_total_relation_size(regclass)
   RegisterScalar(loader, main, "pg_total_relation_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<true, true>}});
-
-  // pg_indexes_size(regclass)
   RegisterScalar(loader, main, "pg_indexes_size", stability, InitSession,
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<false, true>}});
-
-  // pg_database_size(text) and pg_database_size(bigint/oid)
   RegisterScalar(
-    loader, main, "pg_database_size", stability,
-    {duckdb::ScalarFunction{{text}, int8, PgDatabaseSizeNameFunction},
-     duckdb::ScalarFunction{{int8}, int8, PgDatabaseSizeOidFunction}});
-
-  // pg_schema_size(text) and pg_schema_size(oid) -- non-standard helper.
+    loader, main, "pg_database_size", stability, nullptr,
+    {duckdb::ScalarFunction{
+       {text}, int8, DatabaseSizeFunction<duckdb::string_t>},
+     duckdb::ScalarFunction{{int8}, int8, DatabaseSizeFunction<int64_t>}});
   RegisterScalar(
-    loader, main, "pg_schema_size", stability,
-    {duckdb::ScalarFunction{{text}, int8, PgSchemaSizeNameFunction},
-     duckdb::ScalarFunction{{int8}, int8, PgSchemaSizeOidFunction}});
+    loader, main, "pg_schema_size", stability, InitSession,
+    {duckdb::ScalarFunction{{text}, int8, SchemaSizeFunction<duckdb::string_t>},
+     duckdb::ScalarFunction{{int8}, int8, SchemaSizeFunction<int64_t>}});
 }
 
 }  // namespace sdb::pg

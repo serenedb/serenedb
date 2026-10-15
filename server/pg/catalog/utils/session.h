@@ -35,13 +35,9 @@
 #include <utility>
 #include <vector>
 
-namespace sdb {
-namespace catalog {
+#include "catalog/catalog.h"
 
-class SereneDBCatalog;
-
-}  // namespace catalog
-namespace pg {
+namespace sdb::pg {
 
 struct SessionSchema {
   std::string name;
@@ -81,5 +77,4 @@ struct SessionState final : duckdb::FunctionLocalState {
   Session session;
 };
 
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::pg

@@ -59,9 +59,10 @@ class PgAttrdef final : public SystemTableScan<kPgAttrdefSql> {
     if (!Allows<"adrelid">(table.oid)) {
       return;
     }
-    for (const auto& column :
-         table.GetColumns().Logical() | std::views::filter(HasAttrdef)) {
-      Emit<kAttrdef>({table, column});
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (HasAttrdef(column)) {
+        Emit<kAttrdef>({table, column});
+      }
     }
   }
 };

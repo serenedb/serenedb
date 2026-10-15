@@ -22,7 +22,6 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/function/table_function.hpp>
-#include <duckdb/parser/parsed_data/create_table_function_info.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <span>
 #include <string>
@@ -48,45 +47,6 @@ struct SubscriptionStats {
   duckdb::idx_t subid;
   Engine::SubStats stats;
 };
-
-template<typename Row>
-struct RowsState final : duckdb::LocalTableFunctionState {
-  std::vector<Row> rows;
-  size_t next = 0;
-  bool loaded = false;
-};
-
-template<typename Row>
-duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitRows(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
-  duckdb::GlobalTableFunctionState*) {
-  return duckdb::make_uniq<RowsState<Row>>();
-}
-
-template<typename Row, auto Load, auto Write>
-duckdb::OperatorResultType PerSubscription(duckdb::ExecutionContext& context,
-                                           duckdb::TableFunctionInput& data,
-                                           duckdb::DataChunk& input,
-                                           duckdb::DataChunk& output) {
-  auto& state = data.local_state->Cast<RowsState<Row>>();
-  if (!state.loaded) {
-    state.rows.clear();
-    state.next = 0;
-    state.loaded = true;
-    Load(context.client, input, state.rows);
-  }
-  if (state.next == state.rows.size()) {
-    state.loaded = false;
-    output.SetCardinality(0);
-    return duckdb::OperatorResultType::NEED_MORE_INPUT;
-  }
-  const auto count =
-    std::min<size_t>(state.rows.size() - state.next, STANDARD_VECTOR_SIZE);
-  Write(std::span{state.rows}.subspan(state.next, count), output);
-  state.next += count;
-  output.SetCardinality(count);
-  return duckdb::OperatorResultType::HAVE_MORE_OUTPUT;
-}
 
 void WriteLsn(duckdb::VectorWriter<duckdb::string_t>& writer, uint64_t lsn) {
   const auto text = FormatLsn(lsn);
@@ -304,32 +264,26 @@ void OriginStatusScan(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 }  // namespace
 
 void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader) {
-  const auto add = [&](duckdb::TableFunction function) {
-    duckdb::CreateTableFunctionInfo info{std::move(function)};
-    info.SetSchema(duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema});
-    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-    loader.RegisterFunction(std::move(info));
-  };
+  const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   duckdb::TableFunction workers{"pg_stat_get_subscription",
                                 {OID()},
                                 nullptr,
                                 WorkersBind,
                                 nullptr,
                                 InitRows<Worker>};
-  workers.in_out_function =
-    PerSubscription<Worker, &LoadWorkers, &WriteWorkers>;
-  add(std::move(workers));
+  workers.in_out_function = RowsInOut<Worker, &LoadWorkers, &WriteWorkers>;
+  RegisterTable(loader, pg_catalog, std::move(workers));
   duckdb::TableFunction stats{
     "pg_stat_get_subscription_stats", {OID()}, nullptr, StatsBind, nullptr,
     InitRows<SubscriptionStats>};
-  stats.in_out_function =
-    PerSubscription<SubscriptionStats, &LoadStats, &WriteStats>;
-  add(std::move(stats));
-  add(duckdb::TableFunction{"pg_show_replication_origin_status",
-                            {},
-                            OriginStatusScan,
-                            OriginStatusBind,
-                            OriginStatusInit});
+  stats.in_out_function = RowsInOut<SubscriptionStats, &LoadStats, &WriteStats>;
+  RegisterTable(loader, pg_catalog, std::move(stats));
+  RegisterTable(loader, pg_catalog,
+                duckdb::TableFunction{"pg_show_replication_origin_status",
+                                      {},
+                                      OriginStatusScan,
+                                      OriginStatusBind,
+                                      OriginStatusInit});
 }
 
 }  // namespace sdb::pg

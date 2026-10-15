@@ -108,6 +108,7 @@ statement error
 CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, synchronous_commit = 'sometimes');
 ----
 db error: ERROR: invalid value for parameter "synchronous_commit": "sometimes"
+HINT: Available values: local, remote_write, remote_apply, on, off.
 
 
 query
@@ -143,6 +144,21 @@ SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subf
 ----
 subbinary	suborigin	subdisableonerr	subsynccommit	subrunasowner	subfailover	subpasswordrequired	substream	subtwophasestate
 t	none	t	remote_apply	t	t	t	p	d
+
+
+statement ok
+CREATE SUBSCRIPTION cs_hidden CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE, synchronous_commit = 'YES');
+
+
+query
+SELECT subsynccommit FROM pg_subscription WHERE subname = 'cs_hidden';
+----
+subsynccommit
+YES
+
+
+statement ok
+DROP SUBSCRIPTION cs_hidden;
 
 
 statement ok

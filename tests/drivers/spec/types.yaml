@@ -3,7 +3,7 @@
 # server/pg/catalog/generated/builtin_type_oids.gen.inc (`enum PgTypeOID`) by gen/oids_from_pg_types.py (CI gate).
 #
 # Schema:
-#   oid:            postgres OID (must match pg_types.h)
+#   oid:            postgres OID (must match `enum PgTypeOID`)
 #   name:           short identifier used in test ids
 #   pg_typname:     name as in pg_catalog.pg_type.typname; used in cast SQL
 #   cast_sql:       SQL fragment used to cast a $1 placeholder server-side.
@@ -273,9 +273,8 @@
 - oid: 3220
   name: pg_lsn
   pg_typname: pg_lsn
-  # TODO: SereneDB - pg_lsn rejects bind parameters.
-  text: false
-  binary: false
+  text: true
+  binary: true
   array: false
   samples: ["0/0", "16/B374D848", null]
 

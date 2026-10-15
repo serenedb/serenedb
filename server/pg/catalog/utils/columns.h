@@ -21,9 +21,11 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <array>
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -38,11 +40,6 @@
 
 #include "pg/catalog/engine/system_table.h"
 
-namespace duckdb {
-
-class IndexCatalogEntry;
-
-}  // namespace duckdb
 namespace sdb::pg {
 
 duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
@@ -122,24 +119,19 @@ struct IndexColumn {
   const duckdb::LogicalType& type;
 };
 
-inline IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
-                                 const duckdb::ViewColumnInfo* columns,
-                                 int16_t attnum) {
-  static const duckdb::LogicalType kExpression{duckdb::LogicalTypeId::VARCHAR};
-  if (attnum == 0) {
-    return {"expr", kExpression};
-  }
-  const auto column = static_cast<duckdb::idx_t>(attnum - 1);
-  if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
-    return {relation.Cast<duckdb::ViewCatalogEntry>()
-              .ColumnName(*columns, column)
-              .GetIdentifierName(),
-            columns->types[column]};
-  }
-  const auto& definition = relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
-    duckdb::LogicalIndex{column});
-  return {definition.Name().GetIdentifierName(), definition.Type()};
-}
+std::string IndexExpressionName(const duckdb::ParsedExpression& expression);
+
+class IndexColumnNames {
+ public:
+  std::string_view Add(std::string_view name);
+
+ private:
+  absl::InlinedVector<std::string, 4> _names;
+};
+
+IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
+                          const duckdb::ViewColumnInfo* columns,
+                          int16_t attnum);
 
 std::vector<int16_t> ExpressionAttnums(
   const duckdb::TableCatalogEntry& table,

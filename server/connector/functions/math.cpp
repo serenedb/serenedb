@@ -35,7 +35,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <random>
-#include <utility>
+#include <string_view>
 
 namespace sdb::connector {
 namespace {
@@ -517,12 +517,17 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
-  for (const auto& [name, function] :
-       {std::pair{"justify_days", &JustifyFunction<JustifyDays>},
-        std::pair{"justify_hours", &JustifyFunction<JustifyHours>},
-        std::pair{"justify_interval", &JustifyFunction<JustifyInterval>}}) {
+  struct Justify {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+  };
+  for (const auto& [name, function] : {
+         Justify{"justify_days", JustifyFunction<JustifyDays>},
+         Justify{"justify_hours", JustifyFunction<JustifyHours>},
+         Justify{"justify_interval", JustifyFunction<JustifyInterval>},
+       }) {
     loader.RegisterFunction(
-      duckdb::ScalarFunction{name,
+      duckdb::ScalarFunction{duckdb::Identifier{name},
                              {duckdb::LogicalType::INTERVAL},
                              duckdb::LogicalType::INTERVAL,
                              function});

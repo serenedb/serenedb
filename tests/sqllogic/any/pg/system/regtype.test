@@ -145,6 +145,42 @@ regtype
 double precision
 
 
+# A numeric OID is read like oidin: a leading zero means octal.
+query
+SELECT '00023'::regtype AS octal,
+       '037777777777'::regtype::oid AS max_octal,
+       to_regtype('019') IS NULL AS bad_octal,
+       to_regtype('040000000000') IS NULL AS octal_too_big,
+       to_regclass('4294967296') IS NULL AS too_big;
+----
+octal	max_octal	bad_octal	octal_too_big	too_big
+name	4294967295	t	t	t
+
+
+statement error
+SELECT '019'::regtype;
+----
+db error: ERROR: invalid input syntax for type oid: "019"
+
+
+statement error
+SELECT '040000000000'::regtype;
+----
+db error: ERROR: value "040000000000" is out of range for type oid
+
+
+statement error
+SELECT '0777777777777779'::regclass;
+----
+db error: ERROR: invalid input syntax for type oid: "0777777777777779"
+
+
+statement error
+SELECT '0777777777777777777777779'::regclass;
+----
+db error: ERROR: value "0777777777777777777777779" is out of range for type oid
+
+
 query
 SELECT pg_typeof('integer'::regtype);
 ----

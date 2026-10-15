@@ -23,25 +23,16 @@
 #include <absl/functional/function_ref.h>
 
 #include <array>
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <string>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "pg/catalog/oids.h"
 
-namespace duckdb {
-
-class CatalogEntry;
-class ClientContext;
-
-}  // namespace duckdb
-namespace sdb {
-namespace auth {
-
-struct RoleGraph;
-
-}  // namespace auth
-namespace pg {
+namespace sdb::pg {
 
 struct AclPrivilege {
   duckdb::AclMode mode;
@@ -80,5 +71,4 @@ void VisitDefaultAcls(
   absl::FunctionRef<void(duckdb::idx_t oid, const duckdb::DefaultAcl& row)>
     visitor);
 
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::pg

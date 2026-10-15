@@ -1202,7 +1202,7 @@ template<RegKind Kind>
 struct RegTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegOut<Kind>(*ctx.session, static_cast<uint64_t>(oid)));
+    EmitEscaped(ctx, RegOut(*ctx.session, Kind, static_cast<uint64_t>(oid)));
   }
 };
 
@@ -2075,17 +2075,17 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
   return SerializeField<Framing::BinaryField, TextCore>;
 }
 
-void AttachSession(SerializationContext& context) {
-  if (!context.session) {
+void AttachSession(VarFormat format, SerializationContext& context) {
+  if (format != VarFormat::Binary && !context.session) {
     context.session =
-      std::make_shared<const Session>(MakeSession(context.client));
+      std::make_unique<const Session>(MakeSession(context.client));
   }
 }
 
 template<RegKind Kind>
 SerializationFunction MakeRegSerializer(VarFormat format,
                                         SerializationContext& context) {
-  AttachSession(context);
+  AttachSession(format, context);
   return SelectFieldSerializer<RegTextCore<Kind>, RegTextCore<Kind>,
                                OidBinCore>(format, context);
 }
@@ -2133,7 +2133,7 @@ template<RegKind Kind, uint64_t Oid>
 SerializationFunction MakeRegArraySerializer(VarFormat format,
                                              SerializationContext& context,
                                              ArrayKind kind) {
-  AttachSession(context);
+  AttachSession(format, context);
   return MakeArraySerializer<RegTextCore<Kind>, OidBinCore, Oid>(format,
                                                                  context, kind);
 }

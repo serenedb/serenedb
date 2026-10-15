@@ -163,7 +163,8 @@ void Tighten(std::optional<SystemBound<T>>& bound, SystemBound<T> candidate,
 template<typename T>
 void Intersect(std::optional<std::vector<T>>& keys, std::vector<T> set) {
   absl::c_sort(set);
-  set.erase(std::unique(set.begin(), set.end()), set.end());
+  const auto duplicates = std::ranges::unique(set);
+  set.erase(duplicates.begin(), duplicates.end());
   if (keys) {
     std::erase_if(set, [&](const T& value) {
       return !absl::c_binary_search(*keys, value);
@@ -211,7 +212,7 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
     const bool excluded =
       expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_NOT_IN;
     std::vector<T> set;
-    for (const auto& child : children | std::views::drop(1)) {
+    for (const auto& child : std::span{children}.subspan(1)) {
       if (child->GetExpressionType() !=
           duckdb::ExpressionType::VALUE_CONSTANT) {
         return false;
@@ -366,10 +367,9 @@ void Finish(const SystemSqlColumn& meta, SystemFilter& compiled) {
   Seal(compiled.texts);
   Seal(compiled.numbers);
   if (meta.type == kChar) {
-    compiled.chars[0] = compiled.texts.Passes(std::string_view{});
-    for (uint32_t c = 1; c < 256; ++c) {
+    for (uint32_t c = 0; c < 256; ++c) {
       const auto ch = static_cast<char>(c);
-      compiled.chars[c] = compiled.texts.Passes(std::string_view{&ch, 1});
+      compiled.chars[c] = compiled.texts.Passes(std::string_view{&ch, c != 0});
     }
   }
 }
@@ -427,7 +427,9 @@ void SystemScan::Compile(duckdb::column_t column,
   SystemFilter compiled;
   const auto claim = Claim(_table, column, expr, compiled);
   if (claim == SystemClaim::Visibility) {
-    _visible_only = true;
+    if (!_session) {
+      _session.emplace(MakeSession(&_context));
+    }
     return;
   }
   const bool optional =
@@ -442,13 +444,11 @@ void SystemScan::Compile(duckdb::column_t column,
         _table.Columns().GetColumn(duckdb::LogicalIndex{column}).Type();
       optional && !compiled.numbers.keys && type.IsIntegral()) {
     _pruned |= uint64_t{1} << column;
-    _prunes.emplace_back(SystemPrune{
-      .column = static_cast<uint32_t>(column),
-      .filter = &filter,
-      .state = duckdb::TableFilterState::Initialize(_context, filter),
-      .stats = duckdb::BaseStatistics::FromConstant(
-                 duckdb::Value::BIGINT(0).DefaultCastAs(type))
-                 .ToUnique()});
+    _prunes.emplace_back(static_cast<uint32_t>(column), &filter,
+                         duckdb::TableFilterState::Initialize(_context, filter),
+                         duckdb::BaseStatistics::FromConstant(
+                           duckdb::Value::BIGINT(0).DefaultCastAs(type))
+                           .ToUnique());
   }
   if (compiled.texts.Empty() && compiled.numbers.Empty()) {
     return;

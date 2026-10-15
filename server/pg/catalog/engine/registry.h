@@ -23,40 +23,29 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
-#include <memory>
 #include <span>
 #include <string_view>
 
+#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
 
-namespace duckdb {
-
-struct DefaultType;
-
-}  // namespace duckdb
 namespace sdb::pg {
-
-struct ViewBinding {
-  duckdb::shared_ptr<duckdb::ViewColumnInfo> columns;
-};
-
-class SystemTable;
 
 struct StaticView {
   std::string_view schema;
   std::string_view name;
-  std::shared_ptr<const duckdb::CreateViewInfo> info;
+  duckdb::unique_ptr<const duckdb::CreateViewInfo> info;
   duckdb::Permissions permissions;
   duckdb::idx_t oid = 0;
   std::string_view options;
-  std::shared_ptr<ViewBinding> binding;
+  mutable duckdb::shared_ptr<duckdb::ViewColumnInfo> columns;
 };
-using StaticFunction = std::shared_ptr<const duckdb::CreateMacroInfo>;
 
 inline constexpr duckdb::AclItem kPublicSelect{
   .grantee = kPublicGrantee,
@@ -76,11 +65,12 @@ std::span<SystemTable* const> SystemTableFunctions();
 const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 const StaticView* FindSystemView(duckdb::idx_t oid);
 duckdb::idx_t SystemRelationOid(std::string_view schema, std::string_view name);
-StaticFunction GetSystemFunction(std::string_view schema, std::string_view name,
-                                 duckdb::MacroType kind);
+const duckdb::CreateMacroInfo* GetSystemFunction(std::string_view schema,
+                                                 std::string_view name,
+                                                 duckdb::MacroType kind);
 
-duckdb::Permissions SystemPermissions(bool superuser_only);
-duckdb::Permissions SchemaPermissions();
+const duckdb::Permissions& SystemPermissions(bool superuser_only);
+const duckdb::Permissions& SchemaPermissions();
 
 void VisitSystemTables(std::string_view schema,
                        absl::FunctionRef<void(const SystemTable&)> visitor);

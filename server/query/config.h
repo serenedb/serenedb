@@ -75,6 +75,11 @@ class SettingRef {
   mutable std::atomic<Slot> _slot;
 };
 
+struct PgEnumAlias {
+  std::string_view name;
+  std::string_view value;
+};
+
 struct PgSetting {
   std::string_view vartype;
   std::string_view category;
@@ -83,6 +88,7 @@ struct PgSetting {
   std::string_view min_val;
   std::string_view max_val;
   std::span<const std::string_view> enumvals;
+  std::span<const PgEnumAlias> hidden_enumvals;
 };
 
 struct VariableDescription {
@@ -98,6 +104,9 @@ struct VariableDescription {
 std::string_view GetOriginalName(std::string_view name);
 
 const VariableDescription* FindVariable(std::string_view name);
+
+std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
+                             std::string_view text);
 
 std::optional<double> PgBaseValue(std::string_view unit, std::string_view text);
 

@@ -33,6 +33,7 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/lookup.h"
+#include "pg/sql_utils.h"
 #include "pg/types.h"
 
 namespace sdb::pg {
@@ -66,7 +67,7 @@ struct InfoColumn {
   size_t position;
   const duckdb::LogicalType& type;
   const duckdb::ColumnDefinition* column;
-  std::span<const SystemSqlColumn> system;
+  const SystemSqlColumn* system;
   bool not_null;
   bool internal;
   mutable std::optional<ColumnTypeInfo> info;
@@ -75,12 +76,9 @@ struct InfoColumn {
     if (info) {
       return *info;
     }
-    const auto described =
-      column ? DescribeColumn(*column, system) : DescribeColumnType(type);
+    const auto described = DescribeColumn(type, system);
     const auto* builtin =
-      described.oid < kMaxSystem
-        ? FindBuiltinType(static_cast<int32_t>(described.oid))
-        : nullptr;
+      described.oid < kMaxSystem ? FindBuiltinType(described.oid) : nullptr;
     if (!builtin) {
       auto entry = scan.FindById(described.oid);
       const auto array = !entry;
@@ -133,19 +131,22 @@ constexpr std::tuple kRelationColumns{
 
 constexpr std::tuple kTypeColumns{
   Col<"udt_catalog">(&InfoColumn::database),
-  Col<"data_type">([](const auto& row) -> std::string_view {
+  Col<"data_type">([](const auto& row) -> SystemText {
     const auto& info = row.Info();
     if (!info.builtin) {
-      return info.array ? "ARRAY" : "USER-DEFINED";
+      return std::string_view{info.array ? "ARRAY" : "USER-DEFINED"};
     }
     if (info.base->elem != 0 && info.base->len == -1) {
-      return "ARRAY";
+      return std::string_view{"ARRAY"};
     }
     if (info.base->nsp != kPgCatalogSchema) {
-      return "USER-DEFINED";
+      return std::string_view{"USER-DEFINED"};
     }
     if (const auto name = SqlTypeName(info.base->oid); !name.empty()) {
       return name;
+    }
+    if (RequiresQuotes(info.base->name)) {
+      return SystemConcatText{{"\"", info.base->name, "\""}};
     }
     return info.base->name;
   }),
@@ -258,13 +259,11 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
-    for (const auto& column :
-         table.GetColumns().Logical() |
-           std::views::filter([&](const duckdb::ColumnDefinition& column) {
-             return visible ||
-                    (_closure->HeldModes(column.Acl()) & kAnyColumnPrivilege) !=
-                      duckdb::AclMode::NoRights;
-           })) {
+    for (const auto& column : table.GetColumns().Logical()) {
+      if (!visible && (_closure->HeldModes(column.Acl()) &
+                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+        continue;
+      }
       Emit<kTableColumn>(
         {.scan = *this,
          .database = _database,
@@ -275,7 +274,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .position = static_cast<size_t>(Attnum(column)),
          .type = column.Type(),
          .column = &column,
-         .system = system,
+         .system = system.empty() ? nullptr : &system[column.Logical().index],
          .not_null = !not_null.empty() && not_null[column.Logical().index],
          .internal = table.internal});
     }

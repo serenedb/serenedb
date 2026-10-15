@@ -58,6 +58,7 @@
 #include "icu-helpers.hpp"
 #include "pg/inet.h"
 #include "pg/types.h"
+#include "pg/types/pg_lsn.h"
 
 namespace sdb::pg {
 
@@ -539,6 +540,18 @@ struct NumberText {
       return false;
     }
     sink.Fixed(value);
+    return true;
+  }
+};
+
+struct LsnText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    const auto lsn = ParseLsn(data);
+    if (!lsn) {
+      return false;
+    }
+    sink.Fixed(*lsn);
     return true;
   }
 };
@@ -1851,6 +1864,9 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<uint32_t, int64_t>, NumberText<uint32_t>,
                            Sink>(binary);
     case UBIGINT:
+      if (IsPgLsn(type)) {
+        return SelectDecoder<LoadBin<uint64_t>, LsnText, Sink>(binary);
+      }
       return SelectDecoder<UbigintBin, NumberText<uint64_t>, Sink>(binary);
     case HUGEINT:
       return SelectDecoder<HugeintBin, HugeintText, Sink>(binary);

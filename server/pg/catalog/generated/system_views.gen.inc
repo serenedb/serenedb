@@ -2376,8 +2376,8 @@
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
             OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 {"information_schema", "usage_privileges", 13539, 13541, 13540, false, "",
- R"(/* information_schema.collations */
-      -- Collations have no real privileges, so we represent all information_schema.collations with implicit usage privilege here.
+ R"(/* collations */
+      -- Collations have no real privileges, so we represent all collations with implicit usage privilege here.
       SELECT CAST(u.rolname AS sql_identifier) AS grantor,
              CAST('PUBLIC' AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS object_catalog,
@@ -2397,7 +2397,7 @@
 
       UNION ALL
 
-      /* information_schema.domains */
+      /* domains */
       SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
              CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS object_catalog,
@@ -2502,7 +2502,7 @@
 
       UNION ALL
 
-      /* information_schema.sequences */
+      /* sequences */
       SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
              CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS object_catalog,
@@ -2780,7 +2780,7 @@
 
       FROM pg_namespace n, pg_type at, pg_namespace nbt, pg_type bt,
            (
-             /* information_schema.columns, information_schema.attributes */
+             /* columns, attributes */
              SELECT c.relnamespace, CAST(c.relname AS sql_identifier),
                     CASE WHEN c.relkind = 'c' THEN 'USER-DEFINED TYPE'::text ELSE 'TABLE'::text END,
                     a.attnum, a.atttypid, a.attcollation
@@ -2791,7 +2791,7 @@
 
              UNION ALL
 
-             /* information_schema.domains */
+             /* domains */
              SELECT t.typnamespace, CAST(t.typname AS sql_identifier),
                     'DOMAIN'::text, 1, t.typbasetype, t.typcollation
              FROM pg_type t
@@ -2799,7 +2799,7 @@
 
              UNION ALL
 
-             /* information_schema.parameters */
+             /* parameters */
              SELECT pronamespace,
                     CAST(nameconcatoid(proname, oid) AS sql_identifier),
                     'ROUTINE'::text, (ss.x).n, (ss.x).x, 0

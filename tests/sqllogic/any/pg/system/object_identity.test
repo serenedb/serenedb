@@ -321,6 +321,31 @@ integer[]	type	pg_catalog	_int4	integer[]
 ident_s.mood[]	type	ident_s	_mood	ident_s.mood[]
 
 
+# A builtin type's identity is format_type's SQL-standard name where it has
+# one, else its schema-qualified, quoted name.
+query
+SELECT t, (pg_identify_object('pg_type'::regclass, t::regtype, 0)).*,
+       pg_describe_object('pg_type'::regclass, t::regtype, 0) AS description
+FROM (VALUES (1, 'json'), (2, 'json[]'), (3, 'bit'), (4, 'character'), (5, '"char"'), (6, '"any"')) v(i, t) ORDER BY i;
+----
+t	type	schema	name	identity	description
+json	type	pg_catalog	"json"	json	type json
+json[]	type	pg_catalog	_json	json[]	type json[]
+bit	type	pg_catalog	"bit"	bit	type bit
+character	type	pg_catalog	bpchar	character	type character
+"char"	type	pg_catalog	"char"	pg_catalog."char"	type "char"
+"any"	type	pg_catalog	"any"	pg_catalog."any"	type "any"
+
+
+query
+SELECT format_type('json'::regtype, NULL) AS json_type, format_type('bit'::regtype, -1) AS bit_type,
+       format_type('bpchar'::regtype, -1) AS bpchar_type, format_type('"char"'::regtype, NULL) AS char_type,
+       format_type('"any"'::regtype, NULL) AS any_type;
+----
+json_type	bit_type	bpchar_type	char_type	any_type
+json	"bit"	bpchar	"char"	"any"
+
+
 statement ok
 CREATE FUNCTION ident_s.g(a text, b ident_s.mood) RETURNS int LANGUAGE sql AS 'SELECT 1';
 

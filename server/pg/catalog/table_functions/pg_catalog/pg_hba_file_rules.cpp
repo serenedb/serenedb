@@ -34,38 +34,27 @@ SystemRows<HbaRule> LoadHbaRules(SystemScan&) {
   return network::pg::hba::RenderHbaRules();
 }
 
-class PgHbaFileRules final : public SystemTableScan<kPgHbaFileRulesSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<HbaRule>{&LoadHbaRules, {}, {}}};
-
-  static constexpr auto kRule = Shape<kSql, const HbaRule>(
-    Col<"rule_number">(&HbaRule::rule_number),
-    Col<"file_name">([](const auto& rule) {
-      return NonEmpty<std::string_view>(rule.file_name);
-    }),
-    Col<"line_number">([](const auto& rule) {
-      return rule.line_number == 0 ? std::nullopt
-                                   : std::optional<uint32_t>{rule.line_number};
-    }),
-    Col<"type">(&HbaRule::type), Col<"database">(&HbaRule::databases),
-    Col<"user_name">(&HbaRule::roles), Col<"address">([](const auto& rule) {
-      return NonEmpty<std::string_view>(rule.address);
-    }),
-    Col<"netmask">([](const auto& rule) {
-      return NonEmpty<std::string_view>(rule.netmask);
-    }),
-    Col<"auth_method">(&HbaRule::auth_method),
-    Col<"options">(
-      [](const auto& rule) { return NonEmpty(std::span{rule.options}); }));
-
-  void Row(const HbaRule& rule) { Emit<kRule>(rule); }
-};
+constexpr auto kRule = Shape<kPgHbaFileRulesSql, const HbaRule>(
+  Col<"rule_number">(&HbaRule::rule_number),
+  Col<"file_name">([](const auto& rule) {
+    return NonEmpty<std::string_view>(rule.file_name);
+  }),
+  Col<"line_number">([](const auto& rule) {
+    return rule.line_number == 0 ? std::nullopt
+                                 : std::optional<uint32_t>{rule.line_number};
+  }),
+  Col<"type">(&HbaRule::type), Col<"database">(&HbaRule::databases),
+  Col<"user_name">(&HbaRule::roles), Col<"address">([](const auto& rule) {
+    return NonEmpty<std::string_view>(rule.address);
+  }),
+  Col<"netmask">(
+    [](const auto& rule) { return NonEmpty<std::string_view>(rule.netmask); }),
+  Col<"auth_method">(&HbaRule::auth_method),
+  Col<"options">(
+    [](const auto& rule) { return NonEmpty(std::span{rule.options}); }));
 
 }  // namespace
 
-SystemTable gPgHbaFileRules = SystemTableOf<PgHbaFileRules>();
+SystemTable gPgHbaFileRules = SystemTableOf<ArrayTable<kRule, &LoadHbaRules>>();
 
 }  // namespace sdb::pg

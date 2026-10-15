@@ -203,7 +203,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterIResearchScanFunction(db);
 
-  connector::RegisterSystemTableScanFunction(db);
+  pg::RegisterSystemTableScanFunction(db);
 
   connector::RegisterAIFunctions(db);
 

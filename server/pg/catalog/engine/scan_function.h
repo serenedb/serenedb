@@ -20,31 +20,22 @@
 
 #pragma once
 
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/database.hpp>
 
-namespace duckdb {
+#include "catalog/entry/system_table.h"
+#include "pg/catalog/engine/system_table.h"
 
-class DatabaseInstance;
-class DuckCatalog;
-
-}  // namespace duckdb
-namespace sdb::catalog {
-
-class SystemTableEntry;
-
-}  // namespace sdb::catalog
 namespace sdb::pg {
 
-class SystemTable;
-
-}  // namespace sdb::pg
-namespace sdb::connector {
-
 struct SystemTableBindData final : duckdb::FunctionData {
-  SystemTableBindData(const pg::SystemTable& table,
-                      duckdb::DuckCatalog& catalog,
+  SystemTableBindData(const SystemTable& table, duckdb::DuckCatalog& catalog,
                       catalog::SystemTableEntry* entry)
     : table{table}, catalog{catalog}, entry{entry} {}
+  explicit SystemTableBindData(catalog::SystemTableEntry& entry)
+    : SystemTableBindData{entry.Table(),
+                          entry.catalog.Cast<duckdb::DuckCatalog>(), &entry} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<SystemTableBindData>(*this);
@@ -56,7 +47,7 @@ struct SystemTableBindData final : duckdb::FunctionData {
            entry == data.entry;
   }
 
-  const pg::SystemTable& table;
+  const SystemTable& table;
   duckdb::DuckCatalog& catalog;
   catalog::SystemTableEntry* entry;
 };
@@ -67,4 +58,4 @@ duckdb::TableFunction BindSystemTableScan(
 
 void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db);
 
-}  // namespace sdb::connector
+}  // namespace sdb::pg

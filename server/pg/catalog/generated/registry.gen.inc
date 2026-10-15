@@ -43,7 +43,7 @@ extern SystemTable gSdbProgress;
 extern SystemTable gSdbSettings;
 extern SystemTable gPgHbaFileRules;
 extern SystemTable gPgShowAllSettings;
-SystemTable* const kSystemTables[] = {
+constexpr SystemTable* kSystemTables[] = {
   &gInfoColumns,
   &gInfoSqlImplementationInfo,
   &gInfoSqlParts,
@@ -86,18 +86,18 @@ SystemTable* const kSystemTables[] = {
   &gSdbProgress,
   &gSdbSettings,
 };
-SystemTable* const kSystemTableFunctions[] = {
+constexpr SystemTable* kSystemTableFunctions[] = {
   &gPgHbaFileRules,
   &gPgShowAllSettings,
 };
-extern std::string_view gInfoTriggers;
-extern std::string_view gPgStatProgressCreateIndex;
+extern const std::string_view kInfoTriggers;
+extern const std::string_view kPgStatProgressCreateIndex;
 const SystemViewSql kSystemViewSql[] = {
-  {"information_schema", "triggers", gInfoTriggers},
-  {"pg_catalog", "pg_stat_progress_create_index", gPgStatProgressCreateIndex},
+  {"information_schema", "triggers", kInfoTriggers},
+  {"pg_catalog", "pg_stat_progress_create_index", kPgStatProgressCreateIndex},
 };
-extern SystemView gPgStatProgressCreateTableAs;
-SystemView* const kSdbViews[] = {
-  &gPgStatProgressCreateTableAs,
+extern const SystemView kPgStatProgressCreateTableAs;
+constexpr const SystemView* kSdbViews[] = {
+  &kPgStatProgressCreateTableAs,
 };
 // clang-format on

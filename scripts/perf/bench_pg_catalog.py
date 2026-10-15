@@ -10,7 +10,7 @@ import time
 import psycopg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEST = os.path.normpath(os.path.join(HERE, "..", "sqllogic", "any", "pg", "system", "catalog_conformance.test"))
+TEST = os.path.normpath(os.path.join(HERE, "..", "..", "tests", "sqllogic", "any", "pg", "system", "catalog_conformance.test"))
 HZ = os.sysconf("SC_CLK_TCK")
 SCHEMA = "catbench"
 MARKER = f"{SCHEMA}.catbench_done"
@@ -88,7 +88,10 @@ class Session:
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description="Catalog query latency bench at N tables, with a CPU-quietness check.")
+    ap = argparse.ArgumentParser(
+        description="Catalog query latency bench at N tables, with a CPU-quietness check. Needs psycopg 3.",
+        epilog="example: bench_pg_catalog.py --target sdb=127.0.0.1:7861 --target pg=127.0.0.1:55433 "
+               "--server-comm pg=postgres --tables 1000,10000 --json /tmp/bench.json")
     ap.add_argument("--target", action="append", required=True, help="name=[user@]host:port, repeatable (e.g. sdb=127.0.0.1:7861 pg=127.0.0.1:55433)")
     ap.add_argument("--tables", default="1000,10000", help="comma-separated catalog sizes")
     ap.add_argument("--rounds", type=int, default=5)

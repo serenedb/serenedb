@@ -22,7 +22,7 @@
 
 namespace sdb::pg {
 
-std::string_view gPgStatProgressCreateIndex = R"sql(SELECT
+extern constexpr std::string_view kPgStatProgressCreateIndex = R"sql(SELECT
     S.pid AS pid, S.datid AS datid, S.datname AS datname,
     S.relid AS relid,
     S.current_relid AS index_relid,

@@ -119,16 +119,11 @@ std::optional<std::string> IndexColumn(duckdb::ClientContext& context,
     relation.type == duckdb::CatalogType::VIEW_ENTRY
       ? ViewColumns(context, relation.Cast<duckdb::ViewCatalogEntry>())
       : nullptr;
-  if (relation.type == duckdb::CatalogType::VIEW_ENTRY && !view) {
+  if ((relation.type == duckdb::CatalogType::VIEW_ENTRY && !view) ||
+      column >= attnums.size()) {
     return std::nullopt;
   }
-  size_t i = 0;
-  for (const int16_t attnum : attnums) {
-    if (i++ == column) {
-      return std::string{IndexColumnAt(relation, view.get(), attnum).name};
-    }
-  }
-  return std::nullopt;
+  return std::string{IndexColumnAt(relation, view.get(), attnums[column]).name};
 }
 
 std::optional<std::string> ColumnName(const Session& session,
@@ -204,7 +199,7 @@ ObjectIdentity IdentifyRelation(const Session& session, uint64_t oid,
   const auto kind = RelationKind(*relation);
   const auto [schema, name] = NameOf(*session.transaction, *relation);
   auto description =
-    absl::StrCat(kind, " ", RegOut<RegKind::Class>(session, oid));
+    absl::StrCat(kind, " ", RegOut(session, RegKind::Class, oid));
   auto identity = QualifiedOutName(schema, name);
   if (attnum == 0) {
     return ObjectIdentity{.type = std::string{kind},
@@ -226,20 +221,23 @@ ObjectIdentity IdentifyRelation(const Session& session, uint64_t oid,
 }
 
 ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
-  if (!FunctionIsVisible(session, oid)) {
-    return Missing("routine");
-  }
-  const auto builtins = GetBuiltinFunctions(*session.context);
   char kind = 'f';
-  std::string schema;
-  if (const auto* builtin = builtins->Find(oid)) {
+  std::string_view schema;
+  if (oid < kMaxSystem) {
+    const auto builtins = GetBuiltinFunctions(*session.context);
+    const auto* builtin = builtins->Find(oid);
+    if (!builtin) {
+      return Missing("routine");
+    }
     kind = builtin->kind;
     schema = FindSystemObject(kSystemNamespaces, builtin->nsp)->name;
   } else {
-    const auto entry = EntryByOid(session, oid);
-    const auto& macros = entry->Cast<duckdb::MacroCatalogEntry>().macros;
-    kind = macros.front()->is_procedure ? 'p' : 'f';
-    schema = NameOf(*session.transaction, *entry).schema;
+    const auto* macro = FindMacro(session, oid);
+    if (!macro) {
+      return Missing("routine");
+    }
+    kind = macro->macros.front()->is_procedure ? 'p' : 'f';
+    schema = NameOf(*session.transaction, *macro).schema;
   }
   std::string_view type = "function";
   if (kind == 'a') {
@@ -250,18 +248,18 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
   return ObjectIdentity{
     .type = std::string{type},
     .description =
-      absl::StrCat("function ", RegOut<RegKind::Procedure>(session, oid)),
-    .schema = schema,
+      absl::StrCat("function ", RegOut(session, RegKind::Procedure, oid)),
+    .schema = std::string{schema},
     .identity = ProcIdentity(session, oid)};
 }
 
 ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
-  if (!TypeIsVisible(session, oid)) {
+  if (!TypeExists(session, oid)) {
     return Missing("type");
   }
   ObjectIdentity identity{
     .type = "type",
-    .description = absl::StrCat("type ", RegOut<RegKind::Type>(session, oid)),
+    .description = absl::StrCat("type ", RegOut(session, RegKind::Type, oid)),
     .identity = TypeIdentity(session, oid)};
   if (const auto object = TypeObject(session, oid)) {
     identity.schema = std::string{object->schema};
@@ -318,7 +316,7 @@ ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
     return ObjectIdentity{
       .type = "table constraint",
       .description = absl::StrCat("constraint ", name, " on table ",
-                                  RegOut<RegKind::Class>(session, table->oid)),
+                                  RegOut(session, RegKind::Class, table->oid)),
       .schema = std::string{schema},
       .identity = absl::StrCat(QuoteIdentifier(name), " on ",
                                QualifiedOutName(schema, table_name))};
@@ -341,7 +339,7 @@ ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
       .type = "default value",
       .description =
         absl::StrCat("default value for column ", name, " of table ",
-                     RegOut<RegKind::Class>(session, table->oid)),
+                     RegOut(session, RegKind::Class, table->oid)),
       .identity = absl::StrCat("for ", QualifiedOutName(schema, table_name),
                                ".", QuoteIdentifier(name))};
   }
@@ -357,7 +355,7 @@ ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
   return ObjectIdentity{
     .type = "rule",
     .description = absl::StrCat("rule _RETURN on view ",
-                                RegOut<RegKind::Class>(session, oid)),
+                                RegOut(session, RegKind::Class, oid)),
     .identity = absl::StrCat(QuoteIdentifier("_RETURN"), " on ",
                              QualifiedOutName(schema, name))};
 }
@@ -378,24 +376,22 @@ ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
   return ObjectIdentity{
     .type = "trigger",
     .description = absl::StrCat("trigger ", name, " on table ",
-                                RegOut<RegKind::Class>(session, table->oid)),
+                                RegOut(session, RegKind::Class, table->oid)),
     .identity = absl::StrCat(QuoteIdentifier(name), " on ",
                              QualifiedOutName(schema, table_name))};
 }
 
 ObjectIdentity IdentifyCollation(uint64_t oid) {
-  const auto collations = BuiltinCollations();
-  const auto it = absl::c_find_if(
-    collations, [&](const BuiltinCollation& c) { return c.oid == oid; });
-  if (it == collations.end()) {
+  const auto* collation = FindBuiltinCollation(static_cast<int64_t>(oid));
+  if (!collation) {
     return Missing("collation");
   }
-  const auto quoted = QuoteIdentifier(it->name);
+  const auto quoted = QuoteIdentifier(collation->name);
   return ObjectIdentity{
     .type = "collation",
     .description = absl::StrCat("collation ", quoted),
     .schema = std::string{irs::StaticStrings::kPgCatalogSchema},
-    .name = std::string{it->name},
+    .name = std::string{collation->name},
     .identity =
       absl::StrCat(irs::StaticStrings::kPgCatalogSchema, ".", quoted)};
 }

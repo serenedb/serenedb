@@ -31,6 +31,7 @@
 #include <memory>
 #include <tz_calendar.hpp>
 
+#include "pg/catalog/utils/session.h"
 #include "query/config.h"
 #include "server/utils/message_buffer.h"
 
@@ -40,8 +41,6 @@ class ZoneLUT;
 
 }  // namespace duckdb
 namespace sdb::pg {
-
-struct Session;
 
 enum class VarFormat : int16_t {
   Text = 0,
@@ -74,7 +73,7 @@ struct SerializationContext {
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   duckdb::ClientContext* client = nullptr;
-  std::shared_ptr<const Session> session;
+  std::unique_ptr<const Session> session;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;

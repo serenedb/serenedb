@@ -53,7 +53,7 @@ constexpr SystemIndex kIndexes[] = {
 struct Description {
   duckdb::idx_t objoid;
   duckdb::idx_t classoid;
-  size_t objsubid;
+  int32_t objsubid;
   std::string_view text;
 };
 
@@ -86,10 +86,7 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
       return;
     }
     for (const auto& column : table.GetColumns().Logical()) {
-      if (const auto* text = Text(column.Comment())) {
-        Emit<kDescription>({table.oid, kPgClassTable,
-                            static_cast<size_t>(Attnum(column)), *text});
-      }
+      Comment(kPgClassTable, table.oid, Attnum(column), column.Comment());
     }
   }
 
@@ -103,7 +100,8 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
     }
     if (const auto columns = ViewColumns(Context(), view)) {
       for (size_t i = 0; i < columns->names.size(); ++i) {
-        Comment(kPgClassTable, view.oid, i + 1, view.GetColumnComment(i));
+        Comment(kPgClassTable, view.oid, static_cast<int32_t>(i + 1),
+                view.GetColumnComment(i));
       }
     }
   }
@@ -117,7 +115,7 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
     return text.empty() ? nullptr : &text;
   }
 
-  void Comment(duckdb::idx_t classoid, duckdb::idx_t objoid, size_t objsubid,
+  void Comment(duckdb::idx_t classoid, duckdb::idx_t objoid, int32_t objsubid,
                const duckdb::Value& comment) {
     if (const auto* text = Text(comment)) {
       Emit<kDescription>({objoid, classoid, objsubid, *text});

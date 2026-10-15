@@ -76,6 +76,7 @@ target_sources(
         copy_batch_builder.cpp
         connection_context.cpp
         types.cpp
+        types/pg_lsn.cpp
         inet.cpp
         serialize.cpp
         deserialize.cpp

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/constants.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <optional>
@@ -30,11 +31,6 @@
 
 #include "pg/catalog/builtin/builtin.h"
 
-namespace duckdb {
-
-class ClientContext;
-
-}  // namespace duckdb
 namespace sdb::pg {
 
 struct BuiltinFunction {
@@ -48,11 +44,15 @@ struct BuiltinFunction {
   bool retset;
   bool strict;
   char volatility;
-  std::string src;
+  std::string_view src;
 };
 
 class BuiltinFunctions {
  public:
+  explicit BuiltinFunctions(duckdb::idx_t version,
+                            std::vector<BuiltinFunction> functions);
+
+  duckdb::idx_t Version() const noexcept { return _version; }
   std::span<const BuiltinFunction> All() const noexcept { return _functions; }
   const BuiltinFunction* Find(duckdb::idx_t oid) const {
     return FindByOid(_functions, oid);
@@ -63,13 +63,10 @@ class BuiltinFunctions {
   }
 
  private:
-  friend std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
-    duckdb::ClientContext& context);
-
+  duckdb::idx_t _version;
   std::vector<BuiltinFunction> _functions;
   irs::containers::FlatHashMap<std::string_view, std::vector<uint32_t>>
     _by_name;
-  duckdb::idx_t _version = 0;
 };
 
 std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(

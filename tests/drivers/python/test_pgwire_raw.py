@@ -553,6 +553,36 @@ def test_parse_param_oid_unknown_is_inferred(conn):
     assert first_field(m) == b"42"
 
 
+def parameter_types(msgs):
+    for t, p in msgs:
+        if t == "t":
+            (count,) = struct.unpack("!H", p[:2])
+            return list(struct.unpack(f"!{count}I", p[2 : 2 + 4 * count]))
+    return None
+
+
+@pytest.mark.parametrize(
+    "query, oids, expected",
+    [
+        ("select $1::int4 + 1", (705,), [23]),
+        (
+            "select table_name from information_schema.tables "
+            "where table_name = $1",
+            (),
+            [19],
+        ),
+        ("select $1::pg_lsn", (3220,), [3220]),
+    ],
+)
+def test_describe_reports_resolved_param_types(conn, query, oids, expected):
+    conn.parse("", query, oids=oids)
+    conn.describe("S", "")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == expected, parameter_types(m)
+
+
 @pytest.mark.parametrize(
     "oid, param, check",
     [

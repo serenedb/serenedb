@@ -525,6 +525,15 @@ found	null_name
 UTF8	t
 
 
+query
+SELECT current_setting('standard_conforming_strings') AS one_arg,
+       current_setting('standard_conforming_strings', false) AS strict,
+       current_setting('standard_conforming_strings', true) AS missing_ok;
+----
+one_arg	strict	missing_ok
+on	on	on
+
+
 # set_config
 
 query

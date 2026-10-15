@@ -115,11 +115,10 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
       return;
     }
     for (const auto& column :
-         entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical() |
-           std::views::filter([&](const duckdb::ColumnDefinition& column) {
-             return Names(column.Acl(), role);
-           })) {
-      Depend(database, classid, entry.oid, Attnum(column), role, 'a');
+         entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+      if (Names(column.Acl(), role)) {
+        Depend(database, classid, entry.oid, Attnum(column), role, 'a');
+      }
     }
   }
 

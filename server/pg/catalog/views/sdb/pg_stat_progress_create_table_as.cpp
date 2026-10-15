@@ -22,7 +22,7 @@
 
 namespace sdb::pg {
 
-SystemView gPgStatProgressCreateTableAs{
+extern constexpr SystemView kPgStatProgressCreateTableAs{
   .schema = "pg_catalog",
   .name = "pg_stat_progress_create_table_as",
   .oid = kPgStatProgressCreateTableAsView,

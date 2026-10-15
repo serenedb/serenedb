@@ -45,38 +45,36 @@ SystemRows<std::ranges::range_value_t<decltype(Rows)>> LoadStatic(SystemScan&) {
   return {Rows};
 }
 
-template<const auto& RowShape, const auto& Rows>
-class StaticTable final
-  : public SystemTableScan<SystemShapeOf<RowShape>::kSql> {
-  using Item = std::ranges::range_value_t<decltype(Rows)>;
+template<const auto& RowShape, auto Load,
+         duckdb::idx_t Rows = SystemScan::kRows>
+class ArrayTable final : public SystemTableScan<SystemShapeOf<RowShape>::kSql> {
+  using Item = std::remove_const_t<typename SystemShapeOf<RowShape>::Context>;
 
  public:
   using SystemTableScan<SystemShapeOf<RowShape>::kSql>::SystemTableScan;
 
-  static constexpr duckdb::idx_t kRows = std::size(Rows);
+  static constexpr duckdb::idx_t kRows = Rows;
 
-  static constexpr std::tuple kSources{
-    ArraySource<Item>{&LoadStatic<Rows>, {}, {}}};
+  static constexpr std::tuple kSources{ArraySource<Item>{Load, {}, {}}};
 
   void Row(const Item& row) { this->template Emit<RowShape>(row); }
 };
 
+template<const auto& RowShape, const auto& Rows>
+using StaticTable = ArrayTable<RowShape, &LoadStatic<Rows>, std::size(Rows)>;
+
 inline std::span<const SystemSqlColumn> SystemColumns(
   const duckdb::TableCatalogEntry& table) {
-  const auto* system =
-    table.internal ? dynamic_cast<const catalog::SystemTableEntry*>(&table)
-                   : nullptr;
-  return system ? system->Table().Sql().columns
-                : std::span<const SystemSqlColumn>{};
+  const auto* system = table.internal ? FindSystemTable(table.oid) : nullptr;
+  return system ? system->Sql().columns : std::span<const SystemSqlColumn>{};
 }
 
-inline ColumnType DescribeColumn(const duckdb::ColumnDefinition& column,
-                                 std::span<const SystemSqlColumn> system) {
-  auto described = DescribeColumnType(column.Type());
-  if (!system.empty()) {
-    const auto& sql = system[column.Logical().index];
-    described.collation = sql.collation;
-    described.ndims = sql.ndims;
+inline ColumnType DescribeColumn(const duckdb::LogicalType& type,
+                                 const SystemSqlColumn* system) {
+  auto described = DescribeColumnType(type);
+  if (system) {
+    described.collation = system->collation;
+    described.ndims = system->ndims;
   }
   return described;
 }

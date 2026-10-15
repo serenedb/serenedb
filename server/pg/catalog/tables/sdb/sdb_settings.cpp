@@ -69,7 +69,7 @@ std::string_view VarType(const absl::CommandLineFlag& flag) {
   return "string";
 }
 
-constexpr std::string_view kSecretFlags[] = {"auth_password", "auth_api_key",
+constexpr std::string_view kSecretFlags[] = {"auth_api_key",
                                              "auth_bearer_token"};
 
 SystemRows<const absl::CommandLineFlag*> LoadFlags(SystemScan&) {

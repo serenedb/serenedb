@@ -22,7 +22,7 @@
 
 namespace sdb::pg {
 
-std::string_view gInfoTriggers =
+extern constexpr std::string_view kInfoTriggers =
   R"sql(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
        CAST(n.nspname AS sql_identifier) AS trigger_schema,
        CAST(t.tgname AS sql_identifier) AS trigger_name,
@@ -34,7 +34,7 @@ std::string_view gInfoTriggers =
          -- To determine action order, partition by schema, table,
          -- event_manipulation (INSERT/DELETE/UPDATE), ROW/STATEMENT (1),
          -- BEFORE/AFTER (66), then order by trigger name.  It's preferable
-         -- to partition by view output information_schema.columns, so that query constraints
+         -- to partition by view output columns, so that query constraints
          -- can be pushed down below the window function.
          rank() OVER (PARTITION BY CAST(n.nspname AS sql_identifier),
                                    CAST(c.relname AS sql_identifier),

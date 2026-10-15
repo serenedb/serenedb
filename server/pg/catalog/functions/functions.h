@@ -20,18 +20,21 @@
 
 #pragma once
 
+#include <algorithm>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <initializer_list>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "pg/catalog/utils/acl.h"
+#include "auth/role_closure.h"
 #include "pg/catalog/utils/session.h"
 
 namespace sdb::pg {
@@ -45,20 +48,20 @@ struct SystemMacro {
 extern const std::span<const SystemMacro> kPgCatalogMacros;
 extern const std::span<const SystemMacro> kInformationSchemaMacros;
 
+struct NamedScalar {
+  std::string_view name;
+  duckdb::scalar_function_t function;
+};
+
 void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
               duckdb::FunctionStability stability,
               duckdb::ScalarFunctionSet set);
 void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
                     std::string_view name, duckdb::FunctionStability stability,
                     duckdb::init_local_state_t init,
-                    std::initializer_list<duckdb::ScalarFunction> functions);
-
-inline void RegisterScalar(
-  duckdb::ExtensionLoader& loader, std::string_view schema,
-  std::string_view name, duckdb::FunctionStability stability,
-  std::initializer_list<duckdb::ScalarFunction> functions) {
-  RegisterScalar(loader, schema, name, stability, nullptr, functions);
-}
+                    std::span<const duckdb::ScalarFunction> functions);
+void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,
+                   duckdb::TableFunction function);
 
 duckdb::unique_ptr<duckdb::Expression> BindNull(
   duckdb::FunctionBindExpressionInput& input);
@@ -75,15 +78,48 @@ inline const Session& SessionOf(duckdb::ExpressionState& state) {
     .session;
 }
 
-template<typename Writer, typename Items>
-void WriteAclTexts(Writer& writer, const Items& items,
-                   const auth::RoleGraph& roles, std::string& text) {
-  auto item = std::ranges::begin(items);
-  for (auto& child : writer.WriteList(std::ranges::size(items))) {
-    text.clear();
-    AppendAcl(text, *item++, roles);
-    child.WriteValue(duckdb::string_t{text});
+void WriteAclTexts(
+  duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
+  std::span<const duckdb::AclItem> items, const auth::RoleGraph& roles,
+  std::string& text);
+
+template<typename Row>
+struct RowsState final : duckdb::LocalTableFunctionState {
+  std::vector<Row> rows;
+  size_t next = 0;
+  bool loaded = false;
+};
+
+template<typename Row>
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitRows(
+  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
+  duckdb::GlobalTableFunctionState*) {
+  return duckdb::make_uniq<RowsState<Row>>();
+}
+
+template<typename Row, auto Load, auto Write>
+duckdb::OperatorResultType RowsInOut(duckdb::ExecutionContext& context,
+                                     duckdb::TableFunctionInput& data,
+                                     duckdb::DataChunk& input,
+                                     duckdb::DataChunk& output) {
+  auto& state = data.local_state->Cast<RowsState<Row>>();
+  if (!state.loaded) {
+    state.rows.clear();
+    state.next = 0;
+    state.loaded = true;
+    Load(context.client, input, state.rows);
   }
+  if (state.next == state.rows.size()) {
+    state.loaded = false;
+    output.SetCardinality(0);
+    return duckdb::OperatorResultType::NEED_MORE_INPUT;
+  }
+  const auto count =
+    std::min<size_t>(state.rows.size() - state.next, STANDARD_VECTOR_SIZE);
+  Write(std::span<const Row>{state.rows}.subspan(state.next, count), output);
+  state.next += count;
+  output.SetCardinality(count);
+  return duckdb::OperatorResultType::HAVE_MORE_OUTPUT;
 }
 
 void RegisterAclFunctions(duckdb::ExtensionLoader& loader);

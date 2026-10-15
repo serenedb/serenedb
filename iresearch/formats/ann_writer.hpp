@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <span>
+#include <yaclib/coro/task.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -30,7 +29,6 @@
 
 namespace irs {
 
-class ColReader;
 class ColumnReader;
 class IdxWriter;
 class ReadContext;
@@ -50,9 +48,8 @@ class AnnWriter {
 
   virtual void SetMergeSources(std::span<const MergeSource>) noexcept {}
 
-  virtual bool Compute(const ColReader& reader, const ColumnReader& col,
-                       ReadContext& ctx, const AnnBuildEnv* env,
-                       absl::FunctionRef<bool()> progress) = 0;
+  virtual yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
+                                 const AnnBuildEnv* env) = 0;
 
   virtual void Flush() = 0;
 

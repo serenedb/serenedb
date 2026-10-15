@@ -46,6 +46,7 @@
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
@@ -344,22 +345,19 @@ struct MergePlan::State {
     for (size_t unit = 0; unit != footer; ++unit) {
       deps[footer].push_back(unit);
     }
-    std::vector<size_t> ivf_units;
+    size_t last_ann = footer;
     if (field_options) {
       for (const auto id : columns->Columns()) {
         const auto& ann = field_options->GetColumnOptions(id).ann_info;
         if (!ann) {
           continue;
         }
-        const auto unit = units.size();
+        last_ann = units.size();
         units.push_back({.kind = MergeUnitKind::Ann,
                          .id = id,
                          .cost = columns->StoredBytes(id) * kAnnCostPerByte});
-        deps.push_back({unit - 1});
-        if (ann->kind == AnnKind::Ivf) {
-          ivf = true;
-          ivf_units.push_back(unit);
-        }
+        deps.push_back({last_ann - 1});
+        ivf = ivf || ann->kind == AnnKind::Ivf;
       }
     }
     uint64_t input_bytes = 0;
@@ -369,7 +367,10 @@ struct MergePlan::State {
     units.push_back(
       {.kind = MergeUnitKind::Postings,
        .cost = input_bytes > column_bytes ? input_bytes - column_bytes : 0});
-    deps.push_back(std::move(ivf_units));
+    deps.emplace_back();
+    if (ivf) {
+      deps.back().push_back(last_ann);
+    }
     const auto index = units.size();
     units.push_back({.kind = MergeUnitKind::Index});
     deps.emplace_back();
@@ -438,9 +439,7 @@ struct MergePlan::State {
     if (!ann_reader) {
       ann_reader = std::make_unique<ColReader>(track_dir, segment.name, db);
     }
-    if (!col_writer->ComputeAnn(column, *ann_reader, env, progress)) {
-      return false;
-    }
+    GetBlocking(col_writer->ComputeAnn(column, *ann_reader, env).ToFuture());
     clock.Lap(MergeStep::Ann);
     return true;
   }
@@ -448,9 +447,10 @@ struct MergePlan::State {
   bool MergePostings() {
     MergeStepClock clock{profile};
     if (ivf && segment.docs_count != 0) {
+      ann_writers = col_writer->TakeAnnWriters();
       col_reader = std::make_unique<ColReader>(track_dir, segment.name, db);
-      cluster_readers = PrepareIvfClusterReaders(col_writer->AnnWriters(),
-                                                 col_reader.get(), ivf_ctx);
+      cluster_readers =
+        PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
       for (const auto* reader : cluster_readers) {
         index_features |= reader->properties().index_features;
       }
@@ -480,7 +480,9 @@ struct MergePlan::State {
   bool WriteIndex() {
     MergeStepClock clock{profile};
     ann_reader.reset();
-    ann_writers = col_writer->TakeAnnWriters();
+    if (ann_writers.empty()) {
+      ann_writers = col_writer->TakeAnnWriters();
+    }
     for (const auto& writer : ann_writers) {
       writer->Flush();
     }

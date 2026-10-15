@@ -30,6 +30,8 @@
 #include <duckdb/main/database.hpp>
 #include <iterator>
 #include <utility>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -422,16 +424,6 @@ void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   }
 }
 
-std::vector<AnnWriter*> ColWriter::AnnWriters() {
-  std::lock_guard lock{_mutex};
-  std::vector<AnnWriter*> out;
-  out.reserve(_ann_writers.size());
-  for (auto& entry : _ann_writers) {
-    out.push_back(entry->writer.get());
-  }
-  return out;
-}
-
 std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
@@ -451,7 +443,7 @@ bool ColWriter::Commit(uint64_t target_row) {
   return Commit(target_row, kNoCancel);
 }
 
-bool ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   return ComputeAnn(env, kNoCancel);
 }
 
@@ -529,34 +521,34 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   return true;
 }
 
-bool ColWriter::ComputeAnn(const AnnBuildEnv* env,
-                           absl::FunctionRef<bool()> progress) {
+yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
+                                         absl::FunctionRef<bool()> progress) {
   if (!_committed || _ann_writers.empty()) {
-    return true;
+    co_return true;
   }
   ColReader reader{*_dir, _segment_name, *_db};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
-      return false;
+      co_return false;
     }
-    if (!ComputeAnn(entry->column_id, reader, env, progress)) {
-      return false;
+    const auto* col = reader.Column(entry->column_id);
+    if (!col) {
+      continue;
     }
+    co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
-  return true;
+  co_return true;
 }
 
-bool ColWriter::ComputeAnn(field_id column, ColReader& reader,
-                           const AnnBuildEnv* env,
-                           absl::FunctionRef<bool()> progress) {
+yaclib::Task<> ColWriter::ComputeAnn(field_id column, ColReader& reader,
+                                     const AnnBuildEnv* env) {
   SDB_ASSERT(_committed);
   const auto it = _ann_by_id.find(column);
   SDB_ASSERT(it != _ann_by_id.end());
-  const auto* col = reader.Column(column);
-  if (!col) {
-    return true;
+  if (const auto* col = reader.Column(column)) {
+    co_await it->second->writer->Compute(*col, reader.Ctx(), env);
   }
-  return it->second->writer->Compute(reader, *col, reader.Ctx(), env, progress);
+  co_return {};
 }
 
 }  // namespace irs

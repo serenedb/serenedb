@@ -38,6 +38,7 @@
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -143,7 +144,11 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask,
     } else {
       _col_writer->Commit(buffered_docs());
     }
-    _col_writer->ComputeAnn(_ann_env);
+    if (_ann_env != nullptr) {
+      GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
+    } else {
+      GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
+    }
     ann_writers = _col_writer->TakeAnnWriters();
     _col_writer.reset();
   }

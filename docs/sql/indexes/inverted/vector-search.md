@@ -110,7 +110,7 @@ The `hnsw (...)` operator class indexes the vectors as a navigable graph instead
 
 At query time the [`sdb_hnsw_ef_search`](../../../configuration/overview.md) setting (default `64`) sets the search beam. On an index with `quant = 'none'` it is also the result ceiling: a value below the query's `LIMIT` returns fewer rows than asked for. A quantized index searches at least [`sdb_rerank_factor`](./maintenance.md#session-settings) times the `LIMIT` candidates, so its `LIMIT` holds.
 
-A graph is built when a refresh writes a segment, when segments are merged, and when `CREATE INDEX` fills a new index, on an inverted index and on a search table alike. For a large segment, the thread that writes the segment shares the build with extra threads. These come from a separate pool sized to the number of CPU cores, not from the worker threads that run queries. Cancelling `VACUUM (COMPACT_INDEX)` or [`CALL sdb_compact(...)`](./maintenance.md#sdb-compact) stops a graph build in progress.
+A graph is built when a refresh writes a segment, when segments are merged, and when `CREATE INDEX` fills a new index, on an inverted index and on a search table alike. For a large segment, the thread that writes the segment shares the build with extra threads. These come from a separate pool sized to the number of CPU cores, not from the worker threads that run queries.
 
 ## Column types
 

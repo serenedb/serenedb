@@ -32,8 +32,8 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
-class AnnBuildEnv;
 class IndexFieldOptions;
+struct AnnBuildEnv;
 struct SortSpec;
 
 struct SegmentWriterOptions {

@@ -29,6 +29,7 @@
 #include <random>
 #include <span>
 #include <utility>
+#include <yaclib/async/make.hpp>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
@@ -373,9 +374,8 @@ void IvfTermReader::Finish(IndexOutput& out) {
   _qw->Finish(out);
 }
 
-bool IvfWriter::Compute(const ColReader& /*reader*/, const ColumnReader& col,
-                        ReadContext& ctx, const AnnBuildEnv* /*env*/,
-                        absl::FunctionRef<bool()> /*progress*/) {
+yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
+                                  const AnnBuildEnv* /*env*/) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
@@ -386,13 +386,13 @@ bool IvfWriter::Compute(const ColReader& /*reader*/, const ColumnReader& col,
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());
   if (built.empty) {
-    return true;
+    co_return {};
   }
   _result = Result{.postings_id = _info.postings_id,
                    .qw = std::move(qw),
                    .data = std::move(built)};
   _built = true;
-  return true;
+  co_return {};
 }
 
 void IvfWriter::Flush() {

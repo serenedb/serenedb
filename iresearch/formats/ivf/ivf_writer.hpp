@@ -139,9 +139,8 @@ class IvfWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return !_built; }
 
-  bool Compute(const ColReader& reader, const ColumnReader& col,
-               ReadContext& ctx, const AnnBuildEnv* env,
-               absl::FunctionRef<bool()> progress) final;
+  yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
+                         const AnnBuildEnv* env) final;
 
   void Flush() final;
 
@@ -163,9 +162,8 @@ class IvfWriter final : public AnnWriter {
   std::unique_ptr<IvfTermReader> _reader;
 };
 
-template<typename Writers>
-std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
-  const Writers& writers, ColReader* col_reader,
+inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
+  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
   std::optional<ReadContext>& ctx) {
   std::vector<const BasicTermReader*> out;
   if (col_reader == nullptr || writers.empty()) {

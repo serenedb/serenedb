@@ -1,7 +1,6 @@
 target_sources(
     sereneserver
     PRIVATE
-        ann_build_pool.cpp
         compaction/copy_check.cpp
         compaction/merge_planner.cpp
         compaction/merge_policies.cpp

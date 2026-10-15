@@ -94,6 +94,7 @@ set(iresearch-tests_sources
     ./index/compaction/flushed_segments_tests.cpp
     ./index/compaction/merge_ticket_tests.cpp
     ./index/merge/input_norms_tests.cpp
+    ./index/merge/merge_ann_tests.cpp
     ./index/merge/merge_characterization_tests.cpp
     ./index/merge/merge_oracle_tests.cpp
     ./index/merge/merge_plan_tests.cpp

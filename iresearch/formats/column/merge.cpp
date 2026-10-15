@@ -1058,7 +1058,10 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
                                shared.row_group_size, opts.compression, false,
                                shared.CodecParams(opts));
   if (opts.ann_info) {
-    output.AttachAnn(column, *opts.ann_info).SetMergeSources(sources);
+    auto& ann = output.AttachAnn(column, *opts.ann_info);
+    if (!shared.order) {
+      ann.SetMergeSources(sources);
+    }
   }
 
   if (opts.hyperloglog) {

@@ -40,7 +40,6 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
-#include "search/ann_build_pool.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
@@ -84,10 +83,11 @@ uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
 }
 
 const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const auto* const kEnv =
-    new AnnBuildPool{BackgroundScheduler::instance().annExecutor(),
-                     AnnAcquireWorkers, AnnReleaseWorkers};
-  return *kEnv;
+  static const irs::AnnBuildEnv env{
+    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .acquire = AnnAcquireWorkers,
+    .release = AnnReleaseWorkers};
+  return env;
 }
 
 void SearchEngine::start() {
@@ -100,7 +100,6 @@ void SearchEngine::start() {
     BackgroundScheduler::instance().executor(),
     MergeScheduler::Options{.threads = threads,
                             .helpers_per_merge = threads / 2});
-  AnnBuildEnv();
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }

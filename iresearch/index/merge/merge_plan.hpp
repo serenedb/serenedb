@@ -42,7 +42,7 @@ class TaskScheduler;
 }  // namespace duckdb
 namespace irs {
 
-class AnnBuildEnv;
+struct AnnBuildEnv;
 struct Directory;
 class IndexFieldOptions;
 struct SegmentMeta;

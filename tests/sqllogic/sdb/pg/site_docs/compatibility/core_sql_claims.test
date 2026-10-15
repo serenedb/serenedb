@@ -576,6 +576,10 @@ SELECT * FROM pg_available_wal_summaries();
 statement ok
 SELECT * FROM pg_extension_update_paths(NULL);
 
+# sysinfo: pg_wal_lsn_diff
+statement ok
+SELECT pg_wal_lsn_diff('0/4D2', '0/1'), pg_lsn(1234::numeric);
+
 statement error
 SELECT * FROM pg_extension_update_paths('plpgsql');
 ----

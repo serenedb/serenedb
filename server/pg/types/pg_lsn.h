@@ -22,7 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/function/cast/cast_function_set.hpp>
+#include <duckdb/main/database.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,6 +35,6 @@ std::optional<uint64_t> ParseLsn(std::string_view text);
 size_t WriteLsn(uint64_t lsn, char* buffer);
 std::string FormatLsn(uint64_t lsn);
 
-void RegisterPgLsn(duckdb::CastFunctionSet& casts);
+void RegisterPgLsn(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::pg

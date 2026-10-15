@@ -326,6 +326,9 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "numeric_ln", "(x) AS dlog1(x)"},
   {"pg_catalog", "numeric_log", "(b, x) AS log(b, x)"},
   {"pg_catalog", "numeric_sqrt", "(x) AS dsqrt(x)"},
+  {"pg_catalog", "pg_lsn", "(x) AS CAST(x AS pg_lsn)"},
+  {"pg_catalog", "pg_wal_lsn_diff",
+   "(a, b) AS CAST(a AS pg_lsn) - CAST(b AS pg_lsn)"},
 
   {"pg_catalog", "casefold", "(s VARCHAR) AS lower(s)"},
   {"pg_catalog", "string_to_table",

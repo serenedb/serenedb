@@ -571,7 +571,7 @@ statement ok
 SELECT NULL::"pg_dependencies" IS NULL;
 
 
-# pg_lsn (🟢)
+# pg_lsn (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'pg_lsn' AND typnamespace = 'pg_catalog'::regnamespace;
 ----

@@ -39,7 +39,7 @@ namespace sdb::pg {
 void RegisterTypes(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
   RegisterRegTypes(casts);
-  RegisterPgLsn(casts);
+  RegisterPgLsn(db);
   RegisterInet(db);
   RegisterBytea(casts);
   RegisterFloat(casts);

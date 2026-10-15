@@ -60,7 +60,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | pg_brin_bloom_summary        | 🔴            |         |
 | pg_brin_minmax_multi_summary | 🔴            |         |
 | pg_dependencies              | 🟡            | Text input is accepted, which PostgreSQL refuses. There are no extended statistics, so no catalog holds a value. |
-| pg_lsn                       | 🟢            |         |
+| pg_lsn                       | 🟡            | Adding or subtracting a `numeric` gives a `numeric`; an integer gives a `pg_lsn`. |
 | pg_mcv_list                  | 🟡            | Text input is accepted, which PostgreSQL refuses. There are no extended statistics, so no catalog holds a value. |
 | pg_ndistinct                 | 🟡            | Text input is accepted, which PostgreSQL refuses. There are no extended statistics, so no catalog holds a value. |
 | pg_node_tree                 | 🟡            | Text input is accepted, which PostgreSQL refuses. |

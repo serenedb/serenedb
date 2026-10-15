@@ -842,6 +842,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_safe_snapshot_blocking_pids     | Yes           | Always an empty array |
 | pg_available_wal_summaries         | Yes           | Returns no rows |
 | pg_extension_update_paths          | Yes           | Fails for every extension name: no extension is available |
+| pg_wal_lsn_diff                    | Yes           | Also `pg_lsn(numeric)` |
 | pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL

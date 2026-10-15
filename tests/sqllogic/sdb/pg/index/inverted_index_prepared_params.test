@@ -127,7 +127,19 @@ n
 30
 
 query
+SELECT count(*) AS n FROM ppa_idx WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
 EXECUTE ppa_text('zeta');
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE b @@ 'zeta';
 ----
 n
 5
@@ -146,7 +158,22 @@ pk
 83
 
 query
+SELECT pk FROM ppas WHERE v = 3 ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+----
+pk
+93
+83
+
+query
 EXECUTE ppas_bm25('zeta', 2, 1);
+----
+pk
+3
+2
+
+query
+SELECT pk FROM ppas WHERE b @@ 'zeta'
+  ORDER BY bm25(tableoid) DESC LIMIT 2 OFFSET 1;
 ----
 pk
 3
@@ -159,7 +186,19 @@ n
 30
 
 query
+SELECT count(*) AS n FROM ppas_idx WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
 EXECUTE ppas_text('zeta');
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM ppas WHERE b @@ 'zeta';
 ----
 n
 5
@@ -280,6 +319,31 @@ EXECUTE ppas_beyond;
 ----
 n
 1
+
+query
+SELECT count(*) AS n FROM ppas WHERE v > 1000;
+----
+n
+1
+
+query
+SELECT pk FROM ppas WHERE b @@ 'omega'
+  ORDER BY bm25(tableoid) DESC LIMIT 3;
+----
+pk
+150
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v BETWEEN 100 AND 149;
+----
+n
+50
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE b @@ 'alpha';
+----
+n
+200
 
 statement ok
 DEALLOCATE ALL;

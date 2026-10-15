@@ -25,6 +25,7 @@
 #include <string_view>
 #include <text_transform.hpp>
 #include <tuple>
+#include <vector>
 
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/utils/locale_serde.hpp"
@@ -53,6 +54,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     bool accent{true};
     NormForm form{NormForm::Nfc};
     bool fold{false};
+    std::vector<uint32_t> keep_marks;
   };
   static ptr Make(Options opts);
 

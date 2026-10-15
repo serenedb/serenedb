@@ -115,6 +115,7 @@ duckdb::text::TransformOptions MakeTransformOptions(
                                                         : CaseFolding::DEFAULT,
     .strip_marks = !options.accent,
     .strip_before_case = fast,
+    .keep_marks = options.keep_marks,
   };
 }
 

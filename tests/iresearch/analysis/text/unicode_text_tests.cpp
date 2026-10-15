@@ -665,7 +665,10 @@ std::vector<uint32_t> ReferenceTransform(const TransformOptions& options,
   };
   const auto strip = [&] {
     normalize(canonical ? NormalizationForm::NFD : NormalizationForm::NFKD);
-    Normalizer::RemoveNonspacingMarks(text);
+    std::erase_if(text, [&](uint32_t c) {
+      return Normalizer::IsNonspacingMark(c) &&
+             !std::ranges::contains(options.keep_marks, c);
+    });
     if (composes) {
       normalize(renormalize);
     }
@@ -723,6 +726,19 @@ std::vector<TransformOptions> AllTransformOptions() {
                        .strip_before_case = before});
       }
     }
+    const std::vector<uint32_t> keep{0x306, 0x308, 0x20D0};
+    all.push_back({.form = form, .strip_marks = true, .keep_marks = keep});
+    for (const bool before : {false, true}) {
+      for (const auto mapping :
+           {CaseMapping::LOWER, CaseMapping::UPPER, CaseMapping::FOLD,
+            CaseMapping::SIMPLE_LOWER}) {
+        all.push_back({.form = form,
+                       .case_mapping = mapping,
+                       .strip_marks = true,
+                       .strip_before_case = before,
+                       .keep_marks = keep});
+      }
+    }
   }
   return all;
 }
@@ -762,8 +778,9 @@ TEST(UnicodeTransformTest, matches_reference_pipeline) {
                         << " mapping " << static_cast<int>(options.case_mapping)
                         << " locale " << static_cast<int>(options.locale)
                         << " folding " << static_cast<int>(options.folding)
-                        << " strip " << options.strip_marks << " cp "
-                        << std::hex << c << " context " << context.size();
+                        << " strip " << options.strip_marks << " keep "
+                        << options.keep_marks.size() << " cp " << std::hex << c
+                        << " context " << context.size();
         }
       }
     }
@@ -787,6 +804,30 @@ TEST(UnicodeTransformTest, final_sigma_sees_neighbours) {
   const Transform simple_lower{
     {.case_mapping = duckdb::text::CaseMapping::SIMPLE_LOWER}};
   EXPECT_EQ("οδοσ οδοσ.", Apply(simple_lower, "ΟΔΟΣ ΟΔΟΣ."));
+}
+
+TEST(UnicodeTransformTest, keep_marks_survive_stripping) {
+  using duckdb::text::CaseMapping;
+  const Transform keep_breve{{.case_mapping = CaseMapping::SIMPLE_LOWER,
+                              .strip_marks = true,
+                              .strip_before_case = true,
+                              .keep_marks = {0x306}}};
+  EXPECT_EQ("йод", Apply(keep_breve, "Йод"));
+  EXPECT_EQ("й", Apply(keep_breve, "и\xCC\x86"));
+  EXPECT_EQ("елка", Apply(keep_breve, "Ёлка"));
+  EXPECT_EQ("ă", Apply(keep_breve, "Ắ"));
+  EXPECT_EQ("cafe", Apply(keep_breve, "Café"));
+
+  const Transform decomposed{{.form = NormalizationForm::NFD,
+                              .strip_marks = true,
+                              .keep_marks = {0x306}}};
+  EXPECT_EQ("и\xCC\x86", Apply(decomposed, "й"));
+
+  const Transform not_marks{{.strip_marks = true, .keep_marks = {'a', 0x439}}};
+  EXPECT_EQ("и", Apply(not_marks, "й"));
+
+  const Transform no_strip{{.keep_marks = {0x306}}};
+  EXPECT_EQ("Йё", Apply(no_strip, "Йё"));
 }
 
 TEST(UnicodeTransformTest, invalid_utf8_becomes_replacement) {

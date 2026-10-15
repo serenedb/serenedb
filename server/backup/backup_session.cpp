@@ -98,7 +98,6 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
 std::optional<Cut> RecordCut(
   const std::filesystem::path& backup_dir,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  std::span<duckdb::SingleFileBlockManager* const> block_managers,
   absl::FunctionRef<bool()> cancelled) {
   Cut cut;
   auto& gate = CommitGate();
@@ -109,17 +108,14 @@ std::optional<Cut> RecordCut(
   cut.catalog_link = backup_dir / kCatalogLink;
   cut.catalog_log_size =
     catalog::ClusterOf().SnapshotCatalogLog(cut.catalog_link);
-  for (size_t i = 0; i < pins.size(); ++i) {
-    auto& storage = pins[i]->GetStorageManager();
-    auto& block_manager = *block_managers[i];
+  for (const auto& db : pins) {
+    auto& storage = db->GetStorageManager();
     auto& entry = cut.databases.emplace_back();
-    entry.oid = pins[i]->oid;
+    entry.oid = db->oid;
     auto commit_lock = storage.GetCommitLock();
     entry.wal_size = storage.GetWALSize();
-    entry.checkpoint_iteration = block_manager.GetCheckpointIteration();
-    entry.used_size =
-      duckdb::SingleFileBlockManager::BLOCK_START +
-      block_manager.TotalBlocks() * block_manager.GetBlockAllocSize();
+    entry.checkpoint_iteration =
+      storage.GetBlockManager().GetCheckpointIteration();
   }
   for (const auto& db : pins) {
     CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,
@@ -216,7 +212,7 @@ std::optional<uint64_t> BackupSession::Begin(
   if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
     return std::nullopt;
   }
-  auto cut = RecordCut(backup_dir, pins, block_managers, cancelled);
+  auto cut = RecordCut(backup_dir, pins, cancelled);
   if (!cut) {
     return std::nullopt;
   }

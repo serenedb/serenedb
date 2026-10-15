@@ -94,8 +94,8 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     kCatalogKey, cut.catalog_link.string(), " ", cut.catalog_log_size, "\n");
   for (const auto& database : cut.databases) {
     absl::StrAppend(&out, kDatabaseKey, database.oid, " ",
-                    database.checkpoint_iteration, " ", database.wal_size, " ",
-                    database.used_size, "\n");
+                    database.checkpoint_iteration, " ", database.wal_size,
+                    "\n");
   }
   for (const auto& store : cut.stores) {
     absl::StrAppend(&out, kStoreKey, store.database_oid, "/", store.oid, " ",
@@ -163,7 +163,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
     } else if (absl::ConsumePrefix(&value, kDatabaseKey)) {
       DatabaseCut database;
       if (!ParseFields(value, database.oid, database.checkpoint_iteration,
-                       database.wal_size, database.used_size) ||
+                       database.wal_size) ||
           !databases.insert(database.oid).second) {
         return Malformed(line);
       }

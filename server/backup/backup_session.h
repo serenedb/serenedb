@@ -45,7 +45,6 @@ struct DatabaseCut {
   duckdb::idx_t oid = 0;
   uint64_t checkpoint_iteration = 0;
   duckdb::idx_t wal_size = 0;
-  duckdb::idx_t used_size = 0;
 };
 
 struct StoreCut {

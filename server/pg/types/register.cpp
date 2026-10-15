@@ -18,12 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "pg/types/register.h"
 
-#include <duckdb/main/database.hpp>
+#include <duckdb/main/config.hpp>
 
-namespace sdb::connector {
+#include "pg/types/bytea.h"
+#include "pg/types/inet.h"
+#include "pg/types/pg_lsn.h"
+#include "pg/types/reg.h"
 
-void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db);
+namespace sdb::pg {
 
-}  // namespace sdb::connector
+void RegisterTypes(duckdb::DatabaseInstance& db) {
+  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+  RegisterRegTypes(casts);
+  RegisterPgLsn(casts);
+  RegisterInet(casts);
+  RegisterBytea(casts);
+}
+
+}  // namespace sdb::pg

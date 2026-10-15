@@ -36,7 +36,7 @@
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/utils/acl.h"
 #include "pg/connection_context.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 

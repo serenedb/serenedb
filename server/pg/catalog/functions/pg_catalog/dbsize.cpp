@@ -43,9 +43,9 @@
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
+#include "pg/types/logical.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 

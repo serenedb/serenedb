@@ -39,9 +39,9 @@
 #include <iresearch/utils/utf8_utils.hpp>
 #include <span>
 
-#include "connector/pg_logical_types.h"
-#include "pg/serialize.h"
 #include "pg/sql_utils.h"
+#include "pg/types/bytea.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {

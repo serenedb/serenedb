@@ -50,7 +50,6 @@
 #include "catalog/catalog.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
@@ -61,6 +60,7 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
 namespace {

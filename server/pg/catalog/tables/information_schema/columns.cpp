@@ -34,7 +34,7 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {

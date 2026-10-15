@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/inet.h"
+#include "pg/types/inet.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
@@ -29,9 +29,14 @@
 #include <cstring>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/function/cast/default_casts.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
+
+#include "pg/types/cast.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
 namespace {
@@ -68,6 +73,58 @@ std::string Unabbreviate(std::string_view text) {
   }
   absl::StrAppend(&out, "/", bits);
   return out;
+}
+
+bool VarcharToCidrCast(duckdb::Vector& source, duckdb::Vector& result,
+                       duckdb::idx_t count,
+                       duckdb::CastParameters& parameters) {
+  auto src = source.Values<duckdb::string_t>();
+  bool converted = true;
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto value = src[i];
+    if (!value.IsValid()) {
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    const auto& text = value.GetValue();
+    INET_IPAddress inet{};
+    if (auto error = TryParseCidr({text.GetData(), text.GetSize()}, inet)) {
+      InputError(std::move(*error), parameters);
+      converted = false;
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    StoreInet(result, i, inet.type, inet.address.upper, inet.address.lower,
+              inet.mask);
+  }
+  return converted;
+}
+
+template<bool kToText>
+bool CidrCast(duckdb::Vector& source, duckdb::Vector& result,
+              duckdb::idx_t count, duckdb::CastParameters&) {
+  duckdb::RecursiveUnifiedVectorFormat vdata;
+  duckdb::Vector::RecursiveToUnifiedFormat(source, count, vdata);
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    const auto idx = vdata.unified.sel->get_index(i);
+    if (!vdata.unified.validity.RowIsValid(idx)) {
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    INET_IPAddress inet;
+    ReadInet(vdata, idx, inet);
+    if constexpr (kToText) {
+      char buffer[64];
+      const auto size = CidrToString(inet, buffer, sizeof(buffer));
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
+        duckdb::StringVector::AddString(result, buffer, size);
+    } else {
+      const auto network = ipaddress_network(&inet);
+      StoreInet(result, i, network.type, network.address.upper,
+                network.address.lower, network.mask);
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -133,6 +190,16 @@ size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size) {
     written += full.size();
   }
   return written;
+}
+
+void RegisterInet(duckdb::CastFunctionSet& casts) {
+  RegisterTextInput(casts, CIDR(), VarcharToCidrCast, nullptr);
+  casts.RegisterCastFunction(CIDR(), duckdb::LogicalType::VARCHAR,
+                             CidrCast<true>, 50);
+  casts.RegisterCastFunction(INET(), CIDR(), CidrCast<false>);
+  casts.RegisterCastFunction(
+    CIDR(), INET(),
+    duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
 }
 
 }  // namespace sdb::pg

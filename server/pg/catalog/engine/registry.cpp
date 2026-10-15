@@ -44,13 +44,13 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
-#include "pg/types.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 

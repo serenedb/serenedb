@@ -36,8 +36,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-#include "pg/inet.h"
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -66,10 +64,11 @@
 #include <type_traits>
 
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
-#include "pg/types.h"
+#include "pg/types/inet.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 #include "query/config.h"
 #include "server/utils/dtoa.h"
 
@@ -2392,49 +2391,6 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
 }
 
 }  // namespace
-
-void ByteaOutHex(char* buf, std::string_view value) {
-  *buf++ = '\\';
-  *buf++ = 'x';
-
-  absl::BytesToHexStringInternal(
-    reinterpret_cast<const unsigned char*>(value.data()), buf, value.size());
-}
-
-size_t ByteaOutEscapeLength(std::string_view value) {
-  size_t backslash_cnt = 0;
-  size_t non_printable_cnt = 0;
-  for (size_t i = 0; i < value.size(); ++i) {
-    if (value[i] == '\\') {
-      ++backslash_cnt;
-    } else if (!absl::ascii_isprint(value[i])) {
-      ++non_printable_cnt;
-    }
-  }
-  return value.size() + backslash_cnt + non_printable_cnt * 3;
-}
-
-void ByteaOutEscape(char* buf, std::string_view value) {
-  for (const char* in = value.data(), *in_end = value.data() + value.size();
-       in != in_end; ++in) {
-    if (*in == '\\') {
-      *buf++ = '\\';
-      *buf++ = '\\';
-    } else if (!absl::ascii_isprint(*in)) {
-      // As octal
-      unsigned char c = *in;
-      buf[0] = '\\';
-      buf[3] = '0' + (c & 07);
-      c >>= 3;
-      buf[2] = '0' + (c & 07);
-      c >>= 3;
-      buf[1] = '0' + (c & 03);
-      buf += 4;
-    } else {
-      *buf++ = *in;
-    }
-  }
-}
 
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();

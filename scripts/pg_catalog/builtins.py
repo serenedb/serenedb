@@ -23,7 +23,7 @@ RANGE_COLUMNS = ('rngtypid', 'rngsubtype', 'rngmultitypid', 'rngcollation',
                  'rngsubopc', 'rngcanonical', 'rngsubdiff')
 RANGE_PROCS = ('rngcanonical', 'rngsubdiff')
 
-TYPE_MAPPINGS = os.path.join(REPO_ROOT, 'server', 'pg', 'types.cpp')
+TYPE_MAPPINGS = os.path.join(REPO_ROOT, 'server', 'pg', 'types', 'mapping.cpp')
 MAPPINGS_TABLE = re.compile(r'kMappings\[\] = \{\n(.*?)\n\};', re.S)
 MAPPED_TYPE = re.compile(r'^\s*\{k(\w+),', re.M)
 

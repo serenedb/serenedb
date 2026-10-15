@@ -26,10 +26,10 @@
 
 #include <iresearch/utils/static_strings.hpp>
 
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/types.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 

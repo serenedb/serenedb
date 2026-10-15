@@ -23,6 +23,15 @@
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
 
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+
+#include "pg/types/cast.h"
+#include "pg/types/logical.h"
+
 namespace sdb::pg {
 namespace {
 
@@ -39,6 +48,44 @@ std::optional<uint32_t> ParseLsnPart(std::string_view digits) {
     return std::nullopt;
   }
   return value;
+}
+
+bool VarcharToLsnCast(duckdb::Vector& source, duckdb::Vector& result,
+                      duckdb::idx_t count, duckdb::CastParameters& parameters) {
+  auto texts = source.Values<duckdb::string_t>();
+  auto writer = duckdb::FlatVector::Writer<uint64_t>(result, count);
+  bool converted = true;
+  for (auto entry : texts) {
+    if (!entry.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto& raw = entry.GetValue();
+    const std::string_view text{raw.GetData(), raw.GetSize()};
+    if (const auto lsn = ParseLsn(text)) {
+      writer.WriteValue(*lsn);
+      continue;
+    }
+    InputError(
+      SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\"")),
+      parameters);
+    converted = false;
+    writer.WriteNull();
+  }
+  return converted;
+}
+
+bool LsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
+                      duckdb::idx_t count, duckdb::CastParameters&) {
+  duckdb::UnaryExecutor::Execute<uint64_t, duckdb::string_t>(
+    source, result, count, [&](uint64_t lsn) {
+      char buffer[kLsnBufferSize];
+      return duckdb::StringVector::AddString(result, buffer,
+                                             WriteLsn(lsn, buffer));
+    });
+  return true;
 }
 
 }  // namespace
@@ -65,6 +112,12 @@ size_t WriteLsn(uint64_t lsn, char* buffer) {
 std::string FormatLsn(uint64_t lsn) {
   char buffer[kLsnBufferSize];
   return {buffer, WriteLsn(lsn, buffer)};
+}
+
+void RegisterPgLsn(duckdb::CastFunctionSet& casts) {
+  RegisterTextInput(casts, PG_LSN(), VarcharToLsnCast, nullptr);
+  casts.RegisterCastFunction(PG_LSN(), duckdb::LogicalType::VARCHAR,
+                             LsnToVarcharCast, 50);
 }
 
 }  // namespace sdb::pg

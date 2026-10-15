@@ -44,7 +44,6 @@
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/formatting.h"
-#include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
@@ -59,6 +58,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
@@ -167,7 +167,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   pg::RegisterFunctions(db);
 
-  connector::RegisterPgInOutFunctions(db);
+  pg::RegisterTypes(db);
 
   connector::RegisterPgStringFunctions(db);
 

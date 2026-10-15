@@ -17,8 +17,8 @@ holds no OIDs for them; scripts/pg_catalog/initdb.py numbers them in the
 same order.
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
-objects SereneDB names), in server/pg/types.cpp (which PostgreSQL types
-SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
+objects SereneDB names), in server/pg/types/mapping.cpp (which PostgreSQL
+types SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
 views are tables), in server/pg/catalog/table_functions/pg_catalog/<name>.cpp
 (the set-returning functions behind PostgreSQL views) and in
 server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).

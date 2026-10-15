@@ -56,7 +56,6 @@
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/pg_logical_types.h"
 #include "network/cancel_registry.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -66,7 +65,8 @@
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "pg/types.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 #include "search/search_table.h"
 #include "server/utils/build.h"
 

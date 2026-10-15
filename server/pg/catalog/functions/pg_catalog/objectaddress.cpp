@@ -37,7 +37,6 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
@@ -46,6 +45,7 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
 namespace {

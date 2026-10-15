@@ -29,7 +29,7 @@
 #include <variant>
 
 #include "pg/catalog/utils/session.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 

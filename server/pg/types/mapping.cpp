@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 #include <absl/algorithm/container.h>
 
@@ -31,7 +31,6 @@
 #include <string>
 
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/utils/lookup.h"

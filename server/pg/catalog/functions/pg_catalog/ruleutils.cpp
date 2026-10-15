@@ -56,7 +56,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/common.h"
 #include "connector/inverted_store_index.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -64,7 +63,8 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
-#include "pg/types.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {

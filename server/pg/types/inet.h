@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/shared.hpp>
@@ -63,5 +64,7 @@ std::optional<irs::pg::SqlErrorData> TryParseCidr(std::string_view text,
 INET_IPAddress ParseCidr(std::string_view text);
 
 size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size);
+
+void RegisterInet(duckdb::CastFunctionSet& casts);
 
 }  // namespace sdb::pg

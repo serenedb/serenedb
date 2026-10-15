@@ -20,7 +20,7 @@
 
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/tables/tables.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {

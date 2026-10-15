@@ -48,7 +48,7 @@
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 #include "utils/file_utils.h"
 
 ABSL_FLAG(std::string, dump_builtin_oids, "",

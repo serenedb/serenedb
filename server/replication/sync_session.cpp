@@ -49,7 +49,7 @@
 #include "pg/copy_in_batches.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 #include "replication/repl_source.h"
 
 namespace sdb::replication {

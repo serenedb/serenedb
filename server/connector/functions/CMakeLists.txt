@@ -7,7 +7,6 @@ target_sources(
         encode_key.cpp
         es.cpp
         formatting.cpp
-        inout.cpp
         jobs.cpp
         json.cpp
         markdown_render.cpp

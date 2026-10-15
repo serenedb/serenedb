@@ -80,7 +80,7 @@
 #include "catalog/entry/subscription.h"
 #include "catalog/snapshot.h"
 #include "pg/catalog/utils/session.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::catalog {
 

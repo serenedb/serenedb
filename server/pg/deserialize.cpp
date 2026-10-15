@@ -53,11 +53,11 @@
 #include <vector>
 
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
-#include "pg/inet.h"
-#include "pg/types.h"
+#include "pg/types/inet.h"
+#include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 #include "pg/types/pg_lsn.h"
 
 namespace sdb::pg {

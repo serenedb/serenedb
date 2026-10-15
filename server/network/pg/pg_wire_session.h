@@ -95,7 +95,7 @@
 #include "pg/deserialize.h"
 #include "pg/protocol.h"
 #include "pg/serialize.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 #include "server/utils/asio_ns.h"
 #include "server/utils/message_buffer.h"
 

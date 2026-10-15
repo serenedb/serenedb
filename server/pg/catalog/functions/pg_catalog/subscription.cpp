@@ -27,10 +27,10 @@
 #include <string>
 #include <vector>
 
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/commands/create_subscription.h"
+#include "pg/types/logical.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::pg {

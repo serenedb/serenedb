@@ -102,10 +102,4 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 
-void ByteaOutHex(char* buf, std::string_view value);
-
-void ByteaOutEscape(char* buf, std::string_view value);
-
-size_t ByteaOutEscapeLength(std::string_view value);
-
 }  // namespace sdb::pg

@@ -26,11 +26,11 @@
 #include <optional>
 #include <string_view>
 
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
 namespace {

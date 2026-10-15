@@ -75,9 +75,13 @@ target_sources(
         copy_in_batches.cpp
         copy_batch_builder.cpp
         connection_context.cpp
-        types.cpp
+        types/bytea.cpp
+        types/cast.cpp
+        types/inet.cpp
+        types/mapping.cpp
         types/pg_lsn.cpp
-        inet.cpp
+        types/reg.cpp
+        types/register.cpp
         serialize.cpp
         deserialize.cpp
         progress_registry.cpp

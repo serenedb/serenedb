@@ -43,7 +43,7 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
-#include "pg/types.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {

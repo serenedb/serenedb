@@ -1016,7 +1016,7 @@ statement ok
 SELECT 'a' || 'b';
 
 # op_text: btrim
-statement error
+statement ok
 SELECT btrim('  x  ');
 
 # op_text: bit_length
@@ -1026,6 +1026,10 @@ SELECT bit_length('jose');
 # op_text: char_length
 statement ok
 SELECT char_length('jose');
+
+# op_text: is_normalized
+statement ok
+SELECT is_normalized('abc', 'NFKC');
 
 # op_text: lower
 statement ok
@@ -1083,6 +1087,10 @@ SELECT 'abc' ^@ 'a';
 statement ok
 SELECT ascii('x');
 
+# op_text: casefold
+statement ok
+SELECT casefold('ABC');
+
 # op_text: chr
 statement ok
 SELECT chr(65);
@@ -1116,7 +1124,7 @@ statement ok
 SELECT md5('abc');
 
 # op_text: parse_ident
-statement error
+statement ok
 SELECT parse_ident('a.b');
 
 # op_text: quote_ident
@@ -1160,7 +1168,7 @@ statement ok
 SELECT string_to_array('a,b,c',',');
 
 # op_text: string_to_table
-statement error
+statement ok
 SELECT * FROM string_to_table('a,b,c',',');
 
 # op_text: strpos
@@ -1184,7 +1192,7 @@ statement ok
 SELECT translate('12345','143','ax');
 
 # op_text: unistr
-statement error
+statement ok
 SELECT unistr('d\0061t\+000061');
 
 # op_bytea: ||
@@ -1196,7 +1204,7 @@ statement ok
 SELECT bit_length('\x01'::bytea);
 
 # op_bytea: btrim
-statement error
+statement ok
 SELECT btrim('\x010203'::bytea, '\x03'::bytea);
 
 # op_bytea: ltrim
@@ -1231,6 +1239,14 @@ SELECT trim('\x03'::bytea from '\x010203'::bytea);
 statement error
 SELECT bit_count('\x0102'::bytea);
 
+# op_bytea: crc32
+statement ok
+SELECT crc32('\x0102'::bytea);
+
+# op_bytea: crc32c
+statement ok
+SELECT crc32c('\x0102'::bytea);
+
 # op_bytea: get_bit
 statement ok
 SELECT get_bit('\x0102'::bytea, 7);
@@ -1256,15 +1272,15 @@ statement ok
 SELECT set_byte('\x0102'::bytea, 1, 255);
 
 # op_bytea: sha224
-statement error
+statement ok
 SELECT sha224('\x0102'::bytea);
 
 # op_bytea: sha384
-statement error
+statement ok
 SELECT sha384('\x0102'::bytea);
 
 # op_bytea: sha512
-statement error
+statement ok
 SELECT sha512('\x0102'::bytea);
 
 # op_bytea: substr
@@ -1272,7 +1288,7 @@ statement ok
 SELECT substr('\x010203'::bytea, 2, 1);
 
 # op_bytea: convert
-statement error
+statement ok
 SELECT convert('\x010203'::bytea, 'UTF8', 'LATIN1');
 
 # op_bytea: convert_from

@@ -245,9 +245,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature             | Support State | Details                                                    |
 |---------------------|---------------|------------------------------------------------------------|
 | \|\|                | Yes           |                                                            |
-| btrim               | No            |                                                            |
+| btrim               | Yes           |                                                            |
 | bit_length          | Yes           |                                                            |
 | char_length         | Yes           |                                                            |
+| is_normalized       | Yes           | The `IS [NOT] [form] NORMALIZED` syntax is not supported   |
 | lower               | Yes           |                                                            |
 | lpad                | Yes           |                                                            |
 | ltrim               | Yes           |                                                            |
@@ -262,6 +263,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | upper               | Yes           |                                                            |
 | ^@                  | Yes           |                                                            |
 | ascii               | Yes           |                                                            |
+| casefold            | Yes           |                                                            |
 | chr                 | Yes           |                                                            |
 | concat              | Yes           |                                                            |
 | concat_ws           | Yes           |                                                            |
@@ -270,7 +272,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | left                | Yes           |                                                            |
 | length              | Yes           |                                                            |
 | md5                 | Yes           |                                                            |
-| parse_ident         | No            |                                                            |
+| parse_ident         | Yes           |                                                            |
 | quote_ident         | Yes           |                                                            |
 | quote_literal       | Yes           |                                                            |
 | quote_nullable      | Yes           |                                                            |
@@ -281,20 +283,20 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | split_part          | Yes           |                                                            |
 | starts_with         | Yes           |                                                            |
 | string_to_array     | Yes           |                                                            |
-| string_to_table     | No            |                                                            |
+| string_to_table     | Yes           |                                                            |
 | strpos              | Yes           |                                                            |
 | substr              | Yes           |                                                            |
-| to_ascii            | No            |                                                            |
+| to_ascii            | Yes           | Only with an encoding argument (`LATIN1`, `LATIN2`, `LATIN9` or `WIN1250`): the database encoding is `UTF8` |
 | to_hex              | Yes           |                                                            |
 | translate           | Yes           |                                                            |
-| unistr              | No            |                                                            |
+| unistr              | Yes           |                                                            |
 
 #### Bytea
 | Feature        | Support State | Details                   |
 |----------------|---------------|---------------------------|
 | \|\|           | Yes           |                           |
 | bit_length     | Yes           |                           |
-| btrim          | No            |                           |
+| btrim          | Yes           |                           |
 | ltrim          | Yes           |                           |
 | octet_length   | Yes           |                           |
 | overlay        | Yes           |                           |
@@ -303,19 +305,21 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |
 | bit_count      | No            |                           |
+| crc32          | Yes           |                           |
+| crc32c         | Yes           |                           |
 | get_bit        | Yes           |                           |
 | get_byte       | Yes           |                           |
 | length         | Yes           |                           |
 | md5            | Yes           |                           |
 | set_bit        | Yes           |                           |
 | set_byte       | Yes           |                           |
-| sha224         | No            |                           |
-| sha384         | No            |                           |
-| sha512         | No            |                           |
+| sha224         | Yes           |                           |
+| sha384         | Yes           |                           |
+| sha512         | Yes           |                           |
 | substr         | Yes           |                           |
-| convert        | No            |                           |
-| convert_from   | Yes           |                           |
-| convert_to     | Yes           |                           |
+| convert        | Yes           | Converts between `UTF8`, `LATIN1` and `SQL_ASCII`; a conversion that involves another encoding raises an error |
+| convert_from   | Yes           | Same encodings as `convert` |
+| convert_to     | Yes           | Same encodings as `convert` |
 | encode         | Yes           |                           |
 | decode         | Yes           |                           |
 

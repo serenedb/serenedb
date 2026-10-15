@@ -90,6 +90,7 @@ target_sources(
         types/register.cpp
         types/tid.cpp
         types/vector.cpp
+        encoding.cpp
         serialize.cpp
         deserialize.cpp
         progress_registry.cpp

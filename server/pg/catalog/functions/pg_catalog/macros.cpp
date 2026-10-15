@@ -316,6 +316,23 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog","atan2d",
    R"((y, x) AS degrees(atan2(y, x)))"},
 
+  {"pg_catalog", "casefold", "(s VARCHAR) AS lower(s)"},
+  {"pg_catalog", "string_to_table",
+   "(s VARCHAR, sep VARCHAR) AS unnest(string_to_array(s, sep))"},
+  {"pg_catalog", "string_to_table",
+   "(s VARCHAR, sep VARCHAR, null_string VARCHAR) AS unnest(string_to_array(s, sep, null_string))"},
+  {"pg_catalog", "string_to_table",
+   R"((s VARCHAR, sep VARCHAR) AS TABLE
+      SELECT unnest(string_to_array(s, sep)) AS string_to_table)"},
+  {"pg_catalog", "string_to_table",
+   R"((s VARCHAR, sep VARCHAR, null_string VARCHAR) AS TABLE
+      SELECT unnest(string_to_array(s, sep, null_string)) AS string_to_table)"},
+  {"pg_catalog", "textlen", "(s VARCHAR) AS CAST(length(s) AS INTEGER)"},
+  {"pg_catalog", "similar_escape",
+   R"((pattern VARCHAR, esc VARCHAR) AS
+      CASE WHEN esc IS NULL THEN similar_to_escape(pattern)
+           ELSE similar_to_escape(pattern, esc) END)"},
+
   // adbin / conbin already hold the deparsed expression rather than a node
   // tree, so deparsing it is handing it back.
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},

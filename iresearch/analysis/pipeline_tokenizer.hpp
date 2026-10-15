@@ -88,7 +88,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   }
 
   size_t MemoryUsage() const noexcept final {
-    size_t size = _links.size() * sizeof(TokenSink);
+    size_t size = _links.size() * sizeof(ChainSink);
     for (const auto& link : _links) {
       size += link->ScratchBytes();
     }

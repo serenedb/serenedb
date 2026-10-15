@@ -22,7 +22,6 @@
 
 #include <string_view>
 #include <text_break_iterator.hpp>
-#include <type_traits>
 
 #include "iresearch/analysis/text/segment/fill.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -91,7 +90,7 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     _break.SetText(data, n);
 
-    [[maybe_unused]] uint32_t reported = 0;
+    uint32_t reported = 0;
     uint32_t begin = 0;
     for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
          end = _break.Next()) {
@@ -109,13 +108,8 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
                                                                  begin, stop);
       }
       begin = stop;
-      if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
-        if (stop - reported >= classify::kBytesPerProgress) {
-          reported = stop;
-          if (!progress()) {
-            return true;
-          }
-        }
+      if (!classify::KeepScanning(progress, reported, stop)) {
+        return true;
       }
     }
     return true;

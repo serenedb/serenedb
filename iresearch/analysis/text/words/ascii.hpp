@@ -25,7 +25,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
-#include <type_traits>
 
 #include "iresearch/analysis/text/words/masks.hpp"
 
@@ -203,15 +202,10 @@ IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit,
   const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   size_t i = 0;
-  [[maybe_unused]] size_t reported = 0;
+  size_t reported = 0;
   while (i < n) {
-    if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
-      if (i - reported >= classify::kBytesPerProgress) {
-        reported = i;
-        if (!progress()) {
-          return;
-        }
-      }
+    if (!classify::KeepScanning(progress, reported, i)) {
+      return;
     }
     const size_t seg_begin = i;
     const uint8_t c0 = kWbClass[b[i]];

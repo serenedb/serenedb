@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/types.hpp"
@@ -367,6 +368,20 @@ struct NoProgress {
 };
 
 inline constexpr size_t kBytesPerProgress = 64;
+
+template<typename Progress, typename Pos>
+IRS_FORCE_INLINE constexpr bool KeepScanning(Progress& progress, Pos& reported,
+                                             const Pos& pos) {
+  if constexpr (std::is_same_v<Progress, NoProgress>) {
+    return true;
+  } else {
+    if (pos - reported < kBytesPerProgress) {
+      return true;
+    }
+    reported = pos;
+    return progress();
+  }
+}
 
 template<typename ClassifyBlock, typename OnRun, typename Progress = NoProgress>
 IRS_FORCE_INLINE void ForEachRun(const byte_type* data, size_t size,

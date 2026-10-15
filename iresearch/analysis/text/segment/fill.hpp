@@ -25,7 +25,6 @@
 
 #include <limits>
 #include <string_view>
-#include <type_traits>
 
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
@@ -220,15 +219,10 @@ IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
-    [[maybe_unused]] uint32_t reported = 0;
+    uint32_t reported = 0;
     for (uint32_t i = 0; i != n; ++i) {
-      if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
-        if (i - reported >= classify::kBytesPerProgress) {
-          reported = i;
-          if (!progress()) {
-            return;
-          }
-        }
+      if (!classify::KeepScanning(progress, reported, i)) {
+        return;
       }
       if (static_cast<uint8_t>(data[i]) > ' ') {
         EmitAccepted<Layout, C, A, true>(sink, data, n, i, i + 1);

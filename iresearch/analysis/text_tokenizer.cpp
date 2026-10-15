@@ -59,7 +59,12 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
 
   bool Scan(const duckdb::string_t& value, ScanSink& sink,
             BlockTraits known) final {
-    return this->ScanWithProgress(value, sink, known);
+    if constexpr (S == Options::Separate::Word ||
+                  S == Options::Separate::Grapheme) {
+      return this->ScanWithProgress(value, sink, known);
+    } else {
+      return Tokenizer::Scan(value, sink, known);
+    }
   }
 
   template<TokenLayout Layout, Case C, Options::Accept A, bool KnownAscii,

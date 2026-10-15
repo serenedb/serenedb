@@ -119,14 +119,27 @@ IRS_FORCE_INLINE inline InlineKey InlineKeyOf(duckdb::string_t term) noexcept {
 }
 
 template<typename Value>
+IRS_FORCE_INLINE std::string_view CharsOf(const Value& value) noexcept {
+  if constexpr (std::is_same_v<Value, duckdb::string_t>) {
+    return {value.GetData(), value.GetSize()};
+  } else if constexpr (std::is_convertible_v<const Value&, bytes_view>) {
+    return ViewCast<char>(bytes_view{value});
+  } else {
+    return std::string_view{value};
+  }
+}
+
+template<typename Value>
 IRS_FORCE_INLINE duckdb::string_t TermOf(const Value& value) noexcept {
   if constexpr (std::is_same_v<Value, duckdb::string_t>) {
     return value;
-  } else if constexpr (std::is_convertible_v<const Value&, bytes_view>) {
-    return MakeTermView(ViewCast<char>(bytes_view{value}));
   } else {
-    return MakeTermView(std::string_view{value});
+    return MakeTermView(CharsOf(value));
   }
+}
+
+IRS_FORCE_INLINE inline bool LongWord(const char* p, size_t size) noexcept {
+  return size > kMaxFixedSize || p[size - 1] == 0;
 }
 
 template<typename F>
@@ -136,7 +149,7 @@ IRS_FORCE_INLINE decltype(auto) Dispatch(duckdb::string_t term, F&& f) {
     return f(InlineKeyOf(term));
   }
   const char* p = term.GetData();
-  if (size > kMaxFixedSize || p[size - 1] == 0) [[unlikely]] {
+  if (LongWord(p, size)) [[unlikely]] {
     return f(std::string_view{p, size});
   }
   return f(PackKey(p, size));
@@ -151,6 +164,14 @@ inline constexpr size_t kTableOf = kFixedClasses;
 
 template<size_t N>
 inline constexpr size_t kTableOf<Key<N>> = N - 2;
+
+IRS_FORCE_INLINE inline size_t TableOf(std::string_view word) noexcept {
+  if (word.size() <= duckdb::string_t::INLINE_LENGTH) {
+    return kTableOf<InlineKey>;
+  }
+  return LongWord(word.data(), word.size()) ? kTableOf<std::string_view>
+                                            : kTableOf<Key<3>>;
+}
 
 template<template<typename...> typename Table, typename LongKey,
          typename... Mapped>
@@ -217,8 +238,7 @@ class StringTable {
   void Reserve(const Words& words) {
     std::array<size_t, kFixedClasses + 1> counts{};
     for (const auto& word : words) {
-      Dispatch(TermOf(word),
-               [&]<typename K>(const K&) { ++counts[kTableOf<K>]; });
+      ++counts[TableOf(CharsOf(word))];
     }
     [&]<size_t... I>(std::index_sequence<I...>) {
       (std::get<I>(_tables).reserve(counts[I]), ...);

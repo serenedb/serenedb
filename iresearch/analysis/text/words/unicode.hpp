@@ -28,7 +28,6 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <initializer_list>
 #include <limits>
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/analysis/text/words/ascii.hpp"
@@ -387,15 +386,10 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit,
     }
   };
 
-  [[maybe_unused]] size_t reported = 0;
+  size_t reported = 0;
   while (i < n) {
-    if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
-      if (i - reported >= classify::kBytesPerProgress) {
-        reported = i;
-        if (!progress()) {
-          return;
-        }
-      }
+    if (!classify::KeepScanning(progress, reported, i)) {
+      return;
     }
     const byte_type byte = b[i];
     uint8_t cls;

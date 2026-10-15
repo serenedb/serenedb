@@ -1447,20 +1447,22 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     loader, pg_catalog, "pg_basetype", CONSISTENT_WITHIN_QUERY, InitSession,
     {duckdb::ScalarFunction{{REGTYPE()}, REGTYPE(), PgBasetypeFunction}});
 
-  RegisterScalar(
-    loader, pg_catalog, "pg_input_is_valid", CONSISTENT_WITHIN_QUERY,
-    InitInputCheck,
-    {duckdb::ScalarFunction{{text, text}, boolean, InputIsValidFunction}});
+  duckdb::ScalarFunction input_is_valid{
+    {text, text}, boolean, InputIsValidFunction};
+  input_is_valid.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_input_is_valid",
+                 CONSISTENT_WITHIN_QUERY, InitInputCheck, {input_is_valid});
+  duckdb::ScalarFunction input_error_info{{text, text},
+                                          duckdb::LogicalType::STRUCT({
+                                            {"message", text},
+                                            {"detail", text},
+                                            {"hint", text},
+                                            {"sql_error_code", text},
+                                          }),
+                                          InputErrorInfoFunction};
+  input_error_info.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_input_error_info",
-                 CONSISTENT_WITHIN_QUERY, InitInputCheck,
-                 {duckdb::ScalarFunction{{text, text},
-                                         duckdb::LogicalType::STRUCT({
-                                           {"message", text},
-                                           {"detail", text},
-                                           {"hint", text},
-                                           {"sql_error_code", text},
-                                         }),
-                                         InputErrorInfoFunction}});
+                 CONSISTENT_WITHIN_QUERY, InitInputCheck, {input_error_info});
 
   {
     duckdb::ScalarFunction function{{any}, text, nullptr};
@@ -1470,10 +1472,12 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                    CONSISTENT_WITHIN_QUERY, nullptr, {function});
   }
 
+  duckdb::ScalarFunction replica_identity_index{
+    {regclass}, regclass, ReplicaIdentityIndexFunction};
+  replica_identity_index.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_get_replica_identity_index",
                  CONSISTENT_WITHIN_QUERY, InitSession,
-                 {duckdb::ScalarFunction{
-                   {regclass}, regclass, ReplicaIdentityIndexFunction}});
+                 {replica_identity_index});
 
   RegisterScalar(
     loader, pg_catalog, "pg_settings_get_flags", CONSISTENT_WITHIN_QUERY,
@@ -1521,20 +1525,22 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   {
     duckdb::ScalarFunction function{{text}, text, CurrentLogfileFunction};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    function.SetFallible();
     RegisterScalar(
       loader, pg_catalog, "pg_current_logfile", VOLATILE, nullptr,
       {duckdb::ScalarFunction{{}, text, CurrentLogfileFunction}, function});
   }
 
-  RegisterScalar(
-    loader, pg_catalog, "pg_collation_actual_version", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{
-      {oid}, text, ActualVersionFunction<kCollationKind, &CollationExists>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_database_collation_actual_version", VOLATILE,
-    nullptr,
-    {duckdb::ScalarFunction{
-      {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>}});
+  duckdb::ScalarFunction collation_version{
+    {oid}, text, ActualVersionFunction<kCollationKind, &CollationExists>};
+  collation_version.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_collation_actual_version", VOLATILE,
+                 nullptr, {collation_version});
+  duckdb::ScalarFunction database_collation_version{
+    {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>};
+  database_collation_version.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_database_collation_actual_version",
+                 VOLATILE, nullptr, {database_collation_version});
 
   RegisterScalar(loader, pg_catalog, "system_user", CONSISTENT_WITHIN_QUERY,
                  nullptr,

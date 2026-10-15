@@ -988,19 +988,24 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   struct DoubleScalar {
     std::string_view name;
     duckdb::scalar_function_t function;
+    duckdb::FunctionErrors errors;
   };
-  for (const auto& [name, function] : {
-         DoubleScalar{"dexp", DoubleFunction<PgExp>},
-         DoubleScalar{"dlog1", DoubleFunction<PgLog<std::log>>},
-         DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>},
-         DoubleScalar{"dround", DoubleFunction<std::rint>},
-         DoubleScalar{"dtrunc", DoubleFunction<std::trunc>},
+  using enum duckdb::FunctionErrors;
+  for (const auto& [name, function, errors] : {
+         DoubleScalar{"dexp", DoubleFunction<PgExp>, CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dlog1", DoubleFunction<PgLog<std::log>>,
+                      CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>,
+                      CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dround", DoubleFunction<std::rint>, CANNOT_ERROR},
+         DoubleScalar{"dtrunc", DoubleFunction<std::trunc>, CANNOT_ERROR},
        }) {
-    loader.RegisterFunction(
-      duckdb::ScalarFunction{duckdb::Identifier{name},
-                             {duckdb::LogicalType::DOUBLE},
-                             duckdb::LogicalType::DOUBLE,
-                             function});
+    duckdb::ScalarFunction scalar{duckdb::Identifier{name},
+                                  {duckdb::LogicalType::DOUBLE},
+                                  duckdb::LogicalType::DOUBLE,
+                                  function};
+    scalar.SetErrorMode(errors);
+    loader.RegisterFunction(std::move(scalar));
   }
 
   {
@@ -1019,12 +1024,14 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
                            nullptr,
                            BindMinScale});
   for (const auto name : {"div", "numeric_div_trunc"}) {
-    loader.RegisterFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction div_trunc{
       name,
       {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
       duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
       DivTruncFunction,
-      BindDivTrunc});
+      BindDivTrunc};
+    div_trunc.SetFallible();
+    loader.RegisterFunction(std::move(div_trunc));
   }
 }
 

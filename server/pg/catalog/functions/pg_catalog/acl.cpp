@@ -1085,6 +1085,7 @@ template<typename F, typename... Objects>
 void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader) {
   duckdb::ScalarFunctionSet set{Identifier{F::kName}};
   (AddPrivilegeForms<F>(set, std::type_identity<Objects>{}), ...);
+  set.SetFallible();
   Register(loader, irs::StaticStrings::kPgCatalogSchema,
            duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, std::move(set));
 }
@@ -1138,13 +1139,14 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   RegisterPrivilegeFunctions<ParameterPrivileges, ByName>(loader);
   RegisterPrivilegeFunctions<LargeObjectPrivileges, ByOid>(loader);
   RegisterPrivilegeFunctions<RolePrivileges, ByName, ByOid>(loader);
-  RegisterScalar(
-    loader, pg_catalog, "makeaclitem",
-    duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
-    {duckdb::ScalarFunction{{OID(), OID(), duckdb::LogicalType::VARCHAR,
-                             duckdb::LogicalType::BOOLEAN},
-                            ACLITEM(),
-                            MakeAclItemFunction}});
+  duckdb::ScalarFunction make_aclitem{
+    {OID(), OID(), duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN},
+    ACLITEM(),
+    MakeAclItemFunction};
+  make_aclitem.SetFallible();
+  RegisterScalar(loader, pg_catalog, "makeaclitem",
+                 duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
+                 {make_aclitem});
 }
 
 }  // namespace sdb::pg

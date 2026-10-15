@@ -672,14 +672,18 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
      duckdb::ScalarFunction{{int8}, int8, SchemaSizeFunction<int64_t>}});
 
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
+  duckdb::ScalarFunction size_bytes{{text}, int8, SizeBytesFunction};
+  size_bytes.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_size_bytes",
-                 duckdb::FunctionStability::CONSISTENT, nullptr,
-                 {duckdb::ScalarFunction{{text}, int8, SizeBytesFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_tablespace_size", stability, nullptr,
-    {duckdb::ScalarFunction{{OID()}, int8, TablespaceSizeFunction<int64_t>},
-     duckdb::ScalarFunction{
-       {text}, int8, TablespaceSizeFunction<duckdb::string_t>}});
+                 duckdb::FunctionStability::CONSISTENT, nullptr, {size_bytes});
+  duckdb::ScalarFunction tablespace_by_oid{
+    {OID()}, int8, TablespaceSizeFunction<int64_t>};
+  tablespace_by_oid.SetFallible();
+  duckdb::ScalarFunction tablespace_by_name{
+    {text}, int8, TablespaceSizeFunction<duckdb::string_t>};
+  tablespace_by_name.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_tablespace_size", stability, nullptr,
+                 {tablespace_by_oid, tablespace_by_name});
 }
 
 }  // namespace sdb::pg

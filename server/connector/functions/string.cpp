@@ -1764,6 +1764,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                               duckdb::LogicalType::VARCHAR),
           returns, function, nullptr, nullptr, NormalizeInitLocalState});
       }
+      set.SetFallible();
       loader.RegisterFunction(set);
     };
     add("normalize", duckdb::LogicalType::VARCHAR,
@@ -1772,18 +1773,22 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // encode(bytea, text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction encode{
     "encode",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
-    EncodeFunction});
+    EncodeFunction};
+  encode.SetFallible();
+  loader.RegisterFunction(std::move(encode));
 
   // decode(text, text) -> bytea
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  duckdb::ScalarFunction decode{
     "decode",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BLOB,
-    DecodeFunction});
+    DecodeFunction};
+  decode.SetFallible();
+  loader.RegisterFunction(std::move(decode));
 
   // octet_length(varchar) -> bigint
   loader.RegisterFunction(duckdb::ScalarFunction{"octet_length",
@@ -1870,6 +1875,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
            ConvertToFunction},
        }) {
     function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    function.SetFallible();
     loader.RegisterFunction(std::move(function));
   }
 
@@ -1921,6 +1927,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       set.AddFunction(std::move(func));
     }
+    set.SetFallible();
     loader.RegisterFunction(set);
   }
 
@@ -2000,8 +2007,10 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
          OperatorAlias{"notlike", "!~~", ByteaLikeFunction<true>},
        }) {
     const duckdb::Identifier source_name{source};
-    loader.RegisterFunction(duckdb::ScalarFunction{
-      source_name, {blob, blob}, duckdb::LogicalType::BOOLEAN, bytea_like});
+    duckdb::ScalarFunction like{
+      source_name, {blob, blob}, duckdb::LogicalType::BOOLEAN, bytea_like};
+    like.SetFallible();
+    loader.RegisterFunction(std::move(like));
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
     for (const auto& function :
          loader.GetFunction(source_name).functions.functions) {
@@ -2031,6 +2040,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                            {text, duckdb::LogicalType::INTEGER},
                                            text,
                                            ToAsciiByCodeFunction});
+    set.SetFallible();
     loader.RegisterFunction(set);
   }
 
@@ -2045,11 +2055,13 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       set.AddFunction(std::move(func));
     }
+    set.SetFallible();
     loader.RegisterFunction(set);
   }
 
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"unistr", {text}, text, UnistrFunction});
+  duckdb::ScalarFunction unistr{"unistr", {text}, text, UnistrFunction};
+  unistr.SetFallible();
+  loader.RegisterFunction(std::move(unistr));
 }
 
 }  // namespace sdb::connector

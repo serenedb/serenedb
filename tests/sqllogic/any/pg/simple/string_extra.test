@@ -412,6 +412,21 @@ ok
 t
 
 
+skipif serenedb
+statement error
+SELECT decode('@@', 'base64');
+----
+db error: ERROR: invalid symbol "@" found while decoding base64 sequence
+
+
+onlyif serenedb
+statement error
+SELECT decode('@@', 'base64');
+----
+db error: ERROR: Could not decode string "@@" as base64
+
+
+
 # get_byte / set_byte
 
 query

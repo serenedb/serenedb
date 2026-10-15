@@ -476,6 +476,7 @@ void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db) {
       function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       set.AddFunction(std::move(function));
     }
+    set.SetFallible();
     loader.RegisterFunction(set);
   }
 
@@ -496,6 +497,7 @@ void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db) {
                                 ShuffleInitLocalState},
        }) {
     function.SetVolatile();
+    function.SetFallible();
     loader.RegisterFunction(std::move(function));
   }
 }

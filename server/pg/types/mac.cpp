@@ -303,8 +303,10 @@ void RegisterFunctions(duckdb::DatabaseInstance& db) {
     unary("macaddr8_set7bit", mac8, MacUnary<[](uint64_t v) -> uint64_t {
             return v | (uint64_t{0x02} << 56);
           }>));
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "macaddr", {mac8}, mac, MacUnary<&MacaddrFromMacaddr8>});
+  duckdb::ScalarFunction to_macaddr{
+    "macaddr", {mac8}, mac, MacUnary<&MacaddrFromMacaddr8>};
+  to_macaddr.SetFallible();
+  loader.RegisterFunction(std::move(to_macaddr));
   loader.RegisterFunction(duckdb::ScalarFunction{
     "macaddr8", {mac}, mac8, MacUnary<&Macaddr8FromMacaddr>});
   loader.AddFunctionOverload(

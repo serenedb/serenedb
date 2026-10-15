@@ -554,6 +554,21 @@ SELECT json_populate_record(NULL::jsonfn_pair, '[1]');
 db error: ERROR: cannot call populate_composite on an array
 
 
+skipif serenedb
+statement error
+SELECT * FROM json_populate_record(NULL::jsonfn_pair, '{"a": "x"}');
+----
+db error: ERROR: invalid input syntax for type integer: "x"
+
+
+onlyif serenedb
+statement error
+SELECT * FROM json_populate_record(NULL::jsonfn_pair, '{"a": "x"}');
+----
+db error: ERROR: Could not convert string 'x' to INT32
+
+
+
 statement error
 SELECT json_populate_record(NULL::jsonfn_pair, '"x"');
 ----

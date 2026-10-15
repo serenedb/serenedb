@@ -267,30 +267,35 @@ void RegisterSequenceFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   const auto int8 = duckdb::LogicalType::BIGINT;
   const auto boolean = duckdb::LogicalType::BOOLEAN;
-  RegisterScalar(
-    loader, pg_catalog, "pg_sequence_last_value", VOLATILE, InitSession,
-    {duckdb::ScalarFunction{{REGCLASS()}, int8, PgSequenceLastValueFunction}});
+  duckdb::ScalarFunction last_value{
+    {REGCLASS()}, int8, PgSequenceLastValueFunction};
+  last_value.SetFallible();
+  RegisterScalar(loader, pg_catalog, "pg_sequence_last_value", VOLATILE,
+                 InitSession, {last_value});
+  duckdb::ScalarFunction lastval{{}, int8, LastvalFunction};
+  lastval.SetFallible();
   RegisterScalar(loader, pg_catalog, "lastval", VOLATILE, InitSession,
-                 {duckdb::ScalarFunction{{}, int8, LastvalFunction}});
+                 {lastval});
   RegisterScalar(
     loader, pg_catalog, "pg_get_sequence_data", VOLATILE, InitSession,
     {duckdb::ScalarFunction{{REGCLASS()},
                             duckdb::LogicalType::STRUCT(
                               {{"last_value", int8}, {"is_called", boolean}}),
                             PgGetSequenceDataFunction}});
+  duckdb::ScalarFunction parameters{{OID()},
+                                    duckdb::LogicalType::STRUCT({
+                                      {"start_value", int8},
+                                      {"minimum_value", int8},
+                                      {"maximum_value", int8},
+                                      {"increment", int8},
+                                      {"cycle_option", boolean},
+                                      {"cache_size", int8},
+                                      {"data_type", OID()},
+                                    }),
+                                    PgSequenceParametersFunction};
+  parameters.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_sequence_parameters",
-                 CONSISTENT_WITHIN_QUERY, InitSession,
-                 {duckdb::ScalarFunction{{OID()},
-                                         duckdb::LogicalType::STRUCT({
-                                           {"start_value", int8},
-                                           {"minimum_value", int8},
-                                           {"maximum_value", int8},
-                                           {"increment", int8},
-                                           {"cycle_option", boolean},
-                                           {"cache_size", int8},
-                                           {"data_type", OID()},
-                                         }),
-                                         PgSequenceParametersFunction}});
+                 CONSISTENT_WITHIN_QUERY, InitSession, {parameters});
 }
 
 }  // namespace sdb::pg

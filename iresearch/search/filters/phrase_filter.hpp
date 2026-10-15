@@ -115,7 +115,10 @@ class ByPhraseOptions {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  bool operator==(const ByPhraseOptions& rhs) const noexcept;
+  bool operator==(const ByPhraseOptions& rhs) const noexcept {
+    return _phrase == rhs._phrase && _slop == rhs._slop &&
+           _word_separator == rhs._word_separator && _text == rhs._text;
+  }
 
   bool LowerParts();
 

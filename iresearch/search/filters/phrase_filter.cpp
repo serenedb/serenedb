@@ -733,11 +733,6 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
     part);
 }
 
-bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
-  return _phrase == rhs._phrase && _slop == rhs._slop &&
-         _word_separator == rhs._word_separator && _text == rhs._text;
-}
-
 bool ByPhraseOptions::LowerParts() {
   bool changed = false;
   for (auto& info : _phrase) {

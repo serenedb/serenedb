@@ -34,6 +34,7 @@ class ApproxQuery : public QueryBuilderImpl<ApproxQuery> {
       _approx{std::move(approx)},
       _boost{boost} {
     SDB_ASSERT(!QueryBuilder::IsEmpty(*_approx));
+    SDB_ASSERT(!_approx->Scores());
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();
   }

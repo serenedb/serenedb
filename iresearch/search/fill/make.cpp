@@ -172,7 +172,7 @@ Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
 }
 
 Node::ptr Make(const ApproxQuery& query) {
-  return query.Approx().PlanFill({}, ScoreMergeType::Sum);
+  return query.Approx().PlanFill({}, ScoreMergeType::Noop);
 }
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,

@@ -740,8 +740,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | Feature            | Support State | Details                          |
 |--------------------|---------------|----------------------------------|
 | mode               | Yes           |                                  |
-| percentile_cont    | Yes           |                                  |
-| percentile_disc    | Yes           |                                  |
+| percentile_cont    | Partial       | Not for `interval` input; `numeric` input returns `numeric`; a `NULL` fraction raises an error; the result column is named `quantile_cont` |
+| percentile_disc    | Partial       | A `NULL` fraction raises an error; the result column is named `quantile_disc` |
 
 #### Window
 | Feature        | Support State | Details |

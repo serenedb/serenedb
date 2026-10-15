@@ -322,6 +322,10 @@ constexpr SystemMacro kMacros[] = {
       coalesce(running_sum + CAST(value AS DECIMAL(19, 0)), running_sum,
                CAST(value AS DECIMAL(19, 0))))"},
   {"pg_catalog", "numeric_inc", "(x) AS x + CAST(1 AS DECIMAL(1, 0))"},
+  {"pg_catalog", "numeric_exp", "(x) AS dexp(x)"},
+  {"pg_catalog", "numeric_ln", "(x) AS dlog1(x)"},
+  {"pg_catalog", "numeric_log", "(b, x) AS log(b, x)"},
+  {"pg_catalog", "numeric_sqrt", "(x) AS dsqrt(x)"},
 
   {"pg_catalog", "casefold", "(s VARCHAR) AS lower(s)"},
   {"pg_catalog", "string_to_table",

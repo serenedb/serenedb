@@ -110,6 +110,72 @@ numeric_inc	numeric_inc	numeric_inc	numeric_inc	numeric_inc
 2.5	0	1.001	100000000000	NULL
 
 
+# numeric_exp, numeric_ln, numeric_log, numeric_sqrt
+
+query
+SELECT numeric_exp(0)::float8, numeric_ln(1)::float8, numeric_log(2, 64)::float8, numeric_log(10, 1000)::float8,
+       numeric_sqrt(4)::float8, numeric_sqrt(NULL);
+----
+numeric_exp	numeric_ln	numeric_log	numeric_log	numeric_sqrt	numeric_sqrt
+1	0	6	3	2	NULL
+
+
+statement error
+SELECT numeric_sqrt(-1);
+----
+db error: ERROR: cannot take square root of a negative number
+
+
+statement error
+SELECT numeric_ln(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error
+SELECT numeric_ln(-2);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+statement error
+SELECT numeric_log(1, 10);
+----
+db error: ERROR: division by zero
+
+
+statement error
+SELECT numeric_log(0, 10);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error (value overflows numeric format|value out of range: overflow)
+SELECT numeric_exp(100000);
+
+
+query
+SELECT log(10, 1000)::float8, log(10, 1000000)::float8, log(3, 3486784401)::float8, log(16, 256)::float8;
+----
+log	log	log	log
+3	6	20	2
+
+
+# dsqrt
+
+query
+SELECT dsqrt(2), dsqrt(0), dsqrt('NaN'::float8), dsqrt(NULL);
+----
+dsqrt	dsqrt	dsqrt	dsqrt
+1.4142135623730951	0	NaN	NULL
+
+
+statement error
+SELECT dsqrt(-1);
+----
+db error: ERROR: cannot take square root of a negative number
+
+
 # numeric_div_trunc
 
 query

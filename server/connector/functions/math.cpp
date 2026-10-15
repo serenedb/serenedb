@@ -223,7 +223,7 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
                         ERR_MSG("division by zero"));
       }
-      return std::log(value) / std::log(base);
+      return std::log10(value) / std::log10(base);
     });
 }
 
@@ -478,6 +478,14 @@ double PgLog(double x) {
     ThrowFloatUnderflow();
   }
   return result;
+}
+
+double PgSqrt(double x) {
+  if (x < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_POWER_FUNCTION),
+                    ERR_MSG("cannot take square root of a negative number"));
+  }
+  return std::sqrt(x);
 }
 
 template<double (*Function)(double)>
@@ -997,6 +1005,7 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
                       CAN_THROW_RUNTIME_ERROR},
          DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>,
                       CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dsqrt", DoubleFunction<PgSqrt>, CAN_THROW_RUNTIME_ERROR},
          DoubleScalar{"dround", DoubleFunction<std::rint>, CANNOT_ERROR},
          DoubleScalar{"dtrunc", DoubleFunction<std::trunc>, CANNOT_ERROR},
        }) {

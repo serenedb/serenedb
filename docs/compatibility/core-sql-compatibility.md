@@ -177,9 +177,9 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | +                | Yes           |                                                                         |
 | -                | Yes           |                                                                         |
 | *                | Yes           |                                                                         |
-| /                | Yes           |                                                                         |
+| /                | Yes           | On `numeric`, returns `double precision`                                |
 | %                | Yes           |                                                                         |
-| ^                | Yes           |                                                                         |
+| ^                | Yes           | On `numeric`, returns `double precision`                                |
 | |/               | Yes            |                                                                         |
 | ||/              | Yes            |                                                                         |
 | @                | Yes           |                                                                         |
@@ -196,23 +196,23 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | div              | Yes           |                                                                         |
 | erf              | Yes           |                                                                         |
 | erfc             | Yes           |                                                                         |
-| exp              | Yes           |                                                                         |
+| exp              | Yes           | On `numeric`, returns `double precision`                                |
 | factorial        | Yes           |                                                                         |
 | floor            | Yes           |                                                                         |
-| gcd              | Yes           |                                                                         |
-| lcm              | Yes           |                                                                         |
-| ln               | Yes           |                                                                         |
-| log              | Yes           |                                                                         |
-| log10            | Yes           |                                                                         |
+| gcd              | Yes           | Not for `numeric`                                                       |
+| lcm              | Yes           | Not for `numeric`                                                       |
+| ln               | Yes           | On `numeric`, returns `double precision`                                |
+| log              | Yes           | On `numeric`, returns `double precision`                                |
+| log10            | Yes           | On `numeric`, returns `double precision`                                |
 | min_scale        | Yes           |                                                                         |
 | mod              | Yes           |                                                                         |
 | pi               | Yes           |                                                                         |
-| power            | Yes           |                                                                         |
+| power            | Yes           | On `numeric`, returns `double precision`                                |
 | radians          | Yes           |                                                                         |
 | round            | Yes           |                                                                         |
 | scale            | Yes           | The scale of the column type: `numeric` without a scale has three fractional digits |
-| sign             | Yes           |                                                                         |
-| sqrt             | Yes           |                                                                         |
+| sign             | Yes           | Returns `smallint`                                                      |
+| sqrt             | Yes           | On `numeric`, returns `double precision`                                |
 | trim_scale       | No            | A `numeric` value keeps the scale of its type                           |
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |

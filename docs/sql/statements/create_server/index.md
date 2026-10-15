@@ -175,6 +175,7 @@ The lock is the file system's: on a file system without POSIX locks nothing dete
 `CREATE SERVER` refuses a directory:
 
 - inside the data directory of a running server,
+- missing the directory of one of its search tables or inverted indexes,
 - whose name is not a database oid, or
 - that belongs to the attaching server itself.
 

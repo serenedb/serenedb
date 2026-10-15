@@ -203,16 +203,16 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ln               | Yes           |                                                                         |
 | log              | Yes           |                                                                         |
 | log10            | Yes           |                                                                         |
-| min_scale        | No            |                                                                         |
+| min_scale        | Yes           |                                                                         |
 | mod              | Yes           |                                                                         |
 | pi               | Yes           |                                                                         |
 | power            | Yes           |                                                                         |
 | radians          | Yes           |                                                                         |
 | round            | Yes           |                                                                         |
-| scale            | No            |                                                                         |
+| scale            | Yes           | The scale of the column type: `numeric` without a scale has three fractional digits |
 | sign             | Yes           |                                                                         |
 | sqrt             | Yes           |                                                                         |
-| trim_scale       | No            |                                                                         |
+| trim_scale       | No            | A `numeric` value keeps the scale of its type                           |
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |
 | random           | Yes           |                                                                         |

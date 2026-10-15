@@ -864,7 +864,7 @@ statement ok
 SELECT log10(100.0);
 
 # op_math: min_scale
-statement error
+statement ok
 SELECT min_scale(1.230);
 
 # op_math: mod
@@ -888,7 +888,7 @@ statement ok
 SELECT round(1.5);
 
 # op_math: scale
-statement error
+statement ok
 SELECT scale(1.230);
 
 # op_math: sign

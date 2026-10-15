@@ -22,15 +22,18 @@
 
 #include <absl/strings/str_format.h>
 
+#include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <cstdint>
 #include <duckdb/common/types/date.hpp>
+#include <duckdb/common/types/decimal.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -39,6 +42,9 @@
 
 namespace sdb::connector {
 namespace {
+
+constexpr uint8_t kNumericWidth = 18;
+constexpr uint8_t kNumericScale = 3;
 
 void ErfFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                  duckdb::Vector& result) {
@@ -416,6 +422,179 @@ void JustifyFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), Justify);
 }
 
+[[noreturn]] void ThrowFloatOverflow() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("value out of range: overflow"));
+}
+
+[[noreturn]] void ThrowFloatUnderflow() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("value out of range: underflow"));
+}
+
+double PgExp(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? x : 0;
+  }
+  const auto result = std::exp(x);
+  if (std::isinf(result)) {
+    ThrowFloatOverflow();
+  }
+  if (result == 0.0) {
+    ThrowFloatUnderflow();
+  }
+  return result;
+}
+
+template<double (*Log)(double)>
+double PgLog(double x) {
+  if (x == 0.0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                    ERR_MSG("cannot take logarithm of zero"));
+  }
+  if (x < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                    ERR_MSG("cannot take logarithm of a negative number"));
+  }
+  const auto result = Log(x);
+  if (std::isinf(result) && !std::isinf(x)) {
+    ThrowFloatOverflow();
+  }
+  if (result == 0.0 && x != 1.0) {
+    ThrowFloatUnderflow();
+  }
+  return result;
+}
+
+template<double (*Function)(double)>
+void DoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<double, double>(args.data[0], result,
+                                                 args.size(), Function);
+}
+
+duckdb::LogicalType DecimalArgument(duckdb::BindScalarFunctionInput& input,
+                                    duckdb::idx_t index) {
+  uint8_t width = 0;
+  uint8_t scale = 0;
+  if (!input.GetArguments()[index]->GetReturnType().GetDecimalProperties(
+        width, scale) ||
+      width == 0) {
+    width = kNumericWidth;
+    scale = kNumericScale;
+  }
+  const auto type = duckdb::LogicalType::DECIMAL(width, scale);
+  input.GetBoundFunction().GetArguments()[index] = type;
+  return type;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindScale(
+  duckdb::BindScalarFunctionInput& input) {
+  DecimalArgument(input, 0);
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::Expression> ScaleExpression(
+  duckdb::FunctionBindExpressionInput& input) {
+  const auto scale =
+    duckdb::DecimalType::GetScale(input.children[0]->GetReturnType());
+  return duckdb::ExpressionRewriter::ConstantOrNull(
+    input.context, std::move(input.children), duckdb::Value::INTEGER(scale));
+}
+
+template<typename T>
+void MinScaleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  const int32_t scale = duckdb::DecimalType::GetScale(args.data[0].GetType());
+  duckdb::UnaryExecutor::Execute<T, int32_t>(
+    args.data[0], result, args.size(), [&](T value) {
+      int32_t min_scale = scale;
+      for (; min_scale > 0 && value % T(10) == T(0); --min_scale) {
+        value /= T(10);
+      }
+      return min_scale;
+    });
+}
+
+using Int256 = boost::multiprecision::int256_t;
+
+Int256 Pow10(uint8_t exponent) {
+  Int256 power = 1;
+  for (uint8_t i = 0; i < exponent; ++i) {
+    power *= 10;
+  }
+  return power;
+}
+
+Int256 ToInt256(duckdb::hugeint_t value) {
+  return Int256{value.upper} * (Int256{1} << 64) + Int256{value.lower};
+}
+
+duckdb::hugeint_t ToHugeint(const Int256& value) {
+  const Int256 magnitude = boost::multiprecision::abs(value);
+  const duckdb::hugeint_t result{
+    static_cast<int64_t>(static_cast<uint64_t>(magnitude >> 64)),
+    static_cast<uint64_t>(magnitude & std::numeric_limits<uint64_t>::max())};
+  return value < 0 ? -result : result;
+}
+
+void DivTruncFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  const auto dividend_scale =
+    duckdb::DecimalType::GetScale(args.data[0].GetType());
+  const auto divisor_scale =
+    duckdb::DecimalType::GetScale(args.data[1].GetType());
+  const auto dividend_factor = Pow10(divisor_scale);
+  const auto divisor_factor = Pow10(dividend_scale);
+  const auto limit = Pow10(duckdb::Decimal::MAX_WIDTH_DECIMAL);
+  duckdb::BinaryExecutor::Execute<duckdb::hugeint_t, duckdb::hugeint_t,
+                                  duckdb::hugeint_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::hugeint_t dividend, duckdb::hugeint_t divisor) {
+      if (divisor == duckdb::hugeint_t{0}) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                        ERR_MSG("division by zero"));
+      }
+      const Int256 quotient = ToInt256(dividend) * dividend_factor /
+                              (ToInt256(divisor) * divisor_factor);
+      if (boost::multiprecision::abs(quotient) >= limit) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("value overflows numeric format"));
+      }
+      return ToHugeint(quotient);
+    });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindDivTrunc(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& function = input.GetBoundFunction();
+  for (duckdb::idx_t i = 0; i < 2; ++i) {
+    function.GetArguments()[i] = duckdb::LogicalType::DECIMAL(
+      duckdb::Decimal::MAX_WIDTH_DECIMAL,
+      duckdb::DecimalType::GetScale(DecimalArgument(input, i)));
+  }
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindMinScale(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto physical = DecimalArgument(input, 0).InternalType();
+  auto& function = input.GetBoundFunction();
+  if (physical == duckdb::PhysicalType::INT16) {
+    function.SetFunctionCallback(MinScaleFunction<int16_t>);
+  } else if (physical == duckdb::PhysicalType::INT32) {
+    function.SetFunctionCallback(MinScaleFunction<int32_t>);
+  } else if (physical == duckdb::PhysicalType::INT64) {
+    function.SetFunctionCallback(MinScaleFunction<int64_t>);
+  } else {
+    function.SetFunctionCallback(MinScaleFunction<duckdb::hugeint_t>);
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
@@ -541,6 +720,48 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       RandomNormalFunction};
     func.SetVolatile();
     loader.RegisterFunction(func);
+  }
+
+  struct DoubleScalar {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+  };
+  for (const auto& [name, function] : {
+         DoubleScalar{"dexp", DoubleFunction<PgExp>},
+         DoubleScalar{"dlog1", DoubleFunction<PgLog<std::log>>},
+         DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>},
+         DoubleScalar{"dround", DoubleFunction<std::rint>},
+         DoubleScalar{"dtrunc", DoubleFunction<std::trunc>},
+       }) {
+    loader.RegisterFunction(
+      duckdb::ScalarFunction{duckdb::Identifier{name},
+                             {duckdb::LogicalType::DOUBLE},
+                             duckdb::LogicalType::DOUBLE,
+                             function});
+  }
+
+  {
+    duckdb::ScalarFunction scale{"scale",
+                                 {duckdb::LogicalTypeId::DECIMAL},
+                                 duckdb::LogicalType::INTEGER,
+                                 nullptr,
+                                 BindScale};
+    scale.SetBindExpressionCallback(ScaleExpression);
+    loader.RegisterFunction(scale);
+  }
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"min_scale",
+                           {duckdb::LogicalTypeId::DECIMAL},
+                           duckdb::LogicalType::INTEGER,
+                           nullptr,
+                           BindMinScale});
+  for (const auto name : {"div", "numeric_div_trunc"}) {
+    loader.RegisterFunction(duckdb::ScalarFunction{
+      name,
+      {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
+      duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
+      DivTruncFunction,
+      BindDivTrunc});
   }
 }
 

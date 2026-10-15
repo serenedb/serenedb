@@ -1,0 +1,150 @@
+# dexp
+
+query
+SELECT dexp(0), dexp(1), dexp(-1), dexp(-740) > 0, dexp('-Infinity'), dexp('Infinity'), dexp('NaN'), dexp(NULL);
+----
+dexp	dexp	dexp	?column?	dexp	dexp	dexp	dexp
+1	2.718281828459045	0.36787944117144233	t	0	Infinity	NaN	NULL
+
+
+statement error
+SELECT dexp(710);
+----
+db error: ERROR: value out of range: overflow
+
+
+statement error
+SELECT dexp(-746);
+----
+db error: ERROR: value out of range: underflow
+
+
+# dlog1
+
+query
+SELECT dlog1(1), dlog1(2.718281828459045), dlog1(10), dlog1('Infinity'), dlog1('NaN'), dlog1(NULL);
+----
+dlog1	dlog1	dlog1	dlog1	dlog1	dlog1
+0	1	2.302585092994046	Infinity	NaN	NULL
+
+
+statement error
+SELECT dlog1(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error
+SELECT dlog1(-1);
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+# dlog10
+
+query
+SELECT dlog10(1), dlog10(1000), dlog10(0.001), dlog10(2), dlog10('Infinity'), dlog10(NULL);
+----
+dlog10	dlog10	dlog10	dlog10	dlog10	dlog10
+0	3	-3	0.3010299956639812	Infinity	NULL
+
+
+statement error
+SELECT dlog10(0);
+----
+db error: ERROR: cannot take logarithm of zero
+
+
+statement error
+SELECT dlog10('-Infinity');
+----
+db error: ERROR: cannot take logarithm of a negative number
+
+
+# dround
+
+query
+SELECT dround(0.5), dround(1.5), dround(2.5), dround(-2.5), dround(2.6), dround(-0.4), dround('Infinity'), dround(NULL);
+----
+dround	dround	dround	dround	dround	dround	dround	dround
+0	2	2	-2	3	-0	Infinity	NULL
+
+
+# dtrunc
+
+query
+SELECT dtrunc(2.7), dtrunc(-2.7), dtrunc(-0.5), dtrunc(42), dtrunc('-Infinity'), dtrunc('NaN'), dtrunc(NULL);
+----
+dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc
+2	-2	-0	42	-Infinity	NaN	NULL
+
+
+# int4inc
+
+query
+SELECT int4inc(0), int4inc(-1), int4inc(2147483646), int4inc(5::smallint), int4inc(NULL);
+----
+int4inc	int4inc	int4inc	int4inc	int4inc
+1	0	2147483647	6	NULL
+
+
+statement error (integer out of range|Overflow in addition of INT32)
+SELECT int4inc(2147483647);
+
+
+# int8_sum
+
+query
+SELECT int8_sum(10.5, 5), int8_sum(NULL, 7), int8_sum(1.25, NULL), int8_sum(NULL, NULL), int8_sum(1, 9223372036854775807);
+----
+int8_sum	int8_sum	int8_sum	int8_sum	int8_sum
+15.5	7	1.25	NULL	9223372036854775808
+
+
+# numeric_inc
+
+query
+SELECT numeric_inc(1.5), numeric_inc(-1), numeric_inc(0.001), numeric_inc(99999999999), numeric_inc(NULL);
+----
+numeric_inc	numeric_inc	numeric_inc	numeric_inc	numeric_inc
+2.5	0	1.001	100000000000	NULL
+
+
+# numeric_div_trunc
+
+query
+SELECT numeric_div_trunc(9, 4), numeric_div_trunc(-9, 4), numeric_div_trunc(9.9, 0.2), numeric_div_trunc(-7.5, -2.5), numeric_div_trunc(1, 3), numeric_div_trunc(NULL, 1);
+----
+numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc	numeric_div_trunc
+2	-2	49	3	0	NULL
+
+
+query
+SELECT numeric_div_trunc(12345678901234567890.123, 0.001), numeric_div_trunc(0.0001, 0.00003);
+----
+numeric_div_trunc	numeric_div_trunc
+12345678901234567890123	3
+
+
+statement error
+SELECT numeric_div_trunc(1.5, 0);
+----
+db error: ERROR: division by zero
+
+
+# scale
+
+query
+SELECT scale(1.230), scale(0.5), scale(42), scale(-7.00001), scale(CAST(3 AS numeric(10, 2))), scale(NULL);
+----
+scale	scale	scale	scale	scale	scale
+3	1	0	5	2	NULL
+
+
+# min_scale
+
+query
+SELECT min_scale(1.230), min_scale(0.500), min_scale(42.00), min_scale(0.000), min_scale(-7.00001), min_scale(CAST(100 AS numeric(10, 2))), min_scale(NULL);
+----
+min_scale	min_scale	min_scale	min_scale	min_scale	min_scale	min_scale
+2	1	0	0	5	0	NULL

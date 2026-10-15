@@ -316,6 +316,13 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog","atan2d",
    R"((y, x) AS degrees(atan2(y, x)))"},
 
+  {"pg_catalog", "int4inc", "(x INTEGER) AS x + 1"},
+  {"pg_catalog", "int8_sum",
+   R"((running_sum, value BIGINT) AS
+      coalesce(running_sum + CAST(value AS DECIMAL(19, 0)), running_sum,
+               CAST(value AS DECIMAL(19, 0))))"},
+  {"pg_catalog", "numeric_inc", "(x) AS x + CAST(1 AS DECIMAL(1, 0))"},
+
   {"pg_catalog", "casefold", "(s VARCHAR) AS lower(s)"},
   {"pg_catalog", "string_to_table",
    "(s VARCHAR, sep VARCHAR) AS unnest(string_to_array(s, sep))"},

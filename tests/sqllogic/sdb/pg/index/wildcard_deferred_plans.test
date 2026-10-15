@@ -1,5 +1,5 @@
 # Where each deferred wildcard and regexp shape is checked. Their answers are
-# compared with the table itself in wildcard_deferred_matrix.test, which
+# compared with the table itself in wildcard_deferred_matrix.gen.test, which
 # tests/sqllogic/generators/sdb/pg/index/wildcard_deferred_matrix.py generates.
 
 statement ok

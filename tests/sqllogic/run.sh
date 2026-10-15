@@ -985,7 +985,7 @@ generated_tests() {
 	shopt -s globstar nullglob
 	for generator in "$SCRIPT_DIR"/generators/**/*.py; do
 		target="$SCRIPT_DIR/${generator#"$SCRIPT_DIR/generators/"}"
-		target="${target%.py}.test"
+		target="${target%.py}.gen.test"
 		if ! python3 "$SCRIPT_DIR/generated.py" "$1" "$generator" "$target"; then
 			echo "ERROR: $generator failed to $1 $target" >&2
 			exit 1

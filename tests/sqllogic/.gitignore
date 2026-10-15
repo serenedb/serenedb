@@ -1,3 +1,1 @@
-/sdb/pg/index/geo_deferred_matrix.test
-/sdb/pg/index/phrase_deferred_matrix.test
-/sdb/pg/index/wildcard_deferred_matrix.test
+*.gen.test

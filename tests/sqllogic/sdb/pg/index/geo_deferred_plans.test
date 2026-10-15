@@ -1,5 +1,5 @@
 # Where each deferred geo shape is checked. Their answers are compared with
-# the same predicates checked inline in geo_deferred_matrix.test, which
+# the same predicates checked inline in geo_deferred_matrix.gen.test, which
 # tests/sqllogic/generators/sdb/pg/index/geo_deferred_matrix.py generates.
 
 statement ok

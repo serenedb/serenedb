@@ -1,5 +1,5 @@
 # Where each deferred phrase shape is checked. Their answers are compared
-# with a positional index in phrase_deferred_matrix.test, which
+# with a positional index in phrase_deferred_matrix.gen.test, which
 # tests/sqllogic/generators/sdb/pg/index/phrase_deferred_matrix.py
 # generates from the same rows.
 

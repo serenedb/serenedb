@@ -103,7 +103,9 @@ class InvertedIndexStorage final
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    _dropped.store(true, std::memory_order_release);
+    if (_writer) {
+      _dropped.store(true, std::memory_order_release);
+    }
   }
   std::filesystem::path Path() const {
     return _directory->StoragePath(_index_id);
@@ -124,6 +126,7 @@ class InvertedIndexStorage final
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
+  void OpenReader();
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -255,6 +258,7 @@ class InvertedIndexStorage final
   bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
+  irs::IndexReaderOptions ReaderOptions() const;
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                          const irs::MergeWriter::FlushProgress& progress,
                          bool& empty_compaction,

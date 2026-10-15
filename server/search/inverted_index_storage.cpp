@@ -82,18 +82,11 @@ InvertedIndexStorage::InvertedIndexStorage(
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
-  irs::IndexReaderOptions reader_options;
-  reader_options.db = &irs::DuckDBEngine::Instance().instance();
   if (const auto& scorer_options = top_k_scorer) {
     _topk_scorer = MakeScorer(*scorer_options);
-    reader_options.scorer = _topk_scorer.get();
   }
 
   if (read_only) {
-    auto [reader, stamp] = IndexDurability::OpenReader(*_dir, reader_options);
-    SetFileManifest(stamp.manifest);
-    StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
-      std::move(reader), std::move(stamp.manifest)));
     return;
   }
 
@@ -109,8 +102,8 @@ InvertedIndexStorage::InvertedIndexStorage(
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = reader_options.db;
-  writer_options.reader_options = reader_options;
+  writer_options.reader_options = ReaderOptions();
+  writer_options.db = writer_options.reader_options.db;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
@@ -130,6 +123,20 @@ InvertedIndexStorage::InvertedIndexStorage(
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
 
+  SetFileManifest(stamp.manifest);
+  StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), std::move(stamp.manifest)));
+}
+
+irs::IndexReaderOptions InvertedIndexStorage::ReaderOptions() const {
+  irs::IndexReaderOptions options;
+  options.db = &irs::DuckDBEngine::Instance().instance();
+  options.scorer = _topk_scorer.get();
+  return options;
+}
+
+void InvertedIndexStorage::OpenReader() {
+  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
   SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
@@ -163,12 +170,14 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
+  if (!_writer) {
+    return;
+  }
 
   irs::SegmentOptions segment_options;
   segment_options.segment_count_max = 0;
   segment_options.segment_memory_max = options.segment_memory_max;
   segment_options.segment_docs_max = options.segment_docs_max;
-  SDB_ASSERT(_writer);
   _writer->Options(segment_options);
 }
 

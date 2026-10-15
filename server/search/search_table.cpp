@@ -101,7 +101,7 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
   if (read_only) {
-    OpenReader();
+    OpenDirectory();
   } else {
     OpenWriter(in_memory);
   }
@@ -157,12 +157,15 @@ void SearchTable::OpenWriter(bool in_memory) {
   }
 }
 
-void SearchTable::OpenReader() {
+void SearchTable::OpenDirectory() {
   irs::ResourceManagementOptions resource_manager;
   auto opened = OpenStorageDirectory(*_directory, GetTableId(), false, false,
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
+}
+
+void SearchTable::OpenReader() {
   _reader = IndexDurability::OpenReader(*_dir, ReaderOptions()).first;
 }
 

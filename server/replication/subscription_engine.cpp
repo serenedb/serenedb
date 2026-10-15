@@ -182,14 +182,11 @@ void SubscriptionEngine::start() {
     std::string name;
   };
   std::vector<Enabled> subscriptions;
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (const auto& database : manager.GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         const auto& config =
@@ -305,14 +302,11 @@ void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
   std::vector<duckdb::idx_t> subscriptions;
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (const auto& database : manager.GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         if (!subscription || *subscription == entry.oid) {

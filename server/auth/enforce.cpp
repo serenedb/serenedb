@@ -1522,13 +1522,9 @@ class Enforcer {
                 duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
-      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+    for (const auto& db : catalog::SereneDBDatabases(
+           duckdb::DatabaseManager::Get(*_context.db))) {
+      auto& duck_catalog = db->GetCatalog().Cast<duckdb::DuckCatalog>();
       auto server =
         duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
           .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);

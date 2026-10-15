@@ -203,7 +203,4 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::Identifier _pk_sequence;
 };
 
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
-  duckdb::DuckCatalog& catalog);
-
 }  // namespace sdb::catalog

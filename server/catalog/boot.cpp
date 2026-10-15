@@ -46,6 +46,7 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -106,27 +107,17 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
 }
 
 absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
   absl::flat_hash_set<duckdb::idx_t> oids;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          RequirePresent(*table->Storage(), entry);
-          oids.insert(entry.oid);
-        }
-      });
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-        if (index && index->Storage()) {
-          RequirePresent(*index->Storage(), entry);
-          oids.insert(entry.oid);
-        }
-      });
-  }
+  ForEachSearchStorage(
+    catalog,
+    [&](SearchTableEntry& table) {
+      RequirePresent(*table.Storage(), table);
+      oids.insert(table.oid);
+    },
+    [&](InvertedIndexEntry& index) {
+      RequirePresent(*index.Storage(), index);
+      oids.insert(index.oid);
+    });
   return oids;
 }
 
@@ -139,12 +130,12 @@ void RemoveUnownedDatabases(const DataDirectory& layout,
   RemoveUnowned(layout.EngineDir(), databases);
 }
 
-void RemoveUnownedStorages(const DataDirectory& layout,
-                           duckdb::DatabaseManager& manager) {
-  for (const auto& db : manager.GetDatabases()) {
+void RemoveUnownedStorages(
+  const DataDirectory& layout,
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
+  for (const auto& db : attached) {
     auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !catalog.InMemory()) {
+    if (!catalog.InMemory()) {
       RemoveUnowned(layout.DatabaseDir(db->oid),
                     StorageOids(catalog.Cast<SereneDBCatalog>()));
     }
@@ -365,9 +356,8 @@ void InitCatalog(std::string_view directory) {
   cluster.OpenCatalogLog(std::move(catalog_log),
                          gMissingDatabases.policy != "skip");
   auto& manager = duckdb::DatabaseManager::Get(instance);
-  for (const auto& db : manager.GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !ReadDatabase(db->GetName().GetIdentifierName(),
+  for (const auto& db : SereneDBDatabases(manager)) {
+    if (!ReadDatabase(db->GetName().GetIdentifierName(),
                       [](const DatabaseCatalogEntry&) {})) {
       manager.DetachDatabase(context, db->GetName(),
                              duckdb::OnEntryNotFound::RETURN_NULL);
@@ -400,20 +390,16 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  RemoveUnownedStorages(layout, manager);
-  for (const auto& db : manager.GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
-      db->GetStorageManager().FinishLoad(context);
-    }
+  const auto attached = SereneDBDatabases(manager);
+  RemoveUnownedStorages(layout, attached);
+  for (const auto& db : attached) {
+    db->GetStorageManager().FinishLoad(context);
   }
-  search::RecoverSearchStorages();
+  search::RecoverSearchStorages(attached);
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
-  for (const auto& db : manager.GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& db : attached) {
+    db->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());

@@ -153,11 +153,8 @@ std::optional<Origin> FindOrigin(duckdb::ClientContext& context,
                                  std::string_view name) {
   if (const auto oid = SubscriptionOriginOid(name)) {
     for (const auto& database :
-         duckdb::DatabaseManager::Get(context).GetDatabases()) {
+         catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
       auto& catalog = database->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
       auto& duck = catalog.Cast<duckdb::DuckCatalog>();
       const auto transaction = duck.GetCatalogTransaction(context);
       auto entry = duck.GetOidIndex().GetVisible(*oid, transaction.view);

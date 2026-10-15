@@ -50,12 +50,10 @@ struct Origin {
 
 std::vector<Origin> CollectOrigins(duckdb::DatabaseInstance& db) {
   std::vector<Origin> origins;
-  for (const auto& database : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         origins.push_back({

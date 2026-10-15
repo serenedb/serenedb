@@ -667,4 +667,57 @@ void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
   duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
+duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(
+  duckdb::DatabaseManager& manager) {
+  auto databases = manager.GetDatabases();
+  std::erase_if(databases, [](const auto& db) {
+    return db->GetCatalog().GetCatalogType() != SereneDBCatalog::kStorageType;
+  });
+  return databases;
+}
+
+void ForEachSearchStorage(
+  SereneDBCatalog& catalog,
+  std::optional<absl::FunctionRef<void(SearchTableEntry&)>> table,
+  std::optional<absl::FunctionRef<void(InvertedIndexEntry&)>> index) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  for (auto& schema : schemas) {
+    if (table) {
+      schema.get().Scan(
+        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+          if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
+              entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
+            auto& search_table = entry.Cast<SearchTableEntry>();
+            SDB_ASSERT(search_table.Storage());
+            (*table)(search_table);
+          }
+        });
+    }
+    if (index) {
+      schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
+                        [&](duckdb::CatalogEntry& entry) {
+                          if (connector::IsInvertedIndex(
+                                entry.Cast<duckdb::IndexCatalogEntry>())) {
+                            auto& inverted = entry.Cast<InvertedIndexEntry>();
+                            if (inverted.Storage()) {
+                              (*index)(inverted);
+                            }
+                          }
+                        });
+    }
+  }
+}
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  SereneDBCatalog& catalog) {
+  std::vector<std::shared_ptr<search::SearchTable>> tables;
+  ForEachSearchStorage(
+    catalog,
+    [&](SearchTableEntry& table) { tables.push_back(table.Storage()); },
+    std::nullopt);
+  return tables;
+}
+
 }  // namespace sdb::catalog

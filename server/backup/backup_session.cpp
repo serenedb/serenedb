@@ -69,30 +69,17 @@ uint64_t GenerationOf(const irs::DirectoryReader& reader) {
 
 void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
                    std::vector<StoreCut>& stores) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* table = dynamic_cast<catalog::SearchTableEntry*>(&entry);
-        if (table && table->Storage()) {
-          stores.push_back(
-            {database, entry.oid,
-             GenerationOf(table->Storage()->GetDirectoryReader())});
-        }
-      });
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* index = dynamic_cast<catalog::InvertedIndexEntry*>(&entry);
-        if (index && index->Storage()) {
-          stores.push_back(
-            {database, entry.oid,
-             GenerationOf(
-               index->Storage()->GetInvertedIndexSnapshot()->reader)});
-        }
-      });
-  }
+  catalog::ForEachSearchStorage(
+    catalog,
+    [&](catalog::SearchTableEntry& table) {
+      stores.push_back({database, table.oid,
+                        GenerationOf(table.Storage()->GetDirectoryReader())});
+    },
+    [&](catalog::InvertedIndexEntry& index) {
+      stores.push_back(
+        {database, index.oid,
+         GenerationOf(index.Storage()->GetInvertedIndexSnapshot()->reader)});
+    });
 }
 
 std::optional<Cut> RecordCut(
@@ -155,16 +142,10 @@ std::optional<uint64_t> BackupSession::Begin(
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> pins;
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (auto& db : manager.GetDatabases()) {
-    auto& db_catalog = db->GetCatalog();
-    if (db_catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType &&
-        !db_catalog.InMemory()) {
-      pins.push_back(std::move(db));
-    }
-  }
+  auto pins = catalog::SereneDBDatabases(
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
+  std::erase_if(pins,
+                [](const auto& db) { return db->GetCatalog().InMemory(); });
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> checkpoint_keys;
   std::vector<duckdb::SingleFileBlockManager*> block_managers;
   for (auto& db : pins) {

@@ -147,9 +147,8 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
     return;
   }
   for (const auto& db :
-       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !quiesce(*db)) {
+       SereneDBDatabases(duckdb::DatabaseManager::Get(GetDatabase()))) {
+    if (!quiesce(*db)) {
       return;
     }
   }
@@ -172,12 +171,9 @@ void ClusterCatalog::CompactCatalogLog() {
     duckdb::WriteAheadLog rewrite{storage, rewrite_path};
     duckdb::WriteCatalogEntries(rewrite, *this);
     for (const auto& db :
-         duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
-        duckdb::WriteCatalogEntries(rewrite,
-                                    catalog.Cast<duckdb::DuckCatalog>());
-      }
+         SereneDBDatabases(duckdb::DatabaseManager::Get(GetDatabase()))) {
+      duckdb::WriteCatalogEntries(rewrite,
+                                  db->GetCatalog().Cast<duckdb::DuckCatalog>());
     }
     duckdb::DatabaseManager::Get(GetDatabase())
       .RetainPrepared(

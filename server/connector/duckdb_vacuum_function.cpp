@@ -226,21 +226,6 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
   return *found;
 }
 
-// Every attached serenedb database. VACUUM maintains live storage, so the
-// attachments are the population an "all databases" run walks.
-std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
-  duckdb::ClientContext& context) {
-  std::vector<duckdb::reference<duckdb::Catalog>> out;
-  for (auto& attached :
-       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    auto& db_catalog = attached->GetCatalog();
-    if (db_catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      out.emplace_back(db_catalog);
-    }
-  }
-  return out;
-}
-
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
                             const irs::IndexFieldOptions& field_options,
                             std::string_view index_name,
@@ -467,8 +452,9 @@ void DispatchInverted(duckdb::ClientContext& context,
     case Scope::All: {
       // Listed first: a walk scans the database it is for, and doing that from
       // inside the listing re-enters the very set the listing holds.
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }
@@ -591,8 +577,9 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       walk(LookupDatabase(context, target.database), {});
       break;
     case Scope::All: {
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }

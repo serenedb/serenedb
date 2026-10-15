@@ -152,11 +152,10 @@ size_t HistorySize() {
 void ForAllJobs(
   const std::function<void(catalog::JobCatalogEntry&)>& callback) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& database : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      catalog::ForEachJob(catalog.Cast<duckdb::DuckCatalog>(), callback);
-    }
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(db))) {
+    catalog::ForEachJob(database->GetCatalog().Cast<duckdb::DuckCatalog>(),
+                        callback);
   }
 }
 

@@ -158,7 +158,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
       }
     }
     for (auto& table : catalog::SearchTableStorages(
-           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+           db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
       table->FinishCheckpoint();
     }
   }
@@ -166,7 +166,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
   duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {
     duckdb::optional_idx needed;
     for (auto& table : catalog::SearchTableStorages(
-           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+           db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
       const auto generation = table->NeededWAL();
       if (generation &&
           (!needed.IsValid() || *generation < needed.GetIndex())) {

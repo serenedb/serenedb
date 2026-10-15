@@ -25,7 +25,7 @@
 
 #include <algorithm>
 #include <limits>
-#include <numeric>
+#include <span>
 #include <utility>
 
 namespace irs {
@@ -101,7 +101,7 @@ void LayoutSlop(CompiledPhrase& phrase) {
   }
 
   std::vector<uint32_t> groups(n);
-  std::iota(groups.begin(), groups.end(), 0);
+  absl::c_iota(groups, uint32_t{0});
   const auto find = [&](uint32_t x) {
     while (groups[x] != x) {
       groups[x] = groups[groups[x]];
@@ -195,14 +195,15 @@ std::optional<CompiledPhrase::Anchor> AnchorOf(
   return anchor;
 }
 
-}  // namespace
-
 bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
+  const std::span parts{phrase.begin(), phrase.end()};
   return phrase.slop() == 0 &&
-         (phrase.empty() ||
-          std::none_of(std::next(phrase.begin()), phrase.end(),
-                       [](const auto& info) { return info.offs_min == 0; }));
+         (parts.empty() ||
+          absl::c_none_of(parts.subspan(1),
+                          [](const auto& info) { return info.offs_min == 0; }));
 }
+
+}  // namespace
 
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const TermReader& reader) {
@@ -261,7 +262,7 @@ bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
 }
 
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
-                               std::span<const std::vector<bstring>> expanded,
+                               std::vector<std::vector<bstring>> expanded,
                                std::span<const PhraseWordStat> words)
   : slop{.max = phrase.slop()} {
   SDB_ASSERT(!expanded.empty() || IsStandalone(phrase));
@@ -270,8 +271,8 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
   std::vector<uint32_t> term_slots;
   std::vector<std::optional<size_t>> word_of(n);
   uint32_t slot = 0;
-  const auto add = [&](bytes_view term) {
-    terms.emplace_back(term);
+  const auto add = [&](auto&& term) {
+    terms.emplace_back(std::forward<decltype(term)>(term));
     term_slots.emplace_back(slot);
   };
   const auto add_word = [&](bytes_view word) {
@@ -303,8 +304,8 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
         break;
       case SlotKind::Expansion:
         if (part < expanded.size()) {
-          for (const auto& term : expanded[part]) {
-            add(term);
+          for (auto& term : expanded[part]) {
+            add(std::move(term));
           }
         } else if (auto pattern =
                      PatternOf(info.part, phrase.word_separator())) {
@@ -340,22 +341,24 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
   anchor = AnchorOf(slots, words);
 }
 
-bool CompiledPhrase::AcceptsTerm(const Slot& slot,
-                                 const duckdb::string_t& term) const {
+bool AcceptsTerm(const CompiledPhrase& phrase, const CompiledPhrase::Slot& slot,
+                 const duckdb::string_t& term) {
   if (slot.pattern) {
     return slot.pattern->Accepts(AsBytesView(term));
   }
-  const auto* found = accept.Find(term);
-  return found && absl::c_linear_search(
-                    found->slots, static_cast<uint32_t>(&slot - slots.data()));
+  const auto* found = phrase.accept.Find(term);
+  return found &&
+         absl::c_linear_search(
+           found->slots, static_cast<uint32_t>(&slot - phrase.slots.data()));
 }
 
-uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
+uint64_t MaskOf(const CompiledPhrase& phrase, const duckdb::string_t& term) {
   uint64_t mask = 0;
-  if (const auto* found = accept.Find(term)) {
+  if (const auto* found = phrase.accept.Find(term)) {
     mask = found->mask;
   }
-  ForEachPattern(term, [&](uint32_t slot) { mask |= slots[slot].bit; });
+  ForEachPattern(phrase, term,
+                 [&](uint32_t slot) { mask |= phrase.slots[slot].bit; });
   return mask;
 }
 

@@ -45,74 +45,6 @@ enum class StoredType : uint8_t {
   S2Centroid,
 };
 
-struct GeoPlan;
-
-struct GeoFilterOptionsBase {
-  std::string prefix;
-  S2RegionTermIndexer::Options options;
-  StoredType stored{StoredType::Source};
-  irs::geo::coding::Options coding{irs::geo::coding::Options::Invalid};
-  field_id store_field_id{irs::field_limits::invalid()};
-  bool source_is_wkb{false};
-  bool source_is_point{false};
-  std::vector<std::string> point_latitude;
-  std::vector<std::string> point_longitude;
-  std::shared_ptr<const GeoPlan> plan;
-};
-
-enum class GeoFilterType : uint8_t {
-  Intersects = 0,
-  Contains,
-  IsContained,
-};
-
-class GeoFilter;
-
-struct GeoFilterOptions : GeoFilterOptionsBase {
-  using FilterType = GeoFilter;
-
-  bool operator==(const GeoFilterOptions& rhs) const noexcept {
-    return type == rhs.type && shape.equals(rhs.shape);
-  }
-
-  GeoFilterType type{GeoFilterType::Intersects};
-  irs::geo::ShapeContainer shape;
-};
-
-class GeoFilter final : public FilterWithField<GeoFilterOptions> {
- public:
-  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
-                                   const PrepareContext& ctx) const final;
-
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
-                                          StatsArena& stats,
-                                          uint32_t threads) const final;
-};
-
-class GeoDistanceFilter;
-
-struct GeoDistanceFilterOptions : GeoFilterOptionsBase {
-  using FilterType = GeoDistanceFilter;
-
-  bool operator==(const GeoDistanceFilterOptions& rhs) const noexcept {
-    return origin == rhs.origin && range == rhs.range;
-  }
-
-  S2Point origin;
-  SearchRange<double> range;
-};
-
-class GeoDistanceFilter final
-  : public FilterWithField<GeoDistanceFilterOptions> {
- public:
-  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
-                                   const PrepareContext& ctx) const final;
-
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
-                                          StatsArena& stats,
-                                          uint32_t threads) const final;
-};
-
 struct GeoIntersectsAcceptor {
   const irs::geo::ShapeContainer* filter_shape;
 
@@ -178,6 +110,72 @@ struct GeoPlan {
   Kind kind = Kind::Empty;
   std::vector<std::string> terms;
   GeoAcceptor acceptor;
+};
+
+struct GeoFilterOptionsBase {
+  std::string prefix;
+  S2RegionTermIndexer::Options options;
+  StoredType stored{StoredType::Source};
+  irs::geo::coding::Options coding{irs::geo::coding::Options::Invalid};
+  field_id store_field_id{irs::field_limits::invalid()};
+  bool source_is_wkb{false};
+  bool source_is_point{false};
+  std::vector<std::string> point_latitude;
+  std::vector<std::string> point_longitude;
+  std::shared_ptr<const GeoPlan> plan;
+};
+
+enum class GeoFilterType : uint8_t {
+  Intersects = 0,
+  Contains,
+  IsContained,
+};
+
+class GeoFilter;
+
+struct GeoFilterOptions : GeoFilterOptionsBase {
+  using FilterType = GeoFilter;
+
+  bool operator==(const GeoFilterOptions& rhs) const noexcept {
+    return type == rhs.type && shape.equals(rhs.shape);
+  }
+
+  GeoFilterType type{GeoFilterType::Intersects};
+  irs::geo::ShapeContainer shape;
+};
+
+class GeoFilter final : public FilterWithField<GeoFilterOptions> {
+ public:
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
+};
+
+class GeoDistanceFilter;
+
+struct GeoDistanceFilterOptions : GeoFilterOptionsBase {
+  using FilterType = GeoDistanceFilter;
+
+  bool operator==(const GeoDistanceFilterOptions& rhs) const noexcept {
+    return origin == rhs.origin && range == rhs.range;
+  }
+
+  S2Point origin;
+  SearchRange<double> range;
+};
+
+class GeoDistanceFilter final
+  : public FilterWithField<GeoDistanceFilterOptions> {
+ public:
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
 };
 
 std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);

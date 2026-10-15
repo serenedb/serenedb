@@ -170,7 +170,6 @@ enum class PhraseMatch : uint8_t {
 
 constexpr std::optional<PhraseMatch> kMatches[] = {
   std::nullopt,
-  PhraseMatch::Anchor,
   PhraseMatch::Automaton,
   PhraseMatch::Positions,
 };
@@ -273,7 +272,7 @@ template<typename Words>
 Outcome Check(const irs::ByPhraseOptions& phrase, std::string_view text,
               bool count, std::optional<PhraseMatch> match,
               std::span<const std::vector<irs::bstring>> expanded) {
-  irs::CompiledPhrase compiled{phrase, expanded, {}};
+  irs::CompiledPhrase compiled{phrase, {expanded.begin(), expanded.end()}, {}};
   Force(compiled, match);
   irs::PhraseCheck check{compiled, TextOf<Words>(), count};
   irs::PhraseVerdict verdict;
@@ -563,10 +562,9 @@ TEST(PhraseCheckTest, empty_value_matches_nothing) {
 }
 
 TEST(PhraseCheckTest, routes) {
-  const std::span<const std::vector<irs::bstring>> expanded;
   const auto mode = [&](const irs::ByPhraseOptions& phrase,
                         std::optional<PhraseMatch> match = {}) {
-    irs::CompiledPhrase compiled{phrase, expanded, {}};
+    irs::CompiledPhrase compiled{phrase, {}, {}};
     Force(compiled, match);
     return RouteOf(compiled);
   };
@@ -587,27 +585,27 @@ TEST(PhraseCheckTest, routes) {
   PushTerm(wide, "a", 0, 0);
   PushTerm(wide, "b", 1, 70);
   EXPECT_EQ(PhraseMatch::Anchor, mode(wide));
-  const irs::CompiledPhrase compiled{wide, expanded, {}};
-  EXPECT_FALSE(compiled.automaton.has_value());
+  const irs::CompiledPhrase compiled{wide, {}, {}};
+  EXPECT_FALSE(compiled.automaton);
 }
 
 TEST(PhraseCheckTest, anchor_is_the_rarest_word) {
-  const std::span<const std::vector<irs::bstring>> expanded;
   const auto phrase = Phrase("a b c");
   const irs::PhraseWordStat stats[] = {{.docs = 10, .freq = 50},
                                        {.docs = 10, .freq = 12},
                                        {.docs = 4, .freq = 40}};
-  const irs::CompiledPhrase compiled{phrase, expanded, stats};
-  ASSERT_TRUE(compiled.anchor.has_value());
+  const irs::CompiledPhrase compiled{phrase, {}, stats};
+  ASSERT_TRUE(compiled.anchor);
   EXPECT_EQ(1U, compiled.anchor->slot);
-  EXPECT_TRUE(irs::IsAnchored(phrase));
   auto sloppy = phrase;
   sloppy.set_slop(1);
-  EXPECT_FALSE(irs::IsAnchored(sloppy));
+  EXPECT_EQ(PhraseMatch::Positions,
+            RouteOf(irs::CompiledPhrase{sloppy, {}, stats}));
   irs::ByPhraseOptions stacked;
   PushTerm(stacked, "a", 0, 0);
   PushTerm(stacked, "b", 0, 0);
-  EXPECT_FALSE(irs::IsAnchored(stacked));
+  EXPECT_EQ(PhraseMatch::Positions,
+            RouteOf(irs::CompiledPhrase{stacked, {}, stats}));
 }
 
 TEST(PhraseCheckTest, standalone_parts) {
@@ -642,13 +640,10 @@ TEST(PhraseCheckTest, standalone_parts) {
 }
 
 TEST(PhraseCheckTest, stacked_parts_check_positions) {
-  EXPECT_TRUE(irs::IsAnchored(irs::ByPhraseOptions{}));
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "red", 0, 0);
   PushTerm(phrase, "car", 0, 0);
-  EXPECT_FALSE(irs::IsAnchored(phrase));
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{phrase, expanded, {}};
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
   EXPECT_EQ(PhraseMatch::Positions, RouteOf(compiled));
   EXPECT_EQ(1U, Verify<StackedWords>(phrase, "a red|car b").freq);
   EXPECT_FALSE(Matches<StackedWords>(phrase, "a red car"));
@@ -657,9 +652,8 @@ TEST(PhraseCheckTest, stacked_parts_check_positions) {
 TEST(PhraseCheckTest, shingle_parts_check_the_words_they_add) {
   const auto phrase = QuickBrownFoxShingles();
   EXPECT_TRUE(irs::IsStandalone(phrase));
-  EXPECT_TRUE(irs::IsAnchored(phrase));
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{phrase, expanded, {}};
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
+  EXPECT_EQ(PhraseMatch::Anchor, RouteOf(compiled));
   ASSERT_EQ(3U, compiled.slots.size());
   for (uint32_t slot = 1; slot != 3; ++slot) {
     EXPECT_EQ(1U, compiled.slots[slot].offs_min);
@@ -737,8 +731,7 @@ TEST(PhraseCheckTest, anchor_carries_long_terms_across_batches) {
 }
 
 TEST(PhraseCheckTest, json_values_check_the_text_of_strings) {
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), {}, {}};
   irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   irs::PhraseVerdict verdict;
   const auto json = duckdb::LogicalType::JSON();
@@ -754,8 +747,7 @@ TEST(PhraseCheckTest, json_values_check_the_text_of_strings) {
 }
 
 TEST(PhraseCheckTest, only_json_typed_values_are_decoded) {
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), {}, {}};
   const auto tokens = TextOf<DenseWords>();
   irs::PhraseCheck text{compiled, tokens, true};
   irs::PhraseCheck json{compiled, tokens, true};
@@ -797,8 +789,7 @@ TEST(PhraseCheckTest, json_rows_of_every_kind) {
     data[i] = {kRows[i].data(), static_cast<uint32_t>(kRows[i].size())};
   }
   duckdb::FlatVector::ValidityMutable(rows).SetInvalid(kSqlNull);
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), {}, {}};
   irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   check.Bind(rows, std::size(kRows));
   for (size_t i = 0; i != std::size(kRows); ++i) {
@@ -821,8 +812,7 @@ TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {
   rows.SetValue(
     2, pair(duckdb::Value{duckdb::LogicalType::VARCHAR}, "a quick brown"));
   rows.SetValue(3, duckdb::Value{type});
-  const std::span<const std::vector<irs::bstring>> expanded;
-  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), {}, {}};
   irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   check.Bind(rows, 4);
   EXPECT_NE(0U, check.Check(0).freq);
@@ -1037,9 +1027,9 @@ irs::Filter::ptr IndexPart(const irs::ByPhrase& phrase, const Index& index,
                            const irs::Scorer* scorer = nullptr) {
   irs::Filter::ptr root = std::make_unique<irs::ByPhrase>(phrase);
   irs::Deferral deferral{.reader = index.Reader()};
-  irs::Optimize(
-    root,
-    {.scored = scorer != nullptr, .scorer = scorer, .deferral = &deferral});
+  irs::Optimize(root, {.scored = static_cast<bool>(scorer),
+                       .scorer = scorer,
+                       .deferral = &deferral});
   if (deferral.filters.empty()) {
     EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), root->type());
     return nullptr;
@@ -1689,7 +1679,7 @@ TEST(TokenPhraseIndexTest, segments_without_the_field_match_nothing) {
   const Index index{
     docs, std::type_identity<DenseWords>{}, {.segment_docs = 3}};
   ASSERT_TRUE(absl::c_any_of(index.Reader(), [](const irs::SubReader& segment) {
-    return segment.field(kPlainId) == nullptr;
+    return !segment.field(kPlainId);
   }));
   ExpectLikePositions<DenseWords>(index, Phrase("quick brown"));
   EXPECT_EQ((std::vector<irs::doc_id_t>{3}),
@@ -1918,7 +1908,7 @@ TEST(TokenPhraseIndexTest, pruned_top_prunes_only_anchor_bounded_phrases) {
     const auto positional = Lowered(PhraseOn(kPositionalId, options));
     for (auto* filter : {static_cast<irs::detail::TableFilter*>(nullptr),
                          static_cast<irs::detail::TableFilter*>(&table)}) {
-      SCOPED_TRACE(filter != nullptr);
+      SCOPED_TRACE(static_cast<bool>(filter));
       const auto full = TopOf(index, *checked, scorer, false, filter);
       const auto pruned = TopOf(index, *checked, scorer, true, filter);
       ASSERT_EQ(tests::kTop, full.scores.size());
@@ -1966,7 +1956,7 @@ TEST(TokenPhraseIndexTest, pruned_top_matches_full_ranking_on_random_phrases) {
     const auto k = kTops[(i / 3) % std::size(kTops)];
     auto* filter = i % 2 == 0 ? nullptr : &table;
     SCOPED_TRACE(absl::StrCat(Describe(options), " shape=", shape, " k=", k,
-                              " table=", filter != nullptr));
+                              " table=", static_cast<bool>(filter)));
     const auto checked = Shaped(
       PhraseOn(kPlainId, options, Tokens<DenseWords>()), kPlainId, shape);
     const auto positional =

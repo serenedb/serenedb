@@ -1178,8 +1178,15 @@ id
 statement error
 SELECT id FROM pwp_kw_idx WHERE body @@ ts_phrase('quick', 'brown')
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+db error: ERROR: ts_phrase on a column without a text search dictionary matches only whole values
+HINT: Index the column with a text search dictionary, or query with a single-term ts_phrase / ts_like.
+
+
+statement error
+SELECT id FROM pwp_kw_idx WHERE body @@ ('quick' ## 'brown')
+----
+db error: ERROR: ## on a column without a text search dictionary matches only whole values
+HINT: Index the column with a text search dictionary, or query with a single phrase part.
 
 
 query
@@ -1775,6 +1782,49 @@ WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
 ----
 id
 1
+
+query
+EXPLAIN SELECT id FROM pwp_score_idx
+WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
+  AND (BM25(pwp_score_idx.tableoid) * 115)::TINYINT < 125
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────╮
+│ Projections: #0                                         │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ FILTER ───────────────────┴────────────────────────────╮
+│ Expression:                                             │
+│ CAST((sdb_inverted_index_score * 115) AS TINYINT) < 125 │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: pwp_score_idx                                    │
+│ Lookup: table                                           │
+│ Index Filter:                                           │
+│ ╭─ And ───────────────╮                                 │
+│ ╰──────────┬──────────╯                                 │
+│            ├───────────────────────────╮                │
+│ ╭─ Terms ──┴──────────╮  ╭─ And ───────┴────────────╮   │
+│ │ Field: body(string) │  │ Merge: max               │   │
+│ │ Values: 'fox'       │  │ Score: constant(value=1) │   │
+│ ╰─────────────────────╯  ╰─────────────┬────────────╯   │
+│                          ╭─ Terms ─────┴────────────╮   │
+│                          │ Field: body(string)      │   │
+│                          │ Values: 'brown', 'quick' │   │
+│                          ╰──────────────────────────╯   │
+│ Table Filter:                                           │
+│ ╭─ Phrase ─────────────────────────────╮                │
+│ │ Field: body(string)                  │                │
+│ │ Parts:                               │                │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │                │
+│ │ Verify: table filter                 │                │
+│ │ Score: constant(value=1)             │                │
+│ ╰──────────────────────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: id, sdb_inverted_index_score               │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
 
 statement ok
 DROP TABLE pwp_score

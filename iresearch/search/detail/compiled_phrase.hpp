@@ -44,7 +44,6 @@ struct PhraseWordStat {
   uint64_t freq = 0;
 };
 
-bool IsAnchored(const ByPhraseOptions& phrase) noexcept;
 bool IsStandalone(const ByPhraseOptions& phrase) noexcept;
 bool HasPatternParts(const ByPhraseOptions& phrase) noexcept;
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
@@ -93,40 +92,11 @@ struct CompiledPhrase {
   };
 
   CompiledPhrase(const ByPhraseOptions& phrase,
-                 std::span<const std::vector<bstring>> expanded,
+                 std::vector<std::vector<bstring>> expanded,
                  std::span<const PhraseWordStat> words);
 
   CompiledPhrase(CompiledPhrase&&) = delete;
   CompiledPhrase& operator=(CompiledPhrase&&) = delete;
-
-  bool Accepts(const Slot& slot, const duckdb::string_t& term) const {
-    return slot.word ? *slot.word == term : AcceptsTerm(slot, term);
-  }
-  bool AcceptsTerm(const Slot& slot, const duckdb::string_t& term) const;
-  uint64_t MaskOf(const duckdb::string_t& term) const;
-
-  template<typename Visitor>
-  void ForEachSlot(const duckdb::string_t& term, Visitor&& visit) const {
-    if (const auto* found = accept.Find(term)) {
-      for (const auto slot : found->slots) {
-        visit(slot);
-      }
-    }
-    ForEachPattern(term, visit);
-  }
-
-  template<typename Visitor>
-  void ForEachPattern(const duckdb::string_t& term, Visitor&& visit) const {
-    if (pattern_slots.empty()) {
-      return;
-    }
-    const auto view = AsBytesView(term);
-    for (const auto slot : pattern_slots) {
-      if (slots[slot].pattern->Accepts(view)) {
-        visit(slot);
-      }
-    }
-  }
 
   std::vector<Slot> slots;
   std::vector<bstring> terms;
@@ -136,5 +106,41 @@ struct CompiledPhrase {
   std::optional<Anchor> anchor;
   std::optional<Automaton> automaton;
 };
+
+bool AcceptsTerm(const CompiledPhrase& phrase, const CompiledPhrase::Slot& slot,
+                 const duckdb::string_t& term);
+
+inline bool Accepts(const CompiledPhrase& phrase,
+                    const CompiledPhrase::Slot& slot,
+                    const duckdb::string_t& term) {
+  return slot.word ? *slot.word == term : AcceptsTerm(phrase, slot, term);
+}
+
+uint64_t MaskOf(const CompiledPhrase& phrase, const duckdb::string_t& term);
+
+template<typename Visitor>
+void ForEachPattern(const CompiledPhrase& phrase, const duckdb::string_t& term,
+                    Visitor&& visit) {
+  if (phrase.pattern_slots.empty()) {
+    return;
+  }
+  const auto view = AsBytesView(term);
+  for (const auto slot : phrase.pattern_slots) {
+    if (phrase.slots[slot].pattern->Accepts(view)) {
+      visit(slot);
+    }
+  }
+}
+
+template<typename Visitor>
+void ForEachSlot(const CompiledPhrase& phrase, const duckdb::string_t& term,
+                 Visitor&& visit) {
+  if (const auto* found = phrase.accept.Find(term)) {
+    for (const auto slot : found->slots) {
+      visit(slot);
+    }
+  }
+  ForEachPattern(phrase, term, visit);
+}
 
 }  // namespace irs

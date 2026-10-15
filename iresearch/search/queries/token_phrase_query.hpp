@@ -38,7 +38,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
                    QueryBuilder::ptr&& approx,
                    ByPhraseOptions::TokenizerFactory tokenizer,
                    const ColumnReader& column, const ByPhraseOptions& phrase,
-                   std::span<const std::vector<bstring>> expanded,
+                   std::vector<std::vector<bstring>> expanded,
                    std::span<const PhraseWordStat> words,
                    std::span<const PostingMeta* const> word_metas,
                    score_t boost)
@@ -46,8 +46,9 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
       _approx{std::move(approx)},
       _reader{&reader},
       _tokenizer{std::move(tokenizer)},
+      _explicit_pos{phrase.explicit_pos()},
       _column{&column},
-      _compiled{phrase, expanded, words},
+      _compiled{phrase, std::move(expanded), words},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();
@@ -74,6 +75,8 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     return _tokenizer;
   }
 
+  bool ExplicitPos() const noexcept { return _explicit_pos; }
+
   const ColumnReader& Column() const noexcept { return *_column; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -86,6 +89,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   QueryBuilder::ptr _approx;
   const TermReader* _reader;
   ByPhraseOptions::TokenizerFactory _tokenizer;
+  bool _explicit_pos;
   const ColumnReader* _column;
   CompiledPhrase _compiled;
   std::optional<PostingMeta> _anchor;

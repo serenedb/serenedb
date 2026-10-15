@@ -29,11 +29,10 @@
 #include <string_view>
 #include <utility>
 
+#include "iresearch/search/filters/deferral.hpp"
 #include "iresearch/search/filters/filter.hpp"
 
 namespace irs {
-
-struct Deferral;
 
 struct OptimizeContext {
   bool scored = false;
@@ -49,6 +48,12 @@ struct OptimizeContext {
     return analyzed_fields.contains(field);
   }
 };
+
+namespace optimizer {
+
+void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx);
+
+}  // namespace optimizer
 
 template<typename Visit>
 void TraverseFilter(Filter::ptr& root, Visit&& visit) {

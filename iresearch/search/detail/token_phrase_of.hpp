@@ -26,7 +26,6 @@
 #include <memory>
 #include <span>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -134,9 +133,7 @@ class TokenPhraseSlots {
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
 
-  doc_id_t Seek(doc_id_t target)
-    requires requires(Approx& approx, doc_id_t doc) { approx.Seek(doc); }
-  {
+  doc_id_t Seek(doc_id_t target) {
     const auto pending = std::span{_hits}.subspan(_pos);
     const auto it = absl::c_lower_bound(pending, target);
     _pos = static_cast<size_t>(it - std::span{_hits}.begin());
@@ -147,9 +144,7 @@ class TokenPhraseSlots {
     return Fill(_end ? doc_limits::eof() : _approx.Seek(target));
   }
 
-  doc_id_t Next(doc_id_t)
-    requires requires(Approx& approx) { approx.Next(); }
-  {
+  doc_id_t Next(doc_id_t) {
     if (++_pos < _hits.size()) {
       return _hits[_pos];
     }
@@ -157,11 +152,7 @@ class TokenPhraseSlots {
     return Fill(_end ? doc_limits::eof() : _approx.Next());
   }
 
-  doc_id_t Probe(doc_id_t target)
-    requires requires(Approx& approx, doc_id_t doc) { approx.Probe(doc); }
-  {
-    return _approx.Probe(target);
-  }
+  doc_id_t Probe(doc_id_t target) { return _approx.Probe(target); }
 
   bool Match(doc_id_t doc) {
     _verdict = {};
@@ -222,20 +213,12 @@ template<template<typename> typename Impl, typename Result, bool Scored = false,
          template<typename> typename Wrap = DeducedNode, typename... Prefix>
 Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
                        Prefix&&... prefix) {
-  constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
-  auto node = [&] {
-    if constexpr (kProbed) {
-      return query.Approx().PlanProbe({}, interrogations);
-    } else {
-      return query.Approx().PlanLead({});
-    }
-  }();
+  auto node = PlanApprox<Result>(query.Approx(), interrogations);
   if (!node) {
     return {};
   }
-  using Approx = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
   const auto make = [&]<bool Sloppy> -> Result {
-    using Slots = TokenPhraseSlots<Approx, Sloppy>;
+    using Slots = TokenPhraseSlots<ApproxNode<Result>, Sloppy>;
     return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
       std::forward<Prefix>(prefix)..., std::piecewise_construct,
       std::forward_as_tuple(std::move(node)), query, Scored);

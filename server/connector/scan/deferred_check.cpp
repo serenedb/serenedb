@@ -25,8 +25,8 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/search/filters/wildcard_ngram_filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <utility>
 
 #include "connector/scan/scan_state.h"
@@ -58,16 +58,27 @@ std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral) {
   checks.reserve(deferral.filters.size());
   for (auto& deferred : deferral.filters) {
     const auto& source = *deferred.filter;
-    const auto type = source.type();
-    if (type == irs::Type<irs::ByWildcardNGram>::id()) {
-      checks.emplace_back(
-        MakeWildcardCheck(source, deferred.column, deferred.type));
-    } else if (type == irs::Type<irs::ByPhrase>::id()) {
-      checks.emplace_back(MakePhraseCheck(std::move(deferred.owned),
-                                          deferred.column, deferred.type,
-                                          deferral.reader));
-    } else {
-      checks.emplace_back(MakeGeoCheck(source, deferred.column, deferred.type));
+    switch (deferred.kind) {
+      case irs::DeferredKind::Phrase:
+        checks.emplace_back(MakePhraseCheck(std::move(deferred.owned),
+                                            deferred.column, deferred.type,
+                                            deferral.reader));
+        break;
+      case irs::DeferredKind::Wildcard:
+        checks.emplace_back(
+          MakeWildcardCheck(source, deferred.column, deferred.type));
+        break;
+      case irs::DeferredKind::Geo:
+        checks.emplace_back(MakeGeoCheck(
+          source, irs::utils::downCast<irs::GeoFilter>(source).options(),
+          deferred.column, deferred.type));
+        break;
+      case irs::DeferredKind::GeoDistance:
+        checks.emplace_back(MakeGeoCheck(
+          source,
+          irs::utils::downCast<irs::GeoDistanceFilter>(source).options(),
+          deferred.column, deferred.type));
+        break;
     }
   }
   return checks;

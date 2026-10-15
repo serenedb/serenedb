@@ -29,6 +29,7 @@
 #include <variant>
 #include <vector>
 
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/geo/coding.hpp"
@@ -37,8 +38,6 @@
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-struct GeoFilterOptionsBase;
 
 struct SourceJsonParser {
   SourceJsonParser() = default;

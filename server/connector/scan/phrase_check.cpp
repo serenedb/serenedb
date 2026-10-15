@@ -34,20 +34,18 @@
 namespace sdb::connector {
 namespace {
 
+const irs::ByPhrase& PhraseOf(const irs::Filter& source) noexcept {
+  return irs::utils::downCast<irs::ByPhrase>(source);
+}
+
 struct PhraseCheckData {
-  PhraseCheckData(irs::Filter::ptr source, const irs::IndexReader& reader)
-    : source{std::move(source)},
-      compiled{Options(),
+  explicit PhraseCheckData(irs::Filter::ptr phrase,
+                           const irs::IndexReader& reader)
+    : source{std::move(phrase)},
+      compiled{PhraseOf(*source).options(),
                {},
-               irs::PhraseWordStats(Options(), reader, Phrase().field_id())} {}
-
-  const irs::ByPhrase& Phrase() const noexcept {
-    return irs::utils::downCast<irs::ByPhrase>(*source);
-  }
-
-  const irs::ByPhraseOptions& Options() const noexcept {
-    return Phrase().options();
-  }
+               irs::PhraseWordStats(PhraseOf(*source).options(), reader,
+                                    PhraseOf(*source).field_id())} {}
 
   irs::Filter::ptr source;
   irs::CompiledPhrase compiled;
@@ -57,7 +55,8 @@ using PhraseCheckBind = SharedCheckBind<PhraseCheckData>;
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckData& data)
-    : check{data.compiled, data.Options().tokenizer(), false} {}
+    : check{data.compiled, PhraseOf(*data.source).options().tokenizer(),
+            false} {}
 
   irs::PhraseCheck check;
 };
@@ -81,7 +80,7 @@ DeferredCheck MakePhraseCheck(irs::Filter::ptr source, irs::field_id column,
                               const irs::IndexReader& reader) {
   auto data =
     std::make_shared<const PhraseCheckData>(std::move(source), reader);
-  const auto& phrase = data->Phrase();
+  const auto& phrase = PhraseOf(*data->source);
   return Split(phrase, column, type, "sdb_phrase_check", CheckPhrase,
                duckdb::make_uniq<PhraseCheckBind>(std::move(data)),
                InitCheck<PhraseCheckState, PhraseCheckData>);

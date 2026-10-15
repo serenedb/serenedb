@@ -171,6 +171,14 @@ void CheckTokens(const SearchColumnInfo& column_info,
   if (HasPositions(column_info)) {
     return;
   }
+  if (!column_info.tokenizer.analyzer.get_deleter().tokenizer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " on a column without a text search dictionary matches only "
+              "whole values"),
+      ERR_HINT("Index the column with a text search dictionary, ", hint, "."));
+  }
   if (!MatchesPhrases(column_info)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

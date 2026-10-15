@@ -24,7 +24,6 @@
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/search/detail/geo_parsers.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <memory>
 #include <utility>
 #include <variant>
@@ -67,26 +66,18 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     local.parser, local.data.acceptor);
 }
 
-template<typename GeoFilter>
-DeferredCheck MakeGeoCheckOf(const irs::Filter& source, irs::field_id column,
-                             const duckdb::LogicalType& type) {
-  const auto& options = irs::utils::downCast<GeoFilter>(source).options();
+}  // namespace
+
+DeferredCheck MakeGeoCheck(const irs::Filter& source,
+                           const irs::GeoFilterOptionsBase& options,
+                           irs::field_id column,
+                           const duckdb::LogicalType& type) {
   SDB_ASSERT(options.plan);
   auto bind =
     duckdb::make_uniq<GeoCheckBind>(std::make_shared<const GeoCheckData>(
       GeoCheckData{irs::ParserOf(options), options.plan->acceptor}));
   return Split(source, column, type, "sdb_geo_check", CheckGeo, std::move(bind),
                InitCheck<GeoCheckState, GeoCheckData>);
-}
-
-}  // namespace
-
-DeferredCheck MakeGeoCheck(const irs::Filter& source, irs::field_id column,
-                           const duckdb::LogicalType& type) {
-  if (source.type() == irs::Type<irs::GeoFilter>::id()) {
-    return MakeGeoCheckOf<irs::GeoFilter>(source, column, type);
-  }
-  return MakeGeoCheckOf<irs::GeoDistanceFilter>(source, column, type);
 }
 
 }  // namespace sdb::connector

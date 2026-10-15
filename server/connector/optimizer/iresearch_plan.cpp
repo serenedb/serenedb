@@ -1333,7 +1333,7 @@ bool ClaimSearchConjuncts(
   connector::EnsureIncludeSides(*root);
   const auto scorer =
     scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
-  irs::OptimizeContext optimize{.scored = scan.score.text.has_value(),
+  irs::OptimizeContext optimize{.scored = static_cast<bool>(scan.score.text),
                                 .analyzed_fields = std::move(analyzed_fields),
                                 .null_markers = &null_markers,
                                 .scorer = scorer.get()};

@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/table_filter.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -37,7 +38,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
-#include "connector/scan/deferred_check.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
 #include "search/inverted_index_storage.h"
@@ -55,6 +55,12 @@ enum class ScanEntryKind : uint8_t {
   InvertedIndex,
   SearchTable,
   SearchTableIndex,
+};
+
+struct DeferredCheck {
+  const irs::Filter* source;
+  irs::field_id column;
+  std::shared_ptr<const duckdb::TableFilter> check;
 };
 
 struct SearchSpec {

@@ -89,9 +89,9 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
 
   Recipe MakeRecipe() const {
     const auto* col_reader = this->_segment.GetColReader();
-    SDB_ASSERT(col_reader != nullptr);
+    SDB_ASSERT(col_reader);
     const auto* stored_field = col_reader->Column(_store_field_id);
-    SDB_ASSERT(stored_field != nullptr);
+    SDB_ASSERT(stored_field);
     return {stored_field, col_reader, &_parser, &_acceptor};
   }
 

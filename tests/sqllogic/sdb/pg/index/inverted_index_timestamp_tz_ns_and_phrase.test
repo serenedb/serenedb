@@ -30,8 +30,7 @@ CREATE VIEW logs AS SELECT ts AS Ts, id AS Id, body AS Body
 # columnstore paths for the niche type.
 statement ok
 CREATE INDEX logs_idx ON logs USING inverted(
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw,
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) included()
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw
 ) INCLUDE (Ts, Id, Body);
 
 
@@ -99,19 +98,59 @@ count
 3
 
 
-query
+# --------------------------------------------------------------------------
+# Multi-term ts_phrase: the keyword dict has no positions and the index
+# keeps no value of the expression, so it is rejected at planning.
+# --------------------------------------------------------------------------
+
+statement error
 SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('connection', 1, 'reset');
+----
+db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+
+
+# Same rejection through the `##` phrase-sequence operator.
+statement error
+SELECT count(*) FROM logs_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ (ts_phrase('connection') ## 'reset');
+----
+db error: ERROR: ## on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single phrase part.
+
+
+# With the expression's value kept by included(), the same phrases are
+# checked against the stored lists.
+statement ok
+CREATE INDEX logs_text_idx ON logs USING inverted(
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw,
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) included()
+) INCLUDE (Ts, Id, Body);
+
+query
+SELECT count(*) FROM logs_text_idx
 WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('connection', 1, 'reset');
 ----
 count
 0
 
 query
-SELECT count(*) FROM logs_idx
+SELECT count(*) FROM logs_text_idx
 WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ (ts_phrase('connection') ## 'reset');
 ----
 count
 3
+
+query
+SELECT Id, Ts FROM logs_text_idx
+WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_phrase('reset', 'by')
+ORDER BY Id;
+----
+id	ts
+1	2025-09-23 00:00:05+00
+3	2025-09-23 00:00:15+00
+5	2025-09-23 00:00:25+00
 
 # A whitespace-bearing literal still tokenises to ONE keyword token under
 # the keyword dict, so this stays in the single-term fast path.
@@ -168,8 +207,7 @@ CREATE VIEW logs2 AS
 
 statement ok
 CREATE INDEX logs2_idx ON logs2 USING inverted(
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw,
-    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) included()
+    (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) kw
 ) INCLUDE (Ts, Id, Body);
 
 

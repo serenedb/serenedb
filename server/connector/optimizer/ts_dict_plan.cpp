@@ -1111,27 +1111,23 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
   if (!_projected_ids) {
     _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
-  const auto resolve_in = [&](const catalog::InvertedIndexConfig& index) {
-    const auto* term =
-      index
-        .FindExpressionKeys(connector::NormalizedExpression(
-          expr, _found.bind_data->RelationId(), *_projected_ids, _context))
-        .term;
-    if (!term) {
-      return false;
-    }
-    const auto* info = index.FindEntry(term->field_id);
-    if (!irs::field_limits::valid(info->null_field_id)) {
-      return false;
-    }
-    key.field_id = term->field_id;
-    key.null_field_id = info->null_field_id;
-    key.index = &index;
-    return true;
-  };
-  if (!resolve_in(*ColumnIndex())) {
+  const auto& index = *ColumnIndex();
+  const auto* term =
+    index
+      .FindExpressionKeys(connector::NormalizedExpression(
+        expr, _found.bind_data->RelationId(), *_projected_ids, _context))
+      .term;
+  if (!term) {
     return false;
   }
+  const auto* info = index.FindEntry(term->field_id);
+  SDB_ASSERT(info);
+  if (!irs::field_limits::valid(info->null_field_id)) {
+    return false;
+  }
+  key.field_id = term->field_id;
+  key.null_field_id = info->null_field_id;
+  key.index = &index;
   key.anchor = _found.get->table_index;
   return true;
 }

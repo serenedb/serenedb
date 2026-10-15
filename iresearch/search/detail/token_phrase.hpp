@@ -25,7 +25,7 @@
 #include <duckdb/storage/arena_allocator.hpp>
 #include <memory>
 #include <span>
-#include <variant>
+#include <utility>
 #include <vector>
 
 #include "iresearch/analysis/token_sinks.hpp"
@@ -60,14 +60,20 @@ class PhraseCheck final : public TokenConsumer {
   bool OnProgress(TokenBatch& batch) final;
 
  private:
-  struct State {
-    PhraseVerdict Verdict() const noexcept;
+  enum class Route : uint8_t {
+    Anchor,
+    Automaton,
+    Positions,
+  };
 
-    const CompiledPhrase* phrase;
-    bool count;
+  struct State {
+    const CompiledPhrase* phrase = nullptr;
+    bool count = false;
     bool done = false;
     uint64_t freq = 0;
   };
+
+  static PhraseVerdict Verdict(const State& state) noexcept;
 
   class AnchorMatch {
    public:
@@ -87,7 +93,7 @@ class PhraseCheck final : public TokenConsumer {
 
     struct Token {
       duckdb::string_t term;
-      uint32_t pos;
+      uint32_t pos = 0;
     };
 
     const duckdb::string_t& TermAt(size_t at) const noexcept {
@@ -145,8 +151,8 @@ class PhraseCheck final : public TokenConsumer {
 
    private:
     struct Way {
-      PosAttr::value_t pos;
-      uint64_t ways;
+      PosAttr::value_t pos = 0;
+      uint64_t ways = 0;
     };
 
     std::vector<std::vector<PosAttr::value_t>> _slots;
@@ -155,12 +161,16 @@ class PhraseCheck final : public TokenConsumer {
     detail::slop::MatchScratch _scratch;
   };
 
-  template<typename Match, typename... Args>
-  Match& Use(Args&&... args) {
-    if (auto* match = std::get_if<Match>(&_match)) {
-      return *match;
+  decltype(auto) WithMatch(auto&& visit) {
+    switch (_route) {
+      case Route::Anchor:
+        return visit(_anchor);
+      case Route::Automaton:
+        return visit(_automaton);
+      case Route::Positions:
+        return visit(_positions);
     }
-    return _match.template emplace<Match>(std::forward<Args>(args)...);
+    std::unreachable();
   }
 
   void Analyze(duckdb::idx_t row);
@@ -170,8 +180,11 @@ class PhraseCheck final : public TokenConsumer {
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ScanAnalyzer _analyzer;
   RowValues _rows;
-  std::variant<AnchorMatch, AutomatonMatch, PositionsMatch> _match;
+  AnchorMatch _anchor;
+  AutomatonMatch _automaton;
+  PositionsMatch _positions;
   State _state;
+  Route _route = Route::Anchor;
   bool _dense;
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;

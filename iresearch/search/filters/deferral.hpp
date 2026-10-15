@@ -23,14 +23,21 @@
 #include <duckdb/common/types.hpp>
 #include <vector>
 
-#include "iresearch/search/filters/filter_optimizer.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
-struct IndexReader;
+enum class DeferredKind : uint8_t {
+  Phrase,
+  Wildcard,
+  Geo,
+  GeoDistance,
+};
 
 struct DeferredFilter {
+  DeferredKind kind;
   const Filter* filter;
   field_id column;
   duckdb::LogicalType type;
@@ -42,9 +49,4 @@ struct Deferral {
   std::vector<DeferredFilter> filters;
 };
 
-namespace optimizer {
-
-void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx);
-
-}  // namespace optimizer
 }  // namespace irs

@@ -31,6 +31,39 @@ id	body
 7	quick brown
 
 query
+EXPLAIN SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: id ASC                         │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: id, body                    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: dcp_idx                           │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: body (i), id (l)            │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
 SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND id % 2 = 1 ORDER BY id
 ----
 id	body
@@ -58,6 +91,43 @@ SELECT id, body, tags FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND ta
 ----
 id	body	tags
 3	the quick brown dog	{NULL,"quick brown dog"}
+
+query
+EXPLAIN SELECT id, body, tags FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND tags @@ ts_phrase('brown dog') ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────────────────────────────────────────────╮
+│ Order By: id ASC                                                                 │
+│ ~1 row                                                                           │
+╰─────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────┴────────────────────────────────────────╮
+│ Projections: id, body, tags                                                      │
+│ ~1 row                                                                           │
+╰─────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────┴────────────────────────────────────────╮
+│ Index: dcp_idx                                                                   │
+│ Lookup: table                                                                    │
+│ Index Filter:                                                                    │
+│ ╭─ And ────────────────────╮                                                     │
+│ ╰─────────────┬────────────╯                                                     │
+│               ├────────────────────────────╮                                     │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ────┴───────────╮                         │
+│ │ Field: body(string)      │  │ Field: tags            │                         │
+│ │ Values: 'brown', 'quick' │  │ Values: 'brown', 'dog' │                         │
+│ ╰──────────────────────────╯  ╰────────────────────────╯                         │
+│ Table Filter:                                                                    │
+│ ╭─ And ────────────────────────────────╮                                         │
+│ ╰───────────────────┬──────────────────╯                                         │
+│                     ├────────────────────────────────────────╮                   │
+│ ╭─ Phrase ──────────┴──────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                  │  │ Field: tags                        │ │
+│ │ Parts:                               │  │ Parts:                             │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
+│ │ Verify: table filter                 │  │ Verify: table filter               │ │
+│ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
+│ Projections: body (i), tags (i), id (l)                                          │
+│ ~1 row                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
 CREATE TABLE dcp_gen AS
@@ -234,6 +304,37 @@ WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.
 ----
 count
 1597
+
+query
+EXPLAIN SELECT id, geo FROM dcp_geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: id, geo     │
+│ ~2,000 rows              │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: dcp_geo_idx       │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: geo (i),    │
+│              id (l)      │
+│ ~2,000 rows              │
+╰──────────────────────────╯
 
 query
 SELECT count(*), count(*) FILTER (WHERE geo::VARCHAR = '{"type":"Point","coordinates":[' || (37.6 + (id % 100) * 0.0001) || ',' || (55.7 + (id // 100) * 0.0001) || ']}')

@@ -396,26 +396,26 @@ TEST(ShinglePhrasePlanTest, exact_terms) {
 TEST(ShinglePhrasePlanTest, positional_cover_takes_overlapping_tail) {
   const auto shingles = MakeShingles(2, 2);
   auto plan = CoverOf(*shingles, "quick brown fox");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "brown fox"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1}), Offsets(*plan));
 
   plan = CoverOf(*shingles, "a b c d e");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b", "c d", "d e"}), Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 2, 1}), Offsets(*plan));
 
   const auto wide = MakeShingles(2, 3);
   plan = CoverOf(*wide, "a b c d");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b c", "b c d"}), Terms(*plan));
 }
 
 TEST(ShinglePhrasePlanTest, positional_cover_keeps_repeated_terms) {
   const auto shingles = MakeShingles(2, 2);
   const auto plan = CoverOf(*shingles, "the cat the cat");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"the cat", "the cat"}), Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 2}), Offsets(*plan));
 }
@@ -424,18 +424,18 @@ TEST(ShinglePhrasePlanTest, several_windows_need_positions) {
   const auto shingles = MakeShingles(2, 2);
   EXPECT_FALSE(TermOf(*shingles, "the cat the cat").has_value());
   auto plan = CoverOf(*shingles, "the cat the cat");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"the cat", "the cat"}), Terms(*plan));
 
   EXPECT_FALSE(TermOf(*shingles, "a b c d e").has_value());
   plan = CoverOf(*shingles, "a b c d e");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b", "c d", "d e"}), Terms(*plan));
 
   const auto wide = MakeShingles(2, 3);
   EXPECT_FALSE(TermOf(*wide, "a b c d e").has_value());
   plan = CoverOf(*wide, "a b c d e");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b c", "d e"}), Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 3}), Offsets(*plan));
 }
@@ -446,13 +446,13 @@ TEST(ShinglePhrasePlanTest, frequent_words_limit_wide_windows) {
 
   EXPECT_FALSE(TermOf(*shingles, "quick brown fox").has_value());
   auto plan = CoverOf(*shingles, "quick brown fox");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "brown fox"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1}), Offsets(*plan));
 
   plan = CoverOf(*shingles, "the quick brown fox");
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"the quick brown", "brown fox"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 2}), Offsets(*plan));
@@ -464,7 +464,7 @@ TEST(ShinglePhrasePlanTest, gaps_split_runs) {
   phrase.push_back<irs::ByTermOptions>(1).term = Bytes("c");
   phrase.push_back<irs::ByTermOptions>().term = Bytes("d");
   const auto plan = irs::ShingleCover(*shingles, phrase, true);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b", "c d"}), Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 3}), Offsets(*plan));
 }
@@ -472,14 +472,14 @@ TEST(ShinglePhrasePlanTest, gaps_split_runs) {
 TEST(ShinglePhrasePlanTest, checked_cover_keeps_the_phrase_offsets) {
   const auto shingles = MakeShingles(2, 2);
   auto plan = CoverOf(*shingles, "quick brown fox", false);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "brown fox"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<std::string>{"quick", "brown", "fox"}), Words(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1}), Offsets(*plan));
 
   plan = CoverOf(*shingles, "a b c d e", false);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"a b", "c d", "d e"}), Terms(*plan));
   EXPECT_EQ((std::vector<std::string>{"a", "b", "c", "d", "e"}), Words(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1, 1}), Offsets(*plan));
@@ -489,7 +489,7 @@ TEST(ShinglePhrasePlanTest, checked_cover_keeps_the_phrase_offsets) {
   PushTerm(phrase, "dog", 1, 1);
   PushPrefix(phrase, "ju", 1, 1);
   plan = irs::ShingleCover(*shingles, phrase, false);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "lazy dog", "ju*"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<std::string>{"quick", "brown", "lazy", "dog", "ju*"}),
@@ -501,7 +501,7 @@ TEST(ShinglePhrasePlanTest, checked_cover_keeps_the_phrase_offsets) {
   EXPECT_EQ(" ", Text(plan->word_separator()));
 
   plan = CoverOf(*shingles, "quick brown fox", true);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_TRUE(absl::c_none_of(*plan, [](const auto& info) {
     return std::holds_alternative<irs::ShingleOptions>(info.part);
   }));
@@ -513,7 +513,7 @@ TEST(ShinglePhrasePlanTest, partial_cover_keeps_other_parts) {
   auto trailing = Phrase("quick brown fox");
   PushPrefix(trailing, "ju", 1, 1);
   auto plan = irs::ShingleCover(*shingles, trailing, true);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "brown fox", "ju*"}),
             Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1, 2}), Offsets(*plan));
@@ -524,7 +524,7 @@ TEST(ShinglePhrasePlanTest, partial_cover_keeps_other_parts) {
   PushTerm(leading, "brown", 1, 1);
   PushTerm(leading, "fox", 1, 1);
   plan = irs::ShingleCover(*shingles, leading, true);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"qu*", "brown fox"}), Terms(*plan));
   EXPECT_EQ((std::vector<uint32_t>{0, 1}), Offsets(*plan));
 
@@ -532,7 +532,7 @@ TEST(ShinglePhrasePlanTest, partial_cover_keeps_other_parts) {
   PushTerm(interval, "lazy", 2, 4);
   PushTerm(interval, "dog", 1, 1);
   plan = irs::ShingleCover(*shingles, interval, true);
-  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan);
   EXPECT_EQ((std::vector<std::string>{"quick brown", "lazy dog"}),
             Terms(*plan));
   const auto& lazy_dog = *std::next(plan->begin());
@@ -546,7 +546,7 @@ TEST(ShinglePhrasePlanTest, partial_cover_needs_words_for_patterns) {
   PushPrefix(phrase, "fo", 1, 1);
 
   const auto bare = MakeShingles(2, 2, false);
-  EXPECT_FALSE(irs::ShingleCover(*bare, phrase, true).has_value());
+  EXPECT_FALSE(irs::ShingleCover(*bare, phrase, true));
 
   const ShingleTokenizer joined{std::make_unique<WhitespaceTokenizer>(),
                                 {
@@ -554,14 +554,14 @@ TEST(ShinglePhrasePlanTest, partial_cover_needs_words_for_patterns) {
                                   .max_shingle_size = 2,
                                   .token_separator = {},
                                 }};
-  EXPECT_FALSE(irs::ShingleCover(joined, phrase, true).has_value());
+  EXPECT_FALSE(irs::ShingleCover(joined, phrase, true));
 }
 
 TEST(ShinglePhrasePlanTest, declines_without_shingle_gain) {
   const auto shingles = MakeShingles(2, 2);
   const auto plans = [&](const irs::ByPhraseOptions& phrase) {
-    return irs::ShingleTerm(*shingles, phrase).has_value() ||
-           irs::ShingleCover(*shingles, phrase, true).has_value();
+    return irs::ShingleTerm(*shingles, phrase) ||
+           irs::ShingleCover(*shingles, phrase, true);
   };
   const auto brown = Bytes("brown");
 
@@ -586,7 +586,7 @@ TEST(ShinglePhrasePlanTest, max_gram_decides_without_positions) {
   const auto phrase = Phrase("quick brown fox");
   const auto narrow = MakeShingles(2, 2);
   EXPECT_FALSE(irs::ShingleTerm(*narrow, phrase).has_value());
-  EXPECT_TRUE(irs::ShingleCover(*narrow, phrase, false).has_value());
+  EXPECT_TRUE(irs::ShingleCover(*narrow, phrase, false));
 
   const auto wide = MakeShingles(2, 3);
   EXPECT_EQ("quick brown fox", TermOf(*wide, "quick brown fox"));
@@ -758,7 +758,7 @@ TEST(ShinglePhraseIndexTest, partial_cover_agrees_with_positions) {
     irs::Filter::ptr filter = ShingleFilter(*shingles, phrase);
     irs::Optimize(filter);
     EXPECT_EQ(expected, index.Docs(*filter));
-    covered += irs::ShingleCover(*shingles, phrase, true).has_value();
+    covered += irs::ShingleCover(*shingles, phrase, true) ? 1 : 0;
     matched += !expected.empty();
   }
   EXPECT_GT(covered, 150U);
@@ -877,7 +877,7 @@ TEST(ShinglePhraseIndexTest, checked_phrases_agree_with_positions) {
     EXPECT_EQ(index.Docs(*positional), index.Docs(*checked));
     EXPECT_EQ(index.Freqs(*positional), index.Freqs(*checked));
     ExpectConsistent(index.Run(*checked));
-    covered += irs::ShingleCover(*shingles, phrase, false).has_value();
+    covered += irs::ShingleCover(*shingles, phrase, false) ? 1 : 0;
   }
   EXPECT_GT(covered, 30U);
 }

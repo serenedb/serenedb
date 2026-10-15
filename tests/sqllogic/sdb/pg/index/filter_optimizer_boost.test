@@ -38,6 +38,25 @@ id	s
 1	2.2291574
 
 query
+EXPLAIN SELECT id FROM fo_bst_idx
+WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────╮
+│ Index: fo_bst_idx    │
+│ Lookup: table        │
+│ Index Filter:        │
+│ ╭─ Term ───────────╮ │
+│ │ Field: w(string) │ │
+│ │ Value: alpha     │ │
+│ │ Boost: 2         │ │
+│ ╰──────────────────╯ │
+│ Projections: id      │
+│ ~1 row               │
+╰──────────────────────╯
+
+
+query
 EXPLAIN SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
 WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
 ----

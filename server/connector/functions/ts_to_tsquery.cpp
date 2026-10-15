@@ -296,10 +296,12 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   }
   PlanPhrases(root, ctx.client_context, [&](irs::field_id field) {
     if (field == parser_ctx.default_field_id) {
-      return PhraseField{&column_info, QueryShingle(ctx, column_info)};
+      return PhraseField{.info = &column_info,
+                         .shingle = QueryShingle(ctx, column_info)};
     }
     const auto* info = provider ? provider->Find(field) : nullptr;
-    return PhraseField{info, info ? ShingleOf(*info) : nullptr};
+    return PhraseField{.info = info,
+                       .shingle = info ? ShingleOf(*info) : nullptr};
   });
 }
 

@@ -89,6 +89,8 @@ class Instructions {
     }
   }
 
+  bool Open() const noexcept { return _fd >= 0; }
+
   uint64_t Read() const {
     uint64_t value = 0;
     if (_fd < 0 || read(_fd, &value, sizeof(value)) != sizeof(value)) {
@@ -106,16 +108,19 @@ const irs::BM25& Bm25() {
   return kScorer;
 }
 
+const char* CorpusPath() {
+  const char* path = std::getenv("PHRASE_CORPUS");
+  return path ? path : "/mnt/data/searchbench/wiki_small/corpus.json";
+}
+
 const std::vector<std::string>& Docs() {
   static const auto docs = [] {
-    const char* path = std::getenv("PHRASE_CORPUS");
     const char* limit_env = std::getenv("PHRASE_DOCS");
     const size_t limit =
       limit_env ? std::strtoull(limit_env, nullptr, 10) : 100000;
     std::vector<std::string> out;
     out.reserve(limit);
-    std::ifstream in{path ? path
-                          : "/mnt/data/searchbench/wiki_small/corpus.json"};
+    std::ifstream in{CorpusPath()};
     std::string line;
     constexpr std::string_view kKey = "\"text\": \"";
     while (out.size() < limit && std::getline(in, line)) {
@@ -391,16 +396,18 @@ std::vector<std::unique_ptr<Case>>& Cases() {
   return cases;
 }
 
-void Check(const Case& c) {
+bool Check(const Case& c) {
   const auto& index = IndexOf(c.dictionary);
   std::optional<std::pair<uint64_t, double>> expected;
   std::vector<irs::score_t> expected_top;
+  bool same = true;
   for (const auto& mode : kModes) {
     const auto filter = MakeFilter(c.dictionary, c.phrase, mode);
     uint64_t hits = 0;
     const auto score = Scored(index.reader, *filter, hits);
     const auto count = Count(index.reader, *filter);
     if (count != hits) {
+      same = false;
       std::fprintf(stderr, "[mismatch] %s '%s' %s: count %lu scored %lu\n",
                    kDictionaries[c.dictionary].name, c.text.c_str(), mode.name,
                    count, hits);
@@ -416,6 +423,7 @@ void Check(const Case& c) {
         return std::abs(lhs - rhs) <= 1e-4f * (1 + std::abs(lhs));
       });
     if (!same_top) {
+      same = false;
       std::fprintf(stderr, "[mismatch] %s '%s' %s: top %zu vs %zu, first %f\n",
                    kDictionaries[c.dictionary].name, c.text.c_str(), mode.name,
                    top.size(), expected_top.size(),
@@ -423,12 +431,14 @@ void Check(const Case& c) {
     }
     if (expected->first != hits ||
         std::abs(expected->second - score) > 1e-3 * (1 + expected->second)) {
+      same = false;
       std::fprintf(stderr,
                    "[mismatch] %s '%s' %s: hits %lu vs %lu, score %f vs %f\n",
                    kDictionaries[c.dictionary].name, c.text.c_str(), mode.name,
                    hits, expected->first, score, expected->second);
     }
   }
+  return same;
 }
 
 void Measure(benchmark::State& state, auto&& body) {
@@ -440,12 +450,14 @@ void Measure(benchmark::State& state, auto&& body) {
     benchmark::DoNotOptimize(hits);
   }
   const auto after = counter.Read();
-  state.counters["instructions"] = static_cast<double>(after - before) /
-                                   static_cast<double>(state.iterations());
+  if (counter.Open()) {
+    state.counters["instructions"] = static_cast<double>(after - before) /
+                                     static_cast<double>(state.iterations());
+  }
   state.counters["hits"] = static_cast<double>(hits);
 }
 
-void RegisterAll() {
+bool RegisterAll() {
   constexpr std::string_view kPhrases[] = {
     "of the",
     "united states",
@@ -542,8 +554,9 @@ void RegisterAll() {
                                     .phrase = Parse(text, *tokenizer)}));
     }
   }
+  bool same = true;
   for (const auto& c : cases) {
-    Check(*c);
+    same &= Check(*c);
     std::string label{c->text};
     std::replace(label.begin(), label.end(), ' ', '_');
     const auto prefix =
@@ -579,6 +592,7 @@ void RegisterAll() {
         ->Unit(benchmark::kMillisecond);
     }
   }
+  return same;
 }
 
 }  // namespace
@@ -590,7 +604,15 @@ static int Main(int argc, char** argv) {
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;
   }
-  RegisterAll();
+  if (Docs().empty()) {
+    std::fprintf(stderr, "[corpus] no documents in %s, set PHRASE_CORPUS\n",
+                 CorpusPath());
+    return 1;
+  }
+  if (!RegisterAll()) {
+    std::fprintf(stderr, "[mismatch] the modes disagree, not measuring\n");
+    return 1;
+  }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
   return 0;

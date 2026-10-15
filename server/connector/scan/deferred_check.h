@@ -25,21 +25,16 @@
 #include <duckdb/planner/table_filter.hpp>
 #include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/geo_filter.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "connector/scan/scan_state.h"
+
 namespace sdb::connector {
-
-struct ScanGlobalState;
-
-struct DeferredCheck {
-  const irs::Filter* source;
-  irs::field_id column;
-  std::shared_ptr<const duckdb::TableFilter> check;
-};
 
 template<typename T>
 struct SharedCheckBind final : duckdb::FunctionData {
@@ -83,7 +78,9 @@ DeferredCheck MakePhraseCheck(irs::Filter::ptr source, irs::field_id column,
                               const duckdb::LogicalType& type,
                               const irs::IndexReader& reader);
 
-DeferredCheck MakeGeoCheck(const irs::Filter& source, irs::field_id column,
+DeferredCheck MakeGeoCheck(const irs::Filter& source,
+                           const irs::GeoFilterOptionsBase& options,
+                           irs::field_id column,
                            const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

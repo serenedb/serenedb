@@ -176,7 +176,7 @@ Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
   const auto value = irs::detail::AllDocsScoreOf(query, ScoredOf(ctx));
-  if (ctx.table != nullptr) {
+  if (ctx.table) {
     return irs::detail::MakeApprox<FilteredConstantWalk, Root::ptr>(
       query, 0, ctx.table, value);
   }

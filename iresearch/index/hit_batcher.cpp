@@ -108,7 +108,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     c.out_type = r.Type();
     c.list_like = IsListLike(r.Type());
     c.state = std::make_unique<irs::ColumnReader::ScanState>(r.InitScan(*_ctx));
-    if (_rg_col == nullptr) {
+    if (!_rg_col) {
       _rg_col = &r;
     }
   };
@@ -134,7 +134,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     if (!p.IsExtract() &&
         _filters.AttachOutputSlot(static_cast<irs::field_id>(p.column_id),
                                   p.output_slot)) {
-      if (_rg_col == nullptr) {
+      if (!_rg_col) {
         _rg_col = r;
       }
       continue;
@@ -149,7 +149,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
       c.extract_binding = std::make_unique<ExtractBinding>();
       c.extract_binding->Bind(*r, *_ctx, p.extract_path, p.extract_scan_type,
                               context);
-      if (_rg_col == nullptr) {
+      if (!_rg_col) {
         _rg_col = r;
       }
     } else {

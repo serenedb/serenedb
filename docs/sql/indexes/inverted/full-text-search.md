@@ -72,7 +72,7 @@ In short: build the phrase with `##` and the allowed parts, then combine the fin
 
 ### Phrases without positions {#phrases-without-positions}
 
-A column indexed without `position` answers every phrase query when the index also keeps the column's text. A table created `WITH (storage = 'search')` keeps every column. In an inverted index, list the column in `INCLUDE` as well as in `USING inverted`:
+A column analyzed by a text search dictionary without `position` answers every phrase query when the index also keeps the column's text. A table created `WITH (storage = 'search')` keeps every column. In an inverted index, list the column in `INCLUDE` as well as in `USING inverted`:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions" />
 
@@ -85,9 +85,9 @@ The index finds the rows that contain every word of the phrase. Then it reads th
 - `Verify: table filter`: the text is checked last, only for the rows that pass every other condition of the query. The phrase is listed under `Table Filter`, and the `Index Filter` only looks up its words. A phrase gets this when every row has to match it and its score doesn't depend on how often it occurs: the query doesn't rank by score, ranks by a constant score or scores the phrase with [`::score('constant(1)')` or `::score(NULL)`](../../functions/search/scoring.md#score-modifier).
 - `Verify: inline`: the phrase stays in the `Index Filter` and its text is checked as the index finds the rows. A query that ranks the phrase with any other score gets this, because the score counts the phrase's occurrences. So do a query ranked by vector distance, a phrase under `OR` or `NOT`, a query that calls [`ts_offsets`](../../functions/search/highlighting.md), a phrase in `ts_dict_agg` and a phrase with a `ts_levenshtein` part while [`sdb_levenshtein_max_terms`](./maintenance.md#session-settings) isn't `0`. A phrase with both `slop` and a pattern part also stays inline when its dictionary puts several words at one position, as synonym and n-gram dictionaries do.
 
-The index stays smaller without `position`, but a phrase reads more data: the fewer rows contain all of its words, the cheaper it is. A ranked query with a `LIMIT` on an index built with [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) reads the text only of the rows that can still make the top `k`. A phrase of common words over long texts is where `position` pays off. Compressing the kept text, for example with `INCLUDE (body included (compression = 'zstd'))`, shrinks the index further, but every row a phrase checks is decompressed first, so phrases run several times slower.
+The index stays smaller without `position`, but a phrase reads more data: the fewer rows contain all of its words, the cheaper it is. A ranked query with a `LIMIT` on an index built with [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) reads the text only of the rows that can still make the top `k`, for the phrases that [prune](./ranking.md#top-k-queries-and-wand-pruning). A phrase of common words over long texts is where `position` pays off. Compressing the kept text, for example with `INCLUDE (body included (compression = 'zstd'))`, shrinks the index further, but every row a phrase checks is decompressed first, so phrases run several times slower.
 
-Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`.
+Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`. A column indexed without a dictionary holds each value as one term, so a phrase of two or more parts fails with `ts_phrase on a column without a text search dictionary matches only whole values`. Both messages start with the call that holds the phrase: `ts_phrase`, `##` or `to_tsquery`.
 
 A JSON-typed expression such as `(content->'v')` works the same way when listed a second time with `included()`: the check reads the stored JSON value and, like the index, analyzes the text of a JSON string, so `USING inverted (id, (content->'v') words, (content->'v') included())` answers phrases without `position`. A number, a boolean or `null` has no text and never matches a phrase.
 
@@ -204,7 +204,7 @@ A full-text search is a first-class part of the SQL query plan, not a black box 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
-A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan.
+A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan. A condition the index can only narrow down — a [phrase without `position`](#phrases-without-positions), a [geo predicate](./geospatial-search.md#how-rows-are-checked) or a re-checked [`ts_like`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) pattern — keeps its lookup in the `Index Filter` and lists the exact check under `Table Filter`, which runs only for the rows that pass every other condition.
 
 Because the search executes inside the scan, it composes with the rest of SQL: a `JOIN`, a `GROUP BY`, or an `ORDER BY <scorer>` over the same query is planned and run as one statement. See [Profiling](../../../cookbook/performance/profiling.md) for reading plans, and [Ranking](./ranking.md#top-k-queries-and-wand-pruning) for the WAND-optimized `Top: k, optimized` plan.
 

@@ -150,28 +150,23 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
+std::string QuotedTerms(const auto& terms) {
+  return absl::StrJoin(terms, "", [](std::string* out, const auto& term) {
+    absl::StrAppend(out, "'", TermToString(term), "',");
+  });
+}
+
 // Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
   }
   auto operator()(const TermSetOptions& opts) const {
-    absl::StrAppend(out, "Terms:[",
-                    absl::StrJoin(opts.terms, "",
-                                  [](std::string* o, const auto& term) {
-                                    absl::StrAppend(o, "'", TermToString(term),
-                                                    "',");
-                                  }),
-                    "]");
+    absl::StrAppend(out, "Terms:[", QuotedTerms(opts.terms), "]");
   }
   auto operator()(const ShingleOptions& opts) const {
     absl::StrAppend(out, "Shingle:", TermToString(opts.term), "[",
-                    absl::StrJoin(opts.words, "",
-                                  [](std::string* o, const auto& word) {
-                                    absl::StrAppend(o, "'", TermToString(word),
-                                                    "',");
-                                  }),
-                    "]");
+                    QuotedTerms(opts.words), "]");
   }
   auto operator()(const ByPrefixOptions& opts) const {
     absl::StrAppend(out, "Prefix:", TermToString(opts.term));

@@ -455,7 +455,7 @@ void ApplyTermGroups(const ByPhraseOptions& options,
 QueryBuilder::ptr MakeTokenPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
-  const ColumnReader& column, std::span<std::vector<bstring>> part_terms) {
+  const ColumnReader& column, std::vector<std::vector<bstring>> part_terms) {
   const bool covered = absl::c_any_of(options, [](const auto& info) {
     return std::holds_alternative<ShingleOptions>(info.part);
   });
@@ -498,7 +498,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   }
   auto query = memory::make_tracked<TokenPhraseQuery>(
     ctx.memory, segment, reader, std::move(approx), options.tokenizer(), column,
-    options, part_terms, stats, word_metas, ctx.boost);
+    options, std::move(part_terms), stats, word_metas, ctx.boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -645,7 +645,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
 
   if (column) {
     return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, *column,
-                                part_terms);
+                                std::move(part_terms));
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {

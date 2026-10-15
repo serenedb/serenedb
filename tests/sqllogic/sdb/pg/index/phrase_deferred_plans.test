@@ -15,7 +15,7 @@ statement ok
 CREATE TABLE pdm (id INTEGER PRIMARY KEY, body VARCHAR)
 
 statement ok
-INSERT INTO pdm SELECT i, (SELECT string_agg(['quick', 'quack', 'quiet', 'brown', 'brawn', 'brow', 'fox', 'box', 'fix', 'the', 'a', 'dog', 'dot', 'red', 'car', 'auto', 'automobile', 'big'][1 + (hash(i, j) % 18)::INTEGER], ' ') FROM range(1 + (hash(i) % 12)::INTEGER) r(j)) FROM range(600) t(i)
+INSERT INTO pdm SELECT i, (SELECT string_agg(['quick', 'quack', 'quiet', 'brown', 'brawn', 'brow', 'fox', 'box', 'fix', 'the', 'a', 'dog', 'dot', 'red', 'car', 'auto', 'automobile', 'big'][1 + (hash(i, j) % 18)::INTEGER], ' ' ORDER BY j) FROM range(1 + (hash(i) % 12)::INTEGER) r(j)) FROM range(600) t(i)
 
 statement ok
 CREATE INDEX pdm_text ON pdm USING inverted (id, body pdm_words) INCLUDE (body)
@@ -25,6 +25,151 @@ CREATE INDEX pdm_syn_text ON pdm USING inverted (id, body pdm_syn) INCLUDE (body
 
 statement ok
 VACUUM (REFRESH_TABLE) pdm
+
+statement ok
+CREATE TABLE pdm_v (id INTEGER PRIMARY KEY, body VARCHAR, emb FLOAT[3])
+
+statement ok
+INSERT INTO pdm_v VALUES
+    (1, 'quick brown fox', [1, 0, 0]::FLOAT[3]),
+    (2, 'brown quick fox', [0, 1, 0]::FLOAT[3]),
+    (3, 'the quick brown dog', [0, 0, 1]::FLOAT[3]),
+    (4, 'quick red fox', [10, 10, 10]::FLOAT[3])
+
+statement ok
+CREATE INDEX pdm_v_idx ON pdm_v USING inverted (id, body pdm_words, emb ivf (metric = 'l2')) INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) pdm_v
+
+query
+SELECT id FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown') ORDER BY emb <-> [0, 0, 1]::FLOAT[3] LIMIT 2
+----
+id
+3
+1
+
+query
+EXPLAIN SELECT id FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown') ORDER BY emb <-> [0, 0, 1]::FLOAT[3] LIMIT 2
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: pdm_v_idx                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: inline                       │ │
+│ ╰──────────────────────────────────────╯ │
+│ Score: l2_distance(emb, FLOAT[3])        │
+│ Top: 2                                   │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT list_sort(ts_dict_agg(body)) AS terms FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown')
+----
+terms
+{brown,dog,fox,quick,the}
+
+query
+EXPLAIN SELECT list_sort(ts_dict_agg(body)) AS terms FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: terms                        │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────────────────╮
+│ Aggregates:                               │
+│ list(#0) FILTER (WHERE #1) Filter: #1     │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$body,             │
+│ sdb_inverted_index_term$body IS NOT NULL  │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ ~3 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: pdm_v_idx                          │
+│ Index Filter:                             │
+│ ╭─ Phrase ─────────────────────────────╮  │
+│ │ Field: body(string)                  │  │
+│ │ Parts:                               │  │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │  │
+│ │ Verify: inline                       │  │
+│ ╰──────────────────────────────────────╯  │
+│ TsDict: body                              │
+│ Projections:                              │
+│ sdb_inverted_index_term$body              │
+│ ~6 rows                                   │
+╰───────────────────────────────────────────╯
+
+query
+SELECT id FROM pdm_v_idx WHERE NOT body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+2
+4
+
+query
+EXPLAIN SELECT id FROM pdm_v_idx WHERE NOT body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────╮
+│ Index: pdm_v_idx                                                │
+│ Lookup: table                                                   │
+│ Index Filter:                                                   │
+│ ╭─ Not ─────────────╮                                           │
+│ ╰─────────┬─────────╯                                           │
+│           ├────────────────────────────────╮                    │
+│ ╭─ Terms ─┴─────────╮  ╭─ Phrase ──────────┴──────────────────╮ │
+│ │ Field: body(null) │  │ Field: body(string)                  │ │
+│ ╰───────────────────╯  │ Parts:                               │ │
+│                        │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│                        │ Verify: inline                       │ │
+│                        ╰──────────────────────────────────────╯ │
+│ Projections: id                                                 │
+│ ~1 row                                                          │
+╰─────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS h FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	h
+1	<b>quick brown</b> fox
+3	the <b>quick brown</b> dog
+
+query
+EXPLAIN SELECT id, ts_highlight(body, ts_offsets(body)) AS h FROM pdm_v_idx WHERE body @@ ts_phrase('quick brown')
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: id, h                       │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: pdm_v_idx                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: inline                       │ │
+│ ╰──────────────────────────────────────╯ │
+│ Offsets: body                            │
+│ Projections: body (i), id (l)            │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 statement ok
 CREATE TABLE pdm_s (id INTEGER, body VARCHAR) WITH (storage = 'search')

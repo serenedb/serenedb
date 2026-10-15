@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/search/detail/plan.hpp"
@@ -33,21 +32,12 @@ namespace irs::detail {
 template<template<typename> typename Impl, typename Result, typename... Prefix>
 Result MakeApprox(const ApproxQuery& query, uint64_t interrogations,
                   Prefix&&... prefix) {
-  constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
-  SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  auto node = [&] {
-    if constexpr (kProbed) {
-      return query.Approx().PlanProbe({}, interrogations);
-    } else {
-      return query.Approx().PlanLead({});
-    }
-  }();
+  auto node = PlanApprox<Result>(query.Approx(), interrogations);
   if (!node) {
     return {};
   }
-  using Approx = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
-  return memory::make_managed<Impl<Approx>>(std::forward<Prefix>(prefix)...,
-                                            std::move(node));
+  return memory::make_managed<Impl<ApproxNode<Result>>>(
+    std::forward<Prefix>(prefix)..., std::move(node));
 }
 
 }  // namespace irs::detail

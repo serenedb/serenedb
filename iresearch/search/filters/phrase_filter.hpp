@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
@@ -39,11 +40,6 @@
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 
 namespace irs {
-namespace analysis {
-
-class Tokenizer;
-
-}  // namespace analysis
 
 struct TermSetOptions {
   std::set<bstring, std::less<>> terms;
@@ -129,6 +125,7 @@ class ByPhraseOptions {
     _word_separator.clear();
     _text = field_limits::invalid();
     _tokenizer = nullptr;
+    _explicit_pos = false;
   }
 
   bool simple() const noexcept {
@@ -156,9 +153,11 @@ class ByPhraseOptions {
 
   field_id text() const noexcept { return _text; }
   const TokenizerFactory& tokenizer() const noexcept { return _tokenizer; }
+  bool explicit_pos() const noexcept { return _explicit_pos; }
   void set_text(field_id text, TokenizerFactory tokenizer) {
     _text = text;
     _tokenizer = std::move(tokenizer);
+    _explicit_pos = _tokenizer && _tokenizer()->Traits().explicit_pos;
   }
 
  private:
@@ -182,6 +181,7 @@ class ByPhraseOptions {
   bstring _word_separator;
   field_id _text{field_limits::invalid()};
   TokenizerFactory _tokenizer;
+  bool _explicit_pos{false};
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {

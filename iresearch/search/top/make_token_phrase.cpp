@@ -140,14 +140,14 @@ bool FreqBoundedByAnchor(const TokenPhraseQuery& query) {
                         [](const CompiledPhrase::Slot& slot) {
                           return slot.offs_min == slot.offs_max;
                         }) &&
-         !query.Tokenizer()()->Traits().explicit_pos;
+         !query.ExplicitPos();
 }
 
 Root::ptr MakePruned(const TokenPhraseQuery& query, const Context& ctx,
                      const irs::detail::ScoreArgs& args) {
   const auto* anchor = query.Anchor();
   const auto& field = query.Reader();
-  if (anchor == nullptr || anchor->docs_count <= doc_limits::kBlockSize ||
+  if (!anchor || anchor->docs_count <= doc_limits::kBlockSize ||
       !irs::detail::BoundsOf(field) || !HasScoreBounds(args.scorer) ||
       !FreqBoundedByAnchor(query)) {
     return {};

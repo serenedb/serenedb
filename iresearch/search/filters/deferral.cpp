@@ -23,13 +23,13 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/compiled_phrase.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
+#include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
@@ -55,9 +55,8 @@ duckdb::LogicalType StoredColumnType(const IndexReader& reader,
 Filter::ptr PartsConjunction(const ByPhrase& phrase,
                              const OptimizeContext& ctx) {
   const auto* scorer = ScorerOf(phrase, ctx);
-  const bool constant =
-    scorer != nullptr && scorer->type() == Type<ConstantScore>::id();
-  if (scorer != nullptr && !constant && !IsUnscored(*scorer)) {
+  const bool constant = scorer && scorer->type() == Type<ConstantScore>::id();
+  if (scorer && !constant && !IsUnscored(*scorer)) {
     return nullptr;
   }
   auto conjunction = std::make_unique<BooleanFilter>();
@@ -65,7 +64,7 @@ Filter::ptr PartsConjunction(const ByPhrase& phrase,
     conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
                      Occur::Must);
   }
-  if (scorer != nullptr) {
+  if (scorer) {
     conjunction->SetScorer(phrase.GetScorer());
     conjunction->SetBoost(phrase.GetBoost());
     if (constant) {
@@ -88,7 +87,7 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   if (!IsStandalone(options) ||
       (options.slop() != 0 && HasPatternParts(options) &&
-       options.tokenizer()()->Traits().explicit_pos)) {
+       options.explicit_pos())) {
     return false;
   }
   auto index = PartsConjunction(phrase, ctx);
@@ -96,12 +95,13 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
-  ctx.deferral->filters.emplace_back(&phrase, column, std::move(type),
+  ctx.deferral->filters.emplace_back(DeferredKind::Phrase, &phrase, column,
+                                     std::move(type),
                                      std::exchange(slot, std::move(index)));
   return true;
 }
 
-template<typename GeoType>
+template<typename GeoType, DeferredKind Kind>
 bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& geo = downCast<GeoType>(*slot);
   auto& options = *geo.mutable_options();
@@ -116,7 +116,7 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   options.plan = std::move(plan);
   options.store_field_id = field_limits::invalid();
-  ctx.deferral->filters.emplace_back(&geo, column, std::move(type));
+  ctx.deferral->filters.emplace_back(Kind, &geo, column, std::move(type));
   return true;
 }
 
@@ -132,7 +132,8 @@ bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   options.store_field_id = field_limits::invalid();
-  ctx.deferral->filters.emplace_back(&wildcard, column, std::move(type));
+  ctx.deferral->filters.emplace_back(DeferredKind::Wildcard, &wildcard, column,
+                                     std::move(type));
   return true;
 }
 
@@ -145,10 +146,10 @@ bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
     return DeferWildcard(slot, ctx);
   }
   if (type == Type<GeoFilter>::id()) {
-    return DeferGeo<GeoFilter>(slot, ctx);
+    return DeferGeo<GeoFilter, DeferredKind::Geo>(slot, ctx);
   }
   if (type == Type<GeoDistanceFilter>::id()) {
-    return DeferGeo<GeoDistanceFilter>(slot, ctx);
+    return DeferGeo<GeoDistanceFilter, DeferredKind::GeoDistance>(slot, ctx);
   }
   return false;
 }
@@ -156,7 +157,7 @@ bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
 }  // namespace
 
 void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
-  if (ctx.deferral == nullptr) {
+  if (!ctx.deferral) {
     return;
   }
   if (root->type() != Type<BooleanFilter>::id()) {

@@ -31,11 +31,11 @@
 
 #include "auth/role_closure.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
 namespace {

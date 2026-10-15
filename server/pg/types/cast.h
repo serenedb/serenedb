@@ -22,9 +22,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string_view>
@@ -68,6 +70,21 @@ bool TextInputCast(duckdb::Vector& source, duckdb::Vector& result,
     });
   return converted;
 }
+
+class TextInput final {
+ public:
+  TextInput(duckdb::ClientContext& context, const duckdb::LogicalType& type);
+
+  std::optional<irs::pg::SqlErrorData> Error(duckdb::string_t text);
+
+ private:
+  bool _reports;
+  duckdb::BoundCastInfo _cast;
+  duckdb::unique_ptr<duckdb::FunctionLocalState> _state;
+  duckdb::VectorCache _cache;
+  duckdb::Vector _source;
+  duckdb::Vector _result;
+};
 
 void RegisterTextInput(duckdb::CastFunctionSet& casts,
                        const duckdb::LogicalType& type,

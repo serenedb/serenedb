@@ -1026,7 +1026,6 @@ t
 
 # 9.27.7 Data Validity Checking Functions
 
-skipif serenedb
 query
 SELECT pg_input_is_valid('42', 'integer');
 ----
@@ -1034,12 +1033,12 @@ pg_input_is_valid
 t
 
 
-skipif serenedb
 onlyif serenedb
-query error
+query
 SELECT pg_input_error_info('bad', 'integer');
 ----
-db error: ERROR: Function is not supported in SereneDB
+pg_input_error_info
+("Could not convert string 'bad' to INT32",,,22P02)
 
 
 skipif serenedb

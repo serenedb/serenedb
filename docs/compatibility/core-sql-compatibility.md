@@ -795,6 +795,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_serial_sequence             | Yes           | Finds the sequence named by the column's `nextval(...)` default |
 | format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |
 | to_regclass                        | Yes           | Also `to_regtype`, `to_regtypemod`, `to_regproc`, `to_regprocedure`, `to_regnamespace`, `to_regrole`, `to_regcollation`, `to_regoper` and `to_regoperator`; they return `NULL` where the cast would fail |
+| pg_input_is_valid                  | Yes           | Also `pg_input_error_info`. For `bytea`, `cidr`, `pg_lsn` and the `reg*` types it reports PostgreSQL's message, detail, hint and SQLSTATE; for other types the message of the failed cast, with SQLSTATE `22P02` |
 | pg_get_userbyid                    | Yes           |  |
 | pg_get_keywords                    | Yes           | Lists the keywords of SereneDB's parser, among them `pivot` and `qualify`, which PostgreSQL does not reserve. A word the parser takes both as a column name and as a type or function name, such as `struct`, is listed once, as unreserved. `barelabel` and `baredesc` are `NULL`: the parser does not say which keywords can be a bare column label |
 | pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |

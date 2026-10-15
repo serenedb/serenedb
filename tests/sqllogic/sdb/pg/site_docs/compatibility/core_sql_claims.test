@@ -470,6 +470,10 @@ SELECT to_regclass('pg_class')::text, to_regtype('int4')::text, to_regproc('arra
 statement ok
 SELECT word, catcode, catdesc FROM pg_get_keywords();
 
+# sysinfo: pg_input_is_valid
+statement ok
+SELECT pg_input_is_valid('42', 'integer'), pg_input_error_info('x', 'integer');
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

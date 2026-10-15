@@ -20,13 +20,79 @@
 
 #include "pg/types/cast.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
 
+#include <array>
 #include <duckdb/common/operator/cast_operators.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <string>
+
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
+namespace {
+
+bool ReportsInputErrors(const duckdb::LogicalType& type) {
+  static constexpr std::array kAliases = {
+    kRegprocAlias,     kRegprocedureAlias,  kRegoperAlias,
+    kRegoperatorAlias, kRegclassAlias,      kRegtypeAlias,
+    kRegcollationAlias, kRegconfigAlias,    kRegdictionaryAlias,
+    kRegroleAlias,     kRegnamespaceAlias,  kOidAlias,
+    kTidAlias,         kPgLsnAlias,         kCidrAlias,
+    kMacaddrAlias,     kMacaddr8Alias,      kInt2vectorAlias,
+    kOidvectorAlias,
+  };
+  if (type.id() == duckdb::LogicalTypeId::BLOB) {
+    return !type.HasAlias();
+  }
+  return absl::c_linear_search(kAliases, type.GetAlias());
+}
+
+duckdb::BoundCastInfo TextCast(duckdb::ClientContext& context,
+                               const duckdb::LogicalType& type) {
+  duckdb::GetCastFunctionInput input{context};
+  return duckdb::CastFunctionSet::Get(context).GetCastFunction(
+    duckdb::LogicalType::VARCHAR, type, input);
+}
+
+}  // namespace
+
+TextInput::TextInput(duckdb::ClientContext& context,
+                     const duckdb::LogicalType& type)
+  : _reports{ReportsInputErrors(type)},
+    _cast{TextCast(context, type)},
+    _cache{duckdb::Allocator::Get(context), type, 1},
+    _source{duckdb::LogicalType::VARCHAR, 1},
+    _result{_cache} {
+  duckdb::FlatVector::SetSize(_source, 1);
+  if (_cast.HasInitLocalState()) {
+    duckdb::CastLocalStateParameters parameters{context, _cast.GetCastData()};
+    _state = _cast.InitLocalState(parameters);
+  }
+}
+
+std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
+  _result.ResetFromCache(_cache);
+  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_source)[0] = text;
+  std::string message;
+  duckdb::CastParameters parameters{_cast.GetCastData(), false, &message,
+                                    _state.get()};
+  if (_cast.Cast(_source, _result, 1, parameters)) {
+    return std::nullopt;
+  }
+  if (_reports) {
+    if (auto& state = _state->Cast<InputState>(); state.error) {
+      auto error = std::move(*state.error);
+      state.error.reset();
+      return error;
+    }
+  }
+  return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG(message));
+}
 
 ParsedNumber ParseNumber(std::string_view text, size_t start, int base) {
   const auto* begin = text.data();

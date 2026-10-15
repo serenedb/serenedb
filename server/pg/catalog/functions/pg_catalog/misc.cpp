@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
@@ -65,6 +66,8 @@
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
+#include "pg/sql_utils.h"
+#include "pg/types/cast.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
 #include "search/search_table.h"
@@ -744,6 +747,99 @@ void NotSupportedFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
                   ERR_MSG("Function is not supported in SereneDB"));
 }
 
+duckdb::LogicalType InputType(duckdb::ClientContext& context,
+                              std::string_view name) {
+  RegIn(MakeSession(&context), RegKind::Type, name, nullptr);
+  return duckdb::TransformStringToLogicalType(std::string{name}, context);
+}
+
+class InputCheck final : public duckdb::FunctionLocalState {
+ public:
+  explicit InputCheck(duckdb::ClientContext& context) : _context{context} {}
+
+  std::optional<irs::pg::SqlErrorData> Error(duckdb::string_t text,
+                                             duckdb::string_t type) {
+    const auto name = AsView(type);
+    if (!_input || name != _type) {
+      _input.emplace(_context, InputType(_context, name));
+      _type = name;
+    }
+    return _input->Error(text);
+  }
+
+ private:
+  duckdb::ClientContext& _context;
+  std::string _type;
+  std::optional<TextInput> _input;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitInputCheck(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  return duckdb::make_uniq<InputCheck>(state.GetContext());
+}
+
+InputCheck& InputCheckOf(duckdb::ExpressionState& state) {
+  return duckdb::ExecuteFunctionState::GetFunctionState(state)
+    ->Cast<InputCheck>();
+}
+
+void InputIsValidFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
+                          duckdb::Vector& result) {
+  auto& check = InputCheckOf(state);
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t text, duckdb::string_t type) {
+      return !check.Error(text, type);
+    });
+}
+
+void WriteNonEmpty(duckdb::VectorWriter<duckdb::string_t>& writer,
+                   const std::string& text) {
+  if (text.empty()) {
+    writer.WriteNull();
+  } else {
+    writer.WriteValue(duckdb::string_t{text});
+  }
+}
+
+void InputErrorInfoFunction(duckdb::DataChunk& args,
+                            duckdb::ExpressionState& state,
+                            duckdb::Vector& result) {
+  auto& check = InputCheckOf(state);
+  const auto texts = args.data[0].Values<duckdb::string_t>();
+  const auto types = args.data[1].Values<duckdb::string_t>();
+  auto writer = duckdb::FlatVector::Writer<duckdb::VectorStructType<
+    duckdb::string_t, duckdb::string_t, duckdb::string_t, duckdb::string_t>>(
+    result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto text = texts[row];
+    const auto type = types[row];
+    if (!text.IsValid() || !type.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto error = check.Error(text.GetValue(), type.GetValue());
+    writer.WriteValue(
+      [&](auto& message, auto& detail, auto& hint, auto& sql_error_code) {
+        if (!error) {
+          message.WriteNull();
+          detail.WriteNull();
+          hint.WriteNull();
+          sql_error_code.WriteNull();
+          return;
+        }
+        message.WriteValue(duckdb::string_t{error->errmsg});
+        WriteNonEmpty(detail, error->errdetail);
+        WriteNonEmpty(hint, error->errhint);
+        char code[kSqlStateSize];
+        UnpackSqlState(code, error->errcode);
+        sql_error_code.WriteValue(duckdb::string_t{code, kSqlStateSize});
+      });
+  }
+}
+
 struct StatScalar {
   std::string_view name;
   duckdb::LogicalType type;
@@ -929,6 +1025,21 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                  {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
   RegisterScalar(loader, main, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
                  {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
+
+  RegisterScalar(
+    loader, pg_catalog, "pg_input_is_valid", CONSISTENT_WITHIN_QUERY,
+    InitInputCheck,
+    {duckdb::ScalarFunction{{text, text}, boolean, InputIsValidFunction}});
+  RegisterScalar(loader, pg_catalog, "pg_input_error_info",
+                 CONSISTENT_WITHIN_QUERY, InitInputCheck,
+                 {duckdb::ScalarFunction{{text, text},
+                                         duckdb::LogicalType::STRUCT({
+                                           {"message", text},
+                                           {"detail", text},
+                                           {"hint", text},
+                                           {"sql_error_code", text},
+                                         }),
+                                         InputErrorInfoFunction}});
 }
 
 }  // namespace sdb::pg

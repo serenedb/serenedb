@@ -1,0 +1,189 @@
+# System information and catalog functions
+
+control substitution on
+
+statement ok
+CREATE ROLE sif_role_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE sif_keyed (id integer PRIMARY KEY, v text);
+
+
+statement ok
+CREATE TABLE sif_plain (id integer, v text);
+
+
+statement ok
+CREATE VIEW sif_view AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SEQUENCE sif_seq START 5 INCREMENT 2 MINVALUE 1 MAXVALUE 100 CACHE 3 CYCLE;
+
+
+statement ok
+CREATE SEQUENCE sif_seq_plain;
+
+
+# pg_input_is_valid
+
+query
+SELECT pg_input_is_valid('42', 'integer') AS int_ok, pg_input_is_valid('42000000000', 'integer') AS int_range,
+       pg_input_is_valid('abc', 'integer') AS int_bad, pg_input_is_valid('1.5', 'numeric') AS numeric_ok,
+       pg_input_is_valid('12.34', 'numeric(3,2)') AS numeric_typmod, pg_input_is_valid('2024-01-01', 'date') AS date_ok,
+       pg_input_is_valid('2024-13-01', 'date') AS date_bad, pg_input_is_valid('t', 'boolean') AS bool_ok,
+       pg_input_is_valid('maybe', 'boolean') AS bool_bad, pg_input_is_valid('{1,2,3}', 'integer[]') AS array_ok,
+       pg_input_is_valid('{1,x}', 'integer[]') AS array_bad;
+----
+int_ok	int_range	int_bad	numeric_ok	numeric_typmod	date_ok	date_bad	bool_ok	bool_bad	array_ok	array_bad
+t	f	f	t	f	t	f	t	f	t	f
+
+
+query
+SELECT pg_input_is_valid('0/16B3748', 'pg_lsn') AS lsn_ok, pg_input_is_valid('xyz', 'pg_lsn') AS lsn_bad,
+       pg_input_is_valid('10.0.0.0/8', 'cidr') AS cidr_ok, pg_input_is_valid('1.2.3.4/16', 'cidr') AS cidr_bad,
+       pg_input_is_valid('\x0102', 'bytea') AS bytea_ok, pg_input_is_valid('\xzz', 'bytea') AS bytea_bad,
+       pg_input_is_valid('pg_class', 'regclass') AS class_ok, pg_input_is_valid('sif_nosuch', 'regclass') AS class_bad,
+       pg_input_is_valid('int4', 'regtype') AS type_ok, pg_input_is_valid('sif_nosuch', 'regtype') AS type_bad;
+----
+lsn_ok	lsn_bad	cidr_ok	cidr_bad	bytea_ok	bytea_bad	class_ok	class_bad	type_ok	type_bad
+t	f	t	f	t	f	t	f	t	f
+
+
+query
+SELECT pg_input_is_valid(NULL, 'integer') AS null_text, pg_input_is_valid('1', NULL) AS null_type;
+----
+null_text	null_type
+NULL	NULL
+
+
+query
+SELECT id, pg_input_is_valid(v, 'integer') AS valid
+FROM (VALUES (1, '1'), (2, 'x'), (3, '-7'), (4, ''), (5, NULL)) AS t(id, v) ORDER BY id;
+----
+id	valid
+1	t
+2	f
+3	t
+4	f
+5	NULL
+
+
+statement error
+SELECT pg_input_is_valid('1', 'sif_nosuch_type');
+----
+db error: ERROR: type "sif_nosuch_type" does not exist
+
+
+# pg_input_error_info
+
+query
+SELECT * FROM pg_input_error_info('42', 'integer');
+----
+message	detail	hint	sql_error_code
+NULL	NULL	NULL	NULL
+
+
+query
+SELECT message IS NOT NULL AS has_message, detail, hint, sql_error_code FROM pg_input_error_info('abc', 'integer');
+----
+has_message	detail	hint	sql_error_code
+t	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('1.2.3.4/16', 'cidr');
+----
+message	detail	hint	sql_error_code
+invalid cidr value: "1.2.3.4/16"	Value has bits set to right of mask.	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('xyz', 'pg_lsn');
+----
+message	detail	hint	sql_error_code
+invalid input syntax for type pg_lsn: "xyz"	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('\xzz', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid hexadecimal digit: "z"	NULL	NULL	22023
+
+
+query
+SELECT * FROM pg_input_error_info('\x123', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid hexadecimal data: odd number of digits	NULL	NULL	22023
+
+
+query
+SELECT * FROM pg_input_error_info('\', 'bytea');
+----
+message	detail	hint	sql_error_code
+invalid input syntax for type bytea	NULL	NULL	22P02
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regclass');
+----
+message	detail	hint	sql_error_code
+relation "sif_nosuch" does not exist	NULL	NULL	42P01
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regtype');
+----
+message	detail	hint	sql_error_code
+type "sif_nosuch" does not exist	NULL	NULL	42704
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regrole');
+----
+message	detail	hint	sql_error_code
+role "sif_nosuch" does not exist	NULL	NULL	42704
+
+
+query
+SELECT * FROM pg_input_error_info('sif_nosuch', 'regnamespace');
+----
+message	detail	hint	sql_error_code
+schema "sif_nosuch" does not exist	NULL	NULL	3F000
+
+
+query
+SELECT (pg_input_error_info(NULL, 'integer')).message AS null_text,
+       (pg_input_error_info('1', NULL)).message AS null_type;
+----
+null_text	null_type
+NULL	NULL
+
+
+# Cleanup
+
+statement ok
+DROP SEQUENCE sif_seq;
+
+
+statement ok
+DROP SEQUENCE sif_seq_plain;
+
+
+statement ok
+DROP VIEW sif_view;
+
+
+statement ok
+DROP TABLE sif_plain;
+
+
+statement ok
+DROP TABLE sif_keyed;
+
+
+statement ok
+DROP ROLE sif_role_${__DATABASE__};

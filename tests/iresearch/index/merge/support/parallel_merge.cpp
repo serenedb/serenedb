@@ -20,11 +20,15 @@
 
 #include "index/merge/support/parallel_merge.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <exception>
 #include <functional>
 #include <iresearch/index/merge/merge_schedule.hpp>
+#include <iresearch/index/merge/term_ranges.hpp>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <thread>
@@ -77,10 +81,61 @@ bool RunUnits(irs::MergePlan& plan, size_t threads,
   return true;
 }
 
+bool RunPostings(irs::MergePlan& plan, size_t threads,
+                 std::optional<uint64_t> seed) {
+  if (!plan.PostingsPending()) {
+    return true;
+  }
+  for (const auto& range : plan.TermRanges()) {
+    std::vector<size_t> parts(range->PartCount());
+    std::iota(parts.begin(), parts.end(), size_t{0});
+    if (seed) {
+      std::shuffle(parts.begin(), parts.end(), std::mt19937_64{*seed});
+    }
+    std::atomic<size_t> next{0};
+    std::atomic<bool> ok{true};
+    std::mutex mutex;
+    std::exception_ptr error;
+    auto work = [&] {
+      for (size_t at; (at = next++) < parts.size();) {
+        try {
+          if (!range->MergePart(parts[at])) {
+            ok = false;
+          }
+        } catch (...) {
+          std::lock_guard guard{mutex};
+          if (!error) {
+            error = std::current_exception();
+          }
+          ok = false;
+        }
+      }
+    };
+    std::vector<std::thread> helpers;
+    for (size_t i = 1; i < threads; ++i) {
+      helpers.emplace_back(work);
+    }
+    work();
+    for (auto& helper : helpers) {
+      helper.join();
+    }
+    if (error) {
+      std::rethrow_exception(error);
+    }
+    if (!ok) {
+      return false;
+    }
+  }
+  return plan.FinishPostings();
+}
+
 }  // namespace
 
 bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
   if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
+  if (!RunPostings(plan, _threads, std::nullopt)) {
     return false;
   }
   irs::MergeSchedule schedule{plan};
@@ -93,6 +148,9 @@ bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
 
 bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
   if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
+  if (!RunPostings(plan, _threads, _seed)) {
     return false;
   }
   const auto units = plan.Units();

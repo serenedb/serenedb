@@ -38,6 +38,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/doc_map.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
+#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -51,8 +52,10 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/segment_rewrite/logical_merge_order.h"
 #include "connector/segment_rewrite/logical_merge_units.h"
+#include "connector/segment_rewrite/logical_postings_merge.h"
 #include "connector/segment_rewrite/physical_merge_order.h"
 #include "connector/segment_rewrite/physical_merge_units.h"
+#include "connector/segment_rewrite/physical_postings_merge.h"
 #include "gtest/gtest.h"
 #include "search/compaction/merge_unit_run.h"
 #include "search/compaction/pipeline_merge_executor.h"
@@ -400,6 +403,36 @@ TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
             physical.Make<connector::PhysicalMergeOrder>(plan).GetName());
   EXPECT_EQ("MERGE_UNITS",
             physical.Make<connector::PhysicalMergeUnits>(run, 1).GetName());
+}
+
+TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_TRUE(plan.PostingsPending());
+  ASSERT_FALSE(plan.TermRanges().empty());
+  auto& range = *plan.TermRanges().front();
+  EXPECT_LT(1, range.PartCount());
+  const connector::LogicalPostingsMerge merge{range};
+  EXPECT_EQ("POSTINGS_MERGE", merge.GetName());
+  EXPECT_FALSE(merge.RequireOptimizer());
+  EXPECT_FALSE(merge.SupportSerialization());
+  duckdb::PhysicalPlan physical{duckdb::Allocator::DefaultAllocator()};
+  const auto& postings = physical.Make<connector::PhysicalPostingsMerge>(range);
+  EXPECT_EQ("POSTINGS_MERGE", postings.GetName());
+  const auto params = postings.ParamsToString();
+  EXPECT_EQ(std::to_string(range.PartCount()), params.at("Parts"));
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  ASSERT_TRUE(executor.Run(plan));
+  EXPECT_FALSE(plan.PostingsPending());
+  EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
 }
 
 TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {

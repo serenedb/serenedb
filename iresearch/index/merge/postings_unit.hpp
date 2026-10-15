@@ -35,6 +35,7 @@ namespace irs {
 struct BasicTermReader;
 struct FlushState;
 class IdxWriter;
+class TermRangeMerge;
 
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
@@ -51,7 +52,8 @@ class PostingsMerger {
 
   bool Write(const FlushState& flush_state,
              const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
-             IdxWriter& idx, std::span<const BasicTermReader* const> extra);
+             IdxWriter& idx, std::span<const BasicTermReader* const> extra,
+             std::span<const std::unique_ptr<TermRangeMerge>> ranges = {});
 
  private:
   struct Impl;

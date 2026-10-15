@@ -31,6 +31,7 @@
 
 namespace irs {
 
+struct SeekTermIterator;
 struct TermReader;
 
 class TermKeys final : public duckdb::PresortedMergeInput {
@@ -46,6 +47,8 @@ class TermKeys final : public duckdb::PresortedMergeInput {
 
   std::optional<std::pair<uint64_t, bstring>> Anchor(uint64_t row) const;
   void Record(uint64_t row, bytes_view term) const;
+
+  void SeekBefore(SeekTermIterator& it, uint64_t row) const;
 
  private:
   const TermReader& _reader;

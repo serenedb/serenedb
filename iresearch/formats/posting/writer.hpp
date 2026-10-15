@@ -169,6 +169,12 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
+  struct Bases {
+    uint64_t doc = 0;
+    uint64_t pos = 0;
+    uint64_t pay = 0;
+  };
+
   void Prepare(const FlushState& state);
   void BeginField(const FieldProperties& meta);
 
@@ -198,6 +204,12 @@ class PostingsWriter final {
     return {.has_score_bounds = _valid_writer != nullptr,
             .docs_count = static_cast<doc_id_t>(count)};
   }
+
+  const bitset& Docs() const noexcept { return _docs; }
+
+  void FinishPart();
+
+  Bases Append(IndexInput* doc, IndexInput* pos, IndexInput* pay);
 
   void End();
 
@@ -764,6 +776,77 @@ inline void PostingsWriter::End() {
   } else {
     SDB_ASSERT(_pay.size == 0);
   }
+}
+
+inline void PostingsWriter::FinishPart() {
+  if (_pos_out) {
+    if (_pos.size != 0) {
+      FlushTailPos();
+    }
+    if (!_pos_group.Empty()) {
+      _pos_group.Flush(*_pos_out);
+    }
+    _pos_out->Flush();
+    _pos_out.reset();
+  }
+  if (_pay_out) {
+    if (_pay.size != 0) {
+      FlushTailPay();
+    }
+    if (!_pay_group.Empty()) {
+      _pay_group.Flush(*_pay_out);
+    }
+    _pay_out->Flush();
+    _pay_out.reset();
+  }
+  _doc_out->Flush();
+  _doc_out.reset();
+}
+
+inline PostingsWriter::Bases PostingsWriter::Append(IndexInput* doc,
+                                                    IndexInput* pos,
+                                                    IndexInput* pay) {
+  if (_pos.size != 0) {
+    FlushTailPos();
+  }
+  if (_pay.size != 0) {
+    FlushTailPay();
+  }
+  FlushGroups();
+  const auto align = [](IndexOutput* out) -> uint64_t {
+    if (out == nullptr) {
+      return 0;
+    }
+    for (auto pad = -out->Position() & (sizeof(uint64_t) - 1); pad != 0;
+         --pad) {
+      out->WriteByte(0);
+    }
+    return out->Position();
+  };
+  const Bases bases{
+    .doc = align(_doc_out.get()),
+    .pos = align(_pos_out.get()),
+    .pay = align(_pay_out.get()),
+  };
+  const auto copy = [](IndexInput* in, IndexOutput* out) {
+    if (in == nullptr) {
+      return;
+    }
+    SDB_ASSERT(out != nullptr);
+    constexpr uint64_t kChunk = uint64_t{1} << 16;
+    auto buffer = std::make_unique_for_overwrite<byte_type[]>(kChunk);
+    const auto length = in->Length();
+    for (uint64_t offset = 0; offset < length;) {
+      const auto n = std::min(kChunk, length - offset);
+      in->ReadData(offset, buffer.get(), n);
+      out->WriteData(buffer.get(), n);
+      offset += n;
+    }
+  };
+  copy(doc, _doc_out.get());
+  copy(pos, _pos_out.get());
+  copy(pay, _pay_out.get());
+  return bases;
 }
 
 IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,

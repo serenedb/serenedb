@@ -30,6 +30,7 @@
 
 #include "connector/segment_rewrite/logical_merge_order.h"
 #include "connector/segment_rewrite/logical_merge_units.h"
+#include "connector/segment_rewrite/logical_postings_merge.h"
 #include "search/compaction/merge_unit_run.h"
 
 namespace sdb::search {
@@ -58,6 +59,15 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   if (plan.OrderPending()) {
     Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan));
     if (!plan.FinishOrder()) {
+      return false;
+    }
+  }
+  if (plan.PostingsPending()) {
+    for (const auto& range : plan.TermRanges()) {
+      Execute(connection,
+              duckdb::make_uniq<connector::LogicalPostingsMerge>(*range));
+    }
+    if (!plan.FinishPostings()) {
       return false;
     }
   }

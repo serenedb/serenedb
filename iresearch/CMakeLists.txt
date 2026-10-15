@@ -83,6 +83,7 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/index/term_parts.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
     ./formats/hnsw/hnsw_writer.cpp
@@ -113,6 +114,7 @@ set(IResearch_core_sources
     ./index/merge/norms_unit.cpp
     ./index/merge/postings_unit.cpp
     ./index/merge/term_keys.cpp
+    ./index/merge/term_ranges.cpp
     ./index/merge_writer.cpp
     ./index/norm.cpp
     ./index/hit_batcher.cpp

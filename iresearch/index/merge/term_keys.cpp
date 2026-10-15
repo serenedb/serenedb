@@ -115,4 +115,22 @@ void TermKeys::Record(uint64_t row, bytes_view term) const {
   }
 }
 
+void TermKeys::SeekBefore(SeekTermIterator& it, uint64_t row) const {
+  if (row == 0) {
+    return;
+  }
+  uint64_t next = 0;
+  if (const auto anchor = Anchor(row - 1)) {
+    const bool found = it.seek(anchor->second);
+    SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
+               anchor->first);
+    next = anchor->first + 1;
+  }
+  for (; next < row; ++next) {
+    const bool more = it.next();
+    SDB_ENSURE(more, "TermKeys: a term dictionary of ", Count(),
+               " terms ends after ", next);
+  }
+}
+
 }  // namespace irs

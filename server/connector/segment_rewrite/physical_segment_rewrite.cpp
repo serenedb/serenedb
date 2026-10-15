@@ -87,6 +87,9 @@ class SegmentRewriteExecutor final : public irs::MergeExecutor {
     if (plan.OrderPending() && !plan.RunOrder()) {
       return false;
     }
+    if (plan.PostingsPending() && !plan.RunPostings()) {
+      return false;
+    }
     const auto run = std::make_shared<search::MergeUnitRun>(
       plan, std::chrono::steady_clock::now());
     {

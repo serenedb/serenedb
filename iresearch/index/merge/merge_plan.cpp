@@ -44,6 +44,7 @@
 #include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/norms_unit.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
+#include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -57,6 +58,8 @@ using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
 constexpr uint64_t kAnnCostPerByte = 32;
 constexpr uint64_t kRowsPerOrderPartition = uint64_t{1} << 18;
+constexpr uint64_t kTermsPerPart = 4096;
+constexpr uint64_t kPartsPerThread = 4;
 constexpr size_t kEncode = std::numeric_limits<size_t>::max();
 
 struct ColumnRange {
@@ -356,6 +359,50 @@ struct MergePlan::State {
     }
   }
 
+  void PlanTermRanges() {
+    if (threads < 2) {
+      return;
+    }
+    std::vector<field_id> ids;
+    for (const auto& [id, features] : field_meta_map) {
+      if (!IsSubsetOf(IndexFeatures::Vec, features)) {
+        ids.push_back(id);
+      }
+    }
+    absl::c_sort(ids);
+    for (const auto id : ids) {
+      std::vector<TermRangeMerge::Input> inputs;
+      uint64_t terms = 0;
+      for (const auto& input : doc_map) {
+        const auto* reader = input.reader->field(id);
+        if (reader == nullptr) {
+          continue;
+        }
+        terms += reader->size();
+        inputs.push_back({.terms = reader, .remap = &input.remap});
+      }
+      const auto parts =
+        std::min<uint64_t>(terms / kTermsPerPart, threads * kPartsPerThread);
+      if (parts < 2) {
+        continue;
+      }
+      FieldProperties props;
+      props.index_features = field_meta_map[id];
+      if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
+        if (const auto it = merged_norm_ids.find(id);
+            it != merged_norm_ids.end()) {
+          props.norm = it->second;
+        }
+      }
+      auto& range = term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
+        id, props, std::move(inputs), sort != nullptr, progress));
+      range->Partition(
+        parts,
+        {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count});
+    }
+    postings_pending = !term_ranges.empty();
+  }
+
   bool WriteColumnsFooter() {
     MergeStepClock clock{profile};
     col_writer->SetIdxWriter(*idx);
@@ -403,7 +450,7 @@ struct MergePlan::State {
     if (segment.docs_count != 0 &&
         !postings.Write(state, merged_norm_ids,
                         doc_map.get_allocator().Manager(), *idx,
-                        cluster_readers)) {
+                        cluster_readers, term_ranges)) {
       return false;
     }
     clock.Lap(MergeStep::Postings);
@@ -462,6 +509,8 @@ struct MergePlan::State {
   std::optional<InputNormProvider> norms;
   std::optional<ReadContext> ivf_ctx;
   std::vector<const BasicTermReader*> cluster_readers;
+  std::vector<std::unique_ptr<TermRangeMerge>> term_ranges;
+  bool postings_pending = false;
 };
 
 MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
@@ -572,6 +621,7 @@ bool MergePlan::Prepare(size_t threads) {
     s.norms->AddField(out, id, stats.sum, stats.non_zero);
     s.norm_fields.push_back(id);
   }
+  s.PlanTermRanges();
   if (OrderPending()) {
     s.order_clock.emplace(s.profile);
   } else {
@@ -611,6 +661,42 @@ bool MergePlan::RunOrder() {
   auto& s = *_state;
   SDB_ASSERT(OrderPending());
   return s.key_order->Merge(s.progress) && FinishOrder();
+}
+
+bool MergePlan::PostingsPending() const noexcept {
+  return _state->postings_pending;
+}
+
+std::span<const std::unique_ptr<TermRangeMerge>> MergePlan::TermRanges()
+  const noexcept {
+  return _state->term_ranges;
+}
+
+bool MergePlan::RunPostings() {
+  auto& s = *_state;
+  SDB_ASSERT(s.postings_pending);
+  for (const auto& range : s.term_ranges) {
+    for (size_t part = 0; part != range->PartCount(); ++part) {
+      if (!range->MergePart(part)) {
+        return false;
+      }
+    }
+  }
+  return FinishPostings();
+}
+
+bool MergePlan::FinishPostings() {
+  auto& s = *_state;
+  s.postings_pending = false;
+  uint64_t nanos = 0;
+  for (const auto& range : s.term_ranges) {
+    if (!range->Done()) {
+      return false;
+    }
+    nanos += range->Nanos();
+  }
+  s.profile.Add(MergeStep::Postings, nanos);
+  return true;
 }
 
 std::span<const MergeUnit> MergePlan::Units() const noexcept {
@@ -663,6 +749,9 @@ const MergeProfile& MergePlan::Profile() const noexcept {
 
 bool RunSerially(MergePlan& plan) {
   if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
+  if (plan.PostingsPending() && !plan.RunPostings()) {
     return false;
   }
   for (size_t unit = 0; unit < plan.Units().size(); ++unit) {

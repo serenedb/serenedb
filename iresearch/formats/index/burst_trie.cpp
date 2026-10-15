@@ -29,6 +29,8 @@
 
 #include <array>
 #include <bit>
+#include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -38,6 +40,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -498,6 +501,9 @@ class FieldWriter::Impl {
 
   void write(const BasicTermReader& reader);
 
+  void write(field_id id, const FieldProperties& props,
+             std::span<const TermPart> parts, uint64_t doc_count);
+
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
 
  private:
@@ -507,7 +513,8 @@ class FieldWriter::Impl {
 
   void EndField(field_id id, FieldProperties props, bytes_view min_term,
                 bytes_view max_term, uint64_t total_doc_freq,
-                uint64_t total_term_freq, uint64_t doc_count);
+                uint64_t total_term_freq, uint64_t term_count,
+                std::optional<uint64_t> docs = std::nullopt);
 
   // prefix - prefix length (in last_term)
   // begin - index of the first entry in the block
@@ -799,6 +806,43 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
            term_count);
 }
 
+void FieldWriter::Impl::write(field_id id, const FieldProperties& props,
+                              std::span<const TermPart> parts,
+                              uint64_t doc_count) {
+  BeginField(props);
+  _pw.SetTermPayloadWriter(nullptr);
+  uint64_t term_count = 0;
+  uint64_t sum_dfreq = 0;
+  uint64_t sum_tfreq = 0;
+  bstring min_term;
+  bstring max_term;
+  for (const auto& part : parts) {
+    sum_dfreq += part.total_doc_freq;
+    sum_tfreq += part.total_term_freq;
+    if (part.term_count == 0) {
+      continue;
+    }
+    const auto bases = _pw.Append(part.doc, part.pos, part.pay);
+    TermPartReader terms{part.terms, props.index_features};
+    while (terms.Next()) {
+      auto meta = terms.Meta();
+      meta.doc_start += bases.doc;
+      meta.pos_start += bases.pos;
+      meta.pay_start += bases.pay;
+      const auto term = terms.Term();
+      if (term_count == 0) {
+        min_term.assign(term);
+      }
+      Push(term);
+      _stack.emplace_back(term, std::move(meta), _compaction);
+      ++term_count;
+    }
+    max_term.assign(terms.Term());
+  }
+  EndField(id, props, min_term, max_term, sum_dfreq, sum_tfreq, term_count,
+           doc_count);
+}
+
 void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
   SDB_ASSERT(_blocks_out);
 
@@ -811,8 +855,8 @@ void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
 void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
                                  bytes_view min_term, bytes_view max_term,
                                  uint64_t total_doc_freq,
-                                 uint64_t total_term_freq,
-                                 uint64_t term_count) {
+                                 uint64_t total_term_freq, uint64_t term_count,
+                                 std::optional<uint64_t> docs) {
   SDB_ASSERT(_blocks_out);
 
   if (!term_count) {
@@ -820,7 +864,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     return;
   }
 
-  const auto [has_score_bounds, doc_count] = _pw.EndField();
+  const auto field_stats = _pw.EndField();
+  const bool has_score_bounds = field_stats.has_score_bounds;
+  const uint64_t doc_count = docs.value_or(field_stats.docs_count);
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -2993,6 +3039,11 @@ void FieldWriter::SetIdxWriter(IdxWriter& idx) noexcept {
 void FieldWriter::prepare(const FlushState& state) { _impl->prepare(state); }
 
 void FieldWriter::write(const BasicTermReader& reader) { _impl->write(reader); }
+
+void FieldWriter::write(field_id id, const FieldProperties& props,
+                        std::span<const TermPart> parts, uint64_t doc_count) {
+  _impl->write(id, props, parts, doc_count);
+}
 
 void FieldWriter::end() { _impl->end(); }
 

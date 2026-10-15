@@ -366,6 +366,38 @@ TEST(ByteKeysTest, BytesOrderLikeTerms) {
   }
 }
 
+TEST(ByteKeysTest, EqualKeysStayInOnePartition) {
+  std::vector<std::vector<std::string>> inputs(4);
+  for (auto& keys : inputs) {
+    for (size_t n = 0; n != 3000; ++n) {
+      keys.emplace_back(Key("k", n / 7));
+    }
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+  }
+  duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> sources;
+  for (const auto& keys : inputs) {
+    sources.emplace_back(duckdb::make_shared_ptr<ByteKeys>(keys));
+  }
+  duckdb::PresortedMerge merge{std::move(sources)};
+  merge.Partition(16, true);
+  ASSERT_LT(1, merge.PartitionCount());
+  EXPECT_EQ(ExpectedOrder(inputs), MergedOrder(merge, inputs, 64));
+  for (duckdb::idx_t p = 1; p != merge.PartitionCount(); ++p) {
+    for (size_t i = 0; i != inputs.size(); ++i) {
+      const auto begin = merge.PartitionBegin(p, i);
+      if (begin != 0 && begin != merge.PartitionBegin(p + 1, i)) {
+        const auto& previous = inputs[i][begin - 1];
+        for (size_t j = 0; j != inputs.size(); ++j) {
+          const auto at = merge.PartitionBegin(p, j);
+          if (at != merge.PartitionBegin(p + 1, j)) {
+            EXPECT_LT(previous, inputs[j][at]);
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST(ByteKeysTest, UnsortedBytesAreReported) {
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> sources;
   sources.emplace_back(

@@ -45,6 +45,7 @@ struct Directory;
 class IndexFieldOptions;
 struct SegmentMeta;
 struct SortSpec;
+class TermRangeMerge;
 
 enum class MergeUnitKind : uint8_t {
   Norms,
@@ -91,6 +92,14 @@ class MergePlan {
   bool FinishOrder();
 
   bool RunOrder();
+
+  bool PostingsPending() const noexcept;
+
+  std::span<const std::unique_ptr<TermRangeMerge>> TermRanges() const noexcept;
+
+  bool RunPostings();
+
+  bool FinishPostings();
 
   std::span<const MergeUnit> Units() const noexcept;
 

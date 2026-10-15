@@ -37,6 +37,7 @@
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
 #include "iresearch/index/merge/merged_terms.hpp"
+#include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -165,12 +166,27 @@ TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
   return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
 
+const TermRangeMerge* RangeOf(
+  std::span<const std::unique_ptr<TermRangeMerge>> ranges, field_id id) {
+  for (const auto& range : ranges) {
+    if (range->Field() == id) {
+      return range.get();
+    }
+  }
+  return nullptr;
+}
+
 template<typename Postings>
 bool WriteFields(const irs::FlushState& flush_state,
                  CompoundFieldIterator<Postings>& field_itr,
                  const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
-                 IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra) {
+                 IdxWriter& idx, std::span<const BasicTermReader* const> extra,
+                 std::span<const std::unique_ptr<TermRangeMerge>> ranges) {
+  for (const auto& range : ranges) {
+    if (!range->Done()) {
+      return false;
+    }
+  }
   auto field_writer =
     std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
@@ -211,6 +227,11 @@ bool WriteFields(const irs::FlushState& flush_state,
       }
     }
 
+    if (const auto* range = RangeOf(ranges, fid)) {
+      field_writer->write(fid, props, range->Parts(), range->DocCount());
+      continue;
+    }
+
     field_itr.SetProperties(props);
     field_writer->write(field_itr);
   }
@@ -249,13 +270,15 @@ void PostingsMerger::Add(const SubReader& reader, const DocRemap& remap) {
   std::visit([&](auto& fields) { fields.Add(reader, remap); }, _impl->fields);
 }
 
-bool PostingsMerger::Write(const FlushState& flush_state,
-                           const MergedNormIdMap& merged_norm_ids,
-                           IResourceManager& rm, IdxWriter& idx,
-                           std::span<const BasicTermReader* const> extra) {
+bool PostingsMerger::Write(
+  const FlushState& flush_state, const MergedNormIdMap& merged_norm_ids,
+  IResourceManager& rm, IdxWriter& idx,
+  std::span<const BasicTermReader* const> extra,
+  std::span<const std::unique_ptr<TermRangeMerge>> ranges) {
   return std::visit(
     [&](auto& fields) {
-      return WriteFields(flush_state, fields, merged_norm_ids, rm, idx, extra);
+      return WriteFields(flush_state, fields, merged_norm_ids, rm, idx, extra,
+                         ranges);
     },
     _impl->fields);
 }

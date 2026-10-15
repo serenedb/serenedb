@@ -42,6 +42,7 @@
 #include <string>
 
 #include "pg/types/cast.h"
+#include "pg/types/function.h"
 #include "pg/types/logical.h"
 
 namespace sdb::pg {
@@ -353,8 +354,6 @@ duckdb::ScalarFunction Operator(std::string_view name, duckdb::LogicalType left,
   scalar.SetFallible();
   return scalar;
 }
-
-constexpr std::array<std::string_view, 2> kDivisionOperators = {"/", "//"};
 
 template<typename T>
 void RegisterFactorOperators(duckdb::ExtensionLoader& loader,

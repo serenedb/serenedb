@@ -415,59 +415,60 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 
 #### Geometric
 
-PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`, `circle`) and their operators/functions are not supported. SereneDB instead provides spatial data through a built-in `GEOMETRY` type and `ST_*` functions (`ST_Point`, `ST_Intersects`, `ST_Contains`, `ST_Distance`, ...). See [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
+An operator with a string literal on one side, as in `point '(1,2)' <-> '(3,4)'`, is an error when the operator takes several types on that side: cast the literal, as in `point '(1,2)' <-> point '(3,4)'`. For spatial data, SereneDB also has a `GEOMETRY` type and `ST_*` functions: see [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
+
 | Feature        | Support State | Details |
 |----------------|---------------|---------|
-| +              | No            |         |
-| -              | No            |         |
-| *              | No            |         |
-| /              | No            |         |
-| @-@            | No            |         |
-| @@             | No            |         |
-| #              | No            |         |
-| ##             | No            |         |
-| \<->           | No            |         |
-| @>             | No            |         |
-| \<@            | No            |         |
-| &&             | No            |         |
-| \<\<           | No            |         |
-| >>             | No            |         |
-| &\<            | No            |         |
-| &>             | No            |         |
-| \<\<\|         No | No            |         |
-| \|>>           | No            |         |
-| &\<\|          No | No            |         |
-| |&>            | No            |         |
-| \<^            | No            |         |
-| >^             | No            |         |
-| ?#             | No            |         |
-| ?-             | No            |         |
-| ?|             | No            |         |
-| ?-|            No | No            |         |
-| ?||            | No            |         |
-| ~=             | No            |         |
-| area           | No            |         |
-| center         | No            |         |
-| diagonal       | No            |         |
-| diameter       | No            |         |
-| height         | No            |         |
-| isclosed       | No            |         |
-| isopen         | No            |         |
-| length         | No            |         |
-| npoints        | No            |         |
-| pclose         | No            |         |
-| popen          | No            |         |
-| radius         | No            |         |
-| slope          | No            |         |
-| width          | No            |         |
-| box            | No            |         |
-| bounding_box   | No            |         |
-| circle         | No            |         |
-| line           | No            |         |
-| lseg           | No            |         |
-| path           | No            |         |
-| point          | No            |         |
-| polygon        | No            |         |
+| +              | Yes           |         |
+| -              | Yes           |         |
+| *              | Yes           |         |
+| /              | Yes           |         |
+| @-@            | Yes           |         |
+| @@             | Yes           |         |
+| #              | Yes           |         |
+| ##             | Yes           |         |
+| \<->           | Yes           |         |
+| @>             | Yes           |         |
+| \<@            | Yes           |         |
+| &&             | Yes           |         |
+| \<\<           | Yes           |         |
+| >>             | Yes           |         |
+| &\<            | Yes           |         |
+| &>             | Yes           |         |
+| \<\<\|         | Yes           |         |
+| \|>>           | Yes           |         |
+| &\<\|          | Yes           |         |
+| \|&>           | Yes           |         |
+| \<^            | Yes           |         |
+| >^             | Yes           |         |
+| ?#             | Yes           |         |
+| ?-             | Yes           |         |
+| ?\|            | Yes           |         |
+| ?-\|           | Yes           |         |
+| ?\|\|          | Yes           |         |
+| ~=             | Yes           |         |
+| area           | Yes           |         |
+| center         | Yes           |         |
+| diagonal       | Yes           |         |
+| diameter       | Yes           |         |
+| height         | Yes           |         |
+| isclosed       | Yes           |         |
+| isopen         | Yes           |         |
+| length         | Yes           |         |
+| npoints        | Yes           |         |
+| pclose         | Yes           |         |
+| popen          | Yes           |         |
+| radius         | Yes           |         |
+| slope          | Yes           |         |
+| width          | Yes           |         |
+| box            | Yes           |         |
+| bound_box      | Yes           |         |
+| circle         | Yes           |         |
+| line           | Yes           |         |
+| lseg           | Yes           |         |
+| path           | Yes           |         |
+| point          | Yes           |         |
+| polygon        | Yes           |         |
 
 #### Network
 | Feature            | Support State | Details |

@@ -48,8 +48,9 @@ bool TextToMultirange(duckdb::Vector& source, duckdb::Vector& result,
   std::vector<std::string_view> texts;
   std::vector<std::string_view> row_texts;
   bool converted = true;
-  for (auto text : source.Values<duckdb::string_t>()) {
-    const auto row = text.GetIndex();
+  const auto inputs = source.Values<duckdb::string_t>();
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto text = inputs[row];
     if (text.IsValid()) {
       auto error = SplitMultirange(AsView(text.GetValue()), row_texts);
       if (!error) {
@@ -96,7 +97,7 @@ bool TextToMultirange(duckdb::Vector& source, duckdb::Vector& result,
       duckdb::FlatVector::SetNull(result, row, true);
       continue;
     }
-    StoreMultirange(result, row, Normalize<Traits>(std::move(values)));
+    StoreValue(result, row, Normalize<Traits>(std::move(values)));
   }
   return converted;
 }
@@ -174,7 +175,7 @@ bool StorageToMultirange(duckdb::Vector& source, duckdb::Vector& result,
         }
       }
       if (!error) {
-        StoreMultirange(result, row, Normalize<Traits>(std::move(*ranges)));
+        StoreValue(result, row, Normalize<Traits>(std::move(*ranges)));
         continue;
       }
       InputError(std::move(*error), parameters);
@@ -199,7 +200,7 @@ bool RangeToMultirange(duckdb::Vector& source, duckdb::Vector& result,
   const RangeArg<T> ranges{source};
   for (duckdb::idx_t row = 0; row < count; ++row) {
     if (const auto range = ranges[row]) {
-      StoreMultirange(result, row, ToMultirange(*range));
+      StoreValue(result, row, ToMultirange(*range));
     } else {
       duckdb::FlatVector::SetNull(result, row, true);
     }
@@ -232,7 +233,7 @@ void ConstructMultirange(duckdb::DataChunk& args, duckdb::ExpressionState&,
       duckdb::FlatVector::SetNull(result, row, true);
       continue;
     }
-    StoreMultirange(result, row, Normalize<Traits>(std::move(ranges)));
+    StoreValue(result, row, Normalize<Traits>(std::move(ranges)));
   }
 }
 
@@ -293,8 +294,7 @@ struct RangeAgg {
       data.ReturnNull();
       return;
     }
-    StoreMultirange(data.result, data.result_idx,
-                    Normalize<Traits>(*state.ranges));
+    StoreValue(data.result, data.result_idx, Normalize<Traits>(*state.ranges));
   }
 
   template<typename>
@@ -350,7 +350,7 @@ struct RangeIntersectAgg {
       data.ReturnNull();
       return;
     }
-    StoreRange(data.result, data.result_idx, state.range);
+    StoreValue(data.result, data.result_idx, state.range);
   }
 };
 
@@ -397,7 +397,7 @@ struct MultirangeIntersectAgg {
       data.ReturnNull();
       return;
     }
-    StoreMultirange(data.result, data.result_idx, *state.ranges);
+    StoreValue(data.result, data.result_idx, *state.ranges);
   }
 
   template<typename>
@@ -439,13 +439,13 @@ duckdb::LogicalType MakeMultirangeType(const duckdb::LogicalType& range,
 
 template<typename Traits>
 void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
-                            RangeFunctions& functions,
+                            Functions& functions,
                             duckdb::AggregateFunctionSet& range_agg,
                             duckdb::AggregateFunctionSet& intersect_agg) {
   using T = typename Traits::Element;
   using R = RangeArg<T>;
   using M = MultirangeArg<T>;
-  using E = ElementArg<T>;
+  using E = ScalarArg<T>;
   const auto range = Traits::Type();
   const auto multirange = Traits::MultirangeType();
   const auto element = ElementType(range);
@@ -462,88 +462,86 @@ void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
     {},      multirange, ConstructMultirange<Traits>, nullptr, nullptr,
     nullptr, range};
   constructor.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  Add(functions.created, Traits::kMultirangeName,
-      Fallible(std::move(constructor)));
-  Add(functions.created, "multirange",
+  Add(functions, Traits::kMultirangeName, Fallible(std::move(constructor)));
+  Add(functions, "multirange",
       {{range}, multirange, Unary<R, &ToMultirange<T>>});
 
-  Add(functions.overloads, "lower",
+  Add(functions, "lower",
       {{multirange}, element, Unary<M, &OnSpan<T, &LowerValue<T>>>});
-  Add(functions.overloads, "upper",
+  Add(functions, "upper",
       {{multirange}, element, Unary<M, &OnSpan<T, &UpperValue<T>>>});
-  Add(functions.created, "isempty",
+  Add(functions, "isempty",
       {{multirange}, boolean, Unary<M, &OnSpan<T, &IsEmpty<T>>>});
-  Add(functions.created, "lower_inc",
+  Add(functions, "lower_inc",
       {{multirange}, boolean, Unary<M, &OnSpan<T, &LowerInclusive<T>>>});
-  Add(functions.created, "upper_inc",
+  Add(functions, "upper_inc",
       {{multirange}, boolean, Unary<M, &OnSpan<T, &UpperInclusive<T>>>});
-  Add(functions.created, "lower_inf",
+  Add(functions, "lower_inf",
       {{multirange}, boolean, Unary<M, &OnSpan<T, &LowerInfinite<T>>>});
-  Add(functions.created, "upper_inf",
+  Add(functions, "upper_inf",
       {{multirange}, boolean, Unary<M, &OnSpan<T, &UpperInfinite<T>>>});
-  Add(functions.created, "range_merge",
-      {{multirange}, range, Unary<M, &Span<T>>});
+  Add(functions, "range_merge", {{multirange}, range, Unary<M, &Span<T>>});
 
   Add(
-    functions.overloads, "@>",
+    functions, "@>",
     {{multirange, multirange}, boolean, Binary<M, M, &MultirangeContains<T>>});
   Add(
-    functions.overloads, "@>",
+    functions, "@>",
     {{multirange, range}, boolean, Binary<M, R, &MultirangeContainsRange<T>>});
-  Add(functions.overloads, "@>",
+  Add(functions, "@>",
       {{multirange, element},
        boolean,
        Binary<M, E, &MultirangeContainsElement<T>>});
   Add(
-    functions.overloads, "@>",
+    functions, "@>",
     {{range, multirange}, boolean, Binary<R, M, &RangeContainsMultirange<T>>});
-  Add(functions.overloads, "<@",
+  Add(functions, "<@",
       {{multirange, multirange},
        boolean,
        Binary<M, M, &MultirangeContainedBy<T>>});
-  Add(functions.overloads, "<@",
+  Add(functions, "<@",
       {{range, multirange},
        boolean,
        Binary<R, M, &RangeContainedByMultirange<T>>});
-  Add(functions.overloads, "<@",
+  Add(functions, "<@",
       {{element, multirange},
        boolean,
        Binary<E, M, &ElementContainedByMultirange<T>>});
-  Add(functions.overloads, "<@",
+  Add(functions, "<@",
       {{multirange, range},
        boolean,
        Binary<M, R, &MultirangeContainedByRange<T>>});
   Add(
-    functions.overloads, "&&",
+    functions, "&&",
     {{multirange, multirange}, boolean, Binary<M, M, &MultirangesOverlap<T>>});
   Add(
-    functions.overloads, "&&",
+    functions, "&&",
     {{multirange, range}, boolean, Binary<M, R, &MultirangeOverlapsRange<T>>});
   Add(
-    functions.overloads, "&&",
+    functions, "&&",
     {{range, multirange}, boolean, Binary<R, M, &RangeOverlapsMultirange<T>>});
-  const auto spans = [&]<auto Apply>(auto& sets, std::string_view name) {
-    Add(sets, name,
+  const auto spans = [&]<auto Apply>(std::string_view name) {
+    Add(functions, name,
         {{multirange, multirange}, boolean, Binary<M, M, &OnSpans<T, Apply>>});
-    Add(sets, name,
+    Add(functions, name,
         {{multirange, range}, boolean, Binary<M, R, &OnSpanLeft<T, Apply>>});
-    Add(sets, name,
+    Add(functions, name,
         {{range, multirange}, boolean, Binary<R, M, &OnSpanRight<T, Apply>>});
   };
-  spans.template operator()<&Before<T>>(functions.overloads, "<<");
-  spans.template operator()<&After<T>>(functions.overloads, ">>");
-  spans.template operator()<&OverLeft<T>>(functions.created, "&<");
-  spans.template operator()<&OverRight<T>>(functions.created, "&>");
-  spans.template operator()<&Adjacent<T>>(functions.created, "-|-");
-  Add(functions.overloads, "+",
+  spans.template operator()<&Before<T>>("<<");
+  spans.template operator()<&After<T>>(">>");
+  spans.template operator()<&OverLeft<T>>("&<");
+  spans.template operator()<&OverRight<T>>("&>");
+  spans.template operator()<&Adjacent<T>>("-|-");
+  Add(functions, "+",
       {{multirange, multirange},
        multirange,
        Binary<M, M, &MultirangeUnion<Traits>>});
-  Add(functions.overloads, "*",
+  Add(functions, "*",
       {{multirange, multirange},
        multirange,
        Binary<M, M, &MultirangeIntersect<Traits>>});
-  Add(functions.overloads, "-",
+  Add(functions, "-",
       {{multirange, multirange},
        multirange,
        Binary<M, M, &MultirangeMinus<Traits>>});
@@ -557,8 +555,7 @@ void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
 
 }  // namespace
 
-void RegisterMultiranges(duckdb::CastFunctionSet& casts,
-                         RangeFunctions& functions) {
+void RegisterMultiranges(duckdb::CastFunctionSet& casts, Functions& functions) {
   duckdb::AggregateFunctionSet range_agg{"range_agg"};
   duckdb::AggregateFunctionSet intersect_agg{"range_intersect_agg"};
   ForEachRangeKind([&]<typename Traits>(std::type_identity<Traits>) {
@@ -738,7 +735,7 @@ void FinishMultirange(duckdb::Vector& multirange, duckdb::idx_t row) {
       }
       values = ranges::Normalize<Traits>(std::move(values));
       for (duckdb::idx_t i = 0; i < values.size(); ++i) {
-        ranges::StoreRange(child, entry.offset + i, values[i]);
+        ranges::StoreValue(child, entry.offset + i, values[i]);
       }
       entry.length = values.size();
     });

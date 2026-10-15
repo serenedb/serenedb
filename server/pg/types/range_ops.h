@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <absl/container/btree_map.h>
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
@@ -49,6 +48,7 @@
 
 #include "connector/common.h"
 #include "pg/types/cast.h"
+#include "pg/types/function.h"
 #include "pg/types/range.h"
 
 namespace sdb::pg::ranges {
@@ -754,7 +754,7 @@ Range<T> ReadRange(const duckdb::RecursiveUnifiedVectorFormat& range,
 }
 
 template<typename T>
-void StoreRange(duckdb::Vector& vector, duckdb::idx_t row,
+void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
                 const Range<T>& range) {
   auto& children = duckdb::StructVector::GetEntries(vector);
   const auto store = [&]<typename V>(duckdb::idx_t child, V value) {
@@ -772,13 +772,13 @@ void StoreRange(duckdb::Vector& vector, duckdb::idx_t row,
 }
 
 template<typename T>
-void StoreMultirange(duckdb::Vector& vector, duckdb::idx_t row,
-                     const Multirange<T>& ranges) {
+void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
+                const Multirange<T>& ranges) {
   const auto offset = duckdb::ListVector::GetListSize(vector);
   duckdb::ListVector::Reserve(vector, offset + ranges.size());
   auto& child = duckdb::ListVector::GetChildMutable(vector);
   for (duckdb::idx_t i = 0; i < ranges.size(); ++i) {
-    StoreRange(child, offset + i, ranges[i]);
+    StoreValue(child, offset + i, ranges[i]);
   }
   duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(vector)[row] = {
     offset, ranges.size()};
@@ -833,84 +833,6 @@ class MultirangeArg {
   duckdb::RecursiveUnifiedVectorFormat _format;
 };
 
-template<typename T>
-class ElementArg {
- public:
-  explicit ElementArg(const duckdb::Vector& vector) {
-    vector.ToUnifiedFormat(_format);
-  }
-
-  std::optional<T> operator[](duckdb::idx_t row) const {
-    const auto index = _format.sel->get_index(row);
-    if (!_format.validity.RowIsValid(index)) {
-      return std::nullopt;
-    }
-    return duckdb::UnifiedVectorFormat::GetData<T>(_format)[index];
-  }
-
- private:
-  duckdb::UnifiedVectorFormat _format;
-};
-
-inline void Store(duckdb::Vector& result, duckdb::idx_t row, bool value) {
-  duckdb::FlatVector::GetDataMutable<bool>(result)[row] = value;
-}
-
-template<typename T>
-void Store(duckdb::Vector& result, duckdb::idx_t row,
-           const std::optional<T>& value) {
-  if (value) {
-    duckdb::FlatVector::GetDataMutable<T>(result)[row] = *value;
-  } else {
-    duckdb::FlatVector::SetNull(result, row, true);
-  }
-}
-
-template<typename T>
-void Store(duckdb::Vector& result, duckdb::idx_t row, const Range<T>& range) {
-  StoreRange(result, row, range);
-}
-
-template<typename T>
-void Store(duckdb::Vector& result, duckdb::idx_t row,
-           const Multirange<T>& ranges) {
-  StoreMultirange(result, row, ranges);
-}
-
-template<typename Arg, auto Apply>
-void Unary(duckdb::DataChunk& args, duckdb::ExpressionState&,
-           duckdb::Vector& result) {
-  const Arg arg{args.data[0]};
-  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
-    if (const auto value = arg[row]) {
-      Store(result, row, Apply(*value));
-    } else {
-      duckdb::FlatVector::SetNull(result, row, true);
-    }
-  }
-}
-
-template<typename Left, typename Right, auto Apply>
-void Binary(duckdb::DataChunk& args, duckdb::ExpressionState&,
-            duckdb::Vector& result) {
-  const Left left{args.data[0]};
-  const Right right{args.data[1]};
-  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
-    const auto l = left[row];
-    const auto r = right[row];
-    if (l && r) {
-      Store(result, row, Apply(*l, *r));
-    } else {
-      duckdb::FlatVector::SetNull(result, row, true);
-    }
-  }
-}
-
-inline duckdb::ScalarFunction Fallible(duckdb::ScalarFunction function) {
-  function.SetFallible();
-  return function;
-}
-
 struct RangeCastData final : duckdb::BoundCastData {
   explicit RangeCastData(duckdb::BoundCastInfo element)
     : element{std::move(element)} {}
@@ -955,8 +877,9 @@ bool TextToRange(duckdb::Vector& source, duckdb::Vector& result,
       }
     };
     ParsedRange range;
-    for (auto text : source.Values<duckdb::string_t>()) {
-      const auto row = text.GetIndex();
+    const auto texts = source.Values<duckdb::string_t>();
+    for (duckdb::idx_t row = 0; row < count; ++row) {
+      const auto text = texts[row];
       if (text.IsValid()) {
         auto error = ParseRange(connector::AsView(text.GetValue()), range);
         if (!error) {
@@ -978,8 +901,8 @@ bool TextToRange(duckdb::Vector& source, duckdb::Vector& result,
   duckdb::Vector upper_values{element, count};
   converted &= CastElements(lower_text, lower_values, count, parameters);
   converted &= CastElements(upper_text, upper_values, count, parameters);
-  const ElementArg<T> lowers{lower_values};
-  const ElementArg<T> uppers{upper_values};
+  const ScalarArg<T> lowers{lower_values};
+  const ScalarArg<T> uppers{upper_values};
   for (duckdb::idx_t row = 0; row < count; ++row) {
     if (duckdb::FlatVector::IsNull(result, row)) {
       continue;
@@ -1002,7 +925,7 @@ bool TextToRange(duckdb::Vector& source, duckdb::Vector& result,
       duckdb::FlatVector::SetNull(result, row, true);
       continue;
     }
-    StoreRange(result, row, range);
+    StoreValue(result, row, range);
   }
   return converted;
 }
@@ -1010,20 +933,6 @@ bool TextToRange(duckdb::Vector& source, duckdb::Vector& result,
 bool RangeToText(duckdb::Vector& source, duckdb::Vector& result,
                  duckdb::idx_t count, duckdb::CastParameters& parameters);
 
-struct RangeFunctions {
-  absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> overloads;
-  absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> created;
-  std::vector<duckdb::AggregateFunctionSet> aggregates;
-};
-
-inline void Add(
-  absl::btree_map<std::string_view, duckdb::ScalarFunctionSet>& sets,
-  std::string_view name, duckdb::ScalarFunction function) {
-  sets.try_emplace(name, duckdb::Identifier{name})
-    .first->second.AddFunction(std::move(function));
-}
-
-void RegisterMultiranges(duckdb::CastFunctionSet& casts,
-                         RangeFunctions& functions);
+void RegisterMultiranges(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg::ranges

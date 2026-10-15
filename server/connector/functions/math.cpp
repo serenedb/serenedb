@@ -58,9 +58,13 @@
 
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/random.h"
+#include "pg/types/float.h"
 
 namespace sdb::connector {
 namespace {
+
+using pg::ThrowFloatOverflow;
+using pg::ThrowFloatUnderflow;
 
 constexpr uint8_t kNumericWidth = 18;
 constexpr uint8_t kNumericScale = 3;
@@ -501,16 +505,6 @@ void JustifyFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
     args.data[0], result, args.size(), Justify);
-}
-
-[[noreturn]] void ThrowFloatOverflow() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                  ERR_MSG("value out of range: overflow"));
-}
-
-[[noreturn]] void ThrowFloatUnderflow() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                  ERR_MSG("value out of range: underflow"));
 }
 
 double PgExp(double x) {

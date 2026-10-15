@@ -179,6 +179,14 @@ a	b	c	d	e	f	g
 {"[1,2)",empty}	("[1,2)")	(empty)	[1,5)	int4range	{"[\\"2020-01-01 00:00:00\\",\\"2020-01-02 00:00:00\\")"}	("(,infinity)")
 
 
+query
+SELECT '{"[1,3)","(5,7]",NULL,empty}'::int4range[] AS a, '{"[2020-01-01,2020-01-05)"}'::daterange[] AS b,
+       ('{"[1,3)","(5,7]"}'::int4range[])[2] AS c, '{"[1,2]","(,)"}'::int8range[] AS d;
+----
+a	b	c	d
+{"[1,3)","[6,8)",NULL,empty}	{"[2020-01-01,2020-01-05)"}	[6,8)	{"[1,3)","(,)"}
+
+
 statement ok
 CREATE TABLE range_t (id INT, r int4range, d daterange);
 

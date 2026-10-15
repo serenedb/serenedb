@@ -57,6 +57,7 @@
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
 #include "pg/types/char.h"
+#include "pg/types/geometric.h"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
@@ -1957,6 +1958,38 @@ struct MultirangeText {
   }
 };
 
+template<Geometric kKind>
+bool DeserializeTextGeometric(DeserializeContext&, std::string_view data,
+                              duckdb::Vector& vec, duckdb::idx_t row) {
+  return !ParseGeometric(kKind, data, vec, row);
+}
+
+template<Geometric kKind>
+bool DeserializeBinaryGeometric(DeserializeContext&, std::string_view data,
+                                duckdb::Vector& vec, duckdb::idx_t row) {
+  return RecvGeometric(kKind, data, vec, row);
+}
+
+template<Geometric kKind>
+struct GeometricBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryGeometric<kKind>>(
+      ctx, data, sink);
+  }
+};
+
+template<Geometric kKind>
+struct GeometricText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextGeometric<kKind>>(
+      ctx, data, sink);
+  }
+};
+
 template<bool kCidr>
 struct InetBin {
   template<typename Sink>
@@ -2236,6 +2269,12 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       if (IsRange(type)) {
         return SelectDecoder<RangeBin, RangeText, Sink>(binary);
+      }
+      if (const auto geometric = GeometricOf(type)) {
+        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+          return SelectDecoder<GeometricBin<kKind>, GeometricText<kKind>, Sink>(
+            binary);
+        });
       }
       return SelectDecoder<StructBin, StructText, Sink>(binary);
     case MAP:

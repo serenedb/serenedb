@@ -81,14 +81,16 @@ target_sources(
         types/cast.cpp
         types/char.cpp
         types/float.cpp
+        types/function.cpp
+        types/geometric.cpp
         types/inet.cpp
         types/mac.cpp
         types/mapping.cpp
         types/money.cpp
+        types/multirange.cpp
         types/name.cpp
         types/oid.cpp
         types/pg_lsn.cpp
-        types/multirange.cpp
         types/range.cpp
         types/reg.cpp
         types/register.cpp

@@ -30,6 +30,8 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 
 namespace sdb::pg {
@@ -148,6 +150,16 @@ size_t WriteFloatRounded(float value, int8_t extra_float_digits, char* buffer) {
 size_t WriteFloatRounded(double value, int8_t extra_float_digits,
                          char* buffer) {
   return WriteRounded<double, DBL_DIG>(value, extra_float_digits, buffer);
+}
+
+void ThrowFloatOverflow() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("value out of range: overflow"));
+}
+
+void ThrowFloatUnderflow() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("value out of range: underflow"));
 }
 
 void RegisterFloat(duckdb::CastFunctionSet& casts) {

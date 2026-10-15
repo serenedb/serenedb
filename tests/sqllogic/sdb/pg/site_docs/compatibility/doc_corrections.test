@@ -68,11 +68,10 @@ SELECT lastval();
 statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
 
-# --- Geometric: PostgreSQL geometric types unsupported (spatial is a
-#     separate ST_* extension, not the PG geometric types) ---
+# --- Geometric types ---
 
-statement error
+statement ok
 SELECT NULL::point;
 
-statement error
+statement ok
 SELECT NULL::box;

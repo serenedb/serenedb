@@ -33,6 +33,9 @@ size_t WriteFloatShortest(double value, char* buffer);
 size_t WriteFloatRounded(float value, int8_t extra_float_digits, char* buffer);
 size_t WriteFloatRounded(double value, int8_t extra_float_digits, char* buffer);
 
+[[noreturn]] void ThrowFloatOverflow();
+[[noreturn]] void ThrowFloatUnderflow();
+
 void RegisterFloat(duckdb::CastFunctionSet& casts);
 
 }  // namespace sdb::pg

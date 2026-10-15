@@ -28,7 +28,6 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 
 #include "connector/common.h"
 #include "pg/types/cast.h"
@@ -95,9 +94,9 @@ template<typename Traits, bool kFlags>
 void ConstructRange(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
   using T = typename Traits::Element;
-  const ElementArg<T> lowers{args.data[0]};
-  const ElementArg<T> uppers{args.data[1]};
-  std::optional<ElementArg<duckdb::string_t>> texts;
+  const ScalarArg<T> lowers{args.data[0]};
+  const ScalarArg<T> uppers{args.data[1]};
+  std::optional<ScalarArg<duckdb::string_t>> texts;
   if constexpr (kFlags) {
     texts.emplace(args.data[2]);
   }
@@ -116,7 +115,7 @@ void ConstructRange(duckdb::DataChunk& args, duckdb::ExpressionState&,
     const auto upper = uppers[row];
     flags |=
       (lower ? 0 : kRangeLowerInfinite) | (upper ? 0 : kRangeUpperInfinite);
-    StoreRange(result, row,
+    StoreValue(result, row,
                Make<Traits>(FromFlags<T>(flags, lower.value_or(T{}),
                                          upper.value_or(T{}))));
   }
@@ -136,7 +135,7 @@ bool Finish(duckdb::Vector& vector, duckdb::idx_t row, uint8_t flags) {
   if (MakeRange<Traits>(range)) {
     return false;
   }
-  StoreRange(vector, row, range);
+  StoreValue(vector, row, range);
   return true;
 }
 
@@ -150,7 +149,7 @@ bool StorageToRange(duckdb::Vector& source, duckdb::Vector& result,
     if (range) {
       auto error = MakeRange<Traits>(*range);
       if (!error) {
-        StoreRange(result, row, *range);
+        StoreValue(result, row, *range);
         continue;
       }
       InputError(std::move(*error), parameters);
@@ -162,8 +161,7 @@ bool StorageToRange(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 template<typename Traits>
-void RegisterRangeType(duckdb::CastFunctionSet& casts,
-                       RangeFunctions& functions) {
+void RegisterRangeType(duckdb::CastFunctionSet& casts, Functions& functions) {
   using T = typename Traits::Element;
   using R = RangeArg<T>;
   const auto range = Traits::Type();
@@ -182,53 +180,40 @@ void RegisterRangeType(duckdb::CastFunctionSet& casts,
            {element, element, varchar}, range, ConstructRange<Traits, true>},
        }) {
     constructor.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    Add(functions.created, Traits::kName, Fallible(std::move(constructor)));
+    Add(functions, Traits::kName, Fallible(std::move(constructor)));
   }
 
-  Add(functions.overloads, "lower",
-      {{range}, element, Unary<R, &LowerValue<T>>});
-  Add(functions.overloads, "upper",
-      {{range}, element, Unary<R, &UpperValue<T>>});
-  Add(functions.created, "isempty", {{range}, boolean, Unary<R, &IsEmpty<T>>});
-  Add(functions.created, "lower_inc",
-      {{range}, boolean, Unary<R, &LowerInclusive<T>>});
-  Add(functions.created, "upper_inc",
-      {{range}, boolean, Unary<R, &UpperInclusive<T>>});
-  Add(functions.created, "lower_inf",
-      {{range}, boolean, Unary<R, &LowerInfinite<T>>});
-  Add(functions.created, "upper_inf",
-      {{range}, boolean, Unary<R, &UpperInfinite<T>>});
+  Add(functions, "lower", {{range}, element, Unary<R, &LowerValue<T>>});
+  Add(functions, "upper", {{range}, element, Unary<R, &UpperValue<T>>});
+  Add(functions, "isempty", {{range}, boolean, Unary<R, &IsEmpty<T>>});
+  Add(functions, "lower_inc", {{range}, boolean, Unary<R, &LowerInclusive<T>>});
+  Add(functions, "upper_inc", {{range}, boolean, Unary<R, &UpperInclusive<T>>});
+  Add(functions, "lower_inf", {{range}, boolean, Unary<R, &LowerInfinite<T>>});
+  Add(functions, "upper_inf", {{range}, boolean, Unary<R, &UpperInfinite<T>>});
 
-  Add(functions.overloads, "@>",
-      {{range, range}, boolean, Binary<R, R, &Contains<T>>});
+  Add(functions, "@>", {{range, range}, boolean, Binary<R, R, &Contains<T>>});
   Add(
-    functions.overloads, "@>",
-    {{range, element}, boolean, Binary<R, ElementArg<T>, &ContainsElement<T>>});
-  Add(functions.overloads, "<@",
+    functions, "@>",
+    {{range, element}, boolean, Binary<R, ScalarArg<T>, &ContainsElement<T>>});
+  Add(functions, "<@",
       {{range, range}, boolean, Binary<R, R, &ContainedBy<T>>});
-  Add(functions.overloads, "<@",
+  Add(functions, "<@",
       {{element, range},
        boolean,
-       Binary<ElementArg<T>, R, &ElementContainedBy<T>>});
-  Add(functions.overloads, "&&",
-      {{range, range}, boolean, Binary<R, R, &Overlaps<T>>});
-  Add(functions.overloads, "<<",
-      {{range, range}, boolean, Binary<R, R, &Before<T>>});
-  Add(functions.overloads, ">>",
-      {{range, range}, boolean, Binary<R, R, &After<T>>});
-  Add(functions.created, "&<",
-      {{range, range}, boolean, Binary<R, R, &OverLeft<T>>});
-  Add(functions.created, "&>",
-      {{range, range}, boolean, Binary<R, R, &OverRight<T>>});
-  Add(functions.created, "-|-",
-      {{range, range}, boolean, Binary<R, R, &Adjacent<T>>});
-  Add(functions.overloads, "+",
+       Binary<ScalarArg<T>, R, &ElementContainedBy<T>>});
+  Add(functions, "&&", {{range, range}, boolean, Binary<R, R, &Overlaps<T>>});
+  Add(functions, "<<", {{range, range}, boolean, Binary<R, R, &Before<T>>});
+  Add(functions, ">>", {{range, range}, boolean, Binary<R, R, &After<T>>});
+  Add(functions, "&<", {{range, range}, boolean, Binary<R, R, &OverLeft<T>>});
+  Add(functions, "&>", {{range, range}, boolean, Binary<R, R, &OverRight<T>>});
+  Add(functions, "-|-", {{range, range}, boolean, Binary<R, R, &Adjacent<T>>});
+  Add(functions, "+",
       Fallible({{range, range}, range, Binary<R, R, &Union<Traits, true>>}));
-  Add(functions.overloads, "*",
+  Add(functions, "*",
       {{range, range}, range, Binary<R, R, &Intersect<Traits>>});
-  Add(functions.overloads, "-",
+  Add(functions, "-",
       Fallible({{range, range}, range, Binary<R, R, &Minus<Traits>>}));
-  Add(functions.created, "range_merge",
+  Add(functions, "range_merge",
       {{range, range}, range, Binary<R, R, &Union<Traits, false>>});
 }
 
@@ -479,7 +464,7 @@ bool FinishRange(duckdb::Vector& range, duckdb::idx_t row, uint8_t flags) {
 
 void RegisterRange(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
-  ranges::RangeFunctions functions;
+  Functions functions;
   ranges::ForEachRangeKind([&]<typename Traits>(std::type_identity<Traits>) {
     ranges::RegisterRangeType<Traits>(casts, functions);
   });
@@ -488,16 +473,7 @@ void RegisterRange(duckdb::DatabaseInstance& db) {
     RefuseOtherCasts(casts, Traits::Type());
     RefuseOtherCasts(casts, Traits::MultirangeType());
   });
-  duckdb::ExtensionLoader loader{db, "serenedb"};
-  for (auto& [_, set] : functions.overloads) {
-    loader.AddFunctionOverload(std::move(set));
-  }
-  for (auto& [_, set] : functions.created) {
-    loader.RegisterFunction(std::move(set));
-  }
-  for (auto& set : functions.aggregates) {
-    loader.RegisterFunction(std::move(set));
-  }
+  RegisterFunctions(db, std::move(functions));
 }
 
 }  // namespace sdb::pg

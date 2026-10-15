@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` keeps DuckDB's defaults for some options, such as `integer_division` (`false`), `preserve_identifier_case` (`true`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` keeps DuckDB's defaults for some options, such as `integer_division` (`false`), `question_mark_operators` (`false`), `preserve_identifier_case` (`true`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md).
 They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
@@ -242,6 +242,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `lock_configuration`                          | Whether or not configurations can be altered                                                                                                                                                                   | `BOOLEAN`   | `false`                                             |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `0` |
 | `pg_idle_in_transaction_timeout_millis` | Postgres idle in transaction timeout in milliseconds to set on scan connections. | `UINTEGER` |  |
+| `question_mark_operators` | Whether `?#`, `?-`, `?\|`, `?-\|` and `?\|\|` are operators rather than a `?` parameter followed by an operator. | `BOOLEAN` | `true` |
 | `regex_match_operator_semantics` | Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` |  |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `UTF8` |

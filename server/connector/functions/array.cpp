@@ -216,7 +216,6 @@ void CardinalityFunction(duckdb::DataChunk& args,
   }
 }
 
-constexpr size_t kMaxArrayDimensions = 6;
 constexpr int64_t kMaxArraySize = 134217727;
 
 size_t BoundDimensionCount(duckdb::BindScalarFunctionInput& input) {

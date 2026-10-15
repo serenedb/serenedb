@@ -26,6 +26,7 @@
 #include "pg/types/bytea.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
+#include "pg/types/geometric.h"
 #include "pg/types/inet.h"
 #include "pg/types/mac.h"
 #include "pg/types/money.h"
@@ -57,6 +58,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterMoney(db);
   RegisterXml(db);
   RegisterRange(db);
+  RegisterGeometric(db);
 }
 
 }  // namespace sdb::pg

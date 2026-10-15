@@ -34,6 +34,7 @@
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/utils/lookup.h"
+#include "pg/types/geometric.h"
 #include "pg/types/range.h"
 
 namespace sdb::pg {
@@ -61,10 +62,17 @@ constexpr PgTypeMapping kMappings[] = {
   {kJson, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
   {kXml, &XML, true},
   {kPgNodeTree, &PG_NODE_TREE, true},
+  {kPoint, &POINT, true},
+  {kLseg, &LSEG, true},
+  {kPath, &PATH, true},
+  {kBox, &BOX, true},
+  {kPolygon, &POLYGON, true},
+  {kLine, &LINE, true},
   {kCidr, &CIDR, true},
   {kFloat4, []() -> duckdb::LogicalType { return duckdb::LogicalType::FLOAT; }, false},
   {kFloat8, []() -> duckdb::LogicalType { return duckdb::LogicalType::DOUBLE; }, false},
   {kUnknown, []() -> duckdb::LogicalType { return duckdb::LogicalType::UNKNOWN; }, false},
+  {kCircle, &CIRCLE, true},
   {kMoney, &MONEY, true},
   {kInet, &INET, false},
   {kAclitem, &ACLITEM, true},
@@ -390,9 +398,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
         return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
                 -1};
       }
-      if (const auto* row = FindAliasedType(type, [](const BuiltinType& row) {
-            return row.relid != 0 || row.type == 'r';
-          })) {
+      if (const auto* row = FindAliasedType(
+            type, [](const BuiltinType& row) { return row.type != 'p'; })) {
         return make(*row);
       }
       return make(kRecord);

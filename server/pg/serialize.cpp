@@ -69,6 +69,7 @@
 #include "pg/catalog/utils/session.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
+#include "pg/types/geometric.h"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
@@ -1704,6 +1705,37 @@ struct MultirangeBinCore {
   }
 };
 
+template<Geometric kKind, WrapContext InContainer>
+struct GeometricTextCore {
+  static constexpr const char* kArrayDelim =
+    kKind == Geometric::Box ? ";" : ",";
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    const auto write = [&] {
+      WriteGeometric(
+        kKind, vdata, row, context.extra_float_digits,
+        [&](std::string_view text) { context.writer->Write(text); });
+    };
+    if constexpr (kKind == Geometric::Box &&
+                  InContainer == WrapContext::Array) {
+      write();
+    } else {
+      WithWrapIfNested<InContainer>(context, write);
+    }
+  }
+};
+
+template<Geometric kKind>
+struct GeometricBinCore {
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    SendGeometric(kKind, vdata, row,
+                  [&](size_t size) { return context.writer->Alloc(size); });
+  }
+};
+
 template<bool kCidr>
 struct InetTextCore {
   static constexpr uint32_t kMaxBytes = 64;
@@ -2632,6 +2664,13 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                    RangeBinCore, kDynamicOid>(format, context,
                                                               kind);
       }
+      if (const auto geometric = GeometricOf(type)) {
+        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+          return MakeArraySerializer<
+            GeometricTextCore<kKind, WrapContext::Array>,
+            GeometricBinCore<kKind>, kDynamicOid>(format, context, kind);
+        });
+      }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
       return MakeArraySerializer<RecordTextCore<WrapContext::Array>,
@@ -2934,6 +2973,14 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         return SelectFieldSerializer<RangeTextCore<WrapContext::None>,
                                      RangeTextCore<WrapContext::Record>,
                                      RangeBinCore>(format, context);
+      }
+      if (const auto geometric = GeometricOf(type)) {
+        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+          return SelectFieldSerializer<
+            GeometricTextCore<kKind, WrapContext::None>,
+            GeometricTextCore<kKind, WrapContext::Record>,
+            GeometricBinCore<kKind>>(format, context);
+        });
       }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,
                                    RecordTextCore<WrapContext::Record>,

@@ -353,7 +353,7 @@ statement ok
 SELECT NULL::boolean;
 
 # types: box
-statement error
+statement ok
 SELECT NULL::box;
 
 # types: bytea
@@ -391,7 +391,7 @@ statement ok
 SELECT NULL::cidr;
 
 # types: circle
-statement error
+statement ok
 SELECT NULL::circle;
 
 # types: date
@@ -423,11 +423,11 @@ statement error
 SELECT NULL::jsonb;
 
 # types: line
-statement error
+statement ok
 SELECT NULL::line;
 
 # types: lseg
-statement error
+statement ok
 SELECT NULL::lseg;
 
 # types: macaddr
@@ -447,7 +447,7 @@ statement ok
 SELECT NULL::numeric(10,2);
 
 # types: path
-statement error
+statement ok
 SELECT NULL::path;
 
 # types: pg_lsn
@@ -592,11 +592,11 @@ statement error
 SELECT NULL::pg_snapshot;
 
 # types: point
-statement error
+statement ok
 SELECT NULL::point;
 
 # types: polygon
-statement error
+statement ok
 SELECT NULL::polygon;
 
 # types: real
@@ -1663,199 +1663,208 @@ statement error
 SELECT * FROM xmltable('/a' PASSING '<a>x</a>'::xml COLUMNS v text PATH '.');
 
 # op_geo: +
-statement error
+statement ok
 SELECT point '(1,2)' + point '(3,4)';
 
 # op_geo: -
-statement error
+statement ok
 SELECT point '(1,2)' - point '(3,4)';
 
 # op_geo: *
-statement error
+statement ok
 SELECT point '(1,2)' * point '(3,4)';
 
 # op_geo: /
-statement error
+statement ok
 SELECT point '(1,2)' / point '(3,4)';
 
 # op_geo: @-@
-statement error
+statement ok
 SELECT @-@ lseg '((0,0),(1,0))';
 
 # op_geo: @@
-statement error
+statement ok
 SELECT @@ circle '((0,0),1)';
 
 # op_geo: #
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' # box '((1,1),(3,3))';
 
 # op_geo: ##
-statement error
+statement ok
 SELECT point '(0,0)' ## lseg '((1,1),(2,2))';
 
 # op_geo: \<->
-statement error
+statement ok
 SELECT point '(0,0)' <-> point '(3,4)';
 
 # op_geo: @>
-statement error
+statement ok
 SELECT box '((0,0),(3,3))' @> point '(1,1)';
 
 # op_geo: \<@
-statement error
+statement ok
 SELECT point '(1,1)' <@ box '((0,0),(3,3))';
 
 # op_geo: &&
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' && box '((1,1),(3,3))';
 
 # op_geo: \<\<
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' << box '((2,2),(3,3))';
 
 # op_geo: >>
-statement error
+statement ok
 SELECT box '((2,2),(3,3))' >> box '((0,0),(1,1))';
 
 # op_geo: &\<
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' &< box '((1,1),(3,3))';
 
 # op_geo: &>
-statement error
+statement ok
 SELECT box '((1,1),(3,3))' &> box '((0,0),(2,2))';
 
 # op_geo: \<\<\|
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' <<| box '((0,2),(1,3))';
 
 # op_geo: \|>>
-statement error
+statement ok
 SELECT box '((0,2),(1,3))' |>> box '((0,0),(1,1))';
 
 # op_geo: &\<\|
-statement error
+statement ok
 SELECT box '((0,0),(1,2))' &<| box '((0,1),(1,3))';
 
-# op_geo: |&>
-statement error
+# op_geo: \|&>
+statement ok
 SELECT box '((0,1),(1,3))' |&> box '((0,0),(1,2))';
 
 # op_geo: \<^
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' <^ box '((0,2),(1,3))';
 
 # op_geo: >^
-statement error
+statement ok
 SELECT box '((0,2),(1,3))' >^ box '((0,0),(1,1))';
 
 # op_geo: ?#
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' ?# box '((1,1),(3,3))';
 
 # op_geo: ?-
 statement error
 SELECT lseg '((0,0),(1,0))' ?- lseg '((0,2),(1,2))';
 
-# op_geo: ?|
+statement ok
+SELECT ?- lseg '((0,0),(1,0))', point '(0,0)' ?- point '(1,0)';
+
+# op_geo: ?\|
 statement error
 SELECT lseg '((0,0),(0,1))' ?| lseg '((2,0),(2,1))';
 
-# op_geo: ?-|
+statement ok
+SELECT ?| lseg '((0,0),(0,1))', point '(0,0)' ?| point '(0,1)';
+
+# op_geo: ?-\|
 statement error
 SELECT point '(0,0)' ?-| lseg '((0,0),(1,0))';
 
-# op_geo: ?||
-statement error
+statement ok
+SELECT lseg '((0,0),(1,0))' ?-| lseg '((0,0),(0,1))';
+
+# op_geo: ?\|\|
+statement ok
 SELECT lseg '((0,0),(0,1))' ?|| lseg '((2,0),(2,1))';
 
 # op_geo: ~=
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' ~= box '((0,0),(2,2))';
 
 # op_geo: area
-statement error
+statement ok
 SELECT area(box '((0,0),(2,2))');
 
 # op_geo: center
-statement error
+statement ok
 SELECT center(box '((0,0),(2,2))');
 
 # op_geo: diagonal
-statement error
+statement ok
 SELECT diagonal(box '((0,0),(2,2))');
 
 # op_geo: diameter
-statement error
+statement ok
 SELECT diameter(circle '((0,0),2)');
 
 # op_geo: height
-statement error
+statement ok
 SELECT height(box '((0,0),(2,3))');
 
 # op_geo: isopen
-statement error
+statement ok
 SELECT isopen(path '[(0,0),(1,1),(2,0)]');
 
 # op_geo: length
-statement error
+statement ok
 SELECT length(lseg '((0,0),(3,4))');
 
 # op_geo: npoints
-statement error
+statement ok
 SELECT npoints(path '((0,0),(1,1),(2,0))');
 
 # op_geo: pclose
-statement error
+statement ok
 SELECT pclose(path '[(0,0),(1,1),(2,0)]');
 
 # op_geo: popen
-statement error
+statement ok
 SELECT popen(path '((0,0),(1,1),(2,0))');
 
 # op_geo: radius
-statement error
+statement ok
 SELECT radius(circle '((0,0),2)');
 
 # op_geo: slope
-statement error
+statement ok
 SELECT slope(point '(0,0)', point '(2,2)');
 
 # op_geo: width
-statement error
+statement ok
 SELECT width(box '((0,0),(2,3))');
 
 # op_geo: box
-statement error
+statement ok
 SELECT box(circle '((0,0),2)');
 
-# op_geo: bounding_box
-statement error
+# op_geo: bound_box
+statement ok
 SELECT bound_box(box '((0,0),(1,1))', box '((2,2),(3,3))');
 
 # op_geo: circle
-statement error
+statement ok
 SELECT circle(point '(0,0)', 2);
 
 # op_geo: line
-statement error
+statement ok
 SELECT line(point '(0,0)', point '(1,1)');
 
 # op_geo: lseg
-statement error
+statement ok
 SELECT lseg(point '(0,0)', point '(1,1)');
 
 # op_geo: path
-statement error
+statement ok
 SELECT NULL::path;
 
 # op_geo: point
-statement error
+statement ok
 SELECT point(1,2);
 
 # op_geo: polygon
-statement error
+statement ok
 SELECT polygon(box '((0,0),(2,2))');
 
 # op_net: <<
@@ -2747,6 +2756,6 @@ db error: ERROR: lastval is not yet defined in this session
 statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
 
-# op_geo: isclosed (function absent; does not crash)
-statement error
+# op_geo: isclosed
+statement ok
 SELECT isclosed(NULL);

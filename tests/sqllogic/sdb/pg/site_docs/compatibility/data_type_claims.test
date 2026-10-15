@@ -41,7 +41,7 @@ statement ok
 SELECT NULL::"bool" IS NULL;
 
 
-# box (🔴)
+# box (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'box' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -49,10 +49,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"box" IS NULL;
-----
-db error: ERROR: Type with name box does not exist!<slt:ignore>
 
 
 # bpchar (🟡)
@@ -115,7 +113,7 @@ statement ok
 SELECT NULL::"cidr" IS NULL;
 
 
-# circle (🔴)
+# circle (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'circle' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -123,10 +121,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"circle" IS NULL;
-----
-db error: ERROR: Type with name circle does not exist!<slt:ignore>
 
 
 # date (🟡)
@@ -363,7 +359,7 @@ SELECT NULL::"jsonpath" IS NULL;
 db error: ERROR: Type with name jsonpath does not exist!<slt:ignore>
 
 
-# line (🔴)
+# line (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'line' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -371,13 +367,11 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"line" IS NULL;
-----
-db error: ERROR: Type with name line does not exist!<slt:ignore>
 
 
-# lseg (🔴)
+# lseg (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'lseg' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -385,10 +379,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"lseg" IS NULL;
-----
-db error: ERROR: Type with name lseg does not exist!<slt:ignore>
 
 
 # macaddr (🟢)
@@ -499,7 +491,7 @@ statement ok
 SELECT NULL::"oidvector" IS NULL;
 
 
-# path (🔴)
+# path (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'path' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -507,10 +499,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"path" IS NULL;
-----
-db error: ERROR: Type with name path does not exist!<slt:ignore>
 
 
 # pg_brin_bloom_summary (🔴)
@@ -615,7 +605,7 @@ SELECT NULL::"pg_snapshot" IS NULL;
 db error: ERROR: Type with name pg_snapshot does not exist!<slt:ignore>
 
 
-# point (🔴)
+# point (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'point' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -623,13 +613,11 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"point" IS NULL;
-----
-db error: ERROR: Type with name point does not exist!<slt:ignore>
 
 
-# polygon (🔴)
+# polygon (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'polygon' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -637,10 +625,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"polygon" IS NULL;
-----
-db error: ERROR: Type with name polygon does not exist!<slt:ignore>
 
 
 # refcursor (🟡)

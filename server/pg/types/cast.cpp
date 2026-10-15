@@ -32,6 +32,7 @@
 
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
+#include "pg/types/geometric.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
 #include "pg/types/range.h"
@@ -74,6 +75,13 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kDatemultirangeAlias,
     kTsmultirangeAlias,
     kTstzmultirangeAlias,
+    kPointAlias,
+    kLineAlias,
+    kLsegAlias,
+    kBoxAlias,
+    kPathAlias,
+    kPolygonAlias,
+    kCircleAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {
     return !type.HasAlias();

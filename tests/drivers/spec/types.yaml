@@ -124,6 +124,14 @@
   array: true
   samples: ["<a x=\"1\">b &amp; c</a>", "text", "<?xml version=\"1.0\" standalone=\"yes\"?><a/>", null]
 
+- oid: 1790
+  name: refcursor
+  pg_typname: refcursor
+  text: true
+  binary: true
+  array: true
+  samples: ["portal1", "", null]
+
 - oid: 700
   name: float4
   pg_typname: float4
@@ -242,14 +250,20 @@
   samples: ["$1,234.56", "-$0.01", "$0.00", null]
 
 # ---- network / mac ----
+- oid: 650
+  name: cidr
+  pg_typname: cidr
+  text: true
+  binary: true
+  array: true
+  samples: ["192.168.0.0/16", "::1/128", null]
+
 - oid: 869
   name: inet
   pg_typname: inet
-  # TODO: SereneDB - inet lives in the DuckDB inet extension; same gap
-  # as cidr above.
-  text: false
-  binary: false
-  array: false
+  text: true
+  binary: true
+  array: true
   samples: ["127.0.0.1", "::1", "10.0.0.1/24", null]
 
 - oid: 829
@@ -506,6 +520,80 @@
   binary: true
   array: true
   samples: ["{[\"2020-01-01 10:00:00+00\",)}", "{}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+# ---- geometric ----
+- oid: 600
+  name: point
+  pg_typname: point
+  text: true
+  binary: true
+  array: true
+  samples: ["(1,2)", "(-1.5,1e+300)", null]
+  skip:
+    # asyncpg binds geometric values only from its own Point, Box, ...
+    # objects, never from the text samples. Simple-mode literal casts still
+    # exercise geometric input.
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 628
+  name: line
+  pg_typname: line
+  text: true
+  binary: true
+  array: true
+  samples: ["{1,-1,0}", "{0,1,-2.5}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 601
+  name: lseg
+  pg_typname: lseg
+  text: true
+  binary: true
+  array: true
+  samples: ["[(0,0),(1,1)]", "[(1.5,2),(-3,4)]", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 603
+  name: box
+  pg_typname: box
+  text: true
+  binary: true
+  array: true
+  samples: ["(1,1),(0,0)", "(2.5,3),(-1,-2)", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 602
+  name: path
+  pg_typname: path
+  text: true
+  binary: true
+  array: true
+  samples: ["((0,0),(1,1),(1,0))", "[(0,0),(1,1)]", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 604
+  name: polygon
+  pg_typname: polygon
+  text: true
+  binary: true
+  array: true
+  samples: ["((0,0),(1,1),(1,0))", "((7,8))", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 718
+  name: circle
+  pg_typname: circle
+  text: true
+  binary: true
+  array: true
+  samples: ["<(0,0),1>", "<(1.5,-2),0.5>", null]
   skip:
     python_asyncpg: ["extended-text", "extended-binary"]
 
@@ -1274,8 +1362,6 @@
   skip:
     all: ["TODO: triage Xid8"]
 
-# --- auto-stubbed by oids_from_pg_types.py ---
-
 - oid: 13306
   name: cardinal_number_array
   pg_typname: cardinal_number_array
@@ -1376,10 +1462,6 @@
   skip:
     all: ["TODO: triage YesOrNo"]
 
-# --- auto-stubbed by oids_from_pg_types.py ---
-
-# --- auto-stubbed by oids_from_pg_types.py ---
-
 - oid: 32
   name: pg_ddl_command
   pg_typname: pg_ddl_command
@@ -1459,3 +1541,453 @@
   samples: []
   skip:
     all: ["TODO: triage EventTrigger"]
+
+- oid: 143
+  name: xml_array
+  pg_typname: xml_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage XmlArray"]
+
+- oid: 629
+  name: line_array
+  pg_typname: line_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage LineArray"]
+
+- oid: 651
+  name: cidr_array
+  pg_typname: cidr_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CidrArray"]
+
+- oid: 719
+  name: circle_array
+  pg_typname: circle_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CircleArray"]
+
+- oid: 775
+  name: macaddr8_array
+  pg_typname: macaddr8_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Macaddr8Array"]
+
+- oid: 791
+  name: money_array
+  pg_typname: money_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage MoneyArray"]
+
+- oid: 1017
+  name: point_array
+  pg_typname: point_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PointArray"]
+
+- oid: 1018
+  name: lseg_array
+  pg_typname: lseg_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage LsegArray"]
+
+- oid: 1019
+  name: path_array
+  pg_typname: path_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PathArray"]
+
+- oid: 1020
+  name: box_array
+  pg_typname: box_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage BoxArray"]
+
+- oid: 1027
+  name: polygon_array
+  pg_typname: polygon_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PolygonArray"]
+
+- oid: 1040
+  name: macaddr_array
+  pg_typname: macaddr_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage MacaddrArray"]
+
+- oid: 2201
+  name: refcursor_array
+  pg_typname: refcursor_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RefcursorArray"]
+
+- oid: 2776
+  name: anynonarray
+  pg_typname: anynonarray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anynonarray"]
+
+- oid: 2949
+  name: txid_snapshot_array
+  pg_typname: txid_snapshot_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TxidSnapshotArray"]
+
+- oid: 2970
+  name: txid_snapshot
+  pg_typname: txid_snapshot
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TxidSnapshot"]
+
+- oid: 3614
+  name: tsvector
+  pg_typname: tsvector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tsvector"]
+
+- oid: 3642
+  name: gtsvector
+  pg_typname: gtsvector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Gtsvector"]
+
+- oid: 3643
+  name: tsvector_array
+  pg_typname: tsvector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsvectorArray"]
+
+- oid: 3644
+  name: gtsvector_array
+  pg_typname: gtsvector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage GtsvectorArray"]
+
+- oid: 3831
+  name: anyrange
+  pg_typname: anyrange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anyrange"]
+
+- oid: 3905
+  name: int4_range_array
+  pg_typname: int4_range_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int4RangeArray"]
+
+- oid: 3907
+  name: numrange_array
+  pg_typname: numrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NumrangeArray"]
+
+- oid: 3909
+  name: tsrange_array
+  pg_typname: tsrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsrangeArray"]
+
+- oid: 3911
+  name: tstzrange_array
+  pg_typname: tstzrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TstzrangeArray"]
+
+- oid: 3913
+  name: daterange_array
+  pg_typname: daterange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage DaterangeArray"]
+
+- oid: 3927
+  name: int8_range_array
+  pg_typname: int8_range_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int8RangeArray"]
+
+- oid: 4072
+  name: jsonpath
+  pg_typname: jsonpath
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Jsonpath"]
+
+- oid: 4073
+  name: jsonpath_array
+  pg_typname: jsonpath_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage JsonpathArray"]
+
+- oid: 4537
+  name: anymultirange
+  pg_typname: anymultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anymultirange"]
+
+- oid: 4538
+  name: anycompatiblemultirange
+  pg_typname: anycompatiblemultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblemultirange"]
+
+- oid: 4600
+  name: pg_brin_bloom_summary
+  pg_typname: pg_brin_bloom_summary
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgBrinBloomSummary"]
+
+- oid: 4601
+  name: pg_brin_minmax_multi_summary
+  pg_typname: pg_brin_minmax_multi_summary
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgBrinMinmaxMultiSummary"]
+
+- oid: 5038
+  name: pg_snapshot
+  pg_typname: pg_snapshot
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSnapshot"]
+
+- oid: 5039
+  name: pg_snapshot_array
+  pg_typname: pg_snapshot_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSnapshotArray"]
+
+- oid: 5077
+  name: anycompatible
+  pg_typname: anycompatible
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatible"]
+
+- oid: 5078
+  name: anycompatiblearray
+  pg_typname: anycompatiblearray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblearray"]
+
+- oid: 5079
+  name: anycompatiblenonarray
+  pg_typname: anycompatiblenonarray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblenonarray"]
+
+- oid: 5080
+  name: anycompatiblerange
+  pg_typname: anycompatiblerange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblerange"]
+
+- oid: 6150
+  name: int4_multirange_array
+  pg_typname: int4_multirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int4MultirangeArray"]
+
+- oid: 6151
+  name: nummultirange_array
+  pg_typname: nummultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NummultirangeArray"]
+
+- oid: 6152
+  name: tsmultirange_array
+  pg_typname: tsmultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsmultirangeArray"]
+
+- oid: 6153
+  name: tstzmultirange_array
+  pg_typname: tstzmultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TstzmultirangeArray"]
+
+- oid: 6155
+  name: datemultirange_array
+  pg_typname: datemultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage DatemultirangeArray"]
+
+- oid: 6157
+  name: int8_multirange_array
+  pg_typname: int8_multirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int8MultirangeArray"]

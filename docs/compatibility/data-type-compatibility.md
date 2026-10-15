@@ -19,13 +19,13 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | aclitem                      | 🟢            |         |
 | bit                          | 🟡            | A length is not enforced: `'1011'::bit(3)` stays `1011`. A bit string holds at least one bit: `B''` reads as `0`, and a `substring` without bits is an error. |
 | bool                         | 🟢            | `boolean` |
-| box                          | 🔴            |         |
+| box                          | 🟡            | The comparison operators such as `=` and `<` compare the corners one by one, where PostgreSQL compares areas, so `box '(1,1),(0,0)' = box '(2,2),(1,1)'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | bpchar                       | 🟡            | `character(n)`: trailing blanks count in comparisons and in `length()`, so `'a '::char(2) = 'a'::char(2)` is false. |
 | bytea                        | 🟢            |         |
 | char                         | 🟡            | Values above 127 compare by their text form, such as `\303`, so `'é'::"char" > 'z'::"char"` is false. |
 | cid                          | 🟢            |         |
 | cidr                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
-| circle                       | 🔴            |         |
+| circle                       | 🟡            | The comparison operators such as `=` and `<` compare the center and then the radius, where PostgreSQL compares areas, so `circle '<(0,0),1>' = circle '<(5,5),1>'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
 | datemultirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | daterange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
@@ -45,8 +45,8 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | json                         | 🟢            |         |
 | jsonb                        | 🔴            | Use `json`. A parameter a client sends as `jsonb` is read as `json`. |
 | jsonpath                     | 🔴            |         |
-| line                         | 🔴            |         |
-| lseg                         | 🔴            |         |
+| line                         | 🟡            | `=` compares the coefficients, where PostgreSQL tests for the same line, so `line '{1,-1,0}' = line '{2,-2,0}'` is false. The other comparison operators, `ORDER BY`, `DISTINCT` and `GROUP BY` compare the coefficients one by one, where PostgreSQL refuses them. A column of this type cannot be indexed. |
+| lseg                         | 🟡            | The comparison operators `<`, `<=`, `>` and `>=` compare the end points one by one, where PostgreSQL compares lengths. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
 | money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. |
@@ -56,7 +56,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | oid                          | 🟢            |         |
 | oidvector                    | 🟢            |         |
-| path                         | 🔴            |         |
+| path                         | 🟡            | The comparison operators such as `=` and `<` compare whether the path is closed and then its points, where PostgreSQL compares the numbers of points, so `path '((0,0),(1,1))' = path '[(5,5),(6,6)]'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | pg_brin_bloom_summary        | 🔴            |         |
 | pg_brin_minmax_multi_summary | 🔴            |         |
 | pg_dependencies              | 🟡            | Text input is accepted, which PostgreSQL refuses. There are no extended statistics, so no catalog holds a value. |
@@ -65,8 +65,8 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | pg_ndistinct                 | 🟡            | Text input is accepted, which PostgreSQL refuses. There are no extended statistics, so no catalog holds a value. |
 | pg_node_tree                 | 🟡            | Text input is accepted, which PostgreSQL refuses. |
 | pg_snapshot                  | 🔴            |         |
-| point                        | 🔴            |         |
-| polygon                      | 🔴            |         |
+| point                        | 🟡            | The comparison operators such as `=` and `<`, `ORDER BY`, `DISTINCT` and `GROUP BY` compare `x` and then `y`, where PostgreSQL refuses them: `~=` tests for the same point. A column of this type cannot be indexed. |
+| polygon                      | 🟡            | The comparison operators such as `=` and `<`, `ORDER BY`, `DISTINCT` and `GROUP BY` compare the points one by one, where PostgreSQL refuses them: `~=` tests for the same polygon. A column of this type cannot be indexed. |
 | refcursor                    | 🟡            | Values compare and sort like text, which PostgreSQL refuses. |
 | regclass                     | 🟢            |         |
 | regcollation                 | 🟢            |         |

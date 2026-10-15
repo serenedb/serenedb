@@ -23,11 +23,11 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <span>
 
 #include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -36,7 +36,6 @@ struct BasicTermReader;
 struct FlushState;
 class IdxWriter;
 
-using MergeProgress = std::function<bool()>;
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
 class PostingsMerger {

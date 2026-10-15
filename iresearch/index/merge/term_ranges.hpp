@@ -20,12 +20,13 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <vector>
 
@@ -111,7 +112,7 @@ class TermRangeMerge {
   Target _target{};
   const MergeProgress* _progress;
   bool _sorted;
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   std::vector<uint64_t> _docs;
 };
 

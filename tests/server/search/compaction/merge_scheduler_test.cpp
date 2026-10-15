@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/synchronization/mutex.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -76,7 +77,7 @@ struct Board {
   std::map<std::string, const std::atomic_bool*> stops;
   std::map<std::string, size_t> helpers;
   std::map<std::string, uint64_t> ids;
-  std::mutex destroyed_mutex;
+  absl::Mutex destroyed_mutex;
   std::vector<std::string> destroyed;
   bool throw_on_run = false;
   bool throw_int_on_run = false;

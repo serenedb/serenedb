@@ -20,14 +20,14 @@
 
 #include "index/merge/support/parallel_merge.hpp"
 
+#include <absl/synchronization/mutex.h>
+
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <exception>
 #include <functional>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
-#include <mutex>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -38,33 +38,33 @@ namespace tests::merge {
 namespace {
 
 bool RunUnits(irs::MergePlan& plan, size_t threads,
+              const std::function<bool()>& claimable,
               const std::function<std::optional<size_t>()>& claim,
-              const std::function<void(size_t, bool)>& finish,
-              const std::function<bool()>& done) {
-  std::mutex mutex;
-  std::condition_variable wake;
+              const std::function<void(size_t, bool)>& finish) {
+  absl::Mutex mutex;
   std::exception_ptr error;
   auto work = [&] {
-    std::unique_lock lock{mutex};
     while (true) {
       std::optional<size_t> unit;
-      wake.wait(lock, [&] { return done() || (unit = claim()).has_value(); });
+      {
+        absl::MutexLock lock{&mutex};
+        mutex.Await(absl::Condition{&claimable});
+        unit = claim();
+      }
       if (!unit) {
         return;
       }
-      lock.unlock();
       bool ok = false;
       try {
         ok = plan.RunUnit(*unit);
       } catch (...) {
-        std::lock_guard guard{mutex};
+        absl::MutexLock lock{&mutex};
         if (!error) {
           error = std::current_exception();
         }
       }
-      lock.lock();
+      absl::MutexLock lock{&mutex};
       finish(*unit, ok);
-      wake.notify_all();
     }
   };
   std::vector<std::thread> helpers;
@@ -94,7 +94,7 @@ bool RunPostings(irs::MergePlan& plan, size_t threads,
     }
     std::atomic<size_t> next{0};
     std::atomic<bool> ok{true};
-    std::mutex mutex;
+    absl::Mutex mutex;
     std::exception_ptr error;
     auto work = [&] {
       for (size_t at; (at = next++) < parts.size();) {
@@ -103,7 +103,7 @@ bool RunPostings(irs::MergePlan& plan, size_t threads,
             ok = false;
           }
         } catch (...) {
-          std::lock_guard guard{mutex};
+          absl::MutexLock guard{&mutex};
           if (!error) {
             error = std::current_exception();
           }
@@ -140,9 +140,9 @@ bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
   }
   irs::MergeSchedule schedule{plan};
   RunUnits(
-    plan, _threads, [&] { return schedule.Claim(); },
-    [&](size_t unit, bool ok) { schedule.Finish(unit, ok); },
-    [&] { return schedule.Done(); });
+    plan, _threads, [&] { return schedule.Done() || schedule.Ready() != 0; },
+    [&] { return schedule.Claim(); },
+    [&](size_t unit, bool ok) { schedule.Finish(unit, ok); });
   return schedule.Ok();
 }
 
@@ -173,6 +173,7 @@ bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
   bool failed = false;
   RunUnits(
     plan, _threads,
+    [&] { return failed ? running == 0 : left == 0 || !ready.empty(); },
     [&]() -> std::optional<size_t> {
       if (failed || ready.empty()) {
         return std::nullopt;
@@ -200,8 +201,7 @@ bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
           ready.push_back(next);
         }
       }
-    },
-    [&] { return failed ? running == 0 : left == 0; });
+    });
   return !failed;
 }
 

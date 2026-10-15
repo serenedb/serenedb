@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -77,7 +77,7 @@ class ReencodeCache {
              const ReencodeEstimate& estimate);
 
  private:
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   absl::flat_hash_map<field_id, std::pair<ReencodeKey, ReencodeEstimate>>
     _entries;
 };

@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <mutex>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

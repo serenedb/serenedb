@@ -21,12 +21,12 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -158,7 +158,7 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
-  std::mutex _mutex;
+  absl::Mutex _mutex;
   IndexOutput::ptr _out;
   std::unique_ptr<ColBlockSink> _blocks;
   std::unique_ptr<WriteContext> _write_ctx;

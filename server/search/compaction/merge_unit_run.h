@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <exception>
 #include <functional>
@@ -85,7 +86,6 @@ struct MergeUnitRun {
     } else {
       schedule.Fail();
     }
-    wake.notify_all();
     if (waker) {
       waker();
     }
@@ -109,16 +109,14 @@ struct MergeUnitRun {
       error = std::move(failure);
     }
     schedule.Finish(unit, ok);
-    wake.notify_all();
   }
 
+  bool Claimable() const { return schedule.Done() || schedule.Ready() != 0; }
+
   std::optional<size_t> Next() {
-    std::optional<size_t> unit;
-    std::unique_lock lock{mutex};
-    wake.wait(lock, [&] {
-      return schedule.Done() || (unit = schedule.Claim()).has_value();
-    });
-    return unit;
+    absl::MutexLock lock{&mutex};
+    mutex.Await(absl::Condition{this, &MergeUnitRun::Claimable});
+    return schedule.Claim();
   }
 
   bool Finish() {
@@ -135,8 +133,7 @@ struct MergeUnitRun {
   irs::MergePlan& plan;
   irs::MergeSchedule schedule;
   std::chrono::steady_clock::time_point begin;
-  std::mutex mutex;
-  std::condition_variable wake;
+  absl::Mutex mutex;
   std::exception_ptr error;
   std::optional<size_t> held;
   std::atomic<bool> postings{false};

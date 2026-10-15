@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <mutex>
 
 #include "iresearch/index/merge/merge_plan.hpp"
 #include "iresearch/utils/assert.hpp"

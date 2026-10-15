@@ -19,13 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <duckdb/common/enums/order_type.hpp>
@@ -63,7 +63,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -228,28 +227,29 @@ class ThreadedExecutor final : public irs::MergeExecutor {
       }
     }
     irs::MergeSchedule schedule{plan};
-    std::mutex mutex;
-    std::condition_variable wake;
+    absl::Mutex mutex;
+    const auto claimable = [&] {
+      return schedule.Done() || schedule.Ready() != 0;
+    };
     auto work = [&] {
-      std::unique_lock lock{mutex};
       while (true) {
         std::optional<size_t> unit;
-        wake.wait(lock, [&] {
-          return schedule.Done() || (unit = schedule.Claim()).has_value();
-        });
+        {
+          absl::MutexLock lock{&mutex};
+          mutex.Await(absl::Condition{&claimable});
+          unit = schedule.Claim();
+        }
         if (!unit) {
           return;
         }
-        lock.unlock();
         const auto begin = std::chrono::steady_clock::now();
         const bool ok = plan.RunUnit(*unit);
         const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::chrono::steady_clock::now() - begin);
         _nanos[static_cast<size_t>(plan.Units()[*unit].kind)].fetch_add(
           static_cast<uint64_t>(nanos.count()), std::memory_order_relaxed);
-        lock.lock();
+        absl::MutexLock lock{&mutex};
         schedule.Finish(*unit, ok);
-        wake.notify_all();
       }
     };
     std::vector<std::thread> helpers;

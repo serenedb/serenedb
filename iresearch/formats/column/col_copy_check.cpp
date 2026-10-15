@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <span>
 
 #include "iresearch/formats/column/col_reader.hpp"

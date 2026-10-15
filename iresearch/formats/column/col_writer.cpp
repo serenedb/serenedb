@@ -29,6 +29,7 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <iterator>
+#include <mutex>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>

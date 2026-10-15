@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
-#include <mutex>
 #include <span>
 #include <string_view>
 
@@ -45,7 +46,7 @@ class ColBlockSink final {
   uint64_t AppendString(std::string_view string);
 
  private:
-  std::mutex _mutex;
+  absl::Mutex _mutex;
   IndexOutput* _out;
 };
 

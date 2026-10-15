@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/col_block_sink.hpp"
 
 #include <limits>
+#include <mutex>
 
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"

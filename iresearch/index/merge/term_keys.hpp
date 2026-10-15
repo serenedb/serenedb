@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <mutex>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -52,7 +53,7 @@ class TermKeys final : public duckdb::PresortedMergeInput {
 
  private:
   const TermReader& _reader;
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   mutable std::vector<bstring> _anchors;
 };
 

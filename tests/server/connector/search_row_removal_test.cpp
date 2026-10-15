@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <array>
@@ -1049,7 +1050,7 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
   constexpr int64_t kInserters = 3;
   constexpr int64_t kBatches = 40;
   constexpr int64_t kBatch = 1500;
-  std::mutex mutex;
+  absl::Mutex mutex;
   std::set<int64_t> inserted;
   std::set<int64_t> removed;
   std::atomic_bool stop{false};

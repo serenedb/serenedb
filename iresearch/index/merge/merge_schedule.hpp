@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -53,7 +54,7 @@ class MergeSchedule {
   bool Ok() const;
 
  private:
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   std::vector<uint64_t> _rank;
   std::vector<std::vector<size_t>> _dependents;
   std::vector<size_t> _waiting;

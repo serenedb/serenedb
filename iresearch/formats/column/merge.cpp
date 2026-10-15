@@ -24,6 +24,7 @@
 #include <absl/base/call_once.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <array>
@@ -834,7 +835,7 @@ struct ColumnMerger::State {
   std::vector<field_id> ids;
   absl::flat_hash_map<field_id, const ColumnReader*> first_by_id;
   std::unique_ptr<KeptRows[]> kept_rows;
-  std::mutex dictionaries_mutex;
+  absl::Mutex dictionaries_mutex;
   absl::flat_hash_map<field_id,
                       std::shared_ptr<const codecs::TrainedDictionary>>
     dictionaries;

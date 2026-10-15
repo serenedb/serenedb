@@ -23,10 +23,16 @@
 #include <duckdb/main/config.hpp>
 
 #include "pg/types/bytea.h"
+#include "pg/types/char.h"
+#include "pg/types/float.h"
 #include "pg/types/inet.h"
 #include "pg/types/mac.h"
+#include "pg/types/name.h"
+#include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/reg.h"
+#include "pg/types/tid.h"
+#include "pg/types/vector.h"
 
 namespace sdb::pg {
 
@@ -36,6 +42,12 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterPgLsn(casts);
   RegisterInet(casts);
   RegisterBytea(casts);
+  RegisterFloat(casts);
+  RegisterOid(casts);
+  RegisterVectors(casts);
+  RegisterTid(casts);
+  RegisterChar(casts);
+  RegisterName(casts);
   RegisterMacaddr(db);
 }
 

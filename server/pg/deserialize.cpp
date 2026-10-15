@@ -20,6 +20,7 @@
 
 #include "pg/deserialize.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/numeric/int128.h>
 #include <absl/strings/escaping.h>
@@ -55,11 +56,16 @@
 #include "connector/functions/ts_query_codec.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
+#include "pg/types/char.h"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
+#include "pg/types/name.h"
+#include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
+#include "pg/types/tid.h"
+#include "pg/types/vector.h"
 
 namespace sdb::pg {
 
@@ -579,6 +585,83 @@ struct MacBin {
       return false;
     }
     sink.Fixed(*mac);
+    return true;
+  }
+};
+
+struct TidText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    int64_t tid = 0;
+    if (TryParseTid(data, tid)) {
+      return false;
+    }
+    sink.Fixed(tid);
+    return true;
+  }
+};
+
+struct TidBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    const auto tid = TidRecv(data);
+    if (!tid) {
+      return false;
+    }
+    sink.Fixed(*tid);
+    return true;
+  }
+};
+
+struct OidText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    int64_t oid = 0;
+    if (TryParseOid(data, oid)) {
+      return false;
+    }
+    sink.Fixed(oid);
+    return true;
+  }
+};
+
+struct CharText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    char buffer[kCharText];
+    sink.Varchar({buffer, WriteChar(CharIn(data), buffer)});
+    return true;
+  }
+};
+
+struct CharBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() != 1) {
+      return false;
+    }
+    char buffer[kCharText];
+    sink.Varchar(
+      {buffer, WriteChar(static_cast<uint8_t>(data.front()), buffer)});
+    return true;
+  }
+};
+
+struct NameText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    sink.Varchar(data.substr(0, ClipName(data)));
+    return true;
+  }
+};
+
+struct NameBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() >= kNameDataLen) {
+      return false;
+    }
+    sink.Varchar(data);
     return true;
   }
 };
@@ -1802,6 +1885,31 @@ struct ListText {
   }
 };
 
+template<typename T, auto Parse>
+bool DeserializeTextVector(DeserializeContext&, std::string_view data,
+                           duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<T> values;
+  if (Parse(data, values)) {
+    return false;
+  }
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + values.size());
+  absl::c_copy(values, Out<T>(duckdb::ListVector::GetEntry(vec)) + cur);
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, values.size()};
+  duckdb::ListVector::SetListSize(vec, cur + values.size());
+  return true;
+}
+
+template<typename T, auto Parse>
+struct VectorText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextVector<T, Parse>>(
+      ctx, data, sink);
+  }
+};
+
 struct FixedArrayBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
@@ -1875,6 +1983,12 @@ DeserializationFunction<Sink> GetDeserialization(
     case INTEGER:
       return SelectDecoder<LoadBin<int32_t>, NumberText<int32_t>, Sink>(binary);
     case BIGINT:
+      if (IsTid(type)) {
+        return SelectDecoder<TidBin, TidText, Sink>(binary);
+      }
+      if (IsOid(type)) {
+        return SelectDecoder<LoadBin<int64_t, uint32_t>, OidText, Sink>(binary);
+      }
       if (binary) {
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
@@ -1928,6 +2042,12 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<double>, NumberText<double>, Sink>(binary);
     case VARCHAR:
     case CHAR:
+      if (IsChar(type)) {
+        return SelectDecoder<CharBin, CharText, Sink>(binary);
+      }
+      if (IsName(type)) {
+        return SelectDecoder<NameBin, NameText, Sink>(binary);
+      }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
@@ -1965,6 +2085,14 @@ DeserializationFunction<Sink> GetDeserialization(
     case BIT:
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
+      if (IsInt2vector(type)) {
+        return SelectDecoder<ListBin, VectorText<int16_t, ParseInt2Vector>,
+                             Sink>(binary);
+      }
+      if (IsOidvector(type)) {
+        return SelectDecoder<ListBin, VectorText<int64_t, ParseOidVector>,
+                             Sink>(binary);
+      }
       return SelectDecoder<ListBin, ListText, Sink>(binary);
     case ARRAY:
       return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);

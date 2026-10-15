@@ -22,19 +22,19 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | box                          | 🔴            |         |
 | bpchar                       | 🟡            | `character(n)`: trailing blanks count in comparisons and in `length()`, so `'a '::char(2) = 'a'::char(2)` is false. |
 | bytea                        | 🟢            |         |
-| char                         | 🟡            | `"char"` is not limited to one byte: `'ab'::"char"` stays `ab`. |
+| char                         | 🟡            | Values above 127 compare by their text form, such as `\303`, so `'é'::"char" > 'z'::"char"` is false. |
 | cid                          | 🟢            |         |
 | cidr                         | 🟢            |         |
 | circle                       | 🔴            |         |
 | date                         | 🟢            |         |
 | datemultirange               | 🔴            |         |
 | daterange                    | 🔴            |         |
-| float4                       | 🟡            | `real`: casting `Infinity` or `NaN` to text gives `inf` or `nan`; query results show `Infinity` and `NaN`. |
-| float8                       | 🟡            | `double precision`: casting `Infinity` or `NaN` to text gives `inf` or `nan`; query results show `Infinity` and `NaN`. |
+| float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. |
+| float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. |
 | gtsvector                    | 🔴            |         |
 | inet                         | 🟢            |         |
 | int2                         | 🟢            | `smallint` |
-| int2vector                   | 🟡            | Text input such as `'1 2'::int2vector` is not accepted. |
+| int2vector                   | 🟢            |         |
 | int4                         | 🟢            | `integer` |
 | int4multirange               | 🔴            |         |
 | int4range                    | 🔴            |         |
@@ -50,12 +50,12 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
 | money                        | 🔴            |         |
-| name                         | 🟡            | Not truncated to 63 bytes. |
+| name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🔴            |         |
 | numrange                     | 🔴            |         |
 | oid                          | 🟢            |         |
-| oidvector                    | 🟡            | Text input such as `'1 2'::oidvector` is not accepted. |
+| oidvector                    | 🟢            |         |
 | path                         | 🔴            |         |
 | pg_brin_bloom_summary        | 🔴            |         |
 | pg_brin_minmax_multi_summary | 🔴            |         |
@@ -80,7 +80,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | regrole                      | 🟢            |         |
 | regtype                      | 🟢            |         |
 | text                         | 🟢            |         |
-| tid                          | 🟡            | Text input such as `'(0,1)'::tid` is not accepted, and tables have no `ctid` column. |
+| tid                          | 🟡            | Tables have no `ctid` column. |
 | time                         | 🟡            | A precision such as `time(2)` is not accepted. |
 | timestamp                    | 🟡            | A precision keeps milliseconds or microseconds: `timestamp(2)` keeps three fractional digits. |
 | timestamptz                  | 🟡            | A precision such as `timestamptz(2)` is not accepted. |

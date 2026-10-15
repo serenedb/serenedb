@@ -416,12 +416,10 @@
 - oid: 18
   name: char
   pg_typname: char
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Char"]
+  samples: ["a", "Z", "", null]
 
 - oid: 22
   name: int2_vector
@@ -446,12 +444,10 @@
 - oid: 27
   name: tid
   pg_typname: tid
-  binary: false
-  text: false
+  text: true
+  binary: true
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Tid"]
+  samples: ["(0,1)", "(4294967295,65535)", null]
 
 - oid: 28
   name: xid
@@ -476,12 +472,10 @@
 - oid: 30
   name: oidvector
   pg_typname: oidvector
+  text: true
   binary: false
-  text: false
   array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Oidvector"]
+  samples: ["23 25", "", null]
 
 - oid: 194
   name: pg_node_tree

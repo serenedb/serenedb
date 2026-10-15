@@ -66,11 +66,14 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
+#include "pg/types/char.h"
+#include "pg/types/float.h"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
 #include "pg/types/pg_lsn.h"
+#include "pg/types/tid.h"
 #include "query/config.h"
 #include "server/utils/dtoa.h"
 
@@ -328,7 +331,8 @@ struct VarcharBinCore {
 struct CharBinCore {
   using Value = duckdb::string_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
-    const char value = raw.GetSize() == 0 ? '\0' : raw.GetData()[0];
+    const auto value =
+      static_cast<char>(CharIn({raw.GetData(), raw.GetSize()}));
     ctx.writer->Write(std::string_view{&value, 1});
   }
 };
@@ -738,6 +742,15 @@ struct LsnTextCore {
   }
 };
 
+struct TidBinCore {
+  using Value = int64_t;
+  static constexpr uint32_t kMaxBytes = kTidBytes;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tid) {
+    TidSend(tid, dst);
+    return kTidBytes;
+  }
+};
+
 template<bool kMac8>
 struct MacTextCore {
   using Value = uint64_t;
@@ -777,9 +790,6 @@ struct FloatBinCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = sizeof(T);
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
-    if (v == 0) {  // postgres renders -0.0 as 0.0
-      v = 0;
-    }
     absl::big_endian::Store(dst, v);
     return sizeof(T);
   }
@@ -788,32 +798,14 @@ struct FloatBinCore {
 template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
-  static constexpr uint32_t kMaxBytes = utils::kNumberStrMaxLen;
+  static constexpr uint32_t kMaxBytes = kFloatText;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
-    static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
-    if (v == 0) {  // Postgres converts -0.0 as 0.0
-      v = 0;
-    }
     char* buf = reinterpret_cast<char*>(dst);
-    if (char* ptr = utils::dtoa_literals<utils::kPgDtoaLiterals>(v, buf)) {
-      return static_cast<size_t>(ptr - buf);
-    }
     if constexpr (Precise) {
-      char* ptr = utils::dtoa_fast(v, buf);
-      return static_cast<size_t>(ptr - buf);
+      return WriteFloatShortest(v, buf);
     } else {
-      int num_of_digits =
-        std::numeric_limits<T>::digits10 + ctx.extra_float_digits;
-      if constexpr (std::is_same_v<float, T>) {
-        num_of_digits = std::max(0, num_of_digits);
-      } else {
-        SDB_ASSERT(num_of_digits >= 0);
-      }
-      const auto r = std::to_chars(buf, buf + utils::kNumberStrMaxLen, v,
-                                   std::chars_format::general, num_of_digits);
-      SDB_ASSERT(r);
-      return static_cast<size_t>(r.ptr - buf);
+      return WriteFloatRounded(v, ctx.extra_float_digits, buf);
     }
   }
 };
@@ -840,6 +832,16 @@ struct TimestampSecTextCore {
         ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
         : duckdb::timestamp_t(timestamp.value));
     WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+  }
+};
+
+template<WrapContext InContainer>
+struct TidTextCore {
+  using Value = int64_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tid) {
+    char buffer[kTidBufferSize];
+    const std::string_view text{buffer, WriteTid(tid, buffer)};
+    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(text); });
   }
 };
 
@@ -2248,8 +2250,8 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
           format, context, kind);
       }
       if (IsTid(type)) {
-        return MakeArraySerializer<IntTextCore<int64_t>, OidBinCore, kTid>(
-          format, context, kind);
+        return MakeArraySerializer<TidTextCore<WrapContext::Array>, TidBinCore,
+                                   kTid>(format, context, kind);
       }
       // XID8 or BIGINT
       return MakeArraySerializer<IntTextCore<int64_t>, IntBinCore<int64_t>,
@@ -2491,6 +2493,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       }
       if (IsRegcollation(type)) {
         return MakeRegSerializer<RegKind::Collation>(format, context);
+      }
+      if (IsTid(type)) {
+        return SelectFieldSerializer<TidTextCore<WrapContext::None>,
+                                     TidTextCore<WrapContext::Record>,
+                                     TidBinCore>(format, context);
       }
       if (IsOidLike(type)) {
         return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,

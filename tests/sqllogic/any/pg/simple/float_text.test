@@ -1,0 +1,87 @@
+query
+SELECT 'Infinity'::float8::text AS pos, '-Infinity'::float8::text AS neg, 'NaN'::float8::text AS nan,
+       'Infinity'::float4::text AS pos4, '-Infinity'::float4::text AS neg4, 'NaN'::float4::text AS nan4;
+----
+pos	neg	nan	pos4	neg4	nan4
+Infinity	-Infinity	NaN	Infinity	-Infinity	NaN
+
+
+query
+SELECT 1.5::float8::text AS a, (-0.25)::float8::text AS b, 1e100::float8::text AS c, 0.1::float4::text AS d, 0::float8::text AS e;
+----
+a	b	c	d	e
+1.5	-0.25	1e+100	0.1	0
+
+
+query
+SELECT CAST('infinity'::float8 AS varchar) AS v, concat('x', 'NaN'::float8) AS c, format('%s', '-infinity'::float8) AS f;
+----
+v	c	f
+Infinity	xNaN	-Infinity
+
+
+statement ok
+CREATE TABLE float_text_t (id INT, d float8, r float4);
+
+
+statement ok
+INSERT INTO float_text_t VALUES (1, 'Infinity', '-Infinity'), (2, 'NaN', 'NaN'), (3, 2.5, 0.5), (4, NULL, NULL);
+
+
+query
+SELECT id, d::text AS d, r::text AS r FROM float_text_t ORDER BY id;
+----
+id	d	r
+1	Infinity	-Infinity
+2	NaN	NaN
+3	2.5	0.5
+4	NULL	NULL
+
+
+statement ok
+DROP TABLE float_text_t;
+
+
+query
+SELECT 1e15::float8::text AS a, 0.0001::float8::text AS b, 1000000::float4::text AS c, 1000000000000000.5::float8::text AS d, '-0'::float8::text AS e, '-0'::float4::text AS f;
+----
+a	b	c	d	e	f
+1e+15	0.0001	1e+06	1.0000000000000005e+15	-0	-0
+
+
+skipif pg-wire-extended
+query
+SELECT 1e15::float8 AS a, 0.0001::float8 AS b, 1000000::float4 AS c, 1000000000000000.5::float8 AS d, '-0'::float8 AS e, 1e-5::float8 AS f, 123456.7::float4 AS g;
+----
+a	b	c	d	e	f	g
+1e+15	0.0001	1e+06	1.0000000000000005e+15	-0	1e-05	123456.7
+
+
+statement ok
+SET extra_float_digits = 0;
+
+
+query
+SELECT 1e15::float8::text AS a, (0.1::float8 + 0.2::float8)::text AS b, 1234567::float4::text AS c, 'Infinity'::float8::text AS d;
+----
+a	b	c	d
+1e+15	0.3	1.23457e+06	Infinity
+
+
+skipif pg-wire-extended
+query
+SELECT 0.1::float8 + 0.2::float8 AS a, 1234567::float4 AS b;
+----
+a	b
+0.3	1.23457e+06
+
+
+statement ok
+RESET extra_float_digits;
+
+
+query
+SELECT (0.1::float8 + 0.2::float8)::text AS a;
+----
+a
+0.30000000000000004

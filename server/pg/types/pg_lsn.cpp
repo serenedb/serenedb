@@ -23,8 +23,6 @@
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
 
-#include <duckdb/common/vector/vector_iterator.hpp>
-#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -50,31 +48,16 @@ std::optional<uint32_t> ParseLsnPart(std::string_view digits) {
   return value;
 }
 
-bool VarcharToLsnCast(duckdb::Vector& source, duckdb::Vector& result,
-                      duckdb::idx_t count, duckdb::CastParameters& parameters) {
-  auto texts = source.Values<duckdb::string_t>();
-  auto writer = duckdb::FlatVector::Writer<uint64_t>(result, count);
-  bool converted = true;
-  for (auto entry : texts) {
-    if (!entry.IsValid()) {
-      writer.WriteNull();
-      continue;
-    }
-    const auto& raw = entry.GetValue();
-    const std::string_view text{raw.GetData(), raw.GetSize()};
-    if (const auto lsn = ParseLsn(text)) {
-      writer.WriteValue(*lsn);
-      continue;
-    }
-    InputError(
-      SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-        ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\"")),
-      parameters);
-    converted = false;
-    writer.WriteNull();
+std::optional<irs::pg::SqlErrorData> TryParseLsn(std::string_view text,
+                                                 uint64_t& lsn) {
+  const auto parsed = ParseLsn(text);
+  if (!parsed) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\""));
   }
-  return converted;
+  lsn = *parsed;
+  return std::nullopt;
 }
 
 bool LsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
@@ -115,7 +98,7 @@ std::string FormatLsn(uint64_t lsn) {
 }
 
 void RegisterPgLsn(duckdb::CastFunctionSet& casts) {
-  RegisterTextInput(casts, PG_LSN(), VarcharToLsnCast, nullptr);
+  RegisterTextInput(casts, PG_LSN(), TextInput<uint64_t, TryParseLsn>, nullptr);
   casts.RegisterCastFunction(PG_LSN(), duckdb::LogicalType::VARCHAR,
                              LsnToVarcharCast, 50);
 }

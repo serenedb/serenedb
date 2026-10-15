@@ -40,8 +40,6 @@ std::optional<irs::pg::SqlErrorData> TryParseMacaddr(std::string_view text,
                                                      uint64_t& mac);
 std::optional<irs::pg::SqlErrorData> TryParseMacaddr8(std::string_view text,
                                                       uint64_t& mac);
-uint64_t ParseMacaddr(std::string_view text);
-uint64_t ParseMacaddr8(std::string_view text);
 std::optional<uint64_t> MacaddrRecv(std::string_view bytes);
 std::optional<uint64_t> Macaddr8Recv(std::string_view bytes);
 void MacSend(uint64_t mac, size_t bytes, uint8_t* buffer);

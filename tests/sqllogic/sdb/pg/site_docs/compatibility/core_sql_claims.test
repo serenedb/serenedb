@@ -427,11 +427,11 @@ statement error
 SELECT NULL::lseg;
 
 # types: macaddr
-statement error
+statement ok
 SELECT NULL::macaddr;
 
 # types: macaddr8
-statement error
+statement ok
 SELECT NULL::macaddr8;
 
 # types: money

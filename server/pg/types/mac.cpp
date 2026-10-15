@@ -25,8 +25,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <array>
-#include <duckdb/common/vector/vector_iterator.hpp>
-#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
@@ -230,33 +228,6 @@ uint64_t MacaddrFromMacaddr8(uint64_t mac) {
 }
 
 template<bool kMac8>
-bool MacFromText(duckdb::Vector& source, duckdb::Vector& result,
-                 duckdb::idx_t count, duckdb::CastParameters& parameters) {
-  auto texts = source.Values<duckdb::string_t>();
-  auto writer = duckdb::FlatVector::Writer<uint64_t>(result, count);
-  bool converted = true;
-  for (auto entry : texts) {
-    if (!entry.IsValid()) {
-      writer.WriteNull();
-      continue;
-    }
-    const auto& raw = entry.GetValue();
-    const std::string_view text{raw.GetData(), raw.GetSize()};
-    uint64_t mac = 0;
-    auto error =
-      kMac8 ? TryParseMacaddr8(text, mac) : TryParseMacaddr(text, mac);
-    if (!error) {
-      writer.WriteValue(mac);
-      continue;
-    }
-    InputError(std::move(*error), parameters);
-    converted = false;
-    writer.WriteNull();
-  }
-  return converted;
-}
-
-template<bool kMac8>
 bool MacToText(duckdb::Vector& source, duckdb::Vector& result,
                duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<uint64_t, duckdb::string_t>(
@@ -293,8 +264,10 @@ void MacBinary(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 void RegisterCasts(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
-  RegisterTextInput(casts, MACADDR(), MacFromText<false>, nullptr);
-  RegisterTextInput(casts, MACADDR8(), MacFromText<true>, nullptr);
+  RegisterTextInput(casts, MACADDR(), TextInput<uint64_t, TryParseMacaddr>,
+                    nullptr);
+  RegisterTextInput(casts, MACADDR8(), TextInput<uint64_t, TryParseMacaddr8>,
+                    nullptr);
   casts.RegisterCastFunction(MACADDR(), duckdb::LogicalType::VARCHAR,
                              MacToText<false>, 50);
   casts.RegisterCastFunction(MACADDR8(), duckdb::LogicalType::VARCHAR,
@@ -357,22 +330,6 @@ size_t WriteMacaddr(uint64_t mac, char* buffer) {
 
 size_t WriteMacaddr8(uint64_t mac, char* buffer) {
   return WriteHexBytes(mac, 8, buffer);
-}
-
-uint64_t ParseMacaddr(std::string_view text) {
-  uint64_t mac = 0;
-  if (auto error = TryParseMacaddr(text, mac)) {
-    THROW_SQL_ERROR_FROM_DATA(std::move(*error));
-  }
-  return mac;
-}
-
-uint64_t ParseMacaddr8(std::string_view text) {
-  uint64_t mac = 0;
-  if (auto error = TryParseMacaddr8(text, mac)) {
-    THROW_SQL_ERROR_FROM_DATA(std::move(*error));
-  }
-  return mac;
 }
 
 std::optional<uint64_t> MacaddrRecv(std::string_view bytes) {

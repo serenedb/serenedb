@@ -1,0 +1,33 @@
+query
+SELECT length(repeat('x', 70)::name) AS ascii, octet_length(repeat('é', 40)::name) AS clipped, repeat('y', 63)::name = repeat('y', 63) AS exact;
+----
+ascii	clipped	exact
+63	62	t
+
+
+query
+SELECT 'x'::name || 'y' AS concat, pg_typeof(repeat('a', 70)::name)::text AS type;
+----
+concat	type
+xy	name
+
+
+statement ok
+CREATE TABLE name_type_t (id INT, n name);
+
+
+statement ok
+INSERT INTO name_type_t VALUES (1, repeat('n', 100)), (2, 'short'), (3, NULL);
+
+
+query
+SELECT id, octet_length(n) AS len FROM name_type_t ORDER BY id;
+----
+id	len
+1	63
+2	5
+3	NULL
+
+
+statement ok
+DROP TABLE name_type_t;

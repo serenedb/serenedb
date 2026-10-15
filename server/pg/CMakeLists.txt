@@ -77,12 +77,18 @@ target_sources(
         connection_context.cpp
         types/bytea.cpp
         types/cast.cpp
+        types/char.cpp
+        types/float.cpp
         types/inet.cpp
         types/mac.cpp
         types/mapping.cpp
+        types/name.cpp
+        types/oid.cpp
         types/pg_lsn.cpp
         types/reg.cpp
         types/register.cpp
+        types/tid.cpp
+        types/vector.cpp
         serialize.cpp
         deserialize.cpp
         progress_registry.cpp

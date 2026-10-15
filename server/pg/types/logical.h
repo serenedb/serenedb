@@ -95,12 +95,12 @@ inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
   kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
   kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,
   kRegnamespaceAlias, kRegconfigAlias, kRegdictionaryAlias, kRegcollationAlias,
-  kXidAlias,          kCidAlias,       kTidAlias,
+  kXidAlias,          kCidAlias,
 };
 
 inline bool IsOidLike(const duckdb::LogicalType& type) {
   // All OID-family types are BIGINT-backed; reject everything else before the
-  // one alias lookup. A single GetAlias() + hash-set probe replaces 15
+  // one alias lookup. A single GetAlias() + hash-set probe replaces 14
   // GetAlias()+compare calls (this runs per value on the bind/COPY decode
   // path).
   if (type.id() != duckdb::LogicalTypeId::BIGINT) {

@@ -1567,7 +1567,7 @@ void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
       sel.set_index(i, new2old[first + i]);
     }
     duckdb::Vector out{_type, n};
-    duckdb::VectorOperations::Copy(all, out, sel, n, 0, 0);
+    duckdb::ImmutableStrings::Copy(all, out, sel, n, 0, 0);
     CertifyStaged(out);
     duckdb::FlatVector::SetSize(out, n);
     AppendDense(out, n);

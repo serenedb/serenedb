@@ -29,6 +29,7 @@
 #include <limits>
 
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -352,16 +353,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     c.extract_binding->MaterializeRows(rows, out, at, dense);
     return;
   }
-  // A "dense" group only bounds hit *density*, not the doc-id span: sparse
-  // hits across a wide row group can give span > STANDARD_VECTOR_SIZE while
-  // hits <= STANDARD_VECTOR_SIZE. GatherDense scans the whole span into one
-  // vector and requires span <= STANDARD_VECTOR_SIZE; fall back to the
-  // run-based GatherScatter otherwise (same guard as GatherRows).
-  if (dense && span <= STANDARD_VECTOR_SIZE) {
-    c.reader->GatherDense(*c.state, anchor, _sel, hits, span, out);
-  } else {
-    c.reader->GatherScatter(*c.state, anchor, _sel, hits, out, at);
-  }
+  column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,
+                                  out, at, dense);
 }
 
 HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {

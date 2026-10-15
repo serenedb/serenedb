@@ -34,6 +34,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -157,6 +158,10 @@ void ColFilterChain::FinishBind() {
       c.gathered.Initialize(STANDARD_VECTOR_SIZE);
     }
   }
+  if (!_cols.empty() && !_sel_data) {
+    _sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+  }
   // Reordering must not evaluate a throwing expression on rows an earlier
   // filter would have excluded (duckdb's AdaptiveFilter applies the same
   // guard); keep such chains in push order.
@@ -242,11 +247,9 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       }
       if (f.extract) {
         f.extract->MaterializeSelected(anchor, rows, survivors, values);
-      } else if (gather_span <= STANDARD_VECTOR_SIZE) {
-        f.reader->GatherDense(f.scan, anchor, rows, survivors, gather_span,
-                              values);
       } else {
-        f.reader->GatherScatter(f.scan, anchor, rows, survivors, values, 0);
+        column_internal::GatherSelected(*f.reader, f.scan, anchor, rows,
+                                        survivors, gather_span, values);
       }
       duckdb::SelectionVector compact;
       duckdb::idx_t approved = survivors;
@@ -280,10 +283,6 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
                                          duckdb::idx_t n) {
   if (_cols.empty() || n == 0) {
     return n;
-  }
-  if (!_sel_data) {
-    _sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
   const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
@@ -323,10 +322,6 @@ duckdb::idx_t ColFilterChain::WalkMask(
   duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
   SDB_ASSERT(!_cols.empty());
   duckdb::idx_t total = 0;
-  if (!_sel_data) {
-    _sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
-  }
   const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
   uint64_t word = 0;
@@ -491,11 +486,8 @@ void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,
       }
     } else if (f.deferred) {
       if (survivors != 0) {
-        if (span <= STANDARD_VECTOR_SIZE) {
-          f.reader->GatherDense(f.scan, anchor, sel, survivors, span, first);
-        } else {
-          f.reader->GatherScatter(f.scan, anchor, sel, survivors, first, 0);
-        }
+        column_internal::GatherSelected(*f.reader, f.scan, anchor, sel,
+                                        survivors, span, first);
       }
     } else if (survivors != span) {
       // survivors == span means every span row passed (offsets are strictly

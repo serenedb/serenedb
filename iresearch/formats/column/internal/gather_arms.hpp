@@ -76,6 +76,19 @@ void DenseRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   ScatterRuns(self, s, anchor, sel, hits, out, 0);
 }
 
+inline void GatherSelected(const ColumnReader& reader,
+                           ColumnReader::ScanState& s, uint64_t anchor,
+                           const duckdb::SelectionVector& sel,
+                           duckdb::idx_t hits, duckdb::idx_t span,
+                           duckdb::Vector& out, duckdb::idx_t at = 0,
+                           bool whole = true) {
+  if (whole && at == 0 && span <= STANDARD_VECTOR_SIZE) {
+    reader.GatherDense(s, anchor, sel, hits, span, out);
+  } else {
+    reader.GatherScatter(s, anchor, sel, hits, out, at);
+  }
+}
+
 template<typename Rows>
 void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
                 const Rows& rows, duckdb::Vector& result,
@@ -96,11 +109,8 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
   }
   const auto span =
     static_cast<duckdb::idx_t>(static_cast<uint64_t>(rows[n - 1]) - anchor + 1);
-  if (whole_output && out_offset == 0 && span <= STANDARD_VECTOR_SIZE) {
-    reader.GatherDense(s, anchor, s.sel, n, span, result);
-  } else {
-    reader.GatherScatter(s, anchor, s.sel, n, result, out_offset);
-  }
+  GatherSelected(reader, s, anchor, s.sel, n, span, result, out_offset,
+                 whole_output);
 }
 
 }  // namespace irs::column_internal

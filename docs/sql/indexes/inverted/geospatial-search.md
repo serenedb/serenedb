@@ -67,7 +67,7 @@ The indexed column must be `JSON` or `GEOMETRY`. GeoJSON uses `[longitude, latit
 
 ### How rows are checked
 
-The cell terms only find candidates: the rows whose cells overlap the query's. Each candidate's stored geometry is then tested against the predicate, so a row matches only when its geometry satisfies the predicate, not merely when its cells overlap; the [function reference](../../functions/search/geo.md) lists the pairs of shapes a predicate rejects or always answers false for. When the predicate is a required condition of the query, that test runs last, only for the rows that pass every other condition: `EXPLAIN` lists the predicate under `Table Filter` with `Verify: table filter`, and the `Index Filter` shows the cell lookup with `Verify: false`. Under `OR`, under `NOT`, next to `ts_offsets()`, in `ts_dict_agg` and with a vector score, the test runs as the index finds the rows, shown as `Verify: inline`.
+Geo predicates are exact: a row matches only when its stored geometry satisfies the predicate. The [function reference](../../functions/search/geo.md) lists the pairs of shapes a predicate rejects or always answers false for. When the predicate is a required condition of the query, it is checked with the query's other filters: `EXPLAIN` lists it under `Table Filter` with `Verify: table filter`, and the `Index Filter` shows the index lookup with `Verify: false`. Under `OR`, under `NOT`, next to `ts_offsets()`, in `ts_dict_agg` and with a vector score, it is checked as the index finds the rows, shown as `Verify: inline`.
 
 ## See also
 

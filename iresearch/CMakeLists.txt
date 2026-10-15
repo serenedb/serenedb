@@ -112,6 +112,7 @@ set(IResearch_core_sources
     ./index/merge/merged_terms.cpp
     ./index/merge/norms_unit.cpp
     ./index/merge/postings_unit.cpp
+    ./index/merge/term_keys.cpp
     ./index/merge_writer.cpp
     ./index/norm.cpp
     ./index/hit_batcher.cpp

@@ -106,7 +106,9 @@ void CompoundFieldIterator<Postings>::Add(const SubReader& reader,
 
 template<typename Postings>
 bool CompoundFieldIterator<Postings>::Next() {
-  _progress();
+  if (!Aborted()) {
+    _progress();
+  }
 
   if (Aborted()) {
     _field_iterator_mask.clear();

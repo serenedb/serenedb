@@ -99,6 +99,7 @@ set(iresearch-tests_sources
     ./index/merge/merge_plan_tests.cpp
     ./index/merge/merge_schedule_tests.cpp
     ./index/merge/sorted_merge_tests.cpp
+    ./index/merge/term_keys_tests.cpp
     ./index/merge/support/parallel_merge.cpp
     ./index/merge/support/segment_dump.cpp
     ./index/merge/support/segment_gen.cpp

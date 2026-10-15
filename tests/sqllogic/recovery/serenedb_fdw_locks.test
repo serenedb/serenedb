@@ -65,7 +65,7 @@ rm -rf $__TEST_DIR__/sfl_linked && mkdir $__TEST_DIR__/sfl_linked && cp -al ${SD
 statement error
 CREATE SERVER sfl_linked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_linked/5');
 ----
-db error: ERROR: Could not set lock on file "<slt:ignore>": Lock is already held in current process, likely another SereneDB instance
+db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
 
 
 system ok

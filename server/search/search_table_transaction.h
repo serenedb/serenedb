@@ -132,15 +132,12 @@ class SearchTableTransaction {
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
     duckdb::idx_t database_id, duckdb::idx_t shard_id, Factory&& make_reader) {
-    const std::pair key{database_id, shard_id};
-    auto it = _readers.find(key);
-    if (it == _readers.end()) {
-      it =
-        _readers
-          .emplace(key, std::make_shared<irs::DirectoryReader>(make_reader()))
-          .first;
+    auto& reader =
+      _readers.try_emplace(std::pair{database_id, shard_id}).first->second;
+    if (!reader) {
+      reader = std::make_shared<irs::DirectoryReader>(make_reader());
     }
-    return it->second;
+    return reader;
   }
 
   bool Empty() const noexcept { return _writes.empty(); }

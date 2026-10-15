@@ -254,13 +254,13 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   duckdb::idx_t index_id,
   const std::shared_ptr<search::InvertedIndexStorage>& storage) {
   SDB_ASSERT(storage);
-  const std::pair key{storage->GetDatabaseId(), index_id};
-  auto it = _search_snapshots.find(key);
-  if (it == _search_snapshots.end()) {
-    it =
-      _search_snapshots.emplace(key, storage->GetInvertedIndexSnapshot()).first;
+  auto& snapshot =
+    _search_snapshots.try_emplace(std::pair{storage->GetDatabaseId(), index_id})
+      .first->second;
+  if (!snapshot) {
+    snapshot = storage->GetInvertedIndexSnapshot();
   }
-  return it->second;
+  return snapshot;
 }
 
 const duckdb::Vector& Transaction::FeedColumn(

@@ -1067,3 +1067,17 @@ a	1
 b	1
 a	2
 b	2
+
+# DOCS_TEST: example_050
+
+# DOCS_TEST_BODY
+
+query
+SELECT p.name, p.moons
+FROM json_to_recordset('[{"name": "mars", "moons": 2}, {"name": "venus"}]')
+    AS p(name TEXT, moons INTEGER)
+ORDER BY p.name;
+----
+name	moons
+mars	2
+venus	NULL

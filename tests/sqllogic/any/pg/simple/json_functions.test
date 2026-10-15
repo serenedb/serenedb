@@ -1,0 +1,650 @@
+statement ok
+CREATE TYPE jsonfn_pair AS (a int, b text)
+
+
+statement ok
+CREATE TABLE jsonfn_docs (id int, doc json)
+
+
+statement ok
+INSERT INTO jsonfn_docs VALUES (1, '[10, "x", {"a": 1}]'), (2, '[]'), (3, NULL), (4, '[null]')
+
+
+# json_array_elements
+
+query
+SELECT n, elem FROM json_array_elements('[1, "a", {"b": [2,  3]}, null, [1,  2 ] , true, "x\u0041"]') WITH ORDINALITY AS t(elem, n) ORDER BY n;
+----
+n	elem
+1	1
+2	"a"
+3	{"b": [2,  3]}
+4	null
+5	[1,  2 ]
+6	true
+7	"x\\u0041"
+
+
+query
+SELECT * FROM json_array_elements('[{"a": 1}]') AS e;
+----
+value
+{"a": 1}
+
+
+query
+SELECT d.id, e.n, e.elem FROM jsonfn_docs d, json_array_elements(d.doc) WITH ORDINALITY AS e(elem, n) ORDER BY d.id, e.n;
+----
+id	n	elem
+1	1	10
+1	2	"x"
+1	3	{"a": 1}
+4	1	null
+
+
+query
+SELECT json_array_elements('[2, 1]')::text AS e ORDER BY e;
+----
+e
+1
+2
+
+
+query
+SELECT count(*) AS n FROM json_array_elements(NULL);
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM json_array_elements('[]');
+----
+n
+0
+
+
+statement error
+SELECT * FROM json_array_elements('{"a": 1}');
+----
+db error: ERROR: cannot call json_array_elements on a non-array
+
+
+statement error
+SELECT * FROM json_array_elements('1');
+----
+db error: ERROR: cannot call json_array_elements on a scalar
+
+
+# json_array_elements_text
+
+query
+SELECT n, elem FROM json_array_elements_text('[1, "a\"b", {"c": [1,  2]}, null, "x\u0041", true]') WITH ORDINALITY AS t(elem, n) ORDER BY n;
+----
+n	elem
+1	1
+2	a"b
+3	{"c": [1,  2]}
+4	NULL
+5	xA
+6	true
+
+
+query
+SELECT * FROM json_array_elements_text('["q"]') AS e;
+----
+value
+q
+
+
+query
+SELECT d.id, e.n, e.elem FROM jsonfn_docs d, json_array_elements_text(d.doc) WITH ORDINALITY AS e(elem, n) ORDER BY d.id, e.n;
+----
+id	n	elem
+1	1	10
+1	2	x
+1	3	{"a": 1}
+4	1	NULL
+
+
+query
+SELECT count(*) AS n FROM json_array_elements_text(NULL);
+----
+n
+0
+
+
+statement error
+SELECT * FROM json_array_elements_text('{"a": 1}');
+----
+db error: ERROR: cannot call json_array_elements_text on a non-array
+
+
+statement error
+SELECT * FROM json_array_elements_text('"a"');
+----
+db error: ERROR: cannot call json_array_elements_text on a scalar
+
+
+statement error
+SELECT * FROM json_array_elements_text('["a\u0000b"]');
+----
+db error: ERROR: unsupported Unicode escape sequence
+DETAIL: \u0000 cannot be converted to text.
+
+
+# json_each_text
+
+query
+SELECT n, key, value FROM json_each_text('{"a": 1, "b": "x\u0041", "c": null, "d": [1,  2], "e": {"f": "g"}, "a": true}') WITH ORDINALITY AS t(key, value, n) ORDER BY n;
+----
+n	key	value
+1	a	1
+2	b	xA
+3	c	NULL
+4	d	[1,  2]
+5	e	{"f": "g"}
+6	a	true
+
+
+query
+SELECT * FROM json_each_text('{"k": "v"}') AS e;
+----
+key	value
+k	v
+
+
+query
+SELECT json_each_text('{"k": "v"}') AS kv;
+----
+kv
+(k,v)
+
+
+query
+SELECT count(*) AS n FROM json_each_text('{}');
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM json_each_text(NULL);
+----
+n
+0
+
+
+statement error
+SELECT * FROM json_each_text('[1]');
+----
+db error: ERROR: cannot deconstruct an array as an object
+
+
+statement error
+SELECT * FROM json_each_text('1');
+----
+db error: ERROR: cannot deconstruct a scalar
+
+
+# json_object_keys
+
+query
+SELECT n, k FROM json_object_keys('{"b": 1, "a": {"c": 2}, "b": 3, "x\u0041": 4}') WITH ORDINALITY AS t(k, n) ORDER BY n;
+----
+n	k
+1	b
+2	a
+3	b
+4	xA
+
+
+query
+SELECT * FROM json_object_keys('{"x": 1}');
+----
+json_object_keys
+x
+
+
+query
+SELECT * FROM json_object_keys('{"x": 1}') AS k;
+----
+k
+x
+
+
+query
+SELECT json_object_keys('{"y": 1}') AS k;
+----
+k
+y
+
+
+query
+SELECT count(*) AS n FROM json_object_keys('{}');
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM json_object_keys(NULL);
+----
+n
+0
+
+
+statement error
+SELECT * FROM json_object_keys('[1]');
+----
+db error: ERROR: cannot call json_object_keys on an array
+
+
+statement error
+SELECT * FROM json_object_keys('null');
+----
+db error: ERROR: cannot call json_object_keys on a scalar
+
+
+# json_to_record and column definition lists
+
+query
+SELECT * FROM json_to_record('{"a": 1, "b": "x\u0041", "c": [1,  2], "d": {"e": "f"}, "g": true, "h": 1.5, "i": "2", "j": "q\u0041\"z", "n": null}') AS t(a int, b text, c text, d json, g boolean, h numeric(10,2), i int, j json, n text, missing text);
+----
+a	b	c	d	g	h	i	j	n	missing
+1	xA	[1,  2]	{"e": "f"}	t	1.50	2	"qA\\"z"	NULL	NULL
+
+
+query
+SELECT * FROM json_to_record('{"a": 1, "b": "x"}') AS (a int, b text);
+----
+a	b
+1	x
+
+
+query
+SELECT t.b, t.a FROM json_to_record('{"a": 1, "b": "x"}') t(a int, b text);
+----
+b	a
+x	1
+
+
+query
+SELECT json_to_record.a FROM json_to_record('{"a": 5}') AS (a int);
+----
+a
+5
+
+
+statement ok
+CREATE VIEW jsonfn_view AS SELECT * FROM json_to_record('{"a": 6, "b": "v"}') AS t(a int, b text)
+
+
+query
+SELECT * FROM jsonfn_view;
+----
+a	b
+6	v
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef('jsonfn_view');
+----
+pg_get_viewdef
+SELECT * FROM json_to_record('{"a": 6, "b": "v"}') AS t(a INTEGER, b text);
+
+
+statement ok
+DROP VIEW jsonfn_view
+
+
+query
+SELECT * FROM json_to_record('{"a": 1, "A": 2}') AS t(A int);
+----
+a
+1
+
+
+query
+SELECT * FROM json_to_record('{"a": 1, "A": 2}') AS t("A" int);
+----
+A
+2
+
+
+query
+SELECT * FROM json_to_record('{"a": [1, 2, null], "b": "{3,4}", "c": [], "d": [["x", "y"]]}') AS t(a int[], b int[], c int[], d text[][]);
+----
+a	b	c	d
+{1,2,NULL}	{3,4}	{}	{{x,y}}
+
+
+query
+SELECT * FROM json_to_record('{"p": {"a": 1, "b": "x", "z": 0}, "q": "(2,y)"}') AS t(p jsonfn_pair, q jsonfn_pair);
+----
+p	q
+(1,x)	(2,y)
+
+
+query
+SELECT * FROM json_to_record(NULL) AS t(a int, b text);
+----
+a	b
+NULL	NULL
+
+
+query
+SELECT d.id, r.a FROM jsonfn_docs d, json_to_record(json_build_object('a', d.id)) AS r(a int) ORDER BY d.id;
+----
+id	a
+1	1
+2	2
+3	3
+4	4
+
+
+statement error (invalid input syntax for type integer: "abc"|Could not convert string 'abc' to INT32)
+SELECT * FROM json_to_record('{"a": "abc"}') AS t(a int);
+
+
+statement error
+SELECT * FROM json_to_record('{"a": 1}') AS t(a int[]);
+----
+db error: ERROR: expected JSON array
+HINT: See the value of key "a".
+
+
+statement error
+SELECT * FROM json_to_record('{"p": [1]}') AS t(p jsonfn_pair);
+----
+db error: ERROR: cannot call populate_composite on an array
+
+
+statement error
+SELECT * FROM json_to_record('[1]') AS t(a int);
+----
+db error: ERROR: cannot call populate_composite on an array
+
+
+statement error
+SELECT * FROM json_to_record('1') AS t(a int);
+----
+db error: ERROR: cannot call populate_composite on a scalar
+
+
+statement error
+SELECT * FROM json_to_record('{"a": 1}');
+----
+db error: ERROR: a column definition list is required for functions returning "record"
+
+
+statement error
+SELECT * FROM generate_series(1, 2) AS t(a int);
+----
+db error: ERROR: a column definition list is only allowed for functions returning "record"
+
+
+statement error
+SELECT * FROM upper('x') AS t(a text);
+----
+db error: ERROR: a column definition list is only allowed for functions returning "record"
+
+
+statement ok
+CREATE FUNCTION jsonfn_outs(OUT a int, OUT b text) RETURNS record LANGUAGE sql AS 'SELECT 1, ''x''::text'
+
+
+statement error
+SELECT * FROM jsonfn_outs() AS t(a int, b text);
+----
+db error: ERROR: a column definition list is redundant for a function with OUT parameters
+
+
+statement ok
+CREATE FUNCTION jsonfn_one() RETURNS int LANGUAGE sql AS 'SELECT 1'
+
+
+statement error
+SELECT * FROM jsonfn_one() AS t(a int);
+----
+db error: ERROR: a column definition list is only allowed for functions returning "record"
+
+
+statement error WITH ORDINALITY cannot be used with a column definition list
+SELECT * FROM json_to_record('{"a": 1}') WITH ORDINALITY AS t(a int);
+
+
+statement error
+SELECT * FROM json_to_record('{"a": 1}') AS t(a int, a text);
+----
+db error: ERROR: column name "a" specified more than once
+
+
+# json_to_recordset
+
+query
+SELECT * FROM json_to_recordset('[{"a": 1, "b": "x"}, {"a": 2}, {"b": "y", "c": 3}]') AS t(a int, b text) ORDER BY a NULLS LAST;
+----
+a	b
+1	x
+2	NULL
+NULL	y
+
+
+query
+SELECT count(*) AS n FROM json_to_recordset('[]') AS t(a int);
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM json_to_recordset(NULL) AS t(a int);
+----
+n
+0
+
+
+query
+SELECT d.id, r.a FROM jsonfn_docs d, json_to_recordset(json_build_array(json_build_object('a', d.id), json_build_object('a', d.id * 10))) AS r(a int) ORDER BY d.id, r.a;
+----
+id	a
+1	1
+1	10
+2	2
+2	20
+3	3
+3	30
+4	4
+4	40
+
+
+statement error
+SELECT * FROM json_to_recordset('{"a": 1}') AS t(a int);
+----
+db error: ERROR: cannot call json_to_recordset on an object
+
+
+statement error
+SELECT * FROM json_to_recordset('1') AS t(a int);
+----
+db error: ERROR: cannot call json_to_recordset on a scalar
+
+
+statement error
+SELECT * FROM json_to_recordset('[1]') AS t(a int);
+----
+db error: ERROR: argument of json_to_recordset must be an array of objects
+
+
+statement error
+SELECT * FROM json_to_recordset('[{"a": 1}]');
+----
+db error: ERROR: a column definition list is required for functions returning "record"
+
+
+# json_populate_record
+
+query
+SELECT * FROM json_populate_record(NULL::jsonfn_pair, '{"a": 1, "c": 2}');
+----
+a	b
+1	NULL
+
+
+query
+SELECT json_populate_record(NULL::jsonfn_pair, '{"a": 1, "b": "x"}') AS r;
+----
+r
+(1,x)
+
+
+query
+SELECT (json_populate_record(NULL::jsonfn_pair, '{"a": 7}')).a AS a;
+----
+a
+7
+
+
+query
+SELECT * FROM json_populate_record(ROW(5, 'z')::jsonfn_pair, '{"b": "y"}');
+----
+a	b
+5	y
+
+
+query
+SELECT * FROM json_populate_record(ROW(5, 'z')::jsonfn_pair, '{"b": null}');
+----
+a	b
+5	NULL
+
+
+query
+SELECT * FROM json_populate_record(ROW(5, 'z')::jsonfn_pair, NULL);
+----
+a	b
+5	z
+
+
+query
+SELECT json_populate_record(NULL::jsonfn_pair, NULL) IS NULL AS n;
+----
+n
+t
+
+
+query
+SELECT * FROM json_populate_record(NULL::jsonfn_pair, '{"a": 3}', true);
+----
+a	b
+3	NULL
+
+
+statement error
+SELECT json_populate_record(1, '{}');
+----
+db error: ERROR: first argument of json_populate_record must be a row type
+
+
+statement error
+SELECT json_populate_record(NULL::jsonfn_pair, '[1]');
+----
+db error: ERROR: cannot call populate_composite on an array
+
+
+statement error
+SELECT json_populate_record(NULL::jsonfn_pair, '"x"');
+----
+db error: ERROR: cannot call populate_composite on a scalar
+
+
+# json_populate_recordset
+
+query
+SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '[{"a": 1}, {"b": "x"}]') ORDER BY a NULLS LAST;
+----
+a	b
+1	NULL
+NULL	x
+
+
+query
+SELECT * FROM json_populate_recordset(ROW(9, 'd')::jsonfn_pair, '[{"a": 1}, {"b": "x"}, {}]') ORDER BY a, b;
+----
+a	b
+1	d
+9	d
+9	x
+
+
+query
+SELECT json_populate_recordset(NULL::jsonfn_pair, '[{"a": 1, "b": "x"}]') AS r;
+----
+r
+(1,x)
+
+
+query
+SELECT d.id, r.a, r.b FROM jsonfn_docs d, json_populate_recordset(ROW(0, 'base')::jsonfn_pair, json_build_array(json_build_object('a', d.id))) AS r ORDER BY d.id;
+----
+id	a	b
+1	1	base
+2	2	base
+3	3	base
+4	4	base
+
+
+query
+SELECT count(*) AS n FROM json_populate_recordset(NULL::jsonfn_pair, NULL);
+----
+n
+0
+
+
+query
+SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '[{"a": 4}]', true);
+----
+a	b
+4	NULL
+
+
+statement error
+SELECT * FROM json_populate_recordset(1, '[]');
+----
+db error: ERROR: first argument of json_populate_recordset must be a row type
+
+
+statement error
+SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '{"a": 1}');
+----
+db error: ERROR: cannot call json_populate_recordset on an object
+
+
+statement error
+SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '1');
+----
+db error: ERROR: cannot call json_populate_recordset on a scalar
+
+
+statement error
+SELECT * FROM json_populate_recordset(NULL::jsonfn_pair, '[1]');
+----
+db error: ERROR: argument of json_populate_recordset must be an array of objects
+
+
+statement ok
+DROP FUNCTION jsonfn_outs
+
+
+statement ok
+DROP FUNCTION jsonfn_one
+
+
+statement ok
+DROP TABLE jsonfn_docs
+
+
+statement ok
+DROP TYPE jsonfn_pair

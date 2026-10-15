@@ -241,6 +241,10 @@ SELECT a.c FROM (VALUES (1)) a(c) WHERE NOT EXISTS (SELECT 1 FROM (VALUES (2)) b
 statement ok
 SELECT * FROM generate_series(1,3);
 
+# queries: Column Definition Lists
+statement ok
+SELECT * FROM json_to_record('{"a":1}') AS t(a int);
+
 # queries: Lateral Subqueries
 statement ok
 SELECT a.c, b.x FROM (VALUES (1)) a(c) CROSS JOIN LATERAL (SELECT a.c+1 AS x) b;
@@ -2149,7 +2153,7 @@ statement error
 SELECT '{"a":1}' IS JSON;
 
 # op_json: json_array_elements
-statement error
+statement ok
 SELECT json_array_elements('[1,2,3]'::json);
 
 # op_json: jsonb_array_elements
@@ -2157,7 +2161,7 @@ statement error
 SELECT jsonb_array_elements('[1,2,3]'::jsonb);
 
 # op_json: json_array_elements_text
-statement error
+statement ok
 SELECT json_array_elements_text('["a","b"]'::json);
 
 # op_json: jsonb_array_elements_text
@@ -2181,7 +2185,7 @@ statement error
 SELECT * FROM jsonb_each('{"a":1}'::jsonb);
 
 # op_json: json_each_text
-statement error
+statement ok
 SELECT * FROM json_each_text('{"a":1}'::json);
 
 # op_json: jsonb_each_text
@@ -2189,7 +2193,7 @@ statement error
 SELECT * FROM jsonb_each_text('{"a":1}'::jsonb);
 
 # op_json: json_object_keys
-statement error
+statement ok
 SELECT json_object_keys('{"a":1,"b":2}'::json);
 
 # op_json: jsonb_object_keys
@@ -2200,6 +2204,12 @@ SELECT jsonb_object_keys('{"a":1,"b":2}'::jsonb);
 statement error
 SELECT * FROM json_populate_record(null::record, '{"a":1}'::json);
 
+statement ok
+CREATE TYPE op_json_row AS (a int);
+
+statement ok
+SELECT * FROM json_populate_record(null::op_json_row, '{"a":1}'::json);
+
 # op_json: jsonb_populate_record
 statement error
 SELECT * FROM jsonb_populate_record(null::record, '{"a":1}'::jsonb);
@@ -2208,12 +2218,15 @@ SELECT * FROM jsonb_populate_record(null::record, '{"a":1}'::jsonb);
 statement error
 SELECT * FROM json_populate_recordset(null::record, '[{"a":1}]'::json);
 
+statement ok
+SELECT * FROM json_populate_recordset(null::op_json_row, '[{"a":1}]'::json);
+
 # op_json: jsonb_populate_recordset
 statement error
 SELECT * FROM jsonb_populate_recordset(null::record, '[{"a":1}]'::jsonb);
 
 # op_json: json_to_record
-statement error
+statement ok
 SELECT * FROM json_to_record('{"a":1}'::json) AS x(a integer);
 
 # op_json: jsonb_to_record
@@ -2221,7 +2234,7 @@ statement error
 SELECT * FROM jsonb_to_record('{"a":1}'::jsonb) AS x(a int);
 
 # op_json: json_to_recordset
-statement error
+statement ok
 SELECT * FROM json_to_recordset('[{"a":1}]'::json) AS x(a int);
 
 # op_json: jsonb_to_recordset

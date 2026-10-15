@@ -111,6 +111,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Semijoins                  | Yes           |  |
 | Antijoins                  | Yes           |                |
 | Table Functions            | Yes           | |
+| Column Definition Lists    | Yes           | [Column definition lists](../sql/query_syntax/from_and_join/index.md#column-definition-lists) |
 | Lateral Subqueries         | Yes           |                |
 | User-Specified Aliases     | Yes           |                |
 | GROUP BY                   | Yes           |  |
@@ -559,7 +560,7 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 
 #### JSON
 
-The PostgreSQL-named JSON functions below are largely unsupported. SereneDB instead provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
+Most of the PostgreSQL `json` functions below are supported. SereneDB also provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
 
 Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable.
 
@@ -591,25 +592,25 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | json_object | Partial | Requires even arg count; SereneDB `json_object(key, value)` |
 | jsonb_object | No |  |
 | `IS JSON` | No | Use `json_valid()` |
-| json_array_elements | No | Use `json_each()` |
+| json_array_elements | Yes |  |
 | jsonb_array_elements | No |  |
-| json_array_elements_text | No | Use `json_extract_string()` |
+| json_array_elements_text | Yes |  |
 | jsonb_array_elements_text | No |  |
 | json_array_length | Yes |  |
 | jsonb_array_length | No | Use `json_array_length` |
 | json_each | Yes |  |
 | jsonb_each | No |  |
-| json_each_text | No | Use `json_each()` |
+| json_each_text | Yes |  |
 | jsonb_each_text | No |  |
-| json_object_keys | No | Use `json_keys()` |
+| json_object_keys | Yes |  |
 | jsonb_object_keys | No |  |
-| json_populate_record | No | Use `json_transform()` |
+| json_populate_record | Yes |  |
 | jsonb_populate_record | No |  |
-| json_populate_recordset | No | Use `json_transform()` |
+| json_populate_recordset | Yes |  |
 | jsonb_populate_recordset | No |  |
-| json_to_record | No | Use `json_transform()` |
+| json_to_record | Yes |  |
 | jsonb_to_record | No |  |
-| json_to_recordset | No | Use `json_transform()` |
+| json_to_recordset | Yes |  |
 | jsonb_to_recordset | No |  |
 | jsonb_set | No |  |
 | jsonb_set_lax | No |  |

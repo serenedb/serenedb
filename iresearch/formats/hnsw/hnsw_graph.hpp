@@ -360,6 +360,8 @@ inline constexpr float kHnswPanoramaSlack = 1e-4f;
 inline constexpr float kHnswPanoramaMargin = 1e-5f;
 
 inline constexpr uint32_t kHnswCodeLevel = 2 * kHnswPanoramaLevel;
+inline constexpr size_t kHnswPanoramaRows = 64;
+inline constexpr size_t kHnswPanoramaRowsAhead = 4;
 
 inline uint32_t HnswPanoramaLevels(uint32_t d) noexcept {
   return (d + kHnswPanoramaLevel - 1) / kHnswPanoramaLevel;
@@ -393,8 +395,10 @@ struct HnswPanoramaDist {
     }
     const score_t bar =
       threshold - kHnswPanoramaMargin * (1.f + std::abs(threshold));
-    for (size_t i = 0; i < ids.size(); ++i) {
-      out[i] = Bounded(ids[i], bar);
+    for (size_t first = 0; first < ids.size(); first += kHnswPanoramaRows) {
+      Bounded(
+        ids.subspan(first, std::min(kHnswPanoramaRows, ids.size() - first)),
+        bar, out + first);
     }
   }
 
@@ -409,42 +413,87 @@ struct HnswPanoramaDist {
     __builtin_prefetch(norms + id, 0, 3);
   }
 
-  score_t Bounded(uint32_t id, score_t bar) const noexcept {
-    const float* x = Row(id);
-    const float x_norm2 = norms[id];
-    const float slack = kHnswPanoramaSlack * x_norm2;
-    float acc = 0.f;
-    float head = 0.f;
-    for (uint32_t b = 0, level = 1; b < d; b += kHnswPanoramaLevel, ++level) {
-      const uint32_t w = std::min(kHnswPanoramaLevel, d - b);
-      if constexpr (kKernel == VectorMetric::L2Sqr) {
-        acc += faiss::fvec_L2sqr(q + b, x + b, w);
-      } else {
-        acc += faiss::fvec_inner_product(q + b, x + b, w);
-      }
-      if (b + w == d) {
-        break;
-      }
-      head += faiss::fvec_norm_L2sqr(x + b, w);
-      const float rest = x_norm2 - head;
-      const float qt = tails[level];
-      score_t bound;
-      if constexpr (kKernel == VectorMetric::L2Sqr) {
-        const float lo = std::sqrt(std::max(0.f, rest - slack));
-        const float hi = std::sqrt(std::max(0.f, rest + slack));
-        const float gap = qt < lo ? lo - qt : (qt > hi ? qt - hi : 0.f);
-        bound = -(acc + gap * gap);
-      } else {
-        bound = acc + qt * std::sqrt(std::max(0.f, rest + slack));
-      }
-      if (bound < bar) {
-        return kHnswNoThreshold;
-      }
+  void FetchLevel(const float* x, uint32_t b) const noexcept {
+    if (b >= d) {
+      return;
     }
-    if constexpr (kKernel == VectorMetric::L2Sqr) {
-      return -acc;
-    } else {
-      return acc;
+    const auto first = reinterpret_cast<uintptr_t>(x + b) & ~uintptr_t{63};
+    const auto last =
+      reinterpret_cast<uintptr_t>(x + std::min(d, b + kHnswPanoramaLevel) - 1);
+    for (auto line = first; line <= last; line += 64) {
+      __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 3);
+    }
+  }
+
+  void FetchRow(uint32_t id) const noexcept {
+    FetchLevel(Row(id), 0);
+    FetchLevel(Row(id), kHnswPanoramaLevel);
+    __builtin_prefetch(norms + id, 0, 3);
+  }
+
+  void Bounded(std::span<const uint32_t> ids, score_t bar,
+               score_t* out) const noexcept {
+    float acc[kHnswPanoramaRows];
+    float head[kHnswPanoramaRows];
+    uint8_t live[kHnswPanoramaRows];
+    const size_t n = ids.size();
+    for (size_t i = 0; i < n; ++i) {
+      acc[i] = 0.f;
+      head[i] = 0.f;
+      live[i] = static_cast<uint8_t>(i);
+    }
+    for (size_t i = 0; i < std::min(n, kHnswPanoramaRowsAhead); ++i) {
+      FetchRow(ids[i]);
+    }
+    size_t alive = n;
+    for (uint32_t b = 0, level = 1; alive != 0;
+         b += kHnswPanoramaLevel, ++level) {
+      const uint32_t w = std::min(kHnswPanoramaLevel, d - b);
+      size_t kept = 0;
+      for (size_t j = 0; j < alive; ++j) {
+        if (b == 0 && j + kHnswPanoramaRowsAhead < alive) {
+          FetchRow(ids[j + kHnswPanoramaRowsAhead]);
+        }
+        const auto i = live[j];
+        const float* x = Row(ids[i]);
+        float a = acc[i];
+        if constexpr (kKernel == VectorMetric::L2Sqr) {
+          a += faiss::fvec_L2sqr(q + b, x + b, w);
+        } else {
+          a += faiss::fvec_inner_product(q + b, x + b, w);
+        }
+        if (b + w == d) {
+          if constexpr (kKernel == VectorMetric::L2Sqr) {
+            out[i] = -a;
+          } else {
+            out[i] = a;
+          }
+          continue;
+        }
+        const float h = head[i] + faiss::fvec_norm_L2sqr(x + b, w);
+        const float x_norm2 = norms[ids[i]];
+        const float slack = kHnswPanoramaSlack * x_norm2;
+        const float rest = x_norm2 - h;
+        const float qt = tails[level];
+        score_t bound;
+        if constexpr (kKernel == VectorMetric::L2Sqr) {
+          const float lo = std::sqrt(std::max(0.f, rest - slack));
+          const float hi = std::sqrt(std::max(0.f, rest + slack));
+          const float gap = qt < lo ? lo - qt : (qt > hi ? qt - hi : 0.f);
+          bound = -(a + gap * gap);
+        } else {
+          bound = a + qt * std::sqrt(std::max(0.f, rest + slack));
+        }
+        if (bound < bar) {
+          out[i] = kHnswNoThreshold;
+          continue;
+        }
+        FetchLevel(x, b + 2 * kHnswPanoramaLevel);
+        acc[i] = a;
+        head[i] = h;
+        live[kept++] = i;
+      }
+      alive = kept;
     }
   }
 };

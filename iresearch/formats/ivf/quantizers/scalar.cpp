@@ -49,9 +49,8 @@ faiss::ScalarQuantizer::QuantizerType FaissScalarType(
 
 constexpr size_t kEncodeTile = kFastScanBbs;
 
-constexpr uint32_t kSq8LevelsAhead = 2;
-constexpr size_t kSq8RowsAhead = 4;
-constexpr size_t kSq8RowLines = 4;
+constexpr size_t kSq8LevelRows = 64;
+constexpr size_t kSq8LevelRowsAhead = 8;
 
 struct Sq8Levels {
   const float* a;
@@ -63,82 +62,161 @@ struct Sq8Levels {
   const float* query;
 };
 
+struct Sq8LevelRows {
+  const uint8_t* const* codes;
+  const float* const* tails;
+  uint32_t tail_stride;
+  size_t n;
+};
+
 #if defined(__x86_64__) && defined(__AVX2__)
-__attribute__((target("avx512f,avx512bw,avx512vl"))) score_t
-Sq8ScoreLevels512(const Sq8Levels& lv, const uint8_t* code, const float* tails,
-                  score_t threshold) noexcept {
-  __m512 acc0 = _mm512_setzero_ps();
-  __m512 acc1 = _mm512_setzero_ps();
-  uint32_t b = 0;
-  for (uint32_t k = 0;; ++k) {
-    const uint32_t end = std::min(lv.d, b + lv.width);
-    const uint32_t ahead = b + kSq8LevelsAhead * lv.width;
-    for (uint32_t o = ahead; o < std::min(lv.d, ahead + lv.width); o += 64) {
-      __builtin_prefetch(code + o, 0, 3);
-    }
-    for (; b + 32 <= end; b += 32) {
-      const __m512 c0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
-        _mm_loadu_si128(reinterpret_cast<const __m128i*>(code + b))));
-      const __m512 c1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
-        _mm_loadu_si128(reinterpret_cast<const __m128i*>(code + b + 16))));
-      acc0 = _mm512_fmadd_ps(c0, _mm512_loadu_ps(lv.a + b), acc0);
-      acc1 = _mm512_fmadd_ps(c1, _mm512_loadu_ps(lv.a + b + 16), acc1);
-    }
-    for (; b < end; b += 16) {
-      const __mmask16 live = end - b >= 16
-                               ? __mmask16{0xFFFF}
-                               : static_cast<__mmask16>((1U << (end - b)) - 1);
-      const __m512 c = _mm512_cvtepi32_ps(
-        _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(live, code + b)));
-      acc0 = _mm512_fmadd_ps(c, _mm512_maskz_loadu_ps(live, lv.a + b), acc0);
-    }
-    b = end;
-    const float dot = _mm512_reduce_add_ps(_mm512_add_ps(acc0, acc1));
-    if (b == lv.d) {
-      return lv.bias + dot;
-    }
-    if (dot + lv.level_bias[k + 1] + lv.query[b / lv.query_step] * tails[k] <
-        threshold) {
-      return std::numeric_limits<score_t>::lowest();
-    }
+void Sq8FetchLines(const void* from, size_t bytes) noexcept {
+  const auto first = reinterpret_cast<uintptr_t>(from) & ~uintptr_t{63};
+  const auto last = reinterpret_cast<uintptr_t>(from) + bytes - 1;
+  for (auto line = first; line <= last; line += 64) {
+    __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 3);
   }
 }
 
-score_t Sq8ScoreLevels(const Sq8Levels& lv, const uint8_t* code,
-                       const float* tails, score_t threshold) noexcept {
-  __m256 acc0 = _mm256_setzero_ps();
-  __m256 acc1 = _mm256_setzero_ps();
-  uint32_t b = 0;
-  for (uint32_t k = 0;; ++k) {
+void Sq8FetchLevel(const Sq8Levels& lv, const uint8_t* code,
+                   uint32_t k) noexcept {
+  const uint32_t b = k * lv.width;
+  if (b < lv.d) {
+    Sq8FetchLines(code + b, std::min(lv.d, b + lv.width) - b);
+  }
+}
+
+void Sq8FetchRow(const Sq8Levels& lv, const Sq8LevelRows& rows,
+                 size_t i) noexcept {
+  Sq8FetchLevel(lv, rows.codes[i], 0);
+  Sq8FetchLevel(lv, rows.codes[i], 1);
+  Sq8FetchLines(rows.tails[i], rows.tail_stride * sizeof(float));
+}
+
+__attribute__((target("avx512f,avx512bw,avx512vl"))) void Sq8ScoreLevels512(
+  const Sq8Levels& lv, const Sq8LevelRows& rows, score_t threshold,
+  score_t* out) noexcept {
+  __m512 acc0[kSq8LevelRows];
+  __m512 acc1[kSq8LevelRows];
+  uint8_t live[kSq8LevelRows];
+  for (size_t i = 0; i < rows.n; ++i) {
+    acc0[i] = _mm512_setzero_ps();
+    acc1[i] = _mm512_setzero_ps();
+    live[i] = static_cast<uint8_t>(i);
+  }
+  for (size_t i = 0; i < std::min(rows.n, kSq8LevelRowsAhead); ++i) {
+    Sq8FetchRow(lv, rows, i);
+  }
+  size_t alive = rows.n;
+  for (uint32_t k = 0, b = 0; alive != 0; ++k) {
     const uint32_t end = std::min(lv.d, b + lv.width);
-    const uint32_t ahead = b + kSq8LevelsAhead * lv.width;
-    for (uint32_t o = ahead; o < std::min(lv.d, ahead + lv.width); o += 64) {
-      __builtin_prefetch(code + o, 0, 3);
+    size_t kept = 0;
+    for (size_t j = 0; j < alive; ++j) {
+      if (k == 0 && j + kSq8LevelRowsAhead < alive) {
+        Sq8FetchRow(lv, rows, j + kSq8LevelRowsAhead);
+      }
+      const auto i = live[j];
+      const uint8_t* code = rows.codes[i];
+      __m512 a0 = acc0[i];
+      __m512 a1 = acc1[i];
+      uint32_t o = b;
+      for (; o + 32 <= end; o += 32) {
+        const __m512 c0 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(code + o))));
+        const __m512 c1 = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(code + o + 16))));
+        a0 = _mm512_fmadd_ps(c0, _mm512_loadu_ps(lv.a + o), a0);
+        a1 = _mm512_fmadd_ps(c1, _mm512_loadu_ps(lv.a + o + 16), a1);
+      }
+      for (; o < end; o += 16) {
+        const __mmask16 mask =
+          end - o >= 16 ? __mmask16{0xFFFF}
+                        : static_cast<__mmask16>((1U << (end - o)) - 1);
+        const __m512 c = _mm512_cvtepi32_ps(
+          _mm512_cvtepu8_epi32(_mm_maskz_loadu_epi8(mask, code + o)));
+        a0 = _mm512_fmadd_ps(c, _mm512_maskz_loadu_ps(mask, lv.a + o), a0);
+      }
+      const float dot = _mm512_reduce_add_ps(_mm512_add_ps(a0, a1));
+      if (end == lv.d) {
+        out[i] = lv.bias + dot;
+        continue;
+      }
+      if (dot + lv.level_bias[k + 1] +
+            lv.query[end / lv.query_step] * rows.tails[i][k] <
+          threshold) {
+        out[i] = std::numeric_limits<score_t>::lowest();
+        continue;
+      }
+      Sq8FetchLevel(lv, code, k + 2);
+      acc0[i] = a0;
+      acc1[i] = a1;
+      live[kept++] = i;
     }
-    for (; b + 16 <= end; b += 16) {
-      const __m256 c0 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(
-        _mm_loadl_epi64(reinterpret_cast<const __m128i*>(code + b))));
-      const __m256 c1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(
-        _mm_loadl_epi64(reinterpret_cast<const __m128i*>(code + b + 8))));
-      acc0 = _mm256_fmadd_ps(c0, _mm256_loadu_ps(lv.a + b), acc0);
-      acc1 = _mm256_fmadd_ps(c1, _mm256_loadu_ps(lv.a + b + 8), acc1);
+    alive = kept;
+    b = end;
+  }
+}
+
+void Sq8ScoreLevels(const Sq8Levels& lv, const Sq8LevelRows& rows,
+                    score_t threshold, score_t* out) noexcept {
+  __m256 acc0[kSq8LevelRows];
+  __m256 acc1[kSq8LevelRows];
+  uint8_t live[kSq8LevelRows];
+  for (size_t i = 0; i < rows.n; ++i) {
+    acc0[i] = _mm256_setzero_ps();
+    acc1[i] = _mm256_setzero_ps();
+    live[i] = static_cast<uint8_t>(i);
+  }
+  for (size_t i = 0; i < std::min(rows.n, kSq8LevelRowsAhead); ++i) {
+    Sq8FetchRow(lv, rows, i);
+  }
+  size_t alive = rows.n;
+  for (uint32_t k = 0, b = 0; alive != 0; ++k) {
+    const uint32_t end = std::min(lv.d, b + lv.width);
+    size_t kept = 0;
+    for (size_t j = 0; j < alive; ++j) {
+      if (k == 0 && j + kSq8LevelRowsAhead < alive) {
+        Sq8FetchRow(lv, rows, j + kSq8LevelRowsAhead);
+      }
+      const auto i = live[j];
+      const uint8_t* code = rows.codes[i];
+      __m256 a0 = acc0[i];
+      __m256 a1 = acc1[i];
+      uint32_t o = b;
+      for (; o + 16 <= end; o += 16) {
+        const __m256 c0 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(
+          _mm_loadl_epi64(reinterpret_cast<const __m128i*>(code + o))));
+        const __m256 c1 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(
+          _mm_loadl_epi64(reinterpret_cast<const __m128i*>(code + o + 8))));
+        a0 = _mm256_fmadd_ps(c0, _mm256_loadu_ps(lv.a + o), a0);
+        a1 = _mm256_fmadd_ps(c1, _mm256_loadu_ps(lv.a + o + 8), a1);
+      }
+      const __m256 v = _mm256_add_ps(a0, a1);
+      __m128 h =
+        _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+      h = _mm_add_ps(h, _mm_movehl_ps(h, h));
+      h = _mm_add_ss(h, _mm_movehdup_ps(h));
+      float dot = _mm_cvtss_f32(h);
+      for (; o < end; ++o) {
+        dot += lv.a[o] * static_cast<float>(code[o]);
+      }
+      if (end == lv.d) {
+        out[i] = lv.bias + dot;
+        continue;
+      }
+      if (dot + lv.level_bias[k + 1] +
+            lv.query[end / lv.query_step] * rows.tails[i][k] <
+          threshold) {
+        out[i] = std::numeric_limits<score_t>::lowest();
+        continue;
+      }
+      Sq8FetchLevel(lv, code, k + 2);
+      acc0[i] = a0;
+      acc1[i] = a1;
+      live[kept++] = i;
     }
-    const __m256 v = _mm256_add_ps(acc0, acc1);
-    __m128 h =
-      _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
-    h = _mm_add_ps(h, _mm_movehl_ps(h, h));
-    h = _mm_add_ss(h, _mm_movehdup_ps(h));
-    float dot = _mm_cvtss_f32(h);
-    for (; b < end; ++b) {
-      dot += lv.a[b] * static_cast<float>(code[b]);
-    }
-    if (b == lv.d) {
-      return lv.bias + dot;
-    }
-    if (dot + lv.level_bias[k + 1] + lv.query[b / lv.query_step] * tails[k] <
-        threshold) {
-      return std::numeric_limits<score_t>::lowest();
-    }
+    alive = kept;
+    b = end;
   }
 }
 #endif
@@ -500,24 +578,6 @@ class ScalarQuantizerReader final : public QuantizerReader {
         acc += double{q[j]} * (vmin[j] + 0.5f * (vdiff[j] / 255.f));
       }
     }
-    const auto row = [&](size_t i) {
-      return reinterpret_cast<const uint8_t*>(base) +
-             static_cast<size_t>(ids[i]) * record_size;
-    };
-    const auto tails = [&](size_t i) {
-      return bound.rows + static_cast<size_t>(ids[i]) * bound.row_stride;
-    };
-    const auto prefetch = [&](size_t i) {
-      if (i < ids.size()) {
-        for (size_t l = 0; l < kSq8RowLines; ++l) {
-          __builtin_prefetch(row(i) + 64 * l, 0, 3);
-        }
-        __builtin_prefetch(tails(i), 0, 3);
-      }
-    };
-    for (size_t i = 0; i < kSq8RowsAhead; ++i) {
-      prefetch(i);
-    }
     const Sq8Levels lv{.a = _weights.a.data(),
                        .d = d,
                        .width = bound.width,
@@ -526,10 +586,24 @@ class ScalarQuantizerReader final : public QuantizerReader {
                        .level_bias = _level_bias.data(),
                        .query = bound.query.data()};
     const bool wide = HasAvx512Vnni();
-    for (size_t i = 0; i < ids.size(); ++i) {
-      prefetch(i + kSq8RowsAhead);
-      out[i] = wide ? Sq8ScoreLevels512(lv, row(i), tails(i), threshold)
-                    : Sq8ScoreLevels(lv, row(i), tails(i), threshold);
+    const uint8_t* codes[kSq8LevelRows];
+    const float* tails[kSq8LevelRows];
+    for (size_t first = 0; first < ids.size(); first += kSq8LevelRows) {
+      const size_t n = std::min(kSq8LevelRows, ids.size() - first);
+      for (size_t i = 0; i < n; ++i) {
+        const auto id = static_cast<size_t>(ids[first + i]);
+        codes[i] = reinterpret_cast<const uint8_t*>(base) + id * record_size;
+        tails[i] = bound.rows + id * bound.row_stride;
+      }
+      const Sq8LevelRows rows{.codes = codes,
+                              .tails = tails,
+                              .tail_stride = bound.row_stride,
+                              .n = n};
+      if (wide) {
+        Sq8ScoreLevels512(lv, rows, threshold, out + first);
+      } else {
+        Sq8ScoreLevels(lv, rows, threshold, out + first);
+      }
     }
     return true;
 #else

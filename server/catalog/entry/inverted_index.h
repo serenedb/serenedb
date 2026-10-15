@@ -233,6 +233,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);
 
+  duckdb::OwnedJobsExport ExportOwnedJobs(duckdb::ClientContext& context,
+                                          duckdb::CreateIndexInfo& info) final;
+
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
     duckdb::ColumnSegmentInfoScanState& state,

@@ -22,7 +22,13 @@
 
 #include <duckdb/planner/operator/logical_extension_operator.hpp>
 #include <memory>
+#include <span>
 
+namespace irs {
+
+class TermRangeMerge;
+
+}  // namespace irs
 namespace sdb::search {
 
 struct MergeUnitRun;
@@ -32,8 +38,9 @@ namespace sdb::connector {
 
 class LogicalMergeUnits final : public duckdb::LogicalExtensionOperator {
  public:
-  LogicalMergeUnits(std::shared_ptr<search::MergeUnitRun> run,
-                    duckdb::idx_t threads);
+  LogicalMergeUnits(
+    std::shared_ptr<search::MergeUnitRun> run, duckdb::idx_t threads,
+    std::span<const std::unique_ptr<irs::TermRangeMerge>> ranges = {});
 
   duckdb::PhysicalOperator& CreatePlan(
     duckdb::ClientContext& context,

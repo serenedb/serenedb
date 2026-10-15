@@ -89,6 +89,8 @@ class TermRangeMerge {
 
   bool Done() const noexcept;
 
+  size_t PartsLeft() const noexcept;
+
   std::vector<TermPart> Parts() const;
 
   uint64_t DocCount() const noexcept;

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/execution/physical_operator.hpp>
+#include <functional>
 
 namespace irs {
 
@@ -32,7 +33,9 @@ namespace sdb::connector {
 class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
  public:
   PhysicalPostingsMerge(duckdb::PhysicalPlan& physical_plan,
-                        irs::TermRangeMerge& merge);
+                        irs::TermRangeMerge& merge,
+                        std::function<void()> on_part = {},
+                        std::function<void()> on_done = {});
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
@@ -44,6 +47,10 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
   duckdb::SinkCombineResultType Combine(
     duckdb::ExecutionContext& context,
     duckdb::OperatorSinkCombineInput& input) const final;
+  duckdb::SinkFinalizeType Finalize(
+    duckdb::Pipeline& pipeline, duckdb::Event& event,
+    duckdb::ClientContext& context,
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::SourceResultType GetDataInternal(
@@ -55,7 +62,11 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
     const final;
 
  private:
+  void FinishPartition(duckdb::LocalSinkState& local) const;
+
   irs::TermRangeMerge& _merge;
+  std::function<void()> _on_part;
+  std::function<void()> _on_done;
 };
 
 }  // namespace sdb::connector

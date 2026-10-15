@@ -36,7 +36,15 @@ class MergeSchedule {
 
   std::optional<size_t> Claim();
 
+  void Hold(size_t unit);
+
+  void Release(size_t unit);
+
+  void Fail();
+
   size_t Ready() const;
+
+  size_t Running() const;
 
   void Finish(size_t unit, bool ok);
 

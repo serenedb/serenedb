@@ -28,7 +28,8 @@ namespace sdb::connector {
 class LogicalPresortedMerge final : public duckdb::LogicalExtensionOperator {
  public:
   explicit LogicalPresortedMerge(
-    duckdb::shared_ptr<duckdb::PresortedMerge> merge);
+    duckdb::shared_ptr<duckdb::PresortedMerge> merge,
+    duckdb::TableIndex table_index = duckdb::TableIndex(0));
 
   duckdb::PhysicalOperator& CreatePlan(
     duckdb::ClientContext& context,
@@ -44,6 +45,7 @@ class LogicalPresortedMerge final : public duckdb::LogicalExtensionOperator {
 
  private:
   duckdb::shared_ptr<duckdb::PresortedMerge> _merge;
+  duckdb::TableIndex _table_index;
 };
 
 }  // namespace sdb::connector

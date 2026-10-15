@@ -27,8 +27,11 @@
 namespace sdb::connector {
 
 LogicalPresortedMerge::LogicalPresortedMerge(
-  duckdb::shared_ptr<duckdb::PresortedMerge> merge)
-  : duckdb::LogicalExtensionOperator(), _merge{std::move(merge)} {}
+  duckdb::shared_ptr<duckdb::PresortedMerge> merge,
+  duckdb::TableIndex table_index)
+  : duckdb::LogicalExtensionOperator(),
+    _merge{std::move(merge)},
+    _table_index{table_index} {}
 
 void LogicalPresortedMerge::ResolveTypes() {
   types = duckdb::PhysicalPresortedMerge::RunTypes();
@@ -37,12 +40,12 @@ void LogicalPresortedMerge::ResolveTypes() {
 duckdb::vector<duckdb::ColumnBinding>
 LogicalPresortedMerge::GetColumnBindings() {
   return GenerateColumnBindings(
-    duckdb::TableIndex(0), duckdb::PhysicalPresortedMerge::RunTypes().size());
+    _table_index, duckdb::PhysicalPresortedMerge::RunTypes().size());
 }
 
 duckdb::vector<duckdb::TableIndex> LogicalPresortedMerge::GetTableIndex()
   const {
-  return {duckdb::TableIndex(0)};
+  return {_table_index};
 }
 
 duckdb::string LogicalPresortedMerge::GetName() const {

@@ -30,20 +30,22 @@
 
 #include "connector/segment_rewrite/logical_merge_order.h"
 #include "connector/segment_rewrite/logical_merge_units.h"
-#include "connector/segment_rewrite/logical_postings_merge.h"
 #include "search/compaction/merge_unit_run.h"
 
 namespace sdb::search {
 namespace {
 
+void Check(const duckdb::QueryResult& result) {
+  if (result.HasError()) {
+    result.ThrowError();
+  }
+}
+
 void Execute(duckdb::Connection& connection,
              duckdb::unique_ptr<duckdb::LogicalOperator> root) {
   root->ResolveOperatorTypes();
-  const auto result = connection.Query(
-    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
-  if (result->HasError()) {
-    result->ThrowError();
-  }
+  Check(*connection.Query(
+    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root))));
 }
 
 }  // namespace
@@ -56,24 +58,17 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   context.task_scheduler = _scheduler;
   context.config.threads = threads;
   connection.Query("SET max_execution_time = 0");
+  Check(*connection.Query("SET SESSION preserve_insertion_order = false"));
   if (plan.OrderPending()) {
     Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan));
     if (!plan.FinishOrder()) {
       return false;
     }
   }
-  if (plan.PostingsPending()) {
-    for (const auto& range : plan.TermRanges()) {
-      Execute(connection,
-              duckdb::make_uniq<connector::LogicalPostingsMerge>(*range));
-    }
-    if (!plan.FinishPostings()) {
-      return false;
-    }
-  }
-  const auto run = std::make_shared<MergeUnitRun>(plan, begin);
-  Execute(connection,
-          duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads));
+  const auto run =
+    std::make_shared<MergeUnitRun>(plan, begin, plan.PostingsPending());
+  Execute(connection, duckdb::make_uniq<connector::LogicalMergeUnits>(
+                        run, threads, plan.TermRanges()));
   return run->Finish();
 }
 

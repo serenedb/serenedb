@@ -32,11 +32,20 @@ namespace {
 using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
 
 struct MergeUnitsSourceState final : duckdb::GlobalSourceState {
-  explicit MergeUnitsSourceState(duckdb::idx_t threads) noexcept
-    : threads{threads} {}
+  MergeUnitsSourceState(std::shared_ptr<search::MergeUnitRun> run,
+                        duckdb::idx_t threads)
+    : run{std::move(run)}, threads{threads} {
+    this->run->SetWaker([this] {
+      Guard guard{lock};
+      UnblockTasks();
+    });
+  }
+
+  ~MergeUnitsSourceState() final { run->SetWaker(nullptr); }
 
   duckdb::idx_t MaxThreads() final { return threads; }
 
+  std::shared_ptr<search::MergeUnitRun> run;
   duckdb::idx_t threads;
 };
 
@@ -53,7 +62,7 @@ PhysicalMergeUnits::PhysicalMergeUnits(
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 PhysicalMergeUnits::GetGlobalSourceState(duckdb::ClientContext&) const {
-  return duckdb::make_uniq<MergeUnitsSourceState>(_threads);
+  return duckdb::make_uniq<MergeUnitsSourceState>(_run, _threads);
 }
 
 duckdb::SourceResultType PhysicalMergeUnits::GetDataInternal(
@@ -66,7 +75,9 @@ duckdb::SourceResultType PhysicalMergeUnits::GetDataInternal(
     if (_run->schedule.Done()) {
       return duckdb::SourceResultType::FINISHED;
     }
-    unit = _run->schedule.Claim();
+    if (_run->MayClaim(_threads)) {
+      unit = _run->schedule.Claim();
+    }
     if (!unit) {
       return state.BlockSource(input.interrupt_state);
     }

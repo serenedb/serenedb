@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/planner/operator/logical_extension_operator.hpp>
+#include <functional>
 
 namespace irs {
 
@@ -31,7 +32,10 @@ namespace sdb::connector {
 
 class LogicalPostingsMerge final : public duckdb::LogicalExtensionOperator {
  public:
-  explicit LogicalPostingsMerge(irs::TermRangeMerge& merge);
+  explicit LogicalPostingsMerge(
+    irs::TermRangeMerge& merge,
+    duckdb::TableIndex table_index = duckdb::TableIndex(1),
+    std::function<void()> on_part = {}, std::function<void()> on_done = {});
 
   duckdb::PhysicalOperator& CreatePlan(
     duckdb::ClientContext& context,
@@ -47,6 +51,9 @@ class LogicalPostingsMerge final : public duckdb::LogicalExtensionOperator {
 
  private:
   irs::TermRangeMerge& _merge;
+  duckdb::TableIndex _table_index;
+  std::function<void()> _on_part;
+  std::function<void()> _on_done;
 };
 
 }  // namespace sdb::connector

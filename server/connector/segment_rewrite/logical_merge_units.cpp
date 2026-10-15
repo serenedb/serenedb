@@ -20,18 +20,39 @@
 
 #include "connector/segment_rewrite/logical_merge_units.h"
 
+#include <atomic>
+#include <duckdb/common/arena_linked_list.hpp>
+#include <duckdb/execution/operator/set/physical_union.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
 #include <utility>
 
+#include "connector/segment_rewrite/logical_postings_merge.h"
 #include "connector/segment_rewrite/physical_merge_units.h"
+#include "search/compaction/merge_unit_run.h"
 
 namespace sdb::connector {
 
-LogicalMergeUnits::LogicalMergeUnits(std::shared_ptr<search::MergeUnitRun> run,
-                                     duckdb::idx_t threads)
+LogicalMergeUnits::LogicalMergeUnits(
+  std::shared_ptr<search::MergeUnitRun> run, duckdb::idx_t threads,
+  std::span<const std::unique_ptr<irs::TermRangeMerge>> ranges)
   : duckdb::LogicalExtensionOperator(),
     _run{std::move(run)},
-    _threads{threads} {}
+    _threads{threads} {
+  if (ranges.empty()) {
+    return;
+  }
+  auto left = std::make_shared<std::atomic<size_t>>(ranges.size());
+  for (size_t i = 0; i != ranges.size(); ++i) {
+    children.push_back(duckdb::make_uniq<LogicalPostingsMerge>(
+      *ranges[i], duckdb::TableIndex(1 + 2 * i), [run = _run] { run->Wake(); },
+      [run = _run, left] {
+        if (left->fetch_sub(1) == 1) {
+          run->ReleasePostings(run->plan.FinishPostings());
+        }
+      }));
+  }
+}
 
 void LogicalMergeUnits::ResolveTypes() {
   types = {duckdb::LogicalType::BIGINT};
@@ -49,7 +70,17 @@ duckdb::string LogicalMergeUnits::GetName() const { return "MERGE_UNITS"; }
 
 duckdb::PhysicalOperator& LogicalMergeUnits::CreatePlan(
   duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) {
-  return planner.Make<PhysicalMergeUnits>(_run, _threads);
+  auto& units = planner.Make<PhysicalMergeUnits>(_run, _threads);
+  if (children.empty()) {
+    return units;
+  }
+  duckdb::ArenaLinkedList<duckdb::reference<duckdb::PhysicalOperator>> plans{
+    planner.ArenaRef()};
+  for (auto& child : children) {
+    plans.push_back(planner.CreatePlan(*child));
+  }
+  plans.push_back(units);
+  return planner.Make<duckdb::PhysicalUnion>(types, plans, 0, true);
 }
 
 }  // namespace sdb::connector

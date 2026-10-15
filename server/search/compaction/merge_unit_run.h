@@ -20,21 +20,81 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
+#include <iresearch/index/merge/term_ranges.hpp>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 namespace sdb::search {
 
 struct MergeUnitRun {
   MergeUnitRun(irs::MergePlan& plan,
-               std::chrono::steady_clock::time_point begin)
-    : plan{plan}, schedule{plan}, begin{begin} {}
+               std::chrono::steady_clock::time_point begin,
+               bool hold_postings = false)
+    : plan{plan}, schedule{plan}, begin{begin} {
+    if (!hold_postings) {
+      return;
+    }
+    const auto units = plan.Units();
+    for (size_t unit = 0; unit != units.size(); ++unit) {
+      if (units[unit].kind == irs::MergeUnitKind::Postings) {
+        schedule.Hold(unit);
+        held = unit;
+        postings.store(true, std::memory_order_release);
+        return;
+      }
+    }
+  }
+
+  bool MayClaim(size_t threads) const {
+    if (!postings.load(std::memory_order_acquire)) {
+      return true;
+    }
+    size_t left = 0;
+    for (const auto& range : plan.TermRanges()) {
+      left += range->PartsLeft();
+    }
+    return schedule.Running() + std::min(left, threads) < threads;
+  }
+
+  void Wake() {
+    std::lock_guard lock{mutex};
+    if (waker) {
+      waker();
+    }
+  }
+
+  void ReleasePostings(bool ok) {
+    std::lock_guard lock{mutex};
+    if (!held) {
+      return;
+    }
+    postings.store(false, std::memory_order_release);
+    const auto unit = *std::exchange(held, std::nullopt);
+    if (ok) {
+      schedule.Release(unit);
+    } else {
+      schedule.Fail();
+    }
+    wake.notify_all();
+    if (waker) {
+      waker();
+    }
+  }
+
+  void SetWaker(std::function<void()> callback) {
+    std::lock_guard lock{mutex};
+    waker = std::move(callback);
+  }
 
   void Run(size_t unit) {
     bool ok = false;
@@ -78,6 +138,9 @@ struct MergeUnitRun {
   std::mutex mutex;
   std::condition_variable wake;
   std::exception_ptr error;
+  std::optional<size_t> held;
+  std::atomic<bool> postings{false};
+  std::function<void()> waker;
 };
 
 }  // namespace sdb::search

@@ -20,6 +20,7 @@
 
 #include "iresearch/index/merge/term_ranges.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <chrono>
 #include <string_view>
@@ -327,14 +328,12 @@ bool TermRangeMerge::MergePart(size_t part) {
   return FinishPart(part, *writer);
 }
 
-bool TermRangeMerge::Done() const noexcept {
+bool TermRangeMerge::Done() const noexcept { return PartsLeft() == 0; }
+
+size_t TermRangeMerge::PartsLeft() const noexcept {
   std::lock_guard lock{_mutex};
-  for (const auto& part : _parts) {
-    if (!part->done) {
-      return false;
-    }
-  }
-  return true;
+  return static_cast<size_t>(std::ranges::count_if(
+    _parts, [](const auto& part) { return !part->done; }));
 }
 
 std::vector<TermPart> TermRangeMerge::Parts() const {

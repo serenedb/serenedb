@@ -69,9 +69,37 @@ std::optional<size_t> MergeSchedule::Claim() {
   return unit;
 }
 
+void MergeSchedule::Hold(size_t unit) {
+  std::lock_guard lock{_mutex};
+  SDB_ASSERT(unit < _waiting.size());
+  if (_waiting[unit]++ == 0) {
+    std::erase(_ready, unit);
+  }
+}
+
+void MergeSchedule::Release(size_t unit) {
+  std::lock_guard lock{_mutex};
+  SDB_ASSERT(unit < _waiting.size());
+  SDB_ASSERT(_waiting[unit] != 0);
+  if (--_waiting[unit] == 0 && !_failed) {
+    _ready.push_back(unit);
+  }
+}
+
+void MergeSchedule::Fail() {
+  std::lock_guard lock{_mutex};
+  _failed = true;
+  _ready.clear();
+}
+
 size_t MergeSchedule::Ready() const {
   std::lock_guard lock{_mutex};
   return _failed ? 0 : _ready.size();
+}
+
+size_t MergeSchedule::Running() const {
+  std::lock_guard lock{_mutex};
+  return _running;
 }
 
 void MergeSchedule::Finish(size_t unit, bool ok) {

@@ -296,6 +296,80 @@ TEST_F(MergeScheduleTest, FailedUnitStopsTheOthers) {
   EXPECT_EQ(std::nullopt, schedule.Claim());
 }
 
+TEST_F(MergeScheduleTest, HeldUnitWaitsForItsRelease) {
+  irs::MemoryDirectory out;
+  const auto plan = MakePlan(out, _plain);
+  const auto postings = Find(*plan, MergeUnitKind::Postings);
+  const auto index = Find(*plan, MergeUnitKind::Index);
+  ASSERT_TRUE(plan->Dependencies(postings).empty());
+  irs::MergeSchedule schedule{*plan};
+  schedule.Hold(postings);
+  size_t finished = 0;
+  while (const auto unit = schedule.Claim()) {
+    ASSERT_NE(postings, *unit);
+    ASSERT_NE(index, *unit);
+    schedule.Finish(*unit, true);
+    ++finished;
+  }
+  EXPECT_EQ(plan->Units().size() - 2, finished);
+  EXPECT_FALSE(schedule.Done());
+  schedule.Release(postings);
+  EXPECT_EQ(postings, schedule.Claim());
+  EXPECT_EQ(std::nullopt, schedule.Claim());
+  schedule.Finish(postings, true);
+  EXPECT_EQ(index, schedule.Claim());
+  schedule.Finish(index, true);
+  EXPECT_TRUE(schedule.Done());
+  EXPECT_TRUE(schedule.Ok());
+}
+
+TEST_F(MergeScheduleTest, ReleasedUnitStillWaitsForItsDependencies) {
+  irs::MemoryDirectory out;
+  const auto plan = MakePlan(out, _vectors);
+  const auto postings = Find(*plan, MergeUnitKind::Postings);
+  const auto ivf = Find(*plan, MergeUnitKind::Ann, kIvfColumn);
+  ASSERT_TRUE(
+    std::ranges::equal(std::vector<size_t>{ivf}, plan->Dependencies(postings)));
+  irs::MergeSchedule schedule{*plan};
+  schedule.Hold(postings);
+  schedule.Release(postings);
+  while (true) {
+    const auto unit = schedule.Claim();
+    ASSERT_TRUE(unit.has_value());
+    ASSERT_NE(postings, *unit);
+    schedule.Finish(*unit, true);
+    if (*unit == ivf) {
+      break;
+    }
+  }
+  EXPECT_EQ(postings, schedule.Claim());
+}
+
+TEST_F(MergeScheduleTest, FailingTheScheduleStopsTheOthers) {
+  irs::MemoryDirectory out;
+  const auto plan = MakePlan(out, _plain);
+  irs::MergeSchedule schedule{*plan};
+  const auto postings = Find(*plan, MergeUnitKind::Postings);
+  schedule.Hold(postings);
+  while (schedule.Ready() < 2) {
+    const auto unit = schedule.Claim();
+    ASSERT_TRUE(unit);
+    schedule.Finish(*unit, true);
+  }
+  const auto running = schedule.Claim();
+  ASSERT_TRUE(running);
+  schedule.Fail();
+  EXPECT_FALSE(schedule.Ok());
+  EXPECT_EQ(0, schedule.Ready());
+  EXPECT_EQ(std::nullopt, schedule.Claim());
+  schedule.Release(postings);
+  EXPECT_EQ(0, schedule.Ready());
+  EXPECT_FALSE(schedule.Done());
+  schedule.Finish(*running, true);
+  EXPECT_TRUE(schedule.Done());
+  EXPECT_FALSE(schedule.Ok());
+}
+
 TEST_F(MergeScheduleTest, ThreadedMergesMatchTheInputs) {
   for (const size_t threads : {1, 2, 3, 8, 64}) {
     SCOPED_TRACE(threads);

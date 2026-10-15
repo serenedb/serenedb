@@ -26,6 +26,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace sdb::connector {
 namespace {
@@ -36,23 +37,30 @@ struct PostingsMergeSinkState final : duckdb::LocalSinkState {
   duckdb::vector<duckdb::PresortedRun> runs;
 };
 
-void FinishPartition(irs::TermRangeMerge& merge,
-                     PostingsMergeSinkState& state) {
-  if (!state.writer) {
-    return;
-  }
-  merge.FinishPart(state.partition, *state.writer);
-  state.writer.reset();
-}
-
 }  // namespace
 
 PhysicalPostingsMerge::PhysicalPostingsMerge(
-  duckdb::PhysicalPlan& physical_plan, irs::TermRangeMerge& merge)
+  duckdb::PhysicalPlan& physical_plan, irs::TermRangeMerge& merge,
+  std::function<void()> on_part, std::function<void()> on_done)
   : duckdb::PhysicalOperator(physical_plan,
                              duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT}, 0),
-    _merge{merge} {}
+    _merge{merge},
+    _on_part{std::move(on_part)},
+    _on_done{std::move(on_done)} {}
+
+void PhysicalPostingsMerge::FinishPartition(
+  duckdb::LocalSinkState& local) const {
+  auto& state = local.Cast<PostingsMergeSinkState>();
+  if (!state.writer) {
+    return;
+  }
+  _merge.FinishPart(state.partition, *state.writer);
+  state.writer.reset();
+  if (_on_part) {
+    _on_part();
+  }
+}
 
 duckdb::unique_ptr<duckdb::LocalSinkState>
 PhysicalPostingsMerge::GetLocalSinkState(duckdb::ExecutionContext&) const {
@@ -71,7 +79,7 @@ duckdb::SinkResultType PhysicalPostingsMerge::Sink(
   const auto* begins = duckdb::FlatVector::GetData<uint64_t>(chunk.data[2]);
   const auto* counts = duckdb::FlatVector::GetData<uint64_t>(chunk.data[3]);
   if (state.writer && state.partition != partitions[0]) {
-    FinishPartition(_merge, state);
+    FinishPartition(state);
   }
   if (!state.writer) {
     state.partition = partitions[0];
@@ -89,8 +97,17 @@ duckdb::SinkResultType PhysicalPostingsMerge::Sink(
 
 duckdb::SinkCombineResultType PhysicalPostingsMerge::Combine(
   duckdb::ExecutionContext&, duckdb::OperatorSinkCombineInput& input) const {
-  FinishPartition(_merge, input.local_state.Cast<PostingsMergeSinkState>());
+  FinishPartition(input.local_state);
   return duckdb::SinkCombineResultType::FINISHED;
+}
+
+duckdb::SinkFinalizeType PhysicalPostingsMerge::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::OperatorSinkFinalizeInput&) const {
+  if (_on_done) {
+    _on_done();
+  }
+  return duckdb::SinkFinalizeType::READY;
 }
 
 duckdb::SourceResultType PhysicalPostingsMerge::GetDataInternal(

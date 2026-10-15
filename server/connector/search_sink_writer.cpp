@@ -33,6 +33,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/inet_terms.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
@@ -123,6 +124,30 @@ bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
   return DispatchNumericKind<VARCHAR, BLOB, BOOLEAN>(kind, std::forward<F>(f));
 }
 
+bool ValidWhereParentValid(const duckdb::ValidityMask& parent,
+                           const duckdb::ValidityMask& child, uint32_t count) {
+  if (child.CannotHaveNull()) {
+    return true;
+  }
+  if (parent.CannotHaveNull()) {
+    return child.CheckAllValid(count);
+  }
+  constexpr uint32_t kBits = duckdb::ValidityMask::BITS_PER_VALUE;
+  const auto* parent_bits = parent.GetData();
+  const auto* child_bits = child.GetData();
+  const uint32_t words = (count + kBits - 1) / kBits;
+  for (uint32_t w = 0; w < words; ++w) {
+    auto uncovered = parent_bits[w] & ~child_bits[w];
+    if (w + 1 == words && count % kBits != 0) {
+      uncovered &= (duckdb::validity_t{1} << (count % kBits)) - 1;
+    }
+    if (uncovered != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 std::optional<SearchSinkInsertBaseImpl::DictionaryValues>
@@ -210,6 +235,18 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
   });
   return true;
 }
+
+struct SearchSinkInsertBaseImpl::InetBatch {
+  std::array<duckdb::UnifiedVectorFormat, pg::kInetChildCount> fields;
+  irs::TokenBatch tokens;
+  std::array<irs::DocRun, irs::TokenBatch::kCapacity / inet_terms::kV4BaseTerms>
+    runs;
+  std::array<uint8_t, irs::TokenBatch::kCapacity / inet_terms::kV6BaseTerms *
+                        inet_terms::kV6LongTermBytes>
+    bytes;
+};
+
+SearchSinkInsertBaseImpl::~SearchSinkInsertBaseImpl() = default;
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
@@ -358,6 +395,111 @@ void SearchSinkInsertBaseImpl::WriteBoolColumn(const Field& field,
                        return fld.InvertBoolBlock(fmt, n, first_doc);
                      });
                    });
+}
+
+void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
+                                               const Field& null_field,
+                                               const duckdb::Vector& vec,
+                                               duckdb::idx_t count) {
+  SDB_ASSERT(field.GetIndexFeatures() == irs::IndexFeatures::None);
+  if (!_inet_batch) {
+    _inet_batch = std::make_unique_for_overwrite<InetBatch>();
+  }
+  auto& batch = *_inet_batch;
+  const auto& entries = duckdb::StructVector::GetEntries(vec);
+  auto& [types, addresses, masks] = batch.fields;
+  entries[pg::kInetIpTypeChild].ToUnifiedFormat(types);
+  entries[pg::kInetAddressChild].ToUnifiedFormat(addresses);
+  entries[pg::kInetMaskChild].ToUnifiedFormat(masks);
+  const auto* type_data = duckdb::UnifiedVectorFormat::GetData<uint8_t>(types);
+  const auto* address_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(addresses);
+  const auto* mask_data = duckdb::UnifiedVectorFormat::GetData<uint16_t>(masks);
+
+  WriteColumnBlock(
+    null_field, count,
+    [&](const duckdb::UnifiedVectorFormat& fmt, uint32_t n,
+        irs::doc_id_t first_doc) {
+      InvertField(field, [&](irs::FieldInverter& fld) {
+        uint32_t terms = 0;
+        uint32_t runs = 0;
+        auto* bytes = batch.bytes.data();
+        const auto flush = [&] {
+          if (runs == 0) {
+            return true;
+          }
+          batch.tokens.count = terms;
+          const bool ok = fld.InvertBlock(
+            batch.tokens, irs::DocRuns{{batch.runs.data(), runs}});
+          terms = 0;
+          runs = 0;
+          bytes = batch.bytes.data();
+          return ok;
+        };
+        const auto add = [&](uint32_t row, uint8_t ip_type,
+                             duckdb::hugeint_t address,
+                             uint16_t mask) IRS_NO_INLINE {
+          if (terms + inet_terms::kMaxTermsPerValue >
+                irs::TokenBatch::kCapacity &&
+              !flush()) {
+            return false;
+          }
+          auto upper = static_cast<uint64_t>(address.upper);
+          if (ip_type == inet_terms::kV6Type) {
+            upper ^= pg::kInetV6SortBit;
+          }
+          const auto written =
+            inet_terms::WriteTerms(ip_type, upper, address.lower, mask,
+                                   batch.tokens.terms + terms, bytes);
+          if (written != 0) {
+            SDB_ASSERT(runs < batch.runs.size());
+            SDB_ASSERT(bytes <= batch.bytes.data() + batch.bytes.size());
+            batch.runs[runs++] =
+              irs::DocRun{.doc = first_doc + row, .ntokens = written};
+            terms += written;
+          }
+          return true;
+        };
+        if (irs::analysis::IsIdentitySel(fmt) &&
+            irs::analysis::IsIdentitySel(types) &&
+            irs::analysis::IsIdentitySel(addresses) &&
+            irs::analysis::IsIdentitySel(masks) &&
+            ValidWhereParentValid(fmt.validity, types.validity, n) &&
+            ValidWhereParentValid(fmt.validity, addresses.validity, n) &&
+            ValidWhereParentValid(fmt.validity, masks.validity, n)) {
+          return irs::analysis::ForEachValidRun(
+                   fmt, n,
+                   [&](uint32_t start, uint32_t length) {
+                     for (uint32_t i = start; i < start + length; ++i) {
+                       if (!add(i, type_data[i], address_data[i],
+                                mask_data[i])) {
+                         return false;
+                       }
+                     }
+                     return true;
+                   }) &&
+                 flush();
+        }
+        for (uint32_t i = 0; i < n; ++i) {
+          if (!fmt.validity.RowIsValid(fmt.sel->get_index(i))) {
+            continue;
+          }
+          const auto type_idx = types.sel->get_index(i);
+          const auto address_idx = addresses.sel->get_index(i);
+          const auto mask_idx = masks.sel->get_index(i);
+          if (!types.validity.RowIsValid(type_idx) ||
+              !addresses.validity.RowIsValid(address_idx) ||
+              !masks.validity.RowIsValid(mask_idx)) {
+            continue;
+          }
+          if (!add(i, type_data[type_idx], address_data[address_idx],
+                   mask_data[mask_idx])) {
+            return false;
+          }
+        }
+        return flush();
+      });
+    });
 }
 
 template<duckdb::LogicalTypeId Kind>
@@ -771,6 +913,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       WriteBoolColumn(_field, _null_field, count);
       return;
     default: {
+      if (pg::IsInetOrCidr(type)) {
+        _field.PrepareForBlockValue(field_id);
+        append_stored();
+        WriteInetColumn(_field, _null_field, vec, count);
+        return;
+      }
       if (!term_dict::IsNumeric(term_dict::Classify(kind))) {
         return;
       }

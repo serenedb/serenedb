@@ -105,6 +105,8 @@ class SearchSinkInsertBaseImpl {
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
+  ~SearchSinkInsertBaseImpl();
+
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
                 irs::CommitOnFlush* commit_on_flush = nullptr);
 
@@ -202,6 +204,9 @@ class SearchSinkInsertBaseImpl {
   void WriteBoolColumn(const Field& field, const Field& null_field,
                        duckdb::idx_t count);
 
+  void WriteInetColumn(const Field& field, const Field& null_field,
+                       const duckdb::Vector& vec, duckdb::idx_t count);
+
   void WriteNullColumn(const Field& null_field, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId ChildKind>
@@ -285,7 +290,10 @@ class SearchSinkInsertBaseImpl {
     irs::ColumnWriter* _writer = nullptr;
   };
 
+  struct InetBatch;
+
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
+  std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
   std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;

@@ -1,0 +1,219 @@
+statement ok
+CREATE TABLE cidr_idx_t (pk INT PRIMARY KEY, net CIDR);
+
+statement ok
+CREATE INDEX cidr_idx ON cidr_idx_t USING inverted(pk, net);
+
+statement ok
+INSERT INTO cidr_idx_t
+SELECT g, CASE
+  WHEN g % 10 = 0 THEN NULL
+  WHEN g % 2 = 0 THEN network(((8 + g % 5)::text || '.' || (g % 7)::text || '.' || (g % 3)::text || '.' || (g % 11)::text || '/' || (g % 33)::text)::INET)
+  ELSE network(('2001:db8:' || to_hex(g % 3) || '::' || to_hex(g % 50) || '/' || (g % 129)::text)::INET)
+END
+FROM generate_series(1, 2000) AS s(g);
+
+statement ok
+INSERT INTO cidr_idx_t VALUES
+  (3001, '0.0.0.0/0'),
+  (3002, '::/0'),
+  (3003, '10.0.0.0/8'),
+  (3004, '10.1.0.0/16'),
+  (3005, '10.1.2.3/32'),
+  (3006, '255.255.255.255/32'),
+  (3007, 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128'),
+  (3008, '2001:db8:1::/48'),
+  (3009, '10.1.2.3');
+
+statement ok
+CREATE TABLE cidr_plain_t AS SELECT * FROM cidr_idx_t;
+
+statement ok
+VACUUM (REFRESH_TABLE) cidr_idx_t;
+
+statement error has type CIDR and can not use the text search dictionary 'english'
+CREATE INDEX cidr_bad_idx ON cidr_idx_t USING inverted(pk, net english);
+
+query
+SELECT pk, net FROM cidr_idx WHERE net >>= '10.1.2.3' AND pk > 3000 ORDER BY pk;
+----
+pk	net
+3001	0.0.0.0/0
+3003	10.0.0.0/8
+3004	10.1.0.0/16
+3005	10.1.2.3/32
+3009	10.1.2.3/32
+
+query
+EXPLAIN SELECT pk FROM cidr_idx WHERE net = '10.0.0.0/8';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: cidr_idx       │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: net(cidr)  │ │
+│ │ Value: 10.0.0.0/8 │ │
+│ ╰───────────────────╯ │
+│ Projections: pk       │
+│ ~401 rows             │
+╰───────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM cidr_idx WHERE net >>= '10.0.0.0/2';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: cidr_idx                         │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Starts With Any ───────────────────╮ │
+│ │ Field: net(cidr)                    │ │
+│ │ Prefixes: 3, 0.0.0.0/0 .. 0.0.0.0/2 │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: pk                         │
+│ ~401 rows                               │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM cidr_idx WHERE net < '10.0.0.5/8'::INET;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: cidr_idx                     │
+│ Lookup: table                       │
+│ Index Filter:                       │
+│ ╭─ Granular Range ────────────────╮ │
+│ │ Field: net(cidr)                │ │
+│ │ Range: >=0.0.0.0/0, <10.0.0.5/8 │ │
+│ ╰─────────────────────────────────╯ │
+│ Projections: pk                     │
+│ ~401 rows                           │
+╰─────────────────────────────────────╯
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net = '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net = '10.0.0.0/8') b;
+----
+n	same
+7	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net = '10.1.2.3/32') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net = '10.1.2.3/32') b;
+----
+n	same
+2	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net = '10.1.2.3'::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net = '10.1.2.3'::INET) b;
+----
+n	same
+2	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net IN ('10.0.0.0/8', '2001:db8::/32', '9.9.9.9/32')) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net IN ('10.0.0.0/8', '2001:db8::/32', '9.9.9.9/32')) b;
+----
+n	same
+15	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <> '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <> '10.0.0.0/8') b;
+----
+n	same
+1802	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net < '10.1.0.0/16') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net < '10.1.0.0/16') b;
+----
+n	same
+392	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <= '10.1.0.0/16') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <= '10.1.0.0/16') b;
+----
+n	same
+394	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net > '10.1.0.0/16') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net > '10.1.0.0/16') b;
+----
+n	same
+1415	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net >= '2001:db8:1::/48') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net >= '2001:db8:1::/48') b;
+----
+n	same
+421	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net < '10.0.0.5/8'::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net < '10.0.0.5/8'::INET) b;
+----
+n	same
+342	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net > '10.0.0.5/8'::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net > '10.0.0.5/8'::INET) b;
+----
+n	same
+1467	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net BETWEEN '10.0.0.0/8' AND '12.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net BETWEEN '10.0.0.0/8' AND '12.0.0.0/8') b;
+----
+n	same
+325	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <<= '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <<= '10.0.0.0/8') b;
+----
+n	same
+155	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <<= '10.0.0.0/12') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <<= '10.0.0.0/12') b;
+----
+n	same
+130	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <<= '2001:db8::/32') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <<= '2001:db8::/32') b;
+----
+n	same
+745	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net <<= '10.1.2.3/24'::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net <<= '10.1.2.3/24'::INET) b;
+----
+n	same
+5	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net >>= '10.1.2.3') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net >>= '10.1.2.3') b;
+----
+n	same
+233	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net >>= '2001:db8:1::5') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net >>= '2001:db8:1::5') b;
+----
+n	same
+572	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net >>= '10.0.0.0/16'::CIDR) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net >>= '10.0.0.0/16'::CIDR) b;
+----
+n	same
+222	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE NOT (net <<= '10.0.0.0/8')) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE NOT (net <<= '10.0.0.0/8')) b;
+----
+n	same
+1654	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_idx WHERE net IS NULL) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM cidr_plain_t WHERE net IS NULL) b;
+----
+n	same
+200	t

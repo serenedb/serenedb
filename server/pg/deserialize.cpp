@@ -1675,42 +1675,54 @@ struct NestedAdapter<ValueSink> {
 void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
                uint64_t addr_hi, uint64_t addr_lo, uint16_t mask) {
   if (type == INET_IP_ADDRESS_V6) {
-    addr_hi ^= (uint64_t{1} << 63);  // re-apply IPv6 sort-order flip
+    addr_hi ^= kInetV6SortBit;
   }
   auto& entries = duckdb::StructVector::GetEntries(vec);
-  Out<uint8_t>(entries[0])[row] = static_cast<uint8_t>(type);
+  Out<uint8_t>(entries[kInetIpTypeChild])[row] = static_cast<uint8_t>(type);
   duckdb::hugeint_t stored;
   stored.lower = addr_lo;
   stored.upper = static_cast<int64_t>(addr_hi);
-  Out<duckdb::hugeint_t>(entries[1])[row] = stored;
-  Out<uint16_t>(entries[2])[row] = mask;
+  Out<duckdb::hugeint_t>(entries[kInetAddressChild])[row] = stored;
+  Out<uint16_t>(entries[kInetMaskChild])[row] = mask;
 }
 
+template<bool Cidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
-  // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or 16),
-  // then nb big-endian addr bytes; only bits and nb are read.
-  if (data.size() < 4) {
+  InetWireHeader header;
+  if (data.size() < sizeof(header)) {
     return false;
   }
-  const auto nb = static_cast<uint8_t>(data[3]);
-  const auto bits = static_cast<uint8_t>(data[1]);
-  const bool is_v6 = nb == 16;
-  if ((!is_v6 && nb != 4) || data.size() != static_cast<size_t>(4) + nb) {
+  std::memcpy(&header, data.data(), sizeof(header));
+  const bool is_v6 = header.family == kPgsqlAfInet6;
+  if ((!is_v6 && header.family != kPgsqlAfInet) ||
+      header.size != (is_v6 ? kInetWireV6Size : kInetWireV4Size) ||
+      header.bits > header.size * CHAR_BIT ||
+      data.size() != sizeof(header) + header.size) {
     return false;
   }
-  const char* addr = data.data() + 4;
+  const char* addr = data.data() + sizeof(header);
+  INET_IPAddress inet;
+  inet.mask = header.bits;
   if (is_v6) {
-    StoreInet(vec, row, INET_IP_ADDRESS_V6,
-              absl::big_endian::Load<uint64_t>(addr),
-              absl::big_endian::Load<uint64_t>(addr + 8), bits);
+    inet.type = INET_IP_ADDRESS_V6;
+    inet.address.upper = absl::big_endian::Load<uint64_t>(addr);
+    inet.address.lower =
+      absl::big_endian::Load<uint64_t>(addr + sizeof(uint64_t));
   } else {
-    StoreInet(vec, row, INET_IP_ADDRESS_V4, 0,
-              absl::big_endian::Load<uint32_t>(addr), bits);
+    inet.type = INET_IP_ADDRESS_V4;
+    inet.address.upper = 0;
+    inet.address.lower = absl::big_endian::Load<uint32_t>(addr);
   }
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
+    return false;
+  }
+  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
+            inet.mask);
   return true;
 }
 
+template<bool Cidr>
 bool DeserializeTextInet(DeserializeContext&, std::string_view data,
                          duckdb::Vector& vec, duckdb::idx_t row) {
   INET_IPAddress inet;
@@ -1722,6 +1734,9 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   if (inet.type == INET_IP_ADDRESS_INVALID) {
     return false;
   }
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
+    return false;
+  }
   StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
             inet.mask);
   return true;
@@ -1730,21 +1745,23 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
+template<bool Cidr>
 struct InetBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet>(ctx, data,
-                                                                    sink);
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<Cidr>>(
+      ctx, data, sink);
   }
 };
 
+template<bool Cidr>
 struct InetText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet>(ctx, data,
-                                                                  sink);
+    return NestedAdapter<Sink>::template Run<DeserializeTextInet<Cidr>>(
+      ctx, data, sink);
   }
 };
 
@@ -1926,7 +1943,10 @@ DeserializationFunction<Sink> GetDeserialization(
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectDecoder<InetBin, InetText, Sink>(binary);
+        return SelectDecoder<InetBin<false>, InetText<false>, Sink>(binary);
+      }
+      if (IsCidr(type)) {
+        return SelectDecoder<InetBin<true>, InetText<true>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;

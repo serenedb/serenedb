@@ -1,0 +1,179 @@
+query
+SELECT x FROM (VALUES ('10.0.0.5/8'::INET), ('10.0.0.1'::INET), ('10.0.0.0/16'::INET), ('10.0.0.0/8'::INET), ('::/0'::INET), ('::1'::INET), ('0.0.0.0/0'::INET), (NULL::INET)) t(x) ORDER BY x;
+----
+x
+0.0.0.0/0
+10.0.0.0/8
+10.0.0.5/8
+10.0.0.0/16
+10.0.0.1
+::/0
+::1
+NULL
+
+
+query
+SELECT x FROM (VALUES ('8000::/1'::INET), ('8000::1/1'::INET), ('::1/128'::INET), ('::/64'::INET), ('::8000:0:0:0/65'::INET), ('::/63'::INET), ('::1/127'::INET)) t(x) ORDER BY x DESC;
+----
+x
+8000::1/1
+8000::/1
+::8000:0:0:0/65
+::1
+::1/127
+::/64
+::/63
+
+
+query
+SELECT '10.0.0.5/8'::INET < '10.0.0.1/32'::INET AS lt_host_bits, '10.1.0.0/8'::INET < '10.0.0.0/16'::INET AS lt_mask, '10.0.0.5/8'::INET BETWEEN '10.0.0.0/8'::INET AND '10.0.0.0/16'::INET AS btw, '255.255.255.255'::INET < '::'::INET AS v4_before_v6;
+----
+lt_host_bits	lt_mask	btw	v4_before_v6
+t	t	t	t
+
+
+query
+SELECT '10.0.0.1/8'::INET = '10.0.0.2/8'::INET AS eq_host_bits, '10.0.0.0/8'::INET = '10.0.0.0/16'::INET AS eq_mask, '10.0.0.1'::INET = '10.0.0.1/32'::INET AS eq_same;
+----
+eq_host_bits	eq_mask	eq_same
+f	f	t
+
+
+query
+SELECT min(x) AS mn, max(x) AS mx FROM (VALUES ('10.0.0.5/8'::INET), ('10.0.0.1'::INET), ('10.0.0.0/16'::INET)) t(x);
+----
+mn	mx
+10.0.0.5/8	10.0.0.1
+
+
+query
+SELECT greatest('10.0.0.5/8'::INET, '10.0.0.1'::INET) AS g, least('10.0.0.1'::INET, '10.0.0.5/8'::INET, NULL) AS l;
+----
+g	l
+10.0.0.1	10.0.0.5/8
+
+
+query
+SELECT '10.0.0.1'::INET > ANY (SELECT '10.0.0.5/8'::INET) AS gt_any, '10.0.0.0/16'::INET > ALL (SELECT x FROM (VALUES ('10.0.0.5/8'::INET), ('10.0.0.0/8'::INET)) t(x)) AS gt_all, '10.0.0.5/8'::INET >= ANY (SELECT '10.0.0.1'::INET) AS ge_any;
+----
+gt_any	gt_all	ge_any
+t	t	f
+
+
+query
+SELECT a, a > ALL (SELECT b FROM (VALUES ('10.0.0.5/8'::INET), ('10.0.0.0/16'::INET)) t(b) WHERE b <> a) AS gt_all FROM (VALUES ('10.0.0.1'::INET), ('10.0.0.0/16'::INET), ('10.0.0.5/8'::INET)) s(a) ORDER BY a;
+----
+a	gt_all
+10.0.0.5/8	f
+10.0.0.0/16	t
+10.0.0.1	t
+
+
+query
+SELECT x, row_number() OVER (ORDER BY x) AS rn FROM (VALUES ('10.0.0.1'::INET), ('10.0.0.5/8'::INET), ('10.0.0.0/16'::INET)) t(x) ORDER BY rn;
+----
+x	rn
+10.0.0.5/8	1
+10.0.0.0/16	2
+10.0.0.1	3
+
+
+query
+SELECT a.x AS a, b.x AS b FROM (VALUES ('10.0.0.5/8'::INET)) a(x) JOIN (VALUES ('10.0.0.1'::INET), ('10.0.0.0/8'::INET)) b(x) ON a.x < b.x;
+----
+a	b
+10.0.0.5/8	10.0.0.1
+
+
+query
+SELECT count(DISTINCT x) AS n FROM (VALUES ('10.0.0.1/8'::INET), ('10.0.0.2/8'::INET), ('10.0.0.1/8'::INET)) t(x);
+----
+n
+2
+
+
+query
+SELECT ARRAY['10.0.0.5/8'::INET] < ARRAY['10.0.0.1'::INET] AS arr_lt;
+----
+arr_lt
+t
+
+
+query
+SELECT '1.2.3.4'::INET <<= '::/0'::INET AS v4_in_v6, '::/0'::INET >>= '1.2.3.4'::INET AS v6_has_v4, '::1'::INET <<= '::/0'::INET AS v6_in_v6, '0.0.0.0/0'::INET >>= '10.1.2.3'::INET AS v4_has_v4;
+----
+v4_in_v6	v6_has_v4	v6_in_v6	v4_has_v4
+f	f	t	t
+
+
+query
+SELECT '10.1.2.0/24'::INET >>= '10.1.2.3'::INET AS net_has_host, '10.1.2.3/24'::INET >>= '10.1.2.3'::INET AS host_bits_has_host, '10.1.2.3/24'::INET >>= '10.1.2.0'::INET AS host_bits_has_net, '10.1.2.0/24'::INET >>= '10.1.2.3/24'::INET AS same_net, '10.1.2.0/23'::INET <<= '10.1.2.0/24'::INET AS wider_in_narrower;
+----
+net_has_host	host_bits_has_host	host_bits_has_net	same_net	wider_in_narrower
+t	t	t	t	f
+
+
+statement ok
+CREATE TABLE inet_extremes(id INTEGER, ip INET);
+
+
+statement ok
+INSERT INTO inet_extremes VALUES (1, '10.0.0.5/8'), (2, '10.0.0.1'), (3, '10.0.0.0/16'), (4, NULL), (5, '::1'), (6, '2001:db8::/32');
+
+
+query
+SELECT family(ip) AS f, min(ip) AS mn, max(ip) AS mx, count(ip) AS n FROM inet_extremes GROUP BY family(ip) ORDER BY f NULLS LAST;
+----
+f	mn	mx	n
+4	10.0.0.5/8	10.0.0.1	3
+6	::1	2001:db8::/32	2
+NULL	NULL	NULL	0
+
+
+query
+SELECT ip FROM inet_extremes ORDER BY ip DESC NULLS FIRST;
+----
+ip
+NULL
+2001:db8::/32
+::1
+10.0.0.1
+10.0.0.0/16
+10.0.0.5/8
+
+
+query
+SELECT '255.255.255.255'::INET < ALL (SELECT ip FROM inet_extremes WHERE family(ip) = 6) AS v4_below_v6, '10.0.0.1'::INET >= ALL (SELECT ip FROM inet_extremes WHERE family(ip) = 4) AS ge_all_v4, '10.0.0.1'::INET > ALL (SELECT ip FROM inet_extremes) AS gt_all_with_null, '10.0.0.1'::INET > ANY (SELECT ip FROM inet_extremes WHERE id IN (4, 5)) AS gt_any_null;
+----
+v4_below_v6	ge_all_v4	gt_all_with_null	gt_any_null
+t	t	f	NULL
+
+
+query
+SELECT greatest(NULL::INET, NULL::INET) AS g_null, least('::1'::INET, '255.255.255.255'::INET) AS l_family, greatest(ARRAY['10.0.0.5/8'::INET], ARRAY['10.0.0.1'::INET]) AS g_arr;
+----
+g_null	l_family	g_arr
+NULL	255.255.255.255	{10.0.0.1}
+
+
+query
+SELECT ip, count(*) AS n FROM (VALUES ('10.0.0.1/8'::INET), ('10.0.0.1'::INET), ('10.0.0.1/8'::INET), ('10.0.0.1/32'::INET)) t(ip) GROUP BY ip ORDER BY ip;
+----
+ip	n
+10.0.0.1/8	2
+10.0.0.1	2
+
+
+query
+SELECT count(*) FILTER (WHERE ip IN ('10.0.0.1'::INET, '::1'::INET, '10.0.0.5/16'::INET)) AS n_in FROM inet_extremes;
+----
+n_in
+2
+
+
+statement error invalid input syntax for type inet: "not an address"
+SELECT 'not an address'::INET;
+
+
+statement error invalid input syntax for type inet: "10.0.0.1/33"
+SELECT '10.0.0.1/33'::INET;

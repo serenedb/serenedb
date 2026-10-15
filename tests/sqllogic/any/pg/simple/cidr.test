@@ -1,0 +1,268 @@
+query
+SELECT '10.1.2.3'::CIDR AS host, '10.0.0.0/8'::CIDR AS net, '0.0.0.0/0'::CIDR AS all4, '255.255.255.255/32'::CIDR AS max4;
+----
+host	net	all4	max4
+10.1.2.3/32	10.0.0.0/8	0.0.0.0/0	255.255.255.255/32
+
+
+query
+SELECT '::1'::CIDR AS host6, '::/0'::CIDR AS all6, '2001:db8::/32'::CIDR AS net6, 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128'::CIDR AS max6, '::ffff:1.2.3.0/120'::CIDR AS mapped;
+----
+host6	all6	net6	max6	mapped
+::1/128	::/0	2001:db8::/32	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128	::ffff:1.2.3.0/120
+
+
+query
+SELECT NULL::CIDR IS NULL AS is_null, COALESCE(NULL::CIDR, '10.0.0.0/8'::CIDR) AS fallback;
+----
+is_null	fallback
+t	10.0.0.0/8
+
+
+statement error invalid cidr value: "192.168.1.5/24"
+SELECT '192.168.1.5/24'::CIDR;
+
+
+statement error invalid cidr value: "10.0.0.1/8"
+SELECT '10.0.0.1/8'::CIDR;
+
+
+statement error invalid cidr value: "1.2.3.4/0"
+SELECT '1.2.3.4/0'::CIDR;
+
+
+statement error invalid cidr value: "::1/64"
+SELECT '::1/64'::CIDR;
+
+
+statement error invalid cidr value: "2001:db8::1/32"
+SELECT '2001:db8::1/32'::CIDR;
+
+
+statement error invalid input syntax for type cidr: "garbage"
+SELECT 'garbage'::CIDR;
+
+
+statement error invalid input syntax for type cidr: "10.0.0.0/33"
+SELECT '10.0.0.0/33'::CIDR;
+
+
+statement error invalid input syntax for type cidr: "::/129"
+SELECT '::/129'::CIDR;
+
+
+statement error invalid input syntax for type cidr: ""
+SELECT ''::CIDR;
+
+
+query
+SELECT '192.168.1.5/24'::INET::CIDR AS zeroed, '10.0.0.1'::INET::CIDR AS host, '2001:db8::1/32'::INET::CIDR AS zeroed6, '10.0.0.0/8'::CIDR::INET AS as_inet, '10.0.0.1/32'::CIDR::INET AS host_as_inet;
+----
+zeroed	host	zeroed6	as_inet	host_as_inet
+192.168.1.0/24	10.0.0.1/32	2001:db8::/32	10.0.0.0/8	10.0.0.1
+
+
+query
+SELECT '10.0.0.0/8'::CIDR::TEXT AS net_text, '10.0.0.1/32'::CIDR::TEXT AS host_text, '::1/128'::CIDR::TEXT AS host6_text;
+----
+net_text	host_text	host6_text
+10.0.0.0/8	10.0.0.1/32	::1/128
+
+
+query
+SELECT network('10.1.2.3/8'::INET) AS net, network('10.0.0.1'::INET) AS host, network('2001:db8::1/64'::INET) AS net6, pg_typeof(network('10.1.2.3/8'::INET))::TEXT AS t;
+----
+net	host	net6	t
+10.0.0.0/8	10.0.0.1/32	2001:db8::/64	cidr
+
+
+query
+SELECT host('10.0.0.0/8'::CIDR) AS h, family('::/0'::CIDR) AS f, broadcast('10.0.0.0/8'::CIDR) AS b, pg_typeof(broadcast('10.0.0.0/8'::CIDR))::TEXT AS bt, netmask('10.0.0.0/8'::CIDR) AS m;
+----
+h	f	b	bt	m
+10.0.0.0	6	10.255.255.255/8	inet	255.0.0.0
+
+
+query
+SELECT '10.0.0.0/8'::CIDR + 1 AS plus, pg_typeof('10.0.0.0/8'::CIDR + 1)::TEXT AS plus_t, '10.0.0.0/8'::CIDR - 1 AS minus;
+----
+plus	plus_t	minus
+10.0.0.1/8	inet	9.255.255.255/8
+
+
+query
+SELECT '10.0.0.0/8'::CIDR < '10.0.0.0/16'::CIDR AS wider_first, '10.0.0.0/8'::CIDR < '10.0.0.1'::INET AS cidr_lt_inet, '10.0.0.0/16'::CIDR > '10.0.0.5/8'::INET AS cidr_gt_inet, '10.0.0.0/8'::CIDR = '10.0.0.0/8'::INET AS eq_inet, '10.0.0.1/32'::CIDR = '10.0.0.1'::INET AS eq_host;
+----
+wider_first	cidr_lt_inet	cidr_gt_inet	eq_inet	eq_host
+t	t	t	t	t
+
+
+query
+SELECT '10.0.0.0/8'::CIDR >>= '10.1.2.3'::INET AS has_host, '10.0.0.0/8'::CIDR >>= '10.0.0.0/8'::CIDR AS has_self, '10.0.0.0/16'::CIDR <<= '10.0.0.0/8'::CIDR AS in_wider, '10.0.0.0/8'::CIDR <<= '10.0.0.0/16'::CIDR AS in_narrower, '::/0'::CIDR >>= '10.0.0.1'::INET AS v6_has_v4;
+----
+has_host	has_self	in_wider	in_narrower	v6_has_v4
+t	t	t	f	f
+
+
+query
+SELECT pg_typeof(COALESCE('10.0.0.0/8'::CIDR, '1.2.3.4'::INET))::TEXT AS coalesce_t, pg_typeof(CASE WHEN true THEN '10.0.0.0/8'::CIDR ELSE '1.2.3.4'::INET END)::TEXT AS case_t, pg_typeof(greatest('10.0.0.0/8'::CIDR, '10.0.0.0/16'::CIDR))::TEXT AS greatest_t;
+----
+coalesce_t	case_t	greatest_t
+inet	inet	cidr
+
+
+query
+SELECT greatest('10.0.0.0/8'::CIDR, '10.0.0.0/16'::CIDR) AS g, least('10.0.0.0/16'::CIDR, '10.0.0.0/8'::CIDR, NULL) AS l, greatest('10.0.0.0/8'::CIDR, '10.0.0.5/8'::INET) AS g_mixed;
+----
+g	l	g_mixed
+10.0.0.0/16	10.0.0.0/8	10.0.0.5/8
+
+
+query
+SELECT x FROM (SELECT '10.0.0.0/8'::CIDR AS x UNION ALL SELECT '10.0.0.5/8'::INET UNION ALL SELECT '10.0.0.0/16'::CIDR UNION ALL SELECT '9.0.0.0/8'::CIDR) t ORDER BY x;
+----
+x
+9.0.0.0/8
+10.0.0.0/8
+10.0.0.5/8
+10.0.0.0/16
+
+
+query
+SELECT ARRAY['10.0.0.0/8'::CIDR, '10.0.0.1/32'::CIDR] AS arr, ARRAY['10.0.0.0/8'::CIDR] < ARRAY['10.0.0.0/16'::CIDR] AS arr_lt;
+----
+arr	arr_lt
+{10.0.0.0/8,10.0.0.1/32}	t
+
+
+statement ok
+CREATE TABLE cidr_nets(id INTEGER, net CIDR);
+
+
+statement ok
+INSERT INTO cidr_nets VALUES (1, '10.0.0.0/8'), (2, '10.1.0.0/16'), (3, '10.1.2.0/24'), (4, '192.168.0.0/16'), (5, '2001:db8::/32'), (6, NULL), (7, '10.1.2.3/32');
+
+
+statement error invalid cidr value: "10.1.2.3/8"
+INSERT INTO cidr_nets VALUES (8, '10.1.2.3/8');
+
+
+statement ok
+INSERT INTO cidr_nets VALUES (9, '172.16.5.4/12'::INET);
+
+
+query
+SELECT id, net FROM cidr_nets ORDER BY net NULLS FIRST, id;
+----
+id	net
+6	NULL
+1	10.0.0.0/8
+2	10.1.0.0/16
+3	10.1.2.0/24
+7	10.1.2.3/32
+9	172.16.0.0/12
+4	192.168.0.0/16
+5	2001:db8::/32
+
+
+query
+SELECT id FROM cidr_nets WHERE net >>= '10.1.2.3'::INET ORDER BY id;
+----
+id
+1
+2
+3
+7
+
+
+query
+SELECT id FROM cidr_nets WHERE net <<= '10.0.0.0/8'::CIDR ORDER BY id;
+----
+id
+1
+2
+3
+7
+
+
+query
+SELECT id FROM cidr_nets WHERE net = '10.1.0.0/16' OR net IN ('192.168.0.0/16'::CIDR, '2001:db8::/32'::CIDR) ORDER BY id;
+----
+id
+2
+4
+5
+
+
+query
+SELECT id FROM cidr_nets WHERE net BETWEEN '10.0.0.0/8'::CIDR AND '10.1.2.0/24'::CIDR ORDER BY id;
+----
+id
+1
+2
+3
+
+
+query
+SELECT family(net) AS f, count(*) AS n, count(DISTINCT net) AS d FROM cidr_nets GROUP BY family(net) ORDER BY f NULLS LAST;
+----
+f	n	d
+4	6	6
+6	1	1
+NULL	1	0
+
+
+query
+SELECT n.id AS net_id, h.ip AS ip FROM cidr_nets n JOIN (VALUES ('10.1.2.3'::INET), ('192.168.1.1'::INET)) h(ip) ON h.ip <<= n.net ORDER BY n.id, h.ip;
+----
+net_id	ip
+1	10.1.2.3
+2	10.1.2.3
+3	10.1.2.3
+4	192.168.1.1
+7	10.1.2.3
+
+
+query
+SELECT id, network(net::INET) = net AS same_network, host(net) AS h FROM cidr_nets WHERE id IN (1, 7) ORDER BY id;
+----
+id	same_network	h
+1	t	10.0.0.0
+7	t	10.1.2.3
+
+
+query
+SELECT min(net) AS mn, max(net) AS mx FROM cidr_nets WHERE family(net) = 4;
+----
+mn	mx
+10.0.0.0/8	192.168.0.0/16
+
+
+query
+SELECT array_agg(net ORDER BY net) AS nets FROM cidr_nets WHERE id IN (1, 3, 7);
+----
+nets
+{10.0.0.0/8,10.1.2.0/24,10.1.2.3/32}
+
+
+query
+SELECT DISTINCT network(ip) AS net FROM (VALUES ('10.1.2.3/24'::INET), ('10.1.2.200/24'::INET), ('10.1.3.1/24'::INET)) t(ip) ORDER BY net;
+----
+net
+10.1.2.0/24
+10.1.3.0/24
+
+
+statement ok
+UPDATE cidr_nets SET net = '10.2.0.0/16' WHERE id = 2;
+
+
+query
+SELECT id, net FROM cidr_nets WHERE id = 2;
+----
+id	net
+2	10.2.0.0/16
+
+
+statement ok
+DROP TABLE cidr_nets;

@@ -63,7 +63,7 @@ struct MergeUnitRun {
     for (const auto& range : plan.TermRanges()) {
       left += range->PartsLeft();
     }
-    return schedule.Running() + std::min(left, threads) < threads;
+    return schedule.Running() + std::min(left, threads - 1) < threads;
   }
 
   void Wake() {

@@ -57,6 +57,10 @@ namespace {
 using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
 constexpr uint64_t kAnnCostPerByte = 32;
+constexpr uint64_t kCopyCostDivisor = 10;
+constexpr double kEncodeCostPerRow = 0.3;
+constexpr uint64_t kTrainCostPerSampleByte = 10;
+constexpr uint64_t kRangesPerThread = 4;
 constexpr uint64_t kRowsPerOrderPartition = uint64_t{1} << 18;
 constexpr uint64_t kTermsPerPart = 4096;
 constexpr uint64_t kPartsPerThread = 4;
@@ -174,6 +178,23 @@ struct MergePlan::State {
     return units.size() - 1;
   }
 
+  static uint64_t EncodeCost(uint64_t bytes, uint64_t rows) {
+    return bytes +
+           static_cast<uint64_t>(static_cast<double>(rows) * kEncodeCostPerRow);
+  }
+
+  uint64_t ColumnCost(field_id id) const {
+    uint64_t cost = 0;
+    for (size_t input = 0; input != sources.size(); ++input) {
+      const auto bytes = columns->StoredBytes(id, input);
+      const bool copy = columns->Copyable(id, input) &&
+                        (!key_order || key_order->IsolatedBegin(input));
+      cost += copy ? bytes / kCopyCostDivisor
+                   : EncodeCost(bytes, sources[input].alive_count);
+    }
+    return cost;
+  }
+
   void AddEncodeRanges(field_id id, uint64_t begin, uint64_t end,
                        uint64_t bytes, uint64_t target,
                        std::vector<ColumnRange>& out) const {
@@ -181,11 +202,12 @@ struct MergePlan::State {
       return;
     }
     const uint64_t rows = end - begin;
+    const uint64_t cost = EncodeCost(bytes, rows);
     const uint64_t row_group_size = columns->RowGroupSize();
     const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
     const uint64_t parts =
-      target != 0 && bytes > target && columns->Splittable(id)
-        ? std::min((bytes + target - 1) / target, row_groups)
+      target != 0 && cost > target && columns->Splittable(id)
+        ? std::min((cost + target - 1) / target, row_groups)
         : 1;
     for (uint64_t part = 0; part != parts; ++part) {
       out.push_back({
@@ -194,7 +216,7 @@ struct MergePlan::State {
         .end = begin +
                std::min(rows, (part + 1) * row_groups / parts * row_group_size),
         .input = kEncode,
-        .cost = bytes / parts,
+        .cost = cost / parts,
       });
     }
   }
@@ -215,7 +237,7 @@ struct MergePlan::State {
         .begin = *begin,
         .end = *begin + rows,
         .input = input,
-        .cost = columns->StoredBytes(id, input),
+        .cost = columns->StoredBytes(id, input) / kCopyCostDivisor,
       });
     }
     std::ranges::sort(copies, {}, &ColumnRange::begin);
@@ -259,7 +281,7 @@ struct MergePlan::State {
         .begin = row,
         .end = row + rows,
         .input = input,
-        .cost = columns->StoredBytes(id, input),
+        .cost = columns->StoredBytes(id, input) / kCopyCostDivisor,
       });
       row += rows;
       stretch = row;
@@ -274,14 +296,17 @@ struct MergePlan::State {
     if (!units.empty()) {
       after_norms.push_back(units.size() - 1);
     }
-    std::vector<uint64_t> bytes;
+    std::vector<uint64_t> costs;
+    uint64_t bytes = 0;
     uint64_t total = 0;
     for (const auto id : columns->Columns()) {
-      total += bytes.emplace_back(columns->StoredBytes(id));
+      bytes += columns->StoredBytes(id);
+      total += costs.emplace_back(ColumnCost(id));
     }
-    const uint64_t target = threads > 1 ? total / (2 * threads) : 0;
+    const uint64_t target =
+      threads > 1 ? total / (kRangesPerThread * threads) : 0;
     for (size_t i = 0; const auto id : columns->Columns()) {
-      const auto cost = bytes[i++];
+      const auto cost = costs[i++];
       auto column_ranges = RangesOf(id, target);
       if (column_ranges.size() < 2 &&
           (column_ranges.empty() || column_ranges[0].input == kEncode)) {
@@ -291,10 +316,11 @@ struct MergePlan::State {
       }
       auto part_deps = after_norms;
       if (columns->HoldsText(id)) {
-        part_deps = {AddUnit({.kind = MergeUnitKind::ColumnTrain,
-                              .id = id,
-                              .cost = codecs::kTrainSampleBytes},
-                             after_norms)};
+        part_deps = {
+          AddUnit({.kind = MergeUnitKind::ColumnTrain,
+                   .id = id,
+                   .cost = codecs::kTrainSampleBytes * kTrainCostPerSampleByte},
+                  after_norms)};
       }
       for (uint32_t part = 0; part != column_ranges.size(); ++part) {
         const auto& range = column_ranges[part];
@@ -307,7 +333,7 @@ struct MergePlan::State {
       }
       ranges.emplace(id, std::move(column_ranges));
     }
-    return total;
+    return bytes;
   }
 
   void PlanUnits() {

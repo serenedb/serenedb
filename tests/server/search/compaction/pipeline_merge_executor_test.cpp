@@ -566,14 +566,16 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
   ASSERT_EQ(parts, range.PartsLeft());
   search::MergeUnitRun run{plan, std::chrono::steady_clock::now(),
                            plan.PostingsPending()};
-  EXPECT_FALSE(run.MayClaim(parts));
-  EXPECT_TRUE(run.MayClaim(parts + 1));
+  EXPECT_TRUE(run.MayClaim(1));
+  EXPECT_TRUE(run.MayClaim(parts));
   const auto unit = run.schedule.Claim();
   ASSERT_TRUE(unit);
+  EXPECT_FALSE(run.MayClaim(parts));
   EXPECT_FALSE(run.MayClaim(parts + 1));
   EXPECT_TRUE(run.MayClaim(parts + 2));
   ASSERT_TRUE(range.MergePart(0));
   EXPECT_EQ(parts - 1, range.PartsLeft());
+  EXPECT_FALSE(run.MayClaim(parts));
   EXPECT_TRUE(run.MayClaim(parts + 1));
   for (size_t part = 1; part < parts; ++part) {
     ASSERT_TRUE(range.MergePart(part));

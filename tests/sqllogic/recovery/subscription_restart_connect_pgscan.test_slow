@@ -1,0 +1,90 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rrc_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsub_rrc''');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'DROP PUBLICATION IF EXISTS rsub_rrc_pub');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'DROP TABLE IF EXISTS rsub_rrc_rows');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'CREATE TABLE rsub_rrc_rows (id integer PRIMARY KEY)');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'CREATE PUBLICATION rsub_rrc_pub FOR TABLE rsub_rrc_rows');
+
+onlyif serenedb
+statement ok
+CREATE TABLE rsub_rrc_rows (id INTEGER PRIMARY KEY);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION rsub_rrc CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsub_rrc_pub WITH (copy_data = false);
+
+onlyif serenedb
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rrc_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_rrc'' AND active');
+----
+n
+1
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'publisher_slow_connect';
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION rsub_rrc SET (binary = true);
+
+onlyif serenedb
+query ok retry 120 backoff 100ms
+SELECT count(*) AS n FROM postgres_query('rrc_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_rrc'' AND NOT active');
+----
+n
+1
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION rsub_rrc SET (binary = false);
+
+onlyif serenedb
+statement ok
+SET sdb_faults = '-publisher_slow_connect';
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'INSERT INTO rsub_rrc_rows VALUES (1)');
+
+onlyif serenedb
+query ok retry 80 backoff 250ms
+SELECT count(*) AS n FROM rsub_rrc_rows;
+----
+n
+1
+
+onlyif serenedb
+statement ok
+DROP SUBSCRIPTION rsub_rrc;
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'DROP PUBLICATION rsub_rrc_pub');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rrc_${__DATABASE__}', 'DROP TABLE rsub_rrc_rows');
+
+onlyif serenedb
+statement ok
+DETACH rrc_${__DATABASE__};

@@ -31,6 +31,7 @@
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
 #include <string>
 #include <string_view>
@@ -619,7 +620,7 @@ TEST(PhrasePositionsTest, regexp_slot) {
   EXPECT_FALSE(Matches(regexp("[[:alpha:]]+n", irs::RegexpSyntax::PosixEre),
                        Doc{"quick red fox"}));
   EXPECT_EQ(2U, Verify(regexp("[a-z]+"), Doc{"quick a fox quick b fox"}).freq);
-  EXPECT_FALSE(Matches(regexp("("), Doc{"quick ( fox"}));
+  EXPECT_THROW(Matches(regexp("("), Doc{"quick ( fox"}), irs::SqlException);
 }
 
 TEST(PhrasePositionsTest, regexp_parts_lower_by_shape) {

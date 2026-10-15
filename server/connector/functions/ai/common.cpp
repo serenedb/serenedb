@@ -542,8 +542,9 @@ void TopUp(const duckdb::shared_ptr<FetchState>& state) {
   const auto remaining =
     s.out.size() -
     std::min(s.next.load(std::memory_order_relaxed), s.out.size());
-  const auto cap = std::min<size_t>(query.limiter.Available(),
-                                    s.scheduler.NumberOfAsyncThreads());
+  const auto cap =
+    std::min<size_t>(query.limiter.Available(),
+                     duckdb::TaskScheduler::QueryAsyncThreads(s.exec.context));
   absl::MutexLock lock{&s.mutex};
   while (s.helpers + 1 < remaining) {
     absl::Cleanup release = [&] {

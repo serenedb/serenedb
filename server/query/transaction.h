@@ -111,9 +111,8 @@ class Transaction : public Config {
     const std::shared_ptr<search::InvertedIndexStorage>& storage);
 
   // Lazily-created search-table (TableEngine::Search) transaction state +
-  // commit logic. Engaged on the first search-table write/scan; query::
-  // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
-  // Rollback). The operator and scan reach the per-shard mutators through here.
+  // commit logic. Engaged on the first search-table write/scan. The operator
+  // and scan reach the per-shard mutators through here.
   search::SearchTableTransaction& SearchTxn() {
     if (!_search_txn) {
       _search_txn.emplace();
@@ -197,8 +196,7 @@ class Transaction : public Config {
     _search_snapshots;
   FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
-  // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
-  // commit on the store-table tick, not the engine WAL tick.
+  // lazily via SearchTxn(); reset in Destroy.
   std::optional<search::SearchTableTransaction> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<

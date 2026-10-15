@@ -20,6 +20,7 @@
 
 #include "connector/functions/sdb_merge_simulate.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
 
@@ -434,9 +435,9 @@ duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> BindTrace(
   inputs.reserve(kTraceColumns.size());
   for (const auto& column : kTraceColumns) {
     const auto& names = input.input_table_names;
-    const auto it = std::ranges::find_if(
-      names,
-      [&](const duckdb::Identifier& name) { return name == column.name; });
+    const auto it = absl::c_find_if(names, [&](const duckdb::Identifier& name) {
+      return name == column.name;
+    });
     if (it == names.end()) {
       if (column.required) {
         ThrowInvalid(absl::StrCat("the trace has no ", column.name, " column"));

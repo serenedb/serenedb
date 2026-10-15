@@ -40,8 +40,8 @@ struct TableFilter {
 
   virtual uint32_t Narrow(doc_id_t* docs, score_t* scores, uint32_t n) = 0;
 
-  virtual uint32_t Narrow(doc_id_t base, uint64_t* mask, score_t* scores,
-                          uint32_t words) = 0;
+  virtual uint32_t Narrow(doc_id_t base, const uint64_t* in, uint64_t* out,
+                          score_t* scores, uint32_t words) = 0;
 };
 
 template<typename Table>
@@ -103,10 +103,10 @@ class Narrowing {
     }
   }
 
-  IRS_FORCE_INLINE void Window(doc_id_t base, uint64_t* mask, score_t* scores,
-                               uint32_t words) const {
+  IRS_FORCE_INLINE void Window(doc_id_t base, const uint64_t* in, uint64_t* out,
+                               score_t* scores, uint32_t words) const {
     if constexpr (kTable) {
-      _table->Narrow(base, mask, scores, words);
+      _table->Narrow(base, in, out, scores, words);
     }
   }
 

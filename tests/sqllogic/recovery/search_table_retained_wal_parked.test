@@ -1,0 +1,83 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE st_rparked;
+
+
+statement ok
+CREATE TABLE st_rparked.public.docs (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO st_rparked.public.docs VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st_rparked.public.docs;
+
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+
+connection writer
+statement async error connection closed
+INSERT INTO st_rparked.public.docs VALUES (3, 'c');
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+
+connection checkpointer
+statement ok
+CHECKPOINT st_rparked;
+
+
+connection default
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection writer
+wait
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_rparked.public.docs;
+----
+ids
+1,2,3
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+connection after_crash
+statement ok
+DROP DATABASE st_rparked;

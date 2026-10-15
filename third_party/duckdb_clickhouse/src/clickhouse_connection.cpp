@@ -2,18 +2,21 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/common/printer.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
 
 #include <atomic>
 #include <cctype>
+#include <chrono>
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
 #include "clickhouse_connection.hpp"
+#include "clickhouse_logging.hpp"
 
 namespace duckdb {
 
@@ -271,16 +274,6 @@ clickhouse::Client &ClickHouseConnection::GetClient() {
 	return *client;
 }
 
-// Written by SET on whichever thread runs the statement, read by LogQuery on
-// every worker that issues a query -- a plain bool is a data race (tsan:
-// "Location is global 'duckdb::debug_clickhouse_print_queries'"). Relaxed is
-// enough: the flag guards nothing but itself.
-static std::atomic<bool> debug_clickhouse_print_queries {false};
-
-void ClickHouseConnection::DebugSetPrintQueries(bool print) {
-	debug_clickhouse_print_queries.store(print, std::memory_order_relaxed);
-}
-
 clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context, const string &sql) {
 	clickhouse::Query query(sql);
 	Value timeout_val;
@@ -296,17 +289,57 @@ clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context
 	return query;
 }
 
-void ClickHouseConnection::LogQuery(const string &sql) {
-	if (debug_clickhouse_print_queries.load(std::memory_order_relaxed)) {
-		Printer::Print(sql + "\n");
+static void LogQuery(optional_ptr<ClientContext> context, const string &sql,
+                     std::chrono::steady_clock::time_point start) {
+	if (!context) {
+		return;
 	}
+	auto duration =
+	    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	DUCKDB_LOG(*context, ClickHouseQueryLogType, sql, duration);
+}
+
+template <class CALL>
+static void LoggedCall(optional_ptr<ClientContext> context, const string &sql, CALL &&call) {
+	auto start = std::chrono::steady_clock::now();
+	try {
+		call();
+	} catch (...) {
+		LogQuery(context, sql, start);
+		throw;
+	}
+	LogQuery(context, sql, start);
+}
+
+void ClickHouseConnection::Execute(optional_ptr<ClientContext> context, const clickhouse::Query &query) {
+	LoggedCall(context, query.GetText(), [&] { GetClient().Execute(query); });
+}
+
+void ClickHouseConnection::Select(optional_ptr<ClientContext> context, const string &sql,
+                                  clickhouse::SelectCallback callback) {
+	LoggedCall(context, sql, [&] { GetClient().Select(sql, std::move(callback)); });
+}
+
+void ClickHouseConnection::BeginSelect(optional_ptr<ClientContext> context, const clickhouse::Query &query) {
+	LoggedCall(context, query.GetText(), [&] { GetClient().BeginSelect(query); });
+}
+
+void ClickHouseConnection::BeginSelectWithExternalData(optional_ptr<ClientContext> context,
+                                                       const clickhouse::Query &query,
+                                                       const clickhouse::ExternalTables &external_tables) {
+	LoggedCall(context, query.GetText(), [&] { GetClient().BeginSelectWithExternalData(query, external_tables); });
+}
+
+void ClickHouseConnection::Insert(optional_ptr<ClientContext> context, const string &table,
+                                  const clickhouse::Block &block) {
+	LoggedCall(context, absl::StrCat("INSERT INTO ", table, " (", block.GetRowCount(), " rows)"),
+	           [&] { GetClient().Insert(table, block); });
 }
 
 void ClickHouseConnection::ThrowError(const char *op, const string &sql, const std::exception &error) {
 	throw IOException("ClickHouse error %s: %s\nSQL: %s", op, error.what(), sql);
 }
 
-// Same as above: SET writes it, connection setup reads it from worker threads.
 static std::atomic<bool> clickhouse_connection_cache_enabled {true};
 
 void ClickHouseConnection::SetConnectionCache(bool enabled) {

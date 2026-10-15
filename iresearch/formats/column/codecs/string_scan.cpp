@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -215,7 +216,9 @@ char* TrainedWindow(const TrainedDictionary& dictionary, size_t frame_bytes) {
   };
   thread_local std::array<Window, 4> windows;
   thread_local size_t next = 0;
-  auto it = std::ranges::find(windows, dictionary.Id(), &Window::dictionary);
+  auto it = absl::c_find_if(windows, [&](const Window& window) {
+    return window.dictionary == dictionary.Id();
+  });
   if (it == windows.end()) {
     it = windows.begin() + next;
     next = (next + 1) % windows.size();
@@ -425,8 +428,8 @@ struct ScanState final : duckdb::SegmentScanState {
     SDB_ENSURE(!run_ends.empty() && run_ends.back() == header.row_count,
                "col codec: corrupted run ends");
     SDB_ENSURE(
-      std::ranges::all_of(
-        run_values, [&](uint32_t code) { return code < header.entry_count; }),
+      absl::c_all_of(run_values,
+                     [&](uint32_t code) { return code < header.entry_count; }),
       "col codec: corrupted row codes");
   }
 
@@ -1432,13 +1435,8 @@ struct FetchCache final : duckdb::SegmentScanState {
 
 FetchCache& CacheFor(duckdb::ColumnFetchState& state,
                      duckdb::ColumnSegment& segment, data_ptr_t base) {
-  auto* cached = dynamic_cast<FetchCache*>(state.codec_state.get());
-  if (!cached) {
-    auto fresh = duckdb::make_uniq<FetchCache>();
-    cached = fresh.get();
-    state.codec_state = std::move(fresh);
-  }
-  auto& cache = *cached;
+  auto& cache = state.GetOrCreateSegmentState<FetchCache>(
+    segment, [] { return duckdb::make_uniq<FetchCache>(); });
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
     cache.header = Header::Parse(base, segment.SegmentSize());
@@ -1655,6 +1653,15 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     result, cache.frame_data + offset, len);
 }
 
+void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
+               const idx_t* rows, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  for (idx_t i = 0; i < count; ++i) {
+    FetchRow(segment, state, static_cast<duckdb::row_t>(rows[i]), result,
+             result_offset + result_sel.get_index(i));
+  }
+}
+
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   duckdb::QueryContext, duckdb::ColumnSegment& segment) {
   auto& buffer_manager =
@@ -1704,7 +1711,7 @@ duckdb::CompressionFunction MakeScanFunction(
     InitScan,
     ScanVector,
     ScanPartial,
-    FetchRow,
+    FetchRows,
     duckdb::UncompressedFunctions::EmptySkip,
   };
   f.select = Select;

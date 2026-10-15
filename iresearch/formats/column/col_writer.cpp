@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -30,7 +31,6 @@
 #include <iterator>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
@@ -75,8 +75,8 @@ void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
       .elem = MetaRows(meta.children[0]),
     });
   }
-  std::ranges::move(part.data, std::back_inserter(meta.data));
-  std::ranges::move(part.validity, std::back_inserter(meta.validity));
+  absl::c_move(part.data, std::back_inserter(meta.data));
+  absl::c_move(part.validity, std::back_inserter(meta.validity));
   for (size_t i = 0; i != part.children.size(); ++i) {
     AppendPart(meta.children[i], part.children[i]);
   }
@@ -138,10 +138,6 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = _dir->create(_filename);
-  if (!_out) {
-    throw IoError{
-      absl::StrCat("col writer: cannot create .col file: ", _filename)};
-  }
   _blocks = std::make_unique<ColBlockSink>(*_out);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_blocks);
 }

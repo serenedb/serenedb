@@ -212,11 +212,11 @@ statement ok
 ROLLBACK
 
 
-# The view has two dependency edges; a refusal met on an edge names whichever
-# edge came first, so those records accept either one.
 connection s2
-statement error Catalog write-write conflict on alter with "(Schema\\0public|Table\\0public\\0cmr_vt)\\0View\\0public\\0cmr_v"
+statement error
 DROP VIEW cmr_v
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
 
 
 connection s2
@@ -234,8 +234,10 @@ db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "View\\0public\\0cmr_v\\0(Schema\\0public|Table\\0public\\0cmr_vt)"
+statement error
 CREATE VIEW cmr_v AS SELECT 0 AS a
+----
+db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
 
 
 # IF NOT EXISTS finds the committed view and leaves it alone.
@@ -317,8 +319,10 @@ db error: ERROR: Catalog write-write conflict on alter with "cmr_v"
 
 
 connection s1
-statement error Catalog write-write conflict on create with "(Schema\\0public|Table\\0public\\0cmr_vt)\\0View\\0public\\0cmr_v2"
+statement error
 CREATE OR REPLACE VIEW cmr_v2 AS SELECT a FROM cmr_vt WHERE a = 1
+----
+db error: ERROR: Catalog write-write conflict on create with "cmr_v2"
 
 
 connection s2
@@ -947,21 +951,21 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_t(i INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_t"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
 statement error
 DROP TABLE cmr_t
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_t"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
 statement error
 CREATE TABLE cmr_t(q INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Table\0public\0cmr_t\0Schema\0public"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
@@ -1030,7 +1034,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_t"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
@@ -1052,7 +1056,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_t"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
@@ -1082,7 +1086,7 @@ connection s1
 statement error
 CREATE OR REPLACE TABLE cmr_t(h INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_t"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_t"
 
 
 connection s2
@@ -1485,12 +1489,12 @@ connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_s(f INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Sequence\0public\0cmr_s_pk_seq"
+db error: ERROR: Catalog write-write conflict on create with "cmr_s_pk_seq"
 
 
 # The search table depends on its schema and on its key sequence.
 connection s2
-statement error Catalog write-write conflict on alter with "(Schema\\0public|Sequence\\0public\\0cmr_s_pk_seq1)\\0Table\\0public\\0cmr_s"
+statement error Catalog write-write conflict on alter with "cmr_s"
 DROP TABLE cmr_s
 
 
@@ -1631,7 +1635,7 @@ DROP TABLE cmr_sr
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "(Schema\\0public|Sequence\\0public\\0cmr_sr_pk_seq)\\0Table\\0public\\0cmr_sr"
+statement error Catalog write-write conflict on alter with "cmr_sr"
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
 
 
@@ -1651,7 +1655,7 @@ ALTER TABLE cmr_sr RENAME TO cmr_sr_other
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "(Schema\\0public|Sequence\\0public\\0cmr_sr_pk_seq)\\0Table\\0public\\0cmr_sr"
+statement error Catalog write-write conflict on alter with "cmr_sr"
 CREATE OR REPLACE TABLE cmr_sr(c INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
 
 
@@ -1886,7 +1890,7 @@ Use DROP...CASCADE to drop all dependents.
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "[^"]*Macro Function\\0public\\0cmr_m[^"]*"
+statement error Catalog write-write conflict on alter with "cmr_m"
 DROP MACRO cmr_m CASCADE
 
 
@@ -2274,14 +2278,14 @@ connection s2
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq START 600
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Sequence\0public\0cmr_sq"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
 
 
 connection s2
 statement error
 DROP SEQUENCE cmr_sq
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Sequence\0public\0cmr_sq"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
 
 
 connection s2
@@ -2323,7 +2327,7 @@ connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq START 700
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Sequence\0public\0cmr_sq"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq"
 
 
 connection s2
@@ -2410,14 +2414,14 @@ connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq2 START 50
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Sequence\0public\0cmr_sq2"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_sq2"
 
 
 connection s1
 statement error
 CREATE OR REPLACE SEQUENCE cmr_sq3 START 50
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Sequence\0public\0cmr_sq3"
+db error: ERROR: Catalog write-write conflict on create with "cmr_sq3"
 
 
 connection s2
@@ -2608,21 +2612,21 @@ connection s2
 statement error
 CREATE OR REPLACE TYPE cmr_ty AS ENUM ('q')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Type\0public\0cmr_ty"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
 
 
 connection s2
 statement error
 DROP TYPE cmr_ty
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Type\0public\0cmr_ty"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
 
 
 connection s2
 statement error
 CREATE TYPE cmr_ty AS ENUM ('q')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Type\0public\0cmr_ty\0Schema\0public"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
 
 
 connection s2
@@ -2657,7 +2661,7 @@ connection s1
 statement error
 CREATE OR REPLACE TYPE cmr_ty AS ENUM ('p')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Type\0public\0cmr_ty"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ty"
 
 
 connection s2
@@ -2822,70 +2826,70 @@ connection s2
 statement error
 CREATE VIEW IF NOT EXISTS cmr_nv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0View\0public\0cmr_nv"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nv"
 
 
 connection s2
 statement error
 CREATE OR REPLACE VIEW cmr_nv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0View\0public\0cmr_nv"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nv"
 
 
 connection s2
 statement error
 CREATE TABLE IF NOT EXISTS cmr_nt(b INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Table\0public\0cmr_nt"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nt"
 
 
 connection s2
 statement error
 CREATE OR REPLACE TABLE cmr_nt(b INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Table\0public\0cmr_nt"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nt"
 
 
 connection s2
 statement error
 CREATE MACRO IF NOT EXISTS cmr_nm() AS 2
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Macro Function\0public\0cmr_nm"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nm"
 
 
 connection s2
 statement error
 CREATE OR REPLACE MACRO cmr_nm() AS 2
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Macro Function\0public\0cmr_nm"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nm"
 
 
 connection s2
 statement error
 CREATE SEQUENCE IF NOT EXISTS cmr_nsq
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Sequence\0public\0cmr_nsq"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nsq"
 
 
 connection s2
 statement error
 CREATE OR REPLACE SEQUENCE cmr_nsq
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Sequence\0public\0cmr_nsq"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nsq"
 
 
 connection s2
 statement error
 CREATE TYPE IF NOT EXISTS cmr_nty AS ENUM ('b')
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Type\0public\0cmr_nty"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nty"
 
 
 connection s2
 statement error
 CREATE OR REPLACE TYPE cmr_nty AS ENUM ('b')
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Type\0public\0cmr_nty"
+db error: ERROR: Catalog write-write conflict on create with "cmr_nty"
 
 
 connection s1
@@ -3278,7 +3282,7 @@ connection s3
 statement error
 CREATE OR REPLACE TABLE cmr_ot(c INTEGER)
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Table\0public\0cmr_ot"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ot"
 
 
 connection s3
@@ -3338,7 +3342,7 @@ connection s3
 statement error
 CREATE OR REPLACE SEQUENCE cmr_osq START 8
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Sequence\0public\0cmr_osq"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_osq"
 
 
 connection s3
@@ -3368,7 +3372,7 @@ connection s3
 statement error
 CREATE OR REPLACE TYPE cmr_oty AS ENUM ('c')
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0Type\0public\0cmr_oty"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_oty"
 
 
 connection s3
@@ -3396,7 +3400,7 @@ CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
 
 
 connection s3
-statement error Catalog write-write conflict on alter with "Table\\0public\\0(cmr_ota|cmr_ott)\\0Trigger\\0public\\0cmr_otr\\0cmr_ott"
+statement error Catalog write-write conflict on alter with "cmr_otr"
 CREATE OR REPLACE TRIGGER cmr_otr AFTER INSERT ON cmr_ott FOR EACH ROW
   INSERT INTO cmr_ota VALUES (NEW.a * 3)
 
@@ -3429,7 +3433,7 @@ connection s3
 statement error
 DROP VIEW cmr_ov
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Schema\0public\0View\0public\0cmr_ov"
+db error: ERROR: Catalog write-write conflict on alter with "cmr_ov"
 
 
 connection s3
@@ -3461,7 +3465,7 @@ connection s3
 statement error
 CREATE OR REPLACE VIEW cmr_onv AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0View\0public\0cmr_onv"
+db error: ERROR: Catalog write-write conflict on create with "cmr_onv"
 
 
 connection s3
@@ -3491,7 +3495,7 @@ connection s3
 statement error
 CREATE VIEW IF NOT EXISTS cmr_onv2 AS SELECT 2 AS x
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0View\0public\0cmr_onv2"
+db error: ERROR: Catalog write-write conflict on create with "cmr_onv2"
 
 
 connection s3
@@ -4046,23 +4050,23 @@ CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr\\0cmr_tt"
+statement error Catalog write-write conflict on alter with "cmr_tr"
 CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v3', NEW.a)
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr\\0cmr_tt"
+statement error Catalog write-write conflict on alter with "cmr_tr"
 DROP TRIGGER cmr_tr ON cmr_tt
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr\\0cmr_tt"
+statement error Catalog write-write conflict on alter with "cmr_tr"
 DROP TRIGGER IF EXISTS cmr_tr ON cmr_tt
 
 
 connection s2
-statement error Catalog write-write conflict on alter with "Trigger\\0public\\0cmr_tr\\0cmr_tt\\0Table\\0public\\0(cmr_ta|cmr_tt)"
+statement error Catalog write-write conflict on alter with "cmr_tr"
 CREATE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v3', NEW.a)
 
@@ -4124,7 +4128,7 @@ DROP TRIGGER cmr_tr ON cmr_tt
 
 
 connection s1
-statement error Catalog write-write conflict on alter with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr\\0cmr_tt"
+statement error Catalog write-write conflict on alter with "cmr_tr"
 CREATE OR REPLACE TRIGGER cmr_tr AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('v2', NEW.a)
 
@@ -4162,13 +4166,13 @@ CREATE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
 
 
 connection s2
-statement error Catalog write-write conflict on create with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr3\\0cmr_tt"
+statement error Catalog write-write conflict on create with "cmr_tr3"
 CREATE TRIGGER IF NOT EXISTS cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
 
 
 connection s2
-statement error Catalog write-write conflict on create with "Table\\0public\\0(cmr_ta|cmr_tt)\\0Trigger\\0public\\0cmr_tr3\\0cmr_tt"
+statement error Catalog write-write conflict on create with "cmr_tr3"
 CREATE OR REPLACE TRIGGER cmr_tr3 AFTER INSERT ON cmr_tt FOR EACH ROW
   INSERT INTO cmr_ta VALUES ('ins3b', NEW.a)
 

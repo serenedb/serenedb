@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -27,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
@@ -271,9 +272,7 @@ class PostingReader {
   Input& In() {
     if (_in == nullptr) [[unlikely]] {
       _owned = _doc->Reopen();
-      if (!_owned) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      SDB_ASSERT(_owned);
       _in = &irs::utils::downCast<Input>(*_owned);
     }
     return *_in;
@@ -317,7 +316,7 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
     terms | std::views::transform([](const Term& term) -> const PostingMeta& {
       return CookieOf(term);
     });
-  if (std::ranges::any_of(
+  if (absl::c_any_of(
         metas, [](const PostingMeta& meta) { return DocExtent(meta) != 0; })) {
     PrefetchDocExtents(r.In(), metas);
   }

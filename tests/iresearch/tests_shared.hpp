@@ -28,10 +28,22 @@
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <memory>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
+
+#define ASSERT_SQL_ERROR(statement, code)                                  \
+  do {                                                                     \
+    try {                                                                  \
+      statement;                                                           \
+    } catch (const irs::SqlException& sql_error) {                         \
+      ASSERT_EQ(sql_error.error().errcode, (code)) << sql_error.message(); \
+      break;                                                               \
+    }                                                                      \
+    FAIL() << "expected irs::SqlException from " #statement;               \
+  } while (false)
 
 class TestEnv {
  public:

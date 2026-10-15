@@ -26,8 +26,8 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
+#include <fast_float/fast_float.h>
 
-#include <charconv>
 #include <system_error>
 
 #include "iresearch/utils/shared.hpp"
@@ -44,7 +44,7 @@ std::optional<uint64_t> SegmentNumber(std::string_view name) noexcept {
   }
   uint64_t number = 0;
   const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = std::from_chars(name.data() + 1, end, number);
+  const auto [ptr, ec] = fast_float::from_chars(name.data() + 1, end, number);
   if (ec != std::errc{} || ptr != end) {
     return std::nullopt;
   }

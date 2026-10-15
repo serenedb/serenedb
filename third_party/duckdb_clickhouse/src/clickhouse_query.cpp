@@ -16,7 +16,7 @@
 
 namespace duckdb {
 
-void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &describe_sql,
+void ClickHouseDiscoverColumns(ClientContext &context, ClickHouseConnection &connection, const string &describe_sql,
                                vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
                                vector<bool> &stringified, vector<string> &clickhouse_types);
 
@@ -80,7 +80,7 @@ static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &conte
 				bind_data->stringified = std::move(cached.stringified);
 				bind_data->clickhouse_types = std::move(cached.clickhouse_types);
 			} else {
-				ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
+				ClickHouseDiscoverColumns(context, connection, describe_sql, return_types, column_names, binary_as_blob,
 				                          bind_data->stringified, bind_data->clickhouse_types);
 				ch_catalog.StoreDescribe(
 				    cache_key, ClickHouseCatalog::DescribeCacheEntry {
@@ -88,7 +88,7 @@ static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &conte
 			}
 		} else {
 			auto connection = ClickHouseConnection::Open(bind_data->params);
-			ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
+			ClickHouseDiscoverColumns(context, connection, describe_sql, return_types, column_names, binary_as_blob,
 			                          bind_data->stringified, bind_data->clickhouse_types);
 		}
 	} catch (const clickhouse::Error &e) {
@@ -186,8 +186,7 @@ static void ClickHouseExecuteFunc(ClientContext &context, TableFunctionInput &da
 	auto &bind_data = data.bind_data->Cast<ClickHouseExecuteBindData>();
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data.params);
-		ClickHouseConnection::LogQuery(bind_data.sql);
-		connection.GetClient().Execute(ClickHouseConnection::MakeQuery(context, bind_data.sql));
+		connection.Execute(context, ClickHouseConnection::MakeQuery(context, bind_data.sql));
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("executing statement", bind_data.sql, e);
 	}

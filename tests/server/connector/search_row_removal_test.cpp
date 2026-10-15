@@ -827,25 +827,21 @@ TEST(RowPositionTest, FillRowPositions) {
   EXPECT_TRUE(duckdb::FlatVector::Validity(null_out).RowIsValid(3));
 }
 
-TEST(LocalTableChangesTest, DeletesMergeOnlyWithinOneBand) {
+TEST(LocalTableChangesTest, EachDeleteChunkIsItsOwnOp) {
   search::LocalTableChangesEntry entry;
   const std::array<int64_t, 2> rows{1, 2};
   const std::array<uint64_t, 2> positions{MakeRowPosition(1, 1),
                                           MakeRowPosition(1, 2)};
   entry.AppendDeletes(rows, positions);
   entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(1, entry.ops.size());
-  EXPECT_EQ(4, entry.ops[0].delete_rows.size());
-  EXPECT_EQ(4, entry.ops[0].delete_positions.size());
+  ASSERT_EQ(2, entry.ops.size());
+  EXPECT_EQ(2, entry.ops[1].delete_rows.size());
+  EXPECT_EQ(2, entry.ops[1].delete_positions.size());
 
   entry.pk_segments.push_back({0, 10});
   entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(2, entry.ops.size());
-  EXPECT_EQ(1, entry.ops[1].band_watermark);
-
-  entry.applied_ops = entry.ops.size();
-  entry.AppendDeletes(rows, positions);
   ASSERT_EQ(3, entry.ops.size());
+  EXPECT_EQ(1, entry.ops[2].band_watermark);
 
   entry.AppendDeletes({}, {});
   ASSERT_EQ(3, entry.ops.size());
@@ -855,7 +851,7 @@ TEST(LocalTableChangesTest, DeletesMergeOnlyWithinOneBand) {
   entry.AppendDeletes(rows, positions);
   ASSERT_EQ(2, entry.ops.size());
   EXPECT_TRUE(entry.ops[0].IsTruncate());
-  EXPECT_TRUE(entry.ops[1].IsDelete());
+  EXPECT_FALSE(entry.ops[1].IsTruncate());
 }
 
 TEST(CollectRemovedRowsTest, ReadsRowidsAndPositions) {
@@ -915,8 +911,8 @@ TEST_F(SearchRowRemovalTest, RemovalReachesReplacementSegments) {
 
   std::vector<std::string_view> replaced{sources.begin(), sources.end()};
   std::vector<std::string_view> adopted{metas.begin(), metas.end()};
-  ASSERT_TRUE(_writer->ReplaceSegments(
-    replaced, adopted, [](irs::IndexWriter::QueryContext&) { return true; }));
+  _writer->ReplaceSegments(
+    replaced, adopted, [](irs::IndexWriter::QueryContext&) { return true; });
   _writer->RefreshCommit();
   for (const auto rowid : victims) {
     _model.erase(rowid);
@@ -944,11 +940,11 @@ TEST_F(SearchRowRemovalTest, ReplaceSegmentsCarriesARowidRemoval) {
   const auto removal = MakeRowRemoval(victims, {});
   std::vector<std::string_view> replaced{sources.begin(), sources.end()};
   std::vector<std::string_view> adopted{metas.begin(), metas.end()};
-  ASSERT_TRUE(_writer->ReplaceSegments(
-    replaced, adopted, [&](irs::IndexWriter::QueryContext& out) {
-      out = {removal, irs::writer_limits::kMinTick};
-      return true;
-    }));
+  _writer->ReplaceSegments(replaced, adopted,
+                           [&](irs::IndexWriter::QueryContext& out) {
+                             out = {removal, irs::writer_limits::kMinTick};
+                             return true;
+                           });
   _writer->RefreshCommit();
   for (const auto rowid : victims) {
     _model.erase(rowid);

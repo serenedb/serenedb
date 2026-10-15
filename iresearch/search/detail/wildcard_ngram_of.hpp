@@ -52,7 +52,7 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
   return irs::utils::downCast<MultiTermQuery>(query).State();
 }
 
-template<template<typename> class Impl, typename Result,
+template<template<typename> typename Impl, typename Result,
          bool kErasedNGrams = true, typename... Prefix>
 Result MakeWildcardNGram(const WildcardNGramQuery& query,
                          uint64_t interrogations, Prefix&&... prefix) {

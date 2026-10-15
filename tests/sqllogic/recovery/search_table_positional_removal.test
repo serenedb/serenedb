@@ -25,7 +25,7 @@ statement ok
 VACUUM (REFRESH_TABLE) rt;
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 DELETE FROM rt WHERE id % 97 = 5;
@@ -50,7 +50,7 @@ n
 
 connection after_spread
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_spread
 statement error connection closed
@@ -76,7 +76,7 @@ n
 
 connection after_update
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_update
 statement ok
@@ -155,7 +155,7 @@ DELETE FROM rt WHERE id BETWEEN 2015 AND 2018;
 
 connection after_mixed
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_mixed
 statement error connection closed
@@ -193,7 +193,7 @@ segments
 
 connection racer
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection racer
 statement error connection closed
@@ -271,7 +271,7 @@ segments
 
 connection after_race
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_race
 statement error connection closed
@@ -361,7 +361,7 @@ n
 
 connection after_wide_update
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_wide_update
 statement error connection closed

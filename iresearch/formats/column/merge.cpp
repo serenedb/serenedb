@@ -434,7 +434,7 @@ struct ColumnMerger::State {
           std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
         const auto& kept_idx = KeptFor(si, pos);
         const auto kept_in_window = static_cast<uint64_t>(
-          std::ranges::lower_bound(kept_idx, static_cast<duckdb::sel_t>(take)) -
+          absl::c_lower_bound(kept_idx, static_cast<duckdb::sel_t>(take)) -
           kept_idx.begin());
         if (to_skip >= kept_in_window) {
           to_skip -= kept_in_window;
@@ -634,7 +634,7 @@ struct ColumnMerger::State {
   static uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept,
                            uint64_t take) {
     return static_cast<uint32_t>(
-      std::ranges::lower_bound(kept, static_cast<duckdb::sel_t>(take)) -
+      absl::c_lower_bound(kept, static_cast<duckdb::sel_t>(take)) -
       kept.begin());
   }
 

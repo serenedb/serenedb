@@ -40,10 +40,6 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
 
-  if (!in) {
-    throw IoError{absl::StrCat("Failed to open file, path: ", str)};
-  }
-
   format_utils::ReadFooter(*in, str);
 }
 

@@ -68,7 +68,7 @@ dos_vedernikoff
 statement error
 DROP ROLE dos_vedernikoff;
 ----
-db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Move ownership back to postgres -> dependency gone -> drop succeeds.
@@ -106,7 +106,7 @@ ALTER SCHEMA dos_iceberg OWNER TO dos_vedernikoff;
 statement error
 DROP ROLE dos_vedernikoff;
 ----
-db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Transfer to clickclack -> vedernikoff drops cleanly, clickclack now refused.
@@ -121,7 +121,7 @@ DROP ROLE dos_vedernikoff;
 statement error
 DROP ROLE dos_clickclack;
 ----
-db error: ERROR: role "dos_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 # === Non-empty schema: DROP SCHEMA RESTRICT refused, CASCADE clears it ===
@@ -176,7 +176,7 @@ CREATE TABLE dos_iceberg.dos_mop (id int);
 statement error
 DROP ROLE dos_kostya;
 ----
-db error: ERROR: role "dos_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 # Drop the table first; now the empty schema accepts a RESTRICT drop, and after
@@ -219,7 +219,7 @@ ALTER SCHEMA dos_clickclack_sch OWNER TO dos_vedernikoff;
 statement error
 DROP ROLE dos_vedernikoff;
 ----
-db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Hand off just one schema; the role still owns the other, so still refused.
@@ -230,7 +230,7 @@ ALTER SCHEMA dos_iceberg OWNER TO postgres;
 statement error
 DROP ROLE dos_vedernikoff;
 ----
-db error: ERROR: role "dos_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Hand off the second schema too; now the role owns nothing and drops cleanly.
@@ -256,7 +256,7 @@ GRANT USAGE ON SCHEMA dos_iceberg TO dos_mop_role;
 statement error
 DROP ROLE dos_mop_role;
 ----
-db error: ERROR: role "dos_mop_role" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_mop_role" because there are entries that depend on it.<slt:ignore>
 
 
 # Adding CREATE keeps the dependency; revoking only USAGE leaves it refused.
@@ -271,7 +271,7 @@ REVOKE USAGE ON SCHEMA dos_iceberg FROM dos_mop_role;
 statement error
 DROP ROLE dos_mop_role;
 ----
-db error: ERROR: role "dos_mop_role" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dos_mop_role" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the last privilege -> no dependency -> drop succeeds.

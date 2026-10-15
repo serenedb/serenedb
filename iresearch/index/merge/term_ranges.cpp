@@ -20,6 +20,8 @@
 
 #include "iresearch/index/merge/term_ranges.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -338,8 +340,8 @@ bool TermRangeMerge::Done() const noexcept { return PartsLeft() == 0; }
 
 size_t TermRangeMerge::PartsLeft() const noexcept {
   std::lock_guard lock{_mutex};
-  return static_cast<size_t>(std::ranges::count_if(
-    _parts, [](const auto& part) { return !part->done; }));
+  return static_cast<size_t>(
+    absl::c_count_if(_parts, [](const auto& part) { return !part->done; }));
 }
 
 std::vector<TermPart> TermRangeMerge::Parts() const {

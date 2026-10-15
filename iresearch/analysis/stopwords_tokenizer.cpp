@@ -22,7 +22,6 @@
 
 #include "iresearch/analysis/text/dict/stopwords_loader.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 
@@ -35,9 +34,8 @@ StopwordsTokenizer::StopwordsTokenizer(
 Tokenizer::ptr StopwordsTokenizer::Make(Options opts,
                                         duckdb::SharedObjectCache& cache) {
   auto stopwords = duckdb::make_uniq<StopwordSet>(std::move(opts.mask));
-  if (!opts.stopwords_path.empty() &&
-      !dict::LoadStopwords(*stopwords, {}, opts.stopwords_path)) {
-    THROW_SQL_ERROR(ERR_MSG("remove_stopwords: failed to load stopwords"));
+  if (!opts.stopwords_path.empty()) {
+    dict::LoadStopwords(*stopwords, {}, opts.stopwords_path);
   }
   stopwords->ShrinkToFit();
 

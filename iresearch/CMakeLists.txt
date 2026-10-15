@@ -51,7 +51,6 @@ set(IResearch_core_sources
     ./analysis/wildcard_tokenizer.cpp
     ./analysis/html_strip_tokenizer.cpp
     ./analysis/filter_tokens_tokenizer.cpp
-    ./error/error.cpp
     ./formats/column/col_block_copy.cpp
     ./formats/column/col_block_sink.cpp
     ./formats/column/col_copy_check.cpp
@@ -423,7 +422,6 @@ set(IResearch_core_sources
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
     ./utils/string_utils.cpp
-    ./utils/zstd_context.cpp
 )
 
 find_package(FLEX)

@@ -20,6 +20,7 @@
 
 #include "search/compaction/merge_simulator.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -200,7 +201,7 @@ SimulatedJob::~SimulatedJob() {
 }
 
 bool SimulatedJob::Merges(std::string_view name) const noexcept {
-  return std::ranges::any_of(_segments, [&](const SimulatedSegment& segment) {
+  return absl::c_any_of(_segments, [&](const SimulatedSegment& segment) {
     return segment.Meta().name == name;
   });
 }
@@ -397,11 +398,11 @@ std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
   if (trace.empty()) {
     return {};
   }
-  std::ranges::stable_sort(
-    trace, [](const SimulatedFlush& lhs, const SimulatedFlush& rhs) {
-      return std::tie(lhs.time, lhs.relation_id) <
-             std::tie(rhs.time, rhs.relation_id);
-    });
+  absl::c_stable_sort(trace,
+                      [](const SimulatedFlush& lhs, const SimulatedFlush& rhs) {
+                        return std::tie(lhs.time, lhs.relation_id) <
+                               std::tie(rhs.time, rhs.relation_id);
+                      });
   _origin = trace.front().time;
   _now = _origin;
   size_t next = 0;

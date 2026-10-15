@@ -51,10 +51,18 @@ ALTER TYPE dot_clickclack OWNER TO dotype_vedernikoff;
 
 # PG: 2BP01, "cannot be dropped because some objects depend on it"; DETAIL is
 # "owner of type dot_clickclack" -> swallowed.
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Drop the type -> ownership dependency gone -> DROP ROLE succeeds.
@@ -79,10 +87,18 @@ statement ok
 ALTER TYPE dot_iceberg OWNER TO dotype_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Reassign ownership to another role -> dependency gone for vedernikoff -> ok.
@@ -103,10 +119,18 @@ statement ok
 ALTER TYPE dot_iceberg OWNER TO dotype_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -160,10 +184,18 @@ ALTER TYPE dot_iceberg OWNER TO dotype_vedernikoff;
 
 
 # Both types depend on the role; DETAIL lists both -> swallowed.
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Drop one type: still refused because the other type is still owned.
@@ -171,10 +203,18 @@ statement ok
 DROP TYPE dot_clickclack;
 
 
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Drop the last owned type -> dependency fully cleared -> DROP ROLE succeeds.
@@ -204,10 +244,18 @@ statement ok
 GRANT USAGE ON TYPE dot_mop TO dotype_kostya;
 
 
+skipif serenedb
 statement error
 DROP ROLE dotype_kostya;
 ----
 db error: ERROR: role "dotype_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_kostya;
+----
+db error: ERROR: Cannot drop entry "dotype_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -224,10 +272,18 @@ statement ok
 CREATE TABLE dot_babsky (id int, payload dot_mop);
 
 
+skipif serenedb
 statement error
 DROP ROLE dotype_vedernikoff;
 ----
 db error: ERROR: role "dotype_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dotype_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dotype_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Plain DROP TYPE fails: the table column depends on the type.

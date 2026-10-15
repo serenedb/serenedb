@@ -255,13 +255,9 @@ TEST_F(MergeCharacterizationTest, DocMapAllocationFailureFailsTheMerge) {
     NthIncreaseFails memory{fail_at};
     irs::SegmentMeta meta;
     meta.name = absl::StrCat("oom", fail_at);
-    bool merged = false;
     try {
-      merged = Merge(meta, {}, memory);
+      Merge(meta, {}, memory);
     } catch (const std::bad_alloc&) {
-      continue;
-    }
-    if (!merged) {
       doc_map_failed = true;
       EXPECT_TRUE(meta.files.empty());
     }

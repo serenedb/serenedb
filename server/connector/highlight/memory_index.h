@@ -23,6 +23,8 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 
 namespace duckdb {
@@ -53,7 +55,11 @@ class MemoryIndex {
         doc.NextFieldBatch();
         write_docs(doc);
       }
-      trx.Commit();
+      if (!trx.Commit()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+          ERR_MSG("failed to index the text to highlight: out of memory"));
+      }
     }
     writer->RefreshCommit();
     auto reader = writer->GetSnapshot();

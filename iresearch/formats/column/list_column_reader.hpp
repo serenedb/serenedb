@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -137,7 +139,9 @@ class ListColumnReader final : public ColumnReader {
   void AddBases(uint64_t ListPart::* at, uint64_t ListPart::* base,
                 uint64_t first, uint64_t* values,
                 uint64_t count) const noexcept {
-    auto next = std::ranges::upper_bound(_parts, first, {}, at);
+    auto next = absl::c_upper_bound(
+      _parts, first,
+      [at](uint64_t value, const ListPart& part) { return value < part.*at; });
     uint64_t add = next == _parts.begin() ? 0 : (*std::prev(next)).*base;
     const uint64_t end = first + count;
     for (uint64_t pos = first; pos < end;) {

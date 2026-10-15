@@ -152,10 +152,10 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
         _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
       }
       _order = std::make_unique<irs::KeyOrder>(_order_map, *sort);
-      ASSERT_TRUE(_order->Prepare(1));
+      _order->Prepare(1);
       ASSERT_TRUE(_order->Pending());
       ASSERT_TRUE(_order->Merge([] { return true; }));
-      ASSERT_TRUE(_order->Finish());
+      _order->Finish();
     }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,
                                            irs::tests::DefaultReaderOptions());

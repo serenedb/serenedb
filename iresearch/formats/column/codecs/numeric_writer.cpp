@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/codecs/numeric_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
@@ -251,7 +253,7 @@ class TypedSealer final : public NumericSealer {
       }
       BuildCandidates(tuning.pick->transform);
       const auto* c = Find(*tuning.pick);
-      const auto option = std::ranges::find_if(plan, [&](const auto& o) {
+      const auto option = absl::c_find_if(plan, [&](const auto& o) {
         return o.leaf == tuning.pick->leaf && o.level == tuning.pick->level;
       });
       std::optional<NumericSegment> out;
@@ -336,7 +338,7 @@ class TypedSealer final : public NumericSealer {
   }
 
   const Candidate* Find(const NumericChoice& choice) const noexcept {
-    const auto it = std::ranges::find_if(_candidates, [&](const auto& c) {
+    const auto it = absl::c_find_if(_candidates, [&](const auto& c) {
       return c.transform == choice.transform && c.shuffled == choice.shuffled;
     });
     return it == _candidates.end() ? nullptr : &*it;
@@ -620,7 +622,7 @@ class TypedSealer final : public NumericSealer {
         distinct.push_back(_values[i]);
       }
     }
-    std::ranges::sort(distinct, [](U a, U b) { return Less(a, b); });
+    absl::c_sort(distinct, [](U a, U b) { return Less(a, b); });
     for (uint32_t k = 0; k < distinct.size(); ++k) {
       _dict_map[distinct[k]] = k;
     }

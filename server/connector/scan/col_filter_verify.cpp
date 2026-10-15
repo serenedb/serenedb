@@ -75,14 +75,16 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
   return static_cast<uint32_t>(_chain.FilterDocs(docs, scores, left));
 }
 
-uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
-                                 irs::score_t* scores, uint32_t words) {
+uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, const uint64_t* in,
+                                 uint64_t* out, irs::score_t* scores,
+                                 uint32_t words) {
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   if (_score_filter != nullptr) {
-    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
-                                          scores, words);
+    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, in,
+                                          out, scores, words);
+    in = out;
   }
-  return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
+  return static_cast<uint32_t>(_chain.FilterMask(base, in, out, words));
 }
 
 uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,

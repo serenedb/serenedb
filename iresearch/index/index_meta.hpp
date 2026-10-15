@@ -26,7 +26,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"

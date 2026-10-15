@@ -20,6 +20,8 @@
 
 #include "iresearch/index/merge/merge_order.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 
 #include "iresearch/utils/assert.hpp"
@@ -33,7 +35,7 @@ MergeOrder::MergeOrder(size_t inputs, uint64_t rows, IResourceManager& memory)
 }
 
 void MergeOrder::Finish() {
-  std::ranges::fill(_live, 0);
+  absl::c_fill(_live, 0);
   _checkpoints.assign(_live.size(), 0);
   for (uint64_t row = 0; row != Rows(); ++row) {
     ++_live[_inputs[row]];

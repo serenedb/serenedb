@@ -43,7 +43,7 @@ class KeyOrder {
   KeyOrder(const KeyOrder&) = delete;
   KeyOrder& operator=(const KeyOrder&) = delete;
 
-  bool Prepare(size_t partitions, duckdb::TaskScheduler* scheduler = nullptr,
+  void Prepare(size_t partitions, duckdb::TaskScheduler* scheduler = nullptr,
                size_t threads = 1);
 
   bool Pending() const noexcept;
@@ -54,7 +54,7 @@ class KeyOrder {
 
   bool Merge(const std::function<bool()>& proceed);
 
-  bool Finish();
+  void Finish();
 
   std::optional<uint64_t> IsolatedBegin(size_t input) const noexcept;
 

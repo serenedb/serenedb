@@ -32,7 +32,7 @@
 #include <utility>
 #include <variant>
 
-#include "iresearch/error/error.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -59,8 +59,9 @@ uint64_t PrefixKeyAt(const duckdb::string_t& term, uint32_t skip) noexcept {
 }
 
 [[noreturn]] void ThrowDesyncedLog(field_id field, std::string_view what) {
-  throw IndexError{absl::StrCat("occurrence log desynced in field '", field,
-                                "' (", what, "), aborting segment flush")};
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("occurrence log desynced in field '", field, "' (",
+                          what, "), aborting segment flush"));
 }
 
 class LogColumnReader {
@@ -113,7 +114,8 @@ void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
   constexpr uint32_t kRadixMask = (uint32_t{1} << kRadixBits) - 1;
   constexpr size_t kComparisonSortMax = 256;
   if (items.size() <= kComparisonSortMax) {
-    std::ranges::stable_sort(items, {}, doc_of);
+    absl::c_stable_sort(
+      items, [&](const T& l, const T& r) { return doc_of(l) < doc_of(r); });
     return;
   }
   spare.resize(items.size());

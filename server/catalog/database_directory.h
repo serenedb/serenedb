@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
-
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -30,8 +28,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-
-#include "search/search_db_wal.h"
 
 namespace sdb::catalog {
 
@@ -65,14 +61,10 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
     return _detached.load(std::memory_order_acquire);
   }
 
-  search::SearchDbWal& Wal();
-
  private:
   std::filesystem::path _path;
   std::atomic_bool _dropped{false};
   std::atomic_bool _detached{false};
-  absl::once_flag _wal_once;
-  std::unique_ptr<search::SearchDbWal> _wal;
 };
 
 }  // namespace sdb::catalog

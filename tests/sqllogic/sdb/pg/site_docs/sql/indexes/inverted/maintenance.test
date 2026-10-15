@@ -89,6 +89,24 @@ ALTER INDEX logs_idx RESET (compaction_interval);
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (refresh_interval = 0);
+----
+db error: ERROR: refresh_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (refresh_interval = ...).
+
+
+statement error
+CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (row_group_size = 4096);
+----
+db error: ERROR: row_group_size is a table option on a search-backed table
+HINT: Set it in CREATE TABLE ... WITH (storage = 'search', row_group_size = ...).
+
+
+# DOCS_TEST: example_010
+
 statement ok
 CREATE TABLE my_metrics (id INTEGER PRIMARY KEY, msg VARCHAR)
 WITH (storage = 'search', compaction_interval = 0);
@@ -151,7 +169,7 @@ flush	NULL	NULL	NULL	1
 flush	NULL	NULL	NULL	1
 merge	sql	merged	2	2
 
-# DOCS_TEST: example_008
+# DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
@@ -169,7 +187,7 @@ FROM sdb_merge_simulate(
 merges	write_amplification	most_segments
 15	1.3	34
 
-# DOCS_TEST: example_009
+# DOCS_TEST: example_012
 
 statement ok
 CREATE TABLE my_journal (id INTEGER PRIMARY KEY, msg VARCHAR USING COMPRESSION uncompressed)

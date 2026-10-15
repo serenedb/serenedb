@@ -315,6 +315,7 @@ IndexRound IndexMerges(Action action, search::InvertedIndexStorage& inverted,
 void CompactInvertedStorage(Action action,
                             search::InvertedIndexStorage& inverted,
                             const irs::IndexFieldOptions& field_options,
+                            std::string_view index_name,
                             duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress,
                             irs::MergeExecutor& executor) {
@@ -330,7 +331,7 @@ void CompactInvertedStorage(Action action,
     search::GetSearchEngine().Merges().TakeOver(inverted.MergeRelation());
   const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
-  inverted.Refresh();
+  search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (auto more = true; more;) {
     const auto round = IndexMerges(action, inverted, field_options, context);
     for (const auto& merge : round.merges) {
@@ -347,7 +348,7 @@ void CompactInvertedStorage(Action action,
           ERR_CODE(ERRCODE_INTERNAL_ERROR),
           ERR_MSG("compact_index: compaction failed: ", res.message()));
       }
-      inverted.Refresh();
+      search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
     }
     more = round.partial &&
            inverted.GetInvertedIndexSnapshot()->reader.size() < round.segments;
@@ -364,6 +365,7 @@ struct InvertedStep {
   // encoding has to finish against it.
   std::shared_ptr<const irs::IndexFieldOptions> field_options;
   std::shared_ptr<search::SearchTable> search_data;
+  std::string name;
 };
 
 // Every base table of `database`, or of one schema of it when `schema` is set.
@@ -401,14 +403,16 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
       if (inverted.Storage()) {
-        steps.emplace_back(inverted.Storage(), inverted.Config(), nullptr);
+        steps.emplace_back(inverted.Storage(), inverted.Config(), nullptr,
+                           index.name.GetIdentifierName());
       }
     });
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
   // synchronous, on-demand path through the same maintenance ops.
   if (const auto* search =
         dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
-    steps.emplace_back(nullptr, nullptr, search->Storage());
+    steps.emplace_back(nullptr, nullptr, search->Storage(),
+                       table.name.GetIdentifierName());
   }
 }
 
@@ -477,9 +481,12 @@ void DispatchInverted(duckdb::ClientContext& context,
         return;
       }
       if (storage) {
-        steps.emplace_back(std::move(storage), inverted->Config(), nullptr);
+        steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
+                           inverted->name.GetIdentifierName());
       } else {
-        steps.emplace_back(nullptr, nullptr, std::move(search));
+        steps.emplace_back(nullptr, nullptr, std::move(search),
+                           relation ? relation->name.GetIdentifierName()
+                                    : inverted->name.GetIdentifierName());
       }
     } break;
     case Scope::Table: {
@@ -560,29 +567,35 @@ void DispatchInverted(duckdb::ClientContext& context,
           pg::ProgressMetrics::Set(progress->stages_total, 4);
           pg::ProgressMetrics::Set(progress->stage, 0);
         }
-        step.storage->Refresh(report);
+        search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
       } else {
         CompactInvertedStorage(action, *step.storage, *step.field_options,
-                               context, progress, executor);
+                               step.name, context, progress, executor);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
+      absl::Status status;
       if (action == Action::Refresh) {
-        search->VacuumRefresh();  // commit pending inserts + reclaim files
+        status = search->VacuumRefresh();
       } else {
         static constinit SettingRef gTargetSegments{
           "sdb_compact_target_segments"};
         const bool optimize = action == Action::Optimize;
-        search->VacuumCompact(
+        status = search->VacuumCompact(
           optimize ? search::MergeMode::Optimize : search::MergeMode::Compact,
           optimize ? QueryThreads(context) : gTargetSegments.Int(context),
           duckdb::TaskScheduler::GetScheduler(context),
           [&context] { return StatementRunning(context); }, &executor);
         context.InterruptCheck();
         context.DeadlineCheck();
+      }
+      if (!status.ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("failed to ", verb, " search table '",
+                                step.name, "': ", status.message()));
       }
     }
   }

@@ -29,11 +29,11 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/serialization.hpp"
 
 namespace irs::index_meta {
@@ -69,10 +69,6 @@ uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   std::vector<IndexSegment>* segments) {
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
-  if (!in) {
-    throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
-  }
-
   uint64_t cnt = 0;
   format_utils::ReadFooter(
     *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
@@ -80,9 +76,10 @@ uint64_t ReadFile(const Directory& dir, std::string_view filename,
         meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
       if (const auto error = duckdb::StorageVersionError(version);
           !error.empty()) [[unlikely]] {
-        throw IndexError{absl::StrCat("Index meta '", filename,
-                                      "' has storage version ", version,
-                                      " and cannot be read: ", error)};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("Index meta '", filename, "' has storage version ", version,
+                  " and cannot be read: ", error));
       }
       cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
       meta_in.ReadOptionalList(
@@ -99,9 +96,9 @@ uint64_t ReadFile(const Directory& dir, std::string_view filename,
       meta_in.ReadOptionalObject(
         kFieldPayload, "payload", [&](duckdb::BinaryDeserializer& obj) {
           if (!payload) [[unlikely]] {
-            throw IndexError{
-              absl::StrCat("Index meta '", filename,
-                           "' has a payload but no reader for it")};
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                            ERR_MSG("Index meta '", filename,
+                                    "' has a payload but no reader for it"));
           }
           payload(obj);
         });

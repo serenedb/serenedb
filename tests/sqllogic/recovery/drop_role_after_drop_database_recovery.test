@@ -1,0 +1,58 @@
+control substitution on
+
+statement ok
+CREATE ROLE drd_role;
+
+
+statement ok
+CREATE DATABASE drd_db;
+
+
+statement ok
+CREATE TABLE drd_db.public.drd_t (a INTEGER);
+
+
+statement ok
+GRANT SELECT ON drd_db.public.drd_t TO drd_role;
+
+
+statement ok
+DROP DATABASE drd_db;
+
+
+statement ok
+DROP ROLE drd_role;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'drd_role';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'drd_db';
+----
+n
+0
+
+
+connection after_crash
+statement ok
+CREATE DATABASE drd_db;
+
+
+connection after_crash
+statement ok
+DROP DATABASE drd_db;

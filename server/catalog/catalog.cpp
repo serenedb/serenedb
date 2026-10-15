@@ -70,6 +70,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/job.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
@@ -87,6 +88,8 @@
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/tsdictionary.h"
+#include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -230,6 +233,27 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
   return &entry->Cast<duckdb::SchemaCatalogEntry>();
 }
 
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateTokenizerInfo& info) {
+  if (info.config.empty()) {
+    pg::CompileTokenizer(transaction.GetContext(), info);
+  }
+  return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateJobInfo& info) {
+  VerifySchedule(info.schedule);
+  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
+                                                std::make_shared<JobState>());
+  if (transaction.context) {
+    job->ScheduleAtCommit(*transaction.context);
+  }
+  return job;
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
   duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::CatalogType type,
   duckdb::idx_t id) {
@@ -269,8 +293,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   if (op.is_truncate) {
     return planner.Make<connector::SereneDBSearchTruncate>(
-      entry->Storage(), entry->name, op.estimated_cardinality,
-      context.transaction.IsAutoCommit());
+      *entry, op.estimated_cardinality, context.transaction.IsAutoCommit());
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
@@ -519,11 +542,6 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   return ClusterOf(GetDatabase()).CatalogLog();
 }
 
-void SereneDBCatalog::RequestCatalogLogSync(
-  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
-  ClusterOf(GetDatabase()).RequestCatalogLogSync(std::move(log), offset);
-}
-
 bool SereneDBCatalog::AppendLocalIndexes(
   duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
   duckdb::RowGroupCollection& source,
@@ -561,6 +579,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
   _directory->MarkDetached();
+  ForEachJob(*this, [](JobCatalogEntry& job) { job.OnDrop(); });
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(
@@ -568,19 +587,6 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   for (const auto& server : servers) {
     duckdb::DatabaseManager::Get(context).DetachDatabase(
       context, server, duckdb::OnEntryNotFound::RETURN_NULL);
-  }
-  if (context.transaction.HasActiveTransaction()) {
-    auto& cluster = ClusterOf(context);
-    const auto transaction = cluster.GetCatalogTransaction(context);
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                   .GetEntry(transaction, GetName());
-    if (entry && entry->oid == GetAttached().oid) {
-      duckdb::DropInfo info;
-      info.type = duckdb::CatalogType::DATABASE_ENTRY;
-      info.SetName(GetName());
-      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-      cluster.DropDatabase(transaction, info);
-    }
   }
   duckdb::DuckCatalog::OnDetach(context);
 }
@@ -710,18 +716,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(
-  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-  duckdb::CreateTokenizerInfo& info) {
-  DeclareModified(transaction, *this);
-  return schema.CreateTokenizer(transaction, info);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateForeignServerInfo& info) {
   DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  auto entry = duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  if (entry) {
+    entry->Cast<ForeignServerCatalogEntry>().Attach(transaction.GetContext());
+  }
+  return entry;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
+  duckdb::CatalogTransaction transaction,
+  duckdb::CreateSubscriptionInfo& info) {
+  DeclareModified(transaction, *this);
+  return duckdb::DuckCatalog::CreateSubscription(transaction, info);
 }
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
@@ -741,7 +751,8 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
        info.type == duckdb::AlterType::ALTER_INDEX)) {
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
-  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
+      type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;
   }
@@ -759,6 +770,13 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropForeignServer(transaction, info);
+}
+
+void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
+                                       duckdb::DropInfo& info) {
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
 }  // namespace sdb::catalog

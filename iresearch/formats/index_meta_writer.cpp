@@ -27,11 +27,11 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -62,11 +62,6 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
   filename = index_meta::FileName(meta.gen);
 
   auto out = dir.create(pending_filename);
-
-  if (!out) {
-    throw IoError{
-      absl::StrCat("Failed to create file, path: ", pending_filename)};
-  }
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -111,8 +106,9 @@ bool IndexMetaWriter::commit() {
     _pending_gen = index_gen_limits::invalid();
     _dir = nullptr;
 
-    throw IoError{absl::StrCat("Failed to rename file, src path: '", src,
-                               "' dst path: '", dst, "'")};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("Failed to rename file, src path: '", src,
+                            "' dst path: '", dst, "'"));
   }
 
   // only noexcept operations below

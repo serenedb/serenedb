@@ -25,6 +25,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/enum_util.hpp>
@@ -335,8 +336,8 @@ SearchTableEntry::SearchTableEntry(
   }
   if (!_storage) {
     _storage = search::SearchTable::Create(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(), oid,
-      base.oid == 0, _options,
+      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
+      catalog.GetOid(), oid, base.oid == 0, _options,
       search::SearchTable::DeclaredCompression(GetColumns()),
       SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
@@ -567,6 +568,49 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
       storage->SetDeclaredCompression(std::move(declared));
     });
   return result;
+}
+
+void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
+                                    duckdb::DataChunk& chunk,
+                                    duckdb::optional_idx row_start) {
+  std::vector<connector::ColumnId> column_ids;
+  for (const auto& column : _columns.Logical()) {
+    column_ids.emplace_back(column.Oid());
+  }
+  _storage->ReplayInsert(context, catalog, column_ids, chunk,
+                         row_start.GetIndex());
+}
+
+void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
+                                    duckdb::DataChunk& chunk) {
+  _storage->ReplayDelete(catalog.GetAttached(), chunk);
+}
+
+void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
+  _storage->ReplayTruncate(catalog.GetAttached());
+}
+
+void SearchTableEntry::ReplayAdoptSegments(
+  duckdb::ClientContext&, duckdb::vector<std::string> segments) {
+  _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
+}
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  duckdb::DuckCatalog& catalog) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  std::vector<std::shared_ptr<search::SearchTable>> tables;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
+            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
+          tables.push_back(entry.Cast<SearchTableEntry>().Storage());
+        }
+      });
+  }
+  return tables;
 }
 
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,

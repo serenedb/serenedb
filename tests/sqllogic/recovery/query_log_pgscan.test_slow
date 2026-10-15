@@ -1,0 +1,48 @@
+control substitution on
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+SET logging_level = 'debug';
+
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pqlog_${__DATABASE__} (TYPE postgres);
+
+
+query
+SELECT count(*) AS n FROM postgres_query('pqlog_${__DATABASE__}', 'SELECT 42 AS pqlog_marker');
+----
+n
+1
+
+
+query
+SELECT count(*) > 1 AS logged, bool_and(duration_ms >= 0) AS timed
+FROM duckdb_logs_parsed('PostgresQueryLog')
+WHERE connection_id = current_connection_id() AND query LIKE '%pqlog_marker%';
+----
+logged	timed
+t	t
+
+
+statement error
+CALL postgres_execute('pqlog_${__DATABASE__}', 'DROP TABLE pqlog_no_such_table');
+----
+db error: ERROR: Failed to execute query <slt:ignore>
+
+
+query
+SELECT count(*) AS n
+FROM duckdb_logs_parsed('PostgresQueryLog')
+WHERE connection_id = current_connection_id() AND query LIKE '%pqlog_no_such_table%';
+----
+n
+2
+
+
+statement ok
+DETACH pqlog_${__DATABASE__};

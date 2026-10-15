@@ -424,7 +424,9 @@ std::string Literal(cmark_node* node) {
 
 std::string FlatText(cmark_node* root) {
   std::string out;
-  auto* iter = cmark_iter_new(root);
+  const std::unique_ptr<cmark_iter, decltype(&cmark_iter_free)> owner{
+    cmark_iter_new(root), &cmark_iter_free};
+  auto* const iter = owner.get();
   for (auto event = cmark_iter_next(iter); event != CMARK_EVENT_DONE;
        event = cmark_iter_next(iter)) {
     auto* node = cmark_iter_get_node(iter);
@@ -439,7 +441,6 @@ std::string FlatText(cmark_node* root) {
       out.push_back(' ');
     }
   }
-  cmark_iter_free(iter);
   return out;
 }
 

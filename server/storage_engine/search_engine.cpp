@@ -43,14 +43,12 @@
 #include "search/ann_build_pool.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
-ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
@@ -103,15 +101,8 @@ void SearchEngine::start() {
     MergeScheduler::Options{.threads = threads,
                             .helpers_per_merge = threads / 2});
   AnnBuildEnv();
-  StartInvertedIndexTasks();
-  if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
-    RunSearchTableRecovery();
-  }
-  // Only now that every shard is fully replayed + committed do we start the
-  // search-table background loops -- never while recovery is still rebuilding a
-  // table, or a background commit's WAL GC could reclaim un-replayed chunks.
-  StartSearchTableMaintenance();
-  SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
+  StartSearchStorageTasks();
+  SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
@@ -122,16 +113,13 @@ void SearchEngine::stop() {
   _merge_tasks->Join();
 }
 
-template<class Storage>
+template<typename Storage>
 void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
   _loops.Consume(RefreshLoop<Storage>(storage),
                  CompactionCoordinator<Storage>(storage));
-  if constexpr (std::is_same_v<Storage, InvertedIndexStorage>) {
-    _loops.Consume(ReindexLoop(storage));
-  }
 }
 
 template void SearchEngine::StartTasks(

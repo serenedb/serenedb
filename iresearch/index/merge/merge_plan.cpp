@@ -89,17 +89,8 @@ void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 }
 
 doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
-                       const SubReader& reader, doc_id_t next_id) noexcept {
-  try {
-    doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                      doc_limits::eof());
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Failed to resize merge_writer::doc_id_map to accommodate element: ",
-      reader.docs_count() + doc_limits::min());
-    return doc_limits::invalid();
-  }
+                       const SubReader& reader, doc_id_t next_id) {
+  doc_id_map.resize(reader.docs_count() + doc_limits::min(), doc_limits::eof());
   auto docs_itr = reader.docs_iterator();
   for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
        src_doc_id = docs_itr->Next(), ++next_id) {
@@ -240,7 +231,9 @@ struct MergePlan::State {
         .cost = columns->StoredBytes(id, input) / kCopyCostDivisor,
       });
     }
-    std::ranges::sort(copies, {}, &ColumnRange::begin);
+    absl::c_sort(copies, [](const ColumnRange& l, const ColumnRange& r) {
+      return l.begin < r.begin;
+    });
     std::vector<ColumnRange> out;
     uint64_t row = 0;
     const auto stretch = [&](uint64_t end) {
@@ -582,9 +575,7 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
       threads > 1
         ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
         : 1;
-    if (!s.key_order->Prepare(partitions, s.scheduler, threads)) {
-      return false;
-    }
+    s.key_order->Prepare(partitions, s.scheduler, threads);
     s.segment.docs_count = s.key_order->Order().Rows();
   } else {
     doc_id_t base_id = doc_limits::min();
@@ -678,21 +669,22 @@ void MergePlan::ExpandOrder(size_t partition,
   _state->key_order->Expand(partition, runs);
 }
 
-bool MergePlan::FinishOrder() {
+void MergePlan::FinishOrder() {
   auto& s = *_state;
   SDB_ASSERT(OrderPending());
-  if (!s.key_order->Finish()) {
-    return false;
-  }
+  s.key_order->Finish();
   s.PlanUnits();
   s.order_clock->Lap(MergeStep::Prepare);
-  return true;
 }
 
 bool MergePlan::RunOrder() {
   auto& s = *_state;
   SDB_ASSERT(OrderPending());
-  return s.key_order->Merge(s.progress) && FinishOrder();
+  if (!s.key_order->Merge(s.progress)) {
+    return false;
+  }
+  FinishOrder();
+  return true;
 }
 
 bool MergePlan::PostingsPending() const noexcept {

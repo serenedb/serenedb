@@ -360,7 +360,7 @@ TEST_F(SortedMergeTest, UnsortedInputsFailTheMerge) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(4));
-  EXPECT_FALSE(irs::RunSerially(plan));
+  ASSERT_SQL_ERROR(irs::RunSerially(plan), ERRCODE_INDEX_CORRUPTED);
 }
 
 TEST_F(SortedMergeTest, AnUnsortedInputThatLooksApartFailsTheMerge) {
@@ -373,7 +373,7 @@ TEST_F(SortedMergeTest, AnUnsortedInputThatLooksApartFailsTheMerge) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
-  EXPECT_FALSE(irs::RunSerially(plan));
+  ASSERT_SQL_ERROR(irs::RunSerially(plan), ERRCODE_INDEX_CORRUPTED);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -397,7 +397,7 @@ TEST_F(SortedMergeTest, RunsThatMissOrRepeatDocumentsFailTheOrder) {
     auto plan = MakePlan(out, inputs, spec);
     ASSERT_TRUE(plan.Prepare(1));
     plan.ExpandOrder(0, broken[i]);
-    EXPECT_FALSE(plan.FinishOrder());
+    ASSERT_SQL_ERROR(plan.FinishOrder(), ERRCODE_INTERNAL_ERROR);
     EXPECT_TRUE(plan.Units().empty());
   }
   const std::vector<duckdb::PresortedRun> runs{
@@ -407,7 +407,7 @@ TEST_F(SortedMergeTest, RunsThatMissOrRepeatDocumentsFailTheOrder) {
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
   plan.ExpandOrder(0, runs);
-  ASSERT_TRUE(plan.FinishOrder());
+  plan.FinishOrder();
   ASSERT_TRUE(irs::RunSerially(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
@@ -432,9 +432,9 @@ TEST_F(SortedMergeTest, PartitionsExpandInAnyOrder) {
     broken_map.emplace_back(input, irs::IResourceManager::gNoop);
   }
   irs::KeyOrder serial{serial_map, spec};
-  ASSERT_TRUE(serial.Prepare(1));
+  serial.Prepare(1);
   ASSERT_TRUE(serial.Merge([] { return true; }));
-  ASSERT_TRUE(serial.Finish());
+  serial.Finish();
 
   const auto expand_backwards = [](irs::KeyOrder& order) {
     const auto merge = order.KeyMerge();
@@ -450,10 +450,10 @@ TEST_F(SortedMergeTest, PartitionsExpandInAnyOrder) {
     }
   };
   irs::KeyOrder split{split_map, spec};
-  ASSERT_TRUE(split.Prepare(4));
+  split.Prepare(4);
   ASSERT_LT(1, split.KeyMerge()->PartitionCount());
   expand_backwards(split);
-  ASSERT_TRUE(split.Finish());
+  split.Finish();
   EXPECT_TRUE(
     std::ranges::equal(serial.Order().Inputs(), split.Order().Inputs()));
   for (size_t i = 0; i != inputs.size(); ++i) {
@@ -464,14 +464,14 @@ TEST_F(SortedMergeTest, PartitionsExpandInAnyOrder) {
   }
 
   irs::KeyOrder broken{broken_map, spec};
-  ASSERT_TRUE(broken.Prepare(4));
+  broken.Prepare(4);
   const auto first = broken.KeyMerge()->PartitionBegin(1, 0);
   ASSERT_LT(0, first);
   expand_backwards(broken);
   const std::vector<duckdb::PresortedRun> before_partition{
     {.input = 0, .begin = first - 1, .count = 1}};
   broken.Expand(1, before_partition);
-  EXPECT_FALSE(broken.Finish());
+  ASSERT_SQL_ERROR(broken.Finish(), ERRCODE_INTERNAL_ERROR);
 }
 
 TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
@@ -519,7 +519,7 @@ TEST_F(SortedMergeTest, AnIncompleteOrderFailsTheMerge) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
-  EXPECT_FALSE(irs::RunSerially(plan));
+  ASSERT_SQL_ERROR(irs::RunSerially(plan), ERRCODE_INTERNAL_ERROR);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -667,7 +667,7 @@ TEST_F(SortedMergeTest, DocMapsThatCannotBeChargedRefuseTheMerge) {
                       {},
                       nullptr,
                       &spec};
-  EXPECT_FALSE(plan.Prepare(1));
+  EXPECT_THROW(plan.Prepare(1), std::runtime_error);
 }
 
 TEST_F(SortedMergeTest, AnOrderThatCannotBeChargedRefusesTheMerge) {
@@ -692,7 +692,7 @@ TEST_F(SortedMergeTest, AnOrderThatCannotBeChargedRefusesTheMerge) {
                       {},
                       nullptr,
                       &spec};
-  EXPECT_FALSE(plan.Prepare(1));
+  EXPECT_THROW(plan.Prepare(1), std::runtime_error);
 }
 
 TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {

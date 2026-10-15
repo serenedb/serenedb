@@ -71,8 +71,11 @@ VACUUM (REFRESH_TABLE) sof_steps;
 statement ok
 SET sdb_faults = 'irs::KeyOrder::Finish';
 
-statement ok
+statement error
 VACUUM (COMPACT_TABLE) sof_steps;
+----
+db error: ERROR: failed to compact search table 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 38 segments does not hold every live document once
+
 
 statement ok
 SET sdb_faults = '-irs::KeyOrder::Finish';

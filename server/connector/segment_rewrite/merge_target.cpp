@@ -194,12 +194,11 @@ search::MergeScheduler::Lease MergeTarget::TakeOver() const {
 
 void MergeTarget::Publish() const {
   if (_table) {
-    search::RefreshResult code = search::RefreshResult::Undefined;
-    _table->RefreshUnsafe(true, nullptr, code);
+    _table->Publish();
     _table->CleanupUnsafe();
     return;
   }
-  _index->Refresh();
+  search::ThrowIfRefreshFailed(_index->Refresh(), _name);
 }
 
 }  // namespace sdb::connector

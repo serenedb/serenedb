@@ -38,7 +38,7 @@ BEGIN;
 statement error
 DETACH ddb_rb;
 ----
-db error: ERROR: DROP DATABASE cannot run inside a transaction block
+db error: ERROR: cannot detach database "ddb_rb", use DROP DATABASE
 
 
 statement ok

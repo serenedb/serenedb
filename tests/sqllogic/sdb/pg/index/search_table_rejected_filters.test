@@ -1,0 +1,98 @@
+statement ok
+CREATE TABLE rejected_s(id INTEGER PRIMARY KEY, a INTEGER) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO rejected_s SELECT i, i % 7 FROM range(1, 2001) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rejected_s;
+
+statement ok
+CREATE TABLE rejected_su(id INTEGER PRIMARY KEY, w INTEGER);
+
+statement ok
+INSERT INTO rejected_su SELECT i, i * 10 FROM range(1, 20001) r(i);
+
+query
+SELECT count(*) FROM rejected_su u JOIN rejected_s s ON s.id = u.id WHERE s.tableoid = 'rejected_s'::regclass;
+----
+count
+2000
+
+query
+SELECT count(*) FROM (SELECT * FROM rejected_su ORDER BY id LIMIT 10) u JOIN rejected_s s ON s.id = u.id WHERE s.tableoid = 'rejected_s'::regclass;
+----
+count
+10
+
+query
+SELECT count(s.id) FROM rejected_su u LEFT JOIN (SELECT * FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass) s ON s.id = u.id;
+----
+count
+2000
+
+query
+SELECT count(*) FROM (SELECT * FROM rejected_su ORDER BY id LIMIT 3) u CROSS JOIN rejected_s s WHERE s.tableoid = 'rejected_s'::regclass;
+----
+count
+6000
+
+query
+SELECT max(r) FROM (SELECT row_number() OVER (ORDER BY s.id) AS r FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass) x;
+----
+max
+2000
+
+query
+SELECT max(r), sum(id) FROM (SELECT s.id, row_number() OVER () AS r FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass) x;
+----
+max	sum
+2000	2001000
+
+query
+SELECT count(*) FROM (SELECT rank() OVER (PARTITION BY s.a ORDER BY s.id) AS r FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass) x WHERE r = 1;
+----
+count
+7
+
+query
+SELECT count(*) FILTER (WHERE m), count(*) FROM (SELECT s.id IN (SELECT id FROM rejected_su WHERE id <= 100) AS m FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass) x;
+----
+count	count
+100	2000
+
+query
+SELECT count(*), sum(g) FROM rejected_s s, generate_series(1, 2) g(g) WHERE s.tableoid = 'rejected_s'::regclass;
+----
+count	sum
+4000	6000
+
+query
+SELECT count(*), sum(u.w) FROM rejected_su u JOIN rejected_s s ON s.id = u.id WHERE s.tableoid = 'rejected_s'::regclass AND s.a = 3;
+----
+count	sum
+286	2861430
+
+statement count 10
+DELETE FROM rejected_s s USING rejected_su u WHERE s.id = u.id AND u.id <= 10 AND s.tableoid = 'rejected_s'::regclass;
+
+statement count 10
+UPDATE rejected_s s SET a = u.w FROM rejected_su u WHERE s.id = u.id AND u.id BETWEEN 11 AND 20 AND s.tableoid = 'rejected_s'::regclass;
+
+statement count 5
+DELETE FROM rejected_s s WHERE s.tableoid = 'rejected_s'::regclass AND s.id IN (SELECT id FROM rejected_su WHERE id BETWEEN 21 AND 25);
+
+statement ok
+VACUUM (REFRESH_TABLE) rejected_s;
+
+query
+SELECT count(*), sum(a) FROM rejected_s;
+----
+count	sum
+1985	7477
+
+query
+SELECT count(*), sum(u.w) FROM rejected_su u JOIN rejected_s s ON s.id = u.id WHERE s.tableoid = 'rejected_s'::regclass AND s.a > 6;
+----
+count	sum
+10	1550

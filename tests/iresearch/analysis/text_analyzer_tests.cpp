@@ -458,6 +458,7 @@ TEST(text_tokenizer_batch, native_fills_match_pull) {
     auto fill_stream = MakeText(base);
     ASSERT_NE(nullptr, pull_stream);
     ASSERT_NE(nullptr, fill_stream);
+    const bool dense = !fill_stream->Traits().explicit_pos;
 
     for (const auto& v : values) {
       SCOPED_TRACE(v);
@@ -468,7 +469,9 @@ TEST(text_tokenizer_batch, native_fills_match_pull) {
                                std::span<const irs::DocRun> /*runs*/) {
         for (uint32_t i = 0; i < batch.count; ++i) {
           const auto& t = batch.terms[i];
-          filled.push_back({std::string{t.GetData(), t.GetSize()}, batch.pos[i],
+          const uint32_t pos =
+            dense ? static_cast<uint32_t>(filled.size() + 1) : batch.pos[i];
+          filled.push_back({std::string{t.GetData(), t.GetSize()}, pos,
                             batch.offs_start[i], batch.offs_end[i]});
         }
       };

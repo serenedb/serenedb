@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
@@ -31,6 +32,7 @@
 #include <duckdb/common/table_column.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
+#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
 #include <string>
@@ -121,7 +123,8 @@ inline constexpr std::string_view kGeneratedPkSequenceTag =
 
 using persistence::SearchTableOptions;
 
-class SearchTableEntry final : public duckdb::TableCatalogEntry {
+class SearchTableEntry final : public duckdb::TableCatalogEntry,
+                               public duckdb::TableLogStorage {
  public:
   SearchTableEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
@@ -184,6 +187,18 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
            sequence.ParentSchemaName() == ParentSchemaName();
   }
 
+  duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {
+    return this;
+  }
+
+  void ReplayInsert(duckdb::ClientContext& context, duckdb::DataChunk& chunk,
+                    duckdb::optional_idx row_start) final;
+  void ReplayDelete(duckdb::ClientContext& context,
+                    duckdb::DataChunk& chunk) final;
+  void ReplayTruncate(duckdb::ClientContext& context) final;
+  void ReplayAdoptSegments(duckdb::ClientContext& context,
+                           duckdb::vector<std::string> segments) final;
+
   const auto& Storage() const noexcept { return _storage; }
 
  private:
@@ -201,5 +216,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   std::vector<SortKey> _sort_keys;
   duckdb::Identifier _pk_sequence;
 };
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  duckdb::DuckCatalog& catalog);
 
 }  // namespace sdb::catalog

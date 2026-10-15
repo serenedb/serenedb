@@ -238,6 +238,14 @@ The background maintenance options are `refresh_interval`, `compaction_interval`
 
 The change applies to data written afterwards and is undone if its transaction rolls back. On a search table it applies to the segments written after it, and compaction rewrites the older ones; a codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. On a transactional table it applies from the next checkpoint. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
 
+## `ENABLE` / `DISABLE TRIGGER`
+
+`DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_037" />
+
+Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not turn off foreign key checks; a session with `session_replication_role` set to `replica` skips them.
+
 ## Search tables
 
 A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.

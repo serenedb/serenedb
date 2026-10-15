@@ -59,9 +59,7 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   Check(*connection.Query("SET SESSION preserve_insertion_order = false"));
   if (plan.OrderPending()) {
     Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan));
-    if (!plan.FinishOrder()) {
-      return false;
-    }
+    plan.FinishOrder();
   }
   const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
                                                   plan.PostingsPending());

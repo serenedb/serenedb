@@ -20,6 +20,8 @@
 
 #include "iresearch/index/flush_order.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/sorting/sort.hpp>
@@ -131,7 +133,7 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
 
 DocOrder MakeDocOrder(std::vector<uint32_t> new2old) {
   DocOrder order;
-  if (std::ranges::is_sorted(new2old)) {
+  if (absl::c_is_sorted(new2old)) {
     return order;
   }
   order.old2new.resize(new2old.size());

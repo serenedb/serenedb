@@ -1,0 +1,107 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rcin_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rcin_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rcin\_%''');
+
+
+statement ok
+CALL postgres_execute('rcin_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rcin_pub_unix; DROP PUBLICATION IF EXISTS rcin_pub_hosts; DROP PUBLICATION IF EXISTS rcin_pub_standby; DROP TABLE IF EXISTS rcin_unix, rcin_hosts, rcin_standby; END $$');
+
+
+statement ok
+CALL postgres_execute('rcin_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rcin_unix (id int PRIMARY KEY); CREATE TABLE rcin_hosts (id int PRIMARY KEY); CREATE TABLE rcin_standby (id int PRIMARY KEY); INSERT INTO rcin_unix VALUES (1); INSERT INTO rcin_hosts VALUES (1); INSERT INTO rcin_standby VALUES (1); CREATE PUBLICATION rcin_pub_unix FOR TABLE rcin_unix; CREATE PUBLICATION rcin_pub_hosts FOR TABLE rcin_hosts; CREATE PUBLICATION rcin_pub_standby FOR TABLE rcin_standby; END $$');
+
+
+statement ok
+CREATE TABLE rcin_unix (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rcin_hosts (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rcin_standby (id INTEGER PRIMARY KEY);
+
+
+statement error
+CREATE SUBSCRIPTION rcin_fail CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=standby' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_fail');
+----
+db error: ERROR: subscription "rcin_fail" could not connect to the publisher: connection to server at <slt:ignore> failed: server is not in hot standby mode
+
+
+statement error
+CREATE SUBSCRIPTION rcin_fail CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=read-only' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_fail');
+----
+db error: ERROR: subscription "rcin_fail" could not connect to the publisher: connection to server at <slt:ignore> failed: session is not read-only
+
+
+statement error
+CREATE SUBSCRIPTION rcin_fail CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=master' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_fail');
+----
+db error: ERROR: invalid connection string syntax: invalid target_session_attrs value: "master"
+
+
+statement ok
+CREATE SUBSCRIPTION rcin_hosts CONNECTION 'host=${PGHOST},${PGHOST} port=1,${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=read-write load_balance_hosts=random' PUBLICATION rcin_pub_hosts WITH (slot_name = 'rcin_hosts');
+
+
+statement ok
+CREATE SUBSCRIPTION rcin_standby CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER} target_session_attrs=prefer-standby' PUBLICATION rcin_pub_standby WITH (slot_name = 'rcin_standby');
+
+
+onlyif pgsocket
+statement ok
+CREATE SUBSCRIPTION rcin_unix CONNECTION 'host=${PGSOCKETDIR:} dbname=postgres user=${PGUSER} sslmode=require' PUBLICATION rcin_pub_unix WITH (slot_name = 'rcin_unix');
+
+
+statement ok
+CALL postgres_execute('rcin_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rcin_unix VALUES (2); INSERT INTO rcin_hosts VALUES (2); INSERT INTO rcin_standby VALUES (2); END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM rcin_hosts) AS hosts, (SELECT count(*) FROM rcin_standby) AS standby;
+----
+hosts	standby
+2	2
+
+
+onlyif pgsocket
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n FROM rcin_unix;
+----
+n
+2
+
+
+onlyif pgsocket
+query
+SELECT count(*) AS n FROM postgres_query('rcin_${__DATABASE__}', 'SELECT 1 FROM pg_stat_replication WHERE application_name = ''rcin_unix'' AND client_addr IS NULL');
+----
+n
+1
+
+
+onlyif pgsocket
+statement ok
+DROP SUBSCRIPTION rcin_unix;
+
+
+statement ok
+DROP SUBSCRIPTION rcin_hosts;
+
+
+statement ok
+DROP SUBSCRIPTION rcin_standby;
+
+
+statement ok
+CALL postgres_execute('rcin_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rcin_pub_unix; DROP PUBLICATION rcin_pub_hosts; DROP PUBLICATION rcin_pub_standby; DROP TABLE rcin_unix, rcin_hosts, rcin_standby; END $$');
+
+
+statement ok
+DETACH rcin_${__DATABASE__};

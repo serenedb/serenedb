@@ -27,7 +27,7 @@ VACUUM (REFRESH_TABLE) num;
 # Crash AFTER the WAL commit: (3, 100, 1) is fsynced into the WAL but never
 # refresh-published; recovery must recompute a+b=101 for it.
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO num VALUES (3, 100, 1);

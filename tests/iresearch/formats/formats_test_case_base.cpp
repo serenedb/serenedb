@@ -29,7 +29,6 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -997,9 +996,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     {
       irs::SegmentMeta read_meta;
 
-      ASSERT_THROW(
+      ASSERT_SQL_ERROR(
         irs::segment_meta::Read(dir(), read_meta, "no_generation.sm"),
-        irs::IndexError);
+        ERRCODE_INDEX_CORRUPTED);
     }
   }
 
@@ -1128,9 +1127,10 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       read_meta.name = meta.name;
       read_meta.version = 105;
 
-      ASSERT_THROW(irs::segment_meta::Read(
-                     dir(), read_meta, irs::segment_meta::FileName(read_meta)),
-                   irs::IoError);
+      ASSERT_SQL_ERROR(
+        irs::segment_meta::Read(dir(), read_meta,
+                                irs::segment_meta::FileName(read_meta)),
+        ERRCODE_UNDEFINED_FILE);
     }
   }
 }
@@ -1173,7 +1173,8 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
   std::string message;
   try {
     sm::Read(dir(), read_meta, sm::FileName(read_meta));
-  } catch (const irs::IndexError& e) {
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
     message = e.what();
   }
   EXPECT_NE(std::string::npos, message.find("written by a newer release"))
@@ -1197,7 +1198,8 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     try {
       irs::SegmentMeta meta;
       sm::Read(dir(), meta, irs::FileName(name, version, sm::kExt));
-    } catch (const irs::IndexError& e) {
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << name;
       message = e.what();
     }
     EXPECT_NE(std::string::npos, message.find(expected))
@@ -1413,18 +1415,18 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
   auto flipped = bytes;
   flipped[sizeof(uint64_t)] ^= 1;
   write("flipped", flipped);
-  ASSERT_THROW(read("flipped"), irs::IndexError);
+  ASSERT_SQL_ERROR(read("flipped"), ERRCODE_INDEX_CORRUPTED);
 
   auto long_footer = bytes;
   long_footer[long_footer.size() - 1] = 0xFF;
   write("long_footer", long_footer);
-  ASSERT_THROW(read("long_footer"), irs::IndexError);
+  ASSERT_SQL_ERROR(read("long_footer"), ERRCODE_INDEX_CORRUPTED);
 
   write("truncated", irs::bytes_view{bytes}.substr(0, bytes.size() - 1));
-  ASSERT_THROW(read("truncated"), irs::IndexError);
+  ASSERT_SQL_ERROR(read("truncated"), ERRCODE_INDEX_CORRUPTED);
 
   write("empty", {});
-  ASSERT_THROW(read("empty"), irs::IndexError);
+  ASSERT_SQL_ERROR(read("empty"), ERRCODE_INDEX_CORRUPTED);
 }
 
 TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
@@ -1444,7 +1446,8 @@ TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
     try {
       irs::IndexMeta meta;
       im::Read(dir(), meta, name);
-    } catch (const irs::IndexError& e) {
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
       return e.what();
     }
     return {};

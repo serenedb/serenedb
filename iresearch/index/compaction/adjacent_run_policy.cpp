@@ -20,6 +20,8 @@
 
 #include "iresearch/index/compaction/adjacent_run_policy.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -120,7 +122,9 @@ CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
         segments.emplace_back(Describe(segment, range_of));
       }
     }
-    std::ranges::stable_sort(segments, {}, &Candidate::order);
+    absl::c_stable_sort(segments, [](const Candidate& l, const Candidate& r) {
+      return l.order < r.order;
+    });
     const auto taken = [&](size_t i) {
       return compacting.contains(segments[i].segment->Meta().name);
     };

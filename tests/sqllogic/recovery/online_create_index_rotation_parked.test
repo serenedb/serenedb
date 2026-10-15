@@ -39,7 +39,7 @@ CREATE INDEX oci_park_idx ON oci_park USING inverted(label) WITH (segment_docs_m
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM pg_stat_progress_create_index
-WHERE relid = 'oci_park'::regclass;
+WHERE relid = 'oci_park'::regclass AND phase = 'building index';
 ----
 count
 1

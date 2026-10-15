@@ -166,16 +166,12 @@ struct FetchCache final : duckdb::SegmentScanState {
 };
 
 template<typename T>
-void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
-              duckdb::row_t row_id, duckdb::Vector& result, idx_t result_idx) {
+void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
+               const idx_t* rows, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
   auto& handle = state.GetOrInsertHandle(segment);
-  auto* cached = dynamic_cast<FetchCache<T>*>(state.codec_state.get());
-  if (!cached) {
-    auto fresh = duckdb::make_uniq<FetchCache<T>>();
-    cached = fresh.get();
-    state.codec_state = std::move(fresh);
-  }
-  auto& cache = *cached;
+  auto& cache = state.GetOrCreateSegmentState<FetchCache<T>>(
+    segment, [] { return duckdb::make_uniq<FetchCache<T>>(); });
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
@@ -184,10 +180,13 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     cache.block = block;
   }
   auto& frames = *cache.frames;
-  const auto row = static_cast<uint64_t>(row_id);
-  SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-  frames.Seek(row);
-  duckdb::FlatVector::GetDataMutable<T>(result)[result_idx] = frames.At(row);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
+  for (idx_t i = 0; i < count; ++i) {
+    const auto row = static_cast<uint64_t>(rows[i]);
+    SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
+    frames.Seek(row);
+    data[result_offset + result_sel.get_index(i)] = frames.At(row);
+  }
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
@@ -226,7 +225,7 @@ duckdb::CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
     InitScan<T>,
     ScanVector<T>,
     ScanPartial<T>,
-    FetchRow<T>,
+    FetchRows<T>,
     duckdb::UncompressedFunctions::EmptySkip,
   };
   f.select = Select<T>;

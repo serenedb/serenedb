@@ -58,15 +58,16 @@ public:
 	//! paths (not catalog-metadata queries, matching postgres).
 	static clickhouse::Query MakeQuery(duckdb::ClientContext &context, const string &sql);
 
-	//! Print `sql` to stdout when ch_debug_show_queries is enabled. Called at every
-	//! query-emit site (the postgres pg_debug_show_queries analog; there is no single
-	//! choke point because callers drive clickhouse::Client directly).
-	static void LogQuery(const string &sql);
+	void Execute(optional_ptr<ClientContext> context, const clickhouse::Query &query);
+	void Select(optional_ptr<ClientContext> context, const string &sql, clickhouse::SelectCallback callback);
+	void BeginSelect(optional_ptr<ClientContext> context, const clickhouse::Query &query);
+	void BeginSelectWithExternalData(optional_ptr<ClientContext> context, const clickhouse::Query &query,
+	                                 const clickhouse::ExternalTables &external_tables);
+	void Insert(optional_ptr<ClientContext> context, const string &table, const clickhouse::Block &block);
+
 	//! Uniform error translation: throw an IOException naming the failed operation and
-	//! carrying the SQL that failed (so errors are debuggable without re-running under
-	//! ch_debug_show_queries).
+	//! carrying the SQL that failed.
 	[[noreturn]] static void ThrowError(const char *op, const string &sql, const std::exception &error);
-	static void DebugSetPrintQueries(bool print);
 
 	//! Whether idle connections are cached for reuse across transactions/scans
 	//! (ch_connection_cache; on by default). When off, every lease opens a fresh

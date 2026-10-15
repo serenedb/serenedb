@@ -219,3 +219,28 @@ id	name
 1	a
 2	b
 3	c
+
+# DOCS_TEST: example_010
+
+statement ok
+DROP TABLE IF EXISTS members;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE members (
+    id INTEGER PRIMARY KEY DEFERRED,
+    email VARCHAR UNIQUE,
+    nickname VARCHAR UNIQUE IMMEDIATE
+);
+
+query
+SELECT constraint_type, constraint_column_names, constraint_check_mode
+FROM sdb_constraints()
+WHERE table_name = 'members' AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+ORDER BY constraint_index;
+----
+constraint_type	constraint_column_names	constraint_check_mode
+PRIMARY KEY	{id}	DEFERRED
+UNIQUE	{email}	DEFAULT
+UNIQUE	{nickname}	IMMEDIATE

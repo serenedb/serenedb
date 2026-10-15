@@ -78,12 +78,17 @@ void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state, idx_t,
   }
 }
 
-void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
-              duckdb::row_t row_id, duckdb::Vector& result, idx_t result_idx) {
+void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
+               const idx_t* rows, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
   auto& handle = state.GetOrInsertHandle(segment);
-  duckdb::FlatVector::GetDataMutable<uint64_t>(result)[result_idx] =
-    duckdb::Load<uint64_t>(handle.Ptr() + segment.GetBlockOffset()) +
-    static_cast<uint64_t>(row_id);
+  const auto first =
+    duckdb::Load<uint64_t>(handle.Ptr() + segment.GetBlockOffset());
+  auto* data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
+  for (idx_t i = 0; i < count; ++i) {
+    data[result_offset + result_sel.get_index(i)] =
+      first + static_cast<uint64_t>(rows[i]);
+  }
 }
 
 duckdb::CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
@@ -99,7 +104,7 @@ duckdb::CompressionFunction MakeFunction(duckdb::PhysicalType physical) {
     InitScan,
     ScanVector,
     ScanPartial,
-    FetchRow,
+    FetchRows,
     duckdb::UncompressedFunctions::EmptySkip,
   };
   f.select = Select;

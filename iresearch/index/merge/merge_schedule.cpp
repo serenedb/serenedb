@@ -20,6 +20,8 @@
 
 #include "iresearch/index/merge/merge_schedule.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 
 #include "iresearch/index/merge/merge_plan.hpp"
@@ -58,10 +60,9 @@ std::optional<size_t> MergeSchedule::Claim() {
   if (_failed || _ready.empty()) {
     return std::nullopt;
   }
-  const auto best =
-    std::ranges::max_element(_ready, [&](size_t lhs, size_t rhs) {
-      return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
-    });
+  const auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
+    return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
+  });
   const auto unit = *best;
   *best = _ready.back();
   _ready.pop_back();

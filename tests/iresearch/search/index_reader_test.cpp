@@ -68,7 +68,7 @@ TEST(directory_reader_test, open_empty_directory) {
   irs::MemoryDirectory dir;
 
   // No index
-  ASSERT_THROW((irs::DirectoryReader{dir}), irs::IndexNotFound);
+  ASSERT_SQL_ERROR((irs::DirectoryReader{dir}), ERRCODE_UNDEFINED_FILE);
 }
 
 TEST(directory_reader_test, open_empty_index) {

@@ -37,7 +37,9 @@ Three `WITH` options control the background lifecycle of an inverted index (set 
 
 View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
 
-An inverted index on a search table has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it. Set them on the table, in `CREATE TABLE ... WITH` or with [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX ... WITH` and `ALTER INDEX ... SET` reject them for an index on a search table, and `segment_docs_max` too.
+An inverted index on a search table has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it. Set them on the table, in `CREATE TABLE … WITH` or with [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX … WITH` and `ALTER INDEX … SET` reject them for an index on a search table. They also reject the options that only `CREATE TABLE … WITH` sets on a search table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 
 ## Background compaction
 
@@ -172,7 +174,7 @@ Background compaction runs on the server's background threads (`--background_thr
 
 The estimates cost a little encoding work the first time a segment is looked at. `sdb_compact(mode := 'optimize')` and `VACUUM (OPTIMIZE_*)` use the same verdicts to decide whether a segment that would otherwise stay as it is gets rewritten:
 
-<SqlLogicTest id="sql/indexes/inverted/maintenance/example_009" />
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_012" />
 
 Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
 
@@ -183,7 +185,7 @@ Two system tables show the compaction of the current database's search tables an
 
   Both kinds also show `output_live_docs`, the documents of the new segment still live when it was published, and `rowid_min` / `rowid_max`, the range of row ids it holds. The flush rows of a load show the order and sizes in which its data arrived.
 
-<SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_010" />
 
 ### Replaying a load with `sdb_merge_simulate` {#sdb-merge-simulate}
 
@@ -222,7 +224,7 @@ The result has one row per event, in time order: every replayed segment (`type` 
 
 Write amplification, how many times each written byte is rewritten by merges, is the merged bytes over the written ones. Here a load writes an 8 MB segment every second for 100 seconds and two threads merge:
 
-<SqlLogicTest id="sql/indexes/inverted/maintenance/example_008" />
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_011" />
 
 ## Refreshing view-backed indexes
 
@@ -255,12 +257,12 @@ Memory held while writing to a search table is bounded by `segment_memory_max`, 
 
 | Write | Peak memory |
 | :--- | :--- |
-| Serial `INSERT` / `UPDATE` | ≈ 1.5 x `segment_memory_max` |
-| Parallel `INSERT` | ≈ `segment_memory_max` x threads |
+| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
+| Parallel `INSERT` | ≈ `segment_memory_max` × threads |
 
 Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
 
-A table with a sort key (`SORTED BY`) holds the rows of a segment unsorted and uncompressed until it sorts and writes them, so under the same `segment_memory_max` it writes smaller segments than a table without one. A larger value gives it fewer segments and less compaction work, but a parallel load then holds about `segment_memory_max` x threads in memory and does not finish sooner, because the larger staging memory costs the load about as much time as the compaction saves.
+A table with a sort key (`SORTED BY`) holds the rows of a segment unsorted and uncompressed until it sorts and writes them, so under the same `segment_memory_max` it writes smaller segments than a table without one. A larger value gives it fewer segments and less compaction work, but a parallel load then holds about `segment_memory_max` × threads in memory and does not finish sooner, because the larger staging memory costs the load about as much time as the compaction saves.
 
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
@@ -272,6 +274,12 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 `DELETE` sits outside this bound, but costs little: each removed row holds only its rowid and storage position until the removal is applied, so even a million-row `DELETE` stays within a few tens of megabytes.
 
 </DocCallout>
+
+## Durability {#durability}
+
+A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that no refresh has saved, and a later checkpoint deletes the kept logs no table needs anymore. After a crash, the server replays the kept logs and the current one into the tables that need them.
+
+With automatic refresh disabled (`refresh_interval = 0`), kept logs pile up until `VACUUM (REFRESH_TABLE)` saves the table or the server restarts.
 
 ## Session settings {#session-settings}
 

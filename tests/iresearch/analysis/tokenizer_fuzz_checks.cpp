@@ -439,13 +439,13 @@ std::optional<std::string> ValueInvariants(const irs::TokenTraits& traits,
   return std::nullopt;
 }
 
-Probe::Probe(const Spec& spec) : _spec{&spec} {
-  _primary = Make(spec);
+Probe::Probe(const Spec& spec) : _spec{&spec}, _conn{Connect()} {
+  _primary = Make(spec, *_conn.context);
   if (!_primary) {
     return;
   }
-  _shadow = Make(spec);
-  _blocked = Make(spec);
+  _shadow = Make(spec, *_conn.context);
+  _blocked = Make(spec, *_conn.context);
   if (spec.model_children) {
     _children = spec.model_children();
   }
@@ -796,7 +796,8 @@ void CheckSpec(const Spec& spec, std::span<const std::string> values) {
 }
 
 void CheckSpecBlocks(const Spec& spec, std::span<const std::string> values) {
-  auto reference = Make(spec);
+  auto conn = Connect();
+  auto reference = Make(spec, *conn.context);
   ASSERT_NE(nullptr, reference) << spec.name;
   const auto traits = reference->Traits();
 
@@ -812,7 +813,7 @@ void CheckSpecBlocks(const Spec& spec, std::span<const std::string> values) {
       SCOPED_TRACE(testing::Message()
                    << "width=" << shape.width << " nulls=" << shape.nulls
                    << " mode=" << BlockModeName(shape.mode));
-      auto blocked = Make(spec);
+      auto blocked = Make(spec, *conn.context);
       ASSERT_NE(nullptr, blocked) << spec.name;
       const auto width = std::min(shape.width, kMaxBlock);
       for (size_t base = 0; base < values.size(); base += width) {
@@ -864,7 +865,8 @@ void CheckSpecBlocks(const Spec& spec, std::span<const std::string> values) {
 
 void CheckSpecStableTerms(const Spec& spec,
                           std::span<const std::string> values) {
-  auto tokenizer = Make(spec);
+  auto conn = Connect();
+  auto tokenizer = Make(spec, *conn.context);
   ASSERT_NE(nullptr, tokenizer) << spec.name;
   if (!tokenizer->Traits().stable) {
     return;

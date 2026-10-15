@@ -1,0 +1,73 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE wil (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO wil VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) wil;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET threads = 1;
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1MB';
+
+statement ok
+SET GLOBAL debug_skip_checkpoint_on_commit = true;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO wil SELECT 100 + i, 'v' || i || repeat('x', 100) FROM range(60000) t(i);
+
+statement ok
+DELETE FROM wil WHERE id = 1;
+
+statement ok
+COMMIT;
+
+query
+SELECT sum(size) < 2097152 AS rows_not_in_wal
+FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal')
+WHERE filename LIKE '%/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/data.db.wal';
+----
+rows_not_in_wal
+t
+
+statement ok
+INSERT INTO wil SELECT 1000000 + i, 'small' FROM range(10) t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS d, min(id) AS lo, max(id) AS hi FROM wil;
+----
+n	d	lo	hi
+60011	60011	2	1000009
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) wil;
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id = 1) AS deleted_one, count(*) FILTER (WHERE body = 'small') AS small_rows FROM wil;
+----
+n	deleted_one	small_rows
+60011	0	10

@@ -27,6 +27,8 @@ add_executable(
     network_pg_frame_reader_test.cpp
     network_pg_frames_test.cpp
     network_pg_hba_test.cpp
+    replication_conninfo_test.cpp
+    network_tls_client_test.cpp
     network_pg_implicit_txn_test.cpp
     network_pg_protocol_state_test.cpp
     network_pg_scram_test.cpp
@@ -35,6 +37,7 @@ add_executable(
     network_router_test.cpp
     number_of_cores_test.cpp
     pointer_union_test.cpp
+    query_prepared_cache_test.cpp
     random_test.cpp
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
@@ -42,14 +45,16 @@ add_executable(
     storage_version_test.cpp
     catalog/entry/tokenizer_test.cpp
     connector/ai_functions_test.cpp
-    connector/copy_in_bridge_test.cpp
+    connector/copy_in_batches_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
-    connector/search_db_wal_test.cpp
+    connector/pgoutput_test.cpp
+    connector/scram_client_test.cpp
     connector/search_row_removal_test.cpp
+    connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
     search/ann_build_pool_test.cpp

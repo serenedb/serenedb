@@ -20,17 +20,17 @@
 
 #pragma once
 
+#include <zstd.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
-#include "iresearch/utils/zstd_context.hpp"
 
 union LZ4_stream_u;
 union LZ4_streamHC_u;
-struct ZSTD_CDict_s;
-struct ZSTD_DDict_s;
 struct zxc_cctx_s;
 struct zxc_dctx_s;
 
@@ -84,6 +84,11 @@ constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   return level < Leaf<C>::kMaxLevel ? level : Leaf<C>::kMaxLevel;
 }
 
+struct ZstdFree {
+  void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
+  void operator()(ZSTD_DCtx* ctx) const noexcept { ZSTD_freeDCtx(ctx); }
+};
+
 template<ByteCodec C>
 class LeafCompressor;
 
@@ -120,7 +125,7 @@ class LeafCompressor<ByteCodec::Lz4> {
 template<>
 class LeafCompressor<ByteCodec::Zstd> {
  public:
-  LeafCompressor() : _ctx{utils::MakeZstdCCtx()} {}
+  LeafCompressor() : _ctx{ZSTD_createCCtx()} {}
   ~LeafCompressor();
 
   LeafCompressor(const LeafCompressor&) = delete;
@@ -138,10 +143,10 @@ class LeafCompressor<ByteCodec::Zstd> {
 
  private:
   uint8_t _level = Leaf<ByteCodec::Zstd>::kDefaultLevel;
-  utils::ZstdCCtxPtr _ctx;
-  ZSTD_CDict_s* _cdict = nullptr;
-  ZSTD_CDict_s* _trained_cdict = nullptr;
-  const ZSTD_CDict_s* _active = nullptr;
+  std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
+  ZSTD_CDict* _cdict = nullptr;
+  ZSTD_CDict* _trained_cdict = nullptr;
+  const ZSTD_CDict* _active = nullptr;
   uint64_t _trained = 0;
   uint8_t _trained_level = 0;
 };
@@ -193,7 +198,7 @@ class LeafDecompressor<ByteCodec::Lz4> {
 template<>
 class LeafDecompressor<ByteCodec::Zstd> {
  public:
-  LeafDecompressor() : _ctx{utils::MakeZstdDCtx()} {}
+  LeafDecompressor() : _ctx{ZSTD_createDCtx()} {}
   ~LeafDecompressor();
 
   LeafDecompressor(const LeafDecompressor&) = delete;
@@ -210,9 +215,9 @@ class LeafDecompressor<ByteCodec::Zstd> {
                           size_t raw_size) noexcept;
 
  private:
-  utils::ZstdDCtxPtr _ctx;
-  ZSTD_DDict_s* _ddict = nullptr;
-  const ZSTD_DDict_s* _active = nullptr;
+  std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
+  ZSTD_DDict* _ddict = nullptr;
+  const ZSTD_DDict* _active = nullptr;
   std::string_view _loaded;
 };
 

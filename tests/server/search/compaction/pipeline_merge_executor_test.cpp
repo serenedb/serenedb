@@ -32,7 +32,6 @@
 #include <duckdb/planner/logical_plan_verifier.hpp>
 #include <initializer_list>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
@@ -47,6 +46,8 @@
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <numeric>
 #include <thread>
@@ -103,8 +104,12 @@ class NoColumnsDirectory final : public irs::Directory {
   irs::DirectoryAttributes& attributes() noexcept final {
     return _impl.attributes();
   }
-  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
-    return name.ends_with(".col") ? nullptr : _impl.create(name);
+  irs::IndexOutput::ptr create(std::string_view name) final {
+    if (name.ends_with(".col")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("cannot create ", name));
+    }
+    return _impl.create(name);
   }
   bool exists(bool& result, std::string_view name) const noexcept final {
     return _impl.exists(result, name);
@@ -503,7 +508,7 @@ TEST_F(PipelineMergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
                       nullptr, {},      nullptr, &spec};
   ASSERT_TRUE(plan.Prepare(4));
   search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
-  EXPECT_FALSE(executor.Run(plan));
+  EXPECT_THROW(executor.Run(plan), irs::SqlException);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -652,7 +657,7 @@ TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare());
   search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
-  EXPECT_THROW(executor.Run(plan), irs::IoError);
+  EXPECT_THROW(executor.Run(plan), irs::SqlException);
 }
 
 }  // namespace

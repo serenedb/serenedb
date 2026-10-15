@@ -44,11 +44,10 @@ ClickHouseCatalog &ClickHouseSchemaEntry::GetClickHouseCatalog() {
 	return catalog.Cast<ClickHouseCatalog>();
 }
 
-static void RunClickHouseDDL(ClickHouseCatalog &ch_catalog, const string &sql) {
+static void RunClickHouseDDL(optional_ptr<ClientContext> context, ClickHouseCatalog &ch_catalog, const string &sql) {
 	auto conn = ch_catalog.GetConnectionPool().GetConnection();
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		conn->GetClient().Execute(sql);
+		conn->Execute(context, sql);
 	} catch (const clickhouse::Error &e) {
 		conn.Invalidate();
 		ClickHouseConnection::ThrowError("running DDL", sql, e);
@@ -186,7 +185,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateTable(CatalogTransaction
 	// OR REPLACE / IF NOT EXISTS are rendered into the DDL (see GetCreateTableSQL):
 	// ClickHouse resolves the conflict atomically, and a plain CREATE on an existing
 	// table is its loud "already exists" error -- no client-side probe or drop needed.
-	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateTableSQL(database, base));
+	RunClickHouseDDL(transaction.context, GetClickHouseCatalog(), GetCreateTableSQL(database, base));
 
 	{
 		lock_guard<mutex> l(tables_lock);
@@ -288,7 +287,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction 
 		throw BinderException("Cannot create a ClickHouse view from an empty SQL statement");
 	}
 	// Conflict handling delegated to ClickHouse, as in CreateTable.
-	RunClickHouseDDL(GetClickHouseCatalog(),
+	RunClickHouseDDL(transaction.context, GetClickHouseCatalog(),
 	                 GetCreateViewSQL(GetClickHouseCatalog().GetName().GetIdentifierName(), database, info));
 	{
 		lock_guard<mutex> l(tables_lock);
@@ -366,7 +365,7 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 		throw NotImplementedException("ClickHouse: unsupported ALTER TABLE operation");
 	}
 
-	RunClickHouseDDL(GetClickHouseCatalog(), sql);
+	RunClickHouseDDL(transaction.context, GetClickHouseCatalog(), sql);
 	lock_guard<mutex> l(tables_lock);
 	RetireTableLocked(alter.GetQualifiedName().Name().GetIdentifierName());
 }
@@ -403,10 +402,8 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 		             ClickHouseStringLiteral(database) + " AND table = " + ClickHouseStringLiteral(table_name) +
 		             " ORDER BY position";
 		auto conn = clickhouse_catalog.GetConnectionPool().GetConnection();
-		auto &client = conn->GetClient();
-		ClickHouseConnection::LogQuery(sql);
 		try {
-			client.Select(sql, [&](const clickhouse::Block &block) {
+			conn->Select(context, sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() == 0) {
 					return;
 				}
@@ -537,10 +534,8 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 	{
 		string sql = "SELECT name FROM system.tables WHERE database = " + ClickHouseStringLiteral(database);
 		auto conn = clickhouse_catalog.GetConnectionPool().GetConnection();
-		auto &client = conn->GetClient();
-		ClickHouseConnection::LogQuery(sql);
 		try {
-			client.Select(sql, [&](const clickhouse::Block &block) {
+			conn->Select(context, sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() == 0) {
 					return;
 				}
@@ -588,7 +583,7 @@ void ClickHouseSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	const char *kind = info.type == CatalogType::VIEW_ENTRY ? "VIEW" : "TABLE";
 	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." +
 	             ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
-	RunClickHouseDDL(GetClickHouseCatalog(), sql);
+	RunClickHouseDDL(context, GetClickHouseCatalog(), sql);
 	lock_guard<mutex> l(tables_lock);
 	RetireTableLocked(info.GetQualifiedName().Name().GetIdentifierName());
 }

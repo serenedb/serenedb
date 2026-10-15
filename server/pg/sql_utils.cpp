@@ -108,6 +108,23 @@ std::string QuoteIdentifier(std::string_view ident) {
   return out;
 }
 
+std::string QuoteLiteral(std::string_view value) {
+  std::string out;
+  out.reserve(value.size() + 3);
+  if (value.find('\\') != std::string_view::npos) {
+    out += 'E';
+  }
+  out += '\'';
+  for (const auto c : value) {
+    if (c == '\'' || c == '\\') {
+      out += c;
+    }
+    out += c;
+  }
+  out += '\'';
+  return out;
+}
+
 namespace {
 
 template<typename Match>

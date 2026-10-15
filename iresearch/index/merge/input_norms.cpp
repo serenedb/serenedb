@@ -20,6 +20,8 @@
 
 #include "iresearch/index/merge/input_norms.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -282,9 +284,10 @@ class InputNormReader : public NormReader {
   }
 
   size_t Search(doc_id_t doc) const noexcept {
-    const auto it = std::ranges::upper_bound(
-      _pieces, doc, {},
-      [](const Piece& piece) { return piece.region.end_doc; });
+    const auto it =
+      absl::c_upper_bound(_pieces, doc, [](doc_id_t value, const Piece& piece) {
+        return value < piece.region.end_doc;
+      });
     SDB_ASSERT(it != _pieces.end());
     return static_cast<size_t>(it - _pieces.begin());
   }

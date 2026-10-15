@@ -91,7 +91,7 @@ class MergePlan {
   void ExpandOrder(size_t partition,
                    std::span<const duckdb::PresortedRun> runs);
 
-  bool FinishOrder();
+  void FinishOrder();
 
   bool RunOrder();
 

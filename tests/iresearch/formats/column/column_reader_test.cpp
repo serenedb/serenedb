@@ -30,7 +30,6 @@
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <functional>
-#include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
@@ -38,6 +37,7 @@
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -2436,8 +2436,7 @@ TEST_F(ColumnReaderTest, ReproDensePkWithSparseSibling) {
 
 // Repro: many short all-valid BLOB strings sharing a tight common prefix
 // ("row_0".."row_499") -- the shape that triggers dict_fsst. Written densely,
-// point-read scattered rows. Catches dict_fsst point-read (fetch_row)
-// corruption.
+// point-read scattered rows. Catches dict_fsst point-read corruption.
 TEST_F(ColumnReaderTest, ReproShortPkPointRead) {
   constexpr irs::field_id kB = 72;
   constexpr uint64_t kRows = 500;
@@ -3291,7 +3290,8 @@ TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
   std::string message;
   try {
     irs::DeserializeColumnMeta(deserializer);
-  } catch (const irs::IndexError& e) {
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
     message = e.what();
   }
   EXPECT_NE(std::string::npos, message.find("compression 200")) << message;

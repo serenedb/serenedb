@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/column_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
@@ -168,7 +170,7 @@ class ListKeys {
   static bool Supported(const duckdb::LogicalType& type) {
     switch (type.InternalType()) {
       case duckdb::PhysicalType::STRUCT:
-        return std::ranges::all_of(
+        return absl::c_all_of(
           duckdb::StructType::GetChildTypes(type),
           [](const auto& child) { return Supported(child.second); });
       case duckdb::PhysicalType::LIST:
@@ -653,7 +655,7 @@ class ListIngest {
     if (_probe.empty()) {
       return false;
     }
-    std::ranges::sort(_probe);
+    absl::c_sort(_probe);
     const auto distinct =
       static_cast<size_t>(std::ranges::unique(_probe).begin() - _probe.begin());
     return distinct * 2 <= _probe.size();
@@ -977,7 +979,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
 
   auto forced_method = ForcedMethod(db, forced);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
-    const bool available = std::ranges::any_of(
+    const bool available = absl::c_any_of(
       candidates, [&](const auto& f) { return f.get().type == forced_method; });
     if (available) {
       std::erase_if(candidates, [&](const auto& f) {

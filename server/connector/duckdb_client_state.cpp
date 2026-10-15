@@ -41,7 +41,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/static_strings.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
@@ -51,7 +50,6 @@
 #include "catalog/cluster.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -188,6 +186,10 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Revert SET LOCAL variables while the DuckDB transaction is still active
+  // so catalog lookups performed by custom-impl settings (e.g. search_path)
+  // can succeed via their normal set_local path.
+  _connection_ctx->PreCommit();
   // Pre-durability crash point: fires before the engine commit, so the
   // transaction must be absent after restart. Only write transactions
   // crash (the fault-arming SET itself must survive).
@@ -196,10 +198,6 @@ void SereneDBClientState::TransactionPreCommit(
       SDB_IMMEDIATE_ABORT();
     }
   }
-  // Revert SET LOCAL variables while the DuckDB transaction is still active
-  // so catalog lookups performed by custom-impl settings (e.g. search_path)
-  // can succeed via their normal set_local path.
-  _connection_ctx->PreCommit();
   std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
   for (auto& db : transaction.OpenedTransactions()) {
     if (db.get().GetCatalog().GetCatalogType() !=
@@ -378,16 +376,15 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-SystemConnection MakeSystemConnection(std::string_view database,
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
                                       duckdb::idx_t database_id) {
   SystemConnection system{.conn =
                             irs::DuckDBEngine::Instance().CreateConnection()};
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
-    context, irs::StaticStrings::kDefaultUser, pg::kRootUser, database,
-    database_id, nullptr, 0, nullptr);
+    context, user, role, database, database_id, nullptr, 0, nullptr);
   SereneDBClientState::Register(context, system.ctx);
-  context.session_user.assign(irs::StaticStrings::kDefaultUser);
   SetDefaultSearchPath(context, database);
   return system;
 }

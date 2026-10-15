@@ -30,6 +30,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/multiterm_query.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <type_traits>
 
 #include "filter_test_case_base.hpp"
@@ -768,8 +769,10 @@ TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  CheckQuery(*MakeRegexp("term", "(abc"), Docs{}, Costs{0}, rdr);
-  CheckQuery(*MakeRegexp("term", "[abc"), Docs{}, Costs{0}, rdr);
+  ASSERT_THROW(CheckQuery(*MakeRegexp("term", "(abc"), Docs{}, Costs{0}, rdr),
+               irs::SqlException);
+  ASSERT_THROW(CheckQuery(*MakeRegexp("term", "[abc"), Docs{}, Costs{0}, rdr),
+               irs::SqlException);
 }
 
 // Filter reuse
@@ -1169,30 +1172,10 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
-  {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
-    add_segment(gen);
-  }
-  auto index = open_reader();
-  auto& segment = index[0];
-  const auto* reader = segment.field(kPrefixId);
-  {
-    auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
-    tests::EmptyFilterVisitor v;
-    auto fv = irs::AutomatonFilter::visitor(
-      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
-    ASSERT_TRUE(fv);
-    fv(segment, *reader, v);
-    ASSERT_EQ(0, v.prepare_calls_counter());
-  }
-  {
-    auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
-    tests::EmptyFilterVisitor v;
-    auto fv = irs::AutomatonFilter::visitor(
-      irs::MakePatternSource(p, irs::PatternKind::RegexpPerl));
-    fv(segment, *reader, v);
-    ASSERT_EQ(0, v.prepare_calls_counter());
+  for (const std::string_view pattern : {"(abc", "[abc"}) {
+    ASSERT_THROW(irs::MakePatternSource(irs::ViewCast<irs::byte_type>(pattern),
+                                        irs::PatternKind::RegexpPerl),
+                 irs::SqlException);
   }
 }
 
@@ -1547,8 +1530,6 @@ TEST_P(RegexpFilterTestCase,
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_rejects_perl_class) {
-  // Same pattern, POSIX mode: \w is not recognized by the POSIX parser,
-  // so the resulting query matches nothing.
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1556,7 +1537,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_rejects_perl_class) {
   }
   auto rdr = open_reader();
   auto q = MakeFilter("class", "\\w+", irs::RegexpSyntax::PosixEre);
-  CheckQuery(*OptimizedMove(std::move(q)), Docs{}, Costs{0}, rdr);
+  ASSERT_THROW(CheckQuery(*OptimizedMove(std::move(q)), Docs{}, Costs{0}, rdr),
+               irs::SqlException);
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
@@ -1664,12 +1646,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
     tests::PreparedFilter prepared{*lowered, rdr[0]};
     ASSERT_NE(nullptr, prepared.Query(0));
   }
-  {
+  const auto prepare_posix = [&] {
     auto lowered = OptimizedMove(
       MakeFilter("term", "(?:foo)bar", irs::RegexpSyntax::PosixEre));
     tests::PreparedFilter prepared{*lowered, rdr[0]};
-    ASSERT_NE(nullptr, prepared.Query(0));
-  }
+  };
+  ASSERT_THROW(prepare_posix(), irs::SqlException);
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
@@ -1691,14 +1673,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
-  {
-    auto fv = irs::AutomatonFilter::visitor(
-      irs::MakePatternSource(p, irs::PatternKind::RegexpPosixEre));
-    ASSERT_TRUE(fv);
-    tests::EmptyFilterVisitor v;
-    fv(segment, *reader, v);
-    ASSERT_EQ(0, v.prepare_calls_counter());
-  }
+  ASSERT_THROW(irs::MakePatternSource(p, irs::PatternKind::RegexpPosixEre),
+               irs::SqlException);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

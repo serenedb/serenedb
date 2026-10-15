@@ -138,7 +138,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection start
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection start
 statement error connection closed
@@ -161,7 +161,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_1
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_1
 statement error connection closed
@@ -211,7 +211,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_2
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_2
 statement error connection closed
@@ -306,7 +306,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_3
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_3
 statement error connection closed
@@ -321,7 +321,7 @@ n	s
 
 connection after_crash_4
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_4
 statement error connection closed
@@ -403,7 +403,7 @@ n	s
 
 connection after_crash_5
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_5
 statement error connection closed
@@ -512,7 +512,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_6
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_6
 statement error connection closed
@@ -650,7 +650,7 @@ n	s
 
 connection after_crash_7
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_7
 statement error connection closed
@@ -665,7 +665,7 @@ n	s
 
 connection after_crash_8
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_8
 statement error connection closed
@@ -802,7 +802,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_9
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_9
 statement error connection closed
@@ -907,7 +907,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_10
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_10
 statement error connection closed
@@ -930,7 +930,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_11
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_11
 statement error connection closed
@@ -1025,7 +1025,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_12
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_12
 statement error connection closed
@@ -1104,7 +1104,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_13
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_13
 statement error connection closed
@@ -1162,7 +1162,7 @@ VACUUM (REFRESH_TABLE) rl;
 
 connection after_crash_14
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection after_crash_14
 statement error connection closed

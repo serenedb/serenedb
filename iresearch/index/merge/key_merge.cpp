@@ -38,6 +38,8 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -150,18 +152,20 @@ struct KeyOrder::State {
 
   const SubReader& Reader(size_t input) const { return *doc_map[input].reader; }
 
-  bool Incomplete() const {
-    SDB_ERROR(IRESEARCH, "The order of a sorted merge of ", doc_map.size(),
-              " segments does not hold every live document once");
-    return false;
+  [[noreturn]] void ThrowIncomplete() const {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("the order of a sorted merge of ", doc_map.size(),
+              " segments does not hold every live document once"));
   }
 
-  bool Unsorted(const duckdb::optional_idx& input) const {
+  void ThrowIfUnsorted(const duckdb::optional_idx& input) const {
     if (input.IsValid()) {
-      SDB_ERROR(IRESEARCH, "Segment '", Reader(input.GetIndex()).Meta().name,
-                "' of a sorted merge is not sorted by the merge key");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+        ERR_MSG("segment '", Reader(input.GetIndex()).Meta().name,
+                "' of a sorted merge is not sorted by the merge key"));
     }
-    return false;
   }
 
   void PlanParts() {
@@ -238,7 +242,7 @@ KeyOrder::KeyOrder(MergeDocMap& doc_map, const SortSpec& spec)
 
 KeyOrder::~KeyOrder() = default;
 
-bool KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
+void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
                        size_t threads) {
   auto& s = *_state;
   duckdb::vector<duckdb::LogicalType> types;
@@ -263,28 +267,21 @@ bool KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   uint64_t rows = 0;
   s.live.resize(s.doc_map.size());
   s.isolated.resize(s.doc_map.size());
-  try {
-    for (size_t i = 0; i != s.doc_map.size(); ++i) {
-      auto& input = s.doc_map[i];
-      const auto& reader = *input.reader;
-      s.live[i] = reader.live_docs_count();
-      rows += s.live[i];
-      input.remap.id_map.resize(reader.docs_count() + doc_limits::min(),
-                                doc_limits::eof());
-      if (HasRemovals(reader.Meta())) {
-        input.remap.mask = reader.MaskedDocs();
-      }
+  for (size_t i = 0; i != s.doc_map.size(); ++i) {
+    auto& input = s.doc_map[i];
+    const auto& reader = *input.reader;
+    s.live[i] = reader.live_docs_count();
+    rows += s.live[i];
+    input.remap.id_map.resize(reader.docs_count() + doc_limits::min(),
+                              doc_limits::eof());
+    if (HasRemovals(reader.Meta())) {
+      input.remap.mask = reader.MaskedDocs();
     }
-    s.order.emplace(s.doc_map.size(), rows,
-                    s.doc_map.get_allocator().Manager());
-  } catch (...) {
-    SDB_ERROR(IRESEARCH, "Failed to allocate the order of a sorted merge of ",
-              s.doc_map.size(), " segments and ", rows, " documents");
-    return false;
   }
+  s.order.emplace(s.doc_map.size(), rows, s.doc_map.get_allocator().Manager());
   if (s.keys.empty() || rows == 0) {
     s.ConcatOrder();
-    return true;
+    return;
   }
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
   for (const auto& input : s.doc_map) {
@@ -299,7 +296,6 @@ bool KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
     s.merge->Partition(partitions);
   }
   s.PlanParts();
-  return true;
 }
 
 bool KeyOrder::Pending() const noexcept { return _state->merge != nullptr; }
@@ -357,7 +353,8 @@ bool KeyOrder::Merge(const std::function<bool()>& proceed) {
       duckdb::optional_idx unsorted;
       if (!s.merge->Merge(*state, runs, STANDARD_VECTOR_SIZE, proceed,
                           unsorted)) {
-        return s.Unsorted(unsorted);
+        s.ThrowIfUnsorted(unsorted);
+        return false;
       }
       Expand(part, runs);
     }
@@ -365,13 +362,13 @@ bool KeyOrder::Merge(const std::function<bool()>& proceed) {
   return true;
 }
 
-bool KeyOrder::Finish() {
+void KeyOrder::Finish() {
   auto& s = *_state;
-  SDB_IF_FAILURE("irs::KeyOrder::Finish") { return s.Incomplete(); }
+  SDB_IF_FAILURE("irs::KeyOrder::Finish") { s.ThrowIncomplete(); }
   std::vector<State::Span> spans(s.doc_map.size());
   for (const auto& part : s.parts) {
     if (part.failed || part.next != part.end) {
-      return s.Incomplete();
+      s.ThrowIncomplete();
     }
     for (size_t i = 0; i != spans.size(); ++i) {
       spans[i].first = std::min(spans[i].first, part.spans[i].first);
@@ -387,7 +384,6 @@ bool KeyOrder::Finish() {
   s.merge.reset();
   s.parts = {};
   s.order->Finish();
-  return true;
 }
 
 std::optional<uint64_t> KeyOrder::IsolatedBegin(size_t input) const noexcept {

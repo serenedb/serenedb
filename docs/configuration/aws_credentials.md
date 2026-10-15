@@ -38,6 +38,8 @@ aws iam create-access-key --user-name serenedb-engine
 
 For the policy, start from AWS's managed policies and narrow down: [`AmazonS3TablesReadOnlyAccess` / `AmazonS3TablesFullAccess`](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-iam-awsmanpol-s3tables.html) for S3 Tables, [Glue's IAM actions](https://docs.aws.amazon.com/glue/latest/dg/security-iam.html) for the Glue catalog, and plain [`s3:GetObject`/`s3:PutObject`/`s3:ListBucket`](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html) on the specific buckets for data files.
 
+Keep `s3:ListBucket` next to `s3:GetObject`: without it S3 answers a request for a missing object with 403 instead of 404. SereneDB treats only a 404 as a missing file, so the 403 fails the statement with that error rather than reading the object as absent.
+
 Configure the keys as an `S3` secret — `REGION` is required (Iceberg catalog attaches derive their endpoint region from it):
 
 <SqlLogicTest id="configuration/aws_credentials/example_config" />

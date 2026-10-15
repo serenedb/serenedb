@@ -260,7 +260,7 @@ TEST(TokenizerConfig, RefusalLeavesTheCacheUsable) {
   }
   for (const auto* spec : tests::fuzz::SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto tokenizer = tests::fuzz::Make(*spec);
+    auto tokenizer = tests::fuzz::Make(*spec, Context());
     ASSERT_NE(nullptr, tokenizer)
       << "a refused config poisoned the shared resource cache";
     const auto res = tests::fuzz::AnalyzeValue(

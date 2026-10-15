@@ -45287,7 +45287,7 @@ SELECT DISTINCT - 76 * + col0 + - col0 * - CAST ( - col0 + col2 AS REAL ) * + CA
 ----
 -172896
 38990
-4539890
+4.53989e+06
 
 query I rowsort
 SELECT - col0 + + col2 * col1 FROM tab0 cor0

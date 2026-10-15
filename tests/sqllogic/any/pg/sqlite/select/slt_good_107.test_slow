@@ -36249,7 +36249,7 @@ query I rowsort
 SELECT DISTINCT - col1 * + col2 * - CAST ( - col1 * col0 AS REAL ) col2 FROM tab2 AS cor0
 ----
 -181629
--7059468
+-7.059468e+06
 -867578
 
 query I rowsort

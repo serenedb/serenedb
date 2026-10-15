@@ -46756,9 +46756,9 @@ skipif postgres
 query I rowsort
 SELECT ALL - CAST ( + 0 AS REAL ) * col1 FROM tab2
 ----
-0
-0
-0
+-0
+-0
+-0
 
 query I rowsort
 SELECT ALL 90 * - col0 FROM tab1 AS cor0

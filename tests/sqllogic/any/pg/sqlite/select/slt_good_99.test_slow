@@ -76339,7 +76339,7 @@ query I rowsort
 SELECT ALL tab2.col0 * col1 + - col2 * col1 * CAST ( col1 * + col0 AS REAL ) FROM tab2
 ----
 -181412
--7054866
+-7.054866e+06
 -866235
 
 query I rowsort
@@ -76759,9 +76759,9 @@ skipif mysql # not compatible
 query I rowsort
 SELECT ALL col2 * CAST ( 73 + + col1 AS INTEGER ) * - CAST ( - 4 * - col2 AS REAL ) AS col2 FROM tab1 AS cor0
 ----
--1078668
--1154736
--3170304
+-1.078668e+06
+-1.154736e+06
+-3.170304e+06
 
 query I rowsort
 SELECT + + col0 + col2 * col1 * - col0 AS col0 FROM tab2 AS cor0

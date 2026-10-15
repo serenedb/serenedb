@@ -23104,9 +23104,9 @@ skipif postgres
 query I rowsort
 SELECT - CAST ( - col1 + col1 AS REAL ) * + col0 AS col0 FROM tab1
 ----
-0
-0
-0
+-0
+-0
+-0
 
 query I rowsort
 SELECT + col2 * col2 + - col2 FROM tab1 cor0

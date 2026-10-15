@@ -4293,8 +4293,8 @@ skipif mysql # not compatible
 query I rowsort
 SELECT - col1 * col2 * - ( 66 + + col0 * - CAST ( + col0 AS REAL ) ) AS col1 FROM tab2 AS cor0
 ----
--3989050
--9231612
+-3.98905e+06
+-9.231612e+06
 14229
 
 query I rowsort

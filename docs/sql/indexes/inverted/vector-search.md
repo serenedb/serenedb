@@ -90,7 +90,7 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `quant` | Compression | Notes |
 |---|---|---|
 | `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
-| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine`, 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster; it stores one more float per row for every 128 dimensions, and holds the same matrix as `none` in memory, plus a half-precision copy of it |
+| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine`, 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster; it stores one more float per row for every 128 dimensions, and holds the same matrix as `none` in memory, plus an 8-bit copy of it |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
 | `fp16` / `bf16` | Every component stored as a 16-bit float: IEEE half precision, or bfloat16 (the float exponent with a shorter mantissa) | Half the size of `none` with scores nearly as exact, so they are not re-scored by default; `bf16` keeps the full float range, `fp16` keeps more precision |

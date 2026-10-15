@@ -48,7 +48,7 @@ struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
   std::shared_ptr<const std::vector<float>> rotation;
-  std::shared_ptr<const std::vector<uint16_t>> half_rotation;
+  std::shared_ptr<const HnswByteBasis> byte_rotation;
   std::vector<float> norms;
   std::vector<float> tails;
   bstring codes;

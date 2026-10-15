@@ -33,10 +33,15 @@
 
 namespace irs {
 
+struct HnswByteBasis {
+  std::vector<int8_t> codes;
+  std::vector<float> scales;
+};
+
 class HnswBases {
  public:
   using Basis = std::shared_ptr<const std::vector<float>>;
-  using HalfBasis = std::shared_ptr<const std::vector<uint16_t>>;
+  using ByteBasis = std::shared_ptr<const HnswByteBasis>;
 
   Basis Find(field_id field) const;
 
@@ -44,21 +49,21 @@ class HnswBases {
 
   Basis Share(field_id field, std::vector<float> basis);
 
-  HalfBasis Half(const Basis& basis);
+  ByteBasis Bytes(const Basis& basis);
 
  private:
-  struct Halved {
+  struct Narrowed {
     std::weak_ptr<const std::vector<float>> basis;
-    std::weak_ptr<const std::vector<uint16_t>> half;
+    std::weak_ptr<const HnswByteBasis> bytes;
   };
 
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<field_id, Basis> _published;
   std::vector<std::weak_ptr<const std::vector<float>>> _loaded;
-  std::vector<Halved> _halves;
+  std::vector<Narrowed> _narrowed;
 };
 
-HnswBases::HalfBasis MakeHalfBasis(std::span<const float> basis);
+HnswBases::ByteBasis MakeByteBasis(std::span<const float> basis);
 
 struct PanoramaQuery {
   std::vector<float> rotated;
@@ -68,14 +73,14 @@ struct PanoramaQuery {
 class AnnQueryCache {
  public:
   using Basis = HnswBases::Basis;
-  using HalfBasis = HnswBases::HalfBasis;
+  using ByteBasis = HnswBases::ByteBasis;
 
   AnnQueryCache() = default;
   AnnQueryCache(const AnnQueryCache&) noexcept {}
   AnnQueryCache& operator=(const AnnQueryCache&) noexcept { return *this; }
 
   std::shared_ptr<const PanoramaQuery> Get(const Basis& basis,
-                                           const HalfBasis& half,
+                                           const ByteBasis& bytes,
                                            std::span<const float> query);
 
   std::shared_ptr<const QuantizerCodebook> Codebook(
@@ -85,6 +90,8 @@ class AnnQueryCache {
   struct Entry {
     Basis basis;
     std::shared_ptr<PanoramaQuery> query;
+    std::vector<int16_t> narrow;
+    float unit = 0.f;
     std::atomic_uint32_t next{0};
     std::atomic_uint32_t done{0};
     std::atomic_bool ready{false};

@@ -692,8 +692,8 @@ void HnswQuery::Rotate() const {
     }
     _panorama =
       _cache
-        ? _cache->Get(_data->rotation, _data->half_rotation, _query)
-        : AnnQueryCache{}.Get(_data->rotation, _data->half_rotation, _query);
+        ? _cache->Get(_data->rotation, _data->byte_rotation, _query)
+        : AnnQueryCache{}.Get(_data->rotation, _data->byte_rotation, _query);
     if (_data->stats) {
       _codebook = _cache ? _cache->Codebook(*_data->stats, _panorama->rotated)
                          : _data->stats->MakeCodebook(_panorama->rotated);
@@ -708,7 +708,7 @@ bool HnswQuery::ScansByColumn() const {
   }
   const auto matches = _inner->EstimateMax();
   const uint64_t share =
-    _data->half_rotation ? 2 * kHnswColumnScanShare : kHnswColumnScanShare;
+    _data->byte_rotation ? 2 * kHnswColumnScanShare : kHnswColumnScanShare;
   if (matches * share > _d) {
     return false;
   }

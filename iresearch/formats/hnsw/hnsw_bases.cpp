@@ -22,9 +22,9 @@
 
 #include <absl/algorithm/container.h>
 #include <faiss/utils/distances.h>
-#include <faiss/utils/fp16.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #ifdef __AVX2__
@@ -39,69 +39,110 @@
 namespace irs {
 namespace {
 
-float HalfDot(const uint16_t* row, const float* q, uint32_t d) noexcept {
+inline constexpr float kNarrowQueryPeak = 16383.f;
+
+float NarrowQuery(std::span<const float> query, std::vector<int16_t>& out) {
+  float peak = 0.f;
+  for (const float v : query) {
+    if (!std::isfinite(v)) {
+      return 0.f;
+    }
+    peak = std::max(peak, std::abs(v));
+  }
+  out.resize(query.size());
+  if (peak == 0.f) {
+    return 0.f;
+  }
+  const float scale = kNarrowQueryPeak / peak;
+  for (size_t i = 0; i < query.size(); ++i) {
+    out[i] = static_cast<int16_t>(std::nearbyint(query[i] * scale));
+  }
+  return peak / kNarrowQueryPeak;
+}
+
+float ByteDot(const int8_t* row, const int16_t* q, uint32_t d) noexcept {
+  SDB_ASSERT(d <= kHnswPanoramaMaxDim);
   uint32_t i = 0;
   float sum = 0.f;
 #ifdef __AVX2__
-  __m256 acc0 = _mm256_setzero_ps();
-  __m256 acc1 = _mm256_setzero_ps();
-  for (; i + 16 <= d; i += 16) {
-    acc0 = _mm256_fmadd_ps(_mm256_cvtph_ps(_mm_loadu_si128(
-                             reinterpret_cast<const __m128i*>(row + i))),
-                           _mm256_loadu_ps(q + i), acc0);
-    acc1 = _mm256_fmadd_ps(_mm256_cvtph_ps(_mm_loadu_si128(
-                             reinterpret_cast<const __m128i*>(row + i + 8))),
-                           _mm256_loadu_ps(q + i + 8), acc1);
+  __m256i acc0 = _mm256_setzero_si256();
+  __m256i acc1 = _mm256_setzero_si256();
+  for (; i + 32 <= d; i += 32) {
+    const __m256i r0 = _mm256_cvtepi8_epi16(
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + i)));
+    const __m256i r1 = _mm256_cvtepi8_epi16(
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + i + 16)));
+    acc0 = _mm256_add_epi32(
+      acc0, _mm256_madd_epi16(
+              r0, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q + i))));
+    acc1 = _mm256_add_epi32(
+      acc1,
+      _mm256_madd_epi16(
+        r1, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q + i + 16))));
   }
-  const __m256 v = _mm256_add_ps(acc0, acc1);
+  const __m256 v = _mm256_cvtepi32_ps(_mm256_add_epi32(acc0, acc1));
   __m128 h = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
   h = _mm_add_ps(h, _mm_movehl_ps(h, h));
   h = _mm_add_ss(h, _mm_movehdup_ps(h));
   sum = _mm_cvtss_f32(h);
 #elif defined(__aarch64__)
-  float32x4_t acc0 = vdupq_n_f32(0.f);
-  float32x4_t acc1 = vdupq_n_f32(0.f);
+  int32x4_t acc0 = vdupq_n_s32(0);
+  int32x4_t acc1 = vdupq_n_s32(0);
   for (; i + 8 <= d; i += 8) {
-    acc0 =
-      vfmaq_f32(acc0, vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(row + i))),
-                vld1q_f32(q + i));
-    acc1 =
-      vfmaq_f32(acc1, vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(row + i + 4))),
-                vld1q_f32(q + i + 4));
+    const int16x8_t r = vmovl_s8(vld1_s8(row + i));
+    const int16x8_t v = vld1q_s16(q + i);
+    acc0 = vmlal_s16(acc0, vget_low_s16(r), vget_low_s16(v));
+    acc1 = vmlal_high_s16(acc1, r, v);
   }
-  sum = vaddvq_f32(vaddq_f32(acc0, acc1));
+  sum = vaddvq_f32(vaddq_f32(vcvtq_f32_s32(acc0), vcvtq_f32_s32(acc1)));
 #endif
+  int32_t tail = 0;
   for (; i < d; ++i) {
-    sum += faiss::decode_fp16(row[i]) * q[i];
+    tail += int32_t{row[i]} * q[i];
   }
-  return sum;
+  return sum + static_cast<float>(tail);
 }
 
 }  // namespace
 
-HnswBases::HalfBasis MakeHalfBasis(std::span<const float> basis) {
-  std::vector<uint16_t> half(basis.size());
-  for (size_t i = 0; i < half.size(); ++i) {
-    half[i] = faiss::encode_fp16(basis[i]);
+HnswBases::ByteBasis MakeByteBasis(std::span<const float> basis) {
+  const auto d = static_cast<size_t>(
+    std::llround(std::sqrt(static_cast<double>(basis.size()))));
+  SDB_ASSERT(d * d == basis.size());
+  HnswByteBasis bytes;
+  bytes.codes.resize(basis.size());
+  bytes.scales.resize(d);
+  for (size_t row = 0; row < d; ++row) {
+    const auto values = basis.subspan(row * d, d);
+    float peak = 0.f;
+    for (const float v : values) {
+      peak = std::max(peak, std::abs(v));
+    }
+    const float scale = peak > 0.f ? peak / 127.f : 1.f;
+    bytes.scales[row] = scale;
+    for (size_t col = 0; col < d; ++col) {
+      bytes.codes[row * d + col] = static_cast<int8_t>(
+        std::clamp(std::nearbyint(values[col] / scale), -127.f, 127.f));
+    }
   }
-  return std::make_shared<const std::vector<uint16_t>>(std::move(half));
+  return std::make_shared<const HnswByteBasis>(std::move(bytes));
 }
 
-HnswBases::HalfBasis HnswBases::Half(const Basis& basis) {
+HnswBases::ByteBasis HnswBases::Bytes(const Basis& basis) {
   absl::MutexLock lock{&_mutex};
-  for (const auto& halved : _halves) {
-    if (halved.basis.lock() == basis) {
-      if (auto half = halved.half.lock()) {
-        return half;
+  for (const auto& narrowed : _narrowed) {
+    if (narrowed.basis.lock() == basis) {
+      if (auto bytes = narrowed.bytes.lock()) {
+        return bytes;
       }
     }
   }
-  std::erase_if(_halves, [](const Halved& halved) {
-    return halved.basis.expired() || halved.half.expired();
+  std::erase_if(_narrowed, [](const Narrowed& narrowed) {
+    return narrowed.basis.expired() || narrowed.bytes.expired();
   });
-  auto half = MakeHalfBasis(*basis);
-  _halves.push_back({.basis = basis, .half = half});
-  return half;
+  auto bytes = MakeByteBasis(*basis);
+  _narrowed.push_back({.basis = basis, .bytes = bytes});
+  return bytes;
 }
 
 HnswBases::Basis HnswBases::Find(field_id field) const {
@@ -141,7 +182,7 @@ HnswBases::Basis HnswBases::Share(field_id field, std::vector<float> basis) {
 }
 
 std::shared_ptr<const PanoramaQuery> AnnQueryCache::Get(
-  const Basis& basis, const HalfBasis& half, std::span<const float> query) {
+  const Basis& basis, const ByteBasis& bytes, std::span<const float> query) {
   const auto d = static_cast<uint32_t>(query.size());
   SDB_ASSERT(basis->size() == size_t{d} * d);
   Entry* entry = nullptr;
@@ -159,9 +200,13 @@ std::shared_ptr<const PanoramaQuery> AnnQueryCache::Get(
       made->query = std::make_shared<PanoramaQuery>();
       made->query->rotated.resize(d);
       made->query->tails.resize(HnswPanoramaLevels(d) + 1);
+      if (bytes) {
+        made->unit = NarrowQuery(query, made->narrow);
+      }
       entry = _entries.emplace_back(std::move(made)).get();
     }
   }
+  const bool narrow = bytes && !entry->narrow.empty();
   auto& out = *entry->query;
   const uint32_t slices = HnswPanoramaLevels(d);
   for (auto slice = entry->next.fetch_add(1, std::memory_order_relaxed);
@@ -171,9 +216,11 @@ std::shared_ptr<const PanoramaQuery> AnnQueryCache::Get(
     const uint32_t last = std::min(d, first + kHnswPanoramaLevel);
     for (uint32_t row = first; row < last; ++row) {
       out.rotated[row] =
-        half ? HalfDot(half->data() + size_t{row} * d, query.data(), d)
-             : faiss::fvec_inner_product(basis->data() + size_t{row} * d,
-                                         query.data(), d);
+        narrow ? bytes->scales[row] * entry->unit *
+                   ByteDot(bytes->codes.data() + size_t{row} * d,
+                           entry->narrow.data(), d)
+               : faiss::fvec_inner_product(basis->data() + size_t{row} * d,
+                                           query.data(), d);
     }
     if (entry->done.fetch_add(1, std::memory_order_acq_rel) + 1 == slices) {
       HnswPanoramaTails(out.rotated.data(), d, out.tails.data());

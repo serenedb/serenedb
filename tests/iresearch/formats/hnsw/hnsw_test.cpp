@@ -779,7 +779,7 @@ TEST(AnnQueryCacheTest, ThreadsShareOneRotationPerBasis) {
   EXPECT_NE(got[0], copy.Get(first, nullptr, query));
 }
 
-TEST(AnnQueryCacheTest, HalfBasisRotatesWithinItsPrecision) {
+TEST(AnnQueryCacheTest, ByteBasisRotatesWithinItsPrecision) {
   constexpr uint32_t kD = 4 * irs::kHnswPanoramaLevel + 17;
   pcg32 rng{kD + 1};
   const auto random = [&](size_t n) {
@@ -793,26 +793,68 @@ TEST(AnnQueryCacheTest, HalfBasisRotatesWithinItsPrecision) {
     std::make_shared<const std::vector<float>>(random(size_t{kD} * kD));
   const auto query = random(kD);
   irs::HnswBases bases;
-  const auto half = bases.Half(basis);
-  ASSERT_EQ(half->size(), basis->size());
-  EXPECT_EQ(half, bases.Half(basis));
+  const auto bytes = bases.Bytes(basis);
+  ASSERT_EQ(bytes->codes.size(), basis->size());
+  ASSERT_EQ(bytes->scales.size(), kD);
+  EXPECT_EQ(bytes, bases.Bytes(basis));
   irs::AnnQueryCache cache;
-  const auto got = cache.Get(basis, half, query);
-  double norm = 0;
+  const auto got = cache.Get(basis, bytes, query);
+  double mass = 0;
   for (const auto v : query) {
-    norm += double{v} * v;
+    mass += std::abs(double{v});
   }
-  norm = std::sqrt(norm);
   for (uint32_t row = 0; row < kD; ++row) {
     double sum = 0;
-    double scale = 0;
+    double peak = 0;
     for (uint32_t col = 0; col < kD; ++col) {
       const double b = (*basis)[size_t{row} * kD + col];
       sum += b * query[col];
-      scale += b * b;
+      peak = std::max(peak, std::abs(b));
     }
-    ASSERT_NEAR(got->rotated[row], sum, 1e-3 * std::sqrt(scale) * norm)
+    ASSERT_NEAR(bytes->scales[row], peak / 127, 1e-6 * peak) << "row " << row;
+    ASSERT_NEAR(got->rotated[row], sum, 0.55 * bytes->scales[row] * mass)
       << "row " << row;
+  }
+}
+
+TEST(AnnQueryCacheTest, ByteBasisRotatesANonFiniteQueryAsTheFloatBasis) {
+  constexpr uint32_t kD = 4 * irs::kHnswPanoramaLevel;
+  pcg32 rng{kD};
+  std::vector<float> values(size_t{kD} * kD);
+  for (auto& v : values) {
+    v = absl::Uniform<float>(rng, -1.f, 1.f);
+  }
+  const auto basis =
+    std::make_shared<const std::vector<float>>(std::move(values));
+  irs::HnswBases bases;
+  for (const float bad : {std::numeric_limits<float>::quiet_NaN(),
+                          std::numeric_limits<float>::infinity()}) {
+    std::vector<float> query(kD, 0.5f);
+    query[7] = bad;
+    irs::AnnQueryCache narrow;
+    irs::AnnQueryCache wide;
+    const auto got = narrow.Get(basis, bases.Bytes(basis), query);
+    const auto want = wide.Get(basis, nullptr, query);
+    for (uint32_t row = 0; row < kD; ++row) {
+      if (std::isnan(want->rotated[row])) {
+        ASSERT_TRUE(std::isnan(got->rotated[row])) << "row " << row;
+      } else {
+        ASSERT_EQ(got->rotated[row], want->rotated[row]) << "row " << row;
+      }
+    }
+  }
+}
+
+TEST(AnnQueryCacheTest, ByteBasisRotatesAnAlignedQueryAtTheWidestBasis) {
+  constexpr uint32_t kD = irs::kHnswPanoramaMaxDim;
+  const auto basis =
+    std::make_shared<const std::vector<float>>(size_t{kD} * kD, -1.f);
+  const std::vector<float> query(kD, 1.f);
+  irs::HnswBases bases;
+  irs::AnnQueryCache cache;
+  const auto got = cache.Get(basis, bases.Bytes(basis), query);
+  for (uint32_t row = 0; row < kD; ++row) {
+    ASSERT_NEAR(got->rotated[row], -float{kD}, 1e-3f * kD) << "row " << row;
   }
 }
 

@@ -790,7 +790,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_function_identity_arguments | Yes           |  |
 | pg_get_function_result             | Yes           |  |
 | pg_get_function_arg_default        | Yes           |  |
-| pg_get_partkeydef                  | Yes           | Always `NULL`: there are no partitioned tables |
+| pg_get_function_sqlbody            | Partial       | Always `NULL`: the body of a SQL function is kept as source text, shown in `prosrc` and by `pg_get_functiondef` |
+| pg_get_partkeydef                  | Yes           | Always `NULL`, as is `pg_get_partition_constraintdef`: there are no partitioned tables |
 | pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
 | pg_get_serial_sequence             | Yes           | Finds the sequence named by the column's `nextval(...)` default |
 | format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |

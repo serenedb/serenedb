@@ -811,7 +811,8 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
     loader, pg_catalog, "pg_get_function_arg_default", stability, InitSession,
     {duckdb::ScalarFunction{
       {oid, bigint}, text, OidArgFunction<int64_t>(FunctionArgDefault)}});
-  for (const auto name : {"pg_get_partkeydef", "pg_get_statisticsobjdef",
+  for (const auto name : {"pg_get_partkeydef", "pg_get_partition_constraintdef",
+                          "pg_get_function_sqlbody", "pg_get_statisticsobjdef",
                           "pg_get_statisticsobjdef_columns"}) {
     duckdb::ScalarFunction function{{oid}, text, nullptr};
     function.SetBindExpressionCallback(BindNull);

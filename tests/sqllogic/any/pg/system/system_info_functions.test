@@ -512,6 +512,31 @@ SELECT makeaclitem(12345, 0, '', false);
 db error: ERROR: unrecognized privilege type: ""
 
 
+# pg_get_function_sqlbody and pg_get_partition_constraintdef
+
+statement ok
+CREATE FUNCTION sif_body(a integer) RETURNS integer LANGUAGE sql AS 'SELECT a + 1';
+
+
+query
+SELECT pg_get_function_sqlbody('sif_body'::regproc) AS string_body, pg_get_function_sqlbody(0) AS missing,
+       pg_get_function_sqlbody('lower(text)'::regprocedure) AS builtin;
+----
+string_body	missing	builtin
+NULL	NULL	NULL
+
+
+query
+SELECT pg_get_partition_constraintdef('sif_keyed'::regclass) AS plain, pg_get_partition_constraintdef(0) AS missing;
+----
+plain	missing
+NULL	NULL
+
+
+statement ok
+DROP FUNCTION sif_body;
+
+
 # Cleanup
 
 statement ok

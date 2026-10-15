@@ -470,6 +470,14 @@ SELECT to_regclass('pg_class')::text, to_regtype('int4')::text, to_regproc('arra
 statement ok
 SELECT word, catcode, catdesc FROM pg_get_keywords();
 
+# sysinfo: pg_get_function_sqlbody
+statement ok
+SELECT pg_get_function_sqlbody('lower(text)'::regprocedure);
+
+# sysinfo: pg_get_partkeydef
+statement ok
+SELECT pg_get_partkeydef('pg_class'::regclass), pg_get_partition_constraintdef('pg_class'::regclass);
+
 # sysinfo: pg_input_is_valid
 statement ok
 SELECT pg_input_is_valid('42', 'integer'), pg_input_error_info('x', 'integer');

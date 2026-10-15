@@ -20,24 +20,21 @@
 
 #include "backup/restore.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/strip.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstring>
 #include <duckdb/common/error_data.hpp>
 #include <filesystem>
-#include <fstream>
+#include <iresearch/formats/index_meta_reader.hpp>
+#include <iresearch/formats/index_meta_writer.hpp>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/log.hpp>
-#include <sstream>
-#include <stdexcept>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 
@@ -45,28 +42,44 @@
 #include "backup/backup_session.h"
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
+#include "catalog/cluster.h"
 #include "catalog/database_directory.h"
+#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
 
 constexpr std::string_view kRetiredLabelFile = "backup_label.old";
-constexpr std::string_view kSearchWalPrefix = "search.wal.";
-constexpr std::string_view kMetaPrefix = "segments_";
-constexpr std::string_view kPendingMetaPrefix = "pending_segments_";
-constexpr std::string_view kWriteLockFile = "write.lock";
+constexpr std::string_view kSubscriptionHoldFile = "subscriptions.hold";
+
+std::filesystem::path SubscriptionHoldPath() {
+  return catalog::ClusterLayout(catalog::ClusterOf().GetAttached())
+           .EngineDir() /
+         kSubscriptionHoldFile;
+}
 
 [[noreturn]] void Fail(std::string_view what, const std::filesystem::path& path,
                        std::string_view why) {
-  throw std::runtime_error{
-    absl::StrCat(what, " \"", path.string(), "\": ", why)};
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG(what, " \"", path.string(), "\": ", why));
+}
+
+bool Exists(const std::filesystem::path& path) {
+  std::error_code ec;
+  const bool exists = std::filesystem::exists(path, ec);
+  if (ec) {
+    utils::file_utils::ThrowFileError("check", path.string(), ec);
+  }
+  return exists;
 }
 
 void RequireDirectory(const std::filesystem::path& path) {
   std::error_code ec;
   if (!std::filesystem::is_directory(path, ec)) {
-    Fail("the backup names a missing directory", path,
-         ec ? ec.message() : "it does not exist");
+    if (ec) {
+      utils::file_utils::ThrowFileError("check", path.string(), ec);
+    }
+    Fail("the backup names a missing directory", path, "it does not exist");
   }
 }
 
@@ -74,14 +87,14 @@ void Remove(const std::filesystem::path& path) {
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
-    Fail("could not remove", path, ec.message());
+    utils::file_utils::ThrowFileError("remove", path.string(), ec);
   }
 }
 
 void TruncateFile(const std::filesystem::path& path, uint64_t size) {
   const int fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
   if (fd < 0) {
-    Fail("could not open", path, std::strerror(errno));
+    utils::file_utils::ThrowFileError("open", path.string(), errno);
   }
   struct stat st{};
   bool ok = ::fstat(fd, &st) == 0;
@@ -96,7 +109,7 @@ void TruncateFile(const std::filesystem::path& path, uint64_t size) {
   error = ok ? 0 : errno;
   ::close(fd);
   if (!ok) {
-    Fail("could not truncate", path, std::strerror(error));
+    utils::file_utils::ThrowFileError("truncate", path.string(), error);
   }
 }
 
@@ -107,75 +120,33 @@ void ForEachFile(const std::filesystem::path& directory, Visit&& visit) {
     visit(entry.path(), entry.path().filename().string());
   }
   if (ec) {
-    Fail("could not list", directory, ec.message());
+    utils::file_utils::ThrowFileError("list", directory.string(), ec);
   }
-}
-
-void PruneSearchWal(const std::filesystem::path& directory,
-                    const DatabaseCut& database) {
-  ForEachFile(
-    directory, [&](const std::filesystem::path& path, std::string_view name) {
-      if (!absl::ConsumePrefix(&name, kSearchWalPrefix)) {
-        return;
-      }
-      uint64_t first_tick = 0;
-      if (!database.search_tick || !absl::SimpleHexAtoi(name, &first_tick) ||
-          first_tick > *database.search_tick) {
-        Remove(path);
-      }
-    });
 }
 
 void PruneStore(const std::filesystem::path& directory, uint64_t generation) {
   ForEachFile(directory,
               [&](const std::filesystem::path& path, std::string_view name) {
-                if (absl::StartsWith(name, kPendingMetaPrefix)) {
-                  Remove(path);
-                  return;
-                }
-                uint64_t meta_generation = 0;
-                if (absl::ConsumePrefix(&name, kMetaPrefix) &&
-                    absl::SimpleAtoi(name, &meta_generation) &&
-                    meta_generation > generation) {
+                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix) ||
+                    irs::index_meta::ParseGeneration(name) > generation) {
                   Remove(path);
                 }
               });
 }
 
-bool IsOidName(std::string_view name) {
-  return !name.empty() && absl::c_all_of(name, absl::ascii_isdigit);
-}
-
 void RemoveStaleLocks(const std::filesystem::path& engine_dir) {
-  ForEachFile(engine_dir, [&](const std::filesystem::path& database,
-                              std::string_view database_name) {
-    if (!IsOidName(database_name)) {
-      return;
+  for (const auto& [_, database] : catalog::OidDirectories(engine_dir)) {
+    for (const auto& [_, store] : catalog::OidDirectories(database)) {
+      Remove(store / irs::IndexWriter::kWriteLockName);
     }
-    ForEachFile(database, [&](const std::filesystem::path& store,
-                              std::string_view store_name) {
-      if (IsOidName(store_name)) {
-        Remove(store / kWriteLockFile);
-      }
-    });
-  });
-}
-
-std::string ReadFile(const std::filesystem::path& path) {
-  std::ifstream in{path, std::ios::binary};
-  if (!in) {
-    Fail("could not read", path, std::strerror(errno));
   }
-  std::ostringstream text;
-  text << in.rdbuf();
-  return std::move(text).str();
 }
 
 void Restore(const catalog::DataDirectory& layout,
              const std::filesystem::path& label_path) {
   const std::filesystem::path data_dir{layout.directory};
   const auto engine_dir = layout.EngineDir();
-  auto label = ParseBackupLabel(ReadFile(label_path));
+  auto label = ParseBackupLabel(utils::file_utils::Slurp(label_path.string()));
   if (!label.ok()) {
     Fail("cannot use", label_path, label.status().message());
   }
@@ -194,33 +165,33 @@ void Restore(const catalog::DataDirectory& layout,
     RequireDirectory(layout.DatabaseDir(database.oid));
   }
   for (const auto& store : cut.stores) {
-    RequireDirectory(layout.DatabaseDir(store.database_oid) /
-                     absl::StrCat(store.oid));
+    RequireDirectory(layout.StorageDir(store.database_oid, store.oid));
   }
 
   const std::filesystem::path catalog_log{layout.CatalogLogFile()};
   const auto link = data_dir / cut.catalog_link;
   std::error_code ec;
-  if (std::filesystem::exists(link, ec)) {
+  if (Exists(link)) {
     std::filesystem::rename(link, catalog_log, ec);
     if (ec) {
-      Fail("could not restore the catalog log from", link, ec.message());
+      utils::file_utils::ThrowFileError("restore the catalog log from",
+                                        link.string(), ec);
     }
   }
   TruncateFile(catalog_log, cut.catalog_log_size);
 
   for (const auto& database : cut.databases) {
-    const std::filesystem::path wal{
-      absl::StrCat(layout.DatabaseFile(database.oid), ".wal")};
+    const auto wal = absl::StrCat(layout.DatabaseFile(database.oid), ".wal");
     if (database.wal_size == 0) {
       Remove(wal);
     } else {
       TruncateFile(wal, database.wal_size);
     }
-    PruneSearchWal(layout.DatabaseDir(database.oid), database);
+    Remove(absl::StrCat(wal, ".checkpoint"));
+    Remove(absl::StrCat(wal, ".recovery"));
   }
   for (const auto& store : cut.stores) {
-    PruneStore(layout.DatabaseDir(store.database_oid) / absl::StrCat(store.oid),
+    PruneStore(layout.StorageDir(store.database_oid, store.oid),
                store.generation);
   }
 
@@ -228,6 +199,8 @@ void Restore(const catalog::DataDirectory& layout,
   Remove(data_dir / "recovery.signal");
   Remove(data_dir / "standby.signal");
   Remove(engine_dir / kBackupDir);
+  utils::file_utils::Spit((engine_dir / kSubscriptionHoldFile).string(), "",
+                          true);
   WritePgControl(data_dir, {.system_identifier = control->system_identifier,
                             .checkpoint = label->start_lsn});
 
@@ -235,13 +208,12 @@ void Restore(const catalog::DataDirectory& layout,
     catalog::SyncDirectory(layout.DatabaseDir(database.oid));
   }
   for (const auto& store : cut.stores) {
-    catalog::SyncDirectory(layout.DatabaseDir(store.database_oid) /
-                           absl::StrCat(store.oid));
+    catalog::SyncDirectory(layout.StorageDir(store.database_oid, store.oid));
   }
   catalog::SyncDirectory(engine_dir);
   std::filesystem::rename(label_path, data_dir / kRetiredLabelFile, ec);
   if (ec) {
-    Fail("could not retire", label_path, ec.message());
+    utils::file_utils::ThrowFileError("retire", label_path.string(), ec);
   }
   catalog::SyncDirectory(data_dir);
   SDB_INFO(STARTUP, "restored the backup described by '", label_path.string(),
@@ -254,8 +226,7 @@ void PrepareDataDirectory(const catalog::DataDirectory& layout) {
   const std::filesystem::path data_dir{layout.directory};
   const auto label_path = data_dir / kBackupLabelFile;
   try {
-    std::error_code ec;
-    if (std::filesystem::exists(label_path, ec)) {
+    if (Exists(label_path)) {
       Restore(layout, label_path);
     } else {
       Remove(layout.EngineDir() / kBackupDir);
@@ -266,6 +237,14 @@ void PrepareDataDirectory(const catalog::DataDirectory& layout) {
     SDB_FATAL(STARTUP, "cannot prepare data directory '", data_dir.string(),
               "': ", duckdb::ErrorData{e}.RawMessage());
   }
+}
+
+bool SubscriptionsHeld() { return Exists(SubscriptionHoldPath()); }
+
+void ReleaseSubscriptionHold() {
+  const auto path = SubscriptionHoldPath();
+  Remove(path);
+  catalog::SyncDirectory(path.parent_path());
 }
 
 }  // namespace sdb::backup

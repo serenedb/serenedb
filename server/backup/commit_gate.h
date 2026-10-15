@@ -34,6 +34,7 @@ class CommitGate final {
   class [[nodiscard]] Pass {
    public:
     Pass() = default;
+    explicit Pass(CommitGate* gate) noexcept : _gate{gate} {}
     Pass(Pass&& other) noexcept : _gate{std::exchange(other._gate, nullptr)} {}
     Pass& operator=(Pass&& other) noexcept {
       if (this != &other) {
@@ -48,9 +49,6 @@ class CommitGate final {
     void Release() noexcept;
 
    private:
-    friend class CommitGate;
-    explicit Pass(CommitGate* gate) noexcept : _gate{gate} {}
-
     CommitGate* _gate = nullptr;
   };
 
@@ -59,10 +57,9 @@ class CommitGate final {
   Pass Enter();
   bool Close(absl::FunctionRef<bool()> cancelled) noexcept;
   void Open() noexcept;
-
- private:
   void Leave() noexcept;
 
+ private:
   absl::Mutex _mutex;
   absl::CondVar _cv;
   std::atomic<bool> _closed{false};

@@ -84,6 +84,7 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -1624,6 +1625,15 @@ class Enforcer {
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
   Enforcer{context, connection, binder, plan}.Run();
+}
+
+void RequireSuperuser(duckdb::ClientContext& context,
+                      std::string_view function) {
+  auto& conn = connector::GetSereneDBContext(context);
+  if (!ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for function ", function));
+  }
 }
 
 }  // namespace sdb::auth

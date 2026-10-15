@@ -48,6 +48,7 @@
 
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcode_for_file_access.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string_utils.hpp>
 
@@ -104,28 +105,15 @@ std::string BuildFilename(std::string_view path, std::string_view name) {
   return result;
 }
 
-static void ThrowFileReadError(std::string_view filename) {
-  auto message =
-    absl::StrCat("read failed for file '", filename, "': ", strerror(errno));
-  SDB_TRACE(GENERAL, message);
-
-  THROW_SQL_ERROR(ERR_MSG(std::move(message)));
+void ThrowFileError(std::string_view action, std::string_view path, int error) {
+  THROW_SQL_ERROR(
+    ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
+    ERR_MSG("could not ", action, " \"", path, "\": ", std::strerror(error)));
 }
 
-static void ThrowFileWriteError(std::string_view filename) {
-  auto message =
-    absl::StrCat("write failed for file '", filename, "': ", strerror(errno));
-  SDB_TRACE(GENERAL, "", message);
-
-  THROW_SQL_ERROR(ERR_MSG(message));
-}
-
-static void ThrowFileCreateError(std::string_view filename) {
-  auto message =
-    absl::StrCat("failed to create file '", filename, "': ", strerror(errno));
-  SDB_TRACE(GENERAL, "", message);
-
-  THROW_SQL_ERROR(ERR_MSG(message));
+void ThrowFileError(std::string_view action, std::string_view path,
+                    const std::error_code& ec) {
+  ThrowFileError(action, path, ec.value());
 }
 
 static void FillString(int fd, std::string_view filename, size_t filesize,
@@ -148,7 +136,7 @@ static void FillString(int fd, std::string_view filename, size_t filesize,
     }
 
     if (n < 0) {
-      ThrowFileReadError(filename);
+      ThrowFileError("read file", filename, errno);
     }
 
     pos += static_cast<size_t>(n);
@@ -161,12 +149,12 @@ void Slurp(const char* filename, std::string& result) {
   std::error_code ec;
   uintmax_t filesize = std::filesystem::file_size(filename, ec);
   if (ec) {
-    ThrowFileReadError(filename);
+    ThrowFileError("read file", filename, ec);
   }
 
   int fd = SERENEDB_OPEN(filename, O_RDONLY | SERENEDB_O_CLOEXEC);
   if (fd == -1) {
-    ThrowFileReadError(filename);
+    ThrowFileError("read file", filename, errno);
   }
 
   absl::Cleanup sg = [&]() noexcept { SERENEDB_CLOSE(fd); };
@@ -189,7 +177,7 @@ void Spit(const char* filename, std::string_view s, bool sync) {
                     S_IRUSR | S_IWUSR | S_IRGRP);
 
   if (fd == -1) {
-    ThrowFileCreateError(filename);
+    ThrowFileError("create file", filename, errno);
   }
 
   absl::Cleanup sg = [&]() noexcept { SERENEDB_CLOSE(fd); };
@@ -198,7 +186,7 @@ void Spit(const char* filename, std::string_view s, bool sync) {
     auto n = SERENEDB_WRITE(fd, ptr, static_cast<size_t>(len));
 
     if (n < 0) {
-      ThrowFileWriteError(filename);
+      ThrowFileError("write file", filename, errno);
     }
 
     ptr += n;
@@ -206,7 +194,7 @@ void Spit(const char* filename, std::string_view s, bool sync) {
   }
 
   if (sync && fsync(fd) != 0) {
-    ThrowFileWriteError(filename);
+    ThrowFileError("write file", filename, errno);
   }
 }
 

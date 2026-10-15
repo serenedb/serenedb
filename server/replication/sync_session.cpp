@@ -47,6 +47,7 @@
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
+#include "pg/pg_lsn.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"

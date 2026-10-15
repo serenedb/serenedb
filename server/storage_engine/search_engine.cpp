@@ -131,7 +131,7 @@ bool SearchEngine::WaitForBackupEnd(absl::FunctionRef<bool()> cancelled) {
   return true;
 }
 
-template <typename Storage>
+template<typename Storage>
 void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;

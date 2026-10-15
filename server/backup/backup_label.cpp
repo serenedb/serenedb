@@ -20,34 +20,31 @@
 
 #include "backup/backup_label.h"
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/crc/crc32c.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
+#include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/strip.h>
 
-#include <algorithm>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string>
 #include <vector>
 
+#include "backup/pg_control.h"
 #include "pg/pg_lsn.h"
 
 namespace sdb::backup {
 namespace {
-
-constexpr uint32_t kTimeline = 1;
-constexpr uint64_t kWalSegmentSize = uint64_t{16} << 20;
 
 constexpr std::string_view kStartLocation = "START WAL LOCATION: ";
 constexpr std::string_view kFormatKey = "SERENEDB BACKUP FORMAT: ";
 constexpr std::string_view kSystemKey = "SERENEDB SYSTEM IDENTIFIER: ";
 constexpr std::string_view kCatalogKey = "SERENEDB CATALOG LOG: ";
 constexpr std::string_view kDatabaseKey = "SERENEDB DATABASE: ";
-constexpr std::string_view kSearchWalKey = "SERENEDB SEARCH WAL: ";
 constexpr std::string_view kStoreKey = "SERENEDB STORE: ";
 constexpr std::string_view kChecksumKey = "SERENEDB CHECKSUM: ";
 constexpr std::string_view kSereneDBPrefix = "SERENEDB ";
@@ -85,9 +82,7 @@ std::string WalFileName(uint64_t lsn) {
 std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
                              uint64_t system_identifier, absl::Time start_time,
                              const Cut& cut) {
-  std::string one_line{label};
-  std::replace(one_line.begin(), one_line.end(), '\n', ' ');
-  std::replace(one_line.begin(), one_line.end(), '\r', ' ');
+  const auto one_line = absl::StrReplaceAll(label, {{"\n", " "}, {"\r", " "}});
   const auto lsn = pg::FormatLsn(start_lsn);
   std::string out = absl::StrCat(
     kStartLocation, lsn, " (file ", WalFileName(start_lsn), ")\n",
@@ -101,10 +96,6 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     absl::StrAppend(&out, kDatabaseKey, database.oid, " ",
                     database.checkpoint_iteration, " ", database.wal_size, " ",
                     database.used_size, "\n");
-    if (database.search_tick) {
-      absl::StrAppend(&out, kSearchWalKey, database.oid, " ",
-                      *database.search_tick, "\n");
-    }
   }
   for (const auto& store : cut.stores) {
     absl::StrAppend(&out, kStoreKey, store.database_oid, "/", store.oid, " ",
@@ -131,7 +122,7 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
   bool has_format = false;
   bool has_system = false;
   bool has_catalog = false;
-  absl::flat_hash_map<duckdb::idx_t, size_t> databases;
+  irs::containers::FlatHashSet<duckdb::idx_t> databases;
   for (auto line :
        absl::StrSplit(text.substr(0, checksum_at), '\n', absl::SkipEmpty())) {
     std::string_view value;
@@ -173,22 +164,10 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
       DatabaseCut database;
       if (!ParseFields(value, database.oid, database.checkpoint_iteration,
                        database.wal_size, database.used_size) ||
-          !databases.emplace(database.oid, label.cut.databases.size()).second) {
+          !databases.insert(database.oid).second) {
         return Malformed(line);
       }
       label.cut.databases.push_back(database);
-    } else if (absl::ConsumePrefix(&value, kSearchWalKey)) {
-      duckdb::idx_t oid = 0;
-      uint64_t tick = 0;
-      if (!ParseFields(value, oid, tick)) {
-        return Malformed(line);
-      }
-      const auto database = databases.find(oid);
-      if (database == databases.end() ||
-          label.cut.databases[database->second].search_tick) {
-        return Malformed(line);
-      }
-      label.cut.databases[database->second].search_tick = tick;
     } else if (absl::ConsumePrefix(&value, kStoreKey)) {
       StoreCut store;
       const auto slash = value.find('/');

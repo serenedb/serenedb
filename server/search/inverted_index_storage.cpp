@@ -334,11 +334,6 @@ void InvertedIndexStorage::PublishSnapshot() {
             _durability.Position().offset, "'");
 }
 
-bool InvertedIndexStorage::HasPendingCheckpoint() {
-  std::lock_guard lock{_refresh_mutex};
-  return _pending_checkpoint != 0;
-}
-
 void InvertedIndexStorage::PrepareCheckpoint(uint64_t iteration) {
   _durability.PrepareCheckpoint(*_writer, iteration);
 }

@@ -85,43 +85,13 @@ MissingDatabases gMissingDatabases;
 constexpr std::string_view kEngineDir = "engine_v1";
 constexpr std::string_view kCatalogLog = "catalog.wal";
 
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory) {
-  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
-  std::error_code ec;
-  std::filesystem::directory_iterator entries{directory, ec};
-  if (ec && ec != std::errc::no_such_file_or_directory) {
-    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
-              "': ", ec.message());
-  }
-  for (const auto& entry : entries) {
-    const bool is_directory = entry.is_directory(ec);
-    if (ec) {
-      SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
-                "': ", ec.message());
-    }
-    const auto name = entry.path().filename().string();
-    duckdb::idx_t oid = 0;
-    if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
-        absl::SimpleAtoi(name, &oid)) {
-      found.emplace_back(oid, entry.path());
-    }
-  }
-  return found;
-}
-
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   for (const auto& [oid, path] : OidDirectories(directory)) {
     if (owned.contains(oid)) {
       continue;
     }
-    std::error_code ec;
-    std::filesystem::remove_all(path, ec);
-    if (ec) {
-      SDB_WARN(STARTUP, "could not remove '", path.string(),
-               "': ", ec.message());
-    }
+    RemoveTree(path);
   }
 }
 
@@ -247,8 +217,38 @@ std::string DataDirectory::CatalogLogFile() const {
   return (EngineDir() / kCatalogLog).string();
 }
 
+std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
+  const std::filesystem::path& directory) {
+  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
+  std::error_code ec;
+  std::filesystem::directory_iterator entries{directory, ec};
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
+              "': ", ec.message());
+  }
+  for (const auto& entry : entries) {
+    const bool is_directory = entry.is_directory(ec);
+    if (ec) {
+      SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
+                "': ", ec.message());
+    }
+    const auto name = entry.path().filename().string();
+    duckdb::idx_t oid = 0;
+    if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
+        absl::SimpleAtoi(name, &oid)) {
+      found.emplace_back(oid, entry.path());
+    }
+  }
+  return found;
+}
+
 std::filesystem::path DataDirectory::DatabaseDir(duckdb::idx_t oid) const {
   return EngineDir() / absl::StrCat(oid);
+}
+
+std::filesystem::path DataDirectory::StorageDir(duckdb::idx_t database,
+                                                duckdb::idx_t oid) const {
+  return DatabaseDir(database) / absl::StrCat(oid);
 }
 
 std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {

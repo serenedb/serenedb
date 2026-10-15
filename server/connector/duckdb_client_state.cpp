@@ -254,7 +254,7 @@ void SereneDBClientState::TransactionPreCommit(
       }
     }
   }
-  if (transaction.ModifiedDatabase() || _connection_ctx->HasSearchWrites()) {
+  if (transaction.ModifiedDatabase() || !written.empty()) {
     _connection_ctx->EnterCommitGate();
   }
   tls_committing_ctx = _connection_ctx.get();

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <string_view>
+
 namespace duckdb {
 
 class Binder;
@@ -36,5 +38,8 @@ namespace sdb::auth {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
+
+void RequireSuperuser(duckdb::ClientContext& context,
+                      std::string_view function);
 
 }  // namespace sdb::auth

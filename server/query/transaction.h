@@ -80,9 +80,6 @@ class Transaction : public Config {
 
   void EnterCommitGate();
   void LeaveCommitGate() noexcept { _commit_pass.Release(); }
-  bool HasSearchWrites() const noexcept {
-    return _search_txn && !_search_txn->Empty();
-  }
 
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));

@@ -31,7 +31,7 @@
 #include <string_view>
 #include <utility>
 
-#include "auth/role_closure.h"
+#include "auth/enforce.h"
 #include "backup/backup_label.h"
 #include "backup/backup_session.h"
 #include "connector/duckdb_client_state.h"
@@ -41,21 +41,12 @@
 namespace sdb::connector {
 namespace {
 
-ConnectionContext& RequireSuperuser(duckdb::ClientContext& context,
-                                    std::string_view function) {
-  auto& conn = GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for function ", function));
-  }
-  return conn;
-}
-
 void PgBackupStartFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auto& conn = RequireSuperuser(context, "pg_backup_start");
+  auth::RequireSuperuser(context, "pg_backup_start");
+  auto& conn = GetSereneDBContext(context);
   if (!conn.GetSendBuffer()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("pg_backup_start requires a PG wire connection"));
@@ -67,10 +58,15 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto& text = label.GetValue();
-    out.WriteValue(static_cast<int64_t>(backup::BackupSession::Instance().Begin(
+    const auto start = backup::BackupSession::Instance().Begin(
       {&conn, conn.GetBackendPid()},
       std::string_view{text.GetData(), text.GetSize()},
-      [&] { return context.IsInterrupted(); })));
+      [&] { return context.IsInterrupted(); });
+    if (!start) {
+      context.InterruptCheck();
+    }
+    SDB_ASSERT(start);
+    out.WriteValue(static_cast<int64_t>(*start));
   }
 }
 
@@ -104,7 +100,9 @@ void WriteFinishedBackups(duckdb::Vector& lsn, duckdb::Vector& labelfile,
 void PgBackupStopFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  auto& conn = RequireSuperuser(state.GetContext(), "pg_backup_stop");
+  auto& context = state.GetContext();
+  auth::RequireSuperuser(context, "pg_backup_stop");
+  auto& conn = GetSereneDBContext(context);
   auto& entries = duckdb::StructVector::GetEntries(result);
   WriteFinishedBackups(entries[0], entries[1], entries[2], args.size(), conn);
 }
@@ -113,7 +111,7 @@ duckdb::unique_ptr<duckdb::FunctionData> PgBackupStopBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  RequireSuperuser(context, "pg_backup_stop");
+  auth::RequireSuperuser(context, "pg_backup_stop");
   names.emplace_back("lsn");
   return_types.emplace_back(pg::PG_LSN());
   names.emplace_back("labelfile");

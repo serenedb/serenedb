@@ -31,6 +31,8 @@ namespace sdb::backup {
 
 inline constexpr std::string_view kPgControlFile = "global/pg_control";
 inline constexpr std::string_view kPgVersionFile = "PG_VERSION";
+inline constexpr uint32_t kTimeline = 1;
+inline constexpr uint32_t kWalSegmentSize = uint32_t{16} << 20;
 
 struct ControlState {
   uint64_t system_identifier = 0;

@@ -47,8 +47,8 @@ inline size_t RenderLsn(char* dst, uint64_t lsn) noexcept {
 
 inline std::optional<uint64_t> ParseLsn(std::string_view text) noexcept {
   const auto slash = text.find('/');
-  if (slash == std::string_view::npos || slash == 0 || slash > 8 ||
-      text.size() - slash - 1 == 0 || text.size() - slash - 1 > 8) {
+  if (slash == std::string_view::npos || slash == 0 ||
+      slash + 1 == text.size() || slash > 8 || text.size() - slash - 1 > 8) {
     return std::nullopt;
   }
   uint32_t high = 0;

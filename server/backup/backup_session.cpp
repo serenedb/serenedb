@@ -51,9 +51,9 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_storage_extension.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_db_wal.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
+#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
@@ -95,19 +95,7 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
   }
 }
 
-[[noreturn]] void ThrowCancelled() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
-                  ERR_MSG("canceled while starting a backup"));
-}
-
-void ThrowIoError(std::string_view what, const std::filesystem::path& path,
-                  const std::error_code& ec) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_IO_ERROR),
-    ERR_MSG("could not ", what, " \"", path.string(), "\": ", ec.message()));
-}
-
-Cut RecordCut(
+std::optional<Cut> RecordCut(
   const std::filesystem::path& backup_dir,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
   std::span<duckdb::SingleFileBlockManager* const> block_managers,
@@ -115,7 +103,7 @@ Cut RecordCut(
   Cut cut;
   auto& gate = CommitGate::Instance();
   if (!gate.Close(cancelled)) {
-    ThrowCancelled();
+    return std::nullopt;
   }
   absl::Cleanup open = [&gate] { gate.Open(); };
   cut.catalog_link = backup_dir / kCatalogLink;
@@ -133,12 +121,6 @@ Cut RecordCut(
       duckdb::SingleFileBlockManager::BLOCK_START +
       block_manager.TotalBlocks() * block_manager.GetBlockAllocSize();
   }
-  for (size_t i = 0; i < pins.size(); ++i) {
-    auto& db_catalog = pins[i]->GetCatalog().Cast<catalog::SereneDBCatalog>();
-    if (auto* wal = db_catalog.Directory()->TryWal()) {
-      cut.databases[i].search_tick = wal->SealAndCut();
-    }
-  }
   for (const auto& db : pins) {
     CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,
                   cut.stores);
@@ -155,15 +137,6 @@ void Resume(
   }
 }
 
-void RemoveBackupDir(const std::filesystem::path& backup_dir) noexcept {
-  std::error_code ec;
-  std::filesystem::remove_all(backup_dir, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", backup_dir.string(),
-             "': ", ec.message());
-  }
-}
-
 }  // namespace
 
 BackupSession& BackupSession::Instance() {
@@ -171,8 +144,9 @@ BackupSession& BackupSession::Instance() {
   return *gSession;
 }
 
-uint64_t BackupSession::Begin(BackupOwner owner, std::string_view label,
-                              absl::FunctionRef<bool()> cancelled) {
+std::optional<uint64_t> BackupSession::Begin(
+  BackupOwner owner, std::string_view label,
+  absl::FunctionRef<bool()> cancelled) {
   absl::MutexLock lock{&_mutex};
   if (_active && _owner.session == owner.session) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -226,12 +200,10 @@ uint64_t BackupSession::Begin(BackupOwner owner, std::string_view label,
   std::error_code ec;
   std::filesystem::remove_all(backup_dir, ec);
   if (ec) {
-    ThrowIoError("remove directory", backup_dir, ec);
+    utils::file_utils::ThrowFileError("remove directory", backup_dir.string(),
+                                      ec);
   }
-  if (!std::filesystem::create_directory(backup_dir, ec)) {
-    ThrowIoError("create directory", backup_dir, ec);
-  }
-  catalog::SyncDirectory(backup_dir.parent_path());
+  catalog::CreateDirectory(backup_dir);
 
   for (auto* block_manager : block_managers) {
     block_manager->SetDeferBlockReuse(true);
@@ -239,17 +211,20 @@ uint64_t BackupSession::Begin(BackupOwner owner, std::string_view label,
   catalog::DeferRemovals();
   absl::Cleanup undo = [&]() noexcept {
     Resume(block_managers);
-    RemoveBackupDir(backup_dir);
+    catalog::RemoveTree(backup_dir);
   };
   if (!search::GetSearchEngine().BeginBackup(cancelled)) {
-    ThrowCancelled();
+    return std::nullopt;
   }
   auto cut = RecordCut(backup_dir, pins, block_managers, cancelled);
+  if (!cut) {
+    return std::nullopt;
+  }
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
+  cut->catalog_link = cut->catalog_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
-    label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
+    label, start_lsn, positions.SystemIdentifier(), absl::Now(), *cut);
   std::move(undo).Cancel();
 
   // Noexcept committing of backup start
@@ -297,7 +272,7 @@ void BackupSession::Stop() noexcept {
   _block_managers.clear();
   _checkpoint_keys.clear();
   _pins.clear();
-  RemoveBackupDir(_backup_dir);
+  catalog::RemoveTree(_backup_dir);
   _backup_dir.clear();
   _owner = {};
   _label_file.clear();

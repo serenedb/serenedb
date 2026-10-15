@@ -41,13 +41,14 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
+#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
+#include "pg/pg_lsn.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::replication {
@@ -57,14 +58,6 @@ using duckdb::idx_t;
 
 constexpr const char* kSessionKey = "sdb_replication_origin_session";
 constexpr size_t kMaxOriginName = 512;
-
-void RequireSuperuser(duckdb::ClientContext& context, std::string_view name) {
-  auto& conn = connector::GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for function ", name));
-  }
-}
 
 std::string_view View(const duckdb::string_t& text) {
   return {text.GetData(), text.GetSize()};
@@ -253,7 +246,7 @@ void ValidateNewName(std::string_view name) {
 void CreateOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_create");
+  auth::RequireSuperuser(context, "pg_replication_origin_create");
   auto names = args.data[0].Values<duckdb::string_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (auto value : names) {
@@ -282,7 +275,7 @@ void CreateOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void DropOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                 duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_drop");
+  auth::RequireSuperuser(context, "pg_replication_origin_drop");
   for (auto value : args.data[0].Values<duckdb::string_t>()) {
     if (!value.IsValid()) {
       continue;
@@ -316,7 +309,7 @@ void DropOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void OriginOid(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_oid");
+  auth::RequireSuperuser(context, "pg_replication_origin_oid");
   auto names = args.data[0].Values<duckdb::string_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (auto value : names) {
@@ -343,7 +336,7 @@ void WriteLsn(duckdb::VectorWriter<duckdb::string_t>& writer, uint64_t lsn) {
 void OriginProgress(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                     duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_progress");
+  auth::RequireSuperuser(context, "pg_replication_origin_progress");
   auto names = args.data[0].Values<duckdb::string_t>();
   auto writer =
     duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
@@ -360,7 +353,7 @@ void OriginProgress(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void AdvanceOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_advance");
+  auth::RequireSuperuser(context, "pg_replication_origin_advance");
   auto names = args.data[0].Values<duckdb::string_t>();
   auto lsns = args.data[1].Values<duckdb::string_t>();
   for (idx_t i = 0; i < args.size(); ++i) {
@@ -410,7 +403,7 @@ void SetupSession(duckdb::ClientContext& context, std::string_view name,
 void SessionSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_session_setup");
+  auth::RequireSuperuser(context, "pg_replication_origin_session_setup");
   auto names = args.data[0].Values<duckdb::string_t>();
   for (idx_t i = 0; i < args.size(); ++i) {
     if (!names[i].IsValid()) {
@@ -443,7 +436,7 @@ void ForgetXactLsn(duckdb::ClientContext& context,
 void SessionReset(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_session_reset");
+  auth::RequireSuperuser(context, "pg_replication_origin_session_reset");
   ForgetXactLsn(context, RequireSession(context));
   context.registered_state->Remove(kSessionKey);
   ReturnVoid(result);
@@ -452,7 +445,7 @@ void SessionReset(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void SessionIsSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                     duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_session_is_setup");
+  auth::RequireSuperuser(context, "pg_replication_origin_session_is_setup");
   const bool is_setup = Session(context) != nullptr;
   auto writer = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (idx_t i = 0; i < args.size(); ++i) {
@@ -463,7 +456,7 @@ void SessionIsSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void SessionProgress(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_session_progress");
+  auth::RequireSuperuser(context, "pg_replication_origin_session_progress");
   const auto& session = RequireSession(context);
   const auto origin = FindOrigin(context, session.name);
   auto writer =
@@ -476,7 +469,7 @@ void SessionProgress(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void XactSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_xact_setup");
+  auth::RequireSuperuser(context, "pg_replication_origin_xact_setup");
   const auto& session = RequireSession(context);
   auto lsns = args.data[0].Values<duckdb::string_t>();
   for (idx_t i = 0; i < args.size(); ++i) {
@@ -495,7 +488,7 @@ void XactSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void XactReset(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                duckdb::Vector& result) {
   auto& context = state.GetContext();
-  RequireSuperuser(context, "pg_replication_origin_xact_reset");
+  auth::RequireSuperuser(context, "pg_replication_origin_xact_reset");
   if (auto session = Session(context)) {
     ForgetXactLsn(context, *session);
   }
@@ -505,7 +498,8 @@ void XactReset(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void ResetSubscriptionStats(duckdb::DataChunk& args,
                             duckdb::ExpressionState& state,
                             duckdb::Vector& result) {
-  RequireSuperuser(state.GetContext(), "pg_stat_reset_subscription_stats");
+  auth::RequireSuperuser(state.GetContext(),
+                         "pg_stat_reset_subscription_stats");
   auto ids = args.data[0].Values<int64_t>();
   for (idx_t i = 0; i < args.size(); ++i) {
     std::optional<idx_t> subscription;

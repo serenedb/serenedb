@@ -54,6 +54,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -227,9 +228,8 @@ duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
     }
   }
   if (ec) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not snapshot the catalog log as \"",
-                            link.string(), "\": ", ec.message()));
+    utils::file_utils::ThrowFileError("snapshot the catalog log as",
+                                      link.string(), ec);
   }
   SyncDirectory(link.parent_path());
   return size;

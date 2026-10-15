@@ -39,6 +39,7 @@
 #include <system_error>
 
 #include "catalog/database_directory.h"
+#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
@@ -48,9 +49,7 @@ constexpr uint32_t kCatalogVersion = 202506291;
 constexpr size_t kPgControlFileSize = 8192;
 constexpr int32_t kDbInProduction = 6;
 constexpr int32_t kWalLevelReplica = 1;
-constexpr uint32_t kTimeline = 1;
 constexpr uint32_t kBlockSize = 8192;
-constexpr uint32_t kWalSegmentSize = uint32_t{16} << 20;
 
 struct PgCheckPoint {
   uint64_t redo;
@@ -121,13 +120,6 @@ uint32_t ControlCrc(const PgControlData& data) {
     reinterpret_cast<const char*>(&data), offsetof(PgControlData, crc)}));
 }
 
-[[noreturn]] void ThrowIo(std::string_view what,
-                          const std::filesystem::path& path, int error) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                  ERR_MSG("could not ", what, " \"", path.string(),
-                          "\": ", std::strerror(error)));
-}
-
 PgControlData MakeControl(const ControlState& state) {
   PgControlData data{};
   const auto now = absl::ToUnixSeconds(absl::Now());
@@ -188,14 +180,14 @@ std::optional<ControlState> ReadPgControl(
     if (errno == ENOENT) {
       return std::nullopt;
     }
-    ThrowIo("open", path, errno);
+    utils::file_utils::ThrowFileError("open", path.string(), errno);
   }
   PgControlData data{};
   const auto size = ::read(fd, &data, sizeof(data));
   const int error = errno;
   ::close(fd);
   if (size < 0) {
-    ThrowIo("read", path, error);
+    utils::file_utils::ThrowFileError("read", path.string(), error);
   }
   if (static_cast<size_t>(size) < sizeof(data) ||
       data.pg_control_version != kPgControlVersion ||
@@ -217,7 +209,7 @@ void WritePgControl(const std::filesystem::path& data_dir,
     catalog::SyncDirectory(dir.parent_path());
   }
   if (ec) {
-    ThrowIo("create directory", dir, ec.value());
+    utils::file_utils::ThrowFileError("create directory", dir.string(), ec);
   }
   std::string buffer(kPgControlFileSize, '\0');
   const auto data = MakeControl(state);
@@ -227,7 +219,7 @@ void WritePgControl(const std::filesystem::path& data_dir,
   const int fd =
     ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (fd < 0) {
-    ThrowIo("create", temp, errno);
+    utils::file_utils::ThrowFileError("create", temp.string(), errno);
   }
   const bool written = ::write(fd, buffer.data(), buffer.size()) ==
                          static_cast<ssize_t>(buffer.size()) &&
@@ -235,10 +227,10 @@ void WritePgControl(const std::filesystem::path& data_dir,
   const int error = errno;
   ::close(fd);
   if (!written) {
-    ThrowIo("write", temp, error);
+    utils::file_utils::ThrowFileError("write", temp.string(), error);
   }
   if (::rename(temp.c_str(), path.c_str()) != 0) {
-    ThrowIo("rename", temp, errno);
+    utils::file_utils::ThrowFileError("rename", temp.string(), errno);
   }
   catalog::SyncDirectory(dir);
 }
@@ -249,20 +241,10 @@ void EnsurePgVersion(const std::filesystem::path& data_dir) {
   if (std::filesystem::exists(path, ec)) {
     return;
   }
-  const int fd =
-    ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-  if (fd < 0) {
-    ThrowIo("create", path, errno);
+  if (ec) {
+    utils::file_utils::ThrowFileError("check", path.string(), ec);
   }
-  constexpr std::string_view kVersion = "18\n";
-  const bool written = ::write(fd, kVersion.data(), kVersion.size()) ==
-                         static_cast<ssize_t>(kVersion.size()) &&
-                       ::fsync(fd) == 0;
-  const int error = errno;
-  ::close(fd);
-  if (!written) {
-    ThrowIo("write", path, error);
-  }
+  utils::file_utils::Spit(path.string(), "18\n", true);
   catalog::SyncDirectory(data_dir);
 }
 

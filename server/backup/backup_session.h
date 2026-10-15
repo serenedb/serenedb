@@ -27,19 +27,15 @@
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/storage/single_file_block_manager.hpp>
+#include <duckdb/storage/storage_lock.hpp>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace duckdb {
-
-class AttachedDatabase;
-class SingleFileBlockManager;
-class StorageLockKey;
-
-}  // namespace duckdb
 namespace sdb::backup {
 
 inline constexpr std::string_view kBackupDir = "backup";
@@ -50,7 +46,6 @@ struct DatabaseCut {
   uint64_t checkpoint_iteration = 0;
   duckdb::idx_t wal_size = 0;
   duckdb::idx_t used_size = 0;
-  std::optional<uint64_t> search_tick;
 };
 
 struct StoreCut {
@@ -80,8 +75,8 @@ class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  uint64_t Begin(BackupOwner owner, std::string_view label,
-                 absl::FunctionRef<bool()> cancelled);
+  std::optional<uint64_t> Begin(BackupOwner owner, std::string_view label,
+                                absl::FunctionRef<bool()> cancelled);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;

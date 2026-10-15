@@ -28,6 +28,7 @@
 #include "catalog/entry/subscription.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_lsn.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::pg {

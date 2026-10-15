@@ -20,13 +20,13 @@
 
 #pragma once
 
-namespace sdb::catalog {
+#include "catalog/boot.h"
 
-struct DataDirectory;
-
-}  // namespace sdb::catalog
 namespace sdb::backup {
 
 void PrepareDataDirectory(const catalog::DataDirectory& layout);
+
+bool SubscriptionsHeld();
+void ReleaseSubscriptionHold();
 
 }  // namespace sdb::backup

@@ -28,38 +28,18 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstring>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <system_error>
 #include <utility>
 #include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
+#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
-
-void CreateDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  if (!std::filesystem::create_directory(path, ec)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("could not create directory \"", path.string(),
-              "\": ", ec ? ec.message() : std::string{"it already exists"}));
-  }
-  SyncDirectory(path.parent_path());
-}
-
-void RemoveTree(const std::filesystem::path& path) {
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
-  }
-}
 
 using Removal = absl::AnyInvocable<void()>;
 
@@ -117,9 +97,25 @@ void SyncDirectory(const std::filesystem::path& directory) {
     ::close(fd);
   }
   if (!synced) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not fsync directory \"", directory.string(),
-                            "\": ", std::strerror(error)));
+    utils::file_utils::ThrowFileError("fsync directory", directory.string(),
+                                      error);
+  }
+}
+
+void CreateDirectory(const std::filesystem::path& path) {
+  std::error_code ec;
+  if (!std::filesystem::create_directory(path, ec)) {
+    utils::file_utils::ThrowFileError("create directory", path.string(),
+                                      ec ? ec.value() : EEXIST);
+  }
+  SyncDirectory(path.parent_path());
+}
+
+void RemoveTree(const std::filesystem::path& path) noexcept {
+  std::error_code ec;
+  std::filesystem::remove_all(path, ec);
+  if (ec) {
+    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
   }
 }
 
@@ -157,9 +153,7 @@ std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
     return path;
   }
   if (ec && ec != std::errc::no_such_file_or_directory) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not open directory \"", path.string(),
-                            "\": ", ec.message()));
+    utils::file_utils::ThrowFileError("open directory", path.string(), ec);
   }
   return std::nullopt;
 }

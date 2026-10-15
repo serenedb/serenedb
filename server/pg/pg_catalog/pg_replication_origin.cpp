@@ -37,6 +37,7 @@
 #include "catalog/entry/subscription.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/pg_lsn.h"
 
 namespace sdb::pg {
 namespace {

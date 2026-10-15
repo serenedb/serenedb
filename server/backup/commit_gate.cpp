@@ -25,6 +25,7 @@
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::backup {
+
 CommitGate& CommitGate::Instance() {
   static absl::NoDestructor<CommitGate> gGate;
   return *gGate;

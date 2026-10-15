@@ -260,6 +260,8 @@ Memory held while writing to a search table is bounded by `segment_memory_max`, 
 
 Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
 
+A table with a sort key (`SORTED BY`) holds the rows of a segment unsorted and uncompressed until it sorts and writes them, so under the same `segment_memory_max` it writes smaller segments than a table without one. A larger value gives it fewer segments and less compaction work, but a parallel load then holds about `segment_memory_max` x threads in memory and does not finish sooner, because the larger staging memory costs the load about as much time as the compaction saves.
+
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB

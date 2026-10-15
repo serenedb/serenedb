@@ -805,6 +805,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_acl                         | Partial       | Tables, views, sequences and their columns, functions, types and schemas; other object classes return `NULL` |
 | pg_relation_is_updatable           | Yes           | Also `pg_column_is_updatable`. Tables are updatable, views are not |
 | pg_sequence_last_value             | Yes           |  |
+| pg_sequence_parameters             | Yes           | Also `pg_get_sequence_data`. `data_type` is always `bigint` |
 | pg_options_to_table                | Yes           |  |
 | pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
 | pg_tablespace_location             | Yes           | Always an empty string |

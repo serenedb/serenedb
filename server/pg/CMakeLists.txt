@@ -20,6 +20,7 @@ target_sources(
         catalog/functions/pg_catalog/objectaddress.cpp
         catalog/functions/pg_catalog/regproc.cpp
         catalog/functions/pg_catalog/ruleutils.cpp
+        catalog/functions/pg_catalog/sequence.cpp
         catalog/functions/pg_catalog/subscription.cpp
         catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
         catalog/table_functions/pg_catalog/pg_show_all_settings.cpp

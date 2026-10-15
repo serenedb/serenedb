@@ -474,6 +474,16 @@ SELECT word, catcode, catdesc FROM pg_get_keywords();
 statement ok
 SELECT pg_input_is_valid('42', 'integer'), pg_input_error_info('x', 'integer');
 
+# sysinfo: pg_sequence_parameters
+statement ok
+CREATE SEQUENCE sysinfo_seq;
+
+statement ok
+SELECT * FROM pg_sequence_parameters('sysinfo_seq'::regclass), pg_get_sequence_data('sysinfo_seq');
+
+statement ok
+DROP SEQUENCE sysinfo_seq;
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

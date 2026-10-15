@@ -127,6 +127,7 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader);
 void RegisterFormatTypeFunctions(duckdb::ExtensionLoader& loader);
 void RegisterRegprocFunctions(duckdb::ExtensionLoader& loader);
 void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader);
+void RegisterSequenceFunctions(duckdb::ExtensionLoader& loader);
 void RegisterMiscFunctions(duckdb::ExtensionLoader& loader);
 void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader);
 void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader);

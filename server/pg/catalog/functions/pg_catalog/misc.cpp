@@ -21,12 +21,10 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 
 #include <cmath>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
@@ -287,70 +285,6 @@ void PgColumnIsUpdatableFunction(duckdb::DataChunk& args,
     args, result, [&](int64_t oid, int16_t attnum, bool) {
       return attnum > 0 && UpdatableEvents(session, oid) == kAllUpdateEvents;
     });
-}
-
-void PgSequenceLastValueFunction(duckdb::DataChunk& args,
-                                 duckdb::ExpressionState& state,
-                                 duckdb::Vector& result) {
-  const auto& session = SessionOf(state);
-  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-    args.data[0], result, args.size(),
-    [&](int64_t oid) -> duckdb::optional<int64_t> {
-      auto entry = EntryByOid(session, oid);
-      if (!entry) {
-        return duckdb::nullopt;
-      }
-      if (entry->type != CatalogType::SEQUENCE_ENTRY) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                        ERR_MSG("\"", entry->name.GetIdentifierName(),
-                                "\" is not a sequence"));
-      }
-      const auto data = entry->Cast<duckdb::SequenceCatalogEntry>().GetData();
-      if (!data.last_value) {
-        return duckdb::nullopt;
-      }
-      return *data.last_value;
-    });
-}
-
-struct LastValue {
-  duckdb::idx_t sequence;
-  int64_t value;
-};
-
-void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                     duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto& sequences = duckdb::SequenceSession::Get(context);
-  std::optional<LastValue> last;
-  {
-    absl::MutexLock lock{&sequences.lock};
-    if (sequences.last_used.IsValid()) {
-      const auto it = sequences.values.find(sequences.last_used.GetIndex());
-      if (it != sequences.values.end() && it->second.last) {
-        last = LastValue{.sequence = it->first, .value = *it->second.last};
-      }
-    }
-  }
-  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
-  if (last) {
-    entry = EntryByOid(SessionOf(state), last->sequence);
-  }
-  if (!entry) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("lastval is not yet defined in this session"));
-  }
-  if (const auto* connection = connector::GetSereneDBContextPtr(context);
-      connection &&
-      !auth::ClosureFor(&context, connection->GetRoleId())
-         ->CanAny(duckdb::CatalogType::SEQUENCE_ENTRY, entry->permissions,
-                  duckdb::AclMode::Select | duckdb::AclMode::Usage)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for sequence ",
-                            entry->name.GetIdentifierName()));
-  }
-  result.Reference(duckdb::Value::BIGINT(last->value),
-                   duckdb::count_t(args.size()));
 }
 
 void ClockTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -897,11 +831,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     InitSession,
     {duckdb::ScalarFunction{
       {regclass, int2, boolean}, boolean, PgColumnIsUpdatableFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_sequence_last_value", VOLATILE, InitSession,
-    {duckdb::ScalarFunction{{regclass}, int8, PgSequenceLastValueFunction}});
-  RegisterScalar(loader, pg_catalog, "lastval", VOLATILE, InitSession,
-                 {duckdb::ScalarFunction{{}, int8, LastvalFunction}});
   RegisterScalar(
     loader, pg_catalog, "clock_timestamp", VOLATILE, nullptr,
     {duckdb::ScalarFunction{

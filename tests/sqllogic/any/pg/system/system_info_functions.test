@@ -163,6 +163,152 @@ null_text	null_type
 NULL	NULL
 
 
+# pg_sequence_parameters and pg_get_sequence_data
+
+query
+SELECT * FROM pg_sequence_parameters('sif_seq'::regclass);
+----
+start_value	minimum_value	maximum_value	increment	cycle_option	cache_size	data_type
+5	1	100	2	t	3	20
+
+
+query
+SELECT start_value, minimum_value, maximum_value, increment, cycle_option, cache_size
+FROM pg_sequence_parameters('sif_seq_plain'::regclass);
+----
+start_value	minimum_value	maximum_value	increment	cycle_option	cache_size
+1	1	9223372036854775807	1	f	1
+
+
+query
+SELECT (pg_sequence_parameters(NULL)).start_value AS null_input;
+----
+null_input
+NULL
+
+
+statement error
+SELECT * FROM pg_sequence_parameters(0);
+----
+db error: ERROR: relation with OID 0 does not exist
+
+
+statement error
+SELECT * FROM pg_sequence_parameters('sif_plain'::regclass);
+----
+db error: ERROR: cache lookup failed for sequence <slt:ignore>
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq');
+----
+last_value	is_called
+5	f
+
+
+statement ok
+SELECT nextval('sif_seq');
+
+
+query
+SELECT last_value >= 5 AS advanced, is_called FROM pg_get_sequence_data('sif_seq');
+----
+advanced	is_called
+t	t
+
+
+statement ok
+SELECT setval('sif_seq_plain', 42);
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+42	t
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+42
+
+
+statement ok
+SELECT setval('sif_seq_plain', 50, false);
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+50	f
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+NULL
+
+
+query
+SELECT nextval('sif_seq_plain') AS next;
+----
+next
+50
+
+
+query
+SELECT is_called FROM pg_get_sequence_data('sif_seq_plain');
+----
+is_called
+t
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_plain');
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT * FROM pg_get_sequence_data(0);
+----
+last_value	is_called
+NULL	NULL
+
+
+statement ok
+SET ROLE sif_role_${__DATABASE__};
+
+
+query
+SELECT * FROM pg_get_sequence_data('sif_seq_plain');
+----
+last_value	is_called
+NULL	NULL
+
+
+query
+SELECT pg_sequence_last_value('sif_seq_plain') AS last_value;
+----
+last_value
+NULL
+
+
+statement error
+SELECT * FROM pg_sequence_parameters('sif_seq_plain'::regclass);
+----
+db error: ERROR: permission denied for sequence sif_seq_plain
+
+
+statement ok
+RESET ROLE;
+
+
 # Cleanup
 
 statement ok

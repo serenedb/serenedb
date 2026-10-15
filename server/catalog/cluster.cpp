@@ -204,7 +204,7 @@ void ClusterCatalog::CompactCatalogLog() {
   }
   _live_bytes.store(size, std::memory_order_relaxed);
   try {
-    SyncDirectory(std::filesystem::path{path}.parent_path());
+    utils::file_utils::SyncDirectory(std::filesystem::path{path}.parent_path());
   } catch (const std::exception& e) {
     SDB_FATAL(GENERAL,
               "catalog log rewrite: ", duckdb::ErrorData{e}.RawMessage());
@@ -231,7 +231,7 @@ duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
     utils::file_utils::ThrowFileError("snapshot the catalog log as",
                                       link.string(), ec);
   }
-  SyncDirectory(link.parent_path());
+  utils::file_utils::SyncDirectory(link.parent_path());
   return size;
 }
 

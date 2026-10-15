@@ -205,17 +205,18 @@ void Restore(const catalog::DataDirectory& layout,
                             .checkpoint = label->start_lsn});
 
   for (const auto& database : cut.databases) {
-    catalog::SyncDirectory(layout.DatabaseDir(database.oid));
+    utils::file_utils::SyncDirectory(layout.DatabaseDir(database.oid));
   }
   for (const auto& store : cut.stores) {
-    catalog::SyncDirectory(layout.StorageDir(store.database_oid, store.oid));
+    utils::file_utils::SyncDirectory(
+      layout.StorageDir(store.database_oid, store.oid));
   }
-  catalog::SyncDirectory(engine_dir);
+  utils::file_utils::SyncDirectory(engine_dir);
   std::filesystem::rename(label_path, data_dir / kRetiredLabelFile, ec);
   if (ec) {
     utils::file_utils::ThrowFileError("retire", label_path.string(), ec);
   }
-  catalog::SyncDirectory(data_dir);
+  utils::file_utils::SyncDirectory(data_dir);
   SDB_INFO(STARTUP, "restored the backup described by '", label_path.string(),
            "'");
 }
@@ -244,7 +245,7 @@ bool SubscriptionsHeld() { return Exists(SubscriptionHoldPath()); }
 void ReleaseSubscriptionHold() {
   const auto path = SubscriptionHoldPath();
   Remove(path);
-  catalog::SyncDirectory(path.parent_path());
+  utils::file_utils::SyncDirectory(path.parent_path());
 }
 
 }  // namespace sdb::backup

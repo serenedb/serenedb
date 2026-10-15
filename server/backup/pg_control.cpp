@@ -206,7 +206,7 @@ void WritePgControl(const std::filesystem::path& data_dir,
   const auto dir = path.parent_path();
   std::error_code ec;
   if (std::filesystem::create_directories(dir, ec)) {
-    catalog::SyncDirectory(dir.parent_path());
+    utils::file_utils::SyncDirectory(dir.parent_path());
   }
   if (ec) {
     utils::file_utils::ThrowFileError("create directory", dir.string(), ec);
@@ -214,25 +214,7 @@ void WritePgControl(const std::filesystem::path& data_dir,
   std::string buffer(kPgControlFileSize, '\0');
   const auto data = MakeControl(state);
   std::memcpy(buffer.data(), &data, sizeof(data));
-  auto temp = path;
-  temp += ".tmp";
-  const int fd =
-    ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-  if (fd < 0) {
-    utils::file_utils::ThrowFileError("create", temp.string(), errno);
-  }
-  const bool written = ::write(fd, buffer.data(), buffer.size()) ==
-                         static_cast<ssize_t>(buffer.size()) &&
-                       ::fsync(fd) == 0;
-  const int error = errno;
-  ::close(fd);
-  if (!written) {
-    utils::file_utils::ThrowFileError("write", temp.string(), error);
-  }
-  if (::rename(temp.c_str(), path.c_str()) != 0) {
-    utils::file_utils::ThrowFileError("rename", temp.string(), errno);
-  }
-  catalog::SyncDirectory(dir);
+  utils::file_utils::ReplaceFile(path, buffer);
 }
 
 void EnsurePgVersion(const std::filesystem::path& data_dir) {
@@ -245,7 +227,7 @@ void EnsurePgVersion(const std::filesystem::path& data_dir) {
     utils::file_utils::ThrowFileError("check", path.string(), ec);
   }
   utils::file_utils::Spit(path.string(), "18\n", true);
-  catalog::SyncDirectory(data_dir);
+  utils::file_utils::SyncDirectory(data_dir);
 }
 
 PositionSource& PositionSource::Instance() {

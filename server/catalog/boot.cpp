@@ -63,6 +63,7 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/wal_recovery.h"
+#include "utils/file_utils.h"
 
 ABSL_FLAG(std::string, missing_database, "refuse",
           "What boot does with a database whose data file is missing: "
@@ -317,7 +318,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
 void InitCatalog(std::string_view directory) {
   const DataDirectory layout{std::string{directory}};
   if (std::filesystem::create_directories(layout.EngineDir())) {
-    SyncDirectory(layout.EngineDir().parent_path());
+    utils::file_utils::SyncDirectory(layout.EngineDir().parent_path());
   }
   backup::PrepareDataDirectory(layout);
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();

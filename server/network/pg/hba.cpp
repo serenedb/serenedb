@@ -943,19 +943,11 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
                           parent.string(), "': ", dir_ec.message());
     }
   }
-  const std::string tmp = target.string() + ".tmp";
   try {
-    utils::file_utils::Spit(tmp, text, /*sync=*/true);
+    utils::file_utils::ReplaceFile(target, text);
   } catch (const std::exception& e) {
-    return absl::StrCat("could not write hba config file '", tmp,
-                        "': ", e.what());
-  }
-  std::error_code ec;
-  fs::rename(tmp, target, ec);
-  if (ec) {
-    fs::remove(tmp, ec);
     return absl::StrCat("could not install hba config file '", target.string(),
-                        "': ", ec.message());
+                        "': ", e.what());
   }
   return std::nullopt;
 }

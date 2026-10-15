@@ -198,4 +198,30 @@ void Spit(const char* filename, std::string_view s, bool sync) {
   }
 }
 
+void SyncDirectory(const std::filesystem::path& directory) {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  const bool synced = fd >= 0 && ::fsync(fd) == 0;
+  const int error = errno;
+  if (fd >= 0) {
+    ::close(fd);
+  }
+  if (!synced) {
+    ThrowFileError("fsync directory", directory.string(), error);
+  }
+}
+
+void ReplaceFile(const std::filesystem::path& path, std::string_view content) {
+  auto temp = path;
+  temp += ".tmp";
+  Spit(temp.string(), content, true);
+  std::error_code ec;
+  std::filesystem::rename(temp, path, ec);
+  if (ec) {
+    std::error_code ignored;
+    std::filesystem::remove(temp, ignored);
+    ThrowFileError("rename", temp.string(), ec);
+  }
+  SyncDirectory(path.parent_path());
+}
+
 }  // namespace sdb::utils::file_utils

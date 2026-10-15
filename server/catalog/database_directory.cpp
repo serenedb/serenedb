@@ -24,8 +24,6 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <iresearch/utils/assert.hpp>
@@ -89,26 +87,13 @@ void ResumeRemovals() {
   }
 }
 
-void SyncDirectory(const std::filesystem::path& directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  const int error = errno;
-  if (fd >= 0) {
-    ::close(fd);
-  }
-  if (!synced) {
-    utils::file_utils::ThrowFileError("fsync directory", directory.string(),
-                                      error);
-  }
-}
-
 void CreateDirectory(const std::filesystem::path& path) {
   std::error_code ec;
   if (!std::filesystem::create_directory(path, ec)) {
     utils::file_utils::ThrowFileError("create directory", path.string(),
                                       ec ? ec.value() : EEXIST);
   }
-  SyncDirectory(path.parent_path());
+  utils::file_utils::SyncDirectory(path.parent_path());
 }
 
 void RemoveTree(const std::filesystem::path& path) noexcept {

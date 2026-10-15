@@ -413,6 +413,33 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
   EXPECT_EQ(postings, Postings());
 }
 
+TEST_F(PipelineMergeExecutorTest, SortedMergesPartitionOnTheirScheduler) {
+  Reopen(irs::SortSpec{{{.column = kGeneratedPKId}}});
+  for (int64_t segment = 0; segment != 6; ++segment) {
+    std::vector<int64_t> rowids(3000);
+    for (size_t i = 0; i != rowids.size(); ++i) {
+      rowids[i] = static_cast<int64_t>(i) * 6 + segment;
+    }
+    Insert(rowids);
+  }
+  const auto before = Rows();
+  const auto postings = Postings();
+  duckdb::TaskScheduler own{TestDb()};
+  own.SetThreads(4, 0);
+  own.RelaunchThreads();
+  search::PipelineMergeExecutor executor{TestDb(), &own, 4};
+  const auto result = irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor));
+  own.Join();
+  ASSERT_TRUE(result);
+  EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Postings), 0);
+  _writer->RefreshCommit();
+  const auto reader = _writer->GetSnapshot();
+  ASSERT_EQ(1, reader.size());
+  EXPECT_EQ(before, Read(*reader.begin(), kGeneratedPKId));
+  EXPECT_EQ(postings, Postings());
+}
+
 TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
   const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
   Reopen({});

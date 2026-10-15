@@ -43,7 +43,8 @@ class KeyOrder {
   KeyOrder(const KeyOrder&) = delete;
   KeyOrder& operator=(const KeyOrder&) = delete;
 
-  bool Prepare(size_t partitions);
+  bool Prepare(size_t partitions, duckdb::TaskScheduler* scheduler = nullptr,
+               size_t threads = 1);
 
   bool Pending() const noexcept;
 

@@ -73,7 +73,8 @@ class TermRangeMerge {
   field_id Field() const noexcept { return _field; }
   const FieldProperties& Properties() const noexcept { return _props; }
 
-  void Partition(size_t parts, const Target& target);
+  void Partition(size_t parts, const Target& target,
+                 duckdb::TaskScheduler* scheduler, size_t threads);
 
   size_t PartCount() const noexcept { return _parts.size(); }
 

@@ -243,9 +243,15 @@ TermRangeMerge::TermRangeMerge(field_id field, FieldProperties props,
 
 TermRangeMerge::~TermRangeMerge() = default;
 
-void TermRangeMerge::Partition(size_t parts, const Target& target) {
+void TermRangeMerge::Partition(size_t parts, const Target& target,
+                               duckdb::TaskScheduler* scheduler,
+                               size_t threads) {
   _target = target;
-  _merge->Partition(parts, true);
+  if (scheduler != nullptr) {
+    _merge->Partition(parts, true, *scheduler, threads);
+  } else {
+    _merge->Partition(parts, true);
+  }
   _parts.clear();
   for (size_t p = 0; p != _merge->PartitionCount(); ++p) {
     auto& part = *_parts.emplace_back(std::make_unique<Part>());

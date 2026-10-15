@@ -238,7 +238,8 @@ KeyOrder::KeyOrder(MergeDocMap& doc_map, const SortSpec& spec)
 
 KeyOrder::~KeyOrder() = default;
 
-bool KeyOrder::Prepare(size_t partitions) {
+bool KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
+                       size_t threads) {
   auto& s = *_state;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
@@ -292,7 +293,11 @@ bool KeyOrder::Prepare(size_t partitions) {
   }
   s.merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
     std::move(types), std::move(modifiers), std::move(inputs));
-  s.merge->Partition(partitions);
+  if (scheduler != nullptr) {
+    s.merge->Partition(partitions, false, *scheduler, threads);
+  } else {
+    s.merge->Partition(partitions);
+  }
   s.PlanParts();
   return true;
 }

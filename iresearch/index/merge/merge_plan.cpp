@@ -424,7 +424,8 @@ struct MergePlan::State {
         id, props, std::move(inputs), sort != nullptr, progress));
       range->Partition(
         parts,
-        {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count});
+        {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count},
+        scheduler, threads);
     }
     postings_pending = !term_ranges.empty();
   }
@@ -513,6 +514,7 @@ struct MergePlan::State {
   const AnnBuildEnv* env;
   const SortSpec* sort;
   size_t threads = 1;
+  duckdb::TaskScheduler* scheduler = nullptr;
   MergeProfile profile;
   std::optional<MergeStepClock> order_clock;
   IndexFeatures index_features{IndexFeatures::None};
@@ -549,9 +551,10 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
 
 MergePlan::~MergePlan() = default;
 
-bool MergePlan::Prepare(size_t threads) {
+bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
   auto& s = *_state;
   s.threads = threads;
+  s.scheduler = scheduler;
   MergeStepClock clock{s.profile};
   uint64_t live_docs = 0;
   for (const auto& input : s.doc_map) {
@@ -576,7 +579,7 @@ bool MergePlan::Prepare(size_t threads) {
       threads > 1
         ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
         : 1;
-    if (!s.key_order->Prepare(partitions)) {
+    if (!s.key_order->Prepare(partitions, s.scheduler, threads)) {
       return false;
     }
     s.segment.docs_count = s.key_order->Order().Rows();

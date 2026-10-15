@@ -36,6 +36,7 @@
 namespace duckdb {
 
 class DatabaseInstance;
+class TaskScheduler;
 
 }  // namespace duckdb
 namespace irs {
@@ -80,7 +81,7 @@ class MergePlan {
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;
 
-  bool Prepare(size_t threads = 1);
+  bool Prepare(size_t threads = 1, duckdb::TaskScheduler* scheduler = nullptr);
 
   bool OrderPending() const noexcept;
 
@@ -120,6 +121,7 @@ class MergeExecutor {
  public:
   virtual bool Run(MergePlan& plan) = 0;
   virtual size_t Threads() const noexcept { return 1; }
+  virtual duckdb::TaskScheduler* Scheduler() const noexcept { return nullptr; }
 
  protected:
   ~MergeExecutor() = default;

@@ -40,6 +40,7 @@ class PipelineMergeExecutor final : public irs::MergeExecutor {
 
   bool Run(irs::MergePlan& plan) final;
   size_t Threads() const noexcept final { return _threads; }
+  duckdb::TaskScheduler* Scheduler() const noexcept final { return _scheduler; }
 
  private:
   duckdb::DatabaseInstance& _db;

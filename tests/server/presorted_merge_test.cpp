@@ -28,11 +28,13 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/appender.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <limits>
 #include <map>
 #include <random>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -79,6 +81,24 @@ class ValuesInput final : public duckdb::PresortedMergeInput {
 
   std::vector<Row> _rows;
   mutable std::atomic<idx_t> _rows_read{0};
+};
+
+class FailingInput final : public duckdb::PresortedMergeInput {
+ public:
+  idx_t Count() const override { return 5000; }
+
+  duckdb::unique_ptr<duckdb::PresortedMergeReader> CreateReader()
+    const override {
+    return duckdb::make_uniq<Reader>();
+  }
+
+ private:
+  class Reader final : public duckdb::PresortedMergeReader {
+   public:
+    void Read(idx_t, idx_t, duckdb::DataChunk&) override {
+      throw duckdb::IOException("unreadable input");
+    }
+  };
 };
 
 struct Key {
@@ -426,6 +446,72 @@ TEST_F(PresortedMergeTest, MergingInStepsGivesTheSameOrder) {
     }
     EXPECT_FALSE(unsorted.IsValid());
     EXPECT_EQ(Expected(keys, inputs), Expand(runs));
+  }
+}
+
+TEST_F(PresortedMergeTest, PartitionOnSeveralThreadsCutsLikeOnOne) {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*_db.instance);
+  const std::vector<Key> keys{{duckdb::LogicalType::VARCHAR},
+                              {duckdb::LogicalType::BIGINT}};
+  for (uint64_t seed = 0; seed != 6; ++seed) {
+    const auto inputs =
+      SortEach(keys, RandomInputs(keys, 3 + seed * 7, 600, 20, seed));
+    const auto expected = Expected(keys, inputs);
+    for (const bool keep_equal_keys : {false, true}) {
+      SCOPED_TRACE(absl::StrCat(seed, " ", keep_equal_keys));
+      const auto serial = MakeMerge(keys, inputs);
+      serial->Partition(16, keep_equal_keys);
+      const auto parallel = MakeMerge(keys, inputs);
+      parallel->Partition(16, keep_equal_keys, scheduler, 4);
+      ASSERT_EQ(serial->PartitionCount(), parallel->PartitionCount());
+      ASSERT_LT(1, parallel->PartitionCount());
+      std::vector<idx_t> taken(inputs.size());
+      size_t at = 0;
+      for (idx_t p = 0; p <= parallel->PartitionCount(); ++p) {
+        idx_t cut = 0;
+        for (idx_t i = 0; i != inputs.size(); ++i) {
+          EXPECT_EQ(serial->PartitionBegin(p, i),
+                    parallel->PartitionBegin(p, i));
+          cut += parallel->PartitionBegin(p, i);
+        }
+        ASSERT_LE(at, cut);
+        for (; at != cut; ++at) {
+          ++taken[expected[at].first];
+        }
+        for (idx_t i = 0; i != inputs.size(); ++i) {
+          EXPECT_EQ(taken[i], parallel->PartitionBegin(p, i));
+        }
+      }
+      EXPECT_EQ(expected, Expand(MergeAll(*parallel)));
+    }
+  }
+}
+
+TEST_F(PresortedMergeTest, FailedReadStopsPartitionOnEveryThreadCount) {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*_db.instance);
+  const std::vector<Key> keys{{duckdb::LogicalType::BIGINT}};
+  const auto inputs = SortEach(keys, RandomInputs(keys, 12, 300, 100, 5));
+  for (const idx_t threads : {idx_t{1}, idx_t{4}}) {
+    SCOPED_TRACE(threads);
+    duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> sources;
+    for (const auto& rows : inputs) {
+      sources.push_back(duckdb::make_shared_ptr<ValuesInput>(rows));
+    }
+    sources.insert(sources.begin() + 5,
+                   duckdb::make_shared_ptr<FailingInput>());
+    duckdb::PresortedMerge merge{
+      {duckdb::LogicalType::BIGINT},
+      {duckdb::OrderModifiers{duckdb::OrderType::ASCENDING,
+                              duckdb::OrderByNullType::NULLS_LAST}},
+      std::move(sources)};
+    try {
+      merge.Partition(8, false, scheduler, threads);
+      ADD_FAILURE() << "the partition read every input";
+    } catch (const std::exception& e) {
+      EXPECT_NE(std::string_view{e.what()}.find("unreadable input"),
+                std::string_view::npos)
+        << e.what();
+    }
   }
 }
 

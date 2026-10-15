@@ -44,7 +44,9 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   MergePlan plan{_dir,           _readers, segment, _scorer, _db,
                  _field_options, progress, env,     _sort};
-  result = plan.Prepare(executor != nullptr ? executor->Threads() : 1) &&
+  result = (executor != nullptr
+              ? plan.Prepare(executor->Threads(), executor->Scheduler())
+              : plan.Prepare()) &&
            (executor != nullptr ? executor->Run(plan) : RunSerially(plan));
   _profile = plan.Profile();
   co_return result;

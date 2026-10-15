@@ -140,6 +140,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   return entry;
 }
 
+std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
+  duckdb::ClientContext& context) {
+  auto& cluster = catalog::ClusterOf(context);
+  std::vector<duckdb::reference<duckdb::CatalogEntry>> databases;
+  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) { databases.emplace_back(entry); });
+  return databases;
+}
+
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
   if (const auto entry = EntryByOid(session, oid)) {
     if (CatalogClassOid(entry->type) != kPgClassTable &&

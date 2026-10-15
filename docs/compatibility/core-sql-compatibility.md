@@ -809,6 +809,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_options_to_table                | Yes           |  |
 | pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
 | pg_tablespace_location             | Yes           | Always an empty string |
+| pg_tablespace_size                 | Yes           | `pg_default` holds every database and `pg_global` the catalog that all databases share |
+| pg_size_bytes                      | Yes           |  |
 | pg_my_temp_schema                  | Partial       | Always `0` |
 | acldefault                         | Yes           | Also `aclexplode` |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |

@@ -484,6 +484,14 @@ SELECT * FROM pg_sequence_parameters('sysinfo_seq'::regclass), pg_get_sequence_d
 statement ok
 DROP SEQUENCE sysinfo_seq;
 
+# sysinfo: pg_tablespace_size
+statement ok
+SELECT pg_tablespace_size('pg_default'), pg_tablespace_size('pg_global');
+
+# sysinfo: pg_size_bytes
+statement ok
+SELECT pg_size_bytes('1.5 GB');
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

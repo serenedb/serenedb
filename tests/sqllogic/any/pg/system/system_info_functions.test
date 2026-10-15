@@ -309,6 +309,120 @@ statement ok
 RESET ROLE;
 
 
+# pg_size_bytes
+
+query
+SELECT pg_size_bytes('1') AS a, pg_size_bytes('123bytes') AS b, pg_size_bytes('1kB') AS c,
+       pg_size_bytes('1MB') AS d, pg_size_bytes(' 1 GB ') AS e, pg_size_bytes('1.5 GB ') AS f,
+       pg_size_bytes('1TB') AS g, pg_size_bytes('3000 TB') AS h, pg_size_bytes('1e6 MB') AS i,
+       pg_size_bytes('1 B') AS j, pg_size_bytes('1 kb') AS k, pg_size_bytes('1 PB') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+1	123	1024	1048576	1073741824	1610612736	1099511627776	3298534883328000	1048576000000	1	1024	1125899906842624
+
+
+query
+SELECT pg_size_bytes('-1') AS a, pg_size_bytes('-.1') AS b, pg_size_bytes('-0.5') AS c,
+       pg_size_bytes('0.5') AS d, pg_size_bytes('1.5 bytes') AS e, pg_size_bytes('-1.5 bytes') AS f,
+       pg_size_bytes('1e-1 kB') AS g, pg_size_bytes('.5 kB') AS h, pg_size_bytes('5. kB') AS i,
+       pg_size_bytes('+1kB') AS j, pg_size_bytes('1E3') AS k, pg_size_bytes('1e+2 MB') AS l;
+----
+a	b	c	d	e	f	g	h	i	j	k	l
+-1	0	-1	1	2	-2	102	512	5120	1024	1000	104857600
+
+
+query
+SELECT pg_size_bytes('9223372036854775807') AS max, pg_size_bytes('-9223372036854775808') AS min,
+       pg_size_bytes('8191 PB') AS pb,
+       pg_size_bytes('0.0000000000000000000000000000000000000000000000000001 PB') AS tiny,
+       pg_size_bytes('00000000000000000000000000000000000000000001.5 kB') AS zeros,
+       pg_size_bytes(E'1\tkB') AS tab, pg_size_bytes(NULL) AS null_input;
+----
+max	min	pb	tiny	zeros	tab	null_input
+9223372036854775807	-9223372036854775808	9222246136947933184	0	1536	1024	NULL
+
+
+statement error
+SELECT pg_size_bytes('');
+----
+db error: ERROR: invalid size: ""
+
+
+statement error
+SELECT pg_size_bytes('kB');
+----
+db error: ERROR: invalid size: "kB"
+
+
+statement error
+SELECT pg_size_bytes('1 KiB');
+----
+db error: ERROR: invalid size: "1 KiB"
+DETAIL: Invalid size unit: "KiB".
+HINT: Valid units are "bytes", "B", "kB", "MB", "GB", "TB", and "PB".
+
+
+statement error
+SELECT pg_size_bytes('1e kB');
+----
+db error: ERROR: invalid size: "1e kB"
+DETAIL: Invalid size unit: "e kB".
+HINT: Valid units are "bytes", "B", "kB", "MB", "GB", "TB", and "PB".
+
+
+statement error
+SELECT pg_size_bytes('1e 5');
+----
+db error: ERROR: invalid input syntax for type numeric: "1e 5"
+
+
+statement error
+SELECT pg_size_bytes('8192 PB');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('9223372036854775808');
+----
+db error: ERROR: bigint out of range
+
+
+statement error
+SELECT pg_size_bytes('1e1000000');
+----
+db error: ERROR: value overflows numeric format
+
+
+statement error
+SELECT pg_size_bytes('1e-20000');
+----
+db error: ERROR: value overflows numeric format
+
+
+# pg_tablespace_size
+
+query
+SELECT pg_tablespace_size('pg_default') >= pg_database_size(current_database()) AS by_name,
+       pg_tablespace_size(1663::oid) >= pg_database_size(current_database()) AS by_oid,
+       pg_tablespace_size('pg_global') >= 0 AS global, pg_tablespace_size(NULL::oid) AS null_input;
+----
+by_name	by_oid	global	null_input
+t	t	t	NULL
+
+
+statement error
+SELECT pg_tablespace_size('sif_nosuch');
+----
+db error: ERROR: tablespace "sif_nosuch" does not exist
+
+
+statement error
+SELECT pg_tablespace_size(0::oid);
+----
+db error: ERROR: tablespace with OID 0 does not exist
+
+
 # Cleanup
 
 statement ok

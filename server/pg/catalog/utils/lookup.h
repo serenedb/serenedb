@@ -118,6 +118,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
   duckdb::ClientContext& context, std::string_view name);
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   duckdb::ClientContext& context, duckdb::idx_t id);
+std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
+  duckdb::ClientContext& context);
 
 struct SubObject {
   duckdb::TableCatalogEntry* table = nullptr;

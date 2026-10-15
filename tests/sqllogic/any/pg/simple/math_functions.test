@@ -214,3 +214,20 @@ SELECT min_scale(1.230), min_scale(0.500), min_scale(42.00), min_scale(0.000), m
 ----
 min_scale	min_scale	min_scale	min_scale	min_scale	min_scale	min_scale
 2	1	0	0	5	0	NULL
+
+
+# trim_scale
+
+query
+SELECT trim_scale(8.4100), trim_scale(0.00), trim_scale(-1.50), trim_scale(100), trim_scale(NULL::numeric),
+       trim_scale(2.000::numeric(10, 3)), trim_scale(12.30::numeric(10, 2) * 2), trim_scale(123.4500::numeric(38, 10));
+----
+trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale	trim_scale
+8.41	0	-1.5	100	NULL	2	24.6	123.45
+
+
+query
+SELECT pg_typeof(trim_scale(8.4100))::text AS t, scale(trim_scale(8.4100)) AS s, trim_scale(0.0050) = 0.005 AS same;
+----
+t	s	same
+numeric	2	t

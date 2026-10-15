@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <cstdint>
@@ -34,12 +35,14 @@
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/ternary_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <icu-datefunc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -525,17 +528,47 @@ duckdb::unique_ptr<duckdb::Expression> ScaleExpression(
 }
 
 template<typename T>
+int32_t MinScale(T value, int32_t scale) {
+  for (; scale > 0 && value % T(10) == T(0); --scale) {
+    value /= T(10);
+  }
+  return scale;
+}
+
+template<typename T>
 void MinScaleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
   const int32_t scale = duckdb::DecimalType::GetScale(args.data[0].GetType());
   duckdb::UnaryExecutor::Execute<T, int32_t>(
-    args.data[0], result, args.size(), [&](T value) {
-      int32_t min_scale = scale;
-      for (; min_scale > 0 && value % T(10) == T(0); --min_scale) {
-        value /= T(10);
-      }
-      return min_scale;
-    });
+    args.data[0], result, args.size(),
+    [&](T value) { return MinScale(value, scale); });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindTrimScale(
+  duckdb::BindScalarFunctionInput& input) {
+  input.GetBoundFunction().SetReturnType(DecimalArgument(input, 0));
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::Expression> TrimScaleExpression(
+  duckdb::FunctionBindExpressionInput& input) {
+  auto& child = input.children[0];
+  if (!child->IsFoldable()) {
+    return std::move(child);
+  }
+  const auto value =
+    duckdb::ExpressionExecutor::EvaluateScalar(input.context, *child);
+  if (value.IsNull()) {
+    return std::move(child);
+  }
+  const auto width = duckdb::DecimalType::GetWidth(value.type());
+  const auto scale = duckdb::DecimalType::GetScale(value.type());
+  const auto trimmed =
+    static_cast<uint8_t>(MinScale(duckdb::IntegralValue::Get(value), scale));
+  const auto type = duckdb::LogicalType::DECIMAL(
+    std::max<uint8_t>(width - scale + trimmed, 1), trimmed);
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    value.DefaultCastAs(type));
 }
 
 using Int256 = boost::multiprecision::int256_t;
@@ -1032,6 +1065,15 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
                            duckdb::LogicalType::INTEGER,
                            nullptr,
                            BindMinScale});
+  {
+    duckdb::ScalarFunction trim_scale{"trim_scale",
+                                      {duckdb::LogicalTypeId::DECIMAL},
+                                      duckdb::LogicalTypeId::DECIMAL,
+                                      nullptr,
+                                      BindTrimScale};
+    trim_scale.SetBindExpressionCallback(TrimScaleExpression);
+    loader.RegisterFunction(trim_scale);
+  }
   for (const auto name : {"div", "numeric_div_trunc"}) {
     duckdb::ScalarFunction div_trunc{
       name,

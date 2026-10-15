@@ -908,7 +908,7 @@ statement ok
 SELECT sqrt(4.0);
 
 # op_math: trim_scale
-statement error
+statement ok
 SELECT trim_scale(1.230);
 
 # op_math: trunc

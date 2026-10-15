@@ -3738,6 +3738,7 @@
 {"scalar system.main.trim(BLOB, BLOB)", 30340},
 {"scalar system.main.trim(VARCHAR)", 29982},
 {"scalar system.main.trim(VARCHAR, VARCHAR)", 29983},
+{"scalar system.main.trim_scale(DECIMAL)", 30366},
 {"scalar system.main.trunc(BIGINT)", 29990},
 {"scalar system.main.trunc(BIGINT, INTEGER)", 29991},
 {"scalar system.main.trunc(DECIMAL)", 29997},

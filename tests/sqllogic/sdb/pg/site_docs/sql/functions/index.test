@@ -112,3 +112,4 @@ bitstring	scalar	BIT	{VARCHAR,INTEGER}
 bitstring_byte_comparable	scalar	BLOB	{BIT}
 bm25	scalar	FLOAT	{BIGINT}
 broadcast	scalar	INET	{INET}
+btrim	scalar	VARCHAR	{VARCHAR}

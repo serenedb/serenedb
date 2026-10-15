@@ -1040,6 +1040,31 @@ db error: ERROR: No function matches the given name and argument types '<->(JSON
 	"<->"(list1 DOUBLE[], list2 DOUBLE[]) -> DOUBLE
 	"<->"(array1 DOUBLE[ANY], array2 DOUBLE[ANY]) -> DOUBLE
 	"<->"(geom1 GEOMETRY, geom2 GEOMETRY) -> DOUBLE
+	"<->"(col0 point, col1 point, /) -> DOUBLE
+	"<->"(col0 point, col1 line, /) -> DOUBLE
+	"<->"(col0 point, col1 lseg, /) -> DOUBLE
+	"<->"(col0 point, col1 box, /) -> DOUBLE
+	"<->"(col0 point, col1 path, /) -> DOUBLE
+	"<->"(col0 point, col1 polygon, /) -> DOUBLE
+	"<->"(col0 point, col1 circle, /) -> DOUBLE
+	"<->"(col0 line, col1 line, /) -> DOUBLE
+	"<->"(col0 line, col1 point, /) -> DOUBLE
+	"<->"(col0 line, col1 lseg, /) -> DOUBLE
+	"<->"(col0 lseg, col1 lseg, /) -> DOUBLE
+	"<->"(col0 lseg, col1 point, /) -> DOUBLE
+	"<->"(col0 lseg, col1 line, /) -> DOUBLE
+	"<->"(col0 lseg, col1 box, /) -> DOUBLE
+	"<->"(col0 box, col1 box, /) -> DOUBLE
+	"<->"(col0 box, col1 point, /) -> DOUBLE
+	"<->"(col0 box, col1 lseg, /) -> DOUBLE
+	"<->"(col0 path, col1 path, /) -> DOUBLE
+	"<->"(col0 path, col1 point, /) -> DOUBLE
+	"<->"(col0 polygon, col1 polygon, /) -> DOUBLE
+	"<->"(col0 polygon, col1 point, /) -> DOUBLE
+	"<->"(col0 polygon, col1 circle, /) -> DOUBLE
+	"<->"(col0 circle, col1 circle, /) -> DOUBLE
+	"<->"(col0 circle, col1 point, /) -> DOUBLE
+	"<->"(col0 circle, col1 polygon, /) -> DOUBLE
 
 
 # --- EXPLAIN: geo predicate composes with @@ inside IRESEARCH_SCAN ---

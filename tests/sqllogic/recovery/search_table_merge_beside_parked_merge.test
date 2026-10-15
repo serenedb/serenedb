@@ -73,10 +73,10 @@ statement ok
 VACUUM (REFRESH_TABLE) pm;
 
 query ok retry 40 backoff 250ms
-SELECT count(*) AS segments FROM sdb_segments('pm');
+SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pm WHERE id > 400;
 ----
 segments
-5
+1
 
 statement ok
 SET sdb_faults = 'park_compaction_run:release';

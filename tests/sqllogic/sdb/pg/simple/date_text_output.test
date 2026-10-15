@@ -1,8 +1,3 @@
-# Dates reach years PostgreSQL cannot represent. The text form of such a date
-# is checked over the simple engine: the extended engine reads binary dates
-# into a client date type that cannot hold them.
-
-skipif pg-wire-extended
 statement ok
 SELECT array_agg(DATE '0001-01-01' - 1000000000) AS a FROM range(4500);
 
@@ -14,7 +9,6 @@ alive
 1
 
 
-skipif pg-wire-extended
 query
 SELECT DATE '0001-01-01' - 1000000000 AS d, [DATE '0001-01-01' - 1000000000] AS a;
 ----

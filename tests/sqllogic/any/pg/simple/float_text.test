@@ -49,7 +49,6 @@ a	b	c	d	e	f
 1e+15	0.0001	1e+06	1.0000000000000005e+15	-0	-0
 
 
-skipif pg-wire-extended
 query
 SELECT 1e15::float8 AS a, 0.0001::float8 AS b, 1000000::float4 AS c, 1000000000000000.5::float8 AS d, '-0'::float8 AS e, 1e-5::float8 AS f, 123456.7::float4 AS g;
 ----

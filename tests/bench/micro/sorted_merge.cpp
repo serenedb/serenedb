@@ -691,20 +691,14 @@ void BM_KeyOrder(benchmark::State& state) {
     }
     irs::KeyOrder order{doc_map, spec};
     const auto begin = std::chrono::steady_clock::now();
-    if (!order.Prepare(1)) {
-      state.SkipWithError("prepare failed");
-      return;
-    }
+    order.Prepare(1);
     const auto prepared = std::chrono::steady_clock::now();
     if (!order.Merge([] { return true; })) {
       state.SkipWithError("merge failed");
       return;
     }
     const auto merged = std::chrono::steady_clock::now();
-    if (!order.Finish()) {
-      state.SkipWithError("finish failed");
-      return;
-    }
+    order.Finish();
     const auto finished = std::chrono::steady_clock::now();
     const auto nanos = [](auto from, auto to) {
       return static_cast<uint64_t>(

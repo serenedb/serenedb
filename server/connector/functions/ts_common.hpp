@@ -69,6 +69,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
+  WideRanges wide_ranges = WideRanges::Build;
   uint32_t* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
@@ -85,6 +86,7 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .wide_ranges = wide_ranges,
       .min_match = min_match,
     };
   }
@@ -108,6 +110,12 @@ struct FilterContext {
   }
 
   FilterContext WithoutMinMatch() const { return WithMinMatch(nullptr); }
+
+  FilterContext Claimed() const {
+    FilterContext ctx = *this;
+    ctx.wide_ranges = WideRanges::Build;
+    return ctx;
+  }
 };
 
 inline uint32_t TakeMinMatch(const FilterContext& ctx) {

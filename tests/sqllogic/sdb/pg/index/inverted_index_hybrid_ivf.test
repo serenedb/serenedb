@@ -270,6 +270,8 @@ QUERY PLAN
 │ │ Values: 'gear', 'trail' │            │
 │ ╰─────────────────────────╯            │
 │ Score: l2_distance(va, FLOAT[3])       │
+│ Exact:                                 │
+│ brute force over the stored vectors    │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │

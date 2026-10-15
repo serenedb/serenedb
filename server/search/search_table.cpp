@@ -21,6 +21,8 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -122,6 +124,7 @@ void SearchTable::OpenWriter(bool in_memory) {
   _absent = opened.absent;
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
@@ -417,19 +420,36 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
+  auto& engine = GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const auto acquire = [&engine](uint32_t want, uint32_t held) {
+    return engine.AcquireAnnWorkers(want, held,
+                                    SearchEngine::MaxAnnBuildWorkers());
+  };
+  const irs::AnnBuildEnv round_env{.executor = AnnBuildEnv().executor,
+                                   .acquire = acquire,
+                                   .release = AnnReleaseWorkers};
+  const irs::AnnBuildEnv* env = slot ? &round_env : nullptr;
   for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets(target);
+    std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot = _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
+      buckets.resize(target);
       for (size_t i = 0; i < snapshot.size(); ++i) {
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
+    absl::Status status;
     bool merged = false;
-    for (auto& names : buckets) {
+    for (const auto& names : buckets) {
       const irs::CompactionPolicy bucket =
         [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
                  const irs::CompactingSegments& busy) {
@@ -442,12 +462,14 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      if (auto res =
-            CompactUnsafe(bucket, kProgress, empty, field_options.get()).res;
-          !res.ok()) {
-        return res;
-      }
-      merged |= !empty;
+      status.Update(
+        irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
+                                            field_options.get(), env))
+          .res);
+      merged = merged || !empty;
+    }
+    if (!status.ok()) {
+      return status;
     }
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;

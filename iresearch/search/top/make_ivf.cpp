@@ -54,6 +54,9 @@ class VectorChain : public Root {
     SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
     for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
       auto& cluster = _clusters[i];
+      if (_table != nullptr && i != 0) {
+        _table->Rewind();
+      }
       for (;;) {
         cluster.SetThreshold(Bar(collector));
         if (!cluster.NextRun()) {

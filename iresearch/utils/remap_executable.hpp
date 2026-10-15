@@ -27,10 +27,11 @@ namespace irs {
 
 struct ExecutableRemap {
   size_t remapped = 0;
+  size_t locked = 0;
   size_t populated = 0;
   std::string skipped;
 };
 
-ExecutableRemap RemapExecutable();
+ExecutableRemap RemapExecutable(bool remap_text);
 
 }  // namespace irs

@@ -1639,10 +1639,56 @@ bool DeserializeTextMap(DeserializeContext& ctx, std::string_view data,
 
 // The nested decoders rebuild into a Vector child structure. ValueSink decodes
 // into a one-row scratch Vector through that same machinery, then lifts the
-// Value out. Nested bind params are rare, so the scratch+GetValue cost there is
-// fine; the win is the common scalar/temporal/decimal/uuid path going direct.
+// Value out.
 using NestedVectorFn = bool (*)(DeserializeContext&, std::string_view,
                                 duckdb::Vector&, duckdb::idx_t);
+
+template<typename T>
+bool DecodeNumberArrayValue(std::string_view data, ValueSink& sink,
+                            const duckdb::LogicalType& child_type, bool array) {
+  if (data.size() < 20) {
+    return false;
+  }
+  const auto ndim = absl::big_endian::Load<int32_t>(data.data());
+  const auto count = absl::big_endian::Load<int32_t>(data.data() + 12);
+  constexpr size_t kStride = sizeof(int32_t) + sizeof(T);
+  if (ndim != 1 || count < 0 ||
+      (array && static_cast<duckdb::idx_t>(count) !=
+                  duckdb::ArrayType::GetSize(sink.type)) ||
+      data.size() != 20 + static_cast<size_t>(count) * kStride) {
+    return false;
+  }
+  duckdb::vector<duckdb::Value> values;
+  values.reserve(static_cast<size_t>(count));
+  const char* p = data.data() + 20;
+  for (int32_t i = 0; i < count; ++i, p += kStride) {
+    if (absl::big_endian::Load<int32_t>(p) != sizeof(T)) {
+      return false;
+    }
+    values.push_back(duckdb::Value::CreateValue(
+      absl::big_endian::Load<T>(p + sizeof(int32_t))));
+  }
+  sink.out = array ? duckdb::Value::ARRAY(child_type, std::move(values))
+                   : duckdb::Value::LIST(child_type, std::move(values));
+  return true;
+}
+
+bool DecodeNumberArrayValue(std::string_view data, ValueSink& sink) {
+  const bool array = sink.type.id() == duckdb::LogicalTypeId::ARRAY;
+  if (!array && sink.type.id() != duckdb::LogicalTypeId::LIST) {
+    return false;
+  }
+  const auto& child_type = array ? duckdb::ArrayType::GetChildType(sink.type)
+                                 : duckdb::ListType::GetChildType(sink.type);
+  switch (child_type.id()) {
+    case duckdb::LogicalTypeId::FLOAT:
+      return DecodeNumberArrayValue<float>(data, sink, child_type, array);
+    case duckdb::LogicalTypeId::DOUBLE:
+      return DecodeNumberArrayValue<double>(data, sink, child_type, array);
+    default:
+      return false;
+  }
+}
 
 template<typename Sink>
 struct NestedAdapter;
@@ -1661,6 +1707,12 @@ struct NestedAdapter<ValueSink> {
   template<NestedVectorFn Fn>
   static bool Run(DeserializeContext& ctx, std::string_view data,
                   ValueSink& sink) {
+    if constexpr (Fn == &DeserializeBinaryList ||
+                  Fn == &DeserializeBinaryFixedArray) {
+      if (DecodeNumberArrayValue(data, sink)) {
+        return true;
+      }
+    }
     duckdb::Vector scratch{sink.type, 1};
     if (!Fn(ctx, data, scratch, 0)) {
       return false;

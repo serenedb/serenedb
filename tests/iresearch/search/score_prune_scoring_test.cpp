@@ -193,6 +193,8 @@ class RowRuns final : public irs::detail::TableFilter {
 
   bool Ordered() const noexcept { return _ordered; }
 
+  bool Foldable() const noexcept final { return !_bound; }
+
   irs::doc_id_t Live(irs::doc_id_t doc) final {
     if (KeepsRow(doc)) {
       return doc;

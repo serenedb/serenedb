@@ -25,6 +25,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -38,6 +39,12 @@
 #include "connector/term_dict.h"
 
 namespace sdb::connector {
+
+enum class WideRanges : uint8_t {
+  Build,
+  DeclineWide,
+  DeclineAll,
+};
 
 struct SearchColumnInfo;
 
@@ -62,6 +69,11 @@ struct SearchColumnInfo {
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
   std::optional<uint32_t> levenshtein_max_terms;
+  // True when the scan can also read this column from its columnstore (a
+  // search table stores every column), so a predicate the term index would
+  // answer badly may be left to the column filter instead.
+  bool column_stored = false;
+  const duckdb::BaseStatistics* stats = nullptr;
   const FieldSetGetter* index_fields = nullptr;
 };
 
@@ -76,6 +88,17 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::Expression&) const>;
+
+struct ColumnRange {
+  const duckdb::BoundColumnRefExpression* column = nullptr;
+  double lo = 0;
+  double hi = 0;
+};
+
+std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr);
+
+std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
+                                   double hi);
 
 // Builds iresearch filters into `root`'s `Must` bucket from an implicit-AND
 // list of DuckDB bound filter expressions (as found in a LogicalFilter). Each
@@ -217,7 +240,8 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers);
+  const ExpressionGetter& expr_getter, FilterScorers* scorers,
+  WideRanges wide_ranges = WideRanges::Build);
 
 inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
                                         duckdb::LogicalTypeId type_id) {

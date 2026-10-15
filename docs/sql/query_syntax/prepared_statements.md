@@ -68,6 +68,16 @@ Using the CLI client, the statement is executed as follows.
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_007" />
 
 
+## Plans
+
+An execution of a prepared statement skips parsing. A statement that reads only [inverted indexes](../indexes/inverted/index.md) and search tables (`storage = 'search'`) also keeps its plan between executions: it is planned again only by the first execution after an index it reads has changed, for example after [a refresh](../indexes/inverted/maintenance.md#visibility-and-the-refresh-model) made new rows searchable, and that execution's plan is kept in turn. A statement that reads a regular table is planned on every execution.
+
+The values the index takes over are read at execution, so one plan serves them all: the query vector, a full-text query, the conditions the index answers, `LIMIT` and `OFFSET`. A parameter in a condition the index cannot answer, one that is itself an operand of `AND` or `OR`, and any parameter of a statement that calls `ts_dict_agg` or `ts_offsets` is planned with its value, on every execution.
+
+An `EXECUTE` whose values do not have the parameters' types plans the statement again for that execution: `[1, 1]` is an `INTEGER[]` and `2` an `INTEGER`. Declare the parameters with those types or cast the values; client drivers that send typed parameters are not affected.
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/example_010" />
+
 ## Dropping Prepared Statements: `DEALLOCATE`
 
 To drop a prepared statement, use the `DEALLOCATE` statement:

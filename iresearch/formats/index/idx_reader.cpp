@@ -47,7 +47,8 @@ struct IdxReader::Impl {
   std::vector<uint64_t> ann_ends;
 };
 
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
+IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
+                     HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -128,9 +129,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
-              id,
-              std::make_unique<HnswIndex>(
-                header, HnswMeta{.offset = offset, .byte_size = byte_size}));
+              id, std::make_unique<HnswIndex>(
+                    header, HnswMeta{.offset = offset, .byte_size = byte_size},
+                    id, hnsw_bases));
             _impl->ann_by_id.emplace(id, idx);
           });
         });

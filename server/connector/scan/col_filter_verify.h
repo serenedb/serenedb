@@ -46,6 +46,10 @@ class ColFilterVerify : public irs::detail::TableFilter {
     return _chain.Empty() && _score_filter == nullptr;
   }
 
+  // Only a predicate on the computed score needs a score to decide; the
+  // column chain narrows a window before one exists.
+  bool Foldable() const noexcept final { return !_score_filter; }
+
   irs::doc_id_t Live(irs::doc_id_t doc) final {
     if (_chain.Empty()) {
       return doc;
@@ -64,10 +68,24 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
-  void Rewind() {
+  void Rewind() final {
     if (_ctx) {
       _chain.Rewind(*_ctx);
     }
+  }
+
+  irs::detail::PointRead PointReads() const noexcept final {
+    if (_score_filter || _chain.Empty()) {
+      return irs::detail::PointRead::None;
+    }
+    return _chain.PointReads();
+  }
+
+  bool Admits(irs::doc_id_t doc) final {
+    if (PointReads() == irs::detail::PointRead::None) {
+      return TableFilter::Admits(doc);
+    }
+    return _chain.AdmitRow(doc - irs::doc_limits::min());
   }
 
  private:

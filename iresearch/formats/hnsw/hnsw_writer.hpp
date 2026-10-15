@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 
@@ -37,7 +38,7 @@ class ReadContext;
 
 class HnswWriter final : public AnnWriter {
  public:
-  explicit HnswWriter(AnnInfo info);
+  HnswWriter(AnnInfo info, HnswBases* bases);
   ~HnswWriter() final;
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
@@ -57,9 +58,13 @@ class HnswWriter final : public AnnWriter {
 
  private:
   AnnInfo _info;
+  HnswBases* _bases;
   std::span<const MergeSource> _merge_sources;
   HnswGraphWriter _graph;
   std::vector<float> _vectors;
+  std::vector<float> _rotation;
+  std::vector<float> _norms;
+  std::vector<float> _tails;
   bstring _codes;
   bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;

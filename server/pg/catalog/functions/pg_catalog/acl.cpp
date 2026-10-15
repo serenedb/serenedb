@@ -305,8 +305,26 @@ struct PrivilegeModes {
   AclMode grant_options = AclMode::NoRights;
 };
 
-PrivilegeModes ParsePrivileges(std::string_view text, CatalogType type,
-                               AclMode allowed) {
+[[noreturn]] void ThrowUnrecognizedPrivilege(std::string_view privilege) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("unrecognized privilege type: \"", privilege, "\""));
+}
+
+std::optional<AclMode> FindPrivilege(std::string_view keyword) {
+  if (absl::EqualsIgnoreCase(keyword, "TEMP")) {
+    return AclMode::CreateTemp;
+  }
+  const auto it =
+    absl::c_find_if(kAclPrivileges, [&](const AclPrivilege& privilege) {
+      return absl::EqualsIgnoreCase(privilege.name, keyword);
+    });
+  if (it == kAclPrivileges.end()) {
+    return std::nullopt;
+  }
+  return it->mode;
+}
+
+PrivilegeModes ParsePrivileges(std::string_view text, AclMode allowed) {
   constexpr std::string_view kGrantOption = " WITH GRANT OPTION";
   PrivilegeModes modes;
   for (const std::string_view token : absl::StrSplit(text, ',')) {
@@ -319,16 +337,46 @@ PrivilegeModes ParsePrivileges(std::string_view text, CatalogType type,
       keyword.remove_suffix(kGrantOption.size());
       held = &modes.grant_options;
     }
-    auto mode = AclMode::NoRights;
-    if (absl::EqualsIgnoreCase(keyword, "ALL") ||
-        !duckdb::Permissions::TryParsePrivilege(keyword, type, mode) ||
-        (mode & allowed) != mode) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("unrecognized privilege type: \"", chunk, "\""));
+    const auto mode = FindPrivilege(keyword);
+    if (!mode || (*mode & allowed) != *mode) {
+      ThrowUnrecognizedPrivilege(chunk);
     }
-    *held |= mode;
+    *held |= *mode;
   }
   return modes;
+}
+
+void MakeAclItemFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  const auto roles = auth::RolesOf(&state.GetContext());
+  std::string text;
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int64_t,
+                                    duckdb::string_t, bool>(
+    args, result,
+    [&](int64_t grantee, int64_t grantor, duckdb::string_t privileges,
+        bool grant_option) {
+      auto privs = AclMode::NoRights;
+      for (const std::string_view token :
+           absl::StrSplit(AsView(privileges), ',')) {
+        const auto chunk = absl::StripAsciiWhitespace(token);
+        const auto mode = FindPrivilege(chunk);
+        if (!mode) {
+          ThrowUnrecognizedPrivilege(chunk);
+        }
+        privs |= *mode;
+      }
+      text.clear();
+      AppendAcl(text,
+                duckdb::AclItem{
+                  .grantee = static_cast<duckdb::idx_t>(grantee),
+                  .grantor = static_cast<duckdb::idx_t>(grantor),
+                  .privs = privs,
+                  .grant_option = grant_option ? privs : AclMode::NoRights,
+                },
+                *roles);
+      return duckdb::StringVector::AddString(result, text);
+    });
 }
 
 struct ObjectTarget {
@@ -461,7 +509,7 @@ struct ObjectPrivileges {
   using Modes = PrivilegeModes;
 
   static PrivilegeModes Parse(std::string_view text) {
-    return ParsePrivileges(text, F::kType, F::kModes);
+    return ParsePrivileges(text, F::kModes);
   }
 
   static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
@@ -780,6 +828,40 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
   }
 };
 
+struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
+  static constexpr std::string_view kName = "has_parameter_privilege";
+  static constexpr AclMode kModes = AclMode::Set | AclMode::AlterSystem;
+  static constexpr bool kSuperuserFirst = false;
+
+  static uint64_t Resolve(const Session&, std::string_view) {
+    return kInvalidOid;
+  }
+
+  static std::optional<ObjectTarget> Find(const Session&, uint64_t) {
+    return ObjectTarget{&kBuiltinPermissions};
+  }
+
+  static bool Check(const auth::RoleClosure& closure, duckdb::idx_t,
+                    const ObjectTarget&, const PrivilegeModes&) {
+    return closure.is_superuser;
+  }
+};
+
+struct LargeObjectPrivileges : ObjectPrivileges<LargeObjectPrivileges> {
+  static constexpr std::string_view kName = "has_largeobject_privilege";
+  static constexpr AclMode kModes = AclMode::Select | AclMode::Update;
+  static constexpr bool kSuperuserFirst = false;
+
+  static std::optional<ObjectTarget> Find(const Session&, uint64_t) {
+    return std::nullopt;
+  }
+
+  static bool Check(const auth::RoleClosure&, duckdb::idx_t,
+                    const ObjectTarget&, const PrivilegeModes&) {
+    return false;
+  }
+};
+
 struct RolePrivMask {
   bool usage = false;
   bool member = false;
@@ -1053,7 +1135,16 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   RegisterPrivilegeFunctions<ForeignDataWrapperPrivileges, ByName, ByOid>(
     loader);
   RegisterPrivilegeFunctions<TablespacePrivileges, ByName, ByOid>(loader);
+  RegisterPrivilegeFunctions<ParameterPrivileges, ByName>(loader);
+  RegisterPrivilegeFunctions<LargeObjectPrivileges, ByOid>(loader);
   RegisterPrivilegeFunctions<RolePrivileges, ByName, ByOid>(loader);
+  RegisterScalar(
+    loader, pg_catalog, "makeaclitem",
+    duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{OID(), OID(), duckdb::LogicalType::VARCHAR,
+                             duckdb::LogicalType::BOOLEAN},
+                            ACLITEM(),
+                            MakeAclItemFunction}});
 }
 
 }  // namespace sdb::pg

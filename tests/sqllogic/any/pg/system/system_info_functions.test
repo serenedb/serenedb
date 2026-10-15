@@ -423,6 +423,95 @@ SELECT pg_tablespace_size(0::oid);
 db error: ERROR: tablespace with OID 0 does not exist
 
 
+# has_parameter_privilege
+
+query
+SELECT has_parameter_privilege('work_mem', 'SET') AS set, has_parameter_privilege('work_mem', 'ALTER SYSTEM') AS alter_system,
+       has_parameter_privilege('sif_nosuch', 'SET') AS unknown, has_parameter_privilege('work_mem', 'set, alter system') AS both,
+       has_parameter_privilege('work_mem', 'SET WITH GRANT OPTION') AS grantable,
+       has_parameter_privilege(current_user, 'work_mem', 'SET') AS by_name,
+       has_parameter_privilege((SELECT oid FROM pg_roles WHERE rolname = current_user), 'work_mem', 'SET') AS by_oid;
+----
+set	alter_system	unknown	both	grantable	by_name	by_oid
+t	t	t	t	t	t	t
+
+
+query
+SELECT has_parameter_privilege('public', 'work_mem', 'SET') AS public,
+       has_parameter_privilege('sif_role_${__DATABASE__}', 'work_mem', 'SET') AS role,
+       has_parameter_privilege(0::oid, 'work_mem', 'SET') AS oid_zero,
+       has_parameter_privilege(NULL, 'SET') AS null_parameter, has_parameter_privilege('work_mem', NULL) AS null_privilege;
+----
+public	role	oid_zero	null_parameter	null_privilege
+f	f	f	NULL	NULL
+
+
+statement error
+SELECT has_parameter_privilege('work_mem', 'SELECT');
+----
+db error: ERROR: unrecognized privilege type: "SELECT"
+
+
+statement error
+SELECT has_parameter_privilege('sif_nosuch_role', 'work_mem', 'SET');
+----
+db error: ERROR: role "sif_nosuch_role" does not exist
+
+
+# has_largeobject_privilege
+
+query
+SELECT has_largeobject_privilege(0, 'SELECT') AS missing, has_largeobject_privilege(12345, 'UPDATE') AS update,
+       has_largeobject_privilege(current_user, 0, 'SELECT') AS by_name,
+       has_largeobject_privilege((SELECT oid FROM pg_roles WHERE rolname = current_user), 0, 'SELECT WITH GRANT OPTION') AS by_oid;
+----
+missing	update	by_name	by_oid
+NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT has_largeobject_privilege(0, 'USAGE');
+----
+db error: ERROR: unrecognized privilege type: "USAGE"
+
+
+statement error
+SELECT has_largeobject_privilege('sif_nosuch_role', 0, 'SELECT');
+----
+db error: ERROR: role "sif_nosuch_role" does not exist
+
+
+# makeaclitem
+
+query
+SELECT makeaclitem(12345, 0, 'SELECT', false)::text AS plain, makeaclitem(12345, 0, 'SELECT, INSERT', true)::text AS grantable,
+       makeaclitem(0, 12345, 'usage', false)::text AS public,
+       makeaclitem(12345, 12345, 'temp,temporary,connect,set,alter system,maintain', false)::text AS many,
+       makeaclitem(12345, 12345, ' select , update ', false)::text AS spaced,
+       makeaclitem(12345, 0, NULL, false)::text AS null_input;
+----
+plain	grantable	public	many	spaced	null_input
+12345=r/0	12345=a*r*/0	=U/12345	12345=TcsAm/12345	12345=rw/12345	NULL
+
+
+statement error
+SELECT makeaclitem(12345, 0, 'ALL', false);
+----
+db error: ERROR: unrecognized privilege type: "ALL"
+
+
+statement error
+SELECT makeaclitem(12345, 0, 'SELECT WITH GRANT OPTION', false);
+----
+db error: ERROR: unrecognized privilege type: "SELECT WITH GRANT OPTION"
+
+
+statement error
+SELECT makeaclitem(12345, 0, '', false);
+----
+db error: ERROR: unrecognized privilege type: ""
+
+
 # Cleanup
 
 statement ok

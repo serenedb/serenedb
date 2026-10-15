@@ -813,8 +813,11 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_size_bytes                      | Yes           |  |
 | pg_my_temp_schema                  | Partial       | Always `0` |
 | acldefault                         | Yes           | Also `aclexplode` |
+| makeaclitem                        | Yes           |  |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
 | has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
+| has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
 | pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL

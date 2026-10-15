@@ -492,6 +492,18 @@ SELECT pg_tablespace_size('pg_default'), pg_tablespace_size('pg_global');
 statement ok
 SELECT pg_size_bytes('1.5 GB');
 
+# sysinfo: makeaclitem
+statement ok
+SELECT makeaclitem(0, 0, 'SELECT', false);
+
+# sysinfo: has_parameter_privilege
+statement ok
+SELECT has_parameter_privilege('work_mem', 'SET');
+
+# sysinfo: has_largeobject_privilege
+statement ok
+SELECT has_largeobject_privilege(0, 'SELECT');
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

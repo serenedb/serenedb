@@ -374,7 +374,6 @@ SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
 db error: ERROR: foreign-data wrapper "fdw_name" does not exist
 
 
-skipif serenedb
 query
 SELECT has_parameter_privilege('work_mem', 'SET');
 ----
@@ -382,7 +381,6 @@ has_parameter_privilege
 t
 
 
-skipif serenedb
 query
 SELECT has_parameter_privilege(current_user, 'work_mem', 'SET');
 ----
@@ -390,22 +388,18 @@ has_parameter_privilege
 t
 
 
-skipif serenedb
-onlyif serenedb
 query
 SELECT has_largeobject_privilege(0, 'SELECT');
 ----
 has_largeobject_privilege
-t
+NULL
 
 
-skipif serenedb
-onlyif serenedb
 query
 SELECT has_largeobject_privilege(current_user, 0, 'SELECT');
 ----
 has_largeobject_privilege
-t
+NULL
 
 
 query
@@ -476,12 +470,12 @@ SELECT aclexplode(ARRAY[]::bigint[]);
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
 onlyif serenedb
-query error
+query
 SELECT makeaclitem(0, 0, 'SELECT', false);
 ----
-db error: ERROR: Function is not supported in SereneDB
+makeaclitem
+=r/0
 
 
 # PG returns NULL for an OID that doesn't exist in the relevant catalog

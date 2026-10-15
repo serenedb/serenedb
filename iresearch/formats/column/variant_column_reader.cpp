@@ -186,20 +186,14 @@ VariantColumnReader::ShreddedLeafScan(
   return {vstate.leaf_reader, vstate.leaf.get()};
 }
 
-void VariantColumnReader::ExtractShreddedLeafRun(
-  ScanState& s, size_t rg, std::span<const std::string_view> path,
-  duckdb::idx_t local_start, duckdb::idx_t run, duckdb::Vector& out,
-  duckdb::idx_t out_off, bool allow_entire) const {
-  const auto [leaf_reader, leaf] = ShreddedLeafScan(s, rg, path);
-  const uint64_t cur = leaf_reader->GatherCursor(*leaf);
-  SDB_ASSERT(local_start >= cur);
-  if (local_start > cur) {
-    leaf_reader->Skip(*leaf, local_start - cur);
+void VariantColumnReader::ReleaseLeavesBefore(ScanState& s,
+                                              uint64_t row) const {
+  if (!s.variant) {
+    return;
   }
-  if (allow_entire) {
-    leaf_reader->Scan(*leaf, out, run);
-  } else {
-    leaf_reader->ScanCount(*leaf, out, run, out_off);
+  auto& rgs = s.variant->rgs;
+  for (size_t i = 0; i < rgs.size() && _variant_offsets[i + 1] <= row; ++i) {
+    rgs[i].leaf.reset();
   }
 }
 

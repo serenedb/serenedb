@@ -81,14 +81,10 @@ class VariantColumnReader final : public ColumnReader {
     return VariantState(s).rg_leaf[rg];
   }
 
-  void ExtractShreddedLeafRun(ScanState& s, size_t rg,
-                              std::span<const std::string_view> path,
-                              duckdb::idx_t local_start, duckdb::idx_t run,
-                              duckdb::Vector& out, duckdb::idx_t out_off,
-                              bool allow_entire) const;
-
   std::pair<const ColumnReader*, ScanState*> ShreddedLeafScan(
     ScanState& s, size_t rg, std::span<const std::string_view> path) const;
+
+  void ReleaseLeavesBefore(ScanState& s, uint64_t row) const;
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     uint64_t begin, end;

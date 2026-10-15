@@ -103,7 +103,7 @@ statement ok
 SELECT NULL::"cid" IS NULL;
 
 
-# cidr (🟢)
+# cidr (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'cidr' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -155,7 +155,7 @@ SELECT NULL::"datemultirange" IS NULL;
 db error: ERROR: Type with name datemultirange does not exist!<slt:ignore>
 
 
-# daterange (🔴)
+# daterange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'daterange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -163,10 +163,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"daterange" IS NULL;
-----
-db error: ERROR: Type with name daterange does not exist!<slt:ignore>
 
 
 # float4 (🟡)
@@ -207,7 +205,7 @@ SELECT NULL::"gtsvector" IS NULL;
 db error: ERROR: Type with name gtsvector does not exist!<slt:ignore>
 
 
-# inet (🟢)
+# inet (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'inet' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -269,7 +267,7 @@ SELECT NULL::"int4multirange" IS NULL;
 db error: ERROR: Type with name int4multirange does not exist!<slt:ignore>
 
 
-# int4range (🔴)
+# int4range (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'int4range' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -277,10 +275,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"int4range" IS NULL;
-----
-db error: ERROR: Type with name int4range does not exist!<slt:ignore>
 
 
 # int8 (🟢)
@@ -309,7 +305,7 @@ SELECT NULL::"int8multirange" IS NULL;
 db error: ERROR: Type with name int8multirange does not exist!<slt:ignore>
 
 
-# int8range (🔴)
+# int8range (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'int8range' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -317,10 +313,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"int8range" IS NULL;
-----
-db error: ERROR: Type with name int8range does not exist!<slt:ignore>
 
 
 # interval (🟡)
@@ -477,7 +471,7 @@ SELECT NULL::"nummultirange" IS NULL;
 db error: ERROR: Type with name nummultirange does not exist!<slt:ignore>
 
 
-# numrange (🔴)
+# numrange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'numrange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -485,10 +479,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"numrange" IS NULL;
-----
-db error: ERROR: Type with name numrange does not exist!<slt:ignore>
 
 
 # oid (🟢)
@@ -901,7 +893,7 @@ statement ok
 SELECT NULL::"tsquery" IS NULL;
 
 
-# tsrange (🔴)
+# tsrange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'tsrange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -909,10 +901,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"tsrange" IS NULL;
-----
-db error: ERROR: Type with name tsrange does not exist!<slt:ignore>
 
 
 # tstzmultirange (🔴)
@@ -929,7 +919,7 @@ SELECT NULL::"tstzmultirange" IS NULL;
 db error: ERROR: Type with name tstzmultirange does not exist!<slt:ignore>
 
 
-# tstzrange (🔴)
+# tstzrange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'tstzrange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -937,10 +927,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"tstzrange" IS NULL;
-----
-db error: ERROR: Type with name tstzrange does not exist!<slt:ignore>
 
 
 # tsvector (🔴)

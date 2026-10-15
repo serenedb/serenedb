@@ -75,6 +75,7 @@
 #include "pg/types/mapping.h"
 #include "pg/types/money.h"
 #include "pg/types/pg_lsn.h"
+#include "pg/types/range.h"
 #include "pg/types/tid.h"
 #include "pg/types/xml.h"
 #include "query/config.h"
@@ -1416,9 +1417,12 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
       return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_t>(
                vdata.unified)[vdata.unified.sel->get_index(row)]
         .IsFinite();
+    case STRUCT:
+      return !IsRange(type) ||
+             !(ReadRangeFlags(vdata, vdata.unified.sel->get_index(row)) &
+               kRangeEmpty);
     case BLOB:
     case TUPLE:
-    case STRUCT:
       return true;
     case INTERVAL: {
       const auto interval =
@@ -1601,6 +1605,51 @@ struct RecordBinCore {
                                 WireOid(cache.oids[i]));
       cache.functions[i](context, vdata.children[i], row);
     }
+  }
+};
+
+template<WrapContext InContainer>
+struct RangeTextCore {
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    const auto flags = ReadRangeFlags(vdata, row);
+    if (flags & kRangeEmpty) {
+      context.writer->Write("empty");
+      return;
+    }
+    const auto& cache =
+      GetSerializersCache<VarFormat::Text>(context, vdata.logical_type);
+    const auto bound = [&](duckdb::idx_t child, uint8_t infinite) {
+      if (!(flags & infinite)) {
+        cache.functions[child](context, vdata.children[child], row);
+      }
+    };
+    WithWrapIfNested<InContainer>(context, [&] {
+      context.writer->Write(flags & kRangeLowerInclusive ? "[" : "(");
+      bound(kRangeLowerChild, kRangeLowerInfinite);
+      context.writer->Write(",");
+      bound(kRangeUpperChild, kRangeUpperInfinite);
+      context.writer->Write(flags & kRangeUpperInclusive ? "]" : ")");
+    });
+  }
+};
+
+struct RangeBinCore {
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    const auto flags = ReadRangeFlags(vdata, row);
+    *context.writer->Alloc(1) = flags;
+    const auto& cache =
+      GetSerializersCache<VarFormat::Binary>(context, vdata.logical_type);
+    const auto bound = [&](duckdb::idx_t child, uint8_t infinite) {
+      if (!(flags & (kRangeEmpty | infinite))) {
+        cache.functions[child](context, vdata.children[child], row);
+      }
+    };
+    bound(kRangeLowerChild, kRangeLowerInfinite);
+    bound(kRangeUpperChild, kRangeUpperInfinite);
   }
 };
 
@@ -2537,6 +2586,11 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                    TsqueryBinCore, kText>(format, context,
                                                           kind);
       }
+      if (IsRange(type)) {
+        return MakeArraySerializer<RangeTextCore<WrapContext::Array>,
+                                   RangeBinCore, kDynamicOid>(format, context,
+                                                              kind);
+      }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
       return MakeArraySerializer<RecordTextCore<WrapContext::Array>,
@@ -2813,6 +2867,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         return SelectFieldSerializer<TsqueryTextCore<WrapContext::None>,
                                      TsqueryTextCore<WrapContext::Record>,
                                      TsqueryBinCore>(format, context);
+      }
+      if (IsRange(type)) {
+        return SelectFieldSerializer<RangeTextCore<WrapContext::None>,
+                                     RangeTextCore<WrapContext::Record>,
+                                     RangeBinCore>(format, context);
       }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,
                                    RecordTextCore<WrapContext::Record>,

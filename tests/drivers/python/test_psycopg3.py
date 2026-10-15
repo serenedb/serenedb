@@ -19,11 +19,22 @@ import re
 import struct
 import threading
 import time
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import psycopg
 import pytest
 from psycopg.adapt import Loader
 from psycopg.pq import Format, TransactionStatus
+from psycopg.types.range import (
+    DateRange,
+    Int4Range,
+    Int8Range,
+    NumericRange,
+    Range,
+    TimestampRange,
+    TimestamptzRange,
+)
 from spec_loader import (
     PROTOCOL_MODES,
     TypeSpec,
@@ -506,6 +517,75 @@ def test_binary_array_header_matches_pg():
                 raw = cur.fetchone()[0]
                 assert _array_header(raw) == (ndim, flags, dims), (sql, raw.hex())
     finally:
+        c.close()
+
+
+def test_range_values_roundtrip():
+    """Range values travel in both wire formats -- bound parameters, results,
+    arrays of ranges and binary COPY -- and come back in PostgreSQL's
+    canonical form. Cross-checked against PostgreSQL 18. psycopg sends small
+    integer bounds as int2, which neither server reads inside an int4range or
+    int8range, so the integer bounds here need their full width.
+    """
+    cases = [
+        ("int4range", Int4Range(100000, 100005, "[]"), Range(100000, 100006)),
+        ("int4range", Int4Range(empty=True), Range(empty=True)),
+        ("int8range", Int8Range(None, 10_000_000_000, "(]"),
+         Range(None, 10_000_000_001, "()")),
+        ("numrange", NumericRange(Decimal("1.5"), Decimal("2.5"), "(]"),
+         Range(Decimal("1.5"), Decimal("2.5"), "(]")),
+        ("daterange", DateRange(date(2020, 1, 1), date(2020, 1, 31), "(]"),
+         Range(date(2020, 1, 2), date(2020, 2, 1))),
+        ("tsrange", TimestampRange(datetime(2020, 1, 1, 10), None),
+         Range(datetime(2020, 1, 1, 10), None)),
+        ("tstzrange",
+         TimestamptzRange(datetime(2020, 1, 1, 10, tzinfo=timezone.utc),
+                          datetime(2020, 1, 2, tzinfo=timezone.utc), "[]"),
+         Range(datetime(2020, 1, 1, 10, tzinfo=timezone.utc),
+               datetime(2020, 1, 2, tzinfo=timezone.utc), "[]")),
+    ]
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    src = f"range_copy_src_{os.getpid()}"
+    dst = f"range_copy_dst_{os.getpid()}"
+    try:
+        for binary in (False, True):
+            with c.cursor(binary=binary) as cur:
+                for name, value, expected in cases:
+                    cur.execute(
+                        f"SELECT %s::{name}, ARRAY[%s::{name}, 'empty'::{name}]",
+                        (value, value))
+                    assert cur.fetchone() == (expected, [expected, Range(empty=True)]), (
+                        binary, name)
+        rows = [
+            (1, Int4Range(100000, 100005, "[]"), DateRange(date(2020, 1, 1), None),
+             NumericRange(Decimal("1.5"), Decimal("2.5")), TimestamptzRange(empty=True)),
+            (2, None, None, None, None),
+        ]
+        with c.cursor(binary=True) as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+                cur.execute(f'CREATE TABLE "{table}" '
+                            "(id int, r int4range, d daterange, n numrange, t tstzrange)")
+            with cur.copy(f'COPY "{src}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.set_types(["int4", "int4range", "daterange", "numrange", "tstzrange"])
+                for row in rows:
+                    cp.write_row(row)
+            data = b""
+            with cur.copy(f'COPY "{src}" TO STDOUT (FORMAT BINARY)') as cp:
+                for chunk in cp:
+                    data += bytes(chunk)
+            with cur.copy(f'COPY "{dst}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.write(data)
+            cur.execute(f'SELECT * FROM "{dst}" ORDER BY id')
+            assert cur.fetchall() == [
+                (1, Range(100000, 100006), Range(date(2020, 1, 1), None),
+                 Range(Decimal("1.5"), Decimal("2.5")), Range(empty=True)),
+                (2, None, None, None, None),
+            ]
+    finally:
+        with c.cursor() as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
         c.close()
 
 

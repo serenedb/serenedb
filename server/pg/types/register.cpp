@@ -32,6 +32,7 @@
 #include "pg/types/name.h"
 #include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
+#include "pg/types/range.h"
 #include "pg/types/reg.h"
 #include "pg/types/tid.h"
 #include "pg/types/vector.h"
@@ -55,6 +56,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterMacaddr(db);
   RegisterMoney(db);
   RegisterXml(db);
+  RegisterRange(db);
 }
 
 }  // namespace sdb::pg

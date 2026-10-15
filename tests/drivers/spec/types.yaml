@@ -386,8 +386,68 @@
     js_postgres_js: ["extended-text", "extended-binary"]
 
 # ---- ranges ----
-# TODO: SereneDB - range types reject bind parameters; only simple-mode
-# literal casts work. Re-enable once extended-mode bind is supported.
+- oid: 3904
+  name: int4range
+  pg_typname: int4range
+  text: true
+  binary: true
+  array: true
+  samples: ["[1,5)", "(1,5]", "empty", "(,)", null]
+  skip:
+    # asyncpg binds ranges only from asyncpg.Range objects, never from the
+    # text samples. Simple-mode literal casts still exercise range input.
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 3926
+  name: int8range
+  pg_typname: int8range
+  text: true
+  binary: true
+  array: true
+  samples: ["[1,9223372036854775806]", "empty", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 3906
+  name: numrange
+  pg_typname: numrange
+  text: true
+  binary: true
+  array: true
+  samples: ["[1.5,2.5)", "(,3]", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 3912
+  name: daterange
+  pg_typname: daterange
+  text: true
+  binary: true
+  array: true
+  samples: ["[2020-01-01,2020-02-01)", "(2020-01-01,infinity]", "empty", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 3908
+  name: tsrange
+  pg_typname: tsrange
+  text: true
+  binary: true
+  array: true
+  samples: ["[\"2020-01-01 10:00:00\",\"2020-01-02 10:00:00\")", "(,)", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 3910
+  name: tstzrange
+  pg_typname: tstzrange
+  text: true
+  binary: true
+  array: true
+  samples: ["[\"2020-01-01 10:00:00+00\",)", "empty", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
 # ---- arrays of common scalars (already covered by `array: true` above,
 #      but a small number of explicit array-OID entries keeps the harness
 #      honest about array-specific binary format) ----

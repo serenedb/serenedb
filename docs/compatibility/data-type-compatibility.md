@@ -24,23 +24,23 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | bytea                        | 🟢            |         |
 | char                         | 🟡            | Values above 127 compare by their text form, such as `\303`, so `'é'::"char" > 'z'::"char"` is false. |
 | cid                          | 🟢            |         |
-| cidr                         | 🟢            |         |
+| cidr                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | circle                       | 🔴            |         |
 | date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
 | datemultirange               | 🔴            |         |
-| daterange                    | 🔴            |         |
+| daterange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. |
 | float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. |
 | gtsvector                    | 🔴            |         |
-| inet                         | 🟢            |         |
+| inet                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int2                         | 🟢            | `smallint` |
 | int2vector                   | 🟢            |         |
 | int4                         | 🟢            | `integer` |
 | int4multirange               | 🔴            |         |
-| int4range                    | 🔴            |         |
+| int4range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int8                         | 🟢            | `bigint` |
 | int8multirange               | 🔴            |         |
-| int8range                    | 🔴            |         |
+| int8range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | interval                     | 🟡            | Field restrictions are ignored: `'1 year 2 mons'::interval year` keeps the months. |
 | json                         | 🟢            |         |
 | jsonb                        | 🔴            | Use `json`. A parameter a client sends as `jsonb` is read as `json`. |
@@ -53,7 +53,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🔴            |         |
-| numrange                     | 🔴            |         |
+| numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | oid                          | 🟢            |         |
 | oidvector                    | 🟢            |         |
 | path                         | 🔴            |         |
@@ -87,9 +87,9 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | timetz                       | 🟢            |         |
 | tsmultirange                 | 🔴            |         |
 | tsquery                      | 🟡            | SereneDB's own [`TSQUERY`](../sql/data_types/tsquery.md), a query for inverted-index search, not PostgreSQL's. |
-| tsrange                      | 🔴            |         |
+| tsrange                      | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tstzmultirange               | 🔴            |         |
-| tstzrange                    | 🔴            |         |
+| tstzrange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tsvector                     | 🔴            |         |
 | txid_snapshot                | 🔴            |         |
 | uuid                         | 🟢            |         |

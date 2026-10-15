@@ -34,6 +34,7 @@
 #include "pg/catalog/utils/session.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
+#include "pg/types/range.h"
 
 namespace sdb::pg {
 namespace {
@@ -47,6 +48,8 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kTidAlias,          kPgLsnAlias,        kCidrAlias,
     kMacaddrAlias,      kMacaddr8Alias,     kInt2vectorAlias,
     kOidvectorAlias,    kMoneyAlias,        kXmlAlias,
+    kInt4rangeAlias,    kInt8rangeAlias,    kNumrangeAlias,
+    kDaterangeAlias,    kTsrangeAlias,      kTstzrangeAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {
     return !type.HasAlias();

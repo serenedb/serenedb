@@ -34,6 +34,7 @@
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/utils/lookup.h"
+#include "pg/types/range.h"
 
 namespace sdb::pg {
 namespace {
@@ -95,6 +96,12 @@ constexpr PgTypeMapping kMappings[] = {
   {kRegconfig, &REGCONFIG, true},
   {kRegdictionary, &REGDICTIONARY, true},
   {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
+  {kInt4Range, &INT4RANGE, true},
+  {kNumrange, &NUMRANGE, true},
+  {kTsrange, &TSRANGE, true},
+  {kTstzrange, &TSTZRANGE, true},
+  {kDaterange, &DATERANGE, true},
+  {kInt8Range, &INT8RANGE, true},
   {kRegnamespace, &REGNAMESPACE, true},
   {kRegrole, &REGROLE, true},
   {kRegcollation, &REGCOLLATION, true},
@@ -366,7 +373,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
         const auto& alias = type.GetTypeInfo().alias;
         for (const auto& schema : kSystemNamespaces) {
           if (const auto* row = FindBuiltinType(schema.oid, alias);
-              row && row->relid != 0) {
+              row && (row->relid != 0 || row->type == 'r')) {
             return make(*row);
           }
         }

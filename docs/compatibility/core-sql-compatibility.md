@@ -666,29 +666,30 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | unnest             | Yes           | No multi-array expansion       |
 
 #### Range
-| Feature       | Support State | Details |
-|---------------|---------------|---------|
-| @>            | No            |         |
-| \<@           | No            |         |
-| &&            | No            |         |
-| \<\<          | No            |         |
-| >>            | No            |         |
-| &\<           | No            |         |
-| &>            | No            |         |
-| -\| No        | No            |         |
-| +             | No            |         |
-| *             | No            |         |
-| -             | No            |         |
-| lower         | No            |         |
-| upper         | No            |         |
-| isempty       | No            |         |
-| lower_inc     | No            |         |
-| upper_inc     | No            |         |
-| lower_inf     | No            |         |
-| upper_inf     | No            |         |
-| range_merge   | No            |         |
-| multirange    | No            |         |
-| unnest        | No            |         |
+| Feature                  | Support State | Details |
+|--------------------------|---------------|---------|
+| @>                       | Yes           | A string literal on the right is read as an element, not a range: write `r @> '[2,3)'::int4range` to test a range |
+| \<@                      | Yes           | A string literal on the left is read as an element, not a range: write `'[2,3)'::int4range <@ r` to test a range |
+| &&                       | Yes           |         |
+| \<\<                     | Yes           |         |
+| >>                       | Yes           |         |
+| &\<                      | Yes           |         |
+| &>                       | Yes           |         |
+| -\|-                     | Yes           |         |
+| +                        | Yes           |         |
+| *                        | Yes           |         |
+| -                        | Yes           |         |
+| lower                    | Yes           |         |
+| upper                    | Yes           |         |
+| isempty                  | Yes           |         |
+| lower_inc                | Yes           |         |
+| upper_inc                | Yes           |         |
+| lower_inf                | Yes           |         |
+| upper_inf                | Yes           |         |
+| range_merge              | Yes           |         |
+| multirange               | No            |         |
+| unnest                   | No            |         |
+| CREATE TYPE ... AS RANGE | No            |         |
 
 #### Aggregate Functions
 

@@ -65,6 +65,7 @@
 #include "pg/types/name.h"
 #include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
+#include "pg/types/range.h"
 #include "pg/types/tid.h"
 #include "pg/types/vector.h"
 
@@ -1808,9 +1809,77 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   return true;
 }
 
+bool DeserializeTextRange(DeserializeContext& ctx, std::string_view data,
+                          duckdb::Vector& vec, duckdb::idx_t row) {
+  ParsedRange range;
+  if (ParseRange(data, range)) {
+    return false;
+  }
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite,
+                         std::string_view text) {
+    return (range.flags & (kRangeEmpty | infinite)) ||
+           DecodeChild(ctx, children[child].GetType(), VarFormat::Text, text,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite, range.lower) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite, range.upper) &&
+         FinishRange(vec, row, range.flags);
+}
+
+bool DeserializeBinaryRange(DeserializeContext& ctx, std::string_view data,
+                            duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.empty()) {
+    return false;
+  }
+  const auto flags = static_cast<uint8_t>(
+    data[0] & (kRangeEmpty | kRangeLowerInclusive | kRangeUpperInclusive |
+               kRangeLowerInfinite | kRangeUpperInfinite));
+  data.remove_prefix(1);
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite) {
+    if (flags & (kRangeEmpty | infinite)) {
+      return true;
+    }
+    if (data.size() < 4) {
+      return false;
+    }
+    const auto length = absl::big_endian::Load<int32_t>(data.data());
+    data.remove_prefix(4);
+    if (length < 0 || static_cast<size_t>(length) > data.size()) {
+      return false;
+    }
+    const auto body = data.substr(0, length);
+    data.remove_prefix(length);
+    return DecodeChild(ctx, children[child].GetType(), VarFormat::Binary, body,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite) && data.empty() &&
+         FinishRange(vec, row, flags);
+}
+
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
+struct RangeBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryRange>(ctx, data,
+                                                                     sink);
+  }
+};
+
+struct RangeText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextRange>(ctx, data,
+                                                                   sink);
+  }
+};
+
 template<bool kCidr>
 struct InetBin {
   template<typename Sink>
@@ -2084,6 +2153,9 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;
+      }
+      if (IsRange(type)) {
+        return SelectDecoder<RangeBin, RangeText, Sink>(binary);
       }
       return SelectDecoder<StructBin, StructText, Sink>(binary);
     case MAP:

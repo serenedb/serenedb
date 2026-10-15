@@ -37,12 +37,12 @@ namespace {
 
 bool ReportsInputErrors(const duckdb::LogicalType& type) {
   static constexpr std::array kAliases = {
-    kRegprocAlias,     kRegprocedureAlias,  kRegoperAlias,
-    kRegoperatorAlias, kRegclassAlias,      kRegtypeAlias,
+    kRegprocAlias,      kRegprocedureAlias, kRegoperAlias,
+    kRegoperatorAlias,  kRegclassAlias,     kRegtypeAlias,
     kRegcollationAlias, kRegconfigAlias,    kRegdictionaryAlias,
-    kRegroleAlias,     kRegnamespaceAlias,  kOidAlias,
-    kTidAlias,         kPgLsnAlias,         kCidrAlias,
-    kMacaddrAlias,     kMacaddr8Alias,      kInt2vectorAlias,
+    kRegroleAlias,      kRegnamespaceAlias, kOidAlias,
+    kTidAlias,          kPgLsnAlias,        kCidrAlias,
+    kMacaddrAlias,      kMacaddr8Alias,     kInt2vectorAlias,
     kOidvectorAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {

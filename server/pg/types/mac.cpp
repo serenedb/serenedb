@@ -264,8 +264,8 @@ void MacBinary(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 void RegisterCasts(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
-  RegisterTextInput(casts, MACADDR(),
-                    TextInputCast<uint64_t, TryParseMacaddr>, InitInput);
+  RegisterTextInput(casts, MACADDR(), TextInputCast<uint64_t, TryParseMacaddr>,
+                    InitInput);
   RegisterTextInput(casts, MACADDR8(),
                     TextInputCast<uint64_t, TryParseMacaddr8>, InitInput);
   casts.RegisterCastFunction(MACADDR(), duckdb::LogicalType::VARCHAR,

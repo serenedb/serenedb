@@ -40,12 +40,19 @@ struct ParsedNumber {
 
 ParsedNumber ParseNumber(std::string_view text, size_t start, int base);
 
+struct InputState : duckdb::FunctionLocalState {
+  std::optional<irs::pg::SqlErrorData> error;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitInput(
+  duckdb::CastLocalStateParameters& parameters);
+
 void InputError(irs::pg::SqlErrorData&& error,
                 duckdb::CastParameters& parameters);
 
 template<typename T, auto Parse>
-bool TextInput(duckdb::Vector& source, duckdb::Vector& result,
-               duckdb::idx_t count, duckdb::CastParameters& parameters) {
+bool TextInputCast(duckdb::Vector& source, duckdb::Vector& result,
+                   duckdb::idx_t count, duckdb::CastParameters& parameters) {
   bool converted = true;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, T>(
     source, result, count, [&](duckdb::string_t text) -> std::optional<T> {

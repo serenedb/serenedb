@@ -61,12 +61,23 @@ ParsedNumber ParseNumber(std::string_view text, size_t start, int base) {
           .end = static_cast<size_t>(digits_end - begin)};
 }
 
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitInput(
+  duckdb::CastLocalStateParameters&) {
+  return duckdb::make_uniq<InputState>();
+}
+
 void InputError(irs::pg::SqlErrorData&& error,
                 duckdb::CastParameters& parameters) {
   if (!parameters.error_message) {
     THROW_SQL_ERROR_FROM_DATA(std::move(error));
   }
   duckdb::HandleCastError::AssignError(error.errmsg, parameters);
+  if (!parameters.local_state) {
+    return;
+  }
+  if (auto& state = parameters.local_state->Cast<InputState>(); !state.error) {
+    state.error = std::move(error);
+  }
 }
 
 void RegisterTextInput(duckdb::CastFunctionSet& casts,
@@ -87,7 +98,8 @@ void ReplaceTextInput(duckdb::CastFunctionSet& casts,
   for (const auto text : {duckdb::LogicalTypeId::VARCHAR,
                           duckdb::LogicalTypeId::STRING_LITERAL}) {
     const duckdb::LogicalType source{text};
-    casts.RegisterCastFunction(source, type, input,
+    casts.RegisterCastFunction(source, type,
+                               duckdb::BoundCastInfo{input, nullptr, InitInput},
                                casts.ImplicitCastCost(nullptr, source, type));
   }
 }

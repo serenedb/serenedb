@@ -88,10 +88,12 @@ constexpr int32_t kMaxTimePrecision = 6;
 
 using NameList = std::vector<std::string>;
 
-std::nullopt_t Miss(bool missing_ok, irs::pg::SqlErrorData error) {
-  if (!missing_ok) {
+std::nullopt_t Miss(irs::pg::SqlErrorData* soft_error,
+                    irs::pg::SqlErrorData error) {
+  if (!soft_error) {
     THROW_SQL_ERROR_FROM_DATA(std::move(error));
   }
+  *soft_error = std::move(error);
   return std::nullopt;
 }
 
@@ -129,14 +131,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
 }  // namespace
 
 std::optional<uint64_t> SchemaOid(const Session& session,
-                                  std::string_view schema, bool missing_ok) {
+                                  std::string_view schema,
+                                  irs::pg::SqlErrorData* soft_error) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     return system->oid;
   }
   if (auto entry = FindSchema(session, schema)) {
     return entry->oid;
   }
-  return Miss(missing_ok, SQL_ERROR_DATA(
+  return Miss(soft_error, SQL_ERROR_DATA(
                             ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                             ERR_MSG("schema \"", schema, "\" does not exist")));
 }
@@ -269,20 +272,21 @@ std::optional<NameList> SplitNames(std::string_view text) {
   }
 }
 
-std::optional<NameList> ParseNames(std::string_view text, bool missing_ok) {
+std::optional<NameList> ParseNames(std::string_view text,
+                                   irs::pg::SqlErrorData* soft_error) {
   auto names = SplitNames(text);
   if (!names || names->empty()) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_NAME),
+    return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_NAME),
                                            ERR_MSG("invalid name syntax")));
   }
   return names;
 }
 
 std::optional<std::string> ParseSingleName(std::string_view text,
-                                           bool missing_ok) {
+                                           irs::pg::SqlErrorData* soft_error) {
   auto names = SplitNames(text);
   if (!names || names->size() != 1) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_NAME),
+    return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_NAME),
                                            ERR_MSG("invalid name syntax")));
   }
   return std::move(names->front());
@@ -852,15 +856,15 @@ struct ResolvedType {
 
 std::optional<ResolvedType> ResolveType(const Session& session,
                                         std::string_view text,
-                                        bool missing_ok) {
+                                        irs::pg::SqlErrorData* soft_error) {
   if (absl::c_all_of(text, absl::ascii_isspace)) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                                ERR_MSG("invalid type name \"", text, "\"")));
   }
   const auto parsed = TypeParser{text}.Parse();
   if (!parsed) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                                ERR_MSG("invalid type name \"", text, "\"")));
   }
@@ -876,14 +880,14 @@ std::optional<ResolvedType> ResolveType(const Session& session,
     const auto object = Deconstruct(session, parsed->names);
     if (object.schema.empty()) {
       element = FindVisibleType(session, object.name);
-    } else if (!SchemaOid(session, object.schema, missing_ok)) {
+    } else if (!SchemaOid(session, object.schema, soft_error)) {
       return std::nullopt;
     } else {
       element = FindTypeIn(session, object.schema, object.name);
     }
   }
   if (element == kInvalidOid) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+    return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                            ERR_MSG("type \"", display,
                                                    "\" does not exist")));
   }
@@ -893,7 +897,7 @@ std::optional<ResolvedType> ResolveType(const Session& session,
   }
   const auto array = ArrayTypeOf(session, element);
   if (array == kInvalidOid) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+    return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                            ERR_MSG("type \"", display,
                                                    "\" does not exist")));
   }
@@ -1016,8 +1020,8 @@ OutText ClassOut(const Session& session, uint64_t oid) {
 }
 
 std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
-                                bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                                irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
@@ -1043,7 +1047,7 @@ std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
       oid != kInvalidOid) {
     return oid;
   }
-  return Miss(missing_ok,
+  return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                              ERR_MSG("relation \"", absl::StrJoin(*names, "."),
                                      "\" does not exist")));
@@ -1200,20 +1204,20 @@ std::string ProcOut(const Session& session, uint64_t oid, bool signature) {
 }
 
 std::optional<uint64_t> ProcIn(const Session& session, std::string_view text,
-                               bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                               irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
   const auto candidates = FindProcs(session, *names);
   if (candidates.empty()) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+    return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                                            ERR_MSG("function \"", text,
                                                    "\" does not exist")));
   }
   if (candidates.size() > 1) {
     return Miss(
-      missing_ok,
+      soft_error,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_AMBIGUOUS_FUNCTION),
                      ERR_MSG("more than one function named \"", text, "\"")));
   }
@@ -1227,7 +1231,7 @@ struct Signature {
 
 std::optional<Signature> ParseSignature(const Session& session,
                                         std::string_view text, bool allow_none,
-                                        bool missing_ok) {
+                                        irs::pg::SqlErrorData* soft_error) {
   bool quoted = false;
   size_t open = 0;
   for (; open < text.size(); ++open) {
@@ -1238,17 +1242,17 @@ std::optional<Signature> ParseSignature(const Session& session,
     }
   }
   if (open == text.size()) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                ERR_MSG("expected a left parenthesis")));
   }
-  auto names = ParseNames(text.substr(0, open), missing_ok);
+  auto names = ParseNames(text.substr(0, open), soft_error);
   if (!names) {
     return std::nullopt;
   }
   auto rest = absl::StripTrailingAsciiWhitespace(text.substr(open + 1));
   if (!absl::ConsumeSuffix(&rest, ")")) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                ERR_MSG("expected a right parenthesis")));
   }
@@ -1261,7 +1265,7 @@ std::optional<Signature> ParseSignature(const Session& session,
     }
     if (pos == rest.size()) {
       if (had_comma) {
-        return Miss(missing_ok, SQL_ERROR_DATA(
+        return Miss(soft_error, SQL_ERROR_DATA(
                                   ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                   ERR_MSG("expected a type name")));
       }
@@ -1282,7 +1286,7 @@ std::optional<Signature> ParseSignature(const Session& session,
       }
     }
     if (quoted || depth != 0) {
-      return Miss(missing_ok,
+      return Miss(soft_error,
                   SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                  ERR_MSG("improper type name")));
     }
@@ -1293,7 +1297,7 @@ std::optional<Signature> ParseSignature(const Session& session,
       ++pos;
     }
     if (args.size() >= kMaxFunctionArgs) {
-      return Miss(missing_ok,
+      return Miss(soft_error,
                   SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                  ERR_MSG("too many arguments")));
     }
@@ -1301,7 +1305,7 @@ std::optional<Signature> ParseSignature(const Session& session,
       args.emplace_back(0);
       continue;
     }
-    const auto type = ResolveType(session, type_name, missing_ok);
+    const auto type = ResolveType(session, type_name, soft_error);
     if (!type) {
       return std::nullopt;
     }
@@ -1311,8 +1315,9 @@ std::optional<Signature> ParseSignature(const Session& session,
 }
 
 std::optional<uint64_t> ProcedureIn(const Session& session,
-                                    std::string_view text, bool missing_ok) {
-  const auto signature = ParseSignature(session, text, false, missing_ok);
+                                    std::string_view text,
+                                    irs::pg::SqlErrorData* soft_error) {
+  const auto signature = ParseSignature(session, text, false, soft_error);
   if (!signature) {
     return std::nullopt;
   }
@@ -1321,59 +1326,61 @@ std::optional<uint64_t> ProcedureIn(const Session& session,
       return candidate.oid;
     }
   }
-  return Miss(missing_ok, SQL_ERROR_DATA(
+  return Miss(soft_error, SQL_ERROR_DATA(
                             ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                             ERR_MSG("function \"", text, "\" does not exist")));
 }
 
 std::optional<uint64_t> OperIn(const Session& session, std::string_view text,
-                               bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                               irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
   Deconstruct(session, *names);
-  return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+  return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                                          ERR_MSG("operator does not exist: ",
                                                  absl::StrJoin(*names, "."))));
 }
 
 std::optional<uint64_t> OperatorIn(const Session& session,
-                                   std::string_view text, bool missing_ok) {
-  const auto signature = ParseSignature(session, text, true, missing_ok);
+                                   std::string_view text,
+                                   irs::pg::SqlErrorData* soft_error) {
+  const auto signature = ParseSignature(session, text, true, soft_error);
   if (!signature) {
     return std::nullopt;
   }
   if (signature->args.size() == 1) {
     return Miss(
-      missing_ok,
+      soft_error,
       SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_UNDEFINED_PARAMETER), ERR_MSG("missing argument"),
         ERR_HINT(
           "Use NONE to denote the missing argument of a unary operator.")));
   }
   if (signature->args.size() != 2) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_TOO_MANY_ARGUMENTS),
                                ERR_MSG("too many arguments"),
                                ERR_HINT("Provide two argument types for "
                                         "operator.")));
   }
   Deconstruct(session, signature->names);
-  return Miss(missing_ok,
+  return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                              ERR_MSG("operator does not exist: ", text)));
 }
 
 std::optional<uint64_t> CollationIn(const Session& session,
-                                    std::string_view text, bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                                    std::string_view text,
+                                    irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
   const auto object = Deconstruct(session, *names);
   if (!object.schema.empty() &&
-      !SchemaOid(session, object.schema, missing_ok)) {
+      !SchemaOid(session, object.schema, soft_error)) {
     return std::nullopt;
   }
   if (object.schema.empty() ||
@@ -1388,7 +1395,7 @@ std::optional<uint64_t> CollationIn(const Session& session,
     }
   }
   return Miss(
-    missing_ok,
+    soft_error,
     SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                    ERR_MSG("collation \"", absl::StrJoin(*names, "."),
                            "\" for encoding \"UTF8\" does not exist")));
@@ -1402,13 +1409,13 @@ OutText CollationOut(uint64_t oid) {
 }
 
 std::optional<uint64_t> ConfigIn(const Session& session, std::string_view text,
-                                 bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                                 irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
   Deconstruct(session, *names);
-  return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+  return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                          ERR_MSG("text search configuration \"",
                                                  absl::StrJoin(*names, "."),
                                                  "\" does not exist")));
@@ -1425,8 +1432,9 @@ uint64_t FindVisibleDictionary(const Session& session, std::string_view name) {
 }
 
 std::optional<uint64_t> DictionaryIn(const Session& session,
-                                     std::string_view text, bool missing_ok) {
-  const auto names = ParseNames(text, missing_ok);
+                                     std::string_view text,
+                                     irs::pg::SqlErrorData* soft_error) {
+  const auto names = ParseNames(text, soft_error);
   if (!names) {
     return std::nullopt;
   }
@@ -1436,14 +1444,14 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
         oid != kInvalidOid) {
       return oid;
     }
-  } else if (!SchemaOid(session, object.schema, missing_ok)) {
+  } else if (!SchemaOid(session, object.schema, soft_error)) {
     return std::nullopt;
   } else if (auto entry = FindInSchema(session, object.schema,
                                        duckdb::CatalogType::TOKENIZER_ENTRY,
                                        object.name)) {
     return entry->oid;
   }
-  return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+  return Miss(soft_error, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                          ERR_MSG("text search dictionary \"",
                                                  absl::StrJoin(*names, "."),
                                                  "\" does not exist")));
@@ -1462,8 +1470,8 @@ OutText DictionaryOut(const Session& session, uint64_t oid) {
 }
 
 std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
-                               bool missing_ok) {
-  const auto name = ParseSingleName(text, missing_ok);
+                               irs::pg::SqlErrorData* soft_error) {
+  const auto name = ParseSingleName(text, soft_error);
   if (!name) {
     return std::nullopt;
   }
@@ -1471,7 +1479,7 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
   if (const auto* role = graph->FindByName(*name)) {
     return role->first;
   }
-  return Miss(missing_ok,
+  return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                              ERR_MSG("role \"", *name, "\" does not exist")));
 }
@@ -1487,12 +1495,13 @@ std::string RoleOut(const Session& session, uint64_t oid) {
 }
 
 std::optional<uint64_t> NamespaceIn(const Session& session,
-                                    std::string_view text, bool missing_ok) {
-  const auto name = ParseSingleName(text, missing_ok);
+                                    std::string_view text,
+                                    irs::pg::SqlErrorData* soft_error) {
+  const auto name = ParseSingleName(text, soft_error);
   if (!name) {
     return std::nullopt;
   }
-  return SchemaOid(session, *name, missing_ok);
+  return SchemaOid(session, *name, soft_error);
 }
 
 OutText NamespaceOut(const Session& session, uint64_t oid) {
@@ -1512,13 +1521,14 @@ bool IsNumericOid(std::string_view text) {
   return !text.empty() && absl::c_all_of(text, absl::ascii_isdigit);
 }
 
-std::optional<uint64_t> ParseOid(std::string_view text, bool missing_ok) {
+std::optional<uint64_t> ParseOid(std::string_view text,
+                                 irs::pg::SqlErrorData* soft_error) {
   const uint64_t base = text.size() > 1 && text.front() == '0' ? 8 : 10;
   uint64_t oid = 0;
   for (const char c : text) {
     const auto digit = static_cast<uint64_t>(c - '0');
     if (digit >= base) {
-      return Miss(missing_ok, SQL_ERROR_DATA(
+      return Miss(soft_error, SQL_ERROR_DATA(
                                 ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                                 ERR_MSG("invalid input syntax for type oid: \"",
                                         text, "\"")));
@@ -1529,7 +1539,7 @@ std::optional<uint64_t> ParseOid(std::string_view text, bool missing_ok) {
     oid = oid * base + digit;
   }
   if (oid > std::numeric_limits<uint32_t>::max()) {
-    return Miss(missing_ok,
+    return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                                ERR_MSG("value \"", text,
                                        "\" is out of range for type oid")));
@@ -1716,39 +1726,40 @@ std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid) {
 }
 
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
-                              std::string_view text, bool missing_ok) {
+                              std::string_view text,
+                              irs::pg::SqlErrorData* soft_error) {
   if (text == "-" && kind != RegKind::Oper && kind != RegKind::Operator) {
     return kInvalidOid;
   }
   if (IsNumericOid(text)) {
-    return ParseOid(text, missing_ok);
+    return ParseOid(text, soft_error);
   }
   switch (kind) {
     case RegKind::Proc:
-      return ProcIn(session, text, missing_ok);
+      return ProcIn(session, text, soft_error);
     case RegKind::Procedure:
-      return ProcedureIn(session, text, missing_ok);
+      return ProcedureIn(session, text, soft_error);
     case RegKind::Oper:
-      return OperIn(session, text, missing_ok);
+      return OperIn(session, text, soft_error);
     case RegKind::Operator:
-      return OperatorIn(session, text, missing_ok);
+      return OperatorIn(session, text, soft_error);
     case RegKind::Class:
-      return ClassIn(session, text, missing_ok);
+      return ClassIn(session, text, soft_error);
     case RegKind::Type:
-      if (const auto type = ResolveType(session, text, missing_ok)) {
+      if (const auto type = ResolveType(session, text, soft_error)) {
         return type->oid;
       }
       return std::nullopt;
     case RegKind::Collation:
-      return CollationIn(session, text, missing_ok);
+      return CollationIn(session, text, soft_error);
     case RegKind::Config:
-      return ConfigIn(session, text, missing_ok);
+      return ConfigIn(session, text, soft_error);
     case RegKind::Dictionary:
-      return DictionaryIn(session, text, missing_ok);
+      return DictionaryIn(session, text, soft_error);
     case RegKind::Role:
-      return RoleIn(session, text, missing_ok);
+      return RoleIn(session, text, soft_error);
     case RegKind::Namespace:
-      return NamespaceIn(session, text, missing_ok);
+      return NamespaceIn(session, text, soft_error);
   }
 }
 
@@ -1834,10 +1845,11 @@ template<RegKind Kind>
 void ToRegFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
   const auto& session = SessionOf(state);
+  irs::pg::SqlErrorData error;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t text) -> duckdb::optional<int64_t> {
-      const auto oid = RegIn(session, Kind, connector::AsView(text), true);
+      const auto oid = RegIn(session, Kind, connector::AsView(text), &error);
       if (!oid) {
         return duckdb::nullopt;
       }
@@ -1849,10 +1861,11 @@ void ToRegtypmodFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
   const auto& session = SessionOf(state);
+  irs::pg::SqlErrorData error;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int32_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t text) -> duckdb::optional<int32_t> {
-      const auto type = ResolveType(session, connector::AsView(text), true);
+      const auto type = ResolveType(session, connector::AsView(text), &error);
       if (!type) {
         return duckdb::nullopt;
       }

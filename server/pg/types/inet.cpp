@@ -193,7 +193,7 @@ size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size) {
 }
 
 void RegisterInet(duckdb::CastFunctionSet& casts) {
-  RegisterTextInput(casts, CIDR(), VarcharToCidrCast, nullptr);
+  RegisterTextInput(casts, CIDR(), VarcharToCidrCast, InitInput);
   casts.RegisterCastFunction(CIDR(), duckdb::LogicalType::VARCHAR,
                              CidrCast<true>, 50);
   casts.RegisterCastFunction(INET(), CIDR(), CidrCast<false>);

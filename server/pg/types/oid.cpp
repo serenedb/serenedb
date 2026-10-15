@@ -90,7 +90,7 @@ std::optional<irs::pg::SqlErrorData> TryParseOidAt(std::string_view text,
 }
 
 void RegisterOid(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, OID(), TextInput<int64_t, TryParseOid>);
+  ReplaceTextInput(casts, OID(), TextInputCast<int64_t, TryParseOid>);
 }
 
 }  // namespace sdb::pg

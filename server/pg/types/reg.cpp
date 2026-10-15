@@ -21,8 +21,10 @@
 #include "pg/types/reg.h"
 
 #include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <optional>
 #include <string_view>
 
 #include "pg/catalog/functions/pg_catalog/regproc.h"
@@ -33,6 +35,18 @@
 namespace sdb::pg {
 namespace {
 
+struct RegInputState final : InputState {
+  explicit RegInputState(duckdb::ClientContext* context)
+    : session{MakeSession(context)} {}
+
+  Session session;
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegInput(
+  duckdb::CastLocalStateParameters& parameters) {
+  return duckdb::make_uniq<RegInputState>(parameters.context.get());
+}
+
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
   duckdb::CastLocalStateParameters& parameters) {
   return duckdb::make_uniq<SessionState>(parameters.context.get());
@@ -41,22 +55,23 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
 template<RegKind Kind>
 bool VarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
                       duckdb::idx_t count, duckdb::CastParameters& params) {
-  const auto& session = params.local_state->Cast<SessionState>().session;
+  const auto& session = params.local_state->Cast<RegInputState>().session;
   SDB_ASSERT(session.context);
-  auto src = source.Values<duckdb::string_t>();
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
-  auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto value = src[i];
-    if (!value.IsValid()) {
-      dst_validity.SetInvalid(i);
-      continue;
-    }
-    const auto& text = value.GetValue();
-    dst_data[i] = static_cast<int64_t>(*RegIn(
-      session, Kind, std::string_view{text.GetData(), text.GetSize()}, false));
-  }
-  return true;
+  irs::pg::SqlErrorData error;
+  bool converted = true;
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    source, result, count,
+    [&](duckdb::string_t text) -> std::optional<int64_t> {
+      if (const auto oid =
+            RegIn(session, Kind, {text.GetData(), text.GetSize()},
+                  params.error_message ? &error : nullptr)) {
+        return static_cast<int64_t>(*oid);
+      }
+      InputError(std::move(error), params);
+      converted = false;
+      return std::nullopt;
+    });
+  return converted;
 }
 
 template<RegKind Kind>
@@ -83,7 +98,7 @@ bool RegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
 template<RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
-  RegisterTextInput(casts, reg, VarcharToRegCast<Kind>, InitRegCast);
+  RegisterTextInput(casts, reg, VarcharToRegCast<Kind>, InitRegInput);
   casts.RegisterCastFunction(
     reg, duckdb::LogicalType::VARCHAR,
     duckdb::BoundCastInfo(RegToVarcharCast<Kind>, nullptr, InitRegCast), 50);

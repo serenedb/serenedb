@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,13 +68,15 @@ std::string ProcIdentity(const Session& session, uint64_t oid);
 
 std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid);
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
-                              std::string_view text, bool missing_ok);
+                              std::string_view text,
+                              irs::pg::SqlErrorData* soft_error);
 
 const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
                                            uint64_t oid);
 
 std::optional<uint64_t> SchemaOid(const Session& session,
-                                  std::string_view schema, bool missing_ok);
+                                  std::string_view schema,
+                                  irs::pg::SqlErrorData* soft_error);
 uint64_t ResolveRelation(const Session& session,
                          const duckdb::QualifiedName& name);
 OutText RelationName(const Session& session, std::string_view schema,

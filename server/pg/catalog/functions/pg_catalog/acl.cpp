@@ -473,7 +473,7 @@ struct ObjectPrivileges {
 template<typename F>
 struct RelationPrivileges : ObjectPrivileges<F> {
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    return *RegIn(session, RegKind::Class, name, false);
+    return *RegIn(session, RegKind::Class, name, nullptr);
   }
 };
 
@@ -596,7 +596,7 @@ struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    return *SchemaOid(session, name, false);
+    return *SchemaOid(session, name, nullptr);
   }
 
   static std::optional<ObjectTarget> Find(const Session& session,
@@ -644,7 +644,7 @@ struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    return *RegIn(session, RegKind::Procedure, name, false);
+    return *RegIn(session, RegKind::Procedure, name, nullptr);
   }
 
   static std::optional<ObjectTarget> Find(const Session& session,
@@ -666,7 +666,7 @@ struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    return *RegIn(session, RegKind::Type, name, false);
+    return *RegIn(session, RegKind::Type, name, nullptr);
   }
 
   static std::optional<ObjectTarget> Find(const Session& session,

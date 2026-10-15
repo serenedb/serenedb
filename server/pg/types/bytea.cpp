@@ -24,17 +24,38 @@
 #include <absl/strings/escaping.h>
 #include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <string>
+#include <utf8proc_wrapper.hpp>
+
+#include "pg/types/cast.h"
 
 namespace sdb::pg {
 namespace {
 
-duckdb::string_t ByteaIn(std::string_view input, duckdb::Vector& result_vec) {
+irs::pg::SqlErrorData InvalidHexDigit(std::string_view text) {
+  int length = 1;
+  duckdb::Utf8Proc::UTF8ToCodepoint(text.data(), length, text.size());
+  return SQL_ERROR_DATA(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("invalid hexadecimal digit: \"",
+            text.substr(0, static_cast<size_t>(std::max(length, 1))), "\""));
+}
+
+irs::pg::SqlErrorData InvalidByteaSyntax() {
+  return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid input syntax for type bytea"));
+}
+
+std::optional<irs::pg::SqlErrorData> ByteaIn(std::string_view input,
+                                             duckdb::Vector& result_vec,
+                                             duckdb::string_t& bytes) {
   if (input.starts_with("\\x")) {
     std::string_view payload{input.begin() + 2, input.end()};
     auto target =
@@ -49,29 +70,26 @@ duckdb::string_t ByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       }
       const auto h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
       if (h1 == -1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-          ERR_MSG("invalid hexadecimal digit: \"", std::string(1, c), "\""));
+        return InvalidHexDigit(payload.substr(i));
       }
       if (i + 1 >= payload.size()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        return SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("invalid hexadecimal data: odd number of digits"));
       }
       const auto h2 =
         absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
       if (h2 == -1) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        ERR_MSG("invalid hexadecimal digit: \"",
-                                std::string(1, payload[i + 1]), "\""));
+        return InvalidHexDigit(payload.substr(i + 1));
       }
       *out++ = static_cast<char>((h1 << 4) + h2);
       i += 2;
     }
     auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
     target.Finalize();
-    return duckdb::StringVector::AddStringOrBlob(
+    bytes = duckdb::StringVector::AddStringOrBlob(
       result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
+    return std::nullopt;
   }
 
   auto target = duckdb::StringVector::EmptyString(result_vec, input.size());
@@ -85,8 +103,7 @@ duckdb::string_t ByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       continue;
     }
     if (i + 1 >= input.size()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
+      return InvalidByteaSyntax();
     }
     if (input[i + 1] == '\\') {
       *out++ = '\\';
@@ -94,32 +111,41 @@ duckdb::string_t ByteaIn(std::string_view input, duckdb::Vector& result_vec) {
       continue;
     }
     if (i + 3 >= input.size()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
+      return InvalidByteaSyntax();
     }
     const char* octal = input.data() + i + 1;
     unsigned value = 0;
     const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
     if (res.ec != std::errc() || res.ptr != octal + 3 || value > 0xFFU) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
+      return InvalidByteaSyntax();
     }
     *out++ = static_cast<char>(value);
     i += 4;
   }
   auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
   target.Finalize();
-  return duckdb::StringVector::AddStringOrBlob(
+  bytes = duckdb::StringVector::AddStringOrBlob(
     result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
+  return std::nullopt;
 }
 
 bool VarcharToByteaCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count, duckdb::CastParameters&) {
+                        duckdb::idx_t count,
+                        duckdb::CastParameters& parameters) {
+  bool converted = true;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
-      return ByteaIn({input.GetData(), input.GetSize()}, result);
+    source, result, count,
+    [&](duckdb::string_t input) -> std::optional<duckdb::string_t> {
+      duckdb::string_t bytes;
+      if (auto error =
+            ByteaIn({input.GetData(), input.GetSize()}, result, bytes)) {
+        InputError(std::move(*error), parameters);
+        converted = false;
+        return std::nullopt;
+      }
+      return bytes;
     });
-  return true;
+  return converted;
 }
 
 struct ByteaOutCastData final : public duckdb::BoundCastData {
@@ -217,9 +243,9 @@ void ByteaOutEscape(char* buf, std::string_view value) {
 }
 
 void RegisterBytea(duckdb::CastFunctionSet& casts) {
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,
-                             duckdb::LogicalType::BLOB, VarcharToByteaCast,
-                             100);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
+    duckdb::BoundCastInfo{VarcharToByteaCast, nullptr, InitInput}, 100);
   casts.RegisterCastFunction(duckdb::LogicalType::BLOB,
                              duckdb::LogicalType::VARCHAR, ByteaToVarcharBind,
                              100);

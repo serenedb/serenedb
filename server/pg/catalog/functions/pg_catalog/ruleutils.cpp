@@ -706,7 +706,7 @@ void PgGetViewdefByName(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                                     Pretty...>(
     args, result, [&](duckdb::string_t name, Pretty...) {
       const auto oid =
-        *RegIn(session, RegKind::Class, connector::AsView(name), false);
+        *RegIn(session, RegKind::Class, connector::AsView(name), nullptr);
       return Emit(result, ViewDefinition(session, static_cast<int64_t>(oid)));
     });
 }

@@ -98,7 +98,8 @@ std::string FormatLsn(uint64_t lsn) {
 }
 
 void RegisterPgLsn(duckdb::CastFunctionSet& casts) {
-  RegisterTextInput(casts, PG_LSN(), TextInput<uint64_t, TryParseLsn>, nullptr);
+  RegisterTextInput(casts, PG_LSN(), TextInputCast<uint64_t, TryParseLsn>,
+                    InitInput);
   casts.RegisterCastFunction(PG_LSN(), duckdb::LogicalType::VARCHAR,
                              LsnToVarcharCast, 50);
 }

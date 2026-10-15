@@ -116,7 +116,7 @@ void TidSend(int64_t tid, uint8_t* buffer) {
 }
 
 void RegisterTid(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, TID(), TextInput<int64_t, TryParseTid>);
+  ReplaceTextInput(casts, TID(), TextInputCast<int64_t, TryParseTid>);
   casts.RegisterCastFunction(TID(), duckdb::LogicalType::VARCHAR, TidToText);
 }
 

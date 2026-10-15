@@ -202,7 +202,7 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
     [&](duckdb::string_t table_name,
         duckdb::string_t column_name) -> duckdb::optional<duckdb::string_t> {
       auto relation = EntryByOid(
-        session, *RegIn(session, RegKind::Class, AsView(table_name), false));
+        session, *RegIn(session, RegKind::Class, AsView(table_name), nullptr));
       if (!relation) {
         return duckdb::nullopt;
       }

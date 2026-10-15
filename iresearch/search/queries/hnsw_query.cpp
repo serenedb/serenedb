@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -424,6 +425,11 @@ long double ScanCandidateCost(uint32_t record_size) noexcept {
   return r / (r + kWalkCandidateOverhead);
 }
 
+uint32_t HnswCandidateBytes(uint32_t record_size, uint32_t d) noexcept {
+  return record_size != 0 ? record_size
+                          : d * static_cast<uint32_t>(sizeof(float));
+}
+
 inline constexpr uint64_t kTwoHopAdmittedNeighbours = 2;
 
 bool HnswBridgeRejected(uint32_t record_size, uint32_t m0) noexcept {
@@ -553,13 +559,14 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     matches = _inner->EstimateMax();
   }
   auto mode = _filter_mode;
+  const auto record = HnswCandidateBytes(_record_size, _d);
   const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
-                       HnswBridgeRejected(_record_size, graph.M0());
+                       HnswBridgeRejected(record, graph.M0());
   if (_ef != 0 && mode == HnswFilterMode::Auto) {
-    mode = HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                          two_hop)
-             ? HnswFilterMode::Scan
-             : HnswFilterMode::Walk;
+    mode =
+      HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), record, two_hop)
+        ? HnswFilterMode::Scan
+        : HnswFilterMode::Walk;
   }
   // A walk asks the columnstore about the nodes it reaches; only a scan needs
   // the predicate applied to the whole segment up front, which is what building
@@ -658,6 +665,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
       return;
     }
   }
+  SDB_IF_FAILURE("irs::HnswFilteredScan") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   HnswScanTopK(set, graph, dist, _ef, scratch);
 }
 
@@ -692,8 +702,9 @@ bool HnswQuery::ScansByColumn() const {
     return _filter_mode == HnswFilterMode::Scan;
   }
   const auto& graph = _data->graph;
-  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), _record_size,
-                        HnswBridgeRejected(_record_size, graph.M0()));
+  const auto record = HnswCandidateBytes(_record_size, _d);
+  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), record,
+                        HnswBridgeRejected(record, graph.M0()));
 }
 
 void HnswQuery::ScanColumn(HnswSearchScratch& s) const {

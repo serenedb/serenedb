@@ -724,12 +724,12 @@ void XpathFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   }
 }
 
-std::string XmlConcat(std::string_view left, std::string_view right) {
+std::string XmlConcat(std::span<const std::string_view> values) {
   int standalone = 1;
   std::optional<std::string_view> version;
   bool version_differs = false;
   std::string body;
-  for (const auto xml : {left, right}) {
+  for (const auto xml : values) {
     const auto decl = ParseXmlDecl(xml).value_or(XmlDecl{});
     if (decl.standalone == 0 && standalone == 1) {
       standalone = 0;
@@ -751,6 +751,29 @@ std::string XmlConcat(std::string_view left, std::string_view right) {
   }
   return absl::StrCat(
     PrintXmlDecl(version_differs ? std::nullopt : version, standalone), body);
+}
+
+void XmlConcatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
+  const auto count = args.size();
+  std::vector<std::vector<std::string_view>> rows(count);
+  for (auto& column : args.data) {
+    for (auto entry : column.Values<duckdb::string_t>()) {
+      if (entry.IsValid()) {
+        rows[entry.GetIndex()].emplace_back(AsView(entry.GetValue()));
+      }
+    }
+  }
+  auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(result, count);
+  for (const auto& values : rows) {
+    if (values.empty()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto xml = XmlConcat(values);
+    writer.WriteValue(
+      duckdb::string_t{xml.data(), static_cast<uint32_t>(xml.size())});
+  }
 }
 
 struct XmlAggState {
@@ -790,7 +813,8 @@ struct XmlAgg {
                      std::string_view xml) {
     const std::string_view current{state.data, state.size};
     if (state.is_set && current.starts_with(kDeclarationStart)) {
-      const auto merged = XmlConcat(current, xml);
+      const std::array values{current, xml};
+      const auto merged = XmlConcat(values);
       state.size = 0;
       Reserve(state, allocator, merged.size());
       std::memcpy(state.data, merged.data(), merged.size());
@@ -882,6 +906,10 @@ void RegisterFunctions(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(std::move(comment));
   loader.RegisterFunction(duckdb::ScalarFunction{
     "xmltext", {duckdb::LogicalType::VARCHAR}, xml, XmlTextFunction});
+  duckdb::ScalarFunction concat{"xmlconcat", {}, xml, XmlConcatFunction};
+  concat.GetSignature().AddParameter("value", xml).AddArgs("args", xml);
+  concat.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  loader.RegisterFunction(std::move(concat));
   const auto spaces = duckdb::LogicalType::LIST(
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
   const auto xpath =

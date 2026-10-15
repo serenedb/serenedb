@@ -185,6 +185,28 @@ db error: ERROR: could not parse XML document<slt:ignore>
 
 
 query
+SELECT xmlconcat('<a/>', '<b/>') AS a, xmlconcat('<?xml version="1.1"?><a/>', '<?xml version="1.1" standalone="no"?><b/>') AS b,
+       xmlconcat('<?xml version="1.0" standalone="yes"?><a/>') AS c, xmlconcat('<?xml version="1.0"?><a/>')::text AS d,
+       xmlconcat(NULL, '<b/>'::xml) AS e, xmlconcat(NULL::xml, NULL::xml) IS NULL AS f, xmlconcat('abc', '<b/>', 'x') AS g;
+----
+a	b	c	d	e	f	g
+<a/><b/>	<?xml version="1.1"?><a/><b/>	<?xml version="1.0" standalone="yes"?><a/>	<a/>	<b/>	t	abc<b/>x
+
+
+statement error (invalid XML content)
+SELECT xmlconcat('<a>');
+
+
+query
+SELECT '<a/>'::xml IS DOCUMENT AS a, 'abc'::xml IS DOCUMENT AS b, '<a/><b/>'::xml IS NOT DOCUMENT AS c,
+       NULL::xml IS DOCUMENT AS d, '<a/>' IS DOCUMENT AS e, NOT '<a/>'::xml IS DOCUMENT AS f,
+       '<a/>'::xml IS DOCUMENT IS TRUE AS g, '<a/>'::xml IS NOT DOCUMENT AND TRUE AS h;
+----
+a	b	c	d	e	f	g	h
+t	f	t	NULL	t	f	t	f
+
+
+query
 SELECT xmlagg(x) AS a FROM (VALUES ('<a/>'::xml), ('<b/>'::xml), (NULL)) t(x);
 ----
 a

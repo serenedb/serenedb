@@ -3983,6 +3983,7 @@
 {"scalar system.main.xml_is_well_formed_content(VARCHAR)", 3053},
 {"scalar system.main.xml_is_well_formed_document(VARCHAR)", 3052},
 {"scalar system.main.xmlcomment(VARCHAR)", 2895},
+{"scalar system.main.xmlconcat(xml, xml...)", 30436},
 {"scalar system.main.xmltext(VARCHAR)", 3813},
 {"scalar system.main.xor(BIGINT, BIGINT)", 30161},
 {"scalar system.main.xor(BIT, BIT)", 30168},

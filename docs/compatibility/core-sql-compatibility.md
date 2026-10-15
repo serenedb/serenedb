@@ -545,14 +545,14 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 |-----------------------|---------------|---------|
 | xmltext               | Yes           |         |
 | xmlcomment            | Yes           |         |
-| xmlconcat             | No            |         |
+| xmlconcat             | Yes           |         |
 | xmlelement            | No            |         |
 | xmlforest             | No            |         |
 | xmlpi                 | No            |         |
 | xmlroot               | No            |         |
 | xmlagg                | Yes           |         |
-| `IS DOCUMENT`         | No            |         |
-| `IS NOT DOCUMENT`     | No            |         |
+| `IS DOCUMENT`         | Yes           |         |
+| `IS NOT DOCUMENT`     | Yes           |         |
 | XMLEXISTS             | No            |         |
 | xml_is_well_formed    | Yes           | Also `xml_is_well_formed_document` and `xml_is_well_formed_content` |
 | xpath                 | Yes           |         |

@@ -1611,7 +1611,7 @@ statement ok
 SELECT xmlcomment('foo');
 
 # op_misc1: xmlconcat
-statement error
+statement ok
 SELECT xmlconcat('<a/>'::xml,'<b/>'::xml);
 
 # op_misc1: xmlelement
@@ -1635,11 +1635,11 @@ statement ok
 SELECT xmlagg(c) FROM (VALUES ('<a/>'::xml)) t(c);
 
 # op_misc1: IS DOCUMENT
-statement error
+statement ok
 SELECT '<a>x</a>'::xml IS DOCUMENT;
 
 # op_misc1: IS NOT DOCUMENT
-statement error
+statement ok
 SELECT '<a>x</a>'::xml IS NOT DOCUMENT;
 
 # op_misc1: XMLEXISTS

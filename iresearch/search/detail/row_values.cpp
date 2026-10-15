@@ -26,6 +26,7 @@
 namespace irs {
 
 void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
+  _strings.Reset();
   const auto& type = values.GetType();
   _type = type.id();
   _json = type.IsJSONType();

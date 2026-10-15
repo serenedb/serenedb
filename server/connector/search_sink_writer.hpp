@@ -23,8 +23,10 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
 
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/arena_allocator.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -266,7 +268,8 @@ class SearchSinkInsertBaseImpl {
   PkPolicy _pk_policy;
 
   JsonExpressionFields _json_fields;
-  irs::JsonLeafReader _json_reader;
+  duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
+  irs::JsonLeafReader _json_reader{_json_strings};
 
   class StoreAppender final : public irs::StoreSink {
    public:

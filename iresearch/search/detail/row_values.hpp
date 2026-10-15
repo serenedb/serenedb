@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/storage/arena_allocator.hpp>
 
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/json_leaf.hpp"
@@ -75,7 +77,8 @@ class RowValues {
   duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
   uint64_t _array_size = 0;
   bool _json = false;
-  JsonLeafReader _reader;
+  duckdb::ArenaAllocator _strings{duckdb::Allocator::DefaultAllocator()};
+  JsonLeafReader _reader{_strings};
 };
 
 }  // namespace irs

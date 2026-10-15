@@ -524,6 +524,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
                                               duckdb::idx_t count) {
   SDB_ASSERT(_document);
   _document->NextFieldBatch();
+  _json_strings.Reset();
 
   auto& fmt = _vec_fmt.unified;
   vec.ToUnifiedFormat(count, fmt);
@@ -960,8 +961,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& key : config->keys) {
-    if (key.normalized_expression.empty() ||
-        config->FindKey(key.field_id) != &key) {
+    if (key.normalized_expression.empty() || !config->WritesField(key)) {
       continue;
     }
     indexed_exprs.emplace_back(

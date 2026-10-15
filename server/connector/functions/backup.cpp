@@ -25,9 +25,11 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -41,15 +43,30 @@
 namespace sdb::connector {
 namespace {
 
+constexpr std::string kOwnershipKey = "sdb_backup_ownership";
+constexpr std::string_view kPgBackupStart = "pg_backup_start";
+constexpr std::string_view kPgBackupStop = "pg_backup_stop";
+constexpr std::string_view kPgWalfileName = "pg_walfile_name";
+
+struct BackupOwnership final : duckdb::ClientContextState {
+  ~BackupOwnership() final {
+    backup::BackupSession::Instance().AbortIfOwnedBy(this);
+  }
+};
+
+const void* OwnershipOf(duckdb::ClientContext& context) {
+  return context.registered_state->Get<BackupOwnership>(kOwnershipKey).get();
+}
+
 void PgBackupStartFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auth::RequireSuperuser(context, "pg_backup_start");
+  auth::RequireSuperuser(context, kPgBackupStart);
   auto& conn = GetSereneDBContext(context);
   if (!conn.GetSendBuffer()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("pg_backup_start requires a PG wire connection"));
+                    ERR_MSG(kPgBackupStart, " requires a PG wire connection"));
   }
   auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (auto label : args.data[0].Values<duckdb::string_t>()) {
@@ -58,8 +75,10 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto& text = label.GetValue();
+    const auto ownership =
+      context.registered_state->GetOrCreate<BackupOwnership>(kOwnershipKey);
     const auto start = backup::BackupSession::Instance().Begin(
-      {&conn, conn.GetBackendPid()},
+      {ownership.get(), conn.GetBackendPid()},
       std::string_view{text.GetData(), text.GetSize()},
       [&] { return context.IsInterrupted(); });
     if (!start) {
@@ -81,14 +100,14 @@ void PgWalfileNameFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 void WriteFinishedBackups(duckdb::Vector& lsn, duckdb::Vector& labelfile,
                           duckdb::Vector& spcmapfile, duckdb::idx_t count,
-                          ConnectionContext& conn) {
+                          const void* ownership) {
   auto lsn_out = duckdb::FlatVector::Writer<int64_t>(lsn, count);
   auto label_out =
     duckdb::FlatVector::Writer<duckdb::string_t>(labelfile, count);
   auto map_out =
     duckdb::FlatVector::Writer<duckdb::string_t>(spcmapfile, count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    const auto finished = backup::BackupSession::Instance().Finish(&conn);
+    const auto finished = backup::BackupSession::Instance().Finish(ownership);
     lsn_out.WriteValue(static_cast<int64_t>(finished.lsn));
     label_out.WriteValue(
       duckdb::string_t{finished.label_file.data(),
@@ -101,17 +120,17 @@ void PgBackupStopFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auth::RequireSuperuser(context, "pg_backup_stop");
-  auto& conn = GetSereneDBContext(context);
+  auth::RequireSuperuser(context, kPgBackupStop);
   auto& entries = duckdb::StructVector::GetEntries(result);
-  WriteFinishedBackups(entries[0], entries[1], entries[2], args.size(), conn);
+  WriteFinishedBackups(entries[0], entries[1], entries[2], args.size(),
+                       OwnershipOf(context));
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> PgBackupStopBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auth::RequireSuperuser(context, "pg_backup_stop");
+  auth::RequireSuperuser(context, kPgBackupStop);
   names.emplace_back("lsn");
   return_types.emplace_back(pg::PG_LSN());
   names.emplace_back("labelfile");
@@ -139,7 +158,7 @@ void PgBackupStopExecute(duckdb::ClientContext& context,
     return;
   }
   WriteFinishedBackups(output.data[0], output.data[1], output.data[2], 1,
-                       GetSereneDBContext(context));
+                       OwnershipOf(context));
   output.SetCardinalityUnsafe(1);
 }
 
@@ -147,7 +166,7 @@ void PgBackupStopExecute(duckdb::ClientContext& context,
 
 void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  duckdb::ScalarFunctionSet start{"pg_backup_start"};
+  duckdb::ScalarFunctionSet start{duckdb::Identifier{kPgBackupStart}};
   for (const auto& arguments :
        {duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
         duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR,
@@ -158,7 +177,7 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
     start.AddFunction(std::move(function));
   }
   loader.RegisterFunction(std::move(start));
-  duckdb::TableFunctionSet stop{"pg_backup_stop"};
+  duckdb::TableFunctionSet stop{duckdb::Identifier{kPgBackupStop}};
   for (const auto& arguments :
        {duckdb::vector<duckdb::LogicalType>{},
         duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::BOOLEAN}}) {
@@ -171,7 +190,7 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::STRUCT({{"lsn", pg::PG_LSN()},
                                  {"labelfile", duckdb::LogicalType::VARCHAR},
                                  {"spcmapfile", duckdb::LogicalType::VARCHAR}});
-  duckdb::ScalarFunctionSet stop_record{"pg_backup_stop"};
+  duckdb::ScalarFunctionSet stop_record{duckdb::Identifier{kPgBackupStop}};
   for (const auto& arguments :
        {duckdb::vector<duckdb::LogicalType>{},
         duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::BOOLEAN}}) {
@@ -180,10 +199,11 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
     stop_record.AddFunction(std::move(function));
   }
   loader.RegisterFunction(std::move(stop_record));
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_walfile_name",
-                                                 {pg::PG_LSN()},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 PgWalfileNameFunction});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{duckdb::Identifier{kPgWalfileName},
+                           {pg::PG_LSN()},
+                           duckdb::LogicalType::VARCHAR,
+                           PgWalfileNameFunction});
 }
 
 }  // namespace sdb::connector

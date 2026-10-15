@@ -22,8 +22,8 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <duckdb/main/database.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/shared.hpp>
 #include <optional>
@@ -54,8 +54,8 @@ IRS_FORCE_INLINE inline void ReadInet(
   inet.mask = mask;
 }
 
-void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
-               uint64_t addr_hi, uint64_t addr_lo, uint16_t mask);
+void StoreInet(duckdb::Vector& vec, duckdb::idx_t row,
+               const INET_IPAddress& inet);
 
 bool IsNetwork(const INET_IPAddress& inet);
 
@@ -65,6 +65,6 @@ INET_IPAddress ParseCidr(std::string_view text);
 
 size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size);
 
-void RegisterInet(duckdb::CastFunctionSet& casts);
+void RegisterInet(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::pg

@@ -1821,8 +1821,7 @@ bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
   if (kCidr && !IsNetwork(inet)) {
     return false;
   }
-  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
-            inet.mask);
+  StoreInet(vec, row, inet);
   return true;
 }
 
@@ -1839,8 +1838,7 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   if (inet.type == INET_IP_ADDRESS_INVALID) {
     return false;
   }
-  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
-            inet.mask);
+  StoreInet(vec, row, inet);
   return true;
 }
 

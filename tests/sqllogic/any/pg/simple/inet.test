@@ -172,6 +172,94 @@ id	ips
 3	{}
 
 
+query
+SELECT masklen('192.168.1.5/24'::inet) AS v4, masklen('192.168.1.5'::inet) AS v4_host,
+       masklen('2001:db8::1/64'::inet) AS v6, masklen('::1'::inet) AS v6_host;
+----
+v4	v4_host	v6	v6_host
+24	32	64	128
+
+
+query
+SELECT set_masklen('192.168.1.5/24'::inet, 16) AS shorter,
+       set_masklen('192.168.1.5/24'::inet, -1) AS full_v4,
+       set_masklen('2001:db8::1/64'::inet, 48) AS v6,
+       set_masklen('2001:db8::1/64'::inet, -1) AS full_v6,
+       set_masklen('192.168.1.5'::inet, 0) AS zero;
+----
+shorter	full_v4	v6	full_v6	zero
+192.168.1.5/16	192.168.1.5	2001:db8::1/48	2001:db8::1	192.168.1.5/0
+
+
+statement error
+SELECT set_masklen('192.168.1.5/24'::inet, 33);
+----
+db error: ERROR: invalid mask length: 33
+
+
+statement error
+SELECT set_masklen('::1'::inet, 129);
+----
+db error: ERROR: invalid mask length: 129
+
+
+statement error
+SELECT set_masklen('10.0.0.1'::inet, -2);
+----
+db error: ERROR: invalid mask length: -2
+
+
+query
+SELECT hostmask('192.168.23.20/30'::inet) AS v4, hostmask('10.0.0.1'::inet) AS v4_host,
+       hostmask('0.0.0.0/0'::inet) AS v4_all, hostmask('2001:db8::/64'::inet) AS v6,
+       hostmask('::/0'::inet) AS v6_all;
+----
+v4	v4_host	v4_all	v6	v6_all
+0.0.0.3	0.0.0.0	255.255.255.255	::ffff:ffff:ffff:ffff	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+
+query
+SELECT abbrev('10.1.0.0/16'::inet) AS net, abbrev('10.1.0.0'::inet) AS host,
+       abbrev('2001:db8::/32'::inet) AS v6;
+----
+net	host	v6
+10.1.0.0/16	10.1.0.0	2001:db8::/32
+
+
+query
+SELECT masklen(ip) AS m, hostmask(ip) AS h, abbrev(ip) AS a, set_masklen(ip, 8) AS s,
+       set_masklen('10.0.0.1'::inet, NULL) AS sn
+FROM (VALUES (NULL::inet)) AS t(ip);
+----
+m	h	a	s	sn
+NULL	NULL	NULL	NULL	NULL
+
+
+statement ok
+CREATE TABLE inet_masks (id INTEGER, ip INET, bits INTEGER);
+
+
+statement ok
+INSERT INTO inet_masks VALUES (1, '10.1.2.3/8', 24), (2, '2001:db8::1/32', 64), (3, '192.168.0.1', -1), (4, NULL, 8), (5, '10.0.0.1', NULL);
+
+
+query
+SELECT id, masklen(ip) AS m, set_masklen(ip, bits) AS s, hostmask(ip) AS h, abbrev(ip) AS a
+FROM inet_masks
+ORDER BY id;
+----
+id	m	s	h	a
+1	8	10.1.2.3/24	0.255.255.255	10.1.2.3/8
+2	32	2001:db8::1/64	::ffff:ffff:ffff:ffff:ffff:ffff	2001:db8::1/32
+3	32	192.168.0.1	0.0.0.0	192.168.0.1
+4	NULL	NULL	NULL	NULL
+5	32	NULL	0.0.0.0	10.0.0.1
+
+
+statement ok
+DROP TABLE inet_masks;
+
+
 # The extended-protocol client renders regtype as a raw OID (no OID->name map),
 # so the regtype-name checks run on the simple protocol only.
 skipif pg-wire-extended

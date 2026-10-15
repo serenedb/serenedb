@@ -40,7 +40,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
   RegisterRegTypes(casts);
   RegisterPgLsn(casts);
-  RegisterInet(casts);
+  RegisterInet(db);
   RegisterBytea(casts);
   RegisterFloat(casts);
   RegisterOid(casts);

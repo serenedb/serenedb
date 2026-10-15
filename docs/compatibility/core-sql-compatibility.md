@@ -482,17 +482,17 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 | \|                 | No            |         |
 | +                  | No            |         |
 | -                  | No            |         |
-| abbrev             | No            |         |
+| abbrev             | Yes           |         |
 | broadcast          | No            |         |
 | family             | No            |         |
 | host               | No            |         |
-| hostmask           | No            |         |
+| hostmask           | Yes           |         |
 | inet_merge         | No            |         |
 | inet_same_family   | No            |         |
-| masklen            | No            |         |
+| masklen            | Yes           |         |
 | netmask            | No            |         |
 | network            | No            |         |
-| set_masklen        | No            |         |
+| set_masklen        | Yes           |         |
 | text               | No            |         |
 
 #### Text Search

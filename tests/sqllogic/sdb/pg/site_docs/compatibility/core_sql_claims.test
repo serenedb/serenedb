@@ -1895,7 +1895,7 @@ statement error
 SELECT inet '192.168.1.10/24' - inet '192.168.1.5/24';
 
 # op_net: abbrev
-statement error
+statement ok
 SELECT abbrev(inet '10.1.0.0/16');
 
 # op_net: broadcast
@@ -1911,7 +1911,7 @@ statement ok
 SELECT host(inet '192.168.1.5/24');
 
 # op_net: hostmask
-statement error
+statement ok
 SELECT hostmask(inet '192.168.23.20/30');
 
 # op_net: inet_merge
@@ -1923,7 +1923,7 @@ statement error
 SELECT inet_same_family(inet '192.168.1.5/24', inet '::1');
 
 # op_net: masklen
-statement error
+statement ok
 SELECT masklen(inet '192.168.1.5/24');
 
 # op_net: netmask
@@ -1935,7 +1935,7 @@ statement ok
 SELECT network(inet '192.168.1.5/24');
 
 # op_net: set_masklen
-statement error
+statement ok
 SELECT set_masklen(inet '192.168.1.5/24', 16);
 
 # op_net: text

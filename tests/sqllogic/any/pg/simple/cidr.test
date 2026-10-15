@@ -100,3 +100,44 @@ cur	refcursor
 
 statement ok
 DROP TABLE cidr_refcursor
+
+
+query
+SELECT abbrev('10.1.0.0/16'::cidr) AS a, abbrev('192.168.0.0/24'::cidr) AS b,
+       abbrev('10.0.0.0/8'::cidr) AS c, abbrev('0.0.0.0/0'::cidr) AS d,
+       abbrev('172.16.0.0/12'::cidr) AS e, abbrev('10.1.2.3/32'::cidr) AS f,
+       abbrev('192.168.1.128/25'::cidr) AS g
+----
+a	b	c	d	e	f	g
+10.1/16	192.168.0/24	10/8	0/0	172.16/12	10.1.2.3/32	192.168.1.128/25
+
+
+query
+SELECT abbrev('2001:db8::/32'::cidr) AS a, abbrev('::/0'::cidr) AS b,
+       abbrev('2001:db8:0:1::/64'::cidr) AS c, abbrev('::ffff:1.2.3.0/120'::cidr) AS d,
+       abbrev('::1.2.3.4/128'::cidr) AS e, abbrev('fe80::/10'::cidr) AS f,
+       abbrev('ff00::/8'::cidr) AS g
+----
+a	b	c	d	e	f	g
+2001:db8/32	::/0	2001:db8::1/64	::ffff:1.2.3/120	::1.2.3.4/128	fe80::/10	ff00::/8
+
+
+query
+SELECT set_masklen('192.168.1.0/24'::cidr, 16) AS v4, set_masklen('2001:db8:1::/48'::cidr, 32) AS v6,
+       set_masklen('10.0.0.0/8'::cidr, -1) AS full, pg_typeof(set_masklen('10.0.0.0/8'::cidr, 16))::text AS t
+----
+v4	v6	full	t
+192.168.0.0/16	2001:db8::/32	10.0.0.0/32	cidr
+
+
+query
+SELECT masklen('10.0.0.0/8'::cidr) AS m, hostmask('10.0.0.0/8'::cidr) AS h
+----
+m	h
+8	0.255.255.255
+
+
+statement error
+SELECT set_masklen('10.0.0.0/8'::cidr, 33)
+----
+db error: ERROR: invalid mask length: 33

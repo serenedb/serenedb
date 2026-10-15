@@ -509,6 +509,7 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
   s.nearest.clear();
   s.batch.clear();
   const auto size = graph.Size();
+  size_t limit = std::min<size_t>(kBatch, ef);
   for (auto doc = set.Probe(doc_limits::min()); !doc_limits::eof(doc);
        doc = set.Probe(doc + 1)) {
     const auto node = static_cast<uint32_t>(doc - doc_limits::min());
@@ -522,8 +523,9 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
     // No prefetch here: a batch of 256 codes outgrows L1, the distance kernel
     // fetches its own lookahead.
     s.batch.push_back(node);
-    if (s.batch.size() == kBatch) {
+    if (s.batch.size() == limit) {
       HnswAdmit(dist, ef, s);
+      limit = std::min(kBatch, 2 * limit);
     }
   }
   if (!s.batch.empty()) {

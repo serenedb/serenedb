@@ -376,6 +376,40 @@ SELECT count(*) FROM (
 count
 0
 
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+statement ok
+SET sdb_hnsw_ef_search = 32;
+
+statement ok
+SET sdb_ann_oversample = 4;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8 WHERE id BETWEEN 1000 AND 1700 ORDER BY emb <#> rot_vec(1350) LIMIT 7)
+  EXCEPT (SELECT i FROM range(1000, 1701) t(i) ORDER BY rot_vec(i) <#> rot_vec(1350) LIMIT 7)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8_cos WHERE id BETWEEN 3100 AND 3900 ORDER BY emb <=> rot_vec(3777) LIMIT 7)
+  EXCEPT (SELECT i FROM range(3100, 3901) t(i) ORDER BY rot_vec(i) <=> rot_vec(3777) LIMIT 7)) t;
+----
+count
+0
+
+statement ok
+RESET sdb_ann_oversample;
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
 query
 SELECT (SELECT count(*) FROM rot_sq8 WHERE emb <#> rot_vec(900.5) < -12)
      = (SELECT count(*) FROM range(5000) t(i) WHERE rot_vec(i) <#> rot_vec(900.5) < -12) AS same;

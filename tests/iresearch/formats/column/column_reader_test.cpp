@@ -677,44 +677,6 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
   con.Query("SET force_compression = 'auto'");
 }
 
-TEST(GatherArmsTest, FewerRunsCountsEveryRun) {
-  using irs::column_internal::FewerRuns;
-  duckdb::SelectionVector sel(4);
-  sel.set_index(0, 5);
-  sel.set_index(1, 6);
-  sel.set_index(2, 7);
-  sel.set_index(3, 9);
-  EXPECT_FALSE(FewerRuns(sel, 1, 1));
-  EXPECT_TRUE(FewerRuns(sel, 1, 2));
-  EXPECT_FALSE(FewerRuns(sel, 3, 1));
-  EXPECT_TRUE(FewerRuns(sel, 3, 2));
-  EXPECT_FALSE(FewerRuns(sel, 4, 2));
-  EXPECT_TRUE(FewerRuns(sel, 4, 3));
-  EXPECT_TRUE(FewerRuns(sel, 2, 3));
-}
-
-TEST_F(ColumnReaderTest, ScatterWinsByStringCodec) {
-  using irs::column_internal::ScatterWins;
-  const duckdb::LogicalType varchar{duckdb::LogicalType::VARCHAR};
-  const auto& config = duckdb::DBConfig::GetConfig(Db());
-  const auto block = [&](duckdb::CompressionType codec, uint64_t rows) {
-    const auto fn =
-      config.TryGetCompressionFunction(codec, duckdb::PhysicalType::VARCHAR);
-    EXPECT_NE(nullptr, fn.get());
-    return irs::ColumnBlockMeta{duckdb::BaseStatistics::CreateEmpty(varchar),
-                                rows, 0, 0, fn.get()};
-  };
-  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  for (duckdb::idx_t i = 0; i < 100; ++i) {
-    sel.set_index(i, i * 2);
-  }
-  constexpr auto kFsst = duckdb::CompressionType::COMPRESSION_FSST;
-  constexpr auto kDictionary = duckdb::CompressionType::COMPRESSION_DICTIONARY;
-  EXPECT_TRUE(ScatterWins(block(kFsst, 1000), varchar, sel, 100, 199));
-  EXPECT_FALSE(ScatterWins(block(kFsst, 100000), varchar, sel, 100, 199));
-  EXPECT_FALSE(ScatterWins(block(kDictionary, 1000), varchar, sel, 100, 199));
-}
-
 // Point fetches (FetchRow) of scattered single rows on BIGINT and VARCHAR
 // (incl. overflow + NULL), across row-group boundaries.
 TEST_F(ColumnReaderTest, PointFetchRow) {

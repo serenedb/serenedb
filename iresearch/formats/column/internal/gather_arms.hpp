@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 
@@ -28,62 +27,6 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::column_internal {
-
-struct GatherBands {
-  uint32_t flat;
-  uint32_t native;
-};
-
-inline GatherBands BandsFor(duckdb::CompressionType codec,
-                            const duckdb::LogicalType& type) noexcept {
-  switch (codec) {
-    case duckdb::CompressionType::COMPRESSION_CONSTANT:
-      return {0, 1000};
-    case duckdb::CompressionType::COMPRESSION_RLE:
-      return {2, 70};
-    default:
-      return type.InternalType() == duckdb::PhysicalType::VARCHAR
-               ? GatherBands{10, 1000}
-               : GatherBands{10, 0};
-  }
-}
-
-inline bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                      uint64_t limit) noexcept {
-  if (hits < limit) {
-    return true;
-  }
-  uint64_t runs = 1;
-  for (duckdb::idx_t i = 1; i < hits; ++i) {
-    runs += sel.get_index(i) != sel.get_index(i - 1) + 1;
-    if (runs >= limit) {
-      return false;
-    }
-  }
-  return runs < limit;
-}
-
-inline bool ScatterWins(const ColumnBlockMeta& block,
-                        const duckdb::LogicalType& type,
-                        const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                        duckdb::idx_t span) noexcept {
-  if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
-    return true;
-  }
-  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
-    return false;
-  }
-  switch (block.codec->type) {
-    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
-    case duckdb::CompressionType::COMPRESSION_FSST:
-      return FewerRuns(sel, hits, (650 * span - 1) / block.tuple_count + 1);
-    case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
-    case duckdb::CompressionType::COMPRESSION_ZSTD:
-      return FewerRuns(sel, hits, (120 * (span - hits) + 999) / 1000);
-    default:
-      return false;
-  }
-}
 
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,

@@ -20,7 +20,6 @@
 
 #include "connector/segment_rewrite/physical_segment_rewrite.h"
 
-#include <chrono>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -90,8 +89,8 @@ class SegmentRewriteExecutor final : public irs::MergeExecutor {
     if (plan.PostingsPending() && !plan.RunPostings()) {
       return false;
     }
-    const auto run = std::make_shared<search::MergeUnitRun>(
-      plan, std::chrono::steady_clock::now());
+    const auto run =
+      std::make_shared<search::MergeUnitRun>(plan, plan.Started());
     {
       Guard guard{_state.lock};
       _state.run = run;

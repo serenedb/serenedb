@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
@@ -109,6 +110,8 @@ class MergePlan {
   bool RunUnit(size_t unit);
 
   const MergeProfile& Profile() const noexcept;
+
+  std::chrono::steady_clock::time_point Started() const noexcept;
 
   void SetWallNanos(uint64_t nanos) noexcept;
 

@@ -49,6 +49,7 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <numeric>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -281,6 +282,25 @@ TEST_F(PipelineMergeExecutorTest, MergesKeepEveryRow) {
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
+}
+
+TEST_F(PipelineMergeExecutorTest, TotalTimeCountsThePreparation) {
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(4));
+  constexpr std::chrono::milliseconds kPrepared{50};
+  std::this_thread::sleep_for(kPrepared);
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  ASSERT_TRUE(executor.Run(plan));
+  EXPECT_GE(plan.Profile().TotalNanos(),
+            static_cast<uint64_t>(std::chrono::nanoseconds{kPrepared}.count()));
 }
 
 TEST_F(PipelineMergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {

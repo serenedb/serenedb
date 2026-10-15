@@ -515,6 +515,8 @@ struct MergePlan::State {
   const SortSpec* sort;
   size_t threads = 1;
   duckdb::TaskScheduler* scheduler = nullptr;
+  std::chrono::steady_clock::time_point started =
+    std::chrono::steady_clock::now();
   MergeProfile profile;
   std::optional<MergeStepClock> order_clock;
   IndexFeatures index_features{IndexFeatures::None};
@@ -553,6 +555,7 @@ MergePlan::~MergePlan() = default;
 
 bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
   auto& s = *_state;
+  s.started = std::chrono::steady_clock::now();
   s.threads = threads;
   s.scheduler = scheduler;
   MergeStepClock clock{s.profile};
@@ -774,6 +777,10 @@ bool MergePlan::RunUnit(size_t unit) {
 
 const MergeProfile& MergePlan::Profile() const noexcept {
   return _state->profile;
+}
+
+std::chrono::steady_clock::time_point MergePlan::Started() const noexcept {
+  return _state->started;
 }
 
 bool RunSerially(MergePlan& plan) {

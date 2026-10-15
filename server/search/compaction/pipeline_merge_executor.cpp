@@ -21,7 +21,6 @@
 #include "search/compaction/pipeline_merge_executor.h"
 
 #include <algorithm>
-#include <chrono>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
@@ -51,7 +50,6 @@ void Execute(duckdb::Connection& connection,
 }  // namespace
 
 bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
-  const auto begin = std::chrono::steady_clock::now();
   const auto threads = std::max<size_t>(_threads, 1);
   duckdb::Connection connection{_db};
   auto& context = *connection.context;
@@ -65,8 +63,8 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
       return false;
     }
   }
-  const auto run =
-    std::make_shared<MergeUnitRun>(plan, begin, plan.PostingsPending());
+  const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
+                                                  plan.PostingsPending());
   Execute(connection, duckdb::make_uniq<connector::LogicalMergeUnits>(
                         run, threads, plan.TermRanges()));
   return run->Finish();

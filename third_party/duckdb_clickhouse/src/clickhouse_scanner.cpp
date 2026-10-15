@@ -190,7 +190,26 @@ clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
 		    std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(type), DecimalType::GetScale(type));
 		for (idx_t i = 0; i < count; i++) {
 			idx_t idx;
-			col->Append(valid(i, idx) ? vec.GetValue(i).ToString() : string("0"));
+			if (!valid(i, idx)) {
+				col->Append(clickhouse::Int128(0));
+				continue;
+			}
+			switch (type.InternalType()) {
+			case PhysicalType::INT16:
+				col->Append(clickhouse::Int128(UnifiedVectorFormat::GetData<int16_t>(fmt)[idx]));
+				break;
+			case PhysicalType::INT32:
+				col->Append(clickhouse::Int128(UnifiedVectorFormat::GetData<int32_t>(fmt)[idx]));
+				break;
+			case PhysicalType::INT64:
+				col->Append(clickhouse::Int128(UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]));
+				break;
+			default: {
+				const auto value = UnifiedVectorFormat::GetData<hugeint_t>(fmt)[idx];
+				col->Append(absl::MakeInt128(value.upper, value.lower));
+				break;
+			}
+			}
 		}
 		return wrap(std::move(col));
 	}

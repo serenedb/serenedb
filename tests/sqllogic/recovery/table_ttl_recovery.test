@@ -1,0 +1,148 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE ttlrec_logs (ts TIMESTAMP_NS NOT NULL, msg VARCHAR)
+WITH (storage = 'search', ttl = '30 days', ttl_column = 'ts');
+
+
+statement ok
+CREATE TABLE ttlrec_altered (ts TIMESTAMP_NS NOT NULL, msg VARCHAR) WITH (storage = 'search');
+
+
+statement ok
+ALTER TABLE ttlrec_altered SET (ttl = '1 day', ttl_column = 'ts');
+
+
+statement ok
+INSERT INTO ttlrec_logs VALUES
+  (TIMESTAMP_NS '2000-01-01 00:00:00', 'expired'),
+  (TIMESTAMP_NS '2200-01-01 00:00:00', 'kept');
+
+
+statement ok
+INSERT INTO ttlrec_altered VALUES
+  (TIMESTAMP_NS '2000-01-01 00:00:00', 'expired'),
+  (TIMESTAMP_NS '2200-01-01 00:00:00', 'kept');
+
+
+statement ok
+CREATE TABLE ttlrec_replay (ts TIMESTAMP_NS NOT NULL, msg VARCHAR)
+WITH (storage = 'search', refresh_interval = 0, ttl = '1 day', ttl_column = 'ts');
+
+
+statement ok
+INSERT INTO ttlrec_replay VALUES
+  (TIMESTAMP_NS '2000-01-01 00:00:00', 'expired'),
+  (TIMESTAMP_NS '2200-01-01 00:00:00', 'kept');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_replay;
+
+
+statement ok
+EXECUTE JOB ttlrec_replay_ttl;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT relname, option
+FROM (SELECT relname, unnest(reloptions) AS option FROM pg_class WHERE starts_with(relname, 'ttlrec_'))
+WHERE option LIKE 'ttl%' ORDER BY relname, option;
+----
+relname	option
+ttlrec_altered	ttl=1 day
+ttlrec_altered	ttl_column=ts
+ttlrec_logs	ttl=30 days
+ttlrec_logs	ttl_column=ts
+ttlrec_replay	ttl=1 day
+ttlrec_replay	ttl_column=ts
+
+
+connection r1
+query
+SELECT job_name, schedule FROM sdb_jobs() WHERE starts_with(job_name, 'ttlrec_') ORDER BY job_name;
+----
+job_name	schedule
+ttlrec_altered_ttl	EVERY INTERVAL '01:00:00'
+ttlrec_logs_ttl	EVERY INTERVAL '01:00:00'
+ttlrec_replay_ttl	EVERY INTERVAL '01:00:00'
+
+
+connection r1
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_replay;
+
+
+connection r1
+query
+SELECT msg FROM ttlrec_replay ORDER BY msg;
+----
+msg
+kept
+
+
+connection r1
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_logs;
+
+
+connection r1
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_altered;
+
+
+connection r1
+statement ok
+EXECUTE JOB ttlrec_logs_ttl;
+
+
+connection r1
+statement ok
+EXECUTE JOB ttlrec_altered_ttl;
+
+
+connection r1
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_logs;
+
+
+connection r1
+statement ok
+VACUUM (REFRESH_TABLE) ttlrec_altered;
+
+
+connection r1
+query
+SELECT 'logs' AS t, msg FROM ttlrec_logs
+UNION ALL
+SELECT 'altered', msg FROM ttlrec_altered
+ORDER BY t, msg;
+----
+t	msg
+altered	kept
+logs	kept
+
+
+connection r1
+statement ok
+DROP TABLE ttlrec_logs;
+
+
+connection r1
+query
+SELECT job_name FROM sdb_jobs() WHERE starts_with(job_name, 'ttlrec_') ORDER BY job_name;
+----
+job_name
+ttlrec_altered_ttl
+ttlrec_replay_ttl

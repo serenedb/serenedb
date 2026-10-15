@@ -490,3 +490,31 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
 ----
 tgname	tgenabled
 orders_audited	A
+
+# DOCS_TEST: example_038
+
+statement ok
+DROP TABLE IF EXISTS readings;
+
+statement ok
+CREATE TABLE readings (ts TIMESTAMP NOT NULL, value DOUBLE) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE readings SET (ttl = '7 days', ttl_column = 'ts');
+
+query
+SELECT job_name, schedule FROM sdb_jobs() WHERE job_name = 'readings_ttl';
+----
+job_name	schedule
+readings_ttl	EVERY INTERVAL '01:00:00'
+
+statement ok
+ALTER TABLE readings RESET (ttl, ttl_column);
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'readings_ttl';
+----
+jobs
+0

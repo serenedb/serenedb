@@ -401,3 +401,79 @@ SELECT weighted_avg(a, w) AS weighted_avg FROM agg_demo;
 ----
 weighted_avg
 30
+
+# DOCS_TEST: counters
+
+statement ok
+CREATE TABLE requests (ts TIMESTAMP, total DOUBLE);
+
+statement ok
+INSERT INTO requests VALUES
+    (TIMESTAMP '2026-01-01 00:00:00', 100),
+    (TIMESTAMP '2026-01-01 00:00:10', 160),
+    (TIMESTAMP '2026-01-01 00:00:20', 20),
+    (TIMESTAMP '2026-01-01 00:00:30', 50);
+
+# DOCS_TEST_BODY
+
+query
+SELECT increase(total, ts) AS increase,
+       round(rate(total, ts), 6) AS rate,
+       irate(total, ts) AS irate
+FROM requests;
+----
+increase	rate	irate
+110	3.666667	3
+
+# DOCS_TEST: counter_delta
+# DOCS_TEST_BODY
+
+query
+SELECT ts, increase(total, ts) OVER (ORDER BY ts ROWS 1 PRECEDING) AS delta
+FROM requests
+ORDER BY ts;
+----
+ts	delta
+2026-01-01 00:00:00	NULL
+2026-01-01 00:00:10	60
+2026-01-01 00:00:20	20
+2026-01-01 00:00:30	30
+
+# DOCS_TEST: histogram_quantile
+# DOCS_TEST_BODY
+
+query
+SELECT histogram_quantile(0.5, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p50,
+       histogram_quantile(0.95, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p95;
+----
+p50	p95
+1.5	3.6
+
+# DOCS_TEST: histogram_increase
+
+statement ok
+CREATE TABLE latencies (ts TIMESTAMP, bucket_counts BIGINT[], explicit_bounds DOUBLE[]);
+
+statement ok
+INSERT INTO latencies VALUES
+    (TIMESTAMP '2026-01-01 00:00:00', [2, 3, 0, 0], [10.0, 100.0, 1000.0]),
+    (TIMESTAMP '2026-01-01 00:01:00', [12, 7, 1, 0], [10.0, 100.0, 1000.0]);
+
+# DOCS_TEST_BODY
+
+query
+SELECT increase(bucket_counts, ts) AS buckets
+FROM latencies;
+----
+buckets
+{10,4,1,0}
+
+query
+SELECT histogram_quantile(0.9, buckets, explicit_bounds) AS p90
+FROM (
+    SELECT increase(bucket_counts, ts) AS buckets, any_value(explicit_bounds) AS explicit_bounds
+    FROM latencies
+);
+----
+p90
+88.75

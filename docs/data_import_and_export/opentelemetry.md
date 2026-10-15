@@ -183,6 +183,36 @@ Each table is created `WITH (storage = 'search')` and gets one inverted index
 covering what dashboards filter, group and facet on. Columns outside the index
 are still stored and retrievable; they are read with a columnstore scan.
 
+### Your own indexes
+
+The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. `otel_index=none` on the listener creates the tables without any index, so you choose the tokenizer and the indexed columns and expressions before the first export:
+
+```bash
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&otel_index=none'
+```
+
+| `otel_index=` | The tables are created |
+|---|---|
+| `default` | with the shipped indexes; the default |
+| `none` | without indexes |
+
+The option applies only when startup creates the schema; an existing schema keeps the indexes it has. A table without an index still answers every query with a columnstore scan, which skips the parts of the table whose `"timestamp"` range a filter rules out, but it has no full-text search with `@@`, no BM25 and no facets, and an equality lookup such as `trace_id = '…'` reads the whole column.
+
+For example, to find `downstream_remote_disconnect` by `remote` or `disconnect`, index `body` with a dictionary that splits on `_`:
+
+```sql
+CREATE TEXT SEARCH DICTIONARY otel_words AS
+    split_by_non_alpha(case := 'lower', break := 'alnum')
+    WITH (frequency, position, norm);
+
+CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+    "timestamp", body otel_words, severity_text, severity_number,
+    service_name, event_name, trace_id
+);
+```
+
+An index created on a table that already holds rows indexes those rows too, which rewrites the table: on a large table, create the indexes before the first export, or drop and create them in a quiet period.
+
 ## Timestamps
 
 Every table carries `"timestamp" TIMESTAMP_NS NOT NULL`, indexed, plus the
@@ -304,15 +334,51 @@ WHERE "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
 GROUP BY 1 ORDER BY 1;
 ```
 
-A metric rollup:
+A gauge rollup:
 
 ```sql
-SELECT metric_name, date_trunc('minute', "timestamp") AS minute, sum(value)
-FROM otel_metrics_sum
-WHERE metric_name @@ 'http.server.request_count'
+SELECT metric_name, date_trunc('minute', "timestamp") AS minute, avg(value)
+FROM otel_metrics_gauge
+WHERE metric_name @@ 'process.memory.usage'
   AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
 GROUP BY 1, 2 ORDER BY 1, 2;
 ```
+
+### Counters and histograms
+
+SDKs export sums and histograms as running totals by default (`aggregation_temporality = 'Cumulative'`), so `sum(value)` adds up totals instead of counting what happened in a time bucket. [`rate`, `increase` and `irate`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) read them as counters. Compute them per series, one metric with one set of resource and data point attributes, then add the series up:
+
+```sql
+SELECT minute, service_name, sum(per_second) AS requests_per_second
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, service_name,
+         resource_attributes, attributes,
+         rate(value, "timestamp") AS per_second
+  FROM otel_metrics_sum
+  WHERE metric_name = 'http.server.request.count'
+  GROUP BY ALL
+)
+GROUP BY ALL ORDER BY ALL;
+```
+
+Latency percentiles come from the histogram buckets the same way: `increase(bucket_counts, "timestamp")` per series, then `histogram_quantile` over the series:
+
+```sql
+SELECT minute,
+       histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
+       histogram_quantile(0.99, buckets, explicit_bounds) AS p99
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Points exported with delta temporality (`aggregation_temporality = 'Delta'`) need neither: `sum(value)` and `histogram_quantile(q, bucket_counts, explicit_bounds)` over the rows of a time bucket give what happened in it.
 
 On a column indexed without a dictionary, such as `service_name` or
 `severity_text`, a plain `=` is served by the index exactly like `@@`. On an
@@ -329,6 +395,18 @@ it when you need determinism, for example in tests:
 ```sql
 VACUUM (REFRESH_TABLE) otel_logs;
 ```
+
+## Retention
+
+The tables keep every row until it is deleted. Give a table a [TTL](../sql/statements/create_table/index.md#row-expiry-ttl) and SereneDB deletes its expired rows every hour, each table on its own terms:
+
+```sql
+ALTER TABLE otel_logs SET (ttl = '30 days', ttl_column = 'timestamp');
+ALTER TABLE otel_traces SET (ttl = '30 days', ttl_column = 'timestamp');
+ALTER TABLE otel_metrics_sum SET (ttl = '90 days', ttl_column = 'timestamp');
+```
+
+A schema of your own can set the same options in `CREATE TABLE ... WITH (storage = 'search', ttl = ..., ttl_column = ...)` instead.
 
 ## Schema evolution
 

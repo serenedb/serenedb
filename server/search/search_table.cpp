@@ -52,6 +52,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -202,6 +203,7 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
+  _expiry_log.clear();
   _build_truncate = {};
   _delete_log_open.store(true, std::memory_order_release);
 }
@@ -225,10 +227,22 @@ void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
 }
 
+void SearchTable::AppendExpiryLog(std::span<const Expiry> expiries) {
+  if (expiries.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  _expiry_log.insert(_expiry_log.end(), expiries.begin(), expiries.end());
+}
+
 void SearchTable::CloseDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log_open.store(false, std::memory_order_release);
   _delete_log.clear();
+  _expiry_log.clear();
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
@@ -515,6 +529,13 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
     session->trx.Remove(std::make_shared<irs::All>());
+  }
+}
+
+void SearchTable::ReplayExpiry(duckdb::AttachedDatabase& db, Expiry expiry) {
+  if (auto* session = BeginReplay(db)) {
+    session->trx.Remove(std::make_shared<connector::SearchExpireFilter>(
+      expiry.column, std::move(expiry.cutoff)));
   }
 }
 

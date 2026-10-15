@@ -152,6 +152,19 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     if (spec.database.empty()) {
       SDB_FATAL(GENERAL, "empty 'db' in endpoint '", url, "'");
     }
+  } else if (key == "otel_index") {
+    if (!is_http) {
+      SDB_FATAL(GENERAL, "'otel_index' is only valid on an http endpoint '",
+                url, "'");
+    }
+    if (value == "default") {
+      spec.otel_index = true;
+    } else if (value == "none") {
+      spec.otel_index = false;
+    } else {
+      SDB_FATAL(GENERAL, "invalid otel_index in endpoint '", url, "': '", value,
+                "' (default|none)");
+    }
   } else if (key == "schema") {
     if (!is_http) {
       SDB_FATAL(GENERAL, "'schema' is only valid on an http endpoint '", url,

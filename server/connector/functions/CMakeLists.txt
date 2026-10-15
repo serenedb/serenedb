@@ -11,6 +11,7 @@ target_sources(
         json.cpp
         markdown_render.cpp
         math.cpp
+        metrics.cpp
         otel.cpp
         string.cpp
         system.cpp
@@ -35,6 +36,7 @@ target_sources(
         ts_term.cpp
         ts_to_tsquery.cpp
         ts_tokenize.cpp
+        ttl.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
         ai/chat.cpp

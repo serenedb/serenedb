@@ -109,6 +109,14 @@ TEST(ListenSpec, HttpDatabaseParam) {
   EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].database.empty());
 }
 
+TEST(ListenSpec, HttpOtelIndexParam) {
+  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].otel_index);
+  EXPECT_TRUE(
+    Parse({"http://127.0.0.1:4318?api=otel&otel_index=default"})[0].otel_index);
+  EXPECT_FALSE(
+    Parse({"http://127.0.0.1:4318?otel_index=none&api=otel"})[0].otel_index);
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

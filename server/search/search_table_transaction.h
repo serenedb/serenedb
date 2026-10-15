@@ -125,6 +125,9 @@ class SearchTableTransaction {
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
                         std::span<const int64_t> rows);
 
+  void AddSearchExpiry(const std::shared_ptr<SearchTable>& shard,
+                       Expiry expiry);
+
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          const duckdb::Identifier& table_name,
                          bool clears_shard);

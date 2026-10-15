@@ -662,6 +662,42 @@ They all ignore `NULL` values (in the case of a single input column `x`), or pai
 
 </div>
 
+## Counter and Histogram Aggregates
+
+These aggregates read counters that only grow and histograms of bucket counts, such as the cumulative sums and histograms OpenTelemetry SDKs export. Each takes the time of the sample (`TIMESTAMP`, `TIMESTAMP_NS` or `TIMESTAMPTZ`) as its second argument and orders the samples by it, so the order of the input rows does not matter. Of several samples with the same time, the largest counts. Samples with a `NULL` value or time, and `NaN` values, are ignored. A counter that goes down was restarted: the first sample after the drop counts in full as the increase since the restart.
+
+They return `NULL` for a group with fewer than two samples, and they don't extrapolate: the increase is measured from the first to the last sample of the group, so the change between the last sample of one time bucket and the first sample of the next is counted in neither. Over a window of the current and the previous row, `increase` gives the change since the previous sample:
+
+<SqlLogicTest id="sql/functions/aggregates/index/counter_delta" />
+
+#### `increase(value, ts)`
+
+The increase of the counter `value` from the first to the last sample, across restarts.
+
+<SqlLogicTest id="sql/functions/aggregates/index/counters" />
+
+#### `increase(bucket_counts, ts)`
+
+The increase of each bucket of a histogram whose `bucket_counts`, a list of per-bucket counts, only grow, as a `DOUBLE[]`. When any bucket goes down, the histogram was restarted and the sample after the drop counts in full. When the number of buckets changes, the increase starts over from that sample.
+
+<SqlLogicTest id="sql/functions/aggregates/index/histogram_increase" />
+
+#### `rate(value, ts)`
+
+The per-second rate of the counter `value`: `increase(value, ts)` divided by the seconds from the first to the last sample.
+
+#### `irate(value, ts)`
+
+The per-second rate of the counter `value` between the last two samples.
+
+#### `histogram_quantile(q, bucket_counts, explicit_bounds)`
+
+The `q`-quantile of a histogram with explicit bucket bounds, the layout OpenTelemetry uses: bucket `i` counts the values up to `explicit_bounds[i]` and the last bucket the values above the last bound, so `bucket_counts` has one element more than `explicit_bounds`. The counts of all rows of a group are added up, so the rows must have the same `q` and `explicit_bounds`; otherwise the function fails.
+
+The result is interpolated linearly inside the bucket that holds the quantile. The first bucket starts at 0, unless its bound is 0 or less, in which case the result is that bound. A quantile in the last bucket is the last bound. A `q` below 0 gives `-Infinity` and above 1 `Infinity`. Rows with empty `bucket_counts` are skipped, and a group with no observations or no bounds gives `NULL`.
+
+<SqlLogicTest id="sql/functions/aggregates/index/histogram_quantile" />
+
 ## Ordered Set Aggregate Functions
 
 The table below shows the available “ordered set” aggregate functions.

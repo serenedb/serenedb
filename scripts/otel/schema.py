@@ -35,8 +35,19 @@ def render_include():
     return "\n\n".join(blocks) + "\n"
 
 
+def render_statements(name, selected):
+    body = "".join(f'  R"OTELDDL({s})OTELDDL",\n' for s in selected)
+    return (
+        f"inline constexpr std::array<std::string_view, {len(selected)}>\n"
+        f"  {name}{{{{\n"
+        f"{body}"
+        "}};\n"
+    )
+
+
 def render_header():
-    body = "".join(f'  R"OTELDDL({s})OTELDDL",\n' for s in statements())
+    indexes = [s for s in statements() if s.startswith("CREATE INDEX")]
+    others = [s for s in statements() if not s.startswith("CREATE INDEX")]
     return (
         "#pragma once\n"
         "\n"
@@ -47,10 +58,9 @@ def render_header():
         "\n"
         "namespace sdb::otel {\n"
         "\n"
-        f"inline constexpr std::array<std::string_view, {len(statements())}>\n"
-        "  kSchemaStatements{{\n"
-        f"{body}"
-        "}};\n"
+        f"{render_statements('kSchemaStatements', others)}"
+        "\n"
+        f"{render_statements('kIndexStatements', indexes)}"
         "\n"
         "}  // namespace sdb::otel\n"
         "\n"

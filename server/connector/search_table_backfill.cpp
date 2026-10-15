@@ -145,22 +145,35 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   return fed;
 }
 
-std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
-  if (rowids.empty()) {
-    return nullptr;
+std::shared_ptr<const irs::Filter> MakeRemoval(
+  search::SearchTable::DrainedDeletes deletes) {
+  std::vector<std::shared_ptr<const irs::Filter>> removals;
+  if (!deletes.rows.empty()) {
+    // Sorted rowids encode to sorted terms, so the remove filter walks each
+    // segment's term dictionary sequentially.
+    absl::c_sort(deletes.rows);
+    auto removal = std::make_shared<SearchRemoveFilter>(deletes.rows.size(),
+                                                        term_dict::kPKFieldId);
+    std::string key;
+    for (const auto rowid : deletes.rows) {
+      key.clear();
+      primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
+      removal->Add(key);
+    }
+    removals.push_back(std::move(removal));
   }
-  // Sorted rowids encode to sorted terms, so the remove filter walks each
-  // segment's term dictionary sequentially.
-  absl::c_sort(rowids);
-  auto removal =
-    std::make_shared<SearchRemoveFilter>(rowids.size(), term_dict::kPKFieldId);
-  std::string key;
-  for (const auto rowid : rowids) {
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    removal->Add(key);
+  for (auto& expiry : deletes.expiries) {
+    removals.push_back(std::make_shared<SearchExpireFilter>(
+      expiry.column, std::move(expiry.cutoff)));
   }
-  return removal;
+  switch (removals.size()) {
+    case 0:
+      return nullptr;
+    case 1:
+      return std::move(removals.front());
+    default:
+      return std::make_shared<SearchRemoveUnion>(std::move(removals));
+  }
 }
 
 struct Slice {
@@ -310,12 +323,12 @@ bool RebuildGroup(duckdb::ClientContext& context,
     shard.ReplaceSegments(
       replaced, adopted,
       [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
-        auto [rowids, truncate] = shard.DrainDeleteLog();
-        if (truncate > snapshot) {
+        auto deletes = shard.DrainDeleteLog();
+        if (deletes.truncate > snapshot) {
           truncated = true;
           return false;
         }
-        removal = MakeRemoval(std::move(rowids));
+        removal = MakeRemoval(std::move(deletes));
         return true;
       });
   } catch (const irs::SqlException& e) {

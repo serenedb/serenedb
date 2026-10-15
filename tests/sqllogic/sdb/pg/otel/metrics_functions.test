@@ -1,0 +1,203 @@
+statement ok
+CREATE TABLE counters (series VARCHAR, ts TIMESTAMP_NS, value DOUBLE);
+
+statement ok
+INSERT INTO counters VALUES
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:30', 5),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:00', 10),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:20', 35),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:40', 25),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:10', 20),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:20', 30),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:50', NULL),
+  ('a', NULL, 100),
+  ('a', TIMESTAMP_NS '2026-01-01 00:01:00', 'NaN'::DOUBLE),
+  ('b', TIMESTAMP_NS '2026-01-01 00:00:00', 7),
+  ('c', TIMESTAMP_NS '2026-01-01 00:00:00', 1),
+  ('c', TIMESTAMP_NS '2026-01-01 00:00:30', 4);
+
+query
+SELECT series,
+       increase(value, ts) AS increase,
+       rate(value, ts) AS rate,
+       irate(value, ts) AS irate
+FROM counters
+GROUP BY series
+ORDER BY series;
+----
+series	increase	rate	irate
+a	50	1.25	2
+b	NULL	NULL	NULL
+c	3	0.1	0.1
+
+query
+SELECT rate(value, ts::TIMESTAMP) AS micros,
+       rate(value, ts::TIMESTAMPTZ) AS tz
+FROM counters
+WHERE series = 'a';
+----
+micros	tz
+1.25	1.25
+
+query
+SELECT increase(value, ts) AS increase, rate(value, ts) AS rate
+FROM counters
+WHERE false;
+----
+increase	rate
+NULL	NULL
+
+query
+SELECT ts,
+       increase(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS delta
+FROM counters
+WHERE series = 'a' AND ts <= TIMESTAMP_NS '2026-01-01 00:00:40' AND value <> 30
+ORDER BY ts;
+----
+ts	delta
+2026-01-01 00:00:00	NULL
+2026-01-01 00:00:10	10
+2026-01-01 00:00:20	15
+2026-01-01 00:00:30	5
+2026-01-01 00:00:40	20
+
+statement ok
+CREATE TABLE histograms (ts TIMESTAMP_NS, counts BIGINT[]);
+
+statement ok
+INSERT INTO histograms VALUES
+  (TIMESTAMP_NS '2026-01-01 00:00:20', [3, 4, 5]),
+  (TIMESTAMP_NS '2026-01-01 00:00:00', [1, 2, 3]),
+  (TIMESTAMP_NS '2026-01-01 00:00:30', [1, 0, 1]),
+  (TIMESTAMP_NS '2026-01-01 00:00:10', [2, 4, 3]),
+  (TIMESTAMP_NS '2026-01-01 00:00:40', NULL);
+
+query
+SELECT increase(counts, ts) AS increase
+FROM histograms;
+----
+increase
+{3,2,3}
+
+query
+SELECT increase(counts, ts) AS increase
+FROM histograms
+WHERE ts = TIMESTAMP_NS '2026-01-01 00:00:00';
+----
+increase
+NULL
+
+query
+SELECT round(histogram_quantile(q, [10, 20, 10, 0], [1, 2, 4]), 6) AS value
+FROM (VALUES (0.25), (0.5), (0.95), (1.0)) AS t(q)
+GROUP BY q
+ORDER BY q;
+----
+value
+1
+1.5
+3.6
+4
+
+query
+SELECT histogram_quantile(0.99, [10, 20, 10, 10], [1, 2, 4]) AS inf_bucket,
+       histogram_quantile(0.25, [5, 5, 0], [-1, 10]) AS nonpositive_first,
+       histogram_quantile(1.5, [1, 1], [1]) AS above,
+       histogram_quantile(-0.5, [1, 1], [1]) AS below,
+       histogram_quantile('NaN'::DOUBLE, [1, 1], [1]) AS nan;
+----
+inf_bucket	nonpositive_first	above	below	nan
+4	-1	Infinity	-Infinity	NaN
+
+query
+SELECT histogram_quantile(0.5, []::BIGINT[], []::DOUBLE[]) AS no_buckets,
+       histogram_quantile(0.5, [0, 0], [1]) AS no_observations,
+       histogram_quantile(0.5, [5], []::DOUBLE[]) AS no_bounds;
+----
+no_buckets	no_observations	no_bounds
+NULL	NULL	NULL
+
+query
+SELECT round(histogram_quantile(0.5, counts, [1, 2, 4]), 6) AS value
+FROM (VALUES ([5, 10, 5, 0]), ([5, 10, 5, 0]), (NULL)) AS t(counts);
+----
+value
+1.5
+
+statement error
+SELECT histogram_quantile(0.5, [1, 2, 3], [1, 2, 4]);
+----
+db error: ERROR: histogram_quantile(): bucket_counts must have one element more than explicit_bounds, got 3 and 3
+
+
+statement error
+SELECT histogram_quantile(0.5, counts, bounds)
+FROM (VALUES ([1, 2], [1.0]), ([1, 2], [2.0])) AS t(counts, bounds);
+----
+db error: ERROR: histogram_quantile(): all rows of a group must have the same quantile and explicit_bounds
+
+
+include schema.inc
+
+statement ok
+INSERT INTO otel_metrics_sum ("timestamp", service_name, metric_name, attributes, value,
+                              aggregation_temporality, is_monotonic)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.request.count', '{"code":"200"}', 100, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:15', 'checkout', 'http.server.request.count', '{"code":"200"}', 130, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.request.count', '{"code":"200"}', 160, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:45', 'checkout', 'http.server.request.count', '{"code":"200"}', 190, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:01:00', 'checkout', 'http.server.request.count', '{"code":"200"}', 220, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:01:30', 'checkout', 'http.server.request.count', '{"code":"200"}', 280, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.request.count', '{"code":"500"}', 10, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.request.count', '{"code":"500"}', 2, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:45', 'checkout', 'http.server.request.count', '{"code":"500"}', 5, 'Cumulative', true);
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_sum;
+
+query
+SELECT minute, service_name, round(sum(per_second), 6) AS requests_per_second
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, service_name,
+         resource_attributes, attributes,
+         rate(value, "timestamp") AS per_second
+  FROM otel_metrics_sum
+  WHERE metric_name = 'http.server.request.count'
+  GROUP BY ALL
+)
+GROUP BY ALL
+ORDER BY ALL;
+----
+minute	service_name	requests_per_second
+2026-09-08 12:00:00	checkout	2.111111
+2026-09-08 12:01:00	checkout	2
+
+statement ok
+INSERT INTO otel_metrics_histogram ("timestamp", service_name, metric_name, attributes,
+                                    bucket_counts, explicit_bounds, aggregation_temporality)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', '{}', [1, 1, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.duration', '{}', [5, 3, 2, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:59', 'checkout', 'http.server.duration', '{}', [9, 5, 4, 2], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', '{"route":"/b"}', [0, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'http.server.duration', '{"route":"/b"}', [2, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_histogram;
+
+query
+SELECT minute,
+       histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
+       histogram_quantile(0.75, buckets, explicit_bounds) AS p75
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute
+ORDER BY minute;
+----
+minute	p50	p75
+2026-09-08 12:00:00	10	325

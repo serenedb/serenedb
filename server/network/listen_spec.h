@@ -99,6 +99,7 @@ struct ListenSpec {
   // schema is created there); empty means the default database.
   std::string database;
   std::string schema;
+  bool otel_index = true;
 
   std::optional<int> backlog;
   std::optional<bool> reuseport;

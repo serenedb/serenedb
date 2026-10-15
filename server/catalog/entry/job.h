@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
@@ -72,5 +73,10 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
 
 void ForEachJob(duckdb::DuckCatalog& catalog,
                 const std::function<void(JobCatalogEntry&)>& callback);
+
+void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
+                   duckdb::Catalog& catalog, const duckdb::Identifier& schema,
+                   const duckdb::Identifier& job,
+                   const duckdb::Identifier& owner);
 
 }  // namespace sdb::catalog

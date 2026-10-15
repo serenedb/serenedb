@@ -54,9 +54,9 @@ class Creator {
               .conn},
       _schema{schema} {}
 
-  // A search table cannot gain an index once it holds rows, so re-running the
-  // DDL over an existing schema is not just wasteful, it fails. Presence of
-  // the logs table is the marker that the schema is already there.
+  // An existing schema is left alone, indexes included: a user who dropped or
+  // replaced the shipped indexes keeps their own. Presence of the logs table
+  // is the marker that the schema is already there.
   bool Exists() {
     auto result = _conn->Query(
       absl::StrCat("SELECT 1 FROM pg_tables WHERE schemaname = ",
@@ -73,7 +73,7 @@ class Creator {
     return absl::OkStatus();
   }
 
-  absl::Status Create() {
+  absl::Status Create(bool with_indexes) {
     const auto schema = network::http::SqlIdentifier(_schema);
     if (auto status = Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema));
         !status.ok()) {
@@ -84,6 +84,14 @@ class Creator {
       return status;
     }
     for (const auto statement : kSchemaStatements) {
+      if (auto status = Run(statement); !status.ok()) {
+        return status;
+      }
+    }
+    if (!with_indexes) {
+      return absl::OkStatus();
+    }
+    for (const auto statement : kIndexStatements) {
       if (auto status = Run(statement); !status.ok()) {
         return status;
       }
@@ -126,7 +134,8 @@ std::string InsertSql(std::string_view schema, std::string_view table,
                       source, "(", network::http::SqlLiteral(schema), ")");
 }
 
-absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
+absl::Status EnsureSchema(std::string_view database, std::string_view schema,
+                          bool with_indexes) {
   std::string name;
   duckdb::idx_t oid = 0;
   const auto read = [&](const catalog::DatabaseCatalogEntry& entry) {
@@ -156,7 +165,7 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
   if (creator.Exists()) {
     SDB_DEBUG(STARTUP, "OpenTelemetry schema already present in ", database,
               ".", schema);
-  } else if (auto created = creator.Create(); !created.ok()) {
+  } else if (auto created = creator.Create(with_indexes); !created.ok()) {
     return created;
   } else {
     SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database, ".",

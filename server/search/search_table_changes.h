@@ -26,11 +26,13 @@
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -56,13 +58,19 @@ struct InlinePk {
 // only the things that are not rows -- deletes and truncates -- each carrying
 // the number of insert bands that precede it, so replay can interleave them
 // back into the row stream. Rows between two ops are implicit.
+struct Expiry {
+  connector::ColumnId column;
+  duckdb::Value cutoff;
+};
+
 struct LocalTableChangesEntry {
   struct Op {
     // Insert bands of `pk_segments` that precede this op. Rows the flush
     // already promoted are gone from the buffer, so their ops sit at 0.
     uint32_t band_watermark = 0;
-    // Rowids to remove. Empty for a TRUNCATE.
+    // Rowids to remove. Empty for a TRUNCATE and for an expiry.
     std::vector<int64_t> delete_rows;
+    std::optional<Expiry> expiry;
     bool truncate = false;
     bool clears_shard = false;
 
@@ -110,6 +118,12 @@ struct LocalTableChangesEntry {
     auto& op = ops.emplace_back();
     op.band_watermark = static_cast<uint32_t>(pk_segments.size());
     op.delete_rows.assign(rows.begin(), rows.end());
+  }
+
+  void AppendExpiry(Expiry expiry) {
+    auto& op = ops.emplace_back();
+    op.band_watermark = static_cast<uint32_t>(pk_segments.size());
+    op.expiry = std::move(expiry);
   }
 
   // A truncate removes every row, including the ones this transaction has just

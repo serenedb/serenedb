@@ -48,11 +48,13 @@
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
+#include "connector/functions/metrics.h"
 #include "connector/functions/otel.h"
 #include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
+#include "connector/functions/ttl.h"
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/pg_logical_types.h"
@@ -329,6 +331,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterEsFunctions(db);
 
   connector::RegisterOtelFunctions(db);
+
+  connector::RegisterMetricsFunctions(db);
+
+  connector::RegisterTtlFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
 

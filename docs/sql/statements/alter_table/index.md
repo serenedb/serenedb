@@ -228,6 +228,10 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 
 `SET` and `RESET` of storage options are supported only for search tables.
 
+The [row expiry](../create_table/index.md#row-expiry-ttl) options `ttl` and `ttl_column` can be set, changed and reset the same way; after the change both must be set or neither. Setting them on a table without a TTL creates the job that deletes the expired rows, changing them keeps the job and its schedule, and resetting both drops the job.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_038" />
+
 ## `ENABLE` / `DISABLE TRIGGER`
 
 `DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.

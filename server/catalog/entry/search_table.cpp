@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -38,7 +39,10 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_job_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
@@ -56,8 +60,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/job.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/ttl.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/connection_context.h"
@@ -70,6 +76,7 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kEngineSearch = "search";
+constexpr int64_t kTtlJobIntervalMicros = int64_t{3600} * 1'000'000;
 
 using WithOptions =
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>;
@@ -113,6 +120,62 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
   }
 }
 
+bool IsTimestamp(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case duckdb::LogicalTypeId::TIMESTAMP_NS:
+    case duckdb::LogicalTypeId::TIMESTAMP_MS:
+    case duckdb::LogicalTypeId::TIMESTAMP_SEC:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void BindTtlOptions(const duckdb::ColumnList& columns, WithOptions& options) {
+  const auto ttl = FindConstant(options, kTtlOption);
+  const auto ttl_column = FindConstant(options, kTtlColumnOption);
+  if (static_cast<bool>(ttl) != static_cast<bool>(ttl_column)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("options \"", kTtlOption, "\" and \"",
+                            kTtlColumnOption, "\" must be set together"));
+  }
+  if (!ttl) {
+    return;
+  }
+  const auto interval =
+    ttl->GetLiteral().ToValue().DefaultTryCastAs(duckdb::LogicalType::INTERVAL);
+  if (!interval || interval->IsNull() ||
+      !duckdb::Interval::GreaterThan(interval->GetValue<duckdb::interval_t>(),
+                                     duckdb::interval_t{0, 0, 0})) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("option \"", kTtlOption, "\" must be a positive interval, got \"",
+              ttl->GetLiteral().ToValue().ToString(), "\""));
+  }
+  const duckdb::Identifier name{ttl_column->GetLiteral().ToValue().ToString()};
+  if (!columns.ColumnExists(name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+      ERR_MSG("column \"", name.GetIdentifierName(), "\" named by option \"",
+              kTtlColumnOption, "\" does not exist"));
+  }
+  const auto& column = columns.GetColumn(name);
+  if (column.Generated() || !IsTimestamp(column.Type())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+      ERR_MSG("option \"", kTtlColumnOption,
+              "\" must name a stored timestamp column, \"",
+              name.GetIdentifierName(), "\" is ",
+              column.Generated() ? "generated" : column.Type().ToString()));
+  }
+  options.insert_or_assign(kTtlOption, OptionConstant(*interval));
+  options.insert_or_assign(
+    kTtlColumnOption,
+    OptionConstant(duckdb::Value{column.Name().GetIdentifierName()}));
+}
+
 SearchTableOptions ResolveOptions(const WithOptions& options) {
   const auto get = [&](std::string_view name) {
     return FindConstant(options, name)
@@ -140,6 +203,15 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     result.optimize_top_k =
       constant->GetLiteral().ToValue().GetValue<std::string>();
+  }
+  if (const auto constant = FindConstant(options, kTtlOption)) {
+    result.ttl = constant->GetLiteral()
+                   .ToValue()
+                   .DefaultCastAs(duckdb::LogicalType::INTERVAL)
+                   .GetValue<duckdb::interval_t>();
+  }
+  if (const auto constant = FindConstant(options, kTtlColumnOption)) {
+    result.ttl_column = constant->GetLiteral().ToValue().ToString();
   }
   return result;
 }
@@ -230,6 +302,7 @@ SearchTableEntry::SearchTableEntry(
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
+    BindTtlOptions(_columns, base.options);
   }
   _options = ResolveOptions(base.options);
   if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
@@ -467,6 +540,14 @@ void SearchTableEntry::ReplayAdoptSegments(
   _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
 }
 
+void SearchTableEntry::ReplayExpire(duckdb::ClientContext&,
+                                    duckdb::idx_t column,
+                                    const duckdb::Value& cutoff) {
+  _storage->ReplayExpiry(
+    catalog.GetAttached(),
+    {.column = static_cast<connector::ColumnId>(column), .cutoff = cutoff});
+}
+
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
   duckdb::DuckCatalog& catalog) {
   std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
@@ -526,6 +607,10 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes));
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
+  }
+  if (HasTtl()) {
+    set(kTtlOption, duckdb::Value::INTERVAL(_options.ttl));
+    set(kTtlColumnOption, duckdb::Value{_options.ttl_column});
   }
   return info;
 }
@@ -602,6 +687,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
+      if (HasTtl() &&
+          duckdb::Identifier{_options.ttl_column} == rename.old_name) {
+        table.options.insert_or_assign(
+          kTtlColumnOption,
+          OptionConstant(duckdb::Value{rename.new_name.GetIdentifierName()}));
+      }
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;
@@ -679,8 +770,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
-  const auto require_alterable = [](std::string_view name) {
-    if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+  const auto is_ttl = [](std::string_view name) {
+    return name == kTtlOption || name == kTtlColumnOption;
+  };
+  const auto require_alterable = [&](std::string_view name) {
+    if (absl::c_contains(kSearchTableMaintenanceSettings, name) ||
+        is_ttl(name)) {
       return;
     }
     if (absl::c_contains(kSearchTableOptions, name)) {
@@ -703,20 +798,27 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("option \"", name, "\" expects a constant value"));
       }
-      options[name] = OptionConstant(connector::ValidateSetting(
-        context, name,
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
+      const auto value =
+        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue();
+      options[name] = OptionConstant(
+        is_ttl(name) ? value
+                     : connector::ValidateSetting(context, name, value));
     }
   } else {
     for (const auto& identifier :
          alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
       const auto& name = identifier.GetIdentifierName();
       require_alterable(name);
+      if (is_ttl(name)) {
+        options.erase(name);
+        continue;
+      }
       duckdb::Value value;
       context.TryGetCurrentSetting(identifier, value);
       options[name] = OptionConstant(value);
     }
   }
+  BindTtlOptions(GetColumns(), options);
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(create));
   auto result = duckdb::make_uniq<SearchTableEntry>(
@@ -729,7 +831,52 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   } else {
     _storage->ApplyOptions(result->_options);
   }
+  if (alter.bind_mode != duckdb::AlterBindMode::SKIP_BINDING &&
+      HasTtl() != result->HasTtl()) {
+    UpdateTtlJob(context, result->HasTtl());
+  }
   return result;
+}
+
+void SearchTableEntry::UpdateTtlJob(duckdb::ClientContext& context,
+                                    bool has_ttl) {
+  auto transaction = catalog.GetCatalogTransaction(context);
+  if (has_ttl) {
+    const auto& job = CreateTtlJob(transaction);
+    SetJobOwnedBy(transaction, catalog, ParentSchemaName(), job.name, name);
+    return;
+  }
+  for (const auto& owned :
+       catalog.GetDependencyManager()->OwnedEntries(transaction, *this)) {
+    if (owned.get().type != duckdb::CatalogType::JOB_ENTRY) {
+      continue;
+    }
+    const auto& job = owned.get().name;
+    SetJobOwnedBy(transaction, catalog, ParentSchemaName(), job,
+                  duckdb::Identifier{});
+    duckdb::DropInfo drop;
+    drop.type = duckdb::CatalogType::JOB_ENTRY;
+    drop.SetQualifiedName({catalog.GetName(), ParentSchemaName(), job});
+    catalog.DropEntry(context, drop);
+  }
+}
+
+duckdb::CatalogEntry& SearchTableEntry::CreateTtlJob(
+  duckdb::CatalogTransaction transaction) {
+  duckdb::CreateJobInfo create;
+  create.SetQualifiedName(
+    {catalog.GetName(), ParentSchemaName(),
+     duckdb::Identifier{absl::StrCat(name.GetIdentifierName(), "_ttl")}});
+  create.schedule = {.kind = duckdb::JobScheduleKind::EVERY,
+                     .interval = duckdb::Value::INTERVAL(
+                       duckdb::Interval::FromMicro(kTtlJobIntervalMicros))};
+  auto body = duckdb::make_uniq<duckdb::PragmaStatement>();
+  body->info->name = duckdb::Identifier{connector::kExpireByIdPragma};
+  body->info->parameters.emplace_back(
+    duckdb::ConstantExpression::FromValue(duckdb::Value::BIGINT(oid)));
+  create.body = std::move(body);
+  create.permissions.owner = permissions.owner;
+  return *catalog.CreateJob(transaction.GetContext(), create);
 }
 
 }  // namespace sdb::catalog

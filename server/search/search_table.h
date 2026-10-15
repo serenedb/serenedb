@@ -55,6 +55,7 @@
 #include "connector/column_id.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
+#include "search/search_table_changes.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
 
@@ -127,6 +128,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
+  void ReplayExpiry(duckdb::AttachedDatabase& db, Expiry expiry);
   bool FinishReplay(duckdb::AttachedDatabase& db);
 
   void Publish();
@@ -240,15 +242,24 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   }
   void OpenDeleteLog();
   void AppendDeleteLog(std::span<const int64_t> rows);
+  void AppendExpiryLog(std::span<const Expiry> expiries);
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
     absl::MutexLock lock{&_delete_log_mutex};
     return _build_truncate > position;
   }
 
-  std::pair<std::vector<int64_t>, irs::SourcePosition> DrainDeleteLog() {
+  struct DrainedDeletes {
+    std::vector<int64_t> rows;
+    std::vector<Expiry> expiries;
+    irs::SourcePosition truncate;
+  };
+
+  DrainedDeletes DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return {std::exchange(_delete_log, {}), _build_truncate};
+    return {.rows = std::exchange(_delete_log, {}),
+            .expiries = std::exchange(_expiry_log, {}),
+            .truncate = _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>
@@ -316,6 +327,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::atomic<bool> _delete_log_open{false};
   absl::Mutex _delete_log_mutex;
   std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
+  std::vector<Expiry> _expiry_log ABSL_GUARDED_BY(_delete_log_mutex);
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_delete_log_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement

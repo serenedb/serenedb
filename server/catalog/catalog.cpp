@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/catalog/dependency.hpp>
+#include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
@@ -126,6 +128,12 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.cache = kPkSequenceCache;
         info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
+      }
+      if (entry->HasTtl()) {
+        duckdb::LogicalDependency job{entry->CreateTtlJob(transaction)};
+        job.flags = duckdb::DependencyDependentFlags{};
+        job.owned_by = true;
+        info.Base().dependencies.AddDependency(job);
       }
       entry->Storage()->StartTasks();
     }

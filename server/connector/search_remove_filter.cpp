@@ -20,6 +20,10 @@
 
 #include "search_remove_filter.hpp"
 
+#include <algorithm>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <limits>
@@ -290,6 +294,184 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
     }
     _postings = _terms->postings(irs::IndexFeatures::None);
   }
+}
+
+namespace {
+
+enum class Expiry : uint8_t {
+  None,
+  All,
+  Some,
+};
+
+template<typename T>
+Expiry Classify(const duckdb::BaseStatistics& stats, T cutoff) {
+  if (!stats.CanHaveNoNull()) {
+    return Expiry::None;
+  }
+  if (!duckdb::NumericStats::HasMinMax(stats)) {
+    return Expiry::Some;
+  }
+  if (duckdb::NumericStats::GetMin<T>(stats) > cutoff) {
+    return Expiry::None;
+  }
+  if (!stats.CanHaveNull() &&
+      duckdb::NumericStats::GetMax<T>(stats) <= cutoff) {
+    return Expiry::All;
+  }
+  return Expiry::Some;
+}
+
+}  // namespace
+
+SearchExpireFilter::SearchExpireFilter(irs::field_id column,
+                                       duckdb::Value cutoff)
+  : _column{column}, _cutoff{std::move(cutoff)} {}
+
+irs::QueryBuilder::ptr SearchExpireFilter::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchExpireFilter>>(
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
+}
+
+irs::lead::Node::ptr SearchExpireFilter::MakeLead(
+  const irs::SubReader& segment, const irs::DocumentMask*) const {
+  _ranges.clear();
+  _range = 0;
+  if (const auto* column = segment.Column(_column)) {
+    switch (column->Type().InternalType()) {
+      case duckdb::PhysicalType::INT32:
+        Collect<int32_t>(segment, *column);
+        break;
+      case duckdb::PhysicalType::INT64:
+        Collect<int64_t>(segment, *column);
+        break;
+      default:
+        break;
+    }
+  }
+  auto& self = const_cast<SearchExpireFilter&>(*this);
+  self._doc = irs::doc_limits::invalid();
+  return irs::memory::to_managed<irs::lead::Node>(self);
+}
+
+template<typename T>
+void SearchExpireFilter::Collect(const irs::SubReader& segment,
+                                 const irs::ColumnReader& column) const {
+  const auto cutoff = _cutoff.GetValueUnsafe<T>();
+  const uint64_t rows = std::min(column.RowCount(), segment.docs_count());
+  const auto add = [&](uint64_t begin, uint64_t end) {
+    const auto first =
+      static_cast<irs::doc_id_t>(irs::doc_limits::min() + begin);
+    const auto last = static_cast<irs::doc_id_t>(irs::doc_limits::min() + end);
+    if (!_ranges.empty() && _ranges.back().end == first) {
+      _ranges.back().end = last;
+    } else {
+      _ranges.push_back({.begin = first, .end = last});
+    }
+  };
+  switch (Classify(column.MergedStatistics(), cutoff)) {
+    case Expiry::None:
+      return;
+    case Expiry::All:
+      add(0, rows);
+      return;
+    case Expiry::Some:
+      break;
+  }
+  const auto* store = segment.GetColReader();
+  std::unique_ptr<irs::ReadContext> ctx;
+  std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
+  irs::ColumnReader::ScanState scan;
+  uint64_t scanned = 0;
+  irs::BlockWindow window{};
+  for (uint64_t row = 0; row < rows; row = window.end) {
+    window = column.Locate(row, window);
+    const uint64_t end = std::min<uint64_t>(window.end, rows);
+    const auto expiry =
+      Classify(column.RowGroupStatistics(window.block), cutoff);
+    if (expiry == Expiry::All) {
+      add(row, end);
+    }
+    if (expiry != Expiry::Some || !store) {
+      continue;
+    }
+    if (!ctx) {
+      ctx = std::make_unique<irs::ReadContext>(*store);
+      scan = column.InitScan(*ctx);
+      scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(column.Type());
+    }
+    if (row > scanned) {
+      column.Skip(scan, row - scanned);
+      scanned = row;
+    }
+    while (scanned < end) {
+      const auto count =
+        std::min<uint64_t>(end - scanned, STANDARD_VECTOR_SIZE);
+      auto& values = scratch->Reset();
+      column.Scan(scan, values, count);
+      duckdb::UnifiedVectorFormat format;
+      values.ToUnifiedFormat(format);
+      const auto* data = duckdb::UnifiedVectorFormat::GetData<T>(format);
+      for (uint64_t i = 0; i != count; ++i) {
+        const auto index = format.sel->get_index(i);
+        if (format.validity.RowIsValid(index) && data[index] <= cutoff) {
+          add(scanned + i, scanned + i + 1);
+        }
+      }
+      scanned += count;
+    }
+  }
+}
+
+irs::doc_id_t SearchExpireFilter::Next() {
+  while (_range != _ranges.size()) {
+    auto& range = _ranges[_range];
+    if (range.begin != range.end) {
+      return _doc = range.begin++;
+    }
+    ++_range;
+  }
+  return _doc = irs::doc_limits::eof();
+}
+
+irs::QueryBuilder::ptr SearchRemoveUnion::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchRemoveUnion>>(
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
+}
+
+irs::lead::Node::ptr SearchRemoveUnion::MakeLead(
+  const irs::SubReader& segment, const irs::DocumentMask* pending) const {
+  _prepared.clear();
+  _leads.clear();
+  _lead = 0;
+  for (const auto& filter : _filters) {
+    auto prepared =
+      filter->PrepareSegment(segment, {.pending_docs_mask = pending});
+    if (!prepared) {
+      continue;
+    }
+    auto lead = prepared->PlanLead({});
+    if (!lead) {
+      continue;
+    }
+    _prepared.push_back(std::move(prepared));
+    _leads.push_back(std::move(lead));
+  }
+  return irs::memory::to_managed<irs::lead::Node>(
+    const_cast<SearchRemoveUnion&>(*this));
+}
+
+irs::doc_id_t SearchRemoveUnion::Next() {
+  while (_lead != _leads.size()) {
+    if (const auto doc = _leads[_lead]->Next(); !irs::doc_limits::eof(doc)) {
+      return doc;
+    }
+    ++_lead;
+  }
+  return irs::doc_limits::eof();
 }
 
 }  // namespace sdb::connector

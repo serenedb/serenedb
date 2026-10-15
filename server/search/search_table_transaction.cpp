@@ -40,6 +40,7 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
@@ -61,12 +62,17 @@ void RecordDeletesForBuild(SearchTable& shard,
                            const LocalTableChangesEntry& changes,
                            const irs::SourcePosition& position) noexcept {
   std::vector<int64_t> rows;
+  std::vector<Expiry> expiries;
   bool truncated = false;
   for (const auto& op : changes.ops) {
     truncated |= op.IsTruncate();
     rows.insert(rows.end(), op.delete_rows.begin(), op.delete_rows.end());
+    if (op.expiry) {
+      expiries.push_back(*op.expiry);
+    }
   }
   shard.AppendDeleteLog(rows);
+  shard.AppendExpiryLog(expiries);
   if (truncated) {
     shard.RecordTruncateForBuild(position);
   }
@@ -107,6 +113,10 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       },
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
+        if (op.expiry) {
+          _entries.WriteExpireRows(op.expiry->column, op.expiry->cutoff);
+          return;
+        }
         duckdb::DataChunk rows;
         rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
         rows.data[0].Reference(duckdb::Vector(
@@ -208,6 +218,11 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
+      if (op.expiry) {
+        trx.Remove(std::make_shared<connector::SearchExpireFilter>(
+          op.expiry->column, op.expiry->cutoff));
+        return;
+      }
       connector::RemoveGeneratedRows(trx, op.delete_rows);
     });
   entry.applied_ops = entry.ops.size();
@@ -250,6 +265,12 @@ void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
   EnsureShardWrites(shard);
   _changes[shard->GetTableId()].AppendDeletes(rows);
+}
+
+void SearchTableTransaction::AddSearchExpiry(
+  const std::shared_ptr<SearchTable>& shard, Expiry expiry) {
+  EnsureShardWrites(shard);
+  _changes[shard->GetTableId()].AppendExpiry(std::move(expiry));
 }
 
 void SearchTableTransaction::AddSearchTruncate(

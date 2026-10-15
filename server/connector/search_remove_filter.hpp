@@ -22,7 +22,9 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <duckdb/common/types/value.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -159,6 +161,74 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   mutable int64_t _resume_row{0};
   mutable std::string _key_scratch;
   mutable std::vector<Entry> _entries;
+};
+
+class SearchExpireFilter final : public irs::Filter, public irs::lead::Node {
+ public:
+  SearchExpireFilter(irs::field_id column, duckdb::Value cutoff);
+
+  irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
+                                const irs::DocumentMask* pending) const;
+
+  irs::doc_id_t Next() final;
+
+  irs::TypeInfo::type_id type() const noexcept final {
+    return irs::Type<SearchExpireFilter>::id();
+  }
+
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
+
+  irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
+    SDB_ASSERT(false);
+    return _doc = irs::doc_limits::eof();
+  }
+
+ private:
+  struct DocRange {
+    irs::doc_id_t begin;
+    irs::doc_id_t end;
+  };
+
+  template<typename T>
+  void Collect(const irs::SubReader& segment,
+               const irs::ColumnReader& column) const;
+
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
+  const irs::field_id _column;
+  const duckdb::Value _cutoff;
+  mutable std::vector<DocRange> _ranges;
+  mutable size_t _range = 0;
+};
+
+class SearchRemoveUnion final : public irs::Filter, public irs::lead::Node {
+ public:
+  explicit SearchRemoveUnion(
+    std::vector<std::shared_ptr<const irs::Filter>> filters)
+    : _filters{std::move(filters)} {}
+
+  irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
+                                const irs::DocumentMask* pending) const;
+
+  irs::doc_id_t Next() final;
+
+  irs::TypeInfo::type_id type() const noexcept final {
+    return irs::Type<SearchRemoveUnion>::id();
+  }
+
+  irs::QueryBuilder::ptr PrepareSegment(
+    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
+
+  irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
+    SDB_ASSERT(false);
+    return irs::doc_limits::eof();
+  }
+
+ private:
+  std::vector<std::shared_ptr<const irs::Filter>> _filters;
+  mutable std::vector<irs::QueryBuilder::ptr> _prepared;
+  mutable std::vector<irs::lead::Node::ptr> _leads;
+  mutable size_t _lead = 0;
 };
 
 }  // namespace sdb::connector

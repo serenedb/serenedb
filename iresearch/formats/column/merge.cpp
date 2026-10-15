@@ -240,12 +240,19 @@ struct LeafSample {
     sampler.Add({&view, 1});
     seen.clear();
     window.clear();
+    ++closed;
+  }
+
+  bool CanFill() const noexcept {
+    return sampler.Size() + (kSampleWindows - closed) * kSampleWindowBytes >=
+           codecs::kTrainSampleBytes;
   }
 
   std::vector<uint32_t> path;
   absl::flat_hash_set<uint64_t> seen;
   std::string window;
   codecs::DictionarySampler sampler;
+  size_t closed = 0;
 };
 
 struct LeafDictionary {
@@ -474,12 +481,14 @@ struct ColumnMerger::State {
     if (TrainsColumnDictionary(*db, duckdb::LogicalType::VARCHAR,
                                opts.compression, CodecParams(opts))) {
       const auto ctxs = OpenContexts(sources, column);
+      const bool fallback = Rows(column) <= kSampleWindowsReach;
       ScanSampleWindows(
         sources, column, ctxs,
         [&](const duckdb::Vector& batch, duckdb::idx_t take) {
           bool open = false;
           for (auto& leaf : leaves) {
-            if (leaf.window.size() < kSampleWindowBytes) {
+            if (leaf.window.size() < kSampleWindowBytes &&
+                (fallback || leaf.CanFill())) {
               leaf.Add(batch, take, kSampleWindowBytes);
               open |= leaf.window.size() < kSampleWindowBytes;
             }

@@ -78,6 +78,7 @@ target_sources(
         types/bytea.cpp
         types/cast.cpp
         types/inet.cpp
+        types/mac.cpp
         types/mapping.cpp
         types/pg_lsn.cpp
         types/reg.cpp

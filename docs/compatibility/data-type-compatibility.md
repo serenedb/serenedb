@@ -47,8 +47,8 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | jsonpath                     | 🔴            |         |
 | line                         | 🔴            |         |
 | lseg                         | 🔴            |         |
-| macaddr                      | 🔴            |         |
-| macaddr8                     | 🔴            |         |
+| macaddr                      | 🟢            |         |
+| macaddr8                     | 🟢            |         |
 | money                        | 🔴            |         |
 | name                         | 🟡            | Not truncated to 63 bytes. |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |

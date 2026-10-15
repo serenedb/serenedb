@@ -57,6 +57,7 @@
 #include "icu-helpers.hpp"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
+#include "pg/types/mac.h"
 #include "pg/types/mapping.h"
 #include "pg/types/pg_lsn.h"
 
@@ -552,6 +553,32 @@ struct LsnText {
       return false;
     }
     sink.Fixed(*lsn);
+    return true;
+  }
+};
+
+template<bool kMac8>
+struct MacText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    uint64_t mac = 0;
+    if (kMac8 ? TryParseMacaddr8(data, mac) : TryParseMacaddr(data, mac)) {
+      return false;
+    }
+    sink.Fixed(mac);
+    return true;
+  }
+};
+
+template<bool kMac8>
+struct MacBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    const auto mac = kMac8 ? Macaddr8Recv(data) : MacaddrRecv(data);
+    if (!mac) {
+      return false;
+    }
+    sink.Fixed(*mac);
     return true;
   }
 };
@@ -1866,6 +1893,12 @@ DeserializationFunction<Sink> GetDeserialization(
     case UBIGINT:
       if (IsPgLsn(type)) {
         return SelectDecoder<LoadBin<uint64_t>, LsnText, Sink>(binary);
+      }
+      if (IsMacaddr(type)) {
+        return SelectDecoder<MacBin<false>, MacText<false>, Sink>(binary);
+      }
+      if (IsMacaddr8(type)) {
+        return SelectDecoder<MacBin<true>, MacText<true>, Sink>(binary);
       }
       return SelectDecoder<UbigintBin, NumberText<uint64_t>, Sink>(binary);
     case HUGEINT:

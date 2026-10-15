@@ -24,6 +24,7 @@
 
 #include "pg/types/bytea.h"
 #include "pg/types/inet.h"
+#include "pg/types/mac.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/reg.h"
 
@@ -35,6 +36,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterPgLsn(casts);
   RegisterInet(casts);
   RegisterBytea(casts);
+  RegisterMacaddr(db);
 }
 
 }  // namespace sdb::pg

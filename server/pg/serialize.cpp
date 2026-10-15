@@ -68,7 +68,9 @@
 #include "pg/catalog/utils/session.h"
 #include "pg/types/inet.h"
 #include "pg/types/logical.h"
+#include "pg/types/mac.h"
 #include "pg/types/mapping.h"
+#include "pg/types/pg_lsn.h"
 #include "query/config.h"
 #include "server/utils/dtoa.h"
 
@@ -730,11 +732,29 @@ struct IntTextCore {
 
 struct LsnTextCore {
   using Value = uint64_t;
-  static constexpr uint32_t kMaxBytes = sizeof("FFFFFFFF/FFFFFFFF");
+  static constexpr uint32_t kMaxBytes = kLsnBufferSize;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value lsn) {
-    return absl::SNPrintF(reinterpret_cast<char*>(dst), kMaxBytes, "%X/%X",
-                          static_cast<uint32_t>(lsn >> 32),
-                          static_cast<uint32_t>(lsn));
+    return WriteLsn(lsn, reinterpret_cast<char*>(dst));
+  }
+};
+
+template<bool kMac8>
+struct MacTextCore {
+  using Value = uint64_t;
+  static constexpr uint32_t kMaxBytes = kMacaddr8Text;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value mac) {
+    auto* text = reinterpret_cast<char*>(dst);
+    return kMac8 ? WriteMacaddr8(mac, text) : WriteMacaddr(mac, text);
+  }
+};
+
+template<bool kMac8>
+struct MacBinCore {
+  using Value = uint64_t;
+  static constexpr uint32_t kMaxBytes = kMac8 ? kMacaddr8Bytes : kMacaddrBytes;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value mac) {
+    MacSend(mac, kMaxBytes, dst);
+    return kMaxBytes;
   }
 };
 
@@ -2240,6 +2260,14 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<LsnTextCore, IntBinCore<uint64_t>, kPgLsn>(
           format, context, kind);
       }
+      if (IsMacaddr(type)) {
+        return MakeArraySerializer<MacTextCore<false>, MacBinCore<false>,
+                                   kMacaddr>(format, context, kind);
+      }
+      if (IsMacaddr8(type)) {
+        return MakeArraySerializer<MacTextCore<true>, MacBinCore<true>,
+                                   kMacaddr8>(format, context, kind);
+      }
       return MakeArraySerializer<IntTextCore<uint64_t>, UbigintBinCore,
                                  kNumeric>(format, context, kind);
     case HUGEINT:
@@ -2487,6 +2515,14 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       if (IsPgLsn(type)) {
         return SelectFieldSerializer<LsnTextCore, LsnTextCore,
                                      IntBinCore<uint64_t>>(format, context);
+      }
+      if (IsMacaddr(type)) {
+        return SelectFieldSerializer<MacTextCore<false>, MacTextCore<false>,
+                                     MacBinCore<false>>(format, context);
+      }
+      if (IsMacaddr8(type)) {
+        return SelectFieldSerializer<MacTextCore<true>, MacTextCore<true>,
+                                     MacBinCore<true>>(format, context);
       }
       return SelectFieldSerializer<IntTextCore<uint64_t>, IntTextCore<uint64_t>,
                                    UbigintBinCore>(format, context);

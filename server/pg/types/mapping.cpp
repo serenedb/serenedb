@@ -86,6 +86,8 @@ constexpr PgTypeMapping kMappings[] = {
   {kVoid, &VOID, true},
   {kUuid, []() -> duckdb::LogicalType { return duckdb::LogicalType::UUID; }, false},
   {kPgLsn, &PG_LSN, true},
+  {kMacaddr, &MACADDR, true},
+  {kMacaddr8, &MACADDR8, true},
   {kPgNdistinct, &PG_NDISTINCT, true},
   {kPgDependencies, &PG_DEPENDENCIES, true},
   {kRegconfig, &REGCONFIG, true},
@@ -238,6 +240,12 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case UBIGINT:
       if (IsPgLsn(type)) {
         return make(kPgLsn);
+      }
+      if (IsMacaddr(type)) {
+        return make(kMacaddr);
+      }
+      if (IsMacaddr8(type)) {
+        return make(kMacaddr8);
       }
       return make(kNumeric);
     case HUGEINT:

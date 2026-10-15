@@ -236,6 +236,22 @@
   array: false
   samples: ["127.0.0.1", "::1", "10.0.0.1/24", null]
 
+- oid: 829
+  name: macaddr
+  pg_typname: macaddr
+  text: true
+  binary: true
+  array: true
+  samples: ["08:00:2b:01:02:03", "ff:ff:ff:ff:ff:ff", null]
+
+- oid: 774
+  name: macaddr8
+  pg_typname: macaddr8
+  text: true
+  binary: true
+  array: true
+  samples: ["08:00:2b:01:02:03:04:05", "08:00:2b:ff:fe:01:02:03", null]
+
 # ---- bit ----
 - oid: 1560
   name: bit

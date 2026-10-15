@@ -403,7 +403,7 @@ SELECT NULL::"lseg" IS NULL;
 db error: ERROR: Type with name lseg does not exist!<slt:ignore>
 
 
-# macaddr (🔴)
+# macaddr (🟢)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'macaddr' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -411,13 +411,11 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"macaddr" IS NULL;
-----
-db error: ERROR: Type with name macaddr does not exist!<slt:ignore>
 
 
-# macaddr8 (🔴)
+# macaddr8 (🟢)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'macaddr8' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -425,10 +423,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"macaddr8" IS NULL;
-----
-db error: ERROR: Type with name macaddr8 does not exist!<slt:ignore>
 
 
 # money (🔴)

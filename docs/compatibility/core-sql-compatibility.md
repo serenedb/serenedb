@@ -647,7 +647,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_append       | Yes           |                                |
 | array_cat          | Yes           |                                |
 | array_dims         | Yes           |                                |
-| array_fill         | No            |                                |
+| array_fill         | Yes           | Lower bounds must be 1; dimensions taken from a column fill one-dimensional arrays unless written as `ARRAY[...]` |
 | array_lower        | Yes           |                                |
 | array_ndims        | Yes           |                                |
 | array_position     | Yes           |                                |
@@ -655,8 +655,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | array_prepend      | Yes           |                                |
 | array_remove       | Yes           |                                |
 | array_replace      | Yes           |                                |
-| array_sample       | No            |                                |
-| array_shuffle      | No            |                                |
+| array_sample       | Yes           |                                |
+| array_shuffle      | Yes           |                                |
 | array_to_string    | Yes           |                                |
 | array_upper        | Yes           |                                |
 | array_cardinality  | Yes           | via cardinality()              |

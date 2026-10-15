@@ -2305,7 +2305,7 @@ statement ok
 SELECT array_dims('{1,2,3}'::int[]);
 
 # op_arr_range: array_fill
-statement error
+statement ok
 SELECT array_fill(7, '{3}'::int[]);
 
 # op_arr_range: array_lower
@@ -2337,11 +2337,11 @@ statement ok
 SELECT array_replace('{1,2,3}'::int[], 2, 9);
 
 # op_arr_range: array_sample
-statement error
+statement ok
 SELECT array_sample('{1,2,3,4}'::int[], 2);
 
 # op_arr_range: array_shuffle
-statement error
+statement ok
 SELECT array_shuffle('{1,2,3}'::int[]);
 
 # op_arr_range: array_to_string

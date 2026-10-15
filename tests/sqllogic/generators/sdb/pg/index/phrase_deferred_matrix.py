@@ -123,7 +123,7 @@ stmt("CREATE TEXT SEARCH DICTIONARY pdm_syn_pos AS\n    split_text(case := 'lowe
 vocab = ", ".join(f"'{w}'" for w in VOCAB)
 stmt("CREATE TABLE pdm (id INTEGER PRIMARY KEY, body VARCHAR)")
 stmt("INSERT INTO pdm SELECT i, (SELECT string_agg("
-     f"[{vocab}][1 + (hash(i, j) % {len(VOCAB)})::INTEGER], ' ') "
+     f"[{vocab}][1 + (hash(i, j) % {len(VOCAB)})::INTEGER], ' ' ORDER BY j) "
      "FROM range(1 + (hash(i) % 12)::INTEGER) r(j)) FROM range(600) t(i)")
 stmt("CREATE INDEX pdm_text ON pdm USING inverted (id, body pdm_words) INCLUDE (body)")
 stmt("CREATE INDEX pdm_pos ON pdm USING inverted (id, body pdm_words_pos)")

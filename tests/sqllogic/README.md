@@ -54,10 +54,16 @@ every run. Each `generators/<path>.py` prints the test that `run.sh` saves as
 Where only the server knows the answer, such as a row count, a generator prints
 `<recorded>`. `run.sh` fills those cells from `generators/<path>.recorded`, and
 `run.sh --override` records them there, as values or, for a query that fails,
-as its error. The `.recorded` file belongs to one version of its generator: after
-a change to the generator its placeholders stay unfilled, and the test fails
-until it's recorded again with `--override`. Query plans go into a committed test
-next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
+as its exact error, which the test then expects in the block form. Each query
+takes one line of the `.recorded` file, keyed by its number and the start of its
+SQL, so a review sees which query changed. A query that fails where the
+`.recorded` file has values or another error is recorded only with
+`SDB_RECORD_NEW_ERRORS=1` set; without it `--override` lists those queries and
+leaves the file unchanged. The `.recorded` file belongs to one version of its
+generator: after a change to the generator its placeholders stay unfilled, and
+the test fails until it's recorded again with `--override`. Query plans go into
+a committed test next to the generated one, like
+`sdb/pg/index/phrase_deferred_plans.test`.
 
 ## Recovery Tests
 

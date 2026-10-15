@@ -440,6 +440,8 @@ constexpr SystemMacro kMacros[] = {
    R"((wakeup TIMESTAMPTZ) AS
       pg_sleep(extract(epoch FROM wakeup) -
                extract(epoch FROM clock_timestamp())))"},
+  {"pg_catalog", "pg_blocking_pids",
+   "(pid INTEGER) AS CASE WHEN pid IS NOT NULL THEN '{}'::INTEGER[] END"},
   {"pg_catalog", "pg_safe_snapshot_blocking_pids",
    "(pid INTEGER) AS CASE WHEN pid IS NOT NULL THEN '{}'::INTEGER[] END"},
   {"pg_catalog", "pg_available_wal_summaries",

@@ -345,7 +345,7 @@ work_mem	4096	Sets the maximum memory to be used for query workspaces. Accepted 
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
-xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments. Accepted for compatibility; SereneDB has no xml type.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.
 
 
@@ -700,5 +700,5 @@ work_mem	4096	Sets the maximum memory to be used for query workspaces. Accepted 
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
-xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments. Accepted for compatibility; SereneDB has no xml type.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.

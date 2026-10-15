@@ -838,6 +838,16 @@ zero	own	null_input
 {}	{}	NULL
 
 
+# pg_blocking_pids
+
+query
+SELECT pg_blocking_pids(0) AS zero, pg_blocking_pids(pg_backend_pid()) AS own,
+       pg_blocking_pids(NULL) AS null_input;
+----
+zero	own	null_input
+{}	{}	NULL
+
+
 # pg_available_wal_summaries
 
 query

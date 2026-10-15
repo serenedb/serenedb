@@ -554,7 +554,7 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 | `IS DOCUMENT`         | No            |         |
 | `IS NOT DOCUMENT`     | No            |         |
 | XMLEXISTS             | No            |         |
-| xml_is_well_formed    | No            |         |
+| xml_is_well_formed    | Yes           | Also `xml_is_well_formed_document` and `xml_is_well_formed_content` |
 | xpath                 | No            |         |
 | xpath_exists          | No            |         |
 | XMLTABLE              | No            |         |
@@ -839,7 +839,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_current_logfile                 | Yes           | Always `NULL`: there is no logging collector |
 | pg_jit_available                   | Yes           | Always `false`, as is `pg_numa_available` |
 | pg_collation_actual_version        | Yes           | Also `pg_database_collation_actual_version`; always `NULL`: collations are not versioned |
-| pg_safe_snapshot_blocking_pids     | Yes           | Always an empty array |
+| pg_safe_snapshot_blocking_pids     | Yes           | Also `pg_blocking_pids`; always an empty array |
 | pg_available_wal_summaries         | Yes           | Returns no rows |
 | pg_extension_update_paths          | Yes           | Fails for every extension name: no extension is available |
 | pg_wal_lsn_diff                    | Yes           | Also `pg_lsn(numeric)` |

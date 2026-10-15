@@ -343,14 +343,19 @@ std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
 namespace {
 
 template<irs::utils::detail::FixedString Name>
-void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
-                 duckdb::Value& value) {
+void Normalize(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
   constexpr std::string_view kName{Name};
   if (!value.IsNull() && value.type().id() == duckdb::LogicalTypeId::VARCHAR) {
     value = duckdb::Value{
       NormalizePgValue(kName, FindVariable(kName)->pg, value.ToString())};
   }
-  NoticeIfNotDefault(ctx, kName, value);
+}
+
+template<irs::utils::detail::FixedString Name>
+void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                 duckdb::Value& value) {
+  Normalize<Name>(ctx, scope, value);
+  NoticeIfNotDefault(ctx, std::string_view{Name}, value);
 }
 
 void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
@@ -1945,10 +1950,9 @@ constexpr std::pair<std::string_view, VariableDescription>
         .type = LogicalTypeId::VARCHAR,
         .description =
           "Sets whether XML data in implicit parsing and serialization "
-          "operations is to be considered as documents or content fragments. "
-          "Accepted for compatibility; SereneDB has no xml type.",
+          "operations is to be considered as documents or content fragments.",
         .default_value = [] { return duckdb::Value{"content"}; },
-        .set_callback = NoOverwrite<"xmloption">,
+        .set_callback = Normalize<"xmloption">,
         .pg = {.vartype = "enum",
                .category = kStatementBehavior,
                .enumvals = kXmlOptions},

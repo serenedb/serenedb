@@ -33,6 +33,7 @@ target_sources(
         ts_term.cpp
         ts_to_tsquery.cpp
         ts_tokenize.cpp
+        xml.cpp
         ai/aggregate_functions.cpp
         ai/ai.cpp
         ai/chat.cpp
@@ -44,5 +45,5 @@ target_sources(
 
 target_link_libraries(
     sereneserver
-    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static _libxml2
 )

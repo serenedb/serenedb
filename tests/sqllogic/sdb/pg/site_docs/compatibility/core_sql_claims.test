@@ -1647,7 +1647,7 @@ statement error
 SELECT xmlexists('//a' PASSING BY VALUE '<a/>'::xml);
 
 # op_misc1: xml_is_well_formed
-statement error
+statement ok
 SELECT xml_is_well_formed('<a/>');
 
 # op_misc1: xpath

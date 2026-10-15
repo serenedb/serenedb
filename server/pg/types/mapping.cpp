@@ -58,6 +58,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kCid, &CID, true},
   {kOidvector, &OIDVECTOR, true},
   {kJson, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
+  {kXml, &XML, true},
   {kPgNodeTree, &PG_NODE_TREE, true},
   {kCidr, &CIDR, true},
   {kFloat4, []() -> duckdb::LogicalType { return duckdb::LogicalType::FLOAT; }, false},
@@ -311,6 +312,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       }
       if (IsAclitem(type)) {
         return make(kAclitem);
+      }
+      if (IsXml(type)) {
+        return make(kXml);
       }
       if (IsPgNodeTree(type)) {
         return make(kPgNodeTree);

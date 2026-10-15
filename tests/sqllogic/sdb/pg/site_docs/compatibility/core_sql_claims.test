@@ -660,7 +660,7 @@ statement ok
 SELECT NULL::uuid;
 
 # types: xml
-statement error
+statement ok
 SELECT NULL::xml;
 
 # op_logic_cmp: AND
@@ -1603,11 +1603,11 @@ statement ok
 SELECT uuid_extract_version('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid);
 
 # op_misc1: xmltext
-statement error
+statement ok
 SELECT xmltext('foo');
 
 # op_misc1: xmlcomment
-statement error
+statement ok
 SELECT xmlcomment('foo');
 
 # op_misc1: xmlconcat
@@ -1631,7 +1631,7 @@ statement error
 SELECT xmlroot('<a/>'::xml, version '1.0');
 
 # op_misc1: xmlagg
-statement error
+statement ok
 SELECT xmlagg(c) FROM (VALUES ('<a/>'::xml)) t(c);
 
 # op_misc1: IS DOCUMENT
@@ -1651,11 +1651,11 @@ statement ok
 SELECT xml_is_well_formed('<a/>');
 
 # op_misc1: xpath
-statement error
+statement ok
 SELECT xpath('/a', '<a>x</a>'::xml);
 
 # op_misc1: xpath_exists
-statement error
+statement ok
 SELECT xpath_exists('/a', '<a>x</a>'::xml);
 
 # op_misc1: XMLTABLE

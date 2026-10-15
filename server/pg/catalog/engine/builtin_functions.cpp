@@ -113,6 +113,11 @@ char Volatility(duckdb::FunctionStability stability) {
 }
 
 bool Exact(const duckdb::LogicalType& type) {
+  if (type.id() == duckdb::LogicalTypeId::LIST &&
+      duckdb::ListType::GetChildType(type).id() ==
+        duckdb::LogicalTypeId::LIST) {
+    return Exact(duckdb::ListType::GetChildType(type));
+  }
   const auto oid = TypeOid(type);
   const auto* builtin = FindBuiltinType(oid);
   return oid != kUnknown && builtin && BuiltinLogicalType(*builtin) == type;

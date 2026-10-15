@@ -20,10 +20,33 @@
 
 #pragma once
 
+#include <cstdint>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
+#include <optional>
+#include <string>
+#include <string_view>
 
-namespace sdb::connector {
+namespace sdb::pg {
 
-void RegisterPgXmlFunctions(duckdb::DatabaseInstance& db);
+enum class XmlOption : uint8_t {
+  Content,
+  Document,
+};
 
-}  // namespace sdb::connector
+XmlOption CurrentXmlOption(duckdb::ClientContext& context);
+
+std::optional<irs::pg::SqlErrorData> CheckXml(std::string_view text,
+                                              XmlOption option);
+
+struct XmlText {
+  std::string declaration;
+  std::string_view body;
+};
+
+XmlText XmlOut(std::string_view xml);
+
+void RegisterXml(duckdb::DatabaseInstance& db);
+
+}  // namespace sdb::pg

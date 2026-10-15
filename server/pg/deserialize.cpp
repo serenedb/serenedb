@@ -578,6 +578,18 @@ struct ParseFixed {
   }
 };
 
+struct XmlIn {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (CheckXml(data, context.xml_option)) {
+      return false;
+    }
+    sink.Varchar(data);
+    return true;
+  }
+};
+
 struct CharText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -666,6 +678,7 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
 
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context) {
+  context.xml_option = CurrentXmlOption(client);
   duckdb::Value value;
   if (!client.TryGetCurrentSetting("TimeZone", value) || value.IsNull()) {
     context.session_calendar.reset();
@@ -2009,6 +2022,9 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       if (IsName(type)) {
         return SelectDecoder<NameBin, NameText, Sink>(binary);
+      }
+      if (IsXml(type)) {
+        return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
       }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:

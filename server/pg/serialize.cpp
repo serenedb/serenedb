@@ -76,6 +76,7 @@
 #include "pg/types/money.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/tid.h"
+#include "pg/types/xml.h"
 #include "query/config.h"
 #include "server/utils/dtoa.h"
 
@@ -327,6 +328,28 @@ struct VarcharBinCore {
   using Value = duckdb::string_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
     ctx.writer->Write(std::string_view{raw.GetData(), raw.GetSize()});
+  }
+};
+
+template<WrapContext InContainer>
+struct XmlTextCore {
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    const auto xml = XmlOut({raw.GetData(), raw.GetSize()});
+    if (xml.declaration.empty()) {
+      EmitTextItem<InContainer>(ctx, xml.body);
+    } else {
+      EmitTextItem<InContainer>(ctx, absl::StrCat(xml.declaration, xml.body));
+    }
+  }
+};
+
+struct XmlBinCore {
+  using Value = duckdb::string_t;
+  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
+    const auto xml = XmlOut({raw.GetData(), raw.GetSize()});
+    ctx.writer->Write(xml.declaration);
+    ctx.writer->Write(xml.body);
   }
 };
 
@@ -1401,6 +1424,13 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
         duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
           vdata.unified)[vdata.unified.sel->get_index(row)];
       std::string_view v{raw.GetData(), raw.GetSize()};
+      if (IsXml(type)) {
+        const auto xml = XmlOut(v);
+        if (!xml.declaration.empty()) {
+          return true;
+        }
+        v = xml.body;
+      }
       return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
     }
     case ENUM: {
@@ -2418,6 +2448,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<VarcharTextCore<WrapContext::Array>,
                                    CharBinCore, kChar>(format, context, kind);
       }
+      if (IsXml(type)) {
+        return MakeArraySerializer<XmlTextCore<WrapContext::Array>, XmlBinCore,
+                                   kXml>(format, context, kind);
+      }
       return MakeArraySerializer<VarcharTextCore<WrapContext::Array>,
                                  VarcharBinCore, kText>(format, context, kind);
     case BLOB:
@@ -2682,6 +2716,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         return SelectFieldSerializer<VarcharTextCore<WrapContext::None>,
                                      VarcharTextCore<WrapContext::Record>,
                                      CharBinCore>(format, context);
+      }
+      if (IsXml(type)) {
+        return SelectFieldSerializer<XmlTextCore<WrapContext::None>,
+                                     XmlTextCore<WrapContext::Record>,
+                                     XmlBinCore>(format, context);
       }
       return SelectFieldSerializer<VarcharTextCore<WrapContext::None>,
                                    VarcharTextCore<WrapContext::Record>,

@@ -116,6 +116,14 @@
   array: true
   samples: ["null", "true", "42", "\"s\"", "[1,2,3]", "{\"k\":\"v\"}", null]
 
+- oid: 142
+  name: xml
+  pg_typname: xml
+  text: true
+  binary: true
+  array: true
+  samples: ["<a x=\"1\">b &amp; c</a>", "text", "<?xml version=\"1.0\" standalone=\"yes\"?><a/>", null]
+
 - oid: 700
   name: float4
   pg_typname: float4

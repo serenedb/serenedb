@@ -187,6 +187,48 @@ SELECT '1'::money::float8;
 db error: ERROR: cannot cast type money to double precision<slt:ignore>
 
 
+statement error
+SELECT '1'::json::money;
+----
+db error: ERROR: cannot cast type json to money<slt:ignore>
+
+
+statement error
+SELECT 1::oid::money;
+----
+db error: ERROR: cannot cast type oid to money<slt:ignore>
+
+
+statement error
+SELECT '2026-10-15'::date::money;
+----
+db error: ERROR: cannot cast type date to money<slt:ignore>
+
+
+statement error
+SELECT ARRAY[1]::money;
+----
+db error: ERROR: cannot cast type integer[] to money<slt:ignore>
+
+
+statement error
+SELECT '1'::money::json;
+----
+db error: ERROR: cannot cast type money to json<slt:ignore>
+
+
+statement error
+SELECT '1'::money::oid;
+----
+db error: ERROR: cannot cast type money to oid<slt:ignore>
+
+
+statement error
+SELECT '1'::money::xml;
+----
+db error: ERROR: cannot cast type money to xml<slt:ignore>
+
+
 statement error (operator does not exist: - money|No function matches)
 SELECT -'1'::money;
 

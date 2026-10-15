@@ -41,11 +41,8 @@
 #include <limits>
 #include <string>
 
-#include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/types/cast.h"
 #include "pg/types/logical.h"
-#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {
@@ -223,25 +220,6 @@ void CashWordsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-std::string PgTypeName(const duckdb::LogicalType& type) {
-  const auto oid = static_cast<int32_t>(Type2Oid(type));
-  if (const auto name = SqlTypeName(oid); !name.empty()) {
-    return std::string{name};
-  }
-  if (const auto* builtin = FindBuiltinType(oid)) {
-    return std::string{builtin->name};
-  }
-  return type.ToString();
-}
-
-duckdb::BoundCastInfo CannotCast(duckdb::BindCastInput&,
-                                 const duckdb::LogicalType& source,
-                                 const duckdb::LogicalType& target) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANNOT_COERCE),
-                  ERR_MSG("cannot cast type ", PgTypeName(source), " to ",
-                          PgTypeName(target)));
-}
-
 bool MoneyToText(duckdb::Vector& source, duckdb::Vector& result,
                  duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
@@ -351,29 +329,7 @@ void RegisterCasts(duckdb::DatabaseInstance& db) {
                              IntegerToMoney<int32_t>, -1);
   casts.RegisterCastFunction(duckdb::LogicalType::BIGINT, money,
                              IntegerToMoney<int64_t>, -1);
-  for (const auto id : {
-         duckdb::LogicalTypeId::BOOLEAN,
-         duckdb::LogicalTypeId::TINYINT,
-         duckdb::LogicalTypeId::SMALLINT,
-         duckdb::LogicalTypeId::INTEGER,
-         duckdb::LogicalTypeId::BIGINT,
-         duckdb::LogicalTypeId::HUGEINT,
-         duckdb::LogicalTypeId::UTINYINT,
-         duckdb::LogicalTypeId::USMALLINT,
-         duckdb::LogicalTypeId::UINTEGER,
-         duckdb::LogicalTypeId::UBIGINT,
-         duckdb::LogicalTypeId::UHUGEINT,
-         duckdb::LogicalTypeId::FLOAT,
-         duckdb::LogicalTypeId::DOUBLE,
-         duckdb::LogicalTypeId::BIGNUM,
-       }) {
-    const duckdb::LogicalType number{id};
-    casts.RegisterCastFunction(money, number, CannotCast, -1);
-    if (id != duckdb::LogicalTypeId::INTEGER &&
-        id != duckdb::LogicalTypeId::BIGINT) {
-      casts.RegisterCastFunction(number, money, CannotCast, -1);
-    }
-  }
+  RefuseOtherCasts(casts, money);
 }
 
 template<typename L, typename R, typename Result, auto Apply>

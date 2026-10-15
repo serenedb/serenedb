@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "pg/serialize.h"
+#include "pg/types/xml.h"
 
 namespace sdb::pg {
 
@@ -51,6 +52,7 @@ struct DeserializeContext {
   irs::containers::FlatHashMap<std::string,
                                duckdb::unique_ptr<duckdb::Calendar>>
     named_calendars;
+  XmlOption xml_option = XmlOption::Content;
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
 };
@@ -136,7 +138,7 @@ struct ValueSink {
 
   template<typename T>
   void Fixed(T v) {
-    out = duckdb::Value::CreateValue(v);
+    out = duckdb::Value::CreateValue(v).WithType(type);
   }
 
   void Varchar(std::string_view s) { out = duckdb::Value(s); }

@@ -30,7 +30,10 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 
+#include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/catalog/utils/session.h"
 #include "pg/types/logical.h"
+#include "pg/types/mapping.h"
 
 namespace sdb::pg {
 namespace {
@@ -43,7 +46,7 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kRegroleAlias,      kRegnamespaceAlias, kOidAlias,
     kTidAlias,          kPgLsnAlias,        kCidrAlias,
     kMacaddrAlias,      kMacaddr8Alias,     kInt2vectorAlias,
-    kOidvectorAlias,    kMoneyAlias,
+    kOidvectorAlias,    kMoneyAlias,        kXmlAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {
     return !type.HasAlias();
@@ -56,6 +59,66 @@ duckdb::BoundCastInfo TextCast(duckdb::ClientContext& context,
   duckdb::GetCastFunctionInput input{context};
   return duckdb::CastFunctionSet::Get(context).GetCastFunction(
     duckdb::LogicalType::VARCHAR, type, input);
+}
+
+constexpr std::array kStringAliases = {&NAME, &CHARACTERDATA, &SQLIDENTIFIER,
+                                       &YESORNO};
+
+bool IsStringType(const duckdb::LogicalType& type) {
+  return type == duckdb::LogicalType::VARCHAR ||
+         absl::c_any_of(kStringAliases,
+                        [&](auto string) { return string() == type; });
+}
+
+template<typename Cast, typename TextCost>
+void RegisterInputs(duckdb::CastFunctionSet& casts,
+                    const duckdb::LogicalType& type, const Cast& cast,
+                    const TextCost& text_cost) {
+  for (const auto text : {duckdb::LogicalTypeId::VARCHAR,
+                          duckdb::LogicalTypeId::STRING_LITERAL}) {
+    const duckdb::LogicalType source{text};
+    casts.RegisterCastFunction(source, type, cast(), text_cost(source));
+  }
+  for (const auto string : kStringAliases) {
+    if (const auto source = string(); source != type) {
+      casts.RegisterCastFunction(source, type, cast(), -1);
+    }
+  }
+}
+
+duckdb::BoundCastInfo CannotCast(duckdb::BindCastInput& input,
+                                 const duckdb::LogicalType& source,
+                                 const duckdb::LogicalType& target) {
+  const auto session = MakeSession(input.context.get());
+  const auto name = [&](const duckdb::LogicalType& type) {
+    return FormatTypeOut(session, Type2Oid(type), std::nullopt);
+  };
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANNOT_COERCE),
+                  ERR_MSG("cannot cast type ", AsView(name(source)), " to ",
+                          AsView(name(target))));
+}
+
+duckdb::LogicalType CastKey(duckdb::LogicalTypeId id) {
+  const auto& any = duckdb::LogicalType::ANY;
+  if (id == duckdb::LogicalTypeId::STRUCT) {
+    return duckdb::LogicalType::STRUCT({{"any", any}});
+  }
+  if (id == duckdb::LogicalTypeId::TUPLE) {
+    return duckdb::LogicalType::TUPLE({any});
+  }
+  if (id == duckdb::LogicalTypeId::LIST) {
+    return duckdb::LogicalType::LIST(any);
+  }
+  if (id == duckdb::LogicalTypeId::MAP) {
+    return duckdb::LogicalType::MAP(any, any);
+  }
+  if (id == duckdb::LogicalTypeId::UNION) {
+    return duckdb::LogicalType::UNION({{"any", any}});
+  }
+  if (id == duckdb::LogicalTypeId::ARRAY) {
+    return duckdb::LogicalType::ARRAY(any, duckdb::optional_idx{});
+  }
+  return duckdb::LogicalType{id};
 }
 
 }  // namespace
@@ -150,23 +213,47 @@ void RegisterTextInput(duckdb::CastFunctionSet& casts,
                        const duckdb::LogicalType& type,
                        duckdb::cast_function_t input,
                        duckdb::init_cast_local_state_t init_local_state) {
-  for (const auto text : {duckdb::LogicalTypeId::VARCHAR,
-                          duckdb::LogicalTypeId::STRING_LITERAL}) {
-    casts.RegisterCastFunction(
-      duckdb::LogicalType{text}, type,
-      duckdb::BoundCastInfo{input, nullptr, init_local_state}, 50);
-  }
+  RegisterInputs(
+    casts, type,
+    [&] { return duckdb::BoundCastInfo{input, nullptr, init_local_state}; },
+    [](const duckdb::LogicalType&) -> int64_t { return 50; });
+}
+
+void RegisterTextInput(duckdb::CastFunctionSet& casts,
+                       const duckdb::LogicalType& type,
+                       duckdb::bind_cast_function_t bind) {
+  RegisterInputs(
+    casts, type, [&] { return bind; },
+    [](const duckdb::LogicalType&) -> int64_t { return 50; });
 }
 
 void ReplaceTextInput(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& type,
                       duckdb::cast_function_t input) {
-  for (const auto text : {duckdb::LogicalTypeId::VARCHAR,
-                          duckdb::LogicalTypeId::STRING_LITERAL}) {
-    const duckdb::LogicalType source{text};
-    casts.RegisterCastFunction(source, type,
-                               duckdb::BoundCastInfo{input, nullptr, InitInput},
-                               casts.ImplicitCastCost(nullptr, source, type));
+  RegisterInputs(
+    casts, type,
+    [&] { return duckdb::BoundCastInfo{input, nullptr, InitInput}; },
+    [&](const duckdb::LogicalType& source) {
+      return casts.ImplicitCastCost(nullptr, source, type);
+    });
+}
+
+void RefuseOtherCasts(duckdb::CastFunctionSet& casts,
+                      const duckdb::LogicalType& type) {
+  const auto refuse = [&](const duckdb::LogicalType& other) {
+    if (other == type || IsStringType(other)) {
+      return;
+    }
+    casts.RegisterCastFunction(type, other, CannotCast, -1);
+    casts.RegisterCastFunction(other, type, CannotCast, -1);
+  };
+  for (const auto& other : duckdb::LogicalType::AllTypes()) {
+    refuse(CastKey(other.id()));
+  }
+  for (const auto& mapping : PgTypeMappings()) {
+    if (const auto other = mapping.logical(); other.HasAlias()) {
+      refuse(other);
+    }
   }
 }
 

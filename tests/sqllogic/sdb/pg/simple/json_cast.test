@@ -1,0 +1,6 @@
+query
+SELECT ARRAY['a', 'b']::json AS a, json_valid(ARRAY['a', 'b']::json) AS b, ARRAY[1, 2]::json AS c,
+       ARRAY[ARRAY['a']]::json AS d;
+----
+a	b	c	d
+["a","b"]	t	[1,2]	[["a"]]

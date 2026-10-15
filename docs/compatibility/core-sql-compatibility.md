@@ -543,20 +543,20 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 #### XML
 | Feature               | Support State | Details |
 |-----------------------|---------------|---------|
-| xmltext               | No            |         |
-| xmlcomment            | No            |         |
+| xmltext               | Yes           |         |
+| xmlcomment            | Yes           |         |
 | xmlconcat             | No            |         |
 | xmlelement            | No            |         |
 | xmlforest             | No            |         |
 | xmlpi                 | No            |         |
 | xmlroot               | No            |         |
-| xmlagg                | No            |         |
+| xmlagg                | Yes           |         |
 | `IS DOCUMENT`         | No            |         |
 | `IS NOT DOCUMENT`     | No            |         |
 | XMLEXISTS             | No            |         |
 | xml_is_well_formed    | Yes           | Also `xml_is_well_formed_document` and `xml_is_well_formed_content` |
-| xpath                 | No            |         |
-| xpath_exists          | No            |         |
+| xpath                 | Yes           |         |
+| xpath_exists          | Yes           |         |
 | XMLTABLE              | No            |         |
 
 #### JSON
@@ -714,7 +714,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | range(_intersect)_agg      | No            |                               |
 | string_agg                 | Yes           |                                  |
 | sum                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| xmlagg                      | No            |                               |
+| xmlagg                      | Yes           |                               |
 
 ##### Statistical
 | Feature        | Support State | Details                          |

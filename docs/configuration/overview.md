@@ -252,7 +252,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `0` |
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
-| `xmloption` | Whether `xml_is_well_formed` checks its argument as an XML `document` or as `content`. | `VARCHAR` | `content` |
+| `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `content` |
 
 `pg_settings` also lists a few more PostgreSQL settings, each with SereneDB's own value:
 

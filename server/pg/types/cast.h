@@ -91,8 +91,15 @@ void RegisterTextInput(duckdb::CastFunctionSet& casts,
                        duckdb::cast_function_t input,
                        duckdb::init_cast_local_state_t init_local_state);
 
+void RegisterTextInput(duckdb::CastFunctionSet& casts,
+                       const duckdb::LogicalType& type,
+                       duckdb::bind_cast_function_t bind);
+
 void ReplaceTextInput(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& type,
                       duckdb::cast_function_t input);
+
+void RefuseOtherCasts(duckdb::CastFunctionSet& casts,
+                      const duckdb::LogicalType& type);
 
 }  // namespace sdb::pg

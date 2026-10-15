@@ -51,7 +51,6 @@
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
-#include "connector/functions/xml.h"
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
@@ -175,8 +174,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgArrayFunctions(db);
 
   connector::RegisterPgJsonFunctions(db);
-
-  connector::RegisterPgXmlFunctions(db);
 
   connector::RegisterEsFunctions(db);
 

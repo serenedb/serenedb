@@ -92,6 +92,7 @@ target_sources(
         types/register.cpp
         types/tid.cpp
         types/vector.cpp
+        types/xml.cpp
         encoding.cpp
         serialize.cpp
         deserialize.cpp

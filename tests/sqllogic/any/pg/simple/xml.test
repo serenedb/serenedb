@@ -1,0 +1,299 @@
+query
+SELECT '<a>1</a>'::xml AS a, 'abc'::xml AS b, '<a/><b/>'::xml AS c, ''::xml AS d, '<?xml version="1.0"?><a/>'::xml AS e,
+       '<?xml version="1.0" standalone="yes"?><a/>'::xml AS f;
+----
+a	b	c	d	e	f
+<a>1</a>	abc	<a/><b/>	(empty)	<a/>	<?xml version="1.0" standalone="yes"?><a/>
+
+
+query
+SELECT '<?xml version="1.1"?><a/>'::xml AS a, '<?xml version = "1.0" ?>
+<a/>'::xml AS b, '  <a/>'::xml AS c, '<?xml version="1.0"?><a/>'::xml::text AS d;
+----
+a	b	c	d
+<?xml version="1.1"?><a/>	<a/>	  <a/>	<?xml version="1.0"?><a/>
+
+
+statement error (invalid XML content)
+SELECT '<a>'::xml;
+
+
+statement error (invalid XML content)
+SELECT '<a></b>'::xml;
+
+
+statement error (invalid XML content)
+SELECT '&'::xml;
+
+
+statement error (invalid XML content)
+SELECT '<'::name::xml;
+
+
+query
+SELECT '<a/>'::name::xml AS a, '<a/>'::xml::name AS b, '<a/>'::xml::varchar AS c, '<b/>'::varchar::xml AS d;
+----
+a	b	c	d
+<a/>	<a/>	<a/>	<b/>
+
+
+statement error
+SELECT 1::xml;
+----
+db error: ERROR: cannot cast type integer to xml<slt:ignore>
+
+
+statement error
+SELECT '<a>1</a>'::xml::int;
+----
+db error: ERROR: cannot cast type xml to integer<slt:ignore>
+
+
+statement error
+SELECT '"<"'::json::xml;
+----
+db error: ERROR: cannot cast type json to xml<slt:ignore>
+
+
+statement error
+SELECT '<a/>'::xml::json;
+----
+db error: ERROR: cannot cast type xml to json<slt:ignore>
+
+
+statement error
+SELECT '<'::bytea::xml;
+----
+db error: ERROR: cannot cast type bytea to xml<slt:ignore>
+
+
+statement error
+SELECT '<a/>'::xml::bytea;
+----
+db error: ERROR: cannot cast type xml to bytea<slt:ignore>
+
+
+statement error
+SELECT ARRAY['<']::xml;
+----
+db error: ERROR: cannot cast type text[] to xml<slt:ignore>
+
+
+statement error
+SELECT 'a'::"char"::xml;
+----
+db error: ERROR: cannot cast type "char" to xml<slt:ignore>
+
+
+statement ok
+SET xmloption = document
+
+
+statement error (invalid XML document)
+SELECT '<a/><b/>'::xml;
+
+
+statement error (invalid XML document)
+SELECT 'abc'::xml;
+
+
+query
+SELECT '<a/>'::xml AS a;
+----
+a
+<a/>
+
+
+statement ok
+RESET xmloption
+
+
+query
+SELECT xmlcomment('hello') AS a, xmltext('<a>&b') AS b, xml('<x/>') AS c, xmltext('a"b''c\') AS d, xmlcomment('') AS e;
+----
+a	b	c	d	e
+<!--hello-->	&lt;a&gt;&amp;b	<x/>	a&quot;b'c\\	<!---->
+
+
+statement error
+SELECT xmlcomment('a--b');
+----
+db error: ERROR: invalid XML comment<slt:ignore>
+
+
+statement error
+SELECT xmlcomment('a-');
+----
+db error: ERROR: invalid XML comment<slt:ignore>
+
+
+query
+SELECT xpath('/a/b/text()', '<a><b>1</b><b>2</b></a>'::xml) AS a, xpath('//b', '<a><b>1</b></a>'::xml) AS b,
+       xpath_exists('/a/c', '<a><b/></a>'::xml) AS c, xpath('count(//b)', '<a><b/><b/></a>'::xml) AS d;
+----
+a	b	c	d
+{1,2}	{<b>1</b>}	f	{2}
+
+
+query
+SELECT xpath('/a/@x', '<a x="1&amp;2"/>'::xml) AS a, xpath('//text()', '<a>x&lt;y</a>'::xml) AS b, xpath('0.5', '<a/>'::xml) AS c,
+       xpath('string(/a)', '<a>q&amp;</a>'::xml) AS d, xpath('1 = 1', '<a/>'::xml) AS e, xpath('1 div 0', '<a/>'::xml) AS f;
+----
+a	b	c	d	e	f
+{1&amp;2}	{x&lt;y}	{0.5}	{q&amp;}	{true}	{Infinity}
+
+
+query
+SELECT xpath('/a/b', '<?xml version="1.0"?><a><b>1</b></a>'::xml) AS a, xpath_exists('/a/b', '<a><b/></a>'::xml) AS b,
+       xpath('/a/b', '<a/>'::xml) AS c, xpath('/a', '<a/>'::xml, '{}') AS d;
+----
+a	b	c	d
+{<b>1</b>}	t	{}	{<a/>}
+
+
+query
+SELECT xpath('/x:a', '<x:a xmlns:x="u"/>'::xml, ARRAY[ARRAY['x', 'u']]) AS a,
+       xpath_exists('/x:a', '<x:a xmlns:x="u"/>'::xml, ARRAY[ARRAY['x', 'u']]) AS b,
+       xpath('/my:a/text()', '<my:a xmlns:my="http://example.com">test</my:a>', ARRAY[ARRAY['my', 'http://example.com']]) AS c;
+----
+a	b	c
+{"<x:a xmlns:x=\\"u\\"/>"}	t	{test}
+
+
+statement error
+SELECT xpath('/a', '<a/>'::xml, ARRAY[ARRAY['x', 'u', 'v']]);
+----
+db error: ERROR: invalid array for XML namespace mapping<slt:ignore>
+
+
+statement error
+SELECT xpath('/a[', '<a/>'::xml);
+----
+db error: ERROR: invalid XPath expression<slt:ignore>
+
+
+statement error
+SELECT xpath('', '<a/>'::xml);
+----
+db error: ERROR: empty XPath expression<slt:ignore>
+
+
+statement error
+SELECT xpath('/a', 'abc'::xml);
+----
+db error: ERROR: could not parse XML document<slt:ignore>
+
+
+query
+SELECT xmlagg(x) AS a FROM (VALUES ('<a/>'::xml), ('<b/>'::xml), (NULL)) t(x);
+----
+a
+<a/><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY y DESC) AS a FROM (VALUES ('<a/>'::xml, 1), ('<b/>'::xml, 2)) t(x, y);
+----
+a
+<b/><a/>
+
+
+query
+SELECT xmlagg(x ORDER BY y) AS a
+FROM (VALUES ('<?xml version="1.0" standalone="yes"?><a/>'::xml, 1), ('<?xml version="1.0" standalone="yes"?><b/>'::xml, 2)) t(x, y);
+----
+a
+<?xml version="1.0" standalone="yes"?><a/><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY y)::text AS a, xmlagg(z ORDER BY y) AS b
+FROM (VALUES ('<?xml version="1.0"?><a/>'::xml, 1, '<a/>'::xml), ('<b/>'::xml, 2, '<?xml version="1.1"?><b/>'::xml)) t(x, y, z);
+----
+a	b
+<a/><b/>	<a/><b/>
+
+
+query
+SELECT xmlagg(x) IS NULL AS a FROM (VALUES (NULL::xml)) t(x);
+----
+a
+t
+
+
+query
+SELECT pg_typeof('<a/>'::xml) AS a, '<a/>'::xml::varchar AS b, ('<a/>'::xml)::text || 'x' AS c,
+       '<a/>'::text::xml AS d, CAST('<b/>' AS xml) AS e;
+----
+a	b	c	d	e
+xml	<a/>	<a/>x	<a/>	<b/>
+
+
+query
+SELECT ARRAY['<a/>'::xml, '<b x="1"/>'::xml] AS a, ROW('<a x="1, 2"/>'::xml) AS b,
+       ARRAY['<?xml version="1.0" standalone="yes"?><a/>'::xml] AS c;
+----
+a	b	c
+{<a/>,"<b x=\\"1\\"/>"}	("<a x=""1, 2""/>")	{"<?xml version=\\"1.0\\" standalone=\\"yes\\"?><a/>"}
+
+
+query
+SELECT pg_input_is_valid('<a>', 'xml') AS a, pg_input_is_valid('<a/>', 'xml') AS b, xml_is_well_formed('<a>') AS c,
+       xml_is_well_formed_document('<a/><b/>') AS d, xml_is_well_formed_content('<a/><b/>') AS e;
+----
+a	b	c	d	e
+f	t	f	f	t
+
+
+statement ok
+CREATE TABLE xml_t (id INT, x xml);
+
+
+statement ok
+INSERT INTO xml_t VALUES (1, '<a>1</a>'), (2, 'text'), (3, NULL), (4, '<?xml version="1.0" standalone="no"?><b/>');
+
+
+statement error (invalid XML content)
+INSERT INTO xml_t VALUES (5, '<c>');
+
+
+query
+SELECT id, x FROM xml_t ORDER BY id;
+----
+id	x
+1	<a>1</a>
+2	text
+3	NULL
+4	<?xml version="1.0" standalone="no"?><b/>
+
+
+query
+SELECT id, x::text AS t FROM xml_t WHERE id = 4;
+----
+id	t
+4	<?xml version="1.0" standalone="no"?><b/>
+
+
+query
+SELECT xmlagg(x ORDER BY id) AS a FROM xml_t;
+----
+a
+<a>1</a>text<b/>
+
+
+statement ok
+DROP TABLE xml_t;
+
+
+query
+SELECT oid::int AS oid, proname, pg_get_function_identity_arguments(oid) AS args
+FROM pg_proc WHERE proname IN ('xpath', 'xpath_exists', 'xmlagg', 'xmlcomment', 'xmltext') ORDER BY oid;
+----
+oid	proname	args
+2895	xmlcomment	text
+2901	xmlagg	xml
+2931	xpath	text, xml, text[]
+2932	xpath	text, xml
+3049	xpath_exists	text, xml, text[]
+3050	xpath_exists	text, xml
+3813	xmltext	text

@@ -335,30 +335,41 @@ void Seal(SystemCondition<T>& condition) {
                .not_null = condition.not_null};
 }
 
-enum class SystemClaim : uint8_t {
-  None,
-  Filter,
-  Visibility,
+struct SystemClaim {
+  bool claimed;
+  bool visibility;
 };
 
 SystemClaim Claim(const SystemTable& table, duckdb::column_t column,
                   const duckdb::Expression& expr, SystemFilter& compiled) {
   if (column >= table.Columns().LogicalColumnCount()) {
-    return SystemClaim::None;
+    return {.claimed = false, .visibility = false};
   }
   if (const auto& visibility = table.Visibility();
       visibility && visibility->column == column &&
       IsVisibility(expr, *visibility)) {
-    return SystemClaim::Visibility;
+    return {.claimed = true, .visibility = true};
+  }
+  if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+    SystemClaim claim{.claimed = true, .visibility = false};
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      const auto part = Claim(table, column, *child, compiled);
+      if (!part.claimed &&
+          !duckdb::ExpressionFilter::IsRootOptionalExpression(*child)) {
+        return part;
+      }
+      claim.visibility = claim.visibility || part.visibility;
+    }
+    return claim;
   }
   const auto& type =
     table.Columns().GetColumn(duckdb::LogicalIndex{column}).Type();
   if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
-    return Capture(expr, compiled.texts) ? SystemClaim::Filter
-                                         : SystemClaim::None;
+    return {.claimed = Capture(expr, compiled.texts), .visibility = false};
   }
-  return IsNumber(type) && Capture(expr, compiled.numbers) ? SystemClaim::Filter
-                                                           : SystemClaim::None;
+  return {.claimed = IsNumber(type) && Capture(expr, compiled.numbers),
+          .visibility = false};
 }
 
 void Finish(const SystemSqlColumn& meta, SystemFilter& compiled) {
@@ -415,7 +426,7 @@ duckdb::TableFilterPushdown SystemPushdown(const SystemTable& table,
     return duckdb::TableFilterPushdown::BeforeLimit;
   }
   SystemFilter compiled;
-  return Claim(table, column, expr, compiled) != SystemClaim::None
+  return Claim(table, column, expr, compiled).claimed
            ? duckdb::TableFilterPushdown::BeforeLimit
            : duckdb::TableFilterPushdown::Reject;
 }
@@ -426,15 +437,12 @@ void SystemScan::Compile(duckdb::column_t column,
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr;
   SystemFilter compiled;
   const auto claim = Claim(_table, column, expr, compiled);
-  if (claim == SystemClaim::Visibility) {
-    if (!_session) {
-      _session.emplace(MakeSession(&_context));
-    }
-    return;
+  if (claim.visibility && !_session) {
+    _session.emplace(MakeSession(&_context));
   }
   const bool optional =
     duckdb::ExpressionFilter::IsRootOptionalExpression(expr);
-  SDB_ASSERT(claim == SystemClaim::Filter || optional);
+  SDB_ASSERT(claim.claimed || optional);
   if (column >= _table.Columns().LogicalColumnCount()) {
     return;
   }

@@ -31,6 +31,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <memory>
+#include <optional>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
@@ -499,13 +500,14 @@ bool DecodeScrollId(std::string_view id, ScrollState& state) {
 void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
                      duckdb::QueryResult* result, int64_t took) {
   const auto rows = result ? result->RowCount() : 0;
+  std::optional<duckdb::ColumnDataRowCollection> table;
   if (result) {
+    table.emplace(result->Collection());
     if (static_cast<int64_t>(rows) < state.size) {
       state.done = true;
     }
     if (rows > 0) {
-      state.last_id =
-        duckdb::StringValue::Get(result->Collection().GetValue(0, rows - 1));
+      state.last_id = duckdb::StringValue::Get(table->GetValue(0, rows - 1));
     }
   }
   simdjson::builder::string_builder sb;
@@ -524,13 +526,13 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
     sb.append_raw(R"({"_index":)");
     sb.escape_and_append_with_quotes(std::string_view{state.index});
     sb.append_raw(R"(,"_id":)");
-    sb.escape_and_append_with_quotes(std::string_view{
-      duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
+    sb.escape_and_append_with_quotes(
+      std::string_view{duckdb::StringValue::Get(table->GetValue(0, row))});
     sb.append_raw(",\"_score\":null");
     if (state.include_source) {
       sb.append_raw(",\"_source\":");
-      sb.append_raw(std::string_view{
-        duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
+      sb.append_raw(
+        std::string_view{duckdb::StringValue::Get(table->GetValue(1, row))});
     }
     sb.append_raw("}");
   }
@@ -624,9 +626,10 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
   switch (agg.kind) {
     case Aggregation::Kind::kTerms: {
       const auto rows = result->RowCount();
+      const auto table = result->Collection().GetRows();
       int64_t shown = 0;
       const int64_t all =
-        rows > 0 ? result->Collection().GetValue(2, 0).GetValue<int64_t>() : 0;
+        rows > 0 ? table.GetValue(2, 0).GetValue<int64_t>() : 0;
       std::string buckets;
       simdjson::builder::string_builder bucket_sb;
       for (duckdb::idx_t row = 0; row < rows; ++row) {
@@ -634,10 +637,9 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
           bucket_sb.append_raw(",");
         }
         bucket_sb.append_raw(R"({"key":)");
-        AppendSortValue(bucket_sb, result->Collection().GetValue(0, row));
+        AppendSortValue(bucket_sb, table.GetValue(0, row));
         bucket_sb.append_raw(R"(,"doc_count":)");
-        const auto count =
-          result->Collection().GetValue(1, row).GetValue<int64_t>();
+        const auto count = table.GetValue(1, row).GetValue<int64_t>();
         shown += count;
         bucket_sb.append(count);
         bucket_sb.append_raw("}");
@@ -651,18 +653,19 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
       co_return true;
     }
     case Aggregation::Kind::kDateHistogram: {
+      const auto table = result->Collection().GetRows();
       sb.append_raw(R"({"buckets":[)");
-      for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
+      for (duckdb::idx_t row = 0; row < table.size(); ++row) {
         if (row > 0) {
           sb.append_raw(",");
         }
         sb.append_raw(R"({"key_as_string":)");
-        sb.escape_and_append_with_quotes(std::string_view{
-          duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
+        sb.escape_and_append_with_quotes(
+          std::string_view{duckdb::StringValue::Get(table.GetValue(1, row))});
         sb.append_raw(R"(,"key":)");
-        sb.append(result->Collection().GetValue(0, row).GetValue<int64_t>());
+        sb.append(table.GetValue(0, row).GetValue<int64_t>());
         sb.append_raw(R"(,"doc_count":)");
-        sb.append(result->Collection().GetValue(2, row).GetValue<int64_t>());
+        sb.append(table.GetValue(2, row).GetValue<int64_t>());
         sb.append_raw("}");
       }
       sb.append_raw("]}");
@@ -793,6 +796,7 @@ class SearchHandler final : public HttpHandler {
       co_return {};
     }
     const auto rows = result->RowCount();
+    const auto table = result->Collection().GetRows();
 
     // Fetch _source for just this page, by PK -- point lookups, not a scan.
     irs::containers::FlatHashMap<std::string, std::string> source_by_id;
@@ -801,8 +805,7 @@ class SearchHandler final : public HttpHandler {
       for (duckdb::idx_t row = 0; row < rows; ++row) {
         absl::StrAppend(
           &ids, row > 0 ? "," : "",
-          SqlLiteral(
-            result->Collection().GetValue(0, row).GetValue<std::string>()));
+          SqlLiteral(table.GetValue(0, row).GetValue<std::string>()));
       }
       auto source_result = co_await RunSql(
         ctx,
@@ -812,11 +815,11 @@ class SearchHandler final : public HttpHandler {
       if (!source_result) {
         co_return {};
       }
-      source_by_id.reserve(source_result->RowCount());
-      for (duckdb::idx_t row = 0; row < source_result->RowCount(); ++row) {
-        source_by_id.emplace(
-          source_result->Collection().GetValue(0, row).GetValue<std::string>(),
-          source_result->Collection().GetValue(1, row).GetValue<std::string>());
+      const auto sources = source_result->Collection().GetRows();
+      source_by_id.reserve(sources.size());
+      for (duckdb::idx_t row = 0; row < sources.size(); ++row) {
+        source_by_id.emplace(sources.GetValue(0, row).GetValue<std::string>(),
+                             sources.GetValue(1, row).GetValue<std::string>());
       }
     }
 
@@ -841,9 +844,7 @@ class SearchHandler final : public HttpHandler {
     const bool scored = spec.order_by.empty();
     const duckdb::idx_t score_column = sort_base + spec.sort_fields.size();
     auto score_of = [&](duckdb::idx_t row) {
-      return result->Collection()
-        .GetValue(score_column, row)
-        .GetValue<double>();
+      return table.GetValue(score_column, row).GetValue<double>();
     };
     simdjson::builder::string_builder sb;
     sb.append_raw("{\"took\":");
@@ -874,8 +875,8 @@ class SearchHandler final : public HttpHandler {
       sb.append_raw(R"({"_index":)");
       sb.escape_and_append_with_quotes(index);
       sb.append_raw(R"(,"_id":)");
-      sb.escape_and_append_with_quotes(std::string_view{
-        duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
+      sb.escape_and_append_with_quotes(
+        std::string_view{duckdb::StringValue::Get(table.GetValue(0, row))});
       sb.append_raw(",\"_score\":");
       if (!scored) {
         sb.append_raw("null");
@@ -886,8 +887,7 @@ class SearchHandler final : public HttpHandler {
       }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
-        const auto id =
-          result->Collection().GetValue(0, row).GetValue<std::string>();
+        const auto id = table.GetValue(0, row).GetValue<std::string>();
         const auto it = source_by_id.find(id);
         // A doc deleted between rank and fetch leaves an empty object.
         sb.append_raw(it != source_by_id.end() ? std::string_view{it->second}
@@ -899,8 +899,7 @@ class SearchHandler final : public HttpHandler {
           if (i > 0) {
             sb.append_raw(",");
           }
-          AppendSortValue(sb,
-                          result->Collection().GetValue(sort_base + i, row));
+          AppendSortValue(sb, table.GetValue(sort_base + i, row));
         }
         sb.append_raw("]");
       }
@@ -1214,11 +1213,10 @@ class CatIndicesHandler final : public HttpHandler {
     if (json) {
       body.push_back('[');
     }
-    for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      const auto index =
-        result->Collection().GetValue(0, row).GetValue<std::string>();
-      const auto docs =
-        result->Collection().GetValue(1, row).GetValue<int64_t>();
+    const auto table = result->Collection().GetRows();
+    for (duckdb::idx_t row = 0; row < table.size(); ++row) {
+      const auto index = table.GetValue(0, row).GetValue<std::string>();
+      const auto docs = table.GetValue(1, row).GetValue<int64_t>();
       if (json) {
         absl::StrAppend(
           &body, row > 0 ? "," : "",
@@ -1327,11 +1325,11 @@ class MgetHandler final : public HttpHandler {
       co_return {};
     }
     irs::containers::FlatHashMap<std::string, std::string> source_by_id;
-    source_by_id.reserve(result->RowCount());
-    for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      source_by_id.emplace(
-        result->Collection().GetValue(0, row).GetValue<std::string>(),
-        result->Collection().GetValue(1, row).GetValue<std::string>());
+    const auto table = result->Collection().GetRows();
+    source_by_id.reserve(table.size());
+    for (duckdb::idx_t row = 0; row < table.size(); ++row) {
+      source_by_id.emplace(table.GetValue(0, row).GetValue<std::string>(),
+                           table.GetValue(1, row).GetValue<std::string>());
     }
     simdjson::builder::string_builder sb;
     sb.append_raw(R"({"docs":[)");

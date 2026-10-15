@@ -66,8 +66,8 @@ query
 SELECT proname, prosrc FROM pg_proc WHERE proname IN ('sfn_dbl', 'sfn_window') ORDER BY 1
 ----
 proname	prosrc
-sfn_dbl	(SELECT (x + x) LIMIT 1)
-sfn_window	(SELECT row_number() OVER () LIMIT 1)
+sfn_dbl	SELECT x + x
+sfn_window	SELECT row_number() OVER ()
 
 statement ok
 DROP FUNCTION sfn_dbl

@@ -102,7 +102,6 @@ SELECT pg_conf_load_time() IS NOT NULL;
 t
 
 
-skipif serenedb
 query
 SELECT pg_current_logfile() IS NULL;
 ----
@@ -110,7 +109,6 @@ SELECT pg_current_logfile() IS NULL;
 t
 
 
-skipif serenedb
 query
 SELECT pg_current_logfile('stderr') IS NULL;
 ----
@@ -141,7 +139,6 @@ pg_is_other_temp_schema
 f
 
 
-skipif serenedb
 onlyif serenedb
 query
 SELECT pg_jit_available();
@@ -158,12 +155,11 @@ SELECT pg_listening_channels();
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
 query
-SELECT pg_numa_available();
+SELECT pg_typeof(pg_numa_available());
 ----
-pg_numa_available
-t
+pg_typeof
+boolean
 
 
 query
@@ -173,7 +169,6 @@ SELECT pg_postmaster_start_time() IS NOT NULL;
 t
 
 
-skipif serenedb
 query
 SELECT pg_safe_snapshot_blocking_pids(0);
 ----
@@ -585,12 +580,11 @@ format_type
 integer
 
 
-skipif serenedb
-onlyif serenedb
-query error
+query
 SELECT pg_basetype(0);
 ----
-db error: ERROR: Function is not supported in SereneDB
+pg_basetype
+NULL
 
 
 query
@@ -839,7 +833,6 @@ SELECT pg_options_to_table(ARRAY['']::text[]);
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
 onlyif serenedb
 query
 SELECT pg_settings_get_flags('work_mem');
@@ -1035,8 +1028,6 @@ pg_input_error_info
 ("Could not convert string 'bad' to INT32",,,22P02)
 
 
-skipif serenedb
-onlyif serenedb
 query
 SELECT pg_column_compression(1);
 ----
@@ -1044,13 +1035,11 @@ pg_column_compression
 NULL
 
 
-skipif serenedb
-onlyif serenedb
 query
 SELECT pg_column_size(1);
 ----
 pg_column_size
-NULL
+4
 
 
 onlyif serenedb
@@ -1246,16 +1235,14 @@ SELECT pg_control_recovery();
 db error: ERROR: Function is not supported in SereneDB
 
 
-skipif serenedb
 onlyif serenedb
 query
 SELECT unicode_version();
 ----
 unicode_version
-15.1.0
+17.0
 
 
-skipif serenedb
 query
 SELECT icu_unicode_version() IS NULL;
 ----

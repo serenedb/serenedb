@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
@@ -29,12 +30,16 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/types/bit.hpp>
+#include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
+#include <duckdb/function/table_function.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
@@ -45,8 +50,11 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <text_data.hpp>
+#include <utf8proc.hpp>
 #include <utility>
 #include <vector>
 
@@ -681,6 +689,409 @@ void NotSupportedFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
                   ERR_MSG("Function is not supported in SereneDB"));
 }
 
+void PgBasetypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                        duckdb::Vector& result) {
+  const auto& session = SessionOf(state);
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<int64_t> {
+      if (oid < 0 || !TypeExists(session, static_cast<uint64_t>(oid))) {
+        return duckdb::nullopt;
+      }
+      for (const auto* builtin = FindBuiltinType(oid);
+           builtin && builtin->type == 'd';
+           builtin = FindBuiltinType(builtin->basetype)) {
+        oid = builtin->basetype;
+      }
+      return oid;
+    });
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindPgCollationFor(
+  duckdb::FunctionBindExpressionInput& input) {
+  const auto& type = input.children[0]->GetReturnType();
+  duckdb::Value collation{duckdb::LogicalType::VARCHAR};
+  if (type.id() != duckdb::LogicalTypeId::SQLNULL &&
+      type.id() != duckdb::LogicalTypeId::STRING_LITERAL) {
+    const auto session = MakeSession(&input.context);
+    const auto oid = DescribeColumnType(type).collation;
+    if (oid == kInvalidOid) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG("collations are not supported by type ",
+                              pg::AsView(FormatTypeOut(session, Type2Oid(type),
+                                                       std::nullopt))));
+    }
+    collation =
+      duckdb::Value{std::string{RegOut(session, RegKind::Collation, oid)}};
+  }
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    std::move(collation));
+}
+
+void ReplicaIdentityIndexFunction(duckdb::DataChunk& args,
+                                  duckdb::ExpressionState& state,
+                                  duckdb::Vector& result) {
+  const auto& session = SessionOf(state);
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<int64_t> {
+      const auto relation = FindRelation(session, static_cast<uint64_t>(oid));
+      if (!relation) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("could not open relation with OID ", oid));
+      }
+      const auto type =
+        relation->entry ? relation->entry->type : CatalogType::INVALID;
+      if (relation->key || type == CatalogType::INDEX_ENTRY ||
+          type == CatalogType::TYPE_ENTRY) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("cannot open relation \"",
+                  NameOf(*session.transaction, *relation).name, "\""),
+          ERR_DETAIL(type == CatalogType::TYPE_ENTRY
+                       ? "This operation is not supported for composite types."
+                       : "This operation is not supported for indexes."));
+      }
+      if (type != CatalogType::TABLE_ENTRY) {
+        return duckdb::nullopt;
+      }
+      for (const auto& key :
+           KeyIndexes(relation->entry->Cast<duckdb::TableCatalogEntry>())) {
+        if (key.IsPrimaryKey()) {
+          return static_cast<int64_t>(key.index_oid);
+        }
+      }
+      return duckdb::nullopt;
+    });
+}
+
+void SettingsGetFlagsFunction(duckdb::DataChunk& args,
+                              duckdb::ExpressionState& state,
+                              duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  const auto names = args.data[0].Values<duckdb::string_t>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
+      result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto name = names[row];
+    duckdb::Value value;
+    if (!name.IsValid() || !context.TryGetCurrentSetting(
+                             Identifier{AsView(name.GetValue())}, value)) {
+      writer.WriteNull();
+      continue;
+    }
+    writer.WriteList(0);
+  }
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> TablespaceDatabasesBind(
+  duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
+  duckdb::vector<duckdb::LogicalType>& types,
+  duckdb::vector<Identifier>& names) {
+  names.emplace_back("pg_tablespace_databases");
+  types.emplace_back(OID());
+  return duckdb::make_uniq<duckdb::TableFunctionData>();
+}
+
+void LoadTablespaceDatabases(duckdb::ClientContext& context,
+                             duckdb::DataChunk& input,
+                             std::vector<int64_t>& rows) {
+  const auto oids = input.data[0].Values<int64_t>();
+  for (duckdb::idx_t row = 0; row < input.size(); ++row) {
+    const auto oid = oids[row];
+    if (!oid.IsValid()) {
+      continue;
+    }
+    if (oid.GetValue() == static_cast<int64_t>(kPgDefaultTablespace)) {
+      for (const auto& database : Databases(context)) {
+        rows.emplace_back(static_cast<int64_t>(database.get().oid));
+      }
+      continue;
+    }
+    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
+      connection->AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_WARNING),
+        ERR_MSG(oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
+                  ? std::string{"global tablespace never has databases"}
+                  : absl::StrCat(oid.GetValue(), " is not a tablespace OID"))));
+    }
+  }
+  absl::c_sort(rows);
+}
+
+void WriteTablespaceDatabases(std::span<const int64_t> rows,
+                              duckdb::DataChunk& output) {
+  auto writer =
+    duckdb::FlatVector::Writer<int64_t>(output.data[0], rows.size());
+  for (const auto oid : rows) {
+    writer.WriteValue(oid);
+  }
+}
+
+void ReferenceVersion(duckdb::Vector& result, duckdb::idx_t count,
+                      std::string_view version) {
+  result.Reference(duckdb::Value{std::string{version.substr(
+                     0, version.find('.', version.find('.') + 1))}},
+                   duckdb::count_t(count));
+}
+
+void UnicodeVersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  ReferenceVersion(result, args.size(), duckdb::utf8proc_unicode_version());
+}
+
+void IcuUnicodeVersionFunction(duckdb::DataChunk& args,
+                               duckdb::ExpressionState&,
+                               duckdb::Vector& result) {
+  ReferenceVersion(result, args.size(), duckdb::text::text_unicode_version);
+}
+
+bool UnicodeAssigned(std::string_view text) {
+  const auto* bytes = reinterpret_cast<const utf8proc_uint8_t*>(text.data());
+  const auto size = static_cast<utf8proc_ssize_t>(text.size());
+  for (utf8proc_ssize_t pos = 0; pos < size;) {
+    utf8proc_int32_t codepoint = 0;
+    const auto length =
+      duckdb::utf8proc_iterate(bytes + pos, size - pos, &codepoint);
+    if (length <= 0 ||
+        duckdb::utf8proc_category(codepoint) == duckdb::UTF8PROC_CATEGORY_CN) {
+      return false;
+    }
+    pos += length;
+  }
+  return true;
+}
+
+void UnicodeAssignedFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                             duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
+    args.data[0], result, args.size(),
+    [](duckdb::string_t text) { return UnicodeAssigned(AsView(text)); });
+}
+
+constexpr int64_t kVarHdrSz = 4;
+constexpr int64_t kShortVarlenaMax = 127;
+constexpr int64_t kMaxAlign = 8;
+constexpr int64_t kArrayHeaderSize = 16;
+constexpr int64_t kArrayDimensionSize = 8;
+constexpr int64_t kTupleHeaderSize = 23;
+constexpr int64_t kInetHeaderSize = 2;
+
+int64_t AlignUp(int64_t offset, int64_t alignment) {
+  return (offset + alignment - 1) / alignment * alignment;
+}
+
+int64_t Alignment(char align) {
+  if (align == 'd') {
+    return 8;
+  }
+  if (align == 'i') {
+    return 4;
+  }
+  return align == 's' ? 2 : 1;
+}
+
+int64_t BitmapSize(int64_t items) { return (items + 7) / 8; }
+
+int64_t NumericDatumSize(std::string_view text) {
+  if (text.starts_with('-')) {
+    text.remove_prefix(1);
+  }
+  const auto point = std::min(text.find('.'), text.size());
+  auto integer = text.substr(0, point);
+  auto fraction = text.substr(std::min(point + 1, text.size()));
+  integer.remove_prefix(
+    std::min(integer.find_first_not_of('0'), integer.size()));
+  fraction = fraction.substr(0, fraction.find_last_not_of('0') + 1);
+  const auto groups = [](std::string_view digits) {
+    return static_cast<int64_t>((digits.size() + 3) / 4);
+  };
+  int64_t digits = 0;
+  if (!integer.empty() && !fraction.empty()) {
+    digits = groups(integer) + groups(fraction);
+  } else if (!integer.empty()) {
+    const auto zeros = integer.size() - 1 - integer.find_last_not_of('0');
+    digits = groups(integer) - static_cast<int64_t>(zeros / 4);
+  } else if (!fraction.empty()) {
+    digits = groups(fraction) -
+             static_cast<int64_t>(fraction.find_first_not_of('0') / 4);
+  }
+  return kVarHdrSz + 2 + 2 * digits;
+}
+
+int64_t DatumSize(const duckdb::Value& value);
+
+int64_t ArrayDatumSize(const duckdb::Value& value) {
+  int64_t dimensions = 0;
+  const auto* element = &value.type();
+  while (element->id() == duckdb::LogicalTypeId::LIST ||
+         element->id() == duckdb::LogicalTypeId::ARRAY) {
+    ++dimensions;
+    element = element->id() == duckdb::LogicalTypeId::LIST
+                ? &duckdb::ListType::GetChildType(*element)
+                : &duckdb::ArrayType::GetChildType(*element);
+  }
+  const auto alignment = Alignment(DescribeColumnType(*element).align);
+  int64_t items = 0;
+  int64_t data = 0;
+  bool nulls = false;
+  const auto visit = [&](this const auto& self, const duckdb::Value& list,
+                         int64_t depth) -> void {
+    const auto& children = list.type().id() == duckdb::LogicalTypeId::LIST
+                             ? duckdb::ListValue::GetChildren(list)
+                             : duckdb::ArrayValue::GetChildren(list);
+    for (const auto& child : children) {
+      if (depth + 1 < dimensions) {
+        if (!child.IsNull()) {
+          self(child, depth + 1);
+        }
+        continue;
+      }
+      ++items;
+      if (child.IsNull()) {
+        nulls = true;
+        continue;
+      }
+      data = AlignUp(data + DatumSize(child), alignment);
+    }
+  };
+  visit(value, 0);
+  if (items == 0) {
+    return kArrayHeaderSize;
+  }
+  return AlignUp(kArrayHeaderSize + kArrayDimensionSize * dimensions +
+                   (nulls ? BitmapSize(items) : 0),
+                 kMaxAlign) +
+         data;
+}
+
+int64_t TupleDatumSize(const duckdb::Value& value) {
+  const auto& fields = duckdb::StructValue::GetChildren(value);
+  const bool nulls = absl::c_any_of(
+    fields, [](const duckdb::Value& field) { return field.IsNull(); });
+  auto size =
+    AlignUp(kTupleHeaderSize +
+              (nulls ? BitmapSize(static_cast<int64_t>(fields.size())) : 0),
+            kMaxAlign);
+  for (const auto& field : fields) {
+    if (field.IsNull()) {
+      continue;
+    }
+    const auto column = DescribeColumnType(field.type());
+    const auto datum = DatumSize(field);
+    if (column.len == -1 && column.storage != 'p' &&
+        datum - kVarHdrSz + 1 <= kShortVarlenaMax) {
+      size += datum - kVarHdrSz + 1;
+    } else {
+      size = AlignUp(size, Alignment(column.align)) + datum;
+    }
+  }
+  return size;
+}
+
+bool IsText(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::VARCHAR ||
+         type.id() == duckdb::LogicalTypeId::BLOB;
+}
+
+int64_t DatumSize(const duckdb::Value& value) {
+  const auto& type = value.type();
+  if (const auto column = DescribeColumnType(type); column.len > 0) {
+    return column.len;
+  }
+  if (IsText(type)) {
+    return kVarHdrSz +
+           static_cast<int64_t>(duckdb::StringValue::Get(value).size());
+  }
+  if (type.id() == duckdb::LogicalTypeId::BIT) {
+    const auto bits =
+      duckdb::Bit::BitLength(duckdb::string_t{duckdb::StringValue::Get(value)});
+    return kVarHdrSz + 4 + static_cast<int64_t>((bits + 7) / 8);
+  }
+  if (type.id() == duckdb::LogicalTypeId::LIST ||
+      type.id() == duckdb::LogicalTypeId::ARRAY) {
+    return ArrayDatumSize(value);
+  }
+  if (IsInet(type) || IsCidr(type)) {
+    const auto& fields = duckdb::StructValue::GetChildren(value);
+    return kVarHdrSz + kInetHeaderSize +
+           (fields[0].GetValue<uint8_t>() == INET_IP_ADDRESS_V4 ? 4 : 16);
+  }
+  if (type.id() == duckdb::LogicalTypeId::STRUCT ||
+      type.id() == duckdb::LogicalTypeId::TUPLE) {
+    return TupleDatumSize(value);
+  }
+  if (Type2Oid(type) == kNumeric) {
+    return NumericDatumSize(value.ToString());
+  }
+  return kVarHdrSz + static_cast<int64_t>(value.ToString().size());
+}
+
+template<typename T>
+int64_t DecimalDatumSize(const duckdb::UnifiedVectorFormat& format,
+                         duckdb::idx_t index, uint8_t width, uint8_t scale) {
+  const auto value = duckdb::UnifiedVectorFormat::GetData<T>(format)[index];
+  char buffer[64];
+  const auto length =
+    duckdb::DecimalToString::DecimalLength<T>(value, width, scale);
+  duckdb::DecimalToString::FormatDecimal<T>(value, width, scale, buffer,
+                                            static_cast<duckdb::idx_t>(length));
+  return NumericDatumSize({buffer, static_cast<size_t>(length)});
+}
+
+int64_t DecimalDatumSize(const duckdb::LogicalType& type,
+                         const duckdb::UnifiedVectorFormat& format,
+                         duckdb::idx_t index) {
+  const auto width = duckdb::DecimalType::GetWidth(type);
+  const auto scale = duckdb::DecimalType::GetScale(type);
+  const auto physical = type.InternalType();
+  if (physical == duckdb::PhysicalType::INT16) {
+    return DecimalDatumSize<int16_t>(format, index, width, scale);
+  }
+  if (physical == duckdb::PhysicalType::INT32) {
+    return DecimalDatumSize<int32_t>(format, index, width, scale);
+  }
+  if (physical == duckdb::PhysicalType::INT64) {
+    return DecimalDatumSize<int64_t>(format, index, width, scale);
+  }
+  return DecimalDatumSize<duckdb::hugeint_t>(format, index, width, scale);
+}
+
+int64_t RowDatumSize(duckdb::Vector& input,
+                     const duckdb::UnifiedVectorFormat& format,
+                     duckdb::idx_t row, duckdb::idx_t index) {
+  const auto& type = input.GetType();
+  if (IsText(type)) {
+    return kVarHdrSz + static_cast<int64_t>(
+                         duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+                           format)[index]
+                           .GetSize());
+  }
+  if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
+    return DecimalDatumSize(type, format, index);
+  }
+  return DatumSize(input.GetValue(row));
+}
+
+void ColumnSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
+  auto& input = args.data[0];
+  const auto fixed = DescribeColumnType(input.GetType()).len;
+  duckdb::UnifiedVectorFormat format;
+  input.ToUnifiedFormat(args.size(), format);
+  auto writer = duckdb::FlatVector::Writer<int32_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto index = format.sel->get_index(row);
+    if (!format.validity.RowIsValid(index)) {
+      writer.WriteNull();
+      continue;
+    }
+    writer.WriteValue(static_cast<int32_t>(
+      fixed > 0 ? fixed : RowDatumSize(input, format, row, index)));
+  }
+}
+
 duckdb::LogicalType InputType(duckdb::ClientContext& context,
                               std::string_view name) {
   RegIn(MakeSession(&context), RegKind::Type, name, nullptr);
@@ -774,10 +1185,121 @@ void InputErrorInfoFunction(duckdb::DataChunk& args,
   }
 }
 
+constexpr std::string_view kLogFormats[] = {"stderr", "csvlog", "jsonlog"};
+
+void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    if (args.ColumnCount() != 0) {
+      const auto format = args.data[0].GetValue(row);
+      if (!format.IsNull() &&
+          !absl::c_linear_search(kLogFormats,
+                                 duckdb::StringValue::Get(format))) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("log format \"", duckdb::StringValue::Get(format),
+                  "\" is not supported"),
+          ERR_HINT("The supported log formats are \"stderr\", \"csvlog\", "
+                   "and \"jsonlog\"."));
+      }
+    }
+    writer.WriteNull();
+  }
+}
+
+template<const std::string_view& kKind,
+         bool (*Exists)(duckdb::ClientContext&, int64_t)>
+void ActualVersionFunction(duckdb::DataChunk& args,
+                           duckdb::ExpressionState& state,
+                           duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
+      if (!Exists(context, oid)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG(kKind, " with OID ", oid, " does not exist"));
+      }
+      return duckdb::nullopt;
+    });
+}
+
+bool CollationExists(duckdb::ClientContext&, int64_t oid) {
+  return FindBuiltinCollation(oid) != nullptr;
+}
+
+bool DatabaseExists(duckdb::ClientContext& context, int64_t oid) {
+  return oid >= 0 &&
+         FindDatabaseById(context, static_cast<duckdb::idx_t>(oid)) != nullptr;
+}
+
+constexpr std::string_view kCollationKind = "collation";
+constexpr std::string_view kDatabaseKind = "database";
+
+[[noreturn]] void ThrowInvalidExtensionName(std::string_view name,
+                                            std::string_view detail) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("invalid extension name: \"", name, "\""),
+                  ERR_DETAIL(detail));
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> ExtensionUpdatePathsBind(
+  duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
+  duckdb::vector<duckdb::LogicalType>& types,
+  duckdb::vector<Identifier>& names) {
+  for (const auto name : {"source", "target", "path"}) {
+    names.emplace_back(name);
+    types.emplace_back(duckdb::LogicalType::VARCHAR);
+  }
+  return duckdb::make_uniq<duckdb::TableFunctionData>();
+}
+
+duckdb::OperatorResultType ExtensionUpdatePathsInOut(
+  duckdb::ExecutionContext&, duckdb::TableFunctionInput&,
+  duckdb::DataChunk& input, duckdb::DataChunk& output) {
+  const auto names = input.data[0].Values<duckdb::string_t>();
+  for (duckdb::idx_t row = 0; row < input.size(); ++row) {
+    const auto value = names[row];
+    if (!value.IsValid()) {
+      continue;
+    }
+    const auto name = AsView(value.GetValue());
+    if (name.empty()) {
+      ThrowInvalidExtensionName(name, "Extension names must not be empty.");
+    }
+    if (absl::StrContains(name, "--")) {
+      ThrowInvalidExtensionName(name,
+                                "Extension names must not contain \"--\".");
+    }
+    if (name.front() == '-' || name.back() == '-') {
+      ThrowInvalidExtensionName(
+        name, "Extension names must not begin or end with \"-\".");
+    }
+    if (absl::StrContains(name, '/')) {
+      ThrowInvalidExtensionName(
+        name,
+        "Extension names must not contain directory separator characters.");
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("extension \"", name, "\" is not available"),
+                    ERR_HINT("The extension must first be installed on the "
+                             "system where PostgreSQL is running."));
+  }
+  output.SetCardinality(0);
+  return duckdb::OperatorResultType::NEED_MORE_INPUT;
+}
+
 struct StatScalar {
   std::string_view name;
   duckdb::LogicalType type;
   duckdb::scalar_function_t function;
+};
+
+struct NullScalar {
+  std::string_view name;
+  duckdb::LogicalType type;
 };
 
 }  // namespace
@@ -956,6 +1478,10 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                  {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 
   RegisterScalar(
+    loader, pg_catalog, "pg_basetype", CONSISTENT_WITHIN_QUERY, InitSession,
+    {duckdb::ScalarFunction{{REGTYPE()}, REGTYPE(), PgBasetypeFunction}});
+
+  RegisterScalar(
     loader, pg_catalog, "pg_input_is_valid", CONSISTENT_WITHIN_QUERY,
     InitInputCheck,
     {duckdb::ScalarFunction{{text, text}, boolean, InputIsValidFunction}});
@@ -969,6 +1495,80 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                                            {"sql_error_code", text},
                                          }),
                                          InputErrorInfoFunction}});
+
+  {
+    duckdb::ScalarFunction function{{any}, text, nullptr};
+    function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    function.SetBindExpressionCallback(BindPgCollationFor);
+    RegisterScalar(loader, pg_catalog, "pg_collation_for",
+                   CONSISTENT_WITHIN_QUERY, nullptr, {function});
+  }
+
+  RegisterScalar(loader, pg_catalog, "pg_get_replica_identity_index",
+                 CONSISTENT_WITHIN_QUERY, InitSession,
+                 {duckdb::ScalarFunction{
+                   {regclass}, regclass, ReplicaIdentityIndexFunction}});
+
+  RegisterScalar(
+    loader, pg_catalog, "pg_settings_get_flags", CONSISTENT_WITHIN_QUERY,
+    nullptr,
+    {duckdb::ScalarFunction{
+      {text}, duckdb::LogicalType::LIST(text), SettingsGetFlagsFunction}});
+
+  {
+    duckdb::TableFunction function{
+      "pg_tablespace_databases", {oid},   nullptr,
+      TablespaceDatabasesBind,   nullptr, InitRows<int64_t>};
+    function.in_out_function =
+      RowsInOut<int64_t, &LoadTablespaceDatabases, &WriteTablespaceDatabases>;
+    RegisterTable(loader, pg_catalog, std::move(function));
+  }
+
+  {
+    duckdb::TableFunction function{
+      "pg_extension_update_paths", {text}, nullptr, ExtensionUpdatePathsBind};
+    function.in_out_function = ExtensionUpdatePathsInOut;
+    RegisterTable(loader, pg_catalog, std::move(function));
+  }
+
+  RegisterScalar(loader, pg_catalog, "unicode_version", CONSISTENT, nullptr,
+                 {duckdb::ScalarFunction{{}, text, UnicodeVersionFunction}});
+  RegisterScalar(loader, pg_catalog, "icu_unicode_version", CONSISTENT, nullptr,
+                 {duckdb::ScalarFunction{{}, text, IcuUnicodeVersionFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "unicode_assigned", CONSISTENT, nullptr,
+    {duckdb::ScalarFunction{{text}, boolean, UnicodeAssignedFunction}});
+
+  RegisterScalar(loader, pg_catalog, "pg_column_size", CONSISTENT_WITHIN_QUERY,
+                 nullptr,
+                 {duckdb::ScalarFunction{{any}, int4, ColumnSizeFunction}});
+  for (const auto& [name, type] : {
+         NullScalar{.name = "pg_column_compression", .type = text},
+         NullScalar{.name = "pg_column_toast_chunk_id", .type = oid},
+       }) {
+    duckdb::ScalarFunction function{{any}, type, nullptr};
+    function.SetBindExpressionCallback(BindNull);
+    RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY, nullptr,
+                   {function});
+  }
+
+  {
+    duckdb::ScalarFunction function{{text}, text, CurrentLogfileFunction};
+    function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    RegisterScalar(
+      loader, pg_catalog, "pg_current_logfile", VOLATILE, nullptr,
+      {duckdb::ScalarFunction{{}, text, CurrentLogfileFunction}, function});
+  }
+
+  RegisterScalar(
+    loader, pg_catalog, "pg_collation_actual_version", VOLATILE, nullptr,
+    {duckdb::ScalarFunction{
+      {oid}, text, ActualVersionFunction<kCollationKind, &CollationExists>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_database_collation_actual_version", VOLATILE,
+    nullptr,
+    {duckdb::ScalarFunction{
+      {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>}});
 }
 
 }  // namespace sdb::pg

@@ -478,9 +478,25 @@ SELECT pg_get_function_sqlbody('lower(text)'::regprocedure);
 statement ok
 SELECT pg_get_partkeydef('pg_class'::regclass), pg_get_partition_constraintdef('pg_class'::regclass);
 
+# sysinfo: pg_get_replica_identity_index
+statement ok
+SELECT pg_get_replica_identity_index('pg_class');
+
 # sysinfo: pg_input_is_valid
 statement ok
 SELECT pg_input_is_valid('42', 'integer'), pg_input_error_info('x', 'integer');
+
+# sysinfo: getpgusername
+statement ok
+SELECT getpgusername();
+
+# sysinfo: pg_basetype
+statement ok
+SELECT pg_basetype('int4'::regtype);
+
+# sysinfo: pg_collation_for
+statement ok
+SELECT pg_collation_for('a'::text);
 
 # sysinfo: pg_sequence_parameters
 statement ok
@@ -496,9 +512,21 @@ DROP SEQUENCE sysinfo_seq;
 statement ok
 SELECT pg_tablespace_size('pg_default'), pg_tablespace_size('pg_global');
 
+# sysinfo: pg_tablespace_databases
+statement ok
+SELECT * FROM pg_tablespace_databases(1663);
+
 # sysinfo: pg_size_bytes
 statement ok
 SELECT pg_size_bytes('1.5 GB');
+
+# sysinfo: pg_column_size
+statement ok
+SELECT pg_column_size('abc'::text), pg_column_size(ROW(1, 'abc'));
+
+# sysinfo: pg_column_compression
+statement ok
+SELECT pg_column_compression('abc'::text), pg_column_toast_chunk_id('abc'::text);
 
 # sysinfo: makeaclitem
 statement ok
@@ -511,6 +539,45 @@ SELECT has_parameter_privilege('work_mem', 'SET');
 # sysinfo: has_largeobject_privilege
 statement ok
 SELECT has_largeobject_privilege(0, 'SELECT');
+
+# sysinfo: pg_settings_get_flags
+statement ok
+SELECT pg_settings_get_flags('work_mem');
+
+# sysinfo: unicode_version
+statement ok
+SELECT unicode_version(), icu_unicode_version(), unicode_assigned('abc');
+
+# sysinfo: pg_current_logfile
+statement ok
+SELECT pg_current_logfile(), pg_current_logfile('stderr');
+
+# sysinfo: pg_jit_available
+statement ok
+SELECT pg_jit_available(), pg_numa_available();
+
+# sysinfo: pg_collation_actual_version
+statement ok
+SELECT pg_collation_actual_version(950), pg_database_collation_actual_version(oid) FROM pg_database WHERE datname = current_database();
+
+# sysinfo: pg_safe_snapshot_blocking_pids
+statement ok
+SELECT pg_safe_snapshot_blocking_pids(pg_backend_pid());
+
+# sysinfo: pg_available_wal_summaries
+statement ok
+SELECT * FROM pg_available_wal_summaries();
+
+# sysinfo: pg_extension_update_paths
+statement ok
+SELECT * FROM pg_extension_update_paths(NULL);
+
+statement error
+SELECT * FROM pg_extension_update_paths('plpgsql');
+----
+db error: ERROR: extension "plpgsql" is not available
+HINT: The extension must first be installed on the system where PostgreSQL is running.
+
 
 # types: pg_snapshot
 statement error
@@ -1371,6 +1438,10 @@ SELECT age(TIMESTAMP '2020-01-01', TIMESTAMP '2010-01-01');
 # op_datetime: clock_timestamp
 statement ok
 SELECT clock_timestamp();
+
+# op_datetime: pg_sleep_for
+statement ok
+SELECT pg_sleep_for('1 millisecond'), pg_sleep_until(clock_timestamp());
 
 # op_datetime: current_date
 statement ok

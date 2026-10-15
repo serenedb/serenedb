@@ -371,6 +371,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | /                      | Yes           |                          |
 | age                    | Yes           |                          |
 | clock_timestamp        | Yes           |                          |
+| pg_sleep_for           | Yes           | Also `pg_sleep_until`    |
 | current_date           | Yes           |                          |
 | current_time           | Yes           |                          |
 | current_timestamp      | Yes           |                          |
@@ -794,10 +795,14 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_partkeydef                  | Yes           | Always `NULL`, as is `pg_get_partition_constraintdef`: there are no partitioned tables |
 | pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
 | pg_get_serial_sequence             | Yes           | Finds the sequence named by the column's `nextval(...)` default |
+| pg_get_replica_identity_index      | Yes           | The index of the table's primary key; `NULL` for a table without one |
 | format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |
 | to_regclass                        | Yes           | Also `to_regtype`, `to_regtypemod`, `to_regproc`, `to_regprocedure`, `to_regnamespace`, `to_regrole`, `to_regcollation`, `to_regoper` and `to_regoperator`; they return `NULL` where the cast would fail |
 | pg_input_is_valid                  | Yes           | Also `pg_input_error_info`. For `bytea`, `cidr`, `pg_lsn` and the `reg*` types it reports PostgreSQL's message, detail, hint and SQLSTATE; for other types the message of the failed cast, with SQLSTATE `22P02` |
 | pg_get_userbyid                    | Yes           |  |
+| getpgusername                      | Yes           |  |
+| pg_basetype                        | Yes           |  |
+| pg_collation_for                   | Yes           | An untyped string literal is `text`, so it has the default collation |
 | pg_get_keywords                    | Yes           | Lists the keywords of SereneDB's parser, among them `pivot` and `qualify`, which PostgreSQL does not reserve. A word the parser takes both as a column name and as a type or function name, such as `struct`, is listed once, as unreserved. `barelabel` and `baredesc` are `NULL`: the parser does not say which keywords can be a bare column label |
 | pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
 | obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |
@@ -811,7 +816,10 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
 | pg_tablespace_location             | Yes           | Always an empty string |
 | pg_tablespace_size                 | Yes           | `pg_default` holds every database and `pg_global` the catalog that all databases share |
+| pg_tablespace_databases            | Yes           | `pg_default` lists every database |
 | pg_size_bytes                      | Yes           |  |
+| pg_column_size                     | Partial       | Counts a value as it is held in memory: a value read from a table counts as a computed one, so a short string takes 4 bytes more than its length. A whole row, as in `pg_column_size(t)`, counts as in PostgreSQL |
+| pg_column_compression              | Yes           | Always `NULL`, as is `pg_column_toast_chunk_id`: values are not compressed or stored out of line one by one |
 | pg_my_temp_schema                  | Partial       | Always `0` |
 | acldefault                         | Yes           | Also `aclexplode` |
 | makeaclitem                        | Yes           |  |
@@ -819,6 +827,14 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
 | has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
 | has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
+| pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |
+| unicode_version                    | Yes           | Also `icu_unicode_version` and `unicode_assigned`; both versions are `17.0` |
+| pg_current_logfile                 | Yes           | Always `NULL`: there is no logging collector |
+| pg_jit_available                   | Yes           | Always `false`, as is `pg_numa_available` |
+| pg_collation_actual_version        | Yes           | Also `pg_database_collation_actual_version`; always `NULL`: collations are not versioned |
+| pg_safe_snapshot_blocking_pids     | Yes           | Always an empty array |
+| pg_available_wal_summaries         | Yes           | Returns no rows |
+| pg_extension_update_paths          | Yes           | Fails for every extension name: no extension is available |
 | pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL

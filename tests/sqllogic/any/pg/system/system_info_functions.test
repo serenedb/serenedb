@@ -537,6 +537,360 @@ statement ok
 DROP FUNCTION sif_body;
 
 
+# pg_column_size
+
+query
+SELECT pg_column_size(1) AS int4, pg_column_size(1::bigint) AS int8, pg_column_size(1::smallint) AS int2,
+       pg_column_size(true) AS bool, pg_column_size(1.5::float8) AS float8, pg_column_size(1.5::float4) AS float4,
+       pg_column_size(DATE '2024-01-01') AS date, pg_column_size(TIME '12:00') AS time,
+       pg_column_size(TIMESTAMP '2024-01-01 12:00') AS ts, pg_column_size(INTERVAL '1 day') AS iv,
+       pg_column_size('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid) AS uuid, pg_column_size(NULL::int) AS null_input;
+----
+int4	int8	int2	bool	float8	float4	date	time	ts	iv	uuid	null_input
+4	8	2	1	8	4	4	8	8	16	16	NULL
+
+
+query
+SELECT pg_column_size('abc'::text) AS text, pg_column_size(''::text) AS empty, pg_column_size('abc'::varchar) AS varchar,
+       pg_column_size('\x0102'::bytea) AS bytea, pg_column_size(repeat('x', 200)) AS long_text;
+----
+text	empty	varchar	bytea	long_text
+7	4	7	6	204
+
+
+query
+SELECT pg_column_size(0::numeric) AS zero, pg_column_size(1::numeric) AS one, pg_column_size(1.00::numeric) AS one_scaled,
+       pg_column_size(10000::numeric) AS ten_k, pg_column_size(12345::numeric) AS two_digits,
+       pg_column_size(0.0001::numeric(10,4)) AS small, pg_column_size(0.00001::numeric(10,5)) AS smaller,
+       pg_column_size(-1.5::numeric) AS negative, pg_column_size(123.45::numeric(10,2)) AS typed,
+       pg_column_size(123456789.123::numeric) AS long_value;
+----
+zero	one	one_scaled	ten_k	two_digits	small	smaller	negative	typed	long_value
+6	8	8	8	10	8	8	10	10	14
+
+
+query
+SELECT pg_column_size(ARRAY[1, 2, 3]) AS ints, pg_column_size(ARRAY[1, NULL, 3]) AS nulls,
+       pg_column_size(ARRAY[1::bigint, 2]) AS bigints, pg_column_size(ARRAY['a', 'b']::text[]) AS texts,
+       pg_column_size(ARRAY[[1, 2], [3, 4]]) AS matrix, pg_column_size(ARRAY[]::integer[]) AS empty;
+----
+ints	nulls	bigints	texts	matrix	empty
+36	40	40	40	48	16
+
+
+query
+SELECT pg_column_size(ROW(1, 2)) AS ints, pg_column_size(ROW(1, NULL)) AS nulls,
+       pg_column_size(ROW('abc', 1)) AS text_int, pg_column_size(ROW(1::bigint, 1)) AS wide_first,
+       pg_column_size(ROW(1, 1::bigint)) AS wide_second, pg_column_size(ROW(true)) AS bool;
+----
+ints	nulls	text_int	wide_first	wide_second	bool
+32	28	32	36	40	25
+
+
+statement ok
+INSERT INTO sif_plain VALUES (1, 'abc'), (2, repeat('x', 200));
+
+
+query
+SELECT id, pg_column_size(sif_plain) AS row_size FROM sif_plain ORDER BY id;
+----
+id	row_size
+1	32
+2	232
+
+
+# pg_column_compression and pg_column_toast_chunk_id
+
+query
+SELECT pg_column_compression('abc'::text) AS compression, pg_column_compression(1) AS fixed,
+       pg_column_toast_chunk_id('abc'::text) AS chunk, pg_column_toast_chunk_id(1) AS fixed_chunk;
+----
+compression	fixed	chunk	fixed_chunk
+NULL	NULL	NULL	NULL
+
+
+query
+SELECT pg_column_compression(v) AS compression, pg_column_toast_chunk_id(v) AS chunk FROM sif_plain ORDER BY id;
+----
+compression	chunk
+NULL	NULL
+NULL	NULL
+
+
+# pg_sleep_for and pg_sleep_until
+
+statement ok
+CREATE TABLE sif_clock AS SELECT clock_timestamp() AS started;
+
+
+statement ok
+SELECT pg_sleep_for('100 milliseconds');
+
+
+query
+SELECT clock_timestamp() - started >= INTERVAL '100 milliseconds' AS slept FROM sif_clock;
+----
+slept
+t
+
+
+statement ok
+UPDATE sif_clock SET started = clock_timestamp();
+
+
+statement ok
+SELECT pg_sleep_until(clock_timestamp() + INTERVAL '100 milliseconds');
+
+
+query
+SELECT clock_timestamp() - started >= INTERVAL '100 milliseconds' AS slept FROM sif_clock;
+----
+slept
+t
+
+
+query
+SELECT count(*) AS calls FROM (SELECT pg_sleep_for(NULL), pg_sleep_until(NULL), pg_sleep_for('-1 second')) AS t;
+----
+calls
+1
+
+
+statement ok
+DROP TABLE sif_clock;
+
+
+# pg_get_replica_identity_index
+
+query
+SELECT pg_get_replica_identity_index('sif_keyed') AS keyed, pg_get_replica_identity_index('sif_plain') AS plain,
+       pg_get_replica_identity_index('sif_view') AS view, pg_get_replica_identity_index('sif_seq') AS sequence,
+       pg_get_replica_identity_index('pg_class') AS catalog, pg_get_replica_identity_index(NULL) AS null_input;
+----
+keyed	plain	view	sequence	catalog	null_input
+sif_keyed_pkey	NULL	NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT pg_get_replica_identity_index('sif_keyed_pkey');
+----
+db error: ERROR: cannot open relation "sif_keyed_pkey"
+DETAIL: This operation is not supported for indexes.
+
+
+statement error
+SELECT pg_get_replica_identity_index(0);
+----
+db error: ERROR: could not open relation with OID 0
+
+
+# pg_basetype
+
+query
+SELECT pg_basetype('int4'::regtype) AS int4, pg_basetype('int4[]'::regtype) AS int4_array,
+       pg_basetype('information_schema.cardinal_number'::regtype) AS domain,
+       pg_basetype('information_schema.sql_identifier'::regtype) AS name_domain,
+       pg_basetype(0) AS zero, pg_basetype(12345678) AS missing, pg_basetype(NULL) AS null_input;
+----
+int4	int4_array	domain	name_domain	zero	missing	null_input
+integer	integer[]	integer	name	NULL	NULL	NULL
+
+
+# pg_collation_for
+
+query
+SELECT pg_collation_for('abc'::text) AS text, pg_collation_for('abc' COLLATE "C") AS c,
+       pg_collation_for(NULL::text) AS null_text, pg_collation_for(ARRAY['a']) AS array,
+       pg_collation_for('a'::varchar) AS varchar, pg_collation_for('a'::name) AS name;
+----
+text	c	null_text	array	varchar	name
+"default"	"C"	"default"	"default"	"default"	"C"
+
+
+statement error
+SELECT pg_collation_for(1);
+----
+db error: ERROR: collations are not supported by type integer
+
+
+# pg_settings_get_flags
+
+query
+SELECT pg_settings_get_flags('work_mem') IS NOT NULL AS work_mem, pg_settings_get_flags('search_path') IS NOT NULL AS search_path,
+       pg_settings_get_flags('sif_nosuch') AS unknown, pg_settings_get_flags(NULL) AS null_input;
+----
+work_mem	search_path	unknown	null_input
+t	t	NULL	NULL
+
+
+# pg_tablespace_databases
+
+query
+SELECT EXISTS (SELECT 1 FROM pg_tablespace_databases(1663) AS t(o)
+               JOIN pg_database AS d ON d.oid = t.o
+               WHERE d.datname = current_database()) AS current;
+----
+current
+t
+
+
+query
+SELECT (SELECT count(*) FROM pg_tablespace_databases(1664)) AS global,
+       (SELECT count(*) FROM pg_tablespace_databases(0)) AS zero,
+       (SELECT count(*) FROM pg_tablespace_databases(NULL)) AS null_input;
+----
+global	zero	null_input
+0	0	0
+
+
+# getpgusername
+
+query
+SELECT getpgusername() = current_user AS same, pg_typeof(getpgusername()) AS type;
+----
+same	type
+t	name
+
+
+# unicode_version, icu_unicode_version and unicode_assigned
+
+query
+SELECT unicode_version() ~ '^\d+\.\d+$' AS unicode, icu_unicode_version() ~ '^\d+\.\d+$' AS icu;
+----
+unicode	icu
+t	t
+
+
+query
+SELECT unicode_assigned('abc') AS ascii, unicode_assigned('') AS empty, unicode_assigned(chr(888)) AS unassigned,
+       unicode_assigned(chr(57344)) AS private_use, unicode_assigned(chr(64976)) AS noncharacter,
+       unicode_assigned('a' || chr(888)) AS mixed, unicode_assigned(NULL) AS null_input;
+----
+ascii	empty	unassigned	private_use	noncharacter	mixed	null_input
+t	t	f	t	f	f	NULL
+
+
+# pg_current_logfile
+
+query
+SELECT pg_current_logfile() AS any_format, pg_current_logfile('stderr') AS stderr,
+       pg_current_logfile('csvlog') AS csvlog, pg_current_logfile(NULL) AS null_input;
+----
+any_format	stderr	csvlog	null_input
+NULL	NULL	NULL	NULL
+
+
+statement error
+SELECT pg_current_logfile('xml');
+----
+db error: ERROR: log format "xml" is not supported
+HINT: The supported log formats are "stderr", "csvlog", and "jsonlog".
+
+
+# pg_jit_available and pg_numa_available
+
+query
+SELECT pg_typeof(pg_jit_available()) AS jit, pg_typeof(pg_numa_available()) AS numa;
+----
+jit	numa
+boolean	boolean
+
+
+onlyif serenedb
+query
+SELECT pg_jit_available() AS jit, pg_numa_available() AS numa;
+----
+jit	numa
+f	f
+
+
+# pg_collation_actual_version and pg_database_collation_actual_version
+
+query
+SELECT pg_collation_actual_version(950) AS c, pg_collation_actual_version(951) AS posix,
+       pg_collation_actual_version(NULL) AS null_input,
+       pg_database_collation_actual_version(d.oid) IS NOT DISTINCT FROM pg_collation_actual_version(100) AS same
+FROM pg_database AS d WHERE d.datname = current_database();
+----
+c	posix	null_input	same
+NULL	NULL	NULL	t
+
+
+statement error
+SELECT pg_collation_actual_version(12345678);
+----
+db error: ERROR: collation with OID 12345678 does not exist
+
+
+statement error
+SELECT pg_database_collation_actual_version(12345678);
+----
+db error: ERROR: database with OID 12345678 does not exist
+
+
+# pg_safe_snapshot_blocking_pids
+
+query
+SELECT pg_safe_snapshot_blocking_pids(0) AS zero, pg_safe_snapshot_blocking_pids(pg_backend_pid()) AS own,
+       pg_safe_snapshot_blocking_pids(NULL) AS null_input;
+----
+zero	own	null_input
+{}	{}	NULL
+
+
+# pg_available_wal_summaries
+
+query
+SELECT count(*) AS summaries FROM pg_available_wal_summaries();
+----
+summaries
+0
+
+
+# pg_extension_update_paths
+
+query
+SELECT count(*) AS paths FROM pg_extension_update_paths(NULL);
+----
+paths
+0
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('sif_nosuch');
+----
+db error: ERROR: extension "sif_nosuch" is not available
+HINT: The extension must first be installed on the system where PostgreSQL is running.
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('');
+----
+db error: ERROR: invalid extension name: ""
+DETAIL: Extension names must not be empty.
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('a--b');
+----
+db error: ERROR: invalid extension name: "a--b"
+DETAIL: Extension names must not contain "--".
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('-a');
+----
+db error: ERROR: invalid extension name: "-a"
+DETAIL: Extension names must not begin or end with "-".
+
+
+statement error
+SELECT * FROM pg_extension_update_paths('a/b');
+----
+db error: ERROR: invalid extension name: "a/b"
+DETAIL: Extension names must not contain directory separator characters.
+
+
 # Cleanup
 
 statement ok

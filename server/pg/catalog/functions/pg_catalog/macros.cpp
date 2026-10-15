@@ -398,6 +398,26 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
 
   {"pg_catalog", "getdatabaseencoding", "() AS 'UTF8'"},
+  {"pg_catalog", "getpgusername", "() AS CAST(current_user AS name)"},
+  {"pg_catalog", "pg_jit_available", "() AS false"},
+  {"pg_catalog", "pg_numa_available", "() AS false"},
+  {"pg_catalog", "pg_sleep_for",
+   R"((duration INTERVAL) AS
+      pg_sleep(extract(epoch FROM clock_timestamp() + duration) -
+               extract(epoch FROM clock_timestamp())))"},
+  {"pg_catalog", "pg_sleep_until",
+   R"((wakeup TIMESTAMPTZ) AS
+      pg_sleep(extract(epoch FROM wakeup) -
+               extract(epoch FROM clock_timestamp())))"},
+  {"pg_catalog", "pg_safe_snapshot_blocking_pids",
+   "(pid INTEGER) AS CASE WHEN pid IS NOT NULL THEN '{}'::INTEGER[] END"},
+  {"pg_catalog", "pg_available_wal_summaries",
+   R"(()
+      RETURNS TABLE("tli" bigint, "start_lsn" pg_lsn, "end_lsn" pg_lsn)
+      LANGUAGE SQL
+      BEGIN ATOMIC
+        SELECT NULL::bigint, NULL::pg_lsn, NULL::pg_lsn WHERE false;
+      END;)"},
   // Always UTF-8 -> max 4 bytes per character. Argument ignored.
   {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},

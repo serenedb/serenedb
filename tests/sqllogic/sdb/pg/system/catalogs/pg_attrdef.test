@@ -1,0 +1,292 @@
+statement ok
+DROP TABLE IF EXISTS tango_adf_tree;
+
+
+statement ok
+DROP TABLE IF EXISTS tango_adf_seqtab;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_adf_seq;
+
+
+statement ok
+DROP SCHEMA IF EXISTS zeus_adf_ns CASCADE;
+
+
+query
+SELECT relname, relkind, relnatts, relnamespace::regnamespace::text AS nsp FROM pg_class WHERE oid = 2604;
+----
+relname	relkind	relnatts	nsp
+pg_attrdef	r	4	pg_catalog
+
+
+query
+SELECT attname, atttypid::regtype::text AS typ, attnotnull FROM pg_attribute WHERE attrelid = 'pg_attrdef'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	typ	attnotnull
+oid	oid	t
+adrelid	oid	t
+adnum	smallint	t
+adbin	pg_node_tree	t
+
+
+statement ok
+CREATE TABLE tango_adf_tree (id int, hp int DEFAULT 115, name text, regen numeric DEFAULT 7.5, eaten bool DEFAULT false, born timestamp DEFAULT now(), dbl int GENERATED ALWAYS AS (hp * 2) STORED, plain int, sum int DEFAULT 1 + 2);
+
+
+query
+SELECT d.adnum, a.attname, d.adrelid::regclass::text AS rel
+FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+WHERE d.adrelid = 'tango_adf_tree'::regclass ORDER BY d.adnum;
+----
+adnum	attname	rel
+2	hp	tango_adf_tree
+4	regen	tango_adf_tree
+5	eaten	tango_adf_tree
+6	born	tango_adf_tree
+7	dbl	tango_adf_tree
+9	sum	tango_adf_tree
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef
+WHERE adrelid = 'tango_adf_tree'::regclass AND adnum IN (2, 4, 5, 6, 9) ORDER BY adnum;
+----
+adnum	expr
+2	115
+4	7.5
+5	false
+6	now()
+9	(1 + 2)
+
+
+query
+SELECT pg_get_expr(adbin, adrelid, true) AS expr FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass AND adnum = 4;
+----
+expr
+7.5
+
+
+query
+SELECT pg_typeof(adbin)::text AS typ FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass AND adnum = 2;
+----
+typ
+pg_node_tree
+
+
+query
+SELECT count(*) AS n, count(DISTINCT oid) AS oids FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass;
+----
+n	oids
+6	6
+
+
+query
+SELECT a.attname FROM pg_attribute a
+WHERE a.attrelid = 'tango_adf_tree'::regclass AND a.atthasdef
+  AND NOT EXISTS (SELECT 1 FROM pg_attrdef d WHERE d.adrelid = a.attrelid AND d.adnum = a.attnum);
+----
+attname
+
+
+query
+SELECT a.attname FROM pg_attribute a
+WHERE a.attrelid = 'tango_adf_tree'::regclass AND a.attnum > 0 AND NOT a.atthasdef
+  AND EXISTS (SELECT 1 FROM pg_attrdef d WHERE d.adrelid = a.attrelid AND d.adnum = a.attnum)
+ORDER BY a.attnum;
+----
+attname
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT oid, adrelid, adnum FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass
+  EXCEPT
+  SELECT oid, adrelid, adnum FROM pg_attrdef WHERE adrelid::text = 'tango_adf_tree'::regclass::oid::text
+) s;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT oid, adrelid, adnum FROM pg_attrdef WHERE adrelid::text = 'tango_adf_tree'::regclass::oid::text
+  EXCEPT
+  SELECT oid, adrelid, adnum FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass
+) s;
+----
+diff
+0
+
+
+query
+SELECT d2.adnum, d2.adrelid::regclass::text AS rel FROM pg_attrdef d2
+WHERE d2.oid = (SELECT d.oid FROM pg_attrdef d WHERE d.adrelid = 'tango_adf_tree'::regclass AND d.adnum = 5);
+----
+adnum	rel
+5	tango_adf_tree
+
+
+query
+SELECT d2.adnum FROM pg_attrdef d2
+WHERE d2.oid IN (SELECT d.oid FROM pg_attrdef d WHERE d.adrelid = 'tango_adf_tree'::regclass AND d.adnum IN (2, 9))
+ORDER BY d2.adnum;
+----
+adnum
+2
+9
+
+
+query
+SELECT adnum FROM pg_attrdef WHERE oid = 0;
+----
+adnum
+
+
+statement ok
+ALTER TABLE tango_adf_tree ALTER COLUMN plain SET DEFAULT 42;
+
+
+statement ok
+ALTER TABLE tango_adf_tree ALTER COLUMN hp DROP DEFAULT;
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef
+WHERE adrelid = 'tango_adf_tree'::regclass AND adnum <> 7 ORDER BY adnum;
+----
+adnum	expr
+4	7.5
+5	false
+6	now()
+8	42
+9	(1 + 2)
+
+
+query
+SELECT attname, atthasdef FROM pg_attribute WHERE attrelid = 'tango_adf_tree'::regclass AND attname IN ('hp', 'plain') ORDER BY attnum;
+----
+attname	atthasdef
+hp	f
+plain	t
+
+
+query
+SELECT d2.adnum FROM pg_attrdef d2
+WHERE d2.oid = (SELECT d.oid FROM pg_attrdef d WHERE d.adrelid = 'tango_adf_tree'::regclass AND d.adnum = 8);
+----
+adnum
+8
+
+
+statement ok
+ALTER TABLE tango_adf_tree ALTER COLUMN plain SET DEFAULT 43;
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass AND adnum = 8;
+----
+adnum	expr
+8	43
+
+
+statement ok
+ALTER TABLE tango_adf_tree RENAME COLUMN plain TO branch;
+
+
+query
+SELECT a.attname, pg_get_expr(d.adbin, d.adrelid) AS expr
+FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+WHERE d.adrelid = 'tango_adf_tree'::regclass AND d.adnum = 8;
+----
+attname	expr
+branch	43
+
+
+statement ok
+ALTER TABLE tango_adf_tree ADD COLUMN ward int DEFAULT 5;
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef WHERE adrelid = 'tango_adf_tree'::regclass AND adnum = 10;
+----
+adnum	expr
+10	5
+
+
+statement ok
+CREATE SEQUENCE tango_adf_seq;
+
+
+statement ok
+CREATE TABLE tango_adf_seqtab (id bigint DEFAULT nextval('tango_adf_seq'), s serial, note text);
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) LIKE 'nextval(%' AS is_nextval FROM pg_attrdef WHERE adrelid = 'tango_adf_seqtab'::regclass ORDER BY adnum;
+----
+adnum	is_nextval
+1	t
+2	t
+
+
+statement ok
+CREATE SCHEMA zeus_adf_ns;
+
+
+statement ok
+CREATE TABLE zeus_adf_ns.bolt (arc int DEFAULT 3, wrath text);
+
+
+query
+SELECT adrelid::regclass::text AS rel, adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef WHERE adrelid = 'zeus_adf_ns.bolt'::regclass;
+----
+rel	adnum	expr
+zeus_adf_ns.bolt	1	3
+
+
+query
+SELECT c.relname, d.adnum FROM pg_attrdef d JOIN pg_class c ON c.oid = d.adrelid
+WHERE c.relnamespace = 'zeus_adf_ns'::regnamespace ORDER BY c.relname, d.adnum;
+----
+relname	adnum
+bolt	1
+
+
+statement ok
+DROP SCHEMA zeus_adf_ns CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_attrdef d JOIN pg_class c ON c.oid = d.adrelid WHERE c.relname = 'bolt' AND c.relnamespace::regnamespace::text = 'zeus_adf_ns';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_attrdef WHERE adrelid IN ('pg_class'::regclass, 'pg_attribute'::regclass, 'pg_attrdef'::regclass);
+----
+n
+0
+
+
+statement ok
+DROP TABLE tango_adf_seqtab;
+
+
+statement ok
+DROP SEQUENCE tango_adf_seq;
+
+
+statement ok
+DROP TABLE tango_adf_tree;
+
+
+query
+SELECT count(*) AS n FROM pg_attrdef d JOIN pg_class c ON c.oid = d.adrelid WHERE c.relname IN ('tango_adf_tree', 'tango_adf_seqtab');
+----
+n
+0

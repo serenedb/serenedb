@@ -756,8 +756,8 @@ SELECT metric_name, value, attributes ->> 'queue' AS queue, flags
 FROM otel_metrics_gauge WHERE service_name = 'payments' ORDER BY 3;
 ----
 metric_name	value	queue	flags
-queue.depth	-9007199254740992	a	0
-queue.depth	-9007199254740992	a	0
+queue.depth	-9.007199254740992e+15	a	0
+queue.depth	-9.007199254740992e+15	a	0
 queue.depth	0.5	b	0
 queue.depth	0.5	b	0
 queue.depth	0	c	1

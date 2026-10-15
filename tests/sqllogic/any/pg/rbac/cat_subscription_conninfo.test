@@ -1,0 +1,82 @@
+# pg_subscription.subconninfo holds the publisher's connection string, password
+# included, so PostgreSQL grants PUBLIC SELECT on every column of
+# pg_subscription except subconninfo, and no SELECT on the table itself.
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS cat_sub_conninfo;
+
+statement ok
+DROP ROLE IF EXISTS cat_sub_intern;
+
+statement ok
+CREATE ROLE cat_sub_intern LOGIN PASSWORD 'cat_sub_intern_pw';
+
+statement ok
+CREATE SUBSCRIPTION cat_sub_conninfo CONNECTION 'host=127.0.0.1 port=1 user=x password=cat_sub_secret dbname=y' PUBLICATION cat_sub_pub WITH (connect = false, slot_name = NONE);
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+statement error
+SELECT subconninfo FROM pg_subscription;
+----
+db error: ERROR: permission denied for table pg_subscription<slt:ignore>
+
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+statement error
+SELECT * FROM pg_subscription;
+----
+db error: ERROR: permission denied for table pg_subscription<slt:ignore>
+
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT subname, subenabled, subpublications FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
+----
+subname	subenabled	subpublications
+cat_sub_conninfo	f	{cat_sub_pub}
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT count(*) > 0 AS counted FROM pg_subscription;
+----
+counted
+t
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT has_table_privilege('pg_subscription', 'SELECT') AS on_table,
+       has_column_privilege('pg_subscription', 'subconninfo', 'SELECT') AS on_conninfo,
+       has_column_privilege('pg_subscription', 'subname', 'SELECT') AS on_name,
+       has_any_column_privilege('pg_subscription', 'SELECT') AS on_any;
+----
+on_table	on_conninfo	on_name	on_any
+f	f	t	t
+
+connection default
+query
+SELECT array_to_string(relacl, ',') AS relacl FROM pg_class WHERE oid = 'pg_catalog.pg_subscription'::regclass;
+----
+relacl
+postgres=arwdDxtm/postgres
+
+query
+SELECT attname, array_to_string(attacl, ',') AS attacl FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attname IN ('subname', 'subconninfo', 'suborigin')
+ORDER BY attnum;
+----
+attname	attacl
+subname	=r/postgres
+subconninfo	NULL
+suborigin	=r/postgres
+
+query
+SELECT subconninfo FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
+----
+subconninfo
+host=127.0.0.1 port=1 user=x password=cat_sub_secret dbname=y
+
+statement ok
+DROP SUBSCRIPTION cat_sub_conninfo;
+
+statement ok
+DROP ROLE cat_sub_intern;

@@ -1,0 +1,61 @@
+control substitution on
+
+statement ok
+DROP INDEX IF EXISTS view_alias_columns_idx;
+
+
+statement ok
+DROP VIEW IF EXISTS view_alias_columns_v;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS view_alias_columns_en;
+
+
+statement ok
+COPY (SELECT 'a' AS k, 'pudge alpha' AS body UNION ALL SELECT 'b', 'manga beta')
+TO '${__TEST_DIR__}/view_alias_columns.csv' (FORMAT CSV, HEADER);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_alias_columns_en AS split_text();
+
+
+statement ok
+CREATE VIEW view_alias_columns_v(key, text_body) AS
+  SELECT * FROM read_csv('${__TEST_DIR__}/view_alias_columns.csv', header=true);
+
+
+statement ok
+CREATE INDEX view_alias_columns_idx ON view_alias_columns_v
+  USING inverted(k, body view_alias_columns_en);
+
+
+query
+SELECT attnum, attname
+FROM pg_attribute
+WHERE attrelid = 'view_alias_columns_idx'::regclass
+ORDER BY attnum;
+----
+attnum	attname
+1	key
+2	text_body
+
+
+query
+SELECT indkey, indnatts FROM pg_index WHERE indexrelid = 'view_alias_columns_idx'::regclass;
+----
+indkey	indnatts
+1 2	2
+
+
+statement ok
+DROP INDEX view_alias_columns_idx;
+
+
+statement ok
+DROP VIEW view_alias_columns_v;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY view_alias_columns_en;

@@ -1,0 +1,63 @@
+query
+SELECT '-1'::oid AS a, '0x1F'::oid AS b, '010'::oid AS c, ' 12 '::oid AS d, '4294967295'::oid AS e, '-2147483648'::oid AS f;
+----
+a	b	c	d	e	f
+4294967295	31	8	12	4294967295	2147483648
+
+
+query
+SELECT '{1,010,-1}'::oid[] AS oids, '{0/1,FF/0}'::pg_lsn[] AS lsns;
+----
+oids	lsns
+{1,8,4294967295}	{0/1,FF/0}
+
+
+statement error
+SELECT '4294967296'::oid;
+----
+db error: ERROR: value "4294967296" is out of range for type oid<slt:ignore>
+
+
+statement error
+SELECT '-2147483649'::oid;
+----
+db error: ERROR: value "-2147483649" is out of range for type oid<slt:ignore>
+
+
+statement error
+SELECT '1e3'::oid;
+----
+db error: ERROR: invalid input syntax for type oid: "1e3"<slt:ignore>
+
+
+statement error
+SELECT '12abc'::oid;
+----
+db error: ERROR: invalid input syntax for type oid: "12abc"<slt:ignore>
+
+
+statement error
+SELECT ''::oid;
+----
+db error: ERROR: invalid input syntax for type oid: ""<slt:ignore>
+
+
+statement ok
+CREATE TABLE oid_input_t (id INT, o oid);
+
+
+statement ok
+INSERT INTO oid_input_t VALUES (1, '010'), (2, '-1'), (3, NULL);
+
+
+query
+SELECT id, o FROM oid_input_t ORDER BY id;
+----
+id	o
+1	8
+2	4294967295
+3	NULL
+
+
+statement ok
+DROP TABLE oid_input_t;

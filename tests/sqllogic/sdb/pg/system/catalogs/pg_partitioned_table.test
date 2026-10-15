@@ -1,0 +1,69 @@
+statement ok
+DROP TABLE IF EXISTS divine_part_rapier;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_partitioned_table';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+3350	r	8	f	10099	pg_catalog
+
+
+query
+SELECT attname, atttypid, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_partitioned_table'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	atttypid	attnotnull
+partrelid	26	t
+partstrat	18	t
+partnatts	21	t
+partdefid	26	t
+partattrs	22	t
+partclass	30	t
+partcollation	30	t
+partexprs	194	f
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_partitioned_table'::regclass AND attnum > 0
+  AND attname NOT IN ('partattrs', 'partclass', 'partcollation')
+ORDER BY attnum;
+----
+attname	type
+partrelid	oid
+partstrat	"char"
+partnatts	smallint
+partdefid	oid
+partexprs	pg_node_tree
+
+
+statement ok
+CREATE TABLE divine_part_rapier (id INT, dmg INT);
+
+
+query
+SELECT partrelid, partstrat, partnatts, partdefid
+FROM pg_partitioned_table
+WHERE partrelid = 'divine_part_rapier'::regclass;
+----
+partrelid	partstrat	partnatts	partdefid
+
+
+query
+SELECT c.relname, c.relkind, c.relispartition
+FROM pg_class c
+LEFT JOIN pg_partitioned_table p ON p.partrelid = c.oid
+WHERE c.relname = 'divine_part_rapier' AND p.partrelid IS NULL;
+----
+relname	relkind	relispartition
+divine_part_rapier	r	f
+
+
+statement ok
+DROP TABLE divine_part_rapier;

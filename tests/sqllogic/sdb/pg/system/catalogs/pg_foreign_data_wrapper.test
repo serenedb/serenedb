@@ -1,0 +1,97 @@
+statement ok
+DROP ROLE IF EXISTS meepo_fdw_poof;
+
+
+statement ok
+CREATE ROLE meepo_fdw_poof LOGIN PASSWORD 'meepo_fdw_poof_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_foreign_data_wrapper'::regclass;
+----
+oid	relname	relkind	relnatts
+2328	pg_foreign_data_wrapper	r	7
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_foreign_data_wrapper'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+fdwname	name	t
+fdwowner	oid	t
+fdwhandler	oid	t
+fdwvalidator	oid	t
+fdwacl	aclitem[]	f
+fdwoptions	text[]	f
+
+
+query
+SELECT oid::int AS oid, fdwname, fdwowner::regrole::text AS owner, fdwhandler, fdwvalidator, fdwacl::text[] AS fdwacl, fdwoptions
+FROM pg_foreign_data_wrapper
+ORDER BY fdwname;
+----
+oid	fdwname	owner	fdwhandler	fdwvalidator	fdwacl	fdwoptions
+16884	clickhouse_fdw	postgres	0	0	{=U/postgres}	NULL
+16885	iceberg_fdw	postgres	0	0	{=U/postgres}	NULL
+16886	postgres_fdw	postgres	0	0	{=U/postgres}	NULL
+
+
+query
+SELECT fdwname FROM pg_foreign_data_wrapper WHERE fdwname = 'meepo_fdw_poof';
+----
+fdwname
+
+
+query
+SELECT fdwname FROM pg_foreign_data_wrapper WHERE fdwname = 'postgres_fdw';
+----
+fdwname
+postgres_fdw
+
+
+query
+SELECT has_foreign_data_wrapper_privilege('meepo_fdw_poof', 'postgres_fdw', 'USAGE') AS by_name,
+       has_foreign_data_wrapper_privilege('meepo_fdw_poof', 16884, 'USAGE') AS by_oid;
+----
+by_name	by_oid
+t	t
+
+
+query
+SELECT fdwname FROM pg_foreign_data_wrapper WHERE oid = 42042;
+----
+fdwname
+
+
+query
+SELECT count(*) AS n FROM pg_foreign_server s JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw;
+----
+n
+0
+
+
+connection meepo_conn user=meepo_fdw_poof password=meepo_fdw_poof_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_foreign_data_wrapper', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection meepo_conn user=meepo_fdw_poof password=meepo_fdw_poof_pw
+query
+SELECT fdwname, fdwacl::text[] AS fdwacl, fdwoptions FROM pg_foreign_data_wrapper ORDER BY fdwname;
+----
+fdwname	fdwacl	fdwoptions
+clickhouse_fdw	{=U/postgres}	NULL
+iceberg_fdw	{=U/postgres}	NULL
+postgres_fdw	{=U/postgres}	NULL
+
+
+connection default
+statement ok
+DROP ROLE meepo_fdw_poof;

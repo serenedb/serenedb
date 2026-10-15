@@ -1,0 +1,236 @@
+statement ok
+DROP SCHEMA IF EXISTS techies_dac_mines CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS techies_dac_squee;
+
+
+statement ok
+DROP ROLE IF EXISTS techies_dac_spleen;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_default_acl'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+826	pg_default_acl	r	pg_catalog	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_default_acl'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+defaclrole	oid	t
+defaclnamespace	oid	t
+defaclobjtype	"char"	t
+defaclacl	aclitem[]	t
+
+
+statement ok
+CREATE ROLE techies_dac_squee;
+
+
+statement ok
+CREATE ROLE techies_dac_spleen LOGIN PASSWORD 'blast_off';
+
+
+statement ok
+CREATE SCHEMA techies_dac_mines AUTHORIZATION techies_dac_spleen;
+
+
+query
+SELECT count(*) FROM pg_default_acl
+WHERE defaclrole IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'techies\_dac\_%');
+----
+count
+0
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen IN SCHEMA techies_dac_mines GRANT SELECT ON TABLES TO techies_dac_squee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen GRANT USAGE ON SEQUENCES TO techies_dac_squee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen GRANT USAGE ON TYPES TO techies_dac_squee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen GRANT CREATE ON SCHEMAS TO techies_dac_squee;
+
+
+query
+SELECT defaclrole::regrole::text AS role, defaclnamespace::regnamespace::text AS nsp, defaclobjtype
+FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole
+ORDER BY defaclobjtype;
+----
+role	nsp	defaclobjtype
+techies_dac_spleen	-	S
+techies_dac_spleen	-	T
+techies_dac_spleen	-	f
+techies_dac_spleen	-	n
+techies_dac_spleen	techies_dac_mines	r
+
+
+query
+SELECT d.defaclobjtype,
+       CASE WHEN a.grantee = 0 THEN 'public' ELSE a.grantee::regrole::text END AS grantee,
+       a.grantor::regrole::text AS grantor, a.privilege_type, a.is_grantable
+FROM pg_default_acl d, aclexplode(d.defaclacl) a
+WHERE d.defaclrole = 'techies_dac_spleen'::regrole AND d.defaclnamespace = 0
+ORDER BY 1, 2, 4;
+----
+defaclobjtype	grantee	grantor	privilege_type	is_grantable
+S	techies_dac_spleen	techies_dac_spleen	SELECT	f
+S	techies_dac_spleen	techies_dac_spleen	UPDATE	f
+S	techies_dac_spleen	techies_dac_spleen	USAGE	f
+S	techies_dac_squee	techies_dac_spleen	USAGE	f
+T	public	techies_dac_spleen	USAGE	f
+T	techies_dac_spleen	techies_dac_spleen	USAGE	f
+T	techies_dac_squee	techies_dac_spleen	USAGE	f
+f	techies_dac_spleen	techies_dac_spleen	EXECUTE	f
+n	techies_dac_spleen	techies_dac_spleen	CREATE	f
+n	techies_dac_spleen	techies_dac_spleen	USAGE	f
+n	techies_dac_squee	techies_dac_spleen	CREATE	f
+
+
+query
+SELECT a.grantor::regrole::text AS grantor, a.privilege_type, a.is_grantable
+FROM pg_default_acl d, aclexplode(d.defaclacl) a
+WHERE d.defaclrole = 'techies_dac_spleen'::regrole
+  AND d.defaclnamespace = 'techies_dac_mines'::regnamespace
+  AND a.grantee = 'techies_dac_squee'::regrole;
+----
+grantor	privilege_type	is_grantable
+techies_dac_spleen	SELECT	f
+
+
+query
+SELECT defaclacl FROM pg_default_acl
+WHERE defaclrole = 'techies_dac_spleen'::regrole AND defaclnamespace = 'techies_dac_mines'::regnamespace;
+----
+defaclacl
+{techies_dac_squee=r/techies_dac_spleen}
+
+
+query
+SELECT count(*) FROM pg_default_acl
+WHERE oid IN (SELECT oid FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole);
+----
+count
+5
+
+
+connection c_techies_dac user=techies_dac_spleen password=blast_off
+statement ok
+CREATE TABLE techies_dac_mines.proximity (id INTEGER);
+
+
+connection c_techies_dac user=techies_dac_spleen password=blast_off
+query
+SELECT count(*) AS visible FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole;
+----
+visible
+5
+
+
+connection default
+query
+SELECT has_table_privilege('techies_dac_squee', 'techies_dac_mines.proximity', 'SELECT') AS can_select,
+       has_table_privilege('techies_dac_squee', 'techies_dac_mines.proximity', 'INSERT') AS can_insert;
+----
+can_select	can_insert
+t	f
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen IN SCHEMA techies_dac_mines REVOKE SELECT ON TABLES FROM techies_dac_squee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen REVOKE USAGE ON SEQUENCES FROM techies_dac_squee;
+
+
+query
+SELECT defaclobjtype FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole
+ORDER BY defaclobjtype;
+----
+defaclobjtype
+T
+f
+n
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen REVOKE USAGE ON TYPES FROM techies_dac_squee;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen REVOKE CREATE ON SCHEMAS FROM techies_dac_squee;
+
+
+query
+SELECT count(*) FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole;
+----
+count
+0
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen REVOKE ALL ON TABLES FROM techies_dac_spleen;
+
+
+query
+SELECT defaclobjtype, defaclnamespace, defaclacl
+FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole;
+----
+defaclobjtype	defaclnamespace	defaclacl
+r	0	{}
+
+
+query
+SELECT count(*) FROM pg_default_acl
+WHERE oid = (SELECT oid FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole)
+  AND defaclrole = 'techies_dac_spleen'::regrole;
+----
+count
+1
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE techies_dac_spleen GRANT ALL ON TABLES TO techies_dac_spleen;
+
+
+query
+SELECT count(*) FROM pg_default_acl WHERE defaclrole = 'techies_dac_spleen'::regrole;
+----
+count
+0
+
+
+statement ok
+DROP SCHEMA techies_dac_mines CASCADE;
+
+
+statement ok
+DROP ROLE techies_dac_squee;
+
+
+statement ok
+DROP ROLE techies_dac_spleen;

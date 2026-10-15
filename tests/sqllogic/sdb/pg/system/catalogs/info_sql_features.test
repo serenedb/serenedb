@@ -1,0 +1,58 @@
+statement ok
+DROP ROLE IF EXISTS roshan_sql_features_aegis;
+
+
+statement ok
+CREATE ROLE roshan_sql_features_aegis LOGIN PASSWORD 'roshan_sql_features_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sql_features';
+----
+relkind	nspname	relnatts
+r	information_schema	7
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'information_schema.sql_features'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+feature_id	information_schema.character_data	f
+feature_name	information_schema.character_data	f
+sub_feature_id	information_schema.character_data	f
+sub_feature_name	information_schema.character_data	f
+is_supported	information_schema.yes_or_no	f
+is_verified_by	information_schema.character_data	f
+comments	information_schema.character_data	f
+
+
+query
+SELECT count(*) AS n FROM information_schema.sql_features;
+----
+n
+0
+
+
+query
+SELECT has_table_privilege('roshan_sql_features_aegis', 'information_schema.sql_features', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+connection roshan_sql_features user=roshan_sql_features_aegis password=roshan_sql_features_pw
+query
+SELECT count(*) AS n FROM information_schema.sql_features;
+----
+n
+0
+
+
+connection default
+statement ok
+DROP ROLE roshan_sql_features_aegis;

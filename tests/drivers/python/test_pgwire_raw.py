@@ -10,6 +10,7 @@ binary result format.
 
 from __future__ import annotations
 
+import json
 import socket
 import struct
 import time
@@ -540,6 +541,64 @@ def test_char_oid18_param_roundtrip(conn):
     cols = row_description(m)
     assert cols and cols[0][1] == 18, cols  # result type oid 18 ("char")
     assert first_field(m) == b"A"
+
+
+def test_parse_param_oid_unknown_is_inferred(conn):
+    conn.parse("", "select $1::int4 + 1", oids=(705,))
+    conn.bind("", "", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"42"
+
+
+def parameter_types(msgs):
+    for t, p in msgs:
+        if t == "t":
+            (count,) = struct.unpack("!H", p[:2])
+            return list(struct.unpack(f"!{count}I", p[2 : 2 + 4 * count]))
+    return None
+
+
+@pytest.mark.parametrize(
+    "query, oids, expected",
+    [
+        ("select $1::int4 + 1", (705,), [23]),
+        (
+            "select table_name from information_schema.tables "
+            "where table_name = $1",
+            (),
+            [19],
+        ),
+        ("select $1::pg_lsn", (3220,), [3220]),
+    ],
+)
+def test_describe_reports_resolved_param_types(conn, query, oids, expected):
+    conn.parse("", query, oids=oids)
+    conn.describe("S", "")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert parameter_types(m) == expected, parameter_types(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param, check",
+    [
+        (1700, b"1.5", lambda value: float(value) == 1.5),
+        (1042, b"ab", lambda value: value == b"ab"),
+        (3802, b'{"a": 1}', lambda value: json.loads(value) == {"a": 1}),
+    ],
+)
+def test_parse_param_oid_numeric_bpchar_jsonb(conn, oid, param, check):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert check(first_field(m)), first_field(m)
 
 
 def test_describe_resolves_deferred_param_output(conn):

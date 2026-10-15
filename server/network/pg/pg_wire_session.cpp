@@ -437,10 +437,10 @@ bool PgWireSession<Kind>::SetupConnection() {
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
-    *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
-    static_cast<int32_t>(_cancel_key >> 32), _cancel);
-  _client_state =
-    &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+    *_conn->context, user, _system_user, role, DatabaseName(), database_id,
+    &this->_send, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+  _client_state = &connector::SereneDBClientState::Register(
+    *_conn->context, _connection_ctx, true);
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -837,7 +837,9 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
+  const auto status = _txn_state->StatusByte();
+  _client_state->progress_source->in_transaction_block = status != 'I';
+  WriteReadyForQuery(this->_send, status);
   this->KickSend();
 }
 
@@ -1047,6 +1049,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                              UserName(), "\"")));
     co_return false;
   }
+  _system_user = absl::StrCat(hba::MethodName(hba_method), ":", UserName());
   co_return true;
 }
 
@@ -1993,8 +1996,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   for (uint16_t i = 0; i < num_params; ++i) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
-    param_oids.push_back(oid);
-    if (oid != 0) {
+    param_oids.emplace_back(oid);
+    if (oid != 0 && oid != sdb::pg::kUnknown) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -2295,12 +2298,14 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    if (i < client_oids.size() && client_oids[i] != 0) {
+    if (i < client_oids.size() && client_oids[i] != 0 &&
+        client_oids[i] != sdb::pg::kUnknown) {
       oids.emplace_back(client_oids[i]);
       continue;
     }
     oids.emplace_back(
-      sdb::pg::Type2Oid(ResolveExpectedType(prepared, stmt.TypeHints(), i)));
+      sdb::pg::WireType(ResolveExpectedType(prepared, stmt.TypeHints(), i))
+        .oid);
   }
   WriteParameterDescription(this->_send, oids);
 
@@ -2941,6 +2946,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

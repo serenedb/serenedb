@@ -1,0 +1,345 @@
+statement ok
+DROP TABLE IF EXISTS pudge_con_meat;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_con_rot;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_con_hook;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_con_flesh;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_constraint';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2606	r	28	f	10003	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_constraint'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+conname	name	t
+connamespace	oid	t
+contype	"char"	t
+condeferrable	boolean	t
+condeferred	boolean	t
+conenforced	boolean	t
+convalidated	boolean	t
+conrelid	oid	t
+contypid	oid	t
+conindid	oid	t
+conparentid	oid	t
+confrelid	oid	t
+confupdtype	"char"	t
+confdeltype	"char"	t
+confmatchtype	"char"	t
+conislocal	boolean	t
+coninhcount	smallint	t
+connoinherit	boolean	t
+conperiod	boolean	t
+conkey	smallint[]	f
+confkey	smallint[]	f
+conpfeqop	oid[]	f
+conppeqop	oid[]	f
+conffeqop	oid[]	f
+confdelsetcols	smallint[]	f
+conexclop	oid[]	f
+conbin	pg_node_tree	f
+
+
+statement ok
+CREATE TABLE pudge_con_hook (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  dmg INT CHECK (dmg > 0),
+  a INT,
+  b INT,
+  UNIQUE (a, b)
+);
+
+
+statement ok
+CREATE TABLE pudge_con_meat (
+  id INT PRIMARY KEY,
+  hook_id INT REFERENCES pudge_con_hook(id),
+  a INT,
+  b INT,
+  CONSTRAINT pudge_con_ab_fk FOREIGN KEY (a, b) REFERENCES pudge_con_hook(a, b),
+  CONSTRAINT pudge_con_pos CHECK (a >= 0 AND b >= 0)
+);
+
+
+query
+SELECT conname, contype, conrelid::regclass::text AS rel, conkey,
+       confrelid::regclass::text AS frel, confkey, conindid::regclass::text AS idx,
+       connamespace::regnamespace::text AS nsp
+FROM pg_constraint
+WHERE conrelid IN ('pudge_con_hook'::regclass, 'pudge_con_meat'::regclass)
+ORDER BY conrelid::regclass::text, conname;
+----
+conname	contype	rel	conkey	frel	confkey	idx	nsp
+pudge_con_hook_a_b_key	u	pudge_con_hook	{4,5}	-	NULL	pudge_con_hook_a_b_key	public
+pudge_con_hook_dmg_check	c	pudge_con_hook	{3}	-	NULL	-	public
+pudge_con_hook_id_not_null	n	pudge_con_hook	{1}	-	NULL	-	public
+pudge_con_hook_name_key	u	pudge_con_hook	{2}	-	NULL	pudge_con_hook_name_key	public
+pudge_con_hook_name_not_null	n	pudge_con_hook	{2}	-	NULL	-	public
+pudge_con_hook_pkey	p	pudge_con_hook	{1}	-	NULL	pudge_con_hook_pkey	public
+pudge_con_ab_fk	f	pudge_con_meat	{3,4}	pudge_con_hook	{4,5}	pudge_con_hook_a_b_key	public
+pudge_con_meat_hook_id_fkey	f	pudge_con_meat	{2}	pudge_con_hook	{1}	pudge_con_hook_pkey	public
+pudge_con_meat_id_not_null	n	pudge_con_meat	{1}	-	NULL	-	public
+pudge_con_meat_pkey	p	pudge_con_meat	{1}	-	NULL	pudge_con_meat_pkey	public
+pudge_con_pos	c	pudge_con_meat	{3,4}	-	NULL	-	public
+
+
+query
+SELECT conname, condeferrable, condeferred, convalidated, conenforced,
+       connoinherit, conislocal, coninhcount, conperiod, contypid,
+       conparentid, conbin IS NULL AS no_bin
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_meat'::regclass
+ORDER BY conname;
+----
+conname	condeferrable	condeferred	convalidated	conenforced	connoinherit	conislocal	coninhcount	conperiod	contypid	conparentid	no_bin
+pudge_con_ab_fk	f	f	t	t	t	t	0	f	0	0	t
+pudge_con_meat_hook_id_fkey	f	f	t	t	t	t	0	f	0	0	t
+pudge_con_meat_id_not_null	f	f	t	t	f	t	0	f	0	0	t
+pudge_con_meat_pkey	f	f	t	t	t	t	0	f	0	0	t
+pudge_con_pos	f	f	t	t	f	t	0	f	0	0	f
+
+
+query
+SELECT conname, confupdtype, confdeltype, confmatchtype
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_meat'::regclass AND contype = 'f'
+ORDER BY conname;
+----
+conname	confupdtype	confdeltype	confmatchtype
+pudge_con_ab_fk	a	a	s
+pudge_con_meat_hook_id_fkey	a	a	s
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS def
+FROM pg_constraint
+WHERE conrelid IN ('pudge_con_hook'::regclass, 'pudge_con_meat'::regclass)
+ORDER BY conrelid::regclass::text, conname;
+----
+conname	def
+pudge_con_hook_a_b_key	UNIQUE (a, b)
+pudge_con_hook_dmg_check	CHECK ((dmg > 0))
+pudge_con_hook_id_not_null	NOT NULL id
+pudge_con_hook_name_key	UNIQUE (name)
+pudge_con_hook_name_not_null	NOT NULL name
+pudge_con_hook_pkey	PRIMARY KEY (id)
+pudge_con_ab_fk	FOREIGN KEY (a, b) REFERENCES pudge_con_hook(a, b)
+pudge_con_meat_hook_id_fkey	FOREIGN KEY (hook_id) REFERENCES pudge_con_hook(id)
+pudge_con_meat_id_not_null	NOT NULL id
+pudge_con_meat_pkey	PRIMARY KEY (id)
+pudge_con_pos	CHECK (((a >= 0) AND (b >= 0)))
+
+
+query
+SELECT c.conname, a.attname
+FROM pg_constraint c
+JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+WHERE c.conrelid = 'pudge_con_meat'::regclass AND c.contype = 'f'
+ORDER BY 1, a.attnum;
+----
+conname	attname
+pudge_con_ab_fk	a
+pudge_con_ab_fk	b
+pudge_con_meat_hook_id_fkey	hook_id
+
+
+query
+SELECT c.conname, a.attname
+FROM pg_constraint c
+JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = ANY (c.confkey)
+WHERE c.conrelid = 'pudge_con_meat'::regclass AND c.contype = 'f'
+ORDER BY 1, a.attnum;
+----
+conname	attname
+pudge_con_ab_fk	a
+pudge_con_ab_fk	b
+pudge_con_meat_hook_id_fkey	id
+
+
+query
+SELECT conname, conrelid::regclass::text AS rel
+FROM pg_constraint
+WHERE oid = (SELECT oid FROM pg_constraint WHERE conname = 'pudge_con_pos');
+----
+conname	rel
+pudge_con_pos	pudge_con_meat
+
+
+query
+SELECT c.conname, i.indisprimary, i.indisunique
+FROM pg_constraint c
+JOIN pg_index i ON i.indexrelid = c.conindid
+WHERE c.conrelid = 'pudge_con_hook'::regclass
+ORDER BY 1;
+----
+conname	indisprimary	indisunique
+pudge_con_hook_a_b_key	f	t
+pudge_con_hook_name_key	f	t
+pudge_con_hook_pkey	t	t
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conrelid = 'pudge_con_meat'::regclass;
+----
+n
+5
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM pg_constraint OFFSET 0) s
+WHERE s.conrelid = 'pudge_con_meat'::regclass;
+----
+n
+5
+
+
+query
+SELECT c.conname
+FROM pg_constraint c
+JOIN pg_class r ON r.oid = c.conrelid
+JOIN pg_namespace n ON n.oid = r.relnamespace
+WHERE n.nspname = 'public' AND r.relname = 'pudge_con_hook' AND c.contype IN ('p', 'u')
+ORDER BY 1;
+----
+conname
+pudge_con_hook_a_b_key
+pudge_con_hook_name_key
+pudge_con_hook_pkey
+
+
+statement ok
+CREATE TABLE pudge_con_rot (id INT, x INT, y INT, CONSTRAINT pudge_con_rot_pk PRIMARY KEY (x, id));
+
+
+query
+SELECT conname, contype, conkey, conindid::regclass::text AS idx
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_rot'::regclass
+ORDER BY 1;
+----
+conname	contype	conkey	idx
+pudge_con_rot_id_not_null	n	{1}	-
+pudge_con_rot_pk	p	{2,1}	pudge_con_rot_pk
+pudge_con_rot_x_not_null	n	{2}	-
+
+
+statement ok
+ALTER TABLE pudge_con_rot ALTER COLUMN y SET NOT NULL;
+
+
+statement ok
+ALTER TABLE pudge_con_rot ADD CONSTRAINT pudge_con_rot_chk CHECK (id < 100);
+
+
+query
+SELECT conname, contype, conkey, pg_get_constraintdef(oid) AS def
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_rot'::regclass
+ORDER BY 1;
+----
+conname	contype	conkey	def
+pudge_con_rot_chk	c	{1}	CHECK ((id < 100))
+pudge_con_rot_id_not_null	n	{1}	NOT NULL id
+pudge_con_rot_pk	p	{2,1}	PRIMARY KEY (x, id)
+pudge_con_rot_x_not_null	n	{2}	NOT NULL x
+pudge_con_rot_y_not_null	n	{3}	NOT NULL y
+
+
+statement ok
+ALTER TABLE pudge_con_rot ALTER COLUMN y DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE pudge_con_rot DROP CONSTRAINT pudge_con_rot_chk;
+
+
+query
+SELECT conname
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_rot'::regclass
+ORDER BY 1;
+----
+conname
+pudge_con_rot_id_not_null
+pudge_con_rot_pk
+pudge_con_rot_x_not_null
+
+
+statement ok
+ALTER TABLE pudge_con_meat DROP CONSTRAINT pudge_con_pos;
+
+
+query
+SELECT conname
+FROM pg_constraint
+WHERE conrelid = 'pudge_con_meat'::regclass
+ORDER BY 1;
+----
+conname
+pudge_con_ab_fk
+pudge_con_meat_hook_id_fkey
+pudge_con_meat_id_not_null
+pudge_con_meat_pkey
+
+
+statement ok
+DROP TABLE pudge_con_rot;
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conname LIKE 'pudge_con_rot%';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE pudge_con_flesh (a INT, b INT, c INT, CONSTRAINT pudge_con_flesh_order CHECK (c > a AND b > 0), CONSTRAINT pudge_con_flesh_always CHECK (true));
+
+
+query
+SELECT conname, conkey FROM pg_constraint WHERE conrelid = 'pudge_con_flesh'::regclass ORDER BY 1;
+----
+conname	conkey
+pudge_con_flesh_always	NULL
+pudge_con_flesh_order	{3,1,2}
+
+
+statement ok
+DROP TABLE pudge_con_flesh;
+
+
+statement ok
+DROP TABLE pudge_con_meat;
+
+
+statement ok
+DROP TABLE pudge_con_hook;
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conname LIKE 'pudge_con%';
+----
+n
+0

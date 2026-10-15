@@ -2,7 +2,6 @@ add_library(
     serene
     STATIC
     app_server.cpp
-    dtoa.cpp
     file_utils.cpp
     files.cpp
     init.cpp

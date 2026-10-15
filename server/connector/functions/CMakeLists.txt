@@ -6,16 +6,14 @@ target_sources(
         duckdb_aliases.cpp
         encode_key.cpp
         es.cpp
-        inout.cpp
+        formatting.cpp
         jobs.cpp
         json.cpp
         markdown_render.cpp
         math.cpp
         otel.cpp
         string.cpp
-        system.cpp
         minhash.cpp
-        ruleutils.cpp
         search.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
@@ -46,5 +44,5 @@ target_sources(
 
 target_link_libraries(
     sereneserver
-    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static _libxml2
 )

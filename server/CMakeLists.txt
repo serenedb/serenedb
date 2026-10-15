@@ -47,6 +47,7 @@ target_include_directories(
         # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/datetime/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/text/include
 )
 
 add_subdirectory(auth)

@@ -1,0 +1,62 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_transform'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+trftype	oid	t
+trflang	oid	t
+trffromsql	regproc	t
+trftosql	regproc	t
+
+
+query
+SELECT c.oid, c.relname, c.relkind, c.relnamespace::regnamespace::text AS nsp, c.relnatts, c.reltype::regtype::text AS rowtype, c.relisshared
+FROM pg_class c
+WHERE c.oid = 'pg_transform'::regclass;
+----
+oid	relname	relkind	nsp	relnatts	rowtype	relisshared
+3576	pg_transform	r	pg_catalog	5	pg_transform	f
+
+
+query
+SELECT t.typname, t.typtype, t.typrelid = 'pg_transform'::regclass AS linked, a.typname AS array_name
+FROM pg_type t JOIN pg_type a ON a.oid = t.typarray
+WHERE t.typname = 'pg_transform';
+----
+typname	typtype	linked	array_name
+pg_transform	c	t	_pg_transform
+
+
+query
+SELECT count(*) AS n FROM pg_transform;
+----
+n
+0
+
+
+query
+SELECT trftype, trflang, trffromsql, trftosql FROM pg_transform ORDER BY 1;
+----
+trftype	trflang	trffromsql	trftosql
+
+
+query
+SELECT trftype, trflang, trffromsql, trftosql FROM pg_transform WHERE trftype = 23;
+----
+trftype	trflang	trffromsql	trftosql
+
+
+query
+SELECT trftype, trflang, trffromsql, trftosql FROM pg_transform WHERE trflang IN (12, 13, 14);
+----
+trftype	trflang	trffromsql	trftosql
+
+
+query
+SELECT count(*) AS n FROM pg_catalog.pg_transform x JOIN pg_type t ON t.oid = 23;
+----
+n
+0

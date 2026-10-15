@@ -34,7 +34,7 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "pg/pg_types.h"
+#include "pg/catalog/oids.h"
 
 namespace sdb::auth {
 namespace {
@@ -136,6 +136,9 @@ std::shared_ptr<const RoleGraph> BuildRoleGraph(
       node.options = role.Options();
       node.is_superuser = role.IsSuperuser();
     });
+  for (const auto& [oid, node] : graph->nodes) {
+    graph->by_name.emplace(node.name, oid);
+  }
   return graph;
 }
 

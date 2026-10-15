@@ -1,0 +1,83 @@
+statement ok
+DROP ROLE IF EXISTS techies_sql_parts_mine;
+
+
+statement ok
+CREATE ROLE techies_sql_parts_mine LOGIN PASSWORD 'techies_sql_parts_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sql_parts';
+----
+relkind	nspname	relnatts
+r	information_schema	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'information_schema.sql_parts'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+feature_id	information_schema.character_data	f
+feature_name	information_schema.character_data	f
+is_supported	information_schema.yes_or_no	f
+is_verified_by	information_schema.character_data	f
+comments	information_schema.character_data	f
+
+
+query
+SELECT count(*) AS parts FROM information_schema.sql_parts;
+----
+parts
+11
+
+
+query
+SELECT feature_id, feature_name, is_supported, is_verified_by, comments
+FROM information_schema.sql_parts
+ORDER BY feature_id::text;
+----
+feature_id	feature_name	is_supported	is_verified_by	comments
+1	Framework (SQL/Framework)	NO	NULL	(empty)
+10	Object Language Bindings (SQL/OLB)	NO	NULL	(empty)
+11	Information and Definition Schema (SQL/Schemata)	NO	NULL	(empty)
+13	Routines and Types Using the Java Programming Language (SQL/JRT)	NO	NULL	(empty)
+14	XML-Related Specifications (SQL/XML)	NO	NULL	(empty)
+15	Multi-Dimensional Arrays (SQL/MDA)	NO	NULL	(empty)
+16	Property Graph Queries (SQL/PGQ)	NO	NULL	(empty)
+2	Foundation (SQL/Foundation)	NO	NULL	(empty)
+3	Call-Level Interface (SQL/CLI)	NO	NULL	(empty)
+4	Persistent Stored Modules (SQL/PSM)	NO	NULL	(empty)
+9	Management of External Data (SQL/MED)	NO	NULL	(empty)
+
+
+query
+SELECT feature_name, is_supported
+FROM information_schema.sql_parts
+WHERE feature_id = '2';
+----
+feature_name	is_supported
+Foundation (SQL/Foundation)	NO
+
+
+query
+SELECT has_table_privilege('techies_sql_parts_mine', 'information_schema.sql_parts', 'SELECT') AS can_read;
+----
+can_read
+f
+
+
+connection techies_sql_parts user=techies_sql_parts_mine password=techies_sql_parts_pw
+statement error
+SELECT count(*) FROM information_schema.sql_parts;
+----
+db error: ERROR: permission denied for table sql_parts<slt:ignore>
+
+
+connection default
+statement ok
+DROP ROLE techies_sql_parts_mine;

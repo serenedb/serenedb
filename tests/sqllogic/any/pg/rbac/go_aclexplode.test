@@ -162,6 +162,17 @@ privilege_type	is_grantable
 SELECT	t
 
 
+# ---- A constant ACL array explodes the same way as a catalog column. ----
+query
+SELECT pg_get_userbyid(grantee) AS grantee, privilege_type, is_grantable
+FROM aclexplode(ARRAY['go_acl_mop=r*w/postgres']::aclitem[])
+ORDER BY privilege_type;
+----
+grantee	privilege_type	is_grantable
+go_acl_mop	SELECT	t
+go_acl_mop	UPDATE	f
+
+
 # ---- Cleanup (table first to clear dependencies). ----
 statement ok
 DROP TABLE go_iceberg_kostya;

@@ -1,0 +1,326 @@
+statement ok
+DROP SCHEMA IF EXISTS roshan_shd_pit CASCADE;
+
+
+statement ok
+DROP DATABASE IF EXISTS roshan_shd_db;
+
+
+statement ok
+DROP ROLE IF EXISTS roshan_shd_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS roshan_shd_owner;
+
+
+query
+SELECT oid, relkind, relnatts, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_shdepend';
+----
+oid	relkind	relnatts	reltype	nsp
+1214	r	7	10060	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_shdepend'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+dbid	oid	t
+classid	oid	t
+objid	oid	t
+objsubid	integer	t
+refclassid	oid	t
+refobjid	oid	t
+deptype	"char"	t
+
+
+statement ok
+CREATE ROLE roshan_shd_owner;
+
+
+statement ok
+CREATE ROLE roshan_shd_reader;
+
+
+query
+SELECT count(*) AS n FROM pg_shdepend WHERE refobjid = 'roshan_shd_owner'::regrole;
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA roshan_shd_pit AUTHORIZATION roshan_shd_owner;
+
+
+statement ok
+CREATE TABLE roshan_shd_pit.aegis (id INT, cheese INT);
+
+
+statement ok
+ALTER TABLE roshan_shd_pit.aegis OWNER TO roshan_shd_owner;
+
+
+statement ok
+CREATE VIEW roshan_shd_pit.lair AS SELECT id FROM roshan_shd_pit.aegis;
+
+
+statement ok
+ALTER VIEW roshan_shd_pit.lair OWNER TO roshan_shd_owner;
+
+
+statement ok
+CREATE SEQUENCE roshan_shd_pit.respawn;
+
+
+statement ok
+ALTER SEQUENCE roshan_shd_pit.respawn OWNER TO roshan_shd_owner;
+
+
+statement ok
+CREATE TYPE roshan_shd_pit.drop AS ENUM ('aegis', 'cheese', 'refresher');
+
+
+statement ok
+ALTER TYPE roshan_shd_pit.drop OWNER TO roshan_shd_owner;
+
+
+query
+SELECT d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AS this_db,
+       d.classid::regclass::text AS class,
+       CASE d.classid
+         WHEN 'pg_class'::regclass THEN d.objid::regclass::text
+         WHEN 'pg_namespace'::regclass THEN d.objid::regnamespace::text
+         WHEN 'pg_type'::regclass THEN d.objid::regtype::text
+       END AS obj,
+       d.objsubid, d.refclassid::regclass::text AS refclass,
+       d.refobjid::regrole::text AS role, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_owner'::regrole
+ORDER BY 2, 3;
+----
+this_db	class	obj	objsubid	refclass	role	deptype
+t	pg_class	roshan_shd_pit.aegis	0	pg_authid	roshan_shd_owner	o
+t	pg_class	roshan_shd_pit.lair	0	pg_authid	roshan_shd_owner	o
+t	pg_class	roshan_shd_pit.respawn	0	pg_authid	roshan_shd_owner	o
+t	pg_namespace	roshan_shd_pit	0	pg_authid	roshan_shd_owner	o
+t	pg_type	roshan_shd_pit.drop	0	pg_authid	roshan_shd_owner	o
+
+
+statement ok
+GRANT SELECT ON roshan_shd_pit.aegis TO roshan_shd_reader;
+
+
+statement ok
+GRANT UPDATE (cheese) ON roshan_shd_pit.aegis TO roshan_shd_reader;
+
+
+statement ok
+GRANT USAGE ON SCHEMA roshan_shd_pit TO roshan_shd_reader;
+
+
+query
+SELECT d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AS this_db,
+       d.classid::regclass::text AS class,
+       CASE d.classid
+         WHEN 'pg_class'::regclass THEN d.objid::regclass::text
+         WHEN 'pg_namespace'::regclass THEN d.objid::regnamespace::text
+       END AS obj,
+       d.objsubid, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_reader'::regrole
+ORDER BY 2, 3, 4;
+----
+this_db	class	obj	objsubid	deptype
+t	pg_class	roshan_shd_pit.aegis	0	a
+t	pg_class	roshan_shd_pit.aegis	2	a
+t	pg_namespace	roshan_shd_pit	0	a
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_owner'::regrole AND d.deptype = 'o'
+  AND d.classid = 'pg_class'::regclass AND d.objid = 'roshan_shd_pit.aegis'::regclass;
+----
+class	objsubid	deptype
+pg_class	0	o
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_owner'::regrole
+  AND d.objid IN ('roshan_shd_pit.aegis'::regclass::oid, 'roshan_shd_pit'::regnamespace::oid)
+ORDER BY 1, 2;
+----
+class	objsubid	deptype
+pg_class	0	o
+pg_namespace	0	o
+
+
+query
+SELECT count(*) AS n FROM pg_shdepend WHERE refobjid = 'roshan_shd_reader'::regrole;
+----
+n
+3
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM pg_shdepend OFFSET 0) d
+WHERE d.refobjid = 'roshan_shd_reader'::regrole;
+----
+n
+3
+
+
+statement error
+DROP ROLE roshan_shd_reader;
+
+
+statement ok
+REVOKE SELECT ON roshan_shd_pit.aegis FROM roshan_shd_reader;
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_reader'::regrole
+ORDER BY 1, 2;
+----
+class	objsubid	deptype
+pg_class	2	a
+pg_namespace	0	a
+
+
+statement ok
+ALTER SEQUENCE roshan_shd_pit.respawn OWNER TO roshan_shd_reader;
+
+
+query
+SELECT d.objid::regclass::text AS obj, d.refobjid::regrole::text AS role, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid IN ('roshan_shd_owner'::regrole, 'roshan_shd_reader'::regrole)
+  AND d.classid = 'pg_class'::regclass AND d.objid = 'roshan_shd_pit.respawn'::regclass;
+----
+obj	role	deptype
+roshan_shd_pit.respawn	roshan_shd_reader	o
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE roshan_shd_owner IN SCHEMA roshan_shd_pit GRANT SELECT ON TABLES TO roshan_shd_reader;
+
+
+query
+SELECT d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AS this_db,
+       d.objsubid, d.refobjid::regrole::text AS role, d.deptype
+FROM pg_shdepend d
+WHERE d.classid = 'pg_default_acl'::regclass AND d.refobjid = 'roshan_shd_reader'::regrole;
+----
+this_db	objsubid	role	deptype
+t	0	roshan_shd_reader	a
+
+
+query
+SELECT d.objsubid, d.refobjid::regrole::text AS role, d.deptype
+FROM pg_shdepend d
+WHERE d.classid = 'pg_default_acl'::regclass AND d.refobjid = 'roshan_shd_owner'::regrole
+  AND d.deptype = 'o';
+----
+objsubid	role	deptype
+0	roshan_shd_owner	o
+
+
+query
+SELECT d.deptype
+FROM pg_shdepend d
+WHERE d.classid = 'pg_default_acl'::regclass AND d.refobjid = 'roshan_shd_owner'::regrole;
+----
+deptype
+o
+
+
+query
+SELECT d.refobjid::regrole::text AS role, d.deptype
+FROM pg_shdepend d JOIN pg_default_acl a ON a.oid = d.objid
+WHERE d.classid = 'pg_default_acl'::regclass
+  AND d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+  AND a.defaclrole = 'roshan_shd_owner'::regrole
+  AND a.defaclnamespace = 'roshan_shd_pit'::regnamespace
+ORDER BY 1;
+----
+role	deptype
+roshan_shd_owner	o
+roshan_shd_reader	a
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE roshan_shd_owner IN SCHEMA roshan_shd_pit REVOKE SELECT ON TABLES FROM roshan_shd_reader;
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdepend d
+WHERE d.classid = 'pg_default_acl'::regclass
+  AND d.refobjid IN ('roshan_shd_owner'::regrole, 'roshan_shd_reader'::regrole);
+----
+n
+0
+
+
+statement ok
+CREATE DATABASE roshan_shd_db;
+
+
+statement ok
+GRANT CONNECT ON DATABASE roshan_shd_db TO roshan_shd_reader;
+
+
+query
+SELECT d.dbid, d.classid::regclass::text AS class,
+       d.objid = (SELECT oid FROM pg_database WHERE datname = 'roshan_shd_db') AS is_db,
+       d.objsubid, d.deptype
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_reader'::regrole AND d.classid = 'pg_database'::regclass;
+----
+dbid	class	is_db	objsubid	deptype
+0	pg_database	t	0	a
+
+
+statement ok
+DROP DATABASE roshan_shd_db;
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdepend d
+WHERE d.refobjid = 'roshan_shd_reader'::regrole AND d.classid = 'pg_database'::regclass;
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA roshan_shd_pit CASCADE;
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdepend
+WHERE refobjid IN ('roshan_shd_owner'::regrole, 'roshan_shd_reader'::regrole);
+----
+n
+0
+
+
+statement ok
+DROP ROLE roshan_shd_reader;
+
+
+statement ok
+DROP ROLE roshan_shd_owner;

@@ -1,0 +1,64 @@
+control substitution on
+
+statement ok
+CREATE TYPE pudge_pair AS (a INTEGER, b TEXT);
+
+statement ok
+CREATE VIEW pudge_record AS
+SELECT *
+FROM json_to_record('{"a": 322, "b": "clickclack", "m": "08:00:2b:01:02:03", "n": 12.345, "p": {"a": 1, "b": "x"}}')
+  AS t(a INTEGER, b TEXT, m MACADDR, n NUMERIC(10,2), p pudge_pair);
+
+statement ok
+CREATE VIEW pudge_recordset AS
+SELECT *
+FROM json_to_recordset('[{"a": 1, "c": [1, 2]}, {"a": 2, "c": []}]') AS (a INTEGER, c INTEGER[]);
+
+statement ok
+CREATE FUNCTION pudge_fn() RETURNS INTEGER LANGUAGE SQL
+RETURN (SELECT a FROM json_to_record('{"a": 993}') AS t(a INTEGER));
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM pudge_record;
+----
+a	b	m	n	p
+322	clickclack	08:00:2b:01:02:03	12.35	(1,x)
+
+connection after_crash
+query
+SELECT * FROM pudge_recordset ORDER BY a;
+----
+a	c
+1	{1,2}
+2	{}
+
+connection after_crash
+query
+SELECT pudge_fn();
+----
+pudge_fn
+993
+
+connection after_crash
+statement ok
+DROP FUNCTION pudge_fn;
+
+connection after_crash
+statement ok
+DROP VIEW pudge_recordset;
+
+connection after_crash
+statement ok
+DROP VIEW pudge_record;
+
+connection after_crash
+statement ok
+DROP TYPE pudge_pair;

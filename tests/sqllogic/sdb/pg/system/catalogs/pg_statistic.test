@@ -1,0 +1,121 @@
+statement ok
+DROP TABLE IF EXISTS meepo_poof;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_statistic_clone;
+
+
+statement ok
+CREATE ROLE meepo_statistic_clone LOGIN PASSWORD 'meepo_statistic_pw';
+
+
+statement ok
+CREATE TABLE meepo_poof (id int, hero text);
+
+
+statement ok
+INSERT INTO meepo_poof VALUES (1, 'meepo'), (2, 'pudge');
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, relpersistence, reltype
+FROM pg_class
+WHERE relname = 'pg_statistic';
+----
+oid	relkind	relnatts	relisshared	relpersistence	reltype
+2619	r	31	f	p	10029
+
+
+query
+SELECT attname, atttypid, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	atttypid	type	attnotnull
+starelid	26	oid	t
+staattnum	21	smallint	t
+stainherit	16	boolean	t
+stanullfrac	700	real	t
+stawidth	23	integer	t
+stadistinct	700	real	t
+stakind1	21	smallint	t
+stakind2	21	smallint	t
+stakind3	21	smallint	t
+stakind4	21	smallint	t
+stakind5	21	smallint	t
+staop1	26	oid	t
+staop2	26	oid	t
+staop3	26	oid	t
+staop4	26	oid	t
+staop5	26	oid	t
+stacoll1	26	oid	t
+stacoll2	26	oid	t
+stacoll3	26	oid	t
+stacoll4	26	oid	t
+stacoll5	26	oid	t
+stanumbers1	1021	real[]	f
+stanumbers2	1021	real[]	f
+stanumbers3	1021	real[]	f
+stanumbers4	1021	real[]	f
+stanumbers5	1021	real[]	f
+stavalues1	2277	anyarray	f
+stavalues2	2277	anyarray	f
+stavalues3	2277	anyarray	f
+stavalues4	2277	anyarray	f
+stavalues5	2277	anyarray	f
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic;
+----
+readable
+t
+
+
+query
+SELECT starelid, staattnum, stainherit
+FROM pg_statistic
+WHERE starelid = 'meepo_poof'::regclass;
+----
+starelid	staattnum	stainherit
+
+
+query
+SELECT starelid
+FROM pg_statistic
+WHERE starelid = 'meepo_poof'::regclass AND staattnum = 1 AND NOT stainherit;
+----
+starelid
+
+
+query
+SELECT has_table_privilege('meepo_statistic_clone', 'pg_statistic', 'SELECT') AS can_read;
+----
+can_read
+f
+
+
+connection meepo_statistic user=meepo_statistic_clone password=meepo_statistic_pw
+statement error
+SELECT count(*) FROM pg_statistic;
+----
+db error: ERROR: permission denied for table pg_statistic<slt:ignore>
+
+
+connection meepo_statistic user=meepo_statistic_clone password=meepo_statistic_pw
+statement error
+SELECT starelid FROM pg_statistic WHERE starelid = 'meepo_poof'::regclass;
+----
+db error: ERROR: permission denied for table pg_statistic<slt:ignore>
+
+
+connection default
+statement ok
+DROP TABLE meepo_poof;
+
+
+connection default
+statement ok
+DROP ROLE meepo_statistic_clone;

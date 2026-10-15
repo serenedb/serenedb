@@ -1,0 +1,162 @@
+statement ok
+DROP TABLE IF EXISTS invoker_col_spells;
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_collation'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+collname	name	t
+collnamespace	oid	t
+collowner	oid	t
+collprovider	"char"	t
+collisdeterministic	boolean	t
+collencoding	integer	t
+collcollate	text	f
+collctype	text	f
+colllocale	text	f
+collicurules	text	f
+collversion	text	f
+
+
+query
+SELECT oid, collname, collnamespace::regnamespace::text AS nsp, collprovider, collisdeterministic, collencoding, collcollate, collctype, colllocale IS NULL AS no_locale, collicurules IS NULL AS no_rules, collversion IS NULL AS no_version
+FROM pg_collation
+WHERE oid IN (100, 950, 951)
+ORDER BY oid;
+----
+oid	collname	nsp	collprovider	collisdeterministic	collencoding	collcollate	collctype	no_locale	no_rules	no_version
+100	default	pg_catalog	d	t	-1	NULL	NULL	t	t	t
+950	C	pg_catalog	c	t	-1	C	C	t	t	t
+951	POSIX	pg_catalog	c	t	-1	POSIX	POSIX	t	t	t
+
+
+query
+SELECT count(*) = count(DISTINCT oid) AS oids_unique, count(*) = count(DISTINCT (collname, collnamespace, collencoding)) AS names_unique
+FROM pg_collation;
+----
+oids_unique	names_unique
+t	t
+
+
+query
+SELECT count(*) AS bad_owner FROM pg_collation c WHERE NOT EXISTS (SELECT 1 FROM pg_authid a WHERE a.oid = c.collowner);
+----
+bad_owner
+0
+
+
+query
+SELECT collname FROM pg_collation WHERE collname = 'C';
+----
+collname
+C
+
+
+query
+SELECT collname FROM pg_collation WHERE oid IN (950, 100, 12345) ORDER BY oid;
+----
+collname
+default
+C
+
+
+query
+SELECT '"C"'::regcollation::text AS c, 950::regcollation::text AS by_oid, '"POSIX"'::regcollation::oid AS posix, 'default'::regcollation::oid AS dflt, 100::regcollation::text AS dflt_name, to_regcollation('invoker_col_nope') IS NULL AS missing;
+----
+c	by_oid	posix	dflt	dflt_name	missing
+"C"	"C"	951	100	"default"	t
+
+
+statement error
+SELECT 'C'::regcollation;
+
+
+query
+SELECT t.typname, c.collname
+FROM pg_type t JOIN pg_collation c ON c.oid = t.typcollation
+WHERE t.oid IN (19, 25, 1043, 13312)
+ORDER BY t.oid;
+----
+typname	collname
+name	C
+text	default
+varchar	default
+sql_identifier	C
+
+
+query
+SELECT count(*) AS dangling
+FROM pg_type t
+WHERE t.typcollation <> 0 AND NOT EXISTS (SELECT 1 FROM pg_collation c WHERE c.oid = t.typcollation);
+----
+dangling
+0
+
+
+query
+SELECT (SELECT count(*) FROM pg_collation) - 3 = (SELECT count(*) FROM pragma_collations()) AS every_duckdb_collation,
+       (SELECT count(*) FROM pg_collation WHERE oid >= 17384 AND collname NOT IN (SELECT collname FROM pragma_collations())) AS unknown
+----
+every_duckdb_collation	unknown
+t	0
+
+
+query
+SELECT collname, collnamespace::regnamespace::text AS nsp, collprovider, collisdeterministic, collcollate, collctype, colllocale
+FROM pg_collation
+WHERE collname IN ('nocase', 'noaccent', 'nfc', 'de')
+ORDER BY collname;
+----
+collname	nsp	collprovider	collisdeterministic	collcollate	collctype	colllocale
+de	pg_catalog	i	f	NULL	NULL	de
+nfc	pg_catalog	b	f	NULL	NULL	NULL
+noaccent	pg_catalog	b	f	NULL	NULL	NULL
+nocase	pg_catalog	b	f	NULL	NULL	NULL
+
+
+query
+SELECT 'nocase'::regcollation::text AS by_name, ('nocase'::regcollation::oid)::regcollation::text AS by_oid
+----
+by_name	by_oid
+nocase	nocase
+
+
+statement ok
+CREATE TABLE invoker_col_spells (name text, code varchar(10), n int, folded text COLLATE nocase, german text COLLATE de, bytes text COLLATE "C", stacked text COLLATE "nocase.noaccent");
+
+
+query
+SELECT a.attname, a.attcollation::regcollation::text AS coll
+FROM pg_attribute a
+WHERE a.attrelid = 'invoker_col_spells'::regclass AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	coll
+name	"default"
+code	"default"
+n	-
+folded	nocase
+german	de
+bytes	"C"
+stacked	-
+
+
+query
+SELECT column_name, collation_name
+FROM information_schema.columns
+WHERE table_name = 'invoker_col_spells' AND collation_name IS NOT NULL
+ORDER BY ordinal_position;
+----
+column_name	collation_name
+folded	nocase
+german	de
+bytes	C
+
+
+statement ok
+DROP TABLE invoker_col_spells;

@@ -34,6 +34,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/snapshot.h"
 
 namespace duckdb {
 
@@ -53,13 +54,13 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::DatabaseModificationType type =
                        duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
 
-class SereneDBCatalog final : public duckdb::DuckCatalog {
+class SereneDBCatalog final : public SnapshotCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+    : SnapshotCatalog{db, true}, _directory{std::move(directory)} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
@@ -125,7 +126,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateJobInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
-    duckdb::ClientContext& context, duckdb::idx_t id);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t id);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> FindEntryById(
     duckdb::optional_ptr<duckdb::ClientContext> context,

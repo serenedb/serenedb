@@ -22,22 +22,53 @@
 
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
+#include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/enums/date_part_specifier.hpp>
+#include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/types/date.hpp>
+#include <duckdb/common/types/decimal.hpp>
+#include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/common/vector_operations/ternary_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <icu-datefunc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
-#include <random>
+#include <numbers>
+#include <optional>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+#include "connector/functions/duckdb_aliases.h"
+#include "connector/functions/random.h"
+#include "pg/types/float.h"
 
 namespace sdb::connector {
 namespace {
+
+using pg::ThrowDivisionByZero;
+using pg::ThrowFloatOverflow;
+using pg::ThrowFloatUnderflow;
+
+constexpr uint8_t kNumericWidth = 18;
+constexpr uint8_t kNumericScale = 3;
 
 void ErfFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                  duckdb::Vector& result) {
@@ -53,17 +84,47 @@ void ErfcFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](double x) -> double { return std::erfc(x); });
 }
 
-void RandomNormalFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+void RandomNormalFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  thread_local std::mt19937_64 gen{std::random_device{}()};
-  auto& mean_vec = args.data[0];
-  auto& stddev_vec = args.data[1];
-  duckdb::BinaryExecutor::Execute<double, double, double>(
-    mean_vec, stddev_vec, result, args.size(),
-    [](double mean, double stddev) -> double {
-      std::normal_distribution<double> dist(mean, stddev);
-      return dist(gen);
-    });
+  auto& random = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                   ->Cast<RandomState>()
+                   .random;
+  std::optional<duckdb::VectorIterator<double>> means;
+  std::optional<duckdb::VectorIterator<double>> stddevs;
+  if (args.ColumnCount() > 0) {
+    means.emplace(args.data[0]);
+  }
+  if (args.ColumnCount() > 1) {
+    stddevs.emplace(args.data[1]);
+  }
+  const auto count = args.size();
+  auto writer = duckdb::FlatVector::Writer<double>(result, count);
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    double mean = 0;
+    double stddev = 1;
+    if (means) {
+      const auto entry = (*means)[row];
+      if (!entry.IsValid()) {
+        writer.WriteNull();
+        continue;
+      }
+      mean = entry.GetValue();
+    }
+    if (stddevs) {
+      const auto entry = (*stddevs)[row];
+      if (!entry.IsValid()) {
+        writer.WriteNull();
+        continue;
+      }
+      stddev = entry.GetValue();
+    }
+    const auto u1 = 1.0 - random.NextRandom();
+    const auto u2 = random.NextRandom();
+    writer.WriteValue(stddev * std::sqrt(-2.0 * std::log(u1)) *
+                        std::sin(2.0 * std::numbers::pi * u2) +
+                      mean);
+  }
 }
 
 // div(y, x) -> bigint -- PG-compatible, ported from Velox PgDiv
@@ -73,8 +134,7 @@ void DivIntFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](int64_t y, int64_t x) -> int64_t {
       if (x == 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                        ERR_MSG("division by zero"));
+        ThrowDivisionByZero();
       }
       if (y == std::numeric_limits<int64_t>::min() && x == -1) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -90,8 +150,7 @@ void DivDoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](double y, double x) -> int64_t {
       if (x == 0.0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                        ERR_MSG("division by zero"));
+        ThrowDivisionByZero();
       }
       double truncated = std::trunc(y / x);
       if (truncated <
@@ -179,6 +238,38 @@ void LcmInt64Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+duckdb::hugeint_t DecimalGcd(duckdb::hugeint_t a, duckdb::hugeint_t b) {
+  a = duckdb::Hugeint::Abs(a);
+  b = duckdb::Hugeint::Abs(b);
+  while (b != 0) {
+    a = std::exchange(b, a % b);
+  }
+  return a;
+}
+
+duckdb::hugeint_t DecimalLcm(duckdb::hugeint_t a, duckdb::hugeint_t b) {
+  if (a == 0 || b == 0) {
+    return 0;
+  }
+  duckdb::hugeint_t lcm;
+  if (!duckdb::Hugeint::TryMultiply(duckdb::Hugeint::Abs(a) / DecimalGcd(a, b),
+                                    duckdb::Hugeint::Abs(b), lcm) ||
+      lcm >=
+        duckdb::Hugeint::POWERS_OF_TEN[duckdb::Decimal::MAX_WIDTH_DECIMAL]) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("numeric field overflow"));
+  }
+  return lcm;
+}
+
+template<auto Apply>
+void DecimalGcdFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<duckdb::hugeint_t, duckdb::hugeint_t,
+                                  duckdb::hugeint_t>(
+    args.data[0], args.data[1], result, args.size(), Apply);
+}
+
 // log(base, value) -> double -- PG-compatible, ported from Velox PgLogBase
 void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
@@ -202,10 +293,9 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         ERR_MSG("cannot take logarithm of a negative number"));
       }
       if (base == 1.0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                        ERR_MSG("division by zero"));
+        ThrowDivisionByZero();
       }
-      return std::log(value) / std::log(base);
+      return std::log10(value) / std::log10(base);
     });
 }
 
@@ -218,8 +308,7 @@ void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), [](double x) -> double {
       double t = std::tan(x * kDegreesToRadians);
       if (t == 0.0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                        ERR_MSG("division by zero"));
+        ThrowDivisionByZero();
       }
       return 1.0 / t;
     });
@@ -299,6 +388,10 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [](duckdb::interval_t stride, duckdb::timestamp_t source,
        duckdb::timestamp_t origin) -> duckdb::timestamp_t {
+      if (!origin.IsFinite()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("origin out of range"));
+      }
       if (stride.micros <= 0 && stride.days <= 0 && stride.months <= 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
@@ -332,10 +425,494 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+constexpr int32_t kDaysPerMonth = 30;
+
+int32_t AddIntervalField(int32_t field, int64_t delta) {
+  const auto sum = static_cast<int64_t>(field) + delta;
+  if (sum < std::numeric_limits<int32_t>::min() ||
+      sum > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("interval out of range"));
+  }
+  return static_cast<int32_t>(sum);
+}
+
+void MonthsFromDays(duckdb::interval_t& span) {
+  const auto months = span.days / kDaysPerMonth;
+  span.days -= months * kDaysPerMonth;
+  span.months = AddIntervalField(span.months, months);
+}
+
+void DaysFromMicros(duckdb::interval_t& span) {
+  const auto days = span.micros / duckdb::Interval::MICROS_PER_DAY;
+  span.micros -= days * duckdb::Interval::MICROS_PER_DAY;
+  span.days = AddIntervalField(span.days, days);
+}
+
+void AlignDaysToMicros(duckdb::interval_t& span) {
+  if (span.days > 0 && span.micros < 0) {
+    span.micros += duckdb::Interval::MICROS_PER_DAY;
+    --span.days;
+  } else if (span.days < 0 && span.micros > 0) {
+    span.micros -= duckdb::Interval::MICROS_PER_DAY;
+    ++span.days;
+  }
+}
+
+duckdb::interval_t JustifyDays(duckdb::interval_t span) {
+  MonthsFromDays(span);
+  if (span.months > 0 && span.days < 0) {
+    span.days += kDaysPerMonth;
+    --span.months;
+  } else if (span.months < 0 && span.days > 0) {
+    span.days -= kDaysPerMonth;
+    ++span.months;
+  }
+  return span;
+}
+
+duckdb::interval_t JustifyHours(duckdb::interval_t span) {
+  DaysFromMicros(span);
+  AlignDaysToMicros(span);
+  return span;
+}
+
+duckdb::interval_t JustifyInterval(duckdb::interval_t span) {
+  if ((span.days > 0 && span.micros > 0) ||
+      (span.days < 0 && span.micros < 0)) {
+    MonthsFromDays(span);
+  }
+  DaysFromMicros(span);
+  MonthsFromDays(span);
+  if (span.months > 0 &&
+      (span.days < 0 || (span.days == 0 && span.micros < 0))) {
+    span.days += kDaysPerMonth;
+    --span.months;
+  } else if (span.months < 0 &&
+             (span.days > 0 || (span.days == 0 && span.micros > 0))) {
+    span.days -= kDaysPerMonth;
+    ++span.months;
+  }
+  AlignDaysToMicros(span);
+  return span;
+}
+
+template<duckdb::interval_t (*Justify)(duckdb::interval_t)>
+void JustifyFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
+    args.data[0], result, args.size(), Justify);
+}
+
+double PgExp(double x) {
+  if (std::isnan(x)) {
+    return x;
+  }
+  if (std::isinf(x)) {
+    return x > 0 ? x : 0;
+  }
+  const auto result = std::exp(x);
+  if (std::isinf(result)) {
+    ThrowFloatOverflow();
+  }
+  if (result == 0.0) {
+    ThrowFloatUnderflow();
+  }
+  return result;
+}
+
+template<double (*Log)(double)>
+double PgLog(double x) {
+  if (x == 0.0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                    ERR_MSG("cannot take logarithm of zero"));
+  }
+  if (x < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
+                    ERR_MSG("cannot take logarithm of a negative number"));
+  }
+  const auto result = Log(x);
+  if (std::isinf(result) && !std::isinf(x)) {
+    ThrowFloatOverflow();
+  }
+  if (result == 0.0 && x != 1.0) {
+    ThrowFloatUnderflow();
+  }
+  return result;
+}
+
+double PgSqrt(double x) {
+  if (x < 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_POWER_FUNCTION),
+                    ERR_MSG("cannot take square root of a negative number"));
+  }
+  return std::sqrt(x);
+}
+
+template<double (*Function)(double)>
+void DoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<double, double>(args.data[0], result,
+                                                 args.size(), Function);
+}
+
+duckdb::LogicalType DecimalArgument(duckdb::BindScalarFunctionInput& input,
+                                    duckdb::idx_t index) {
+  uint8_t width = 0;
+  uint8_t scale = 0;
+  if (!input.GetArguments()[index]->GetReturnType().GetDecimalProperties(
+        width, scale) ||
+      width == 0) {
+    width = kNumericWidth;
+    scale = kNumericScale;
+  }
+  const auto type = duckdb::LogicalType::DECIMAL(width, scale);
+  input.GetBoundFunction().GetArguments()[index] = type;
+  return type;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindScale(
+  duckdb::BindScalarFunctionInput& input) {
+  DecimalArgument(input, 0);
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindDecimalGcd(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto type = duckdb::LogicalType::DECIMAL(
+    duckdb::Decimal::MAX_WIDTH_DECIMAL,
+    std::max(duckdb::DecimalType::GetScale(DecimalArgument(input, 0)),
+             duckdb::DecimalType::GetScale(DecimalArgument(input, 1))));
+  auto& function = input.GetBoundFunction();
+  function.GetArguments()[0] = type;
+  function.GetArguments()[1] = type;
+  function.SetReturnType(type);
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::Expression> ScaleExpression(
+  duckdb::FunctionBindExpressionInput& input) {
+  const auto scale =
+    duckdb::DecimalType::GetScale(input.children[0]->GetReturnType());
+  return duckdb::ExpressionRewriter::ConstantOrNull(
+    input.context, std::move(input.children), duckdb::Value::INTEGER(scale));
+}
+
+template<typename T>
+int32_t MinScale(T value, int32_t scale) {
+  for (; scale > 0 && value % T(10) == T(0); --scale) {
+    value /= T(10);
+  }
+  return scale;
+}
+
+template<typename T>
+void MinScaleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  const int32_t scale = duckdb::DecimalType::GetScale(args.data[0].GetType());
+  duckdb::UnaryExecutor::Execute<T, int32_t>(
+    args.data[0], result, args.size(),
+    [&](T value) { return MinScale(value, scale); });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindTrimScale(
+  duckdb::BindScalarFunctionInput& input) {
+  input.GetBoundFunction().SetReturnType(DecimalArgument(input, 0));
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::Expression> TrimScaleExpression(
+  duckdb::FunctionBindExpressionInput& input) {
+  auto& child = input.children[0];
+  if (!child->IsFoldable()) {
+    return std::move(child);
+  }
+  const auto value =
+    duckdb::ExpressionExecutor::EvaluateScalar(input.context, *child);
+  if (value.IsNull()) {
+    return std::move(child);
+  }
+  const auto width = duckdb::DecimalType::GetWidth(value.type());
+  const auto scale = duckdb::DecimalType::GetScale(value.type());
+  const auto trimmed =
+    static_cast<uint8_t>(MinScale(duckdb::IntegralValue::Get(value), scale));
+  const auto type = duckdb::LogicalType::DECIMAL(
+    std::max<uint8_t>(width - scale + trimmed, 1), trimmed);
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    value.DefaultCastAs(type));
+}
+
+using Int256 = boost::multiprecision::int256_t;
+
+Int256 Pow10(uint8_t exponent) {
+  Int256 power = 1;
+  for (uint8_t i = 0; i < exponent; ++i) {
+    power *= 10;
+  }
+  return power;
+}
+
+Int256 ToInt256(duckdb::hugeint_t value) {
+  return Int256{value.upper} * (Int256{1} << 64) + Int256{value.lower};
+}
+
+duckdb::hugeint_t ToHugeint(const Int256& value) {
+  const Int256 magnitude = boost::multiprecision::abs(value);
+  const duckdb::hugeint_t result{
+    static_cast<int64_t>(static_cast<uint64_t>(magnitude >> 64)),
+    static_cast<uint64_t>(magnitude & std::numeric_limits<uint64_t>::max())};
+  return value < 0 ? -result : result;
+}
+
+void DivTruncFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  const auto dividend_scale =
+    duckdb::DecimalType::GetScale(args.data[0].GetType());
+  const auto divisor_scale =
+    duckdb::DecimalType::GetScale(args.data[1].GetType());
+  const auto dividend_factor = Pow10(divisor_scale);
+  const auto divisor_factor = Pow10(dividend_scale);
+  const auto limit = Pow10(duckdb::Decimal::MAX_WIDTH_DECIMAL);
+  duckdb::BinaryExecutor::Execute<duckdb::hugeint_t, duckdb::hugeint_t,
+                                  duckdb::hugeint_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::hugeint_t dividend, duckdb::hugeint_t divisor) {
+      if (divisor == duckdb::hugeint_t{0}) {
+        ThrowDivisionByZero();
+      }
+      const Int256 quotient = ToInt256(dividend) * dividend_factor /
+                              (ToInt256(divisor) * divisor_factor);
+      if (boost::multiprecision::abs(quotient) >= limit) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("value overflows numeric format"));
+      }
+      return ToHugeint(quotient);
+    });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindDivTrunc(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& function = input.GetBoundFunction();
+  for (duckdb::idx_t i = 0; i < 2; ++i) {
+    function.GetArguments()[i] = duckdb::LogicalType::DECIMAL(
+      duckdb::Decimal::MAX_WIDTH_DECIMAL,
+      duckdb::DecimalType::GetScale(DecimalArgument(input, i)));
+  }
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindMinScale(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto physical = DecimalArgument(input, 0).InternalType();
+  auto& function = input.GetBoundFunction();
+  if (physical == duckdb::PhysicalType::INT16) {
+    function.SetFunctionCallback(MinScaleFunction<int16_t>);
+  } else if (physical == duckdb::PhysicalType::INT32) {
+    function.SetFunctionCallback(MinScaleFunction<int32_t>);
+  } else if (physical == duckdb::PhysicalType::INT64) {
+    function.SetFunctionCallback(MinScaleFunction<int64_t>);
+  } else {
+    function.SetFunctionCallback(MinScaleFunction<duckdb::hugeint_t>);
+  }
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindDateSubtract(
+  duckdb::FunctionBindExpressionInput& input) {
+  return duckdb::FunctionBinder{input.context}.BindScalarFunction(
+    duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"-"},
+    std::move(input.children), true);
+}
+
+duckdb::TZCalendar SessionCalendar(duckdb::ExpressionState& state) {
+  const auto& info = state.expr.Cast<duckdb::BoundFunctionExpression>()
+                       .BindInfo()
+                       ->Cast<duckdb::ICUDateFunc::BindData>();
+  return {*info.calendar, info.cal_setting};
+}
+
+void DateSubtractInZoneFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
+  auto& zones = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<duckdb::ICUDateFunc::CalendarCacheState>();
+  auto calendar = SessionCalendar(state);
+  const auto subtract = [&](duckdb::timestamp_tz_t instant,
+                            duckdb::interval_t span) {
+    return duckdb::ICUDateFunc::Sub(calendar, instant, span);
+  };
+  auto& zone = args.data[2];
+  if (zone.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    if (duckdb::ConstantVector::IsNull(zone)) {
+      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(result, true);
+      return;
+    }
+    zones.SetTimeZone(calendar.GetCalendar(),
+                      *duckdb::ConstantVector::GetData<duckdb::string_t>(zone));
+    duckdb::BinaryExecutor::Execute<duckdb::timestamp_tz_t, duckdb::interval_t,
+                                    duckdb::timestamp_tz_t>(
+      args.data[0], args.data[1], result, args.size(), subtract);
+    return;
+  }
+  duckdb::TernaryExecutor::Execute<duckdb::timestamp_tz_t, duckdb::interval_t,
+                                   duckdb::string_t, duckdb::timestamp_tz_t>(
+    args.data[0], args.data[1], zone, result, args.size(),
+    [&](duckdb::timestamp_tz_t instant, duckdb::interval_t span,
+        duckdb::string_t name) {
+      zones.SetTimeZone(calendar.GetCalendar(), name);
+      return subtract(instant, span);
+    });
+}
+
+void DateTruncInZoneFunction(duckdb::DataChunk& args,
+                             duckdb::ExpressionState& state,
+                             duckdb::Vector& result) {
+  auto& zones = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<duckdb::ICUDateFunc::CalendarCacheState>();
+  auto calendar = SessionCalendar(state);
+  duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::timestamp_tz_t,
+                                   duckdb::string_t, duckdb::timestamp_tz_t>(
+    args.data[0], args.data[1], args.data[2], result, args.size(),
+    [&](duckdb::string_t part, duckdb::timestamp_tz_t instant,
+        duckdb::string_t name) {
+      if (!instant.IsFinite()) {
+        return instant;
+      }
+      const auto truncate =
+        duckdb::ICUDateFunc::TruncationFactory(duckdb::GetDatePartSpecifier(
+          std::string_view{part.GetData(), part.GetSize()}));
+      zones.SetTimeZone(calendar.GetCalendar(), name);
+      auto micros =
+        duckdb::ICUDateFunc::SetTime(calendar.GetCalendar(), instant);
+      truncate(calendar.GetCalendar(), micros);
+      return duckdb::ICUDateFunc::GetTimeUnsafe(calendar.GetCalendar(), micros);
+    });
+}
+
+template<typename T>
+std::optional<bool> Overlaps(std::optional<T> start1, std::optional<T> end1,
+                             std::optional<T> start2, std::optional<T> end2) {
+  if (!start1 || (end1 && *start1 > *end1)) {
+    std::swap(start1, end1);
+  }
+  if (!start2 || (end2 && *start2 > *end2)) {
+    std::swap(start2, end2);
+  }
+  if (!start1 || !start2) {
+    return std::nullopt;
+  }
+  if (*start1 > *start2) {
+    if (!end2) {
+      return std::nullopt;
+    }
+    if (*start1 < *end2) {
+      return true;
+    }
+    if (!end1) {
+      return std::nullopt;
+    }
+    return false;
+  }
+  if (*start1 < *start2) {
+    if (!end1) {
+      return std::nullopt;
+    }
+    if (*start2 < *end1) {
+      return true;
+    }
+    if (!end2) {
+      return std::nullopt;
+    }
+    return false;
+  }
+  if (!end1 || !end2) {
+    return std::nullopt;
+  }
+  return true;
+}
+
+template<typename T>
+std::optional<T> PeriodStart(const auto& start) {
+  if (!start.IsValid()) {
+    return std::nullopt;
+  }
+  return start.GetValue();
+}
+
+template<typename T, typename End>
+std::optional<T> PeriodEnd(const auto& start, const auto& end,
+                           const auto& add) {
+  if (!end.IsValid()) {
+    return std::nullopt;
+  }
+  if constexpr (std::is_same_v<End, duckdb::interval_t>) {
+    if (!start.IsValid()) {
+      return std::nullopt;
+    }
+    return add(start.GetValue(), end.GetValue());
+  } else {
+    return end.GetValue();
+  }
+}
+
+template<typename T, typename End1, typename End2>
+void ExecuteOverlaps(duckdb::DataChunk& args, duckdb::Vector& result,
+                     const auto& add) {
+  const auto start1 = args.data[0].Values<T>();
+  const auto end1 = args.data[1].Values<End1>();
+  const auto start2 = args.data[2].Values<T>();
+  const auto end2 = args.data[3].Values<End2>();
+  auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto overlaps =
+      Overlaps<T>(PeriodStart<T>(start1[row]),
+                  PeriodEnd<T, End1>(start1[row], end1[row], add),
+                  PeriodStart<T>(start2[row]),
+                  PeriodEnd<T, End2>(start2[row], end2[row], add));
+    if (overlaps) {
+      out.WriteValue(*overlaps);
+    } else {
+      out.WriteNull();
+    }
+  }
+}
+
+template<typename T, typename End1, typename End2>
+void OverlapsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  ExecuteOverlaps<T, End1, End2>(
+    args, result, [](auto start, duckdb::interval_t length) {
+      if constexpr (std::is_same_v<decltype(start), duckdb::dtime_t>) {
+        return duckdb::AddTimeOperator::Operation<
+          duckdb::dtime_t, duckdb::interval_t, duckdb::dtime_t>(start, length);
+      } else {
+        return duckdb::AddOperator::Operation<
+          duckdb::timestamp_t, duckdb::interval_t, duckdb::timestamp_t>(start,
+                                                                        length);
+      }
+    });
+}
+
+template<typename End1, typename End2>
+void OverlapsInSessionZoneFunction(duckdb::DataChunk& args,
+                                   duckdb::ExpressionState& state,
+                                   duckdb::Vector& result) {
+  auto calendar = SessionCalendar(state);
+  ExecuteOverlaps<duckdb::timestamp_tz_t, End1, End2>(
+    args, result, [&](duckdb::timestamp_tz_t start, duckdb::interval_t length) {
+      return duckdb::ICUDateFunc::Add(calendar, start, length);
+    });
+}
+
 }  // namespace
 
 void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
+
+  RegisterScalarAlias(loader, "xor", "#");
+  RegisterScalarAlias(loader, "sqrt", "|/");
+  RegisterScalarAlias(loader, "cbrt", "||/");
 
   loader.RegisterFunction(duckdb::ScalarFunction{"erf",
                                                  {duckdb::LogicalType::DOUBLE},
@@ -376,6 +953,12 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       GcdInt64Function});
+    gcd_set.AddFunction(duckdb::ScalarFunction{
+      "gcd",
+      {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
+      duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
+      DecimalGcdFunction<&DecimalGcd>,
+      BindDecimalGcd});
     loader.RegisterFunction(gcd_set);
   }
 
@@ -392,6 +975,14 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       LcmInt64Function});
+    duckdb::ScalarFunction lcm_decimal{
+      "lcm",
+      {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
+      duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
+      DecimalGcdFunction<&DecimalLcm>,
+      BindDecimalGcd};
+    lcm_decimal.SetFallible();
+    lcm_set.AddFunction(std::move(lcm_decimal));
     loader.RegisterFunction(lcm_set);
   }
 
@@ -433,14 +1024,199 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  struct Justify {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+  };
+  for (const auto& [name, function] : {
+         Justify{"justify_days", JustifyFunction<JustifyDays>},
+         Justify{"justify_hours", JustifyFunction<JustifyHours>},
+         Justify{"justify_interval", JustifyFunction<JustifyInterval>},
+       }) {
+    loader.RegisterFunction(
+      duckdb::ScalarFunction{duckdb::Identifier{name},
+                             {duckdb::LogicalType::INTERVAL},
+                             duckdb::LogicalType::INTERVAL,
+                             function});
+  }
+
   {
-    duckdb::ScalarFunction func{
-      "random_normal",
-      {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::DOUBLE,
-      RandomNormalFunction};
-    func.SetVolatile();
-    loader.RegisterFunction(func);
+    duckdb::ScalarFunction in_session_zone{
+      "date_subtract",
+      {duckdb::LogicalType::TIMESTAMP_TZ, duckdb::LogicalType::INTERVAL},
+      duckdb::LogicalType::TIMESTAMP_TZ,
+      nullptr};
+    in_session_zone.SetBindExpressionCallback(BindDateSubtract);
+    in_session_zone.SetStability(
+      duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    duckdb::ScalarFunction in_zone{
+      "date_subtract",
+      {duckdb::LogicalType::TIMESTAMP_TZ, duckdb::LogicalType::INTERVAL,
+       duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::TIMESTAMP_TZ,
+      DateSubtractInZoneFunction,
+      duckdb::ICUDateFunc::Bind,
+      nullptr,
+      duckdb::ICUDateFunc::InitCalendarCache};
+    in_zone.SetFallible();
+    duckdb::ScalarFunctionSet set{"date_subtract"};
+    set.AddFunction(std::move(in_session_zone));
+    set.AddFunction(std::move(in_zone));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  {
+    duckdb::ScalarFunction in_zone{
+      "date_trunc",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::TIMESTAMP_TZ,
+       duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::TIMESTAMP_TZ,
+      DateTruncInZoneFunction,
+      duckdb::ICUDateFunc::Bind,
+      nullptr,
+      duckdb::ICUDateFunc::InitCalendarCache};
+    in_zone.SetFallible();
+    loader.AddFunctionOverload(std::move(in_zone));
+  }
+
+  {
+    using duckdb::dtime_t;
+    using duckdb::dtime_tz_t;
+    using duckdb::interval_t;
+    using duckdb::timestamp_t;
+    using duckdb::timestamp_tz_t;
+    const auto time = duckdb::LogicalType::TIME;
+    const auto timetz = duckdb::LogicalType::TIME_TZ;
+    const auto timestamp = duckdb::LogicalType::TIMESTAMP;
+    const auto timestamptz = duckdb::LogicalType::TIMESTAMP_TZ;
+    const auto interval = duckdb::LogicalType::INTERVAL;
+    duckdb::ScalarFunctionSet set{"overlaps"};
+    const auto add = [&](const duckdb::LogicalType& bound,
+                         const duckdb::LogicalType& end1,
+                         const duckdb::LogicalType& end2,
+                         duckdb::scalar_function_t function,
+                         duckdb::bind_scalar_function_t bind) {
+      duckdb::ScalarFunction overload{"overlaps",
+                                      {bound, end1, bound, end2},
+                                      duckdb::LogicalType::BOOLEAN,
+                                      std::move(function),
+                                      bind};
+      overload.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+      if (bind) {
+        overload.SetStability(
+          duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+      }
+      if (end1 == interval || end2 == interval) {
+        overload.SetFallible();
+      }
+      set.AddFunction(std::move(overload));
+    };
+    add(timetz, timetz, timetz,
+        OverlapsFunction<dtime_tz_t, dtime_tz_t, dtime_tz_t>, nullptr);
+    add(time, time, time, OverlapsFunction<dtime_t, dtime_t, dtime_t>, nullptr);
+    add(time, interval, interval,
+        OverlapsFunction<dtime_t, interval_t, interval_t>, nullptr);
+    add(time, time, interval, OverlapsFunction<dtime_t, dtime_t, interval_t>,
+        nullptr);
+    add(time, interval, time, OverlapsFunction<dtime_t, interval_t, dtime_t>,
+        nullptr);
+    add(timestamp, timestamp, timestamp,
+        OverlapsFunction<timestamp_t, timestamp_t, timestamp_t>, nullptr);
+    add(timestamp, interval, interval,
+        OverlapsFunction<timestamp_t, interval_t, interval_t>, nullptr);
+    add(timestamp, timestamp, interval,
+        OverlapsFunction<timestamp_t, timestamp_t, interval_t>, nullptr);
+    add(timestamp, interval, timestamp,
+        OverlapsFunction<timestamp_t, interval_t, timestamp_t>, nullptr);
+    add(timestamptz, timestamptz, timestamptz,
+        OverlapsFunction<timestamp_tz_t, timestamp_tz_t, timestamp_tz_t>,
+        nullptr);
+    add(timestamptz, interval, interval,
+        OverlapsInSessionZoneFunction<interval_t, interval_t>,
+        duckdb::ICUDateFunc::Bind);
+    add(timestamptz, timestamptz, interval,
+        OverlapsInSessionZoneFunction<timestamp_tz_t, interval_t>,
+        duckdb::ICUDateFunc::Bind);
+    add(timestamptz, interval, timestamptz,
+        OverlapsInSessionZoneFunction<interval_t, timestamp_tz_t>,
+        duckdb::ICUDateFunc::Bind);
+    loader.RegisterFunction(std::move(set));
+  }
+
+  {
+    duckdb::ScalarFunctionSet set{"random_normal"};
+    for (const auto arity : {0, 1, 2}) {
+      duckdb::ScalarFunction function{
+        set.name,
+        duckdb::vector<duckdb::LogicalType>(arity, duckdb::LogicalType::DOUBLE),
+        duckdb::LogicalType::DOUBLE,
+        RandomNormalFunction,
+        nullptr,
+        nullptr,
+        InitRandomState};
+      function.SetVolatile();
+      set.AddFunction(std::move(function));
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  struct DoubleScalar {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+    duckdb::FunctionErrors errors;
+  };
+  using enum duckdb::FunctionErrors;
+  for (const auto& [name, function, errors] : {
+         DoubleScalar{"dexp", DoubleFunction<PgExp>, CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dlog1", DoubleFunction<PgLog<std::log>>,
+                      CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>,
+                      CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dsqrt", DoubleFunction<PgSqrt>, CAN_THROW_RUNTIME_ERROR},
+         DoubleScalar{"dround", DoubleFunction<std::rint>, CANNOT_ERROR},
+         DoubleScalar{"dtrunc", DoubleFunction<std::trunc>, CANNOT_ERROR},
+       }) {
+    duckdb::ScalarFunction scalar{duckdb::Identifier{name},
+                                  {duckdb::LogicalType::DOUBLE},
+                                  duckdb::LogicalType::DOUBLE,
+                                  function};
+    scalar.SetErrorMode(errors);
+    loader.RegisterFunction(std::move(scalar));
+  }
+
+  {
+    duckdb::ScalarFunction scale{"scale",
+                                 {duckdb::LogicalTypeId::DECIMAL},
+                                 duckdb::LogicalType::INTEGER,
+                                 nullptr,
+                                 BindScale};
+    scale.SetBindExpressionCallback(ScaleExpression);
+    loader.RegisterFunction(scale);
+  }
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"min_scale",
+                           {duckdb::LogicalTypeId::DECIMAL},
+                           duckdb::LogicalType::INTEGER,
+                           nullptr,
+                           BindMinScale});
+  {
+    duckdb::ScalarFunction trim_scale{"trim_scale",
+                                      {duckdb::LogicalTypeId::DECIMAL},
+                                      duckdb::LogicalTypeId::DECIMAL,
+                                      nullptr,
+                                      BindTrimScale};
+    trim_scale.SetBindExpressionCallback(TrimScaleExpression);
+    loader.RegisterFunction(trim_scale);
+  }
+  for (const auto name : {"div", "numeric_div_trunc"}) {
+    duckdb::ScalarFunction div_trunc{
+      name,
+      {duckdb::LogicalTypeId::DECIMAL, duckdb::LogicalTypeId::DECIMAL},
+      duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_DECIMAL, 0),
+      DivTruncFunction,
+      BindDivTrunc};
+    div_trunc.SetFallible();
+    loader.RegisterFunction(std::move(div_trunc));
   }
 }
 

@@ -24,6 +24,8 @@
 
 namespace sdb::connector {
 
+inline constexpr size_t kMaxArrayDimensions = 6;
+
 void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

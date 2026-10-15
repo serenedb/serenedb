@@ -20,6 +20,7 @@
 
 #include "pg/deserialize.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/numeric/int128.h>
 #include <absl/strings/escaping.h>
@@ -53,10 +54,21 @@
 #include <vector>
 
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
-#include "pg/pg_types.h"
+#include "pg/types/char.h"
+#include "pg/types/geometric.h"
+#include "pg/types/inet.h"
+#include "pg/types/logical.h"
+#include "pg/types/mac.h"
+#include "pg/types/mapping.h"
+#include "pg/types/money.h"
+#include "pg/types/name.h"
+#include "pg/types/oid.h"
+#include "pg/types/pg_lsn.h"
+#include "pg/types/range.h"
+#include "pg/types/tid.h"
+#include "pg/types/vector.h"
 
 namespace sdb::pg {
 
@@ -542,6 +554,85 @@ struct NumberText {
   }
 };
 
+template<auto Read>
+struct ReadFixed {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    const auto value = Read(data);
+    if (!value) {
+      return false;
+    }
+    sink.Fixed(*value);
+    return true;
+  }
+};
+
+template<typename T, auto Parse>
+struct ParseFixed {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    T value = 0;
+    if (Parse(data, value)) {
+      return false;
+    }
+    sink.Fixed(value);
+    return true;
+  }
+};
+
+struct XmlIn {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (CheckXml(data, context.xml_option)) {
+      return false;
+    }
+    sink.Varchar(data);
+    return true;
+  }
+};
+
+struct CharText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    char buffer[kCharText];
+    sink.Varchar({buffer, WriteChar(CharIn(data), buffer)});
+    return true;
+  }
+};
+
+struct CharBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() != 1) {
+      return false;
+    }
+    char buffer[kCharText];
+    sink.Varchar(
+      {buffer, WriteChar(static_cast<uint8_t>(data.front()), buffer)});
+    return true;
+  }
+};
+
+struct NameText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    sink.Varchar(data.substr(0, ClipName(data)));
+    return true;
+  }
+};
+
+struct NameBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.size() >= kNameDataLen) {
+      return false;
+    }
+    sink.Varchar(data);
+    return true;
+  }
+};
+
 struct VarcharText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -589,6 +680,7 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
 
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context) {
+  context.xml_option = CurrentXmlOption(client);
   duckdb::Value value;
   if (!client.TryGetCurrentSetting("TimeZone", value) || value.IsNull()) {
     context.session_calendar.reset();
@@ -1046,16 +1138,13 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   // Resolve the leaf element deserializer once (the element type is fixed for
   // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
   // aren't reconstructed by the multi-dim path.
-  const duckdb::LogicalType* leaf = &vec.GetType();
-  for (int32_t d = 0; d < ndim; ++d) {
-    const auto id = leaf->id();
-    if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::MAP) {
-      leaf = &duckdb::ListType::GetChildType(*leaf);
-    } else if (id == duckdb::LogicalTypeId::ARRAY) {
+  const auto* leaf = &duckdb::ListType::GetChildType(vec.GetType());
+  for (int32_t d = 1; d < ndim; ++d) {
+    if (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
+        !IsArrayDimension(*leaf)) {
       return false;
-    } else {
-      break;
     }
+    leaf = &duckdb::ListType::GetChildType(*leaf);
   }
   const auto leaf_fn = GetDeserialization<VectorSink>(*leaf, VarFormat::Binary);
   if (leaf_fn == nullptr) {
@@ -1440,7 +1529,8 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
     return false;
   }
   const auto& child_type = duckdb::ListType::GetChildType(vec.GetType());
-  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST;
+  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST &&
+                      IsArrayDimension(child_type);
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::idx_t count = 0;
   if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
@@ -1670,22 +1760,7 @@ struct NestedAdapter<ValueSink> {
   }
 };
 
-// STRUCT vector entries: [0]=ip_type (1=IPv4, 2=IPv6), [1]=address (signed
-// hugeint, IPv6 top bit flipped for sort order), [2]=mask. Inverse of ReadInet.
-void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
-               uint64_t addr_hi, uint64_t addr_lo, uint16_t mask) {
-  if (type == INET_IP_ADDRESS_V6) {
-    addr_hi ^= (uint64_t{1} << 63);  // re-apply IPv6 sort-order flip
-  }
-  auto& entries = duckdb::StructVector::GetEntries(vec);
-  Out<uint8_t>(entries[0])[row] = static_cast<uint8_t>(type);
-  duckdb::hugeint_t stored;
-  stored.lower = addr_lo;
-  stored.upper = static_cast<int64_t>(addr_hi);
-  Out<duckdb::hugeint_t>(entries[1])[row] = stored;
-  Out<uint16_t>(entries[2])[row] = mask;
-}
-
+template<bool kCidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
   // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or 16),
@@ -1694,57 +1769,244 @@ bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
     return false;
   }
   const auto nb = static_cast<uint8_t>(data[3]);
-  const auto bits = static_cast<uint8_t>(data[1]);
   const bool is_v6 = nb == 16;
   if ((!is_v6 && nb != 4) || data.size() != static_cast<size_t>(4) + nb) {
     return false;
   }
   const char* addr = data.data() + 4;
+  INET_IPAddress inet{};
+  inet.mask = static_cast<uint8_t>(data[1]);
   if (is_v6) {
-    StoreInet(vec, row, INET_IP_ADDRESS_V6,
-              absl::big_endian::Load<uint64_t>(addr),
-              absl::big_endian::Load<uint64_t>(addr + 8), bits);
+    inet.type = INET_IP_ADDRESS_V6;
+    inet.address.upper = absl::big_endian::Load<uint64_t>(addr);
+    inet.address.lower = absl::big_endian::Load<uint64_t>(addr + 8);
   } else {
-    StoreInet(vec, row, INET_IP_ADDRESS_V4, 0,
-              absl::big_endian::Load<uint32_t>(addr), bits);
+    inet.type = INET_IP_ADDRESS_V4;
+    inet.address.lower = absl::big_endian::Load<uint32_t>(addr);
   }
+  if (kCidr && !IsNetwork(inet)) {
+    return false;
+  }
+  StoreInet(vec, row, inet);
   return true;
 }
 
+template<bool kCidr>
 bool DeserializeTextInet(DeserializeContext&, std::string_view data,
                          duckdb::Vector& vec, duckdb::idx_t row) {
   INET_IPAddress inet;
   try {
-    inet = ipaddress_from_string(data.data(), data.size());
+    inet =
+      kCidr ? ParseCidr(data) : ipaddress_from_string(data.data(), data.size());
   } catch (...) {
     return false;
   }
   if (inet.type == INET_IP_ADDRESS_INVALID) {
     return false;
   }
-  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
-            inet.mask);
+  StoreInet(vec, row, inet);
   return true;
+}
+
+bool DeserializeTextRange(DeserializeContext& ctx, std::string_view data,
+                          duckdb::Vector& vec, duckdb::idx_t row) {
+  ParsedRange range;
+  if (ParseRange(data, range)) {
+    return false;
+  }
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite,
+                         std::string_view text) {
+    return (range.flags & (kRangeEmpty | infinite)) ||
+           DecodeChild(ctx, children[child].GetType(), VarFormat::Text, text,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite, range.lower) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite, range.upper) &&
+         FinishRange(vec, row, range.flags);
+}
+
+bool DeserializeBinaryRange(DeserializeContext& ctx, std::string_view data,
+                            duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.empty()) {
+    return false;
+  }
+  const auto flags = static_cast<uint8_t>(
+    data[0] & (kRangeEmpty | kRangeLowerInclusive | kRangeUpperInclusive |
+               kRangeLowerInfinite | kRangeUpperInfinite));
+  data.remove_prefix(1);
+  auto& children = duckdb::StructVector::GetEntries(vec);
+  const auto bound = [&](duckdb::idx_t child, uint8_t infinite) {
+    if (flags & (kRangeEmpty | infinite)) {
+      return true;
+    }
+    if (data.size() < 4) {
+      return false;
+    }
+    const auto length = absl::big_endian::Load<int32_t>(data.data());
+    data.remove_prefix(4);
+    if (length < 0 || static_cast<size_t>(length) > data.size()) {
+      return false;
+    }
+    const auto body = data.substr(0, length);
+    data.remove_prefix(length);
+    return DecodeChild(ctx, children[child].GetType(), VarFormat::Binary, body,
+                       children[child], row);
+  };
+  return bound(kRangeLowerChild, kRangeLowerInfinite) &&
+         bound(kRangeUpperChild, kRangeUpperInfinite) && data.empty() &&
+         FinishRange(vec, row, flags);
+}
+
+template<typename Decode>
+bool DecodeMultirange(duckdb::Vector& vec, duckdb::idx_t row,
+                      duckdb::idx_t count, Decode&& decode) {
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + count);
+  auto& child = duckdb::ListVector::GetChildMutable(vec);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (!decode(child, cur + i)) {
+      return false;
+    }
+  }
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, count};
+  duckdb::ListVector::SetListSize(vec, cur + count);
+  FinishMultirange(vec, row);
+  return true;
+}
+
+bool DeserializeTextMultirange(DeserializeContext& ctx, std::string_view data,
+                               duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<std::string_view> ranges;
+  if (SplitMultirange(data, ranges)) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  auto text = ranges.begin();
+  return DecodeMultirange(
+    vec, row, ranges.size(), [&](duckdb::Vector& child, duckdb::idx_t index) {
+      return DecodeChild(ctx, range, VarFormat::Text, *text++, child, index);
+    });
+}
+
+bool DeserializeBinaryMultirange(DeserializeContext& ctx, std::string_view data,
+                                 duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.size() < 4) {
+    return false;
+  }
+  const auto count = absl::big_endian::Load<int32_t>(data.data());
+  data.remove_prefix(4);
+  if (count < 0 || static_cast<size_t>(count) > data.size() / 5) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  return DecodeMultirange(
+           vec, row, static_cast<duckdb::idx_t>(count),
+           [&](duckdb::Vector& child, duckdb::idx_t index) {
+             if (data.size() < 4) {
+               return false;
+             }
+             const auto length = absl::big_endian::Load<int32_t>(data.data());
+             data.remove_prefix(4);
+             if (length < 0 || static_cast<size_t>(length) > data.size()) {
+               return false;
+             }
+             const auto body = data.substr(0, length);
+             data.remove_prefix(length);
+             return DecodeChild(ctx, range, VarFormat::Binary, body, child,
+                                index);
+           }) &&
+         data.empty();
 }
 
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
+struct RangeBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryRange>(ctx, data,
+                                                                     sink);
+  }
+};
+
+struct RangeText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextRange>(ctx, data,
+                                                                   sink);
+  }
+};
+
+struct MultirangeBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryMultirange>(
+      ctx, data, sink);
+  }
+};
+
+struct MultirangeText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextMultirange>(
+      ctx, data, sink);
+  }
+};
+
+template<Geometric kKind>
+bool DeserializeTextGeometric(DeserializeContext&, std::string_view data,
+                              duckdb::Vector& vec, duckdb::idx_t row) {
+  return !ParseGeometric(kKind, data, vec, row);
+}
+
+template<Geometric kKind>
+bool DeserializeBinaryGeometric(DeserializeContext&, std::string_view data,
+                                duckdb::Vector& vec, duckdb::idx_t row) {
+  return RecvGeometric(kKind, data, vec, row);
+}
+
+template<Geometric kKind>
+struct GeometricBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryGeometric<kKind>>(
+      ctx, data, sink);
+  }
+};
+
+template<Geometric kKind>
+struct GeometricText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextGeometric<kKind>>(
+      ctx, data, sink);
+  }
+};
+
+template<bool kCidr>
 struct InetBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet>(ctx, data,
-                                                                    sink);
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<kCidr>>(
+      ctx, data, sink);
   }
 };
 
+template<bool kCidr>
 struct InetText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet>(ctx, data,
-                                                                  sink);
+    return NestedAdapter<Sink>::template Run<DeserializeTextInet<kCidr>>(
+      ctx, data, sink);
   }
 };
 
@@ -1763,6 +2025,31 @@ struct ListText {
                      Sink& sink) {
     return NestedAdapter<Sink>::template Run<DeserializeTextList>(ctx, data,
                                                                   sink);
+  }
+};
+
+template<typename T, auto Parse>
+bool DeserializeTextVector(DeserializeContext&, std::string_view data,
+                           duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<T> values;
+  if (Parse(data, values)) {
+    return false;
+  }
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + values.size());
+  absl::c_copy(values, Out<T>(duckdb::ListVector::GetEntry(vec)) + cur);
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, values.size()};
+  duckdb::ListVector::SetListSize(vec, cur + values.size());
+  return true;
+}
+
+template<typename T, auto Parse>
+struct VectorText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextVector<T, Parse>>(
+      ctx, data, sink);
   }
 };
 
@@ -1839,6 +2126,18 @@ DeserializationFunction<Sink> GetDeserialization(
     case INTEGER:
       return SelectDecoder<LoadBin<int32_t>, NumberText<int32_t>, Sink>(binary);
     case BIGINT:
+      if (IsTid(type)) {
+        return SelectDecoder<ReadFixed<&TidRecv>,
+                             ParseFixed<int64_t, &TryParseTid>, Sink>(binary);
+      }
+      if (IsOid(type)) {
+        return SelectDecoder<LoadBin<int64_t, uint32_t>,
+                             ParseFixed<int64_t, &TryParseOid>, Sink>(binary);
+      }
+      if (IsMoney(type)) {
+        return SelectDecoder<LoadBin<int64_t>,
+                             ParseFixed<int64_t, &TryParseMoney>, Sink>(binary);
+      }
       if (binary) {
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
@@ -1855,6 +2154,20 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<uint32_t, int64_t>, NumberText<uint32_t>,
                            Sink>(binary);
     case UBIGINT:
+      if (IsPgLsn(type)) {
+        return SelectDecoder<LoadBin<uint64_t>, ReadFixed<&ParseLsn>, Sink>(
+          binary);
+      }
+      if (IsMacaddr(type)) {
+        return SelectDecoder<ReadFixed<&MacaddrRecv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr>, Sink>(
+          binary);
+      }
+      if (IsMacaddr8(type)) {
+        return SelectDecoder<ReadFixed<&Macaddr8Recv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr8>, Sink>(
+          binary);
+      }
       return SelectDecoder<UbigintBin, NumberText<uint64_t>, Sink>(binary);
     case HUGEINT:
       return SelectDecoder<HugeintBin, HugeintText, Sink>(binary);
@@ -1883,6 +2196,15 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<double>, NumberText<double>, Sink>(binary);
     case VARCHAR:
     case CHAR:
+      if (IsChar(type)) {
+        return SelectDecoder<CharBin, CharText, Sink>(binary);
+      }
+      if (IsName(type)) {
+        return SelectDecoder<NameBin, NameText, Sink>(binary);
+      }
+      if (IsXml(type)) {
+        return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
+      }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
@@ -1920,16 +2242,39 @@ DeserializationFunction<Sink> GetDeserialization(
     case BIT:
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
+      if (IsInt2vector(type)) {
+        return SelectDecoder<ListBin, VectorText<int16_t, ParseInt2Vector>,
+                             Sink>(binary);
+      }
+      if (IsOidvector(type)) {
+        return SelectDecoder<ListBin, VectorText<int64_t, ParseOidVector>,
+                             Sink>(binary);
+      }
+      if (IsMultirange(type)) {
+        return SelectDecoder<MultirangeBin, MultirangeText, Sink>(binary);
+      }
       return SelectDecoder<ListBin, ListText, Sink>(binary);
     case ARRAY:
       return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectDecoder<InetBin, InetText, Sink>(binary);
+        return SelectDecoder<InetBin<false>, InetText<false>, Sink>(binary);
+      }
+      if (IsCidr(type)) {
+        return SelectDecoder<InetBin<true>, InetText<true>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;
+      }
+      if (IsRange(type)) {
+        return SelectDecoder<RangeBin, RangeText, Sink>(binary);
+      }
+      if (const auto geometric = GeometricOf(type)) {
+        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
+          return SelectDecoder<GeometricBin<kKind>, GeometricText<kKind>, Sink>(
+            binary);
+        });
       }
       return SelectDecoder<StructBin, StructText, Sink>(binary);
     case MAP:

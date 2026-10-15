@@ -1,0 +1,60 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_opclass'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+opcmethod	oid	t
+opcname	name	t
+opcnamespace	oid	t
+opcowner	oid	t
+opcfamily	oid	t
+opcintype	oid	t
+opcdefault	boolean	t
+opckeytype	oid	t
+
+
+query
+SELECT o.opcname, a.amname, o.opcnamespace::regnamespace::text AS nsp, o.opcintype, o.opcdefault, o.opckeytype
+FROM pg_opclass o JOIN pg_am a ON a.oid = o.opcmethod
+ORDER BY o.opcname;
+----
+opcname	amname	nsp	opcintype	opcdefault	opckeytype
+hnsw	inverted	pg_catalog	1021	f	0
+included	inverted	pg_catalog	2276	f	0
+ivf	inverted	pg_catalog	1021	f	0
+
+
+query
+SELECT count(*) = count(DISTINCT oid) AS oids_unique, count(*) = count(DISTINCT (opcmethod, opcname, opcnamespace)) AS names_unique
+FROM pg_opclass;
+----
+oids_unique	names_unique
+t	t
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_opclass o WHERE NOT EXISTS (SELECT 1 FROM pg_am a WHERE a.oid = o.opcmethod)) AS bad_method,
+  (SELECT count(*) FROM pg_opclass o WHERE NOT EXISTS (SELECT 1 FROM pg_namespace n WHERE n.oid = o.opcnamespace)) AS bad_namespace,
+  (SELECT count(*) FROM pg_opclass o WHERE NOT EXISTS (SELECT 1 FROM pg_type t WHERE t.oid = o.opcintype)) AS bad_intype,
+  (SELECT count(*) FROM pg_opclass o WHERE NOT EXISTS (SELECT 1 FROM pg_authid r WHERE r.oid = o.opcowner)) AS bad_owner;
+----
+bad_method	bad_namespace	bad_intype	bad_owner
+0	0	0	0
+
+
+query
+SELECT opcname FROM pg_opclass WHERE opcname = 'hnsw';
+----
+opcname
+hnsw
+
+
+query
+SELECT count(*) AS n FROM pg_opclass WHERE opcmethod = 2;
+----
+n
+0

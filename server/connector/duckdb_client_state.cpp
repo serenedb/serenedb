@@ -56,7 +56,7 @@ namespace sdb::connector {
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
-  std::shared_ptr<ConnectionContext> connection_ctx) {
+  std::shared_ptr<ConnectionContext> connection_ctx, bool client_backend) {
   auto state =
     duckdb::make_shared_ptr<SereneDBClientState>(std::move(connection_ctx));
   auto& registered = *state;
@@ -66,7 +66,10 @@ SereneDBClientState& SereneDBClientState::Register(
   source->datid = registered._connection_ctx->GetDatabaseId();
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
+  source->client_backend = client_backend;
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
+  source->state_change_us.store(source->backend_start_us,
+                                std::memory_order_relaxed);
   source->ctx = &client_ctx;
   registered.progress_source = source;
   pg::ProgressRegistry::Instance().Register(std::move(source));
@@ -140,10 +143,9 @@ SereneDBClientState& SereneDBClientState::Register(
 
   client_ctx.setting_visibility = [](duckdb::ClientContext&,
                                      const std::string& name) {
-    // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
-    // Still settable/readable by name.
     static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-      "sdb_faults", "debug_verification"};
+      "sdb_faults", "debug_verification", "is_superuser", "role",
+      "session_authorization"};
     return !kHidden.contains(name);
   };
 
@@ -296,6 +298,9 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
+  if (std::exchange(_query_in_transaction, false)) {
+    progress_source->xact_commit.fetch_add(1, std::memory_order_relaxed);
+  }
   _connection_ctx->Commit();
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
@@ -305,11 +310,15 @@ void SereneDBClientState::TransactionCommit(
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
+  if (std::exchange(_query_in_transaction, false)) {
+    progress_source->xact_rollback.fetch_add(1, std::memory_order_relaxed);
+  }
   _connection_ctx->Rollback();
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementBegin();
+  _query_in_transaction = true;
   progress_source->BeginQuery(context.GetCurrentQuery());
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = progress_source->metrics;
@@ -374,8 +383,9 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
                             irs::DuckDBEngine::Instance().CreateConnection()};
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
-    context, user, role, database, database_id, nullptr, 0, nullptr);
-  SereneDBClientState::Register(context, system.ctx);
+    context, user, std::string_view{}, role, database, database_id, nullptr, 0,
+    nullptr);
+  SereneDBClientState::Register(context, system.ctx, false);
   SetDefaultSearchPath(context, database);
   return system;
 }

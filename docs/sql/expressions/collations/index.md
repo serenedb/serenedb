@@ -23,7 +23,7 @@ The `BINARY` collation is also available under the aliases `C` and `POSIX`.
 
 SereneDB ships with three built-in, region-independent collations: `NOCASE`, `NOACCENT` and `NFC`. The `NOCASE` collation compares characters as equal regardless of their casing. The `NOACCENT` collation compares characters as equal regardless of their accents. The `NFC` collation performs NFC-normalized comparisons, see [Unicode normalization](https://en.wikipedia.org/wiki/Unicode_equivalence#Normalization) for more information. In addition to these three built-ins, SereneDB also includes the region- and language-specific collations described in [Locale Collations](#locale-collations) below.
 
-The available collations can be listed with `PRAGMA collations`. The query below filters to a stable subset to show both the built-ins and a few locales:
+The available collations can be listed with `PRAGMA collations`, and `pg_collation` lists them too, next to PostgreSQL's `default`, `C` and `POSIX`. A column's collation shows in `pg_attribute.attcollation`, in psql's `\d` and in `information_schema.columns.collation_name`; a combined collation such as `nocase.noaccent` has no `pg_collation` row, so such a column shows none. The query below filters to a stable subset to show both the built-ins and a few locales:
 
 <SqlLogicTest id="sql/expressions/collations/index/example_015" />
 

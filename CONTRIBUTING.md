@@ -70,6 +70,43 @@ Tools and benchmarks share binaries instead of each linking their own: `serenedb
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
 
+### PostgreSQL catalog code
+
+Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: the built-in types and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL and lookup key), `pg_catalog` and `information_schema` view definitions, the keyword list `quote_ident` uses, and stubs of the functions the views call. The output is `server/pg/catalog/generated/*.gen.inc`, and nothing else lives in that directory. Only what PostgreSQL defines is copied; what describes SereneDB itself, such as which types exist or what a setting's value is, is written by hand.
+
+`scripts/generate_pg_catalog.py` reads the PostgreSQL source in the `third_party/postgres` submodule. It runs PostgreSQL's own `genbki.pl` over the catalog headers and `.dat` files and reads the `postgres.bki` it writes, the same file initdb bootstraps from. It also reads the SQL files initdb runs after bootstrap (`system_views.sql`, `information_schema.sql`, `system_functions.sql`), the privileges `initdb.c` sets and the keywords in `kwlist.h`. It needs Perl and no PostgreSQL server:
+
+```bash
+git submodule update --init third_party/postgres
+python3 scripts/generate_pg_catalog.py
+```
+
+A system object has one OID in every database and every release. Below 16384 the OIDs are PostgreSQL's; SereneDB's own system objects use 16384 to 49151 (`server/pg/catalog/oids.h`), DuckDB's builtins in its system catalog 49152 to 65535, and the objects users create 65536 and up.
+
+initdb numbers the objects it creates from those SQL files while it runs, so the source holds no OIDs for them. `server/pg/catalog/generated/system_oids.lock` keeps their OIDs, and the OIDs of SereneDB's builtin functions and collations. The system views, `information_schema` and its domains and tables have the OIDs PostgreSQL 18.6's initdb gave them. A builtin function whose kind, name and argument types are exactly a PostgreSQL function's has PostgreSQL's OID, and every other builtin function and collation has one from SereneDB's range. The generator keeps the file and nothing else edits it: a new object gets the next free OID, a removed one stays as a `retired` line, and no line is ever renumbered or reused.
+
+The builtin functions and collations come from the DuckDB catalog, which only a running server has, so after adding, removing or changing the signature of one, rerun the generator with a serened built from the change:
+
+```bash
+python3 scripts/generate_pg_catalog.py --serened build/bin/serened
+```
+
+Until then the new function or collation has an OID from the unfrozen range (`kFirstUnfrozenFunction`, `kFirstUnfrozenCollation`), and `tests/sqllogic/sdb/pg/system/system_oids.test` fails.
+
+What SereneDB decides on its own is kept apart from the generated output:
+
+- `scripts/pg_catalog/config.py` names the PostgreSQL objects SereneDB refers to by constant: schemas, databases, tablespaces, access methods, languages, procedures and collations.
+- `server/pg/types/mapping.cpp` maps each PostgreSQL type SereneDB supports to a DuckDB type. `pg_type` lists every PostgreSQL type; one without a mapping exists only in the catalog, like the pseudo-types: its name resolves (`::regtype`, `format_type`) but no value of it can be created. `server/pg/types/mapping.h` says how each column type is stored. A type's DuckDB alias is declared in `server/pg/types/logical.h`, and its text input and output, operators and functions live in `server/pg/types/<type>.cpp`, registered from `server/pg/types/register.cpp`. `server/pg/catalog/builtin/builtin.h` defines SereneDB's own types; a PostgreSQL type of the same name, such as `tsquery`, is not copied.
+- `server/query/config_variables.cpp` lists every setting SereneDB accepts, with its value, description and what `pg_settings` shows for it; a PostgreSQL setting SereneDB does not implement is accepted only when clients or `pg_dump` scripts set it, and its description says it has no effect.
+- `server/pg/catalog/views/{pg_catalog,information_schema}/<view>.cpp` holds the SQL of a PostgreSQL view whose body SereneDB rewrites, as a C++ string constant; such a view keeps its generated OID, privileges and options but no generated body, and the registry gives it the file's SQL. `views/sdb/<view>.cpp` defines one of SereneDB's own views whole, with its oid from `oids.h`. The generator registers every such file in `generated/registry.gen.inc` and stops on a file in the PostgreSQL folders named after no view.
+- `server/pg/catalog/functions/{pg_catalog,information_schema}/` holds the functions of each schema, grouped by the PostgreSQL source file that defines them (`acl.cpp`, `dbsize.cpp`, `format_type.cpp`, `regproc.cpp`, `ruleutils.cpp`, the rest in `misc.cpp`); `functions/functions.cpp` registers them. `macros.cpp` holds the functions SereneDB writes in SQL, as C++ string constants. Every `pg_catalog` function the generated views call has a generated stub, which startup registers only when neither SereneDB nor DuckDB defines a function of that name: a stub with output columns returns no rows, one with a numeric result returns 0 (NULL for a NULL argument), any other NULL.
+- `server/pg/catalog/tables/{pg_catalog,information_schema,sdb}/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values; a NOT NULL column a row leaves unset reads as its type's zero, any other as NULL. The table's class also states the row estimate the planner sees (`kRows`), lookup keys PostgreSQL does not declare (`kColumnKeys`) and whether only superusers may read it (`kSuperuserOnly`). A file named after a PostgreSQL view makes that view a table, as `information_schema.columns` is. The rows of the `information_schema.sql_*` tables are SereneDB's own claims, written there by hand, and `sql_features`, which would list a claim per SQL standard feature, has none; `sdb/` holds SereneDB's own `sdb_*` tables, which live in `pg_catalog` and define their columns and oid themselves. The generator registers every such file in `generated/registry.gen.inc` and stops on a file in the PostgreSQL folders named after no catalog table or view. A catalog without a file exists with no rows.
+- `server/pg/catalog/table_functions/pg_catalog/<function>.cpp` produces the rows of a set-returning function behind a PostgreSQL view, such as `pg_show_all_settings` behind `pg_settings` and `pg_hba_file_rules` behind the view of that name, with the output columns of its `pg_proc` entry; the generator registers every such file in `generated/registry.gen.inc` and stops on a file named after no single set-returning `pg_catalog` function.
+
+The same script owns the three outputs that come from this repository alone: `generated/registry.gen.inc`, `tests/sqllogic/sdb/pg/site_docs/compatibility/system_table_claims.test`, which checks what `docs/compatibility/system-table-compatibility.md` claims for each relation, and `data_type_claims.test` next to it, which checks what `docs/compatibility/data-type-compatibility.md` claims for each type; the generator also stops when that page misses a PostgreSQL type. Pre-commit runs `python3 scripts/generate_pg_catalog.py --check`, which fails while any output is stale; without the submodule checked out it checks only those three, `generated/system_oids.lock` and the two OID tables generated from it (`generated/builtin_function_oids.gen.inc`, `generated/builtin_collation_oids.gen.inc`), and not whether the type page lists every PostgreSQL type.
+
+To move to a new PostgreSQL release, bring that release's files into `third_party/postgres` (a pull request to a version branch of serenedb/postgres), rerun the generator and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
+
 ### Launch
 
 ```bash

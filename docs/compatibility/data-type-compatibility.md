@@ -49,7 +49,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | lseg                         | 🔴            |         |
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
-| money                        | 🔴            |         |
+| money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. |
 | name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🔴            |         |

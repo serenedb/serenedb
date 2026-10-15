@@ -61,6 +61,7 @@
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
+#include "pg/types/money.h"
 #include "pg/types/name.h"
 #include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
@@ -551,76 +552,28 @@ struct NumberText {
   }
 };
 
-struct LsnText {
+template<auto Read>
+struct ReadFixed {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    const auto lsn = ParseLsn(data);
-    if (!lsn) {
+    const auto value = Read(data);
+    if (!value) {
       return false;
     }
-    sink.Fixed(*lsn);
+    sink.Fixed(*value);
     return true;
   }
 };
 
-template<bool kMac8>
-struct MacText {
+template<typename T, auto Parse>
+struct ParseFixed {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    uint64_t mac = 0;
-    if (kMac8 ? TryParseMacaddr8(data, mac) : TryParseMacaddr(data, mac)) {
+    T value = 0;
+    if (Parse(data, value)) {
       return false;
     }
-    sink.Fixed(mac);
-    return true;
-  }
-};
-
-template<bool kMac8>
-struct MacBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    const auto mac = kMac8 ? Macaddr8Recv(data) : MacaddrRecv(data);
-    if (!mac) {
-      return false;
-    }
-    sink.Fixed(*mac);
-    return true;
-  }
-};
-
-struct TidText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    int64_t tid = 0;
-    if (TryParseTid(data, tid)) {
-      return false;
-    }
-    sink.Fixed(tid);
-    return true;
-  }
-};
-
-struct TidBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    const auto tid = TidRecv(data);
-    if (!tid) {
-      return false;
-    }
-    sink.Fixed(*tid);
-    return true;
-  }
-};
-
-struct OidText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    int64_t oid = 0;
-    if (TryParseOid(data, oid)) {
-      return false;
-    }
-    sink.Fixed(oid);
+    sink.Fixed(value);
     return true;
   }
 };
@@ -1982,10 +1935,16 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<int32_t>, NumberText<int32_t>, Sink>(binary);
     case BIGINT:
       if (IsTid(type)) {
-        return SelectDecoder<TidBin, TidText, Sink>(binary);
+        return SelectDecoder<ReadFixed<&TidRecv>,
+                             ParseFixed<int64_t, &TryParseTid>, Sink>(binary);
       }
       if (IsOid(type)) {
-        return SelectDecoder<LoadBin<int64_t, uint32_t>, OidText, Sink>(binary);
+        return SelectDecoder<LoadBin<int64_t, uint32_t>,
+                             ParseFixed<int64_t, &TryParseOid>, Sink>(binary);
+      }
+      if (IsMoney(type)) {
+        return SelectDecoder<LoadBin<int64_t>,
+                             ParseFixed<int64_t, &TryParseMoney>, Sink>(binary);
       }
       if (binary) {
         return IsOidLike(type)
@@ -2004,13 +1963,18 @@ DeserializationFunction<Sink> GetDeserialization(
                            Sink>(binary);
     case UBIGINT:
       if (IsPgLsn(type)) {
-        return SelectDecoder<LoadBin<uint64_t>, LsnText, Sink>(binary);
+        return SelectDecoder<LoadBin<uint64_t>, ReadFixed<&ParseLsn>, Sink>(
+          binary);
       }
       if (IsMacaddr(type)) {
-        return SelectDecoder<MacBin<false>, MacText<false>, Sink>(binary);
+        return SelectDecoder<ReadFixed<&MacaddrRecv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr>, Sink>(
+          binary);
       }
       if (IsMacaddr8(type)) {
-        return SelectDecoder<MacBin<true>, MacText<true>, Sink>(binary);
+        return SelectDecoder<ReadFixed<&Macaddr8Recv>,
+                             ParseFixed<uint64_t, &TryParseMacaddr8>, Sink>(
+          binary);
       }
       return SelectDecoder<UbigintBin, NumberText<uint64_t>, Sink>(binary);
     case HUGEINT:

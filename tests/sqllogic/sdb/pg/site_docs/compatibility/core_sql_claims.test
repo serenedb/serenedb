@@ -439,7 +439,7 @@ statement ok
 SELECT NULL::macaddr8;
 
 # types: money
-statement error
+statement ok
 SELECT NULL::money;
 
 # types: numeric [ (p, s) ]

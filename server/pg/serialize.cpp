@@ -73,6 +73,7 @@
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
+#include "pg/types/money.h"
 #include "pg/types/pg_lsn.h"
 #include "pg/types/tid.h"
 #include "query/config.h"
@@ -892,6 +893,17 @@ struct TidTextCore {
   }
 };
 
+struct MoneyTextCore {
+  using Value = int64_t;
+  static constexpr uint32_t kMaxBytes = kMoneyText;
+  IRS_FORCE_INLINE static bool NeedsQuoting(Value money) {
+    return money <= -kMoneyThousand || money >= kMoneyThousand;
+  }
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value money) {
+    return WriteMoney(money, reinterpret_cast<char*>(dst));
+  }
+};
+
 int64_t TimestampSecondsToWire(int64_t value) {
   if (value == std::numeric_limits<int64_t>::max()) {
     return value;
@@ -1334,11 +1346,22 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
                 InContainer == WrapContext::Record);
   using enum duckdb::LogicalTypeId;
   switch (type.id()) {
+    case BIGINT:
+      if (IsTid(type)) {
+        return true;
+      }
+      return IsMoney(type) &&
+             MoneyTextCore::NeedsQuoting(
+               duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(
+                 vdata.unified)[vdata.unified.sel->get_index(row)]);
+    case DATE:
+      return DateTextCore::NeedsQuoting(
+        duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::date_t>(
+          vdata.unified)[vdata.unified.sel->get_index(row)]);
     case BOOLEAN:
     case TINYINT:
     case SMALLINT:
     case INTEGER:
-    case BIGINT:
     case UTINYINT:
     case USMALLINT:
     case UINTEGER:
@@ -1348,7 +1371,6 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case FLOAT:
     case DOUBLE:
     case DECIMAL:
-    case DATE:
     case TIME:
     case TIME_NS:
     case TIME_TZ:
@@ -2314,6 +2336,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<TidTextCore<WrapContext::Array>, TidBinCore,
                                    kTid>(format, context, kind);
       }
+      if (IsMoney(type)) {
+        return MakeArraySerializer<MoneyTextCore, IntBinCore<int64_t>, kMoney>(
+          format, context, kind);
+      }
       // XID8 or BIGINT
       return MakeArraySerializer<IntTextCore<int64_t>, IntBinCore<int64_t>,
                                  kInt8>(format, context, kind);
@@ -2559,6 +2585,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         return SelectFieldSerializer<TidTextCore<WrapContext::None>,
                                      TidTextCore<WrapContext::Record>,
                                      TidBinCore>(format, context);
+      }
+      if (IsMoney(type)) {
+        return SelectFieldSerializer<MoneyTextCore, MoneyTextCore,
+                                     IntBinCore<int64_t>>(format, context);
       }
       if (IsOidLike(type)) {
         return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,

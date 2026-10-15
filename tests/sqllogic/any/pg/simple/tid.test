@@ -12,6 +12,13 @@ tids	macs	empty_block	wrapped
 {"(1,2)","(3,4)"}	{08:00:2b:01:02:03,08:00:2b:01:02:04}	(0,4)	(4294967295,1)
 
 
+query
+SELECT ARRAY[ROW('(1,2)'::tid)] AS rec_arr, ROW(ARRAY['(1,2)'::tid]) AS arr_rec;
+----
+rec_arr	arr_rec
+{"(\\"(1,2)\\")"}	("{""(1,2)""}")
+
+
 statement error
 SELECT '( 3 , 4 )'::tid;
 ----

@@ -64,5 +64,13 @@ arr	rec	ts_arr
 {"0001-12-31 BC",2020-01-01}	("0001-12-31 BC",1)	{"0001-12-31 00:00:00 BC"}
 
 
+skipif pg-wire-extended
+query
+SELECT ARRAY[ROW(DATE '0001-01-01' - 1)] AS rec_arr, ROW(ARRAY[DATE '0001-01-01' - 1]) AS arr_rec;
+----
+rec_arr	arr_rec
+{"(\\"0001-12-31 BC\\")"}	("{""0001-12-31 BC""}")
+
+
 statement ok
 RESET TimeZone

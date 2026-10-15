@@ -43,7 +43,7 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kRegroleAlias,      kRegnamespaceAlias, kOidAlias,
     kTidAlias,          kPgLsnAlias,        kCidrAlias,
     kMacaddrAlias,      kMacaddr8Alias,     kInt2vectorAlias,
-    kOidvectorAlias,
+    kOidvectorAlias,    kMoneyAlias,
   };
   if (type.id() == duckdb::LogicalTypeId::BLOB) {
     return !type.HasAlias();

@@ -28,6 +28,7 @@
 #include "pg/types/float.h"
 #include "pg/types/inet.h"
 #include "pg/types/mac.h"
+#include "pg/types/money.h"
 #include "pg/types/name.h"
 #include "pg/types/oid.h"
 #include "pg/types/pg_lsn.h"
@@ -51,6 +52,7 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   RegisterChar(casts);
   RegisterName(casts);
   RegisterMacaddr(db);
+  RegisterMoney(db);
 }
 
 }  // namespace sdb::pg

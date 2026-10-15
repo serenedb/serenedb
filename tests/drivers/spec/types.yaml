@@ -225,6 +225,14 @@
   # PG accepts NaN; SereneDB currently raises "Could not convert".
   samples: ["0", "1", "-1", "3.14", "1234567890.0987654321", null]
 
+- oid: 790
+  name: money
+  pg_typname: money
+  text: true
+  binary: true
+  array: true
+  samples: ["$1,234.56", "-$0.01", "$0.00", null]
+
 # ---- network / mac ----
 - oid: 869
   name: inet

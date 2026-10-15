@@ -427,7 +427,7 @@ statement ok
 SELECT NULL::"macaddr8" IS NULL;
 
 
-# money (🔴)
+# money (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'money' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -435,10 +435,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"money" IS NULL;
-----
-db error: ERROR: Type with name money does not exist!<slt:ignore>
 
 
 # name (🟢)

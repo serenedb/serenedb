@@ -63,6 +63,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kFloat4, []() -> duckdb::LogicalType { return duckdb::LogicalType::FLOAT; }, false},
   {kFloat8, []() -> duckdb::LogicalType { return duckdb::LogicalType::DOUBLE; }, false},
   {kUnknown, []() -> duckdb::LogicalType { return duckdb::LogicalType::UNKNOWN; }, false},
+  {kMoney, &MONEY, true},
   {kInet, &INET, false},
   {kAclitem, &ACLITEM, true},
   {kBpchar, []() -> duckdb::LogicalType { return duckdb::LogicalType::VARCHAR; }, false},
@@ -235,6 +236,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       }
       if (IsRegcollation(type)) {
         return make(kRegcollation);
+      }
+      if (IsMoney(type)) {
+        return make(kMoney);
       }
       return make(kInt8);
     case UBIGINT:

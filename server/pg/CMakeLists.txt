@@ -84,6 +84,7 @@ target_sources(
         types/inet.cpp
         types/mac.cpp
         types/mapping.cpp
+        types/money.cpp
         types/name.cpp
         types/oid.cpp
         types/pg_lsn.cpp

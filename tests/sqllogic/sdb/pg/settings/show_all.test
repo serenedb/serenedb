@@ -238,6 +238,22 @@ profiling_coverage	SELECT	The profiling coverage, either SELECT (only SELECT que
 profiling_output	(empty)	The file to which profiler output is written. When empty, the output is printed to the terminal.
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
+quack_cache_max_rows	100000	Maximum rows the server retains in the result cache (0 = unlimited)
+quack_debug_drop_batch	0	DEBUG SETTING: do not send the SEND_DATA batch with this dense index (0 = off); the terminal message must then fail the statement instead of inserting less data
+quack_debug_duplicate_sends	0	DEBUG SETTING: send every SEND_DATA batch two times, imitating a transport retry; the receiver must drop the duplicate
+quack_debug_emit_delay_ms	0	DEBUG SETTING: max random delay in ms before the fetch collector publishes a batch, stressing out-of-order emission
+quack_debug_fetch_delay_ms	0	DEBUG SETTING: max random delay in ms before a FETCH response is published, stressing out-of-order batch arrival
+quack_debug_send_delay_ms	0	DEBUG SETTING: max random delay in ms before a SEND_DATA request goes out, stressing out-of-order batch arrival on the server
+quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
+quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
+quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
+quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
+quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load
+quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
+quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
+quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)
+quack_server_stream_buffer_bytes	268435456	Server-side per-stream byte budget, at most a quarter of memory_limit: FETCH counts serialized payload bytes, INSERT counts decoded chunk allocations; 0 disables the limit
+quack_target_batch_bytes	33554432	Target in-memory size of one rebalanced batch (one wire message payload); batches are cut when they reach this size
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
@@ -329,6 +345,12 @@ wal_receiver_status_interval	10s	How often a logical replication worker reports 
 wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
 wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
+whoami_hostname	(empty)	Network hostname / public address
+whoami_meta	{}	Provider-specific metadata as JSON
+whoami_name	(empty)	Human-readable name for this node
+whoami_provider	(empty)	Deployment provider (ec2, docker, local, ...)
+whoami_region	(empty)	Deployment region
+whoami_started_at	(empty)	Node start time (ISO-8601 TIMESTAMP)
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
@@ -579,6 +601,22 @@ profiling_coverage	SELECT	The profiling coverage, either SELECT (only SELECT que
 profiling_output	(empty)	The file to which profiler output is written. When empty, the output is printed to the terminal.
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
+quack_cache_max_rows	100000	Maximum rows the server retains in the result cache (0 = unlimited)
+quack_debug_drop_batch	0	DEBUG SETTING: do not send the SEND_DATA batch with this dense index (0 = off); the terminal message must then fail the statement instead of inserting less data
+quack_debug_duplicate_sends	0	DEBUG SETTING: send every SEND_DATA batch two times, imitating a transport retry; the receiver must drop the duplicate
+quack_debug_emit_delay_ms	0	DEBUG SETTING: max random delay in ms before the fetch collector publishes a batch, stressing out-of-order emission
+quack_debug_fetch_delay_ms	0	DEBUG SETTING: max random delay in ms before a FETCH response is published, stressing out-of-order batch arrival
+quack_debug_send_delay_ms	0	DEBUG SETTING: max random delay in ms before a SEND_DATA request goes out, stressing out-of-order batch arrival on the server
+quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
+quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
+quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
+quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
+quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load
+quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
+quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
+quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)
+quack_server_stream_buffer_bytes	268435456	Server-side per-stream byte budget, at most a quarter of memory_limit: FETCH counts serialized payload bytes, INSERT counts decoded chunk allocations; 0 disables the limit
+quack_target_batch_bytes	33554432	Target in-memory size of one rebalanced batch (one wire message payload); batches are cut when they reach this size
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
@@ -670,6 +708,12 @@ wal_receiver_status_interval	10s	How often a logical replication worker reports 
 wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
 wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
+whoami_hostname	(empty)	Network hostname / public address
+whoami_meta	{}	Provider-specific metadata as JSON
+whoami_name	(empty)	Human-readable name for this node
+whoami_provider	(empty)	Deployment provider (ec2, docker, local, ...)
+whoami_region	(empty)	Deployment region
+whoami_started_at	(empty)	Node start time (ISO-8601 TIMESTAMP)
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.

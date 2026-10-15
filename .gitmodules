@@ -170,6 +170,10 @@
 	path = third_party/duckdb_markdown
 	url = https://github.com/serenedb/duckdb_markdown.git
 	shallow = true
+[submodule "third_party/duckdb_quack"]
+	path = third_party/duckdb_quack
+	url = https://github.com/serenedb/duckdb-quack.git
+	shallow = true
 [submodule "third_party/cmark-gfm"]
 	path = third_party/cmark-gfm
 	url = https://github.com/serenedb/cmark-gfm.git

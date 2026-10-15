@@ -1,0 +1,100 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_quack test suite. tests/duckdb/quack/run.sh runs each file against a serened of its own that serves quack, instead of the quack_serve server of the test's DuckDB process.",
+  "skip_tests": [
+    {
+      "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no server to run from SQL: quack_serve, quack_stop, quack_server_list, quack_generate_keys, the quack_server_* settings and the quack_authentication_function / quack_authorization_function hooks do not exist. Every file below tests starting, stopping or configuring a server from SQL, or needs a server at a fixed address (quack:localhost) or a second server.",
+      "paths": [
+        "test/sql/attach_secret_name.test",
+        "test/sql/authn_swap.test",
+        "test/sql/duckdb_databases.test",
+        "test/sql/reconnects_ack_best_effort.test",
+        "test/sql/self_stop.test",
+        "test/sql/serve_canonical.test",
+        "test/sql/serve_create_secret.test",
+        "test/sql/serve_secret.test",
+        "test/sql/serve_ssl.test",
+        "test/sql/serve_token_from_secret.test",
+        "test/sql/server_connection_limits.test",
+        "test/sql/server_list.test",
+        "test/sql/token_validation.test",
+        "test/remote_pushdown/remote_pushdown_multi_catalog.test"
+      ]
+    },
+    {
+      "reason": "serened's default schema is public, as in PostgreSQL: the files below name the server's tables main.<table>.",
+      "paths": [
+        "test/sql/attach.test",
+        "test/sql/lookup_overwrite.test",
+        "test/sql/pushdown.test",
+        "test/remote_pushdown/remote_pushdown_catalog.test",
+        "test/remote_pushdown/remote_pushdown_catalog_stripping.test"
+      ]
+    },
+    {
+      "reason": "EXPLAIN names operators in upper case (SEQ_SCAN, UNION, QUACK_QUERY_BY_NAME), and the plan checks of the files below match DuckDB's names in title case (Seq Scan, Union, Quack Query).",
+      "paths": [
+        "test/remote_pushdown/remote_pushdown_advanced.test",
+        "test/remote_pushdown/remote_pushdown_cte.test",
+        "test/remote_pushdown/remote_pushdown_ddl.test",
+        "test/remote_pushdown/remote_pushdown_merge.test",
+        "test/remote_pushdown/remote_pushdown_mixed.test",
+        "test/remote_pushdown/remote_pushdown_set_operations.test"
+      ]
+    },
+    {
+      "reason": "A repeated output column name is renamed with a colon (x, x:1), which no unquoted identifier can collide with, and rpc_duplicate_columns.test expects DuckDB's x_1. It also starts its own server.",
+      "paths": [
+        "test/sql/rpc_duplicate_columns.test"
+      ]
+    },
+    {
+      "reason": "serened rejects a bad credential with `authentication failed`, as PostgreSQL words it, and the files below expect `Authentication failed`.",
+      "paths": [
+        "test/sql/error_types.test",
+        "test/sql/rpc.test",
+        "test/sql/secret.test",
+        "test/sql/secret_rpc_call.test"
+      ]
+    },
+    {
+      "reason": "serened's engine holds more than a fresh DuckDB database: the attached catalog also lists the memory database and the information_schema and pg_catalog schemas, which the schema listings of the files below do not expect.",
+      "paths": [
+        "test/sql/attach_nested_catalog.test",
+        "test/sql/attach_nested_schema.test",
+        "test/sql/attach_nested_schema_ddl.test"
+      ]
+    },
+    {
+      "reason": "The expected results are DuckDB's TPC-H answers under extension/tpch, a path relative to DuckDB's root, while an extension's test runs in the extension's directory, where the path does not exist.",
+      "paths": [
+        "test/remote_pushdown/remote_pushdown_tpch.test_slow"
+      ]
+    },
+    {
+      "reason": "On a SereneDB server, binding a remote query only describes it (duckdb/duckdb-quack issue 282), and the files below build on the bind running the query and leaving the rest of its result on the server.",
+      "paths": [
+        "test/sql/result_ttl.test",
+        "test/sql/result_ttl_releases_query.test"
+      ]
+    },
+    {
+      "reason": "Each local session has its own session on the server, which ends with the local session: cancellations.test checks the state of a session after the concurrent loop that opened it is gone.",
+      "paths": [
+        "test/sql/cancellations.test"
+      ]
+    },
+    {
+      "reason": "serened writes the engine's log to its own log (logging_storage is stdout), so duckdb_logs on the server stays empty: heartbeat_lifecycle.test reads the server's heartbeat entries from it.",
+      "paths": [
+        "test/sql/heartbeat_lifecycle.test"
+      ]
+    },
+    {
+      "reason": "The server runs in another process: logging.test reads the server's log entries from the client's duckdb_logs, and self_connect.test needs the client and the server in one database.",
+      "paths": [
+        "test/sql/logging.test",
+        "test/sql/self_connect.test"
+      ]
+    }
+  ]
+}

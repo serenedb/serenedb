@@ -105,9 +105,15 @@ class HttpAuthenticator {
 
   AuthResult Authenticate(std::string_view authorization_header,
                           bool is_loopback) const;
+  // A credential a protocol carries in its own messages: an Authorization
+  // header value, "user:password", or a bearer token.
+  AuthResult AuthenticateCredential(std::string_view credential,
+                                    bool is_loopback) const;
 
  private:
   AuthResult Basic(std::string_view payload, bool is_loopback) const;
+  AuthResult Password(std::string_view user, std::string_view password,
+                      bool is_loopback) const;
   AuthResult ApiKey(std::string_view payload) const;
   AuthResult Bearer(std::string_view payload) const;
 

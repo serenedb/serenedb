@@ -23,6 +23,7 @@
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 #include <absl/time/time.h>
 
@@ -35,7 +36,9 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/role.h"
@@ -390,6 +393,13 @@ void Server::StartIoPool() {
 void Server::StartListeners() {
   const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
+  std::vector<std::string_view> quack_urls;
+  for (const auto& spec : specs) {
+    if (spec.protocol == network::ListenProtocol::Http &&
+        absl::c_linear_search(spec.apis, network::HttpApi::Quack)) {
+      quack_urls.emplace_back(spec.url);
+    }
+  }
   for (const auto& spec : specs) {
     if (spec.protocol != network::ListenProtocol::Http) {
       continue;
@@ -411,6 +421,12 @@ void Server::StartListeners() {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
     }
+    if (!_quack && absl::c_linear_search(spec.apis, network::HttpApi::Quack)) {
+      _quack = std::make_unique<network::http::quack::Service>(
+        _credentials.get(), _api_key_validator.get(), _bearer_validator.get(),
+        _cancel, _sessions, absl::StrJoin(quack_urls, ","));
+      _quack->Start();
+    }
   }
   for (const auto& spec : specs) {
     AddListener(spec);
@@ -421,6 +437,9 @@ void Server::RequestStop() noexcept {
   for (auto& acceptor : _acceptors) {
     acceptor->Stop();
   }
+  if (_quack) {
+    _quack->RequestStop();
+  }
   _cancel.TerminateAll();
 }
 
@@ -430,6 +449,7 @@ void Server::stop() {
   // then can the pool go down -- nothing is parked on it anymore.
   _sessions.Done();
   _sessions.Wait();
+  _quack.reset();
   if (_pool) {
     _pool->Stop();
     _pool.reset();

@@ -1142,6 +1142,8 @@
 {"aggregate system.main.quantile_cont(HUGEINT, DOUBLE[])", 29491},
 {"aggregate system.main.quantile_cont(INTEGER, DOUBLE)", 29486},
 {"aggregate system.main.quantile_cont(INTEGER, DOUBLE[])", 29487},
+{"aggregate system.main.quantile_cont(INTERVAL, DOUBLE)", 30354},
+{"aggregate system.main.quantile_cont(INTERVAL, DOUBLE[])", 30355},
 {"aggregate system.main.quantile_cont(SMALLINT, DOUBLE)", 29484},
 {"aggregate system.main.quantile_cont(SMALLINT, DOUBLE[])", 29485},
 {"aggregate system.main.quantile_cont(TIME WITH TIME ZONE, DOUBLE)", 29506},

@@ -104,6 +104,8 @@ constexpr size_t kSampleWindowBytes =
 constexpr size_t kSampleWindowVectors = 64;
 constexpr uint64_t kSampleWindowsReach =
   uint64_t{kSampleWindows} * kSampleWindowVectors * STANDARD_VECTOR_SIZE;
+constexpr uint64_t kRowGroupFallbackBytes =
+  uint64_t{kSampleWindows} * codecs::kSamplePieceBytes;
 
 void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t count,
                     absl::flat_hash_set<uint64_t>& seen, std::string& window,
@@ -941,10 +943,13 @@ bool ColumnMerger::Train(field_id column, absl::FunctionRef<bool()> progress) {
                              opts.compression, shared.CodecParams(opts))) {
     const auto ctxs = OpenContexts(shared.sources, column);
     codecs::DictionarySampler sampler;
-    SampleDictionary(
-      shared.sources, column, ctxs,
-      [&](std::string_view window) { sampler.Add({&window, 1}); });
-    if (!sampler.Ready() &&
+    uint64_t sampled = 0;
+    SampleDictionary(shared.sources, column, ctxs,
+                     [&](std::string_view window) {
+                       sampled += window.size();
+                       sampler.Add({&window, 1});
+                     });
+    if (!sampler.Ready() && sampled >= kRowGroupFallbackBytes &&
         !shared.SampleRowGroups(column, sampler, progress)) {
       return false;
     }

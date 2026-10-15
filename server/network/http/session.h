@@ -197,8 +197,8 @@ class HttpSession final
 
       _conn = irs::DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, role, dbname, database_id, nullptr,
-        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+        *_conn->context, user, std::string_view{}, role, dbname, database_id,
+        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();

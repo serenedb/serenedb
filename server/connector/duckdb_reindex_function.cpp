@@ -229,8 +229,9 @@ class PassConnection {
     : _caller{caller},
       _conn{*context.db},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn.context, caller.user(), caller.GetRoleId(), target.database,
-        target.database_id, nullptr, caller.GetBackendPid(), nullptr)} {
+        *_conn.context, caller.user(), caller.SystemUser(), caller.GetRoleId(),
+        target.database, target.database_id, nullptr, caller.GetBackendPid(),
+        nullptr)} {
     SereneDBClientState::Register(*_conn.context, _ctx, false);
     _conn.context->config.user_settings = context.config.user_settings;
   }
@@ -1048,9 +1049,9 @@ class ReindexSession {
                  duckdb::idx_t database_id, int32_t backend_pid,
                  NoticeSink sink)
     : _conn{db},
-      _ctx{std::make_shared<ConnectionContext>(*_conn.context, user, role_id,
-                                               database, database_id, nullptr,
-                                               backend_pid, nullptr)},
+      _ctx{std::make_shared<ConnectionContext>(
+        *_conn.context, user, std::string_view{}, role_id, database,
+        database_id, nullptr, backend_pid, nullptr)},
       _sink{std::move(sink)} {
     SereneDBClientState::Register(*_conn.context, _ctx, false);
   }

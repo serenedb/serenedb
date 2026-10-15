@@ -243,8 +243,8 @@ bool SyncSession::SetupApplyConnection() {
     duckdb::SetScope::SESSION, duckdb::Value{"replica"});
   this->_txn_state.emplace(this->_conn->context->transaction);
   this->_connection_ctx = std::make_shared<ConnectionContext>(
-    *this->_conn->context, user, role, _target.database_name,
-    _target.database_oid, nullptr, 0, nullptr);
+    *this->_conn->context, user, std::string_view{}, role,
+    _target.database_name, _target.database_oid, nullptr, 0, nullptr);
   this->_client_state = &connector::SereneDBClientState::Register(
     *this->_conn->context, this->_connection_ctx, false);
   connector::SetDefaultSearchPath(*this->_conn->context, _target.database_name);

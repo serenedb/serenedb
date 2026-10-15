@@ -1,0 +1,39 @@
+# SYSTEM_USER and system_user(): the authentication method and the identity
+# the connection authenticated with, NULL when no password was checked. Both
+# engines admit this connection with trust.
+
+query
+SELECT system_user IS NULL AS keyword,
+       SYSTEM_USER IS NULL AS uppercase_keyword,
+       pg_catalog.system_user() IS NULL AS function,
+       pg_typeof(system_user) AS type;
+----
+keyword	uppercase_keyword	function	type
+t	t	t	text
+
+
+statement ok
+DROP ROLE IF EXISTS session_info_functions_role;
+
+
+statement ok
+CREATE ROLE session_info_functions_role;
+
+
+statement ok
+SET SESSION AUTHORIZATION session_info_functions_role;
+
+
+query
+SELECT session_user, current_user, system_user IS NULL AS system_user_null;
+----
+session_user	current_user	system_user_null
+session_info_functions_role	session_info_functions_role	t
+
+
+statement ok
+RESET SESSION AUTHORIZATION;
+
+
+statement ok
+DROP ROLE session_info_functions_role;

@@ -437,8 +437,8 @@ bool PgWireSession<Kind>::SetupConnection() {
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
-    *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
-    static_cast<int32_t>(_cancel_key >> 32), _cancel);
+    *_conn->context, user, _system_user, role, DatabaseName(), database_id,
+    &this->_send, static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state = &connector::SereneDBClientState::Register(
     *_conn->context, _connection_ctx, true);
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
@@ -1049,6 +1049,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                              UserName(), "\"")));
     co_return false;
   }
+  _system_user = absl::StrCat(hba::MethodName(hba_method), ":", UserName());
   co_return true;
 }
 

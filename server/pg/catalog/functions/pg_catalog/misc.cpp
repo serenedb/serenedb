@@ -444,6 +444,15 @@ void SessionUserFunction(duckdb::DataChunk& args,
   result.Reference(value, duckdb::count_t(args.size()));
 }
 
+void SystemUserFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                        duckdb::Vector& result) {
+  const auto& system_user = GetSereneDBContext(state.GetContext()).SystemUser();
+  result.Reference(system_user.empty()
+                     ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                     : duckdb::Value{system_user},
+                   duckdb::count_t(args.size()));
+}
+
 void PgBackendPidFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
@@ -1527,6 +1536,10 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     nullptr,
     {duckdb::ScalarFunction{
       {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>}});
+
+  RegisterScalar(loader, pg_catalog, "system_user", CONSISTENT_WITHIN_QUERY,
+                 nullptr,
+                 {duckdb::ScalarFunction{{}, text, SystemUserFunction}});
 }
 
 }  // namespace sdb::pg

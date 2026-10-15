@@ -383,7 +383,8 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
                             irs::DuckDBEngine::Instance().CreateConnection()};
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
-    context, user, role, database, database_id, nullptr, 0, nullptr);
+    context, user, std::string_view{}, role, database, database_id, nullptr, 0,
+    nullptr);
   SereneDBClientState::Register(context, system.ctx, false);
   SetDefaultSearchPath(context, database);
   return system;

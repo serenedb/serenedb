@@ -809,6 +809,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | getpgusername                      | Yes           |  |
 | pg_basetype                        | Yes           |  |
 | pg_collation_for                   | Yes           | An untyped string literal is `text`, so it has the default collation |
+| system_user                        | Yes           | Also the `SYSTEM_USER` keyword. The [authentication method](../security/client_authentication.md) and the role, for example `scram-sha-256:alice`; `NULL` for a connection a `trust` rule admits and for the HTTP API |
 | pg_get_keywords                    | Yes           | Lists the keywords of SereneDB's parser, among them `pivot` and `qualify`, which PostgreSQL does not reserve. A word the parser takes both as a column name and as a type or function name, such as `struct`, is listed once, as unreserved. `barelabel` and `baredesc` are `NULL`: the parser does not say which keywords can be a bare column label |
 | pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
 | obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |

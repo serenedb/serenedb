@@ -247,8 +247,8 @@ class Loader {
          std::span<const Doc> docs)
     : _conn{irs::DuckDBEngine::Instance().CreateConnection()},
       _ctx{std::make_shared<ConnectionContext>(
-        *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
-        database, database_id, nullptr, 0, nullptr)},
+        *_conn->context, irs::StaticStrings::kDefaultUser, std::string_view{},
+        pg::kRootUser, database, database_id, nullptr, 0, nullptr)},
       _docs{docs} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx, false);
     connector::SetDefaultSearchPath(*_conn->context, database);

@@ -423,6 +423,7 @@ class PgWireSession
   // loopback reads as IPv4. Feeds HBA CIDR matching and the passwordless-trust
   // gate (via asio's address::is_loopback()).
   asio_ns::ip::address _peer_addr;
+  std::string _system_user;
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so

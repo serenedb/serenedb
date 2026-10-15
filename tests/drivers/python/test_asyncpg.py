@@ -164,6 +164,11 @@ def _coerce_for_asyncpg(pg_typname: str, sample):
     if pg_typname == "pg_lsn":
         high, low = s.split("/")
         return (int(high, 16) << 32) | int(low, 16)
+    if pg_typname == "tid":
+        block, offset = s.strip("()").split(",")
+        return (int(block), int(offset))
+    if pg_typname == "oidvector":
+        return [int(oid) for oid in s.split()]
     return s
 
 

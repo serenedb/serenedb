@@ -193,12 +193,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  if (ss.plan_cache.cache_plan && ss.plan_cache.reacquire_snapshot) {
-    state->snapshot = ss.plan_cache.reacquire_snapshot(context);
-    ss.search.snapshot.reset();
-  } else {
-    state->snapshot = ss.search.snapshot;
-  }
+  state->snapshot = ss.Snapshot(context);
   const auto& snapshot = *state->snapshot;
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
@@ -280,12 +275,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "fast-path source (read_parquet/csv/json/...)"));
     }
   }
-  // The claimed WHERE, rebuilt with this execution's parameter values where
-  // the plan deferred it; otherwise the one the plan built.
-  std::shared_ptr<const irs::Filter> where = ss.search.filter;
-  if (ss.plan_cache.deferred) {
-    where = state->owned_where;
-  }
+  const auto where = state->ClaimedWhere();
   if (ss.score.vector) {
     state->owned_vector_scorer = *ss.score.vector;
     auto& vs = *state->owned_vector_scorer;
@@ -350,7 +340,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   ClassifySegments(*state);
 
   state->splittable =
-    !(ss.search.filter && HasNested(*ss.search.filter)) &&
+    !(where && HasNested(*where)) &&
     // A vector scan stays one unit. Letting it into the row-group split was
     // measured on wiki-1m, eight segments, one client: p99 got worse on 18 of
     // 25 groups and better on 1, and turning only the split back off returned

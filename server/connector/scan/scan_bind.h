@@ -70,7 +70,9 @@ struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
-  mutable search::InvertedIndexSnapshotPtr snapshot;
+  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
+    acquire_snapshot;
+  std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
 
   bool MatchAll() const noexcept { return !filter; }
 };
@@ -166,13 +168,6 @@ struct DeferredClaim {
 
 struct PlanCacheSpec {
   std::optional<DeferredClaim> deferred;
-  // Re-acquires the index snapshot at execution, so a cached plan reads the
-  // data of the executing transaction rather than of the one that planned.
-  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
-    reacquire_snapshot;
-  // True when every parameter this scan depends on is read at execution: the
-  // prepared statement's plan is then kept instead of re-bound per execution.
-  bool cache_plan = false;
   // A conjunct with a parameter the claim could not shape: it stays a filter
   // above the scan, so the plan must be re-bound with values.
   bool declined_parameter = false;
@@ -236,7 +231,13 @@ struct ScanBindData final : duckdb::FunctionData {
     return duckdb::make_uniq<ScanBindData>(*this);
   }
   bool Equals(const duckdb::FunctionData& other) const final;
-  bool CachePlanWithParameters() const final { return plan_cache.cache_plan; }
+  bool ReadsParametersAtExecution() const final;
+  duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
+
+  search::InvertedIndexSnapshotPtr Snapshot(
+    duckdb::ClientContext& context) const {
+    return search.acquire_snapshot(context);
+  }
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
   bool IsMatchAll() const noexcept {
@@ -313,6 +314,7 @@ struct DeferredColumnFilter {
 
 struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
+  std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
 };
 

@@ -222,6 +222,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   // The claimed WHERE rebuilt from this execution's parameters, when the plan
   // deferred it; `owned_filter` wraps it and `filter` points into that.
   std::shared_ptr<const irs::Filter> owned_where;
+  std::vector<std::shared_ptr<irs::Scorer>> owned_where_scorers;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
@@ -310,6 +311,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t MaxThreads() const final { return workers; }
 
   const ScanBindData& Bind() const noexcept { return *scan; }
+  std::shared_ptr<const irs::Filter> ClaimedWhere() const {
+    return scan->plan_cache.deferred ? owned_where : scan->search.filter;
+  }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
   UnitRows RowsOf(const ScanUnit& unit) const noexcept;
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;

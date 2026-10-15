@@ -420,8 +420,12 @@ void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
                         const ScanBindData& bind_data) {
   auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
   state.owned_where = std::move(built.filter);
+  state.owned_where_scorers = std::move(built.scorers);
   for (auto& column_filter : built.column_filters) {
     AddDeferredColumnFilter(state, std::move(column_filter));
+  }
+  if (state.owned_where) {
+    AddDeferredVerifyFilters(state, *state.owned_where);
   }
 }
 
@@ -533,7 +537,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     BuildTableFilter(state, bind_data, *input.filters);
   }
   BuildRowFilters(state, bind_data);
-  if (bind_data.search.filter) {
+  if (bind_data.search.filter && !bind_data.plan_cache.deferred) {
     AddDeferredVerifyFilters(state, *bind_data.search.filter);
   }
 }

@@ -414,15 +414,11 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
   l.answer_chunk->Append(batch, duckdb::VectorAppendMode::ALLOW_RESIZE);
 }
 
-std::shared_ptr<const irs::Filter> ClaimedWhere(const ScanGlobalState& g) {
-  return g.Bind().plan_cache.deferred ? g.owned_where : g.Bind().search.filter;
-}
-
 std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l) {
   auto vs = *g.vector_scorer;
   vs.exact = true;
   const auto filter =
-    MakeVectorFilter(vs, ClaimedWhere(g), vs.EffectiveRadius());
+    MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
   std::vector<irs::ScoreDoc> ranked;
   std::atomic<irs::score_t> threshold;
   for (const auto seg : g.segment_order) {

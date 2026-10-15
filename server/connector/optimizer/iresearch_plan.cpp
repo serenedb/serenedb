@@ -360,6 +360,31 @@ bool ClaimDeferredRange(const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   return true;
 }
 
+bool ParameterShapesConjunction(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+    for (const auto& operand :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      if (!operand->HasParameter()) {
+        continue;
+      }
+      bool reads_column = false;
+      duckdb::ExpressionIterator::VisitExpression<
+        duckdb::BoundColumnRefExpression>(
+        *operand,
+        [&](const duckdb::BoundColumnRefExpression&) { reads_column = true; });
+      if (!reads_column) {
+        return true;
+      }
+    }
+  }
+  bool shapes = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      shapes = shapes || ParameterShapesConjunction(child);
+    });
+  return shapes;
+}
+
 bool TryClaimIResearchConjunctImpl(
   irs::BooleanFilter& root,
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
@@ -378,25 +403,36 @@ bool TryClaimIResearchConjunctImpl(
       return false;
     }
     deferred->any_parameter = true;
-    auto shaped = NormalizeClaimShape(
-      context, SubstituteParameters(conjunct->Copy(), /*with_values=*/false));
-    auto node = std::make_unique<irs::BooleanFilter>();
-    std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped, 1};
-    connector::FilterScorers shaped_scorers;
-    const auto column_getter = deferred->Recording(getter);
-    const auto expression_getter = deferred->Recording(expr_getter);
-    const auto claimed = connector::MakeSearchFilter(
-      *node, single, column_getter, context, expression_getter, &shaped_scorers,
-      ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
-                                   : connector::WideRanges::Build);
-    const bool built = absl::c_any_of(
-      irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
-    if (!claimed.ok() || !built || deferred->used_expr_getter ||
-        !shaped_scorers.empty()) {
-      if (ClaimDeferredRange(conjunct, shaped, column_getter, expression_getter,
-                             context, *deferred)) {
-        return true;
+    if (ParameterShapesConjunction(*conjunct)) {
+      deferred->declined_parameter = true;
+      return false;
+    }
+    try {
+      auto shaped = NormalizeClaimShape(
+        context, SubstituteParameters(conjunct->Copy(), /*with_values=*/false));
+      auto node = std::make_unique<irs::BooleanFilter>();
+      std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped,
+                                                                     1};
+      connector::FilterScorers shaped_scorers;
+      const auto column_getter = deferred->Recording(getter);
+      const auto expression_getter = deferred->Recording(expr_getter);
+      const auto claimed = connector::MakeSearchFilter(
+        *node, single, column_getter, context, expression_getter,
+        &shaped_scorers,
+        ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
+                                     : connector::WideRanges::Build);
+      const bool built = absl::c_any_of(irs::kAllOccur, [&](irs::Occur occur) {
+        return node->Size(occur) != 0;
+      });
+      if (!claimed.ok() || !built || deferred->used_expr_getter) {
+        if (ClaimDeferredRange(conjunct, shaped, column_getter,
+                               expression_getter, context, *deferred)) {
+          return true;
+        }
+        deferred->declined_parameter = true;
+        return false;
       }
+    } catch (const irs::SqlException&) {
       deferred->declined_parameter = true;
       return false;
     }
@@ -458,6 +494,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const auto projected_ids = BuildProjectedColumnIds(get, bind_data);
   const auto table_index = get.table_index;
   const bool table_backed = !bind_data.IsViewBacked();
+  const auto snapshot = bind_data.Snapshot(context);
 
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
@@ -477,9 +514,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
                                               dicts.Acquire(field_id));
       column_info.column_stored = bind_data.relation.IsSearchTable();
-      if (column && column_info.column_stored && bind_data.search.snapshot) {
-        column_info.stats =
-          bind_data.search.snapshot->reader.GetColumnStats(*column);
+      if (column && column_info.column_stored) {
+        column_info.stats = snapshot->reader.GetColumnStats(*column);
       }
       if (column && table_backed && column_not_null(*column)) {
         column_info.null_field_id = irs::field_limits::invalid();
@@ -551,10 +587,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers,
                           column_id});
 }
-
-void DecidePlanCache(
-  connector::ScanBindData& scan,
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& residual);
 
 namespace {
 
@@ -1421,12 +1453,10 @@ bool ClaimSearchConjuncts(
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
   connector::FilterScorers filter_scorers;
-  // Parameters are read at execution only by a vector-scored scan, the one
-  // whose plan is worth caching; a text-scored one keeps duckdb's rebind.
   DeferredClaimBuilder deferred;
   deferred.column_id = &column_id;
   DeferredClaimBuilder* const deferred_ptr =
-    scan.score.vector && !scan.score.text ? &deferred : nullptr;
+    scan.ts_dict.Active() || scan.offsets.Active() ? nullptr : &deferred;
   const auto range_modes = DecideColumnRanges(filters, getter, context);
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
   for (size_t i = 0; i < filters.size();) {
@@ -1507,24 +1537,11 @@ bool TryClaimSearchFilter(
     });
 }
 
-// Every SereneDB scan of the plan decides whether its plan may be cached
-// across executions; a scan under a WHERE decides again when its filters are
-// pushed down (IResearchPushdownComplexFilter).
-void DecidePlanCacheForScans(duckdb::LogicalOperator& op) {
-  if (auto scan = AsSearchScan(op)) {
-    DecidePlanCache(*scan->bind_data, {});
-  }
-  for (auto& child : op.children) {
-    DecidePlanCacheForScans(*child);
-  }
-}
-
 void RewriteSearchCallsToColumnRefs(
   duckdb::OptimizerExtensionInput& input,
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   RewriteIResearchExpressions(input.context, plan, plan, input.optimizer.binder,
                               HasSearchScan(*plan));
-  DecidePlanCacheForScans(*plan);
 }
 
 void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
@@ -1727,25 +1744,6 @@ void TakeColumnConjuncts(
 
 }  // namespace
 
-// A vector-scored scan reads its knobs and its query vector at execution
-// and rebuilt its parameterized WHERE then too, so its plan may be cached
-// across the executions of a prepared statement: unless some conjunct with a
-// parameter was declined and stays a filter above the scan, which the
-// template plan would evaluate after the graph walk instead of inside it.
-void DecidePlanCache(
-  connector::ScanBindData& scan,
-  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& residual) {
-  if (!scan.score.vector || scan.score.text || scan.ts_dict.Active() ||
-      scan.offsets.Active() || scan.plan_cache.declined_parameter ||
-      !scan.plan_cache.reacquire_snapshot) {
-    scan.plan_cache.cache_plan = false;
-    return;
-  }
-  const bool residual_parameter =
-    absl::c_any_of(residual, [](const auto& e) { return e->HasParameter(); });
-  scan.plan_cache.cache_plan = !residual_parameter;
-}
-
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data_ptr,
@@ -1758,17 +1756,19 @@ void IResearchPushdownComplexFilter(
     ClaimTsDictFilter(filters, get, bind_data, bind_data, context);
     return;
   }
-  if (bind_data.search.filter) {
-    return;
+  if (!bind_data.search.filter) {
+    TryClaimAnnRange(filters, get, bind_data, context);
+    if (!filters.empty()) {
+      TryClaimSearchFilter(filters, get, bind_data, context);
+    }
+    if (bind_data.score.vector) {
+      TakeColumnConjuncts(get, bind_data, filters, context);
+    }
   }
-  TryClaimAnnRange(filters, get, bind_data, context);
-  if (!filters.empty()) {
-    TryClaimSearchFilter(filters, get, bind_data, context);
+  if (absl::c_any_of(filters,
+                     [](const auto& e) { return e->HasParameter(); })) {
+    bind_data.plan_cache.declined_parameter = true;
   }
-  if (bind_data.score.vector) {
-    TakeColumnConjuncts(get, bind_data, filters, context);
-  }
-  DecidePlanCache(bind_data, filters);
 }
 
 namespace {

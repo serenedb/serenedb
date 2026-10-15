@@ -30,12 +30,13 @@
 namespace sdb::connector {
 
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
-  duckdb::ClientContext&, duckdb::TableFunctionGetStatisticsInput& input) {
+  duckdb::ClientContext& context,
+  duckdb::TableFunctionGetStatisticsInput& input) {
   if (!input.bind_data) {
     return nullptr;
   }
   const auto& bind = input.bind_data->Cast<ScanBindData>();
-  if (bind.plan_cache.cache_plan || !input.column_index.HasPrimaryIndex()) {
+  if (!input.column_index.HasPrimaryIndex()) {
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
@@ -51,7 +52,8 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   } else if (col_id > kMaxRealColumnIdValue) {
     return nullptr;
   }
-  const auto* stats = bind.search.snapshot->reader.GetColumnStats(col_id);
+  const auto snapshot = bind.Snapshot(context);
+  const auto* stats = snapshot->reader.GetColumnStats(col_id);
   if (!stats) {
     return nullptr;
   }

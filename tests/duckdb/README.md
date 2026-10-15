@@ -27,6 +27,7 @@ tests/duckdb/run.sh                    # every suite
 tests/duckdb/run.sh --suite core       # just duckdb core
 tests/duckdb/run.sh --suite avro,inet  # a subset
 tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
+tests/duckdb/run.sh --suite quack      # quack's tests against a serened per file
 tests/duckdb/run.sh --jobs 8           # 8 test files at a time (default: nproc)
 tests/duckdb/run.sh --list             # suite names
 ```
@@ -198,8 +199,8 @@ The skips fall into a few kinds, and the `reason` on every entry says which:
   are compiled into the server binary); the parser is one fixed grammar, with no
   parser, grammar or dialect extensions; `search_path` follows PostgreSQL; `//` on
   `DECIMAL` divides by IEEE 754 like `/`; httpfs is curl-only; spatial is built
-  without GEOS, GDAL, PROJ and its persistent RTREE index. Tests for those features
-  cannot pass and shouldn't.
+  without GEOS, GDAL, PROJ and its persistent RTREE index; quack has no server in
+  the engine (serened serves it). Tests for those features cannot pass and shouldn't.
 - **Needs a live third-party endpoint.** A test that reaches a public bucket
   without a `require-env` guard fails intermittently on the endpoint's answer, not
   on anything the fork does.
@@ -302,6 +303,10 @@ The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: 
 Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Outside the image (no `pyspark` on the host), `run.sh` runs the generator in `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`). Its log is `out/test-results/iceberg-data.log`.
 
 The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json`, and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
+
+## The quack suite
+
+Upstream's quack tests start a server in the test's own process with `quack_serve`, which our quack extension does not have: serened serves quack from an HTTP listener. [quack/run.sh](quack/run.sh) therefore runs each file against a serened of its own, started with `--auth_bearer_token=asdf` (the token the tests attach with) in the extension's directory, where `unittest` runs the file too. The file reaches it through `QUACK_SERVER` (`--env-passthrough`). `test/template/quack_setup.test_template` attaches that serened on the server connection and `CONNECT`s to it, so the statements the tests run "on the server" run in serened. That connection is a quack session of its own, which a file that lists the server's sessions excludes with `WHERE connection_id <> '{harness}'`, and the files that started a server of their own include the template instead. The files that test starting, stopping or configuring a server from SQL, or depend on what serened does differently, are in [config/quack.json](config/quack.json).
 
 ## Traps
 

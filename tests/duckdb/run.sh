@@ -62,9 +62,10 @@ declare -A SUITE_DIR=(
 	[markdown]="$WORKSPACE/third_party/duckdb_markdown"
 	[postgres_scanner]="$WORKSPACE/third_party/duckdb_postgres"
 	[spatial]="$WORKSPACE/third_party/duckdb_spatial"
+	[quack]="$WORKSPACE/third_party/duckdb_quack"
 	[interop]="$SCRIPT_DIR/interop"
 )
-SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
+SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial quack interop)
 CORE_SERIAL_TESTS=(
 	test/sql/storage/concurrent_checkpoint_append_before_snapshot.test_slow
 	test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow
@@ -132,17 +133,20 @@ while [ $# -gt 0 ]; do
 done
 
 run_interop=false
+run_quack=false
 unittest_suites=""
 for suite in $SUITES; do
 	if [[ "$suite" == interop ]]; then
 		run_interop=true
+	elif [[ "$suite" == quack ]]; then
+		run_quack=true
 	else
 		unittest_suites="$unittest_suites $suite"
 	fi
 done
 
 UNITTEST="$WORKSPACE/$BUILD_DIR/third_party/duckdb/test/unittest"
-if [[ -n "${unittest_suites// /}" && ! -x "$UNITTEST" ]]; then
+if [[ (-n "${unittest_suites// /}" || "$run_quack" == true) && ! -x "$UNITTEST" ]]; then
 	if [[ ! -f "$WORKSPACE/$BUILD_DIR/CMakeCache.txt" ]]; then
 		echo "ERROR: $WORKSPACE/$BUILD_DIR is not a configured build directory." >&2
 		exit 1
@@ -631,6 +635,13 @@ if [[ " $SUITES " == *" iceberg "* ]]; then
 	CATALOG_TEST_CONFIG_SETUP=fixture run_unittest --order lex \
 		"$ICEBERG_DIR/test/sql/local/catalog_custom_setup/*,$ICEBERG_DIR/test/sql/local/partitioning/foldable_expression_filter.test,$ICEBERG_DIR/test/sql/local/partitioning/in_filter.test"
 	[[ -n "$http_proxy_public" ]] && export HTTP_PROXY_PUBLIC="$http_proxy_public"
+fi
+if [[ "$run_quack" == true ]]; then
+	start=$(wc -l <"$log")
+	BUILD_DIR="$BUILD_DIR" DUCKDB_JOBS="$DUCKDB_JOBS" "$SCRIPT_DIR/quack/run.sh" 2>&1 | tee -a "$log"
+	quack_rc=${PIPESTATUS[0]}
+	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^===== \[duckdb quack\] [0-9]+/[0-9]+ passed' | tail -1)")
+	[[ $rc -eq 0 ]] && rc=$quack_rc
 fi
 if [[ "$run_interop" == true ]]; then
 	start=$(wc -l <"$log")

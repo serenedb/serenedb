@@ -14,6 +14,7 @@ Each kind of database has its own dedicated page:
 
 - [PostgreSQL](./postgres.md) — attach an external PostgreSQL database over a connection string.
 - [DuckDB](./duckdb.md) — attach a DuckDB database file, including remote files over HTTP and S3.
+- [Quack](./quack.md) — attach another SereneDB server over the Quack protocol.
 
 Attachment definitions are not persisted between sessions: when a new session is launched, you have to re-attach to all databases. For a **persistent** connection to a PostgreSQL or ClickHouse instance — one that survives restart, has an owner and is guarded by `USAGE` privileges — use [`CREATE SERVER`](../create_server/index.md) instead.
 
@@ -29,6 +30,7 @@ The type of an attached database is either given explicitly with the `TYPE` opti
 
 - A **file path** attaches a [DuckDB database file](./duckdb.md).
 - A **connection string** (e.g. `host=… port=…`) attaches an external [PostgreSQL database](./postgres.md) with `TYPE postgres`.
+- A **`quack:` address** (e.g. `quack:10.0.0.5:9494`) attaches a [server over the Quack protocol](./quack.md).
 
 By default, `ATTACH` opens a database for reading and writing. Pass `READ_ONLY` to open it for reading only.
 

@@ -687,7 +687,7 @@ set(BUILD_EXTENSIONS
     FORCE
 )
 set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;quack"
     CACHE STRING
     ""
     FORCE
@@ -698,6 +698,7 @@ set(STATICALLY_LINK_EXTENSIONS
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_quack/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -712,6 +713,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR
 sdb_update_module(${GIT_EXECUTABLE} "postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_quack" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 

@@ -16,7 +16,7 @@ changed="$(git diff --name-only "${BASE_REF}...HEAD")"
 #
 # Directories that affect no DuckDB suite -- iresearch and the rest of the serenedb
 # stack -- deliberately fall through to none here; they have their own gates.
-ALL_SUITES="core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop"
+ALL_SUITES="core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial quack interop"
 ALL_SUITES_DIRS="abseil-cpp ada brotli fast_float fmt jemalloc jemalloc-cmake llvm-project lz4 re2 simdutf snappy tcmalloc zlib-ng zstd"
 
 # dir -> space-separated suite list
@@ -40,6 +40,7 @@ declare -A SUITE_OF_DIR=(
 	[duckdb_inet]="inet"
 	[duckdb_markdown]="markdown"
 	[cmark-gfm]="markdown"
+	[duckdb_quack]="quack"
 	[curl]="httpfs iceberg postgres_scanner"
 	[openssl]="httpfs azure iceberg postgres_scanner"
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
@@ -62,6 +63,10 @@ while IFS= read -r f; do
 		;;
 	tests/duckdb/interop/*)
 		suite_hit[interop]=1
+		continue
+		;;
+	tests/duckdb/quack/* | tests/duckdb/config/quack.json | server/network/http/quack/*)
+		suite_hit[quack]=1
 		continue
 		;;
 	esac

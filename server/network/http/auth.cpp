@@ -69,6 +69,30 @@ AuthResult HttpAuthenticator::Authenticate(
   return {.status = HttpStatus::Unauthorized};
 }
 
+AuthResult HttpAuthenticator::AuthenticateCredential(
+  std::string_view credential, bool is_loopback) const {
+  if (!Enabled()) {
+    return is_loopback ? AuthResult{}
+                       : AuthResult{.status = HttpStatus::Unauthorized};
+  }
+  std::string_view value = credential;
+  if (TakeScheme(value, "Basic")) {
+    return Basic(value, is_loopback);
+  }
+  if (TakeScheme(value, "ApiKey")) {
+    return ApiKey(value);
+  }
+  if (TakeScheme(value, "Bearer")) {
+    return Bearer(value);
+  }
+  if (const auto colon = credential.find(':');
+      colon != std::string_view::npos) {
+    return Password(credential.substr(0, colon), credential.substr(colon + 1),
+                    is_loopback);
+  }
+  return Bearer(credential);
+}
+
 AuthResult HttpAuthenticator::Basic(std::string_view payload,
                                     bool is_loopback) const {
   const auto decoded = network::Base64Decode(payload);
@@ -80,9 +104,12 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
   if (colon == std::string_view::npos) {
     return {.status = HttpStatus::Unauthorized};
   }
-  const std::string_view user = pair.substr(0, colon);
-  const std::string_view password = pair.substr(colon + 1);
+  return Password(pair.substr(0, colon), pair.substr(colon + 1), is_loopback);
+}
 
+AuthResult HttpAuthenticator::Password(std::string_view user,
+                                       std::string_view password,
+                                       bool is_loopback) const {
   const auto credential = _credentials->LookupCredential(user);
   if (!credential) {
     // Same trust semantics as the pg session: a user without a configured

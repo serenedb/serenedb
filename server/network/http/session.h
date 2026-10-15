@@ -250,9 +250,17 @@ class HttpSession final
 
   std::string_view User() const final { return _user; }
 
+  std::string_view Database() const final { return _database; }
+
   std::string_view Schema() const final {
     return _schema.empty() ? std::string_view{"public"} : _schema;
   }
+
+  bool PeerIsLoopback() const final { return _peer_is_loopback; }
+
+  const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
+
+  IoExecutor& Io() final { return *_ioexec; }
 
  private:
   static duckdb::QueryParameters MaterializedQuery() {
@@ -334,6 +342,8 @@ class HttpSession final
   yaclib::Task<bool> Negotiate();
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
+  // io-side: the deadline of the pending socket read.
+  void ArmReadDeadline();
 
   void ReleaseConnection() {
     {
@@ -378,8 +388,15 @@ class HttpSession final
   message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
   // Read-deadline phase for RecvLoop: idle (between requests, generous
-  // keep-alive timeout) vs mid-request (strict header/body timeout).
-  std::atomic<bool> _idle{true};
+  // keep-alive timeout), mid-request (strict header/body timeout), or
+  // handling a request that is fully read (no deadline: the client waits for
+  // the response).
+  enum class ReadPhase : uint8_t {
+    Idle,
+    Request,
+    Handling,
+  };
+  std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -389,6 +406,7 @@ class HttpSession final
   std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
+  bool _peer_is_loopback = false;
 };
 
 template<SocketKind Kind>
@@ -445,14 +463,7 @@ yaclib::Task<> HttpSession<Kind>::Run() {
     _task->Start();
 
     for (;;) {
-      _deadline.expires_after(_idle.load(std::memory_order_acquire)
-                                ? gHttpKeepAliveTimeout
-                                : gHttpBodyTimeout);
-      _deadline.async_wait([self](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
+      ArmReadDeadline();
       auto [ec, n] =
         co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
       _deadline.cancel();
@@ -469,6 +480,26 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   }
   co_await std::move(writer);
   co_return {};
+}
+
+template<SocketKind Kind>
+void HttpSession<Kind>::ArmReadDeadline() {
+  _deadline.expires_after(_read_phase.load(std::memory_order_acquire) ==
+                              ReadPhase::Request
+                            ? gHttpBodyTimeout
+                            : gHttpKeepAliveTimeout);
+  _deadline.async_wait(
+    [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+      if (ec) {
+        return;
+      }
+      if (self->_read_phase.load(std::memory_order_acquire) ==
+          ReadPhase::Handling) {
+        self->ArmReadDeadline();
+        return;
+      }
+      self->_socket.Close();
+    });
 }
 
 template<SocketKind Kind>
@@ -491,11 +522,12 @@ yaclib::Task<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
         continue;
       }
     }
-    _idle.store(avail == 0, std::memory_order_release);
+    _read_phase.store(avail == 0 ? ReadPhase::Idle : ReadPhase::Request,
+                      std::memory_order_release);
     if (!co_await AwaitMoreBytes(avail)) {
       co_return std::nullopt;
     }
-    _idle.store(false, std::memory_order_release);
+    _read_phase.store(ReadPhase::Request, std::memory_order_release);
   }
 }
 
@@ -592,7 +624,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (!event) {
         break;
       }
-      _idle.store(false, std::memory_order_release);
+      _read_phase.store(ReadPhase::Request, std::memory_order_release);
       if (*event == H1Event::Error) {
         http::HttpResponseWriter error_writer{_send, *this,
                                               /*keep_alive=*/false,
@@ -617,6 +649,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         }
         break;
       }
+      _read_phase.store(ReadPhase::Handling, std::memory_order_release);
 
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
@@ -689,10 +722,13 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
 
         asio_ns::error_code peer_ec;
         const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        const bool peer_is_loopback =
-          !peer_ec && peer_ep.address().is_loopback();
-        auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), peer_is_loopback);
+        _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+        HttpHandler* handler = _router.Match(request);
+        http::AuthResult auth;
+        if (!handler || !handler->AuthenticatesItself()) {
+          auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                    _peer_is_loopback);
+        }
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
@@ -701,7 +737,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         } else if (const auto decoding = DecodeRequestBody(request);
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
-        } else if (HttpHandler* handler = _router.Match(request)) {
+        } else if (handler) {
           if (_conn && _user != _conn_user) {
             ReleaseConnection();
           }
@@ -746,7 +782,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         break;
       }
       _codec.Reset();
-      _idle.store(true, std::memory_order_release);
+      _read_phase.store(ReadPhase::Idle, std::memory_order_release);
     }
   } catch (const std::exception& e) {
     SDB_ERROR(HTTP, "http session terminated by exception: ",

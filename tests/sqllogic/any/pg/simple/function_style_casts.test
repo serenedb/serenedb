@@ -1,0 +1,60 @@
+query
+SELECT int4('42'), text(123);
+----
+int4	text
+42	123
+
+
+query
+SELECT int4('42') AS a, float8(1) AS b, text(123) AS c, bool('t') AS d, int8(5) AS e, name('x') AS f;
+----
+a	b	c	d	e	f
+42	1	123	t	5	x
+
+
+query
+SELECT pg_typeof(int4('42')) AS a, pg_typeof(text(123)) AS b, pg_typeof(float8(1)) AS c, pg_typeof(int2('7')) AS d;
+----
+a	b	c	d
+integer	text	double precision	smallint
+
+
+query
+SELECT oid(5) AS o, uuid('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11') AS u, inet('1.2.3.4') AS i, cidr('10.0.0.0/8') AS c;
+----
+o	u	i	c
+5	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	1.2.3.4	10.0.0.0/8
+
+
+query
+SELECT macaddr('08:00:2b:01:02:03') AS m, "char"('ab') AS ch, bpchar('x') AS b, regclass('pg_class') AS r, tid('(1,2)') AS t;
+----
+m	ch	b	r	t
+08:00:2b:01:02:03	a	x	pg_class	(1,2)
+
+
+query
+SELECT bytea('\x01') AS b, json('{"a":1}') AS j, date('2020-01-01') AS d;
+----
+b	j	d
+\\x01	{"a":1}	2020-01-01
+
+
+query
+SELECT int4(x) AS v FROM (VALUES ('1'), ('2')) AS t(x) ORDER BY v;
+----
+v
+1
+2
+
+
+statement error (invalid input syntax for type integer: "abc"|Could not convert string 'abc' to INT32)
+SELECT int4('abc');
+
+
+statement error (smallint out of range|out of range for the destination type INT16)
+SELECT int2(70000);
+
+
+statement error (ORDER BY specified, but int4 is not an aggregate function|int4 does not exist)
+SELECT int4('42' ORDER BY 1);

@@ -10,7 +10,7 @@ split: headings
 - 🟡 Supported, with the differences described in Details
 - 🔴 Not supported: the type is in `pg_type` and its name resolves (`'point'::regtype`, `format_type(600, NULL)`), but no value, cast or column can use it
 
-The array type of each type, `<type>[]`, has the same support as the type, and the column shorthands `smallserial`, `serial` and `bigserial` work as in PostgreSQL. Pseudo-types such as `anyelement`, `record` and `trigger` are listed for function signatures and, as in PostgreSQL, hold no values. Besides these types, SereneDB has types of its own, such as [`VARIANT`](../sql/data_types/variant.md), [`MAP`](../sql/data_types/map.md) and [`UNION`](../sql/data_types/union.md).
+The array type of each type, `<type>[]`, has the same support as the type, and the column shorthands `smallserial`, `serial` and `bigserial` work as in PostgreSQL. As in PostgreSQL, a call of a type's name with one argument, such as `int4('42')` or `text(123)`, is a cast to that type when no function of that name takes the argument. Pseudo-types such as `anyelement`, `record` and `trigger` are listed for function signatures and, as in PostgreSQL, hold no values. Besides these types, SereneDB has types of its own, such as [`VARIANT`](../sql/data_types/variant.md), [`MAP`](../sql/data_types/map.md) and [`UNION`](../sql/data_types/union.md).
 
 ## Data Types
 

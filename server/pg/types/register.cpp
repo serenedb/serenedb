@@ -26,6 +26,7 @@
 #include "pg/types/bytea.h"
 #include "pg/types/char.h"
 #include "pg/types/float.h"
+#include "pg/types/function.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
 #include "pg/types/mac.h"
@@ -43,22 +44,24 @@ namespace sdb::pg {
 
 void RegisterTypes(duckdb::DatabaseInstance& db) {
   auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+  Functions functions;
   RegisterRegTypes(casts);
-  RegisterPgLsn(db);
-  RegisterInet(db);
-  RegisterBytea(db);
-  RegisterBit(db);
+  RegisterPgLsn(casts, functions);
+  RegisterInet(casts, functions);
+  RegisterBytea(casts, functions);
+  RegisterBit(functions);
   RegisterFloat(casts);
   RegisterOid(casts);
   RegisterVectors(casts);
   RegisterTid(casts);
   RegisterChar(casts);
   RegisterName(casts);
-  RegisterMacaddr(db);
-  RegisterMoney(db);
-  RegisterXml(db);
-  RegisterRange(db);
-  RegisterGeometric(db);
+  RegisterMacaddr(casts, functions);
+  RegisterMoney(casts, functions);
+  RegisterXml(casts, functions);
+  RegisterRange(casts, functions);
+  RegisterGeometric(casts, functions);
+  RegisterFunctions(db, std::move(functions));
 }
 
 }  // namespace sdb::pg

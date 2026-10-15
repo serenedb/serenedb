@@ -162,6 +162,11 @@ void ThrowFloatUnderflow() {
                   ERR_MSG("value out of range: underflow"));
 }
 
+void ThrowDivisionByZero() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
+                  ERR_MSG("division by zero"));
+}
+
 void RegisterFloat(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(duckdb::LogicalType::FLOAT,
                              duckdb::LogicalType::VARCHAR,

@@ -39,8 +39,8 @@ duckdb::string_t AddChar(duckdb::Vector& result, uint8_t value) {
                                          WriteChar(value, buffer));
 }
 
-bool CharFromText(duckdb::Vector& source, duckdb::Vector& result,
-                  duckdb::idx_t count, duckdb::CastParameters&) {
+bool TextToChar(duckdb::Vector& source, duckdb::Vector& result,
+                duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     source, result, count, [&](duckdb::string_t text) {
       return AddChar(result, CharIn({text.GetData(), text.GetSize()}));
@@ -100,7 +100,7 @@ size_t WriteChar(uint8_t value, char* buffer) {
 }
 
 void RegisterChar(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, CHAR(), CharFromText);
+  ReplaceTextInput(casts, CHAR(), TextToChar);
   casts.RegisterCastFunction(duckdb::LogicalType::INTEGER, CHAR(),
                              CharFromInteger);
   casts.RegisterCastFunction(CHAR(), duckdb::LogicalType::INTEGER,

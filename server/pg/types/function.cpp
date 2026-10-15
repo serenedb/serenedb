@@ -21,6 +21,7 @@
 #include "pg/types/function.h"
 
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 
 namespace sdb::pg {
 
@@ -33,8 +34,19 @@ void RegisterFunctions(duckdb::DatabaseInstance& db, Functions functions) {
       loader.RegisterFunction(std::move(set));
     }
   }
-  for (auto& set : functions.aggregates) {
-    loader.RegisterFunction(std::move(set));
+  for (auto& [_, set] : functions.aggregates) {
+    if (loader.TryGetAggregateFunction(set.name)) {
+      for (const auto& function : set.functions) {
+        loader.AddFunctionOverload(*function);
+      }
+    } else {
+      loader.RegisterFunction(std::move(set));
+    }
+  }
+  for (auto& [_, set] : functions.replacements) {
+    duckdb::CreateScalarFunctionInfo info{std::move(set)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
   }
 }
 

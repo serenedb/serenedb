@@ -25,12 +25,9 @@
 #include <absl/strings/str_cat.h>
 
 #include <array>
-#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -248,22 +245,7 @@ bool MacConvert(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-template<auto Apply>
-void MacUnary(duckdb::DataChunk& args, duckdb::ExpressionState&,
-              duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<uint64_t, uint64_t>(args.data[0], result,
-                                                     args.size(), Apply);
-}
-
-template<auto Apply>
-void MacBinary(duckdb::DataChunk& args, duckdb::ExpressionState&,
-               duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<uint64_t, uint64_t, uint64_t>(
-    args.data[0], args.data[1], result, args.size(), Apply);
-}
-
-void RegisterCasts(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+void RegisterCasts(duckdb::CastFunctionSet& casts) {
   RegisterTextInput(casts, MACADDR(), TextInputCast<uint64_t, TryParseMacaddr>,
                     InitInput);
   RegisterTextInput(casts, MACADDR8(),
@@ -278,49 +260,52 @@ void RegisterCasts(duckdb::DatabaseInstance& db) {
                              MacConvert<&MacaddrFromMacaddr8>, 1);
 }
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto mac = MACADDR();
   const auto mac8 = MACADDR8();
-  const auto unary = [](std::string_view name, const duckdb::LogicalType& type,
-                        duckdb::scalar_function_t function) {
-    return duckdb::ScalarFunction{
-      duckdb::Identifier{name}, {type}, type, function};
-  };
-  const auto binary = [](std::string_view name, const duckdb::LogicalType& type,
-                         duckdb::scalar_function_t function) {
-    return duckdb::ScalarFunction{
-      duckdb::Identifier{name}, {type, type}, type, function};
-  };
-  loader.AddFunctionOverload(unary(
-    "trunc", mac,
-    MacUnary<[](uint64_t v) -> uint64_t { return v & 0xFFFF'FF00'0000; }>));
-  loader.AddFunctionOverload(
-    unary("trunc", mac8, MacUnary<[](uint64_t v) -> uint64_t {
-            return v & 0xFFFF'FF00'0000'0000;
-          }>));
-  loader.RegisterFunction(
-    unary("macaddr8_set7bit", mac8, MacUnary<[](uint64_t v) -> uint64_t {
-            return v | (uint64_t{0x02} << 56);
-          }>));
-  duckdb::ScalarFunction to_macaddr{
-    "macaddr", {mac8}, mac, MacUnary<&MacaddrFromMacaddr8>};
-  to_macaddr.SetFallible();
-  loader.RegisterFunction(std::move(to_macaddr));
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "macaddr8", {mac}, mac8, MacUnary<&Macaddr8FromMacaddr>});
-  loader.AddFunctionOverload(
-    unary("~", mac,
-          MacUnary<[](uint64_t v) -> uint64_t { return ~v & kMacaddrMask; }>));
-  loader.AddFunctionOverload(
-    unary("~", mac8, MacUnary<[](uint64_t v) -> uint64_t { return ~v; }>));
+  Add(functions, "trunc",
+      {{mac}, mac, UnaryExecute<uint64_t, uint64_t, [](uint64_t v) -> uint64_t {
+         return v & 0xFFFF'FF00'0000;
+       }>});
+  Add(
+    functions, "trunc",
+    {{mac8}, mac8, UnaryExecute<uint64_t, uint64_t, [](uint64_t v) -> uint64_t {
+       return v & 0xFFFF'FF00'0000'0000;
+     }>});
+  Add(
+    functions, "macaddr8_set7bit",
+    {{mac8}, mac8, UnaryExecute<uint64_t, uint64_t, [](uint64_t v) -> uint64_t {
+       return v | (uint64_t{0x02} << 56);
+     }>});
+  Add(functions, "macaddr",
+      Fallible(
+        {{mac8}, mac, UnaryExecute<uint64_t, uint64_t, &MacaddrFromMacaddr8>}));
+  Add(functions, "macaddr8",
+      {{mac}, mac8, UnaryExecute<uint64_t, uint64_t, &Macaddr8FromMacaddr>});
+  Add(functions, "~",
+      {{mac}, mac, UnaryExecute<uint64_t, uint64_t, [](uint64_t v) -> uint64_t {
+         return ~v & kMacaddrMask;
+       }>});
+  Add(
+    functions, "~",
+    {{mac8}, mac8, UnaryExecute<uint64_t, uint64_t, [](uint64_t v) -> uint64_t {
+       return ~v;
+     }>});
   for (const auto& type : {mac, mac8}) {
-    loader.AddFunctionOverload(binary(
-      "&", type,
-      MacBinary<[](uint64_t l, uint64_t r) -> uint64_t { return l & r; }>));
-    loader.AddFunctionOverload(binary(
-      "|", type,
-      MacBinary<[](uint64_t l, uint64_t r) -> uint64_t { return l | r; }>));
+    Add(functions, "&",
+        {{type, type},
+         type,
+         BinaryExecute<uint64_t, uint64_t, uint64_t,
+                       [](uint64_t l, uint64_t r) -> uint64_t {
+                         return l & r;
+                       }>});
+    Add(functions, "|",
+        {{type, type},
+         type,
+         BinaryExecute<uint64_t, uint64_t, uint64_t,
+                       [](uint64_t l, uint64_t r) -> uint64_t {
+                         return l | r;
+                       }>});
   }
 }
 
@@ -357,9 +342,9 @@ void MacSend(uint64_t mac, size_t bytes, uint8_t* buffer) {
   }
 }
 
-void RegisterMacaddr(duckdb::DatabaseInstance& db) {
-  RegisterCasts(db);
-  RegisterFunctions(db);
+void RegisterMacaddr(duckdb::CastFunctionSet& casts, Functions& functions) {
+  RegisterCasts(casts);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

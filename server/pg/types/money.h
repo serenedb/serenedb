@@ -22,10 +22,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/main/database.hpp>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string_view>
+
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
@@ -36,6 +38,6 @@ std::optional<irs::pg::SqlErrorData> TryParseMoney(std::string_view text,
                                                    int64_t& money);
 size_t WriteMoney(int64_t money, char* buffer);
 
-void RegisterMoney(duckdb::DatabaseInstance& db);
+void RegisterMoney(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

@@ -439,9 +439,7 @@ duckdb::LogicalType MakeMultirangeType(const duckdb::LogicalType& range,
 
 template<typename Traits>
 void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
-                            Functions& functions,
-                            duckdb::AggregateFunctionSet& range_agg,
-                            duckdb::AggregateFunctionSet& intersect_agg) {
+                            Functions& functions) {
   using T = typename Traits::Element;
   using R = RangeArg<T>;
   using M = MultirangeArg<T>;
@@ -546,23 +544,22 @@ void RegisterMultirangeType(duckdb::CastFunctionSet& casts,
        multirange,
        Binary<M, M, &MultirangeMinus<Traits>>});
 
-  range_agg.AddFunction(Aggregate<RangeAgg<Traits, R>>(range, multirange));
-  range_agg.AddFunction(Aggregate<RangeAgg<Traits, M>>(multirange, multirange));
-  intersect_agg.AddFunction(Aggregate<RangeIntersectAgg<Traits>>(range, range));
-  intersect_agg.AddFunction(
-    Aggregate<MultirangeIntersectAgg<Traits>>(multirange, multirange));
+  Add(functions, "range_agg",
+      Aggregate<RangeAgg<Traits, R>>(range, multirange));
+  Add(functions, "range_agg",
+      Aggregate<RangeAgg<Traits, M>>(multirange, multirange));
+  Add(functions, "range_intersect_agg",
+      Aggregate<RangeIntersectAgg<Traits>>(range, range));
+  Add(functions, "range_intersect_agg",
+      Aggregate<MultirangeIntersectAgg<Traits>>(multirange, multirange));
 }
 
 }  // namespace
 
 void RegisterMultiranges(duckdb::CastFunctionSet& casts, Functions& functions) {
-  duckdb::AggregateFunctionSet range_agg{"range_agg"};
-  duckdb::AggregateFunctionSet intersect_agg{"range_intersect_agg"};
   ForEachRangeKind([&]<typename Traits>(std::type_identity<Traits>) {
-    RegisterMultirangeType<Traits>(casts, functions, range_agg, intersect_agg);
+    RegisterMultirangeType<Traits>(casts, functions);
   });
-  functions.aggregates.push_back(std::move(range_agg));
-  functions.aggregates.push_back(std::move(intersect_agg));
 }
 
 }  // namespace ranges

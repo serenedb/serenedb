@@ -28,7 +28,6 @@
 #include <duckdb/common/vector_operations/ternary_executor.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
@@ -165,30 +164,24 @@ void ConcatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 }  // namespace
 
-void RegisterBit(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterBit(Functions& functions) {
   const auto bit = duckdb::LogicalType::BIT;
   const auto bigint = duckdb::LogicalType::BIGINT;
   for (auto arguments :
        {duckdb::vector<duckdb::LogicalType>{bit, bigint},
         duckdb::vector<duckdb::LogicalType>{bit, bigint, bigint}}) {
-    duckdb::ScalarFunction substring{"substring", std::move(arguments), bit,
-                                     SubstringFunction};
-    substring.SetFallible();
-    loader.AddFunctionOverload(std::move(substring));
+    Add(functions, "substring",
+        Fallible({std::move(arguments), bit, SubstringFunction}));
   }
   for (auto arguments :
        {duckdb::vector<duckdb::LogicalType>{bit, bit, bigint},
         duckdb::vector<duckdb::LogicalType>{bit, bit, bigint, bigint}}) {
-    duckdb::ScalarFunction overlay{"overlay", std::move(arguments), bit,
-                                   OverlayFunction};
-    overlay.SetFallible();
-    loader.AddFunctionOverload(std::move(overlay));
+    Add(functions, "overlay",
+        Fallible({std::move(arguments), bit, OverlayFunction}));
   }
-  loader.AddFunctionOverload(duckdb::ScalarFunction{
-    "position", {bit, bit}, duckdb::LogicalType::INTEGER, PositionFunction});
-  loader.AddFunctionOverload(
-    duckdb::ScalarFunction{"||", {bit, bit}, bit, ConcatFunction});
+  Add(functions, "position",
+      {{bit, bit}, duckdb::LogicalType::INTEGER, PositionFunction});
+  Add(functions, "||", {{bit, bit}, bit, ConcatFunction});
 }
 
 }  // namespace sdb::pg

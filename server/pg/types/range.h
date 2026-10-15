@@ -23,12 +23,14 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/main/database.hpp>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
@@ -96,6 +98,6 @@ std::optional<irs::pg::SqlErrorData> SplitMultirange(
 
 void FinishMultirange(duckdb::Vector& multirange, duckdb::idx_t row);
 
-void RegisterRange(duckdb::DatabaseInstance& db);
+void RegisterRange(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

@@ -91,8 +91,8 @@ std::optional<irs::pg::SqlErrorData> ParseVector(std::string_view text,
 }
 
 template<typename T, auto Parse>
-bool VectorFromText(duckdb::Vector& source, duckdb::Vector& result,
-                    duckdb::idx_t count, duckdb::CastParameters& parameters) {
+bool TextToVector(duckdb::Vector& source, duckdb::Vector& result,
+                  duckdb::idx_t count, duckdb::CastParameters& parameters) {
   std::vector<T> values;
   bool converted = true;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::list_entry_t>(
@@ -144,9 +144,8 @@ std::optional<irs::pg::SqlErrorData> ParseOidVector(
 }
 
 void RegisterVectors(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, INT2VECTOR(),
-                   VectorFromText<int16_t, ParseInt2Vector>);
-  ReplaceTextInput(casts, OIDVECTOR(), VectorFromText<int64_t, ParseOidVector>);
+  ReplaceTextInput(casts, INT2VECTOR(), TextToVector<int16_t, ParseInt2Vector>);
+  ReplaceTextInput(casts, OIDVECTOR(), TextToVector<int64_t, ParseOidVector>);
   casts.RegisterCastFunction(INT2VECTOR(), duckdb::LogicalType::VARCHAR,
                              VectorToText<int16_t>);
   casts.RegisterCastFunction(OIDVECTOR(), duckdb::LogicalType::VARCHAR,

@@ -22,10 +22,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/main/database.hpp>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string_view>
+
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
@@ -44,6 +46,6 @@ std::optional<uint64_t> MacaddrRecv(std::string_view bytes);
 std::optional<uint64_t> Macaddr8Recv(std::string_view bytes);
 void MacSend(uint64_t mac, size_t bytes, uint8_t* buffer);
 
-void RegisterMacaddr(duckdb::DatabaseInstance& db);
+void RegisterMacaddr(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

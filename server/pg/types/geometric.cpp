@@ -35,7 +35,6 @@
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/config.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -122,8 +121,7 @@ double Mul(double left, double right) {
 
 double Div(double left, double right) {
   if (right == 0.0 && !std::isnan(left)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                    ERR_MSG("division by zero"));
+    ThrowDivisionByZero();
   }
   const auto result = left / right;
   if (std::isinf(result) && !std::isinf(left)) {
@@ -2713,9 +2711,7 @@ void Operator(Functions& functions, std::string_view symbol,
 void Division(Functions& functions, std::string_view procedure,
               const duckdb::ScalarFunction& function) {
   Add(functions, procedure, function);
-  for (const auto name : kDivisionOperators) {
-    Add(functions, name, function);
-  }
+  AddDivision(functions, function);
 }
 
 template<Geometric K>
@@ -3107,9 +3103,8 @@ void SendGeometric(Geometric kind,
   });
 }
 
-void RegisterGeometric(duckdb::DatabaseInstance& db) {
-  geo::RegisterCasts(duckdb::DBConfig::GetConfig(db).GetCastFunctions());
-  Functions functions;
+void RegisterGeometric(duckdb::CastFunctionSet& casts, Functions& functions) {
+  geo::RegisterCasts(casts);
   geo::RegisterPointFunctions(functions);
   geo::RegisterLineFunctions(functions);
   geo::RegisterLsegFunctions(functions);
@@ -3117,7 +3112,6 @@ void RegisterGeometric(duckdb::DatabaseInstance& db) {
   geo::RegisterPathFunctions(functions);
   geo::RegisterPolygonFunctions(functions);
   geo::RegisterCircleFunctions(functions);
-  RegisterFunctions(db, std::move(functions));
 }
 
 }  // namespace sdb::pg

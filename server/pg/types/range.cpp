@@ -27,7 +27,6 @@
 #include <array>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
-#include <duckdb/main/config.hpp>
 
 #include "connector/common.h"
 #include "pg/types/cast.h"
@@ -462,9 +461,7 @@ bool FinishRange(duckdb::Vector& range, duckdb::idx_t row, uint8_t flags) {
     });
 }
 
-void RegisterRange(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
-  Functions functions;
+void RegisterRange(duckdb::CastFunctionSet& casts, Functions& functions) {
   ranges::ForEachRangeKind([&]<typename Traits>(std::type_identity<Traits>) {
     ranges::RegisterRangeType<Traits>(casts, functions);
   });
@@ -473,7 +470,6 @@ void RegisterRange(duckdb::DatabaseInstance& db) {
     RefuseOtherCasts(casts, Traits::Type());
     RefuseOtherCasts(casts, Traits::MultirangeType());
   });
-  RegisterFunctions(db, std::move(functions));
 }
 
 }  // namespace sdb::pg

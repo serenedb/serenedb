@@ -25,8 +25,6 @@
 
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/function_binder.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -64,8 +62,8 @@ std::optional<irs::pg::SqlErrorData> TryParseLsn(std::string_view text,
   return std::nullopt;
 }
 
-bool LsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                      duckdb::idx_t count, duckdb::CastParameters&) {
+bool LsnToText(duckdb::Vector& source, duckdb::Vector& result,
+               duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<uint64_t, duckdb::string_t>(
     source, result, count, [&](uint64_t lsn) {
       char buffer[kLsnBufferSize];
@@ -101,19 +99,17 @@ duckdb::unique_ptr<duckdb::Expression> LsnOffset(
     input.context, BindDecimalOperator(input, kName), PG_LSN());
 }
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto lsn = PG_LSN();
   const duckdb::LogicalType offset{duckdb::LogicalType::BIGINT};
   const auto add = [&](std::string_view name,
                        duckdb::vector<duckdb::LogicalType> arguments,
                        duckdb::LogicalType result,
                        duckdb::function_bind_expression_t rewrite) {
-    duckdb::ScalarFunction function{duckdb::Identifier{name},
-                                    std::move(arguments), std::move(result),
+    duckdb::ScalarFunction function{std::move(arguments), std::move(result),
                                     nullptr};
     function.SetBindExpressionCallback(rewrite);
-    loader.AddFunctionOverload(std::move(function));
+    Add(functions, name, std::move(function));
   };
   add("-", {lsn, lsn}, duckdb::LogicalType::DECIMAL(21, 0), LsnDifference);
   add("+", {lsn, offset}, lsn, LsnOffset<'+'>);
@@ -147,13 +143,12 @@ std::string FormatLsn(uint64_t lsn) {
   return {buffer, WriteLsn(lsn, buffer)};
 }
 
-void RegisterPgLsn(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+void RegisterPgLsn(duckdb::CastFunctionSet& casts, Functions& functions) {
   RegisterTextInput(casts, PG_LSN(), TextInputCast<uint64_t, TryParseLsn>,
                     InitInput);
-  casts.RegisterCastFunction(PG_LSN(), duckdb::LogicalType::VARCHAR,
-                             LsnToVarcharCast, 50);
-  RegisterFunctions(db);
+  casts.RegisterCastFunction(PG_LSN(), duckdb::LogicalType::VARCHAR, LsnToText,
+                             50);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

@@ -29,8 +29,8 @@
 namespace sdb::pg {
 namespace {
 
-bool NameFromText(duckdb::Vector& source, duckdb::Vector& result,
-                  duckdb::idx_t count, duckdb::CastParameters&) {
+bool TextToName(duckdb::Vector& source, duckdb::Vector& result,
+                duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     source, result, count, [&](duckdb::string_t text) {
       const auto size = ClipName({text.GetData(), text.GetSize()});
@@ -56,7 +56,7 @@ size_t ClipName(std::string_view text) {
 }
 
 void RegisterName(duckdb::CastFunctionSet& casts) {
-  ReplaceTextInput(casts, NAME(), NameFromText);
+  ReplaceTextInput(casts, NAME(), TextToName);
 }
 
 }  // namespace sdb::pg

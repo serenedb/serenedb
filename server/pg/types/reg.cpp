@@ -53,8 +53,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
 }
 
 template<RegKind Kind>
-bool VarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
-                      duckdb::idx_t count, duckdb::CastParameters& params) {
+bool TextToReg(duckdb::Vector& source, duckdb::Vector& result,
+               duckdb::idx_t count, duckdb::CastParameters& params) {
   const auto& session = params.local_state->Cast<RegInputState>().session;
   SDB_ASSERT(session.context);
   irs::pg::SqlErrorData error;
@@ -75,8 +75,8 @@ bool VarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 template<RegKind Kind>
-bool RegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                      duckdb::idx_t count, duckdb::CastParameters& params) {
+bool RegToText(duckdb::Vector& source, duckdb::Vector& result,
+               duckdb::idx_t count, duckdb::CastParameters& params) {
   const auto& session = params.local_state->Cast<SessionState>().session;
   auto src = source.Values<int64_t>();
   auto* dst_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
@@ -98,10 +98,10 @@ bool RegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
 template<RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
-  RegisterTextInput(casts, reg, VarcharToRegCast<Kind>, InitRegInput);
+  RegisterTextInput(casts, reg, TextToReg<Kind>, InitRegInput);
   casts.RegisterCastFunction(
     reg, duckdb::LogicalType::VARCHAR,
-    duckdb::BoundCastInfo(RegToVarcharCast<Kind>, nullptr, InitRegCast), 50);
+    duckdb::BoundCastInfo(RegToText<Kind>, nullptr, InitRegCast), 50);
   casts.RegisterCastFunction(
     OID(), reg, duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast),
     1);

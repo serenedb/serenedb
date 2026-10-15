@@ -22,17 +22,17 @@
 
 #include <absl/container/btree_map.h>
 
-#include <array>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector_operations/binary_executor.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <optional>
 #include <string_view>
-#include <vector>
 
 namespace sdb::pg {
 
@@ -117,23 +117,54 @@ void Binary(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+template<typename In, typename Out, auto Apply>
+void UnaryExecute(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                  duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<In, Out>(args.data[0], result, args.size(),
+                                          Apply);
+}
+
+template<typename Left, typename Right, typename Out, auto Apply>
+void BinaryExecute(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<Left, Right, Out>(args.data[0], args.data[1],
+                                                    result, args.size(), Apply);
+}
+
 inline duckdb::ScalarFunction Fallible(duckdb::ScalarFunction function) {
   function.SetFallible();
   return function;
 }
 
-inline constexpr std::array<std::string_view, 2> kDivisionOperators = {"/",
-                                                                       "//"};
-
 struct Functions {
   absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> scalars;
-  std::vector<duckdb::AggregateFunctionSet> aggregates;
+  absl::btree_map<std::string_view, duckdb::AggregateFunctionSet> aggregates;
+  absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> replacements;
 };
 
 inline void Add(Functions& functions, std::string_view name,
                 duckdb::ScalarFunction function) {
   functions.scalars.try_emplace(name, duckdb::Identifier{name})
     .first->second.AddFunction(std::move(function));
+}
+
+inline void Add(Functions& functions, std::string_view name,
+                duckdb::AggregateFunction function) {
+  function.SetName(duckdb::Identifier{name});
+  functions.aggregates.try_emplace(name, duckdb::Identifier{name})
+    .first->second.AddFunction(std::move(function));
+}
+
+inline void Replace(Functions& functions, std::string_view name,
+                    duckdb::ScalarFunction function) {
+  functions.replacements.try_emplace(name, duckdb::Identifier{name})
+    .first->second.AddFunction(std::move(function));
+}
+
+inline void AddDivision(Functions& functions,
+                        const duckdb::ScalarFunction& function) {
+  Add(functions, "/", function);
+  Add(functions, "//", function);
 }
 
 void RegisterFunctions(duckdb::DatabaseInstance& db, Functions functions);

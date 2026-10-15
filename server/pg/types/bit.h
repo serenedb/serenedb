@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include <duckdb/main/database.hpp>
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
-void RegisterBit(duckdb::DatabaseInstance& db);
+void RegisterBit(Functions& functions);
 
 }  // namespace sdb::pg

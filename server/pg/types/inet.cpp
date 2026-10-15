@@ -35,11 +35,10 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -83,9 +82,29 @@ std::string Unabbreviate(std::string_view text) {
   return out;
 }
 
-bool VarcharToCidrCast(duckdb::Vector& source, duckdb::Vector& result,
-                       duckdb::idx_t count,
-                       duckdb::CastParameters& parameters) {
+std::optional<irs::pg::SqlErrorData> TryParseCidr(std::string_view text,
+                                                  INET_IPAddress& inet) {
+  const auto input = Unabbreviate(text);
+  try {
+    inet = ipaddress_from_string(input.data(), input.size());
+  } catch (const std::exception&) {
+    inet.type = INET_IP_ADDRESS_INVALID;
+  }
+  if (inet.type == INET_IP_ADDRESS_INVALID) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("invalid input syntax for type cidr: \"", text, "\""));
+  }
+  if (!IsNetwork(inet)) {
+    return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                          ERR_MSG("invalid cidr value: \"", text, "\""),
+                          ERR_DETAIL("Value has bits set to right of mask."));
+  }
+  return std::nullopt;
+}
+
+bool TextToCidr(duckdb::Vector& source, duckdb::Vector& result,
+                duckdb::idx_t count, duckdb::CastParameters& parameters) {
   auto src = source.Values<duckdb::string_t>();
   bool converted = true;
   for (duckdb::idx_t i = 0; i < count; i++) {
@@ -546,9 +565,8 @@ void AbbrevFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
               });
 }
 
-void RegisterCasts(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
-  RegisterTextInput(casts, CIDR(), VarcharToCidrCast, InitInput);
+void RegisterCasts(duckdb::CastFunctionSet& casts) {
+  RegisterTextInput(casts, CIDR(), TextToCidr, InitInput);
   casts.RegisterCastFunction(CIDR(), duckdb::LogicalType::VARCHAR,
                              CidrCast<true>, 50);
   casts.RegisterCastFunction(INET(), CIDR(), CidrCast<false>);
@@ -557,78 +575,53 @@ void RegisterCasts(duckdb::DatabaseInstance& db) {
     duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
 }
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto inet = INET();
   const auto cidr = CIDR();
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "masklen", {inet}, duckdb::LogicalType::INTEGER, MasklenFunction});
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"hostmask", {inet}, inet, HostmaskFunction});
-  duckdb::ScalarFunctionSet set_masklen{"set_masklen"};
-  set_masklen.AddFunction(duckdb::ScalarFunction{
-    {inet, duckdb::LogicalType::INTEGER}, inet, SetMasklenFunction<false>});
-  set_masklen.AddFunction(duckdb::ScalarFunction{
-    {cidr, duckdb::LogicalType::INTEGER}, cidr, SetMasklenFunction<true>});
-  set_masklen.SetFallible();
-  loader.RegisterFunction(std::move(set_masklen));
-  duckdb::ScalarFunctionSet abbrev{"abbrev"};
-  abbrev.AddFunction(duckdb::ScalarFunction{
-    {inet}, duckdb::LogicalType::VARCHAR, AbbrevFunction<false>});
-  abbrev.AddFunction(duckdb::ScalarFunction{
-    {cidr}, duckdb::LogicalType::VARCHAR, AbbrevFunction<true>});
-  loader.RegisterFunction(std::move(abbrev));
-
   const auto boolean = duckdb::LogicalType::BOOLEAN;
   const auto bigint = duckdb::LogicalType::BIGINT;
-  const auto fallible = [](duckdb::ScalarFunction function) {
-    function.SetFallible();
-    return function;
-  };
-  for (auto function : {
-         duckdb::ScalarFunction{"<<",
-                                {inet, inet},
-                                boolean,
-                                InetPredicateFunction<ContainedBy<false>>},
-         duckdb::ScalarFunction{
-           ">>", {inet, inet}, boolean, InetPredicateFunction<Contains<false>>},
-         duckdb::ScalarFunction{
-           "&&", {inet, inet}, boolean, InetPredicateFunction<Overlaps>},
-         duckdb::ScalarFunction{"~", {inet}, inet, InetNotFunction},
-         fallible(
-           {"&", {inet, inet}, inet, InetCombineFunction<Bitwise<false>>}),
-         fallible(
-           {"|", {inet, inet}, inet, InetCombineFunction<Bitwise<true>>}),
-         fallible({"-", {inet, inet}, bigint, InetDifferenceFunction}),
-         fallible({"+", {inet, bigint}, inet, InetOffsetFunction<true, false>}),
-         fallible(
-           {"+", {bigint, inet}, inet, InetOffsetFunction<false, false>}),
-         fallible({"-", {inet, bigint}, inet, InetOffsetFunction<true, true>}),
-       }) {
-    loader.AddFunctionOverload(std::move(function));
-  }
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"inet_same_family",
-                           {inet, inet},
-                           boolean,
-                           InetPredicateFunction<SameFamily>});
-  loader.RegisterFunction(
-    fallible({"inet_merge", {inet, inet}, cidr, InetCombineFunction<Merge>}));
-  for (auto function : {
-         duckdb::ScalarFunction{"<<=",
-                                {inet, inet},
-                                boolean,
-                                InetPredicateFunction<ContainedBy<true>>},
-         duckdb::ScalarFunction{
-           ">>=", {inet, inet}, boolean, InetPredicateFunction<Contains<true>>},
-         duckdb::ScalarFunction{"netmask", {inet}, inet, NetmaskFunction},
-       }) {
-    duckdb::ScalarFunctionSet set{function.name};
-    set.AddFunction(std::move(function));
-    duckdb::CreateScalarFunctionInfo info{std::move(set)};
-    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-    loader.RegisterFunction(std::move(info));
-  }
+  Add(functions, "masklen",
+      {{inet}, duckdb::LogicalType::INTEGER, MasklenFunction});
+  Add(functions, "hostmask", {{inet}, inet, HostmaskFunction});
+  Add(
+    functions, "set_masklen",
+    Fallible(
+      {{inet, duckdb::LogicalType::INTEGER}, inet, SetMasklenFunction<false>}));
+  Add(
+    functions, "set_masklen",
+    Fallible(
+      {{cidr, duckdb::LogicalType::INTEGER}, cidr, SetMasklenFunction<true>}));
+  Add(functions, "abbrev",
+      {{inet}, duckdb::LogicalType::VARCHAR, AbbrevFunction<false>});
+  Add(functions, "abbrev",
+      {{cidr}, duckdb::LogicalType::VARCHAR, AbbrevFunction<true>});
+  Add(functions, "<<",
+      {{inet, inet}, boolean, InetPredicateFunction<ContainedBy<false>>});
+  Add(functions, ">>",
+      {{inet, inet}, boolean, InetPredicateFunction<Contains<false>>});
+  Add(functions, "&&",
+      {{inet, inet}, boolean, InetPredicateFunction<Overlaps>});
+  Add(functions, "~", {{inet}, inet, InetNotFunction});
+  Add(functions, "&",
+      Fallible({{inet, inet}, inet, InetCombineFunction<Bitwise<false>>}));
+  Add(functions, "|",
+      Fallible({{inet, inet}, inet, InetCombineFunction<Bitwise<true>>}));
+  Add(functions, "-", Fallible({{inet, inet}, bigint, InetDifferenceFunction}));
+  Add(functions, "+",
+      Fallible({{inet, bigint}, inet, InetOffsetFunction<true, false>}));
+  Add(functions, "+",
+      Fallible({{bigint, inet}, inet, InetOffsetFunction<false, false>}));
+  Add(functions, "-",
+      Fallible({{inet, bigint}, inet, InetOffsetFunction<true, true>}));
+  Add(functions, "inet_same_family",
+      {{inet, inet}, boolean, InetPredicateFunction<SameFamily>});
+  Add(functions, "inet_merge",
+      Fallible({{inet, inet}, cidr, InetCombineFunction<Merge>}));
+  Replace(functions, "<<=",
+          {{inet, inet}, boolean, InetPredicateFunction<ContainedBy<true>>});
+  Replace(functions, ">>=",
+          {{inet, inet}, boolean, InetPredicateFunction<Contains<true>>});
+  Replace(functions, "netmask", {{inet}, inet, NetmaskFunction});
 }
 
 }  // namespace
@@ -656,27 +649,6 @@ bool IsNetwork(const INET_IPAddress& inet) {
          network.address.lower == inet.address.lower;
 }
 
-std::optional<irs::pg::SqlErrorData> TryParseCidr(std::string_view text,
-                                                  INET_IPAddress& inet) {
-  const auto input = Unabbreviate(text);
-  try {
-    inet = ipaddress_from_string(input.data(), input.size());
-  } catch (const std::exception&) {
-    inet.type = INET_IP_ADDRESS_INVALID;
-  }
-  if (inet.type == INET_IP_ADDRESS_INVALID) {
-    return SQL_ERROR_DATA(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("invalid input syntax for type cidr: \"", text, "\""));
-  }
-  if (!IsNetwork(inet)) {
-    return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                          ERR_MSG("invalid cidr value: \"", text, "\""),
-                          ERR_DETAIL("Value has bits set to right of mask."));
-  }
-  return std::nullopt;
-}
-
 INET_IPAddress ParseCidr(std::string_view text) {
   INET_IPAddress inet{};
   if (auto error = TryParseCidr(text, inet)) {
@@ -697,9 +669,9 @@ size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size) {
   return written;
 }
 
-void RegisterInet(duckdb::DatabaseInstance& db) {
-  RegisterCasts(db);
-  RegisterFunctions(db);
+void RegisterInet(duckdb::CastFunctionSet& casts, Functions& functions) {
+  RegisterCasts(casts);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

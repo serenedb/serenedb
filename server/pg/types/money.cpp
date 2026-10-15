@@ -28,20 +28,18 @@
 #include <cmath>
 #include <duckdb/common/types/decimal.hpp>
 #include <duckdb/common/types/hugeint.hpp>
-#include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/aggregate/distributive_function_utils.hpp>
 #include <duckdb/function/aggregate_function.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string>
 
 #include "pg/types/cast.h"
+#include "pg/types/float.h"
 #include "pg/types/function.h"
 #include "pg/types/logical.h"
 
@@ -55,11 +53,6 @@ constexpr int kGroupDigits = 3;
 [[noreturn]] void ThrowOutOfRange(std::string_view message) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                   ERR_MSG(message));
-}
-
-[[noreturn]] void ThrowDivisionByZero() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DIVISION_BY_ZERO),
-                  ERR_MSG("division by zero"));
 }
 
 int64_t AddMoney(int64_t left, int64_t right) {
@@ -315,8 +308,7 @@ duckdb::BoundCastInfo BindDecimalToMoney(duckdb::BindCastInput& input,
                             input.GetCastFunction(source, CentsType()))};
 }
 
-void RegisterCasts(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+void RegisterCasts(duckdb::CastFunctionSet& casts) {
   const auto money = MONEY();
   RegisterTextInput(casts, money, TextInputCast<int64_t, TryParseMoney>,
                     InitInput);
@@ -333,42 +325,24 @@ void RegisterCasts(duckdb::DatabaseInstance& db) {
   RefuseOtherCasts(casts, money);
 }
 
-template<typename L, typename R, typename Result, auto Apply>
-void Binary(duckdb::DataChunk& args, duckdb::ExpressionState&,
-            duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<L, R, Result>(args.data[0], args.data[1],
-                                                result, args.size(), Apply);
-}
-
-duckdb::ScalarFunction Operator(std::string_view name, duckdb::LogicalType left,
-                                duckdb::LogicalType right,
-                                duckdb::LogicalType result,
-                                duckdb::scalar_function_t function) {
-  duckdb::ScalarFunction scalar{duckdb::Identifier{name},
-                                {std::move(left), std::move(right)},
-                                std::move(result),
-                                function};
-  auto& signature = scalar.GetSignature();
-  signature.GetParameter(0).SetName("left");
-  signature.GetParameter(1).SetName("right");
-  scalar.SetFallible();
-  return scalar;
-}
-
 template<typename T>
-void RegisterFactorOperators(duckdb::ExtensionLoader& loader,
+void RegisterFactorOperators(Functions& functions,
                              const duckdb::LogicalType& type) {
   const auto money = MONEY();
-  loader.AddFunctionOverload(Operator(
-    "*", money, type, money, Binary<int64_t, T, int64_t, &MultiplyMoney<T>>));
-  loader.AddFunctionOverload(Operator(
-    "*", type, money, money,
-    Binary<T, int64_t, int64_t,
-           [](T factor, int64_t m) { return MultiplyMoney(m, factor); }>));
-  for (const auto name : kDivisionOperators) {
-    loader.AddFunctionOverload(Operator(
-      name, money, type, money, Binary<int64_t, T, int64_t, &DivideMoney<T>>));
-  }
+  Add(functions, "*",
+      Fallible({{money, type},
+                money,
+                BinaryExecute<int64_t, T, int64_t, &MultiplyMoney<T>>}));
+  Add(functions, "*",
+      Fallible({{type, money},
+                money,
+                BinaryExecute<T, int64_t, int64_t, [](T factor, int64_t m) {
+                  return MultiplyMoney(m, factor);
+                }>}));
+  AddDivision(functions,
+              Fallible({{money, type},
+                        money,
+                        BinaryExecute<int64_t, T, int64_t, &DivideMoney<T>>}));
 }
 
 struct MoneySumState {
@@ -398,44 +372,42 @@ struct MoneySum : duckdb::EmptyValAggregate<MoneyAdd, duckdb::ConstantInit<0>> {
   }
 };
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto money = MONEY();
-  loader.AddFunctionOverload(Operator(
-    "+", money, money, money, Binary<int64_t, int64_t, int64_t, &AddMoney>));
-  loader.AddFunctionOverload(
-    Operator("-", money, money, money,
-             Binary<int64_t, int64_t, int64_t, &SubtractMoney>));
-  for (const auto name : kDivisionOperators) {
-    loader.AddFunctionOverload(
-      Operator(name, money, money, duckdb::LogicalType::DOUBLE,
-               Binary<int64_t, int64_t, double, &MoneyRatio>));
-  }
-  RegisterFactorOperators<int16_t>(loader, duckdb::LogicalType::SMALLINT);
-  RegisterFactorOperators<int32_t>(loader, duckdb::LogicalType::INTEGER);
-  RegisterFactorOperators<int64_t>(loader, duckdb::LogicalType::BIGINT);
-  RegisterFactorOperators<float>(loader, duckdb::LogicalType::FLOAT);
-  RegisterFactorOperators<double>(loader, duckdb::LogicalType::DOUBLE);
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "cashlarger",
-    {money, money},
-    money,
-    Binary<int64_t, int64_t, int64_t,
-           [](int64_t l, int64_t r) { return std::max(l, r); }>});
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "cashsmaller",
-    {money, money},
-    money,
-    Binary<int64_t, int64_t, int64_t,
-           [](int64_t l, int64_t r) { return std::min(l, r); }>});
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "cash_words", {money}, duckdb::LogicalType::VARCHAR, CashWordsFunction});
+  Add(functions, "+",
+      Fallible({{money, money},
+                money,
+                BinaryExecute<int64_t, int64_t, int64_t, &AddMoney>}));
+  Add(functions, "-",
+      Fallible({{money, money},
+                money,
+                BinaryExecute<int64_t, int64_t, int64_t, &SubtractMoney>}));
+  AddDivision(functions,
+              Fallible({{money, money},
+                        duckdb::LogicalType::DOUBLE,
+                        BinaryExecute<int64_t, int64_t, double, &MoneyRatio>}));
+  RegisterFactorOperators<int16_t>(functions, duckdb::LogicalType::SMALLINT);
+  RegisterFactorOperators<int32_t>(functions, duckdb::LogicalType::INTEGER);
+  RegisterFactorOperators<int64_t>(functions, duckdb::LogicalType::BIGINT);
+  RegisterFactorOperators<float>(functions, duckdb::LogicalType::FLOAT);
+  RegisterFactorOperators<double>(functions, duckdb::LogicalType::DOUBLE);
+  Add(functions, "cashlarger",
+      {{money, money},
+       money,
+       BinaryExecute<int64_t, int64_t, int64_t,
+                     [](int64_t l, int64_t r) { return std::max(l, r); }>});
+  Add(functions, "cashsmaller",
+      {{money, money},
+       money,
+       BinaryExecute<int64_t, int64_t, int64_t,
+                     [](int64_t l, int64_t r) { return std::min(l, r); }>});
+  Add(functions, "cash_words",
+      {{money}, duckdb::LogicalType::VARCHAR, CashWordsFunction});
   auto sum =
     duckdb::AggregateFunction::UnaryAggregate<MoneySumState, int64_t, int64_t,
                                               MoneySum>(money, money);
-  sum.SetName("sum");
   sum.GetSignature().GetParameter(0).SetName("arg");
-  loader.AddFunctionOverload(std::move(sum));
+  Add(functions, "sum", std::move(sum));
 }
 
 }  // namespace
@@ -546,9 +518,9 @@ size_t WriteMoney(int64_t money, char* buffer) {
   return static_cast<size_t>(out - buffer);
 }
 
-void RegisterMoney(duckdb::DatabaseInstance& db) {
-  RegisterCasts(db);
-  RegisterFunctions(db);
+void RegisterMoney(duckdb::CastFunctionSet& casts, Functions& functions) {
+  RegisterCasts(casts);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

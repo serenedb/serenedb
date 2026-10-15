@@ -26,11 +26,13 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/main/database.hpp>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <optional>
 #include <string_view>
+
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
@@ -101,6 +103,6 @@ void SendGeometric(Geometric kind,
                    duckdb::idx_t index,
                    absl::FunctionRef<uint8_t*(size_t)> alloc);
 
-void RegisterGeometric(duckdb::DatabaseInstance& db);
+void RegisterGeometric(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

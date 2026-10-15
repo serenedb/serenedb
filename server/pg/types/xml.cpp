@@ -42,8 +42,6 @@
 #include <duckdb/function/aggregate_state_layout.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -866,16 +864,15 @@ struct XmlAgg {
   static bool IgnoreNull() { return true; }
 };
 
-void RegisterCasts(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+void RegisterCasts(duckdb::CastFunctionSet& casts) {
   const auto xml = XML();
   RegisterTextInput(casts, xml, BindTextToXml);
   RefuseOtherCasts(casts, xml);
 }
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto xml = XML();
+  const auto varchar = duckdb::LogicalType::VARCHAR;
   struct WellFormedFunctionSpec {
     std::string_view name;
     duckdb::scalar_function_t function;
@@ -892,58 +889,44 @@ void RegisterFunctions(duckdb::DatabaseInstance& db) {
                                 WellFormedFunction<XmlOption::Content>,
                                 duckdb::FunctionStability::CONSISTENT},
        }) {
-    duckdb::ScalarFunction scalar{duckdb::Identifier{name},
-                                  {duckdb::LogicalType::VARCHAR},
-                                  duckdb::LogicalType::BOOLEAN,
-                                  function};
+    duckdb::ScalarFunction scalar{
+      {varchar}, duckdb::LogicalType::BOOLEAN, function};
     scalar.SetInitStateCallback(InitXmlFunction);
     scalar.SetStability(stability);
-    loader.RegisterFunction(std::move(scalar));
+    Add(functions, name, std::move(scalar));
   }
-  duckdb::ScalarFunction comment{
-    "xmlcomment", {duckdb::LogicalType::VARCHAR}, xml, XmlCommentFunction};
-  comment.SetFallible();
-  loader.RegisterFunction(std::move(comment));
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "xmltext", {duckdb::LogicalType::VARCHAR}, xml, XmlTextFunction});
-  duckdb::ScalarFunction concat{"xmlconcat", {}, xml, XmlConcatFunction};
+  Add(functions, "xmlcomment", Fallible({{varchar}, xml, XmlCommentFunction}));
+  Add(functions, "xmltext", {{varchar}, xml, XmlTextFunction});
+  duckdb::ScalarFunction concat{{}, xml, XmlConcatFunction};
   concat.GetSignature().AddParameter("value", xml).AddArgs("args", xml);
   concat.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  loader.RegisterFunction(std::move(concat));
-  const auto spaces = duckdb::LogicalType::LIST(
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
-  const auto xpath =
-    [&](std::string_view name, duckdb::vector<duckdb::LogicalType> arguments,
-        duckdb::LogicalType result, duckdb::scalar_function_t function) {
-      duckdb::ScalarFunction scalar{duckdb::Identifier{name},
-                                    std::move(arguments), std::move(result),
-                                    function};
-      scalar.SetInitStateCallback(InitXmlFunction);
-      scalar.SetFallible();
-      return scalar;
-    };
-  duckdb::ScalarFunctionSet xpaths{"xpath"};
-  xpaths.AddFunction(xpath("xpath", {duckdb::LogicalType::VARCHAR, xml},
-                           duckdb::LogicalType::LIST(xml),
-                           XpathFunction<false, false>));
-  xpaths.AddFunction(xpath("xpath", {duckdb::LogicalType::VARCHAR, xml, spaces},
-                           duckdb::LogicalType::LIST(xml),
-                           XpathFunction<false, true>));
-  loader.RegisterFunction(std::move(xpaths));
-  duckdb::ScalarFunctionSet exists{"xpath_exists"};
-  exists.AddFunction(xpath("xpath_exists", {duckdb::LogicalType::VARCHAR, xml},
-                           duckdb::LogicalType::BOOLEAN,
-                           XpathFunction<true, false>));
-  exists.AddFunction(
-    xpath("xpath_exists", {duckdb::LogicalType::VARCHAR, xml, spaces},
-          duckdb::LogicalType::BOOLEAN, XpathFunction<true, true>));
-  loader.RegisterFunction(std::move(exists));
-  auto agg =
-    duckdb::AggregateFunction::UnaryAggregate<XmlAggState, duckdb::string_t,
-                                              duckdb::string_t, XmlAgg>(xml,
-                                                                        xml);
-  agg.SetName("xmlagg");
-  loader.RegisterFunction(std::move(agg));
+  Add(functions, "xmlconcat", std::move(concat));
+  const auto spaces =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::LIST(varchar));
+  const auto xpath = [](duckdb::vector<duckdb::LogicalType> arguments,
+                        duckdb::LogicalType result,
+                        duckdb::scalar_function_t function) {
+    duckdb::ScalarFunction scalar{std::move(arguments), std::move(result),
+                                  function};
+    scalar.SetInitStateCallback(InitXmlFunction);
+    return Fallible(std::move(scalar));
+  };
+  Add(functions, "xpath",
+      xpath({varchar, xml}, duckdb::LogicalType::LIST(xml),
+            XpathFunction<false, false>));
+  Add(functions, "xpath",
+      xpath({varchar, xml, spaces}, duckdb::LogicalType::LIST(xml),
+            XpathFunction<false, true>));
+  Add(functions, "xpath_exists",
+      xpath({varchar, xml}, duckdb::LogicalType::BOOLEAN,
+            XpathFunction<true, false>));
+  Add(functions, "xpath_exists",
+      xpath({varchar, xml, spaces}, duckdb::LogicalType::BOOLEAN,
+            XpathFunction<true, true>));
+  Add(functions, "xmlagg",
+      duckdb::AggregateFunction::UnaryAggregate<XmlAggState, duckdb::string_t,
+                                                duckdb::string_t, XmlAgg>(xml,
+                                                                          xml));
 }
 
 }  // namespace
@@ -977,9 +960,9 @@ XmlText XmlOut(std::string_view xml) {
   return out;
 }
 
-void RegisterXml(duckdb::DatabaseInstance& db) {
-  RegisterCasts(db);
-  RegisterFunctions(db);
+void RegisterXml(duckdb::CastFunctionSet& casts, Functions& functions) {
+  RegisterCasts(casts);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

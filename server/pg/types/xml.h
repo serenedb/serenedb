@@ -21,12 +21,14 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/database.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
+
+#include "pg/types/function.h"
 
 namespace sdb::pg {
 
@@ -47,6 +49,6 @@ struct XmlText {
 
 XmlText XmlOut(std::string_view xml);
 
-void RegisterXml(duckdb::DatabaseInstance& db);
+void RegisterXml(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

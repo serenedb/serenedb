@@ -34,8 +34,6 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -137,9 +135,8 @@ std::optional<irs::pg::SqlErrorData> ByteaIn(std::string_view input,
   return std::nullopt;
 }
 
-bool VarcharToByteaCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count,
-                        duckdb::CastParameters& parameters) {
+bool TextToBytea(duckdb::Vector& source, duckdb::Vector& result,
+                 duckdb::idx_t count, duckdb::CastParameters& parameters) {
   bool converted = true;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     source, result, count,
@@ -164,9 +161,8 @@ struct ByteaOutCastData final : public duckdb::BoundCastData {
   }
 };
 
-bool ByteaToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count,
-                        duckdb::CastParameters& parameters) {
+bool ByteaToText(duckdb::Vector& source, duckdb::Vector& result,
+                 duckdb::idx_t count, duckdb::CastParameters& parameters) {
   bool use_escape = false;
   if (parameters.cast_data) {
     use_escape = parameters.cast_data->Cast<ByteaOutCastData>().use_escape;
@@ -191,9 +187,9 @@ bool ByteaToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-duckdb::BoundCastInfo ByteaToVarcharBind(duckdb::BindCastInput& input,
-                                         const duckdb::LogicalType&,
-                                         const duckdb::LogicalType&) {
+duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
+                                      const duckdb::LogicalType&,
+                                      const duckdb::LogicalType&) {
   bool use_escape = false;
   if (input.context) {
     duckdb::Value value;
@@ -202,7 +198,7 @@ duckdb::BoundCastInfo ByteaToVarcharBind(duckdb::BindCastInput& input,
       use_escape = (str == "escape");
     }
   }
-  return duckdb::BoundCastInfo(ByteaToVarcharCast,
+  return duckdb::BoundCastInfo(ByteaToText,
                                duckdb::make_uniq<ByteaOutCastData>(use_escape));
 }
 
@@ -285,40 +281,34 @@ void BitCountFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-void RegisterCasts(duckdb::DatabaseInstance& db) {
-  auto& casts = duckdb::DBConfig::GetConfig(db).GetCastFunctions();
+void RegisterCasts(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(
     duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
-    duckdb::BoundCastInfo{VarcharToByteaCast, nullptr, InitInput}, 100);
+    duckdb::BoundCastInfo{TextToBytea, nullptr, InitInput}, 100);
   casts.RegisterCastFunction(duckdb::LogicalType::BLOB,
-                             duckdb::LogicalType::VARCHAR, ByteaToVarcharBind,
+                             duckdb::LogicalType::VARCHAR, BindByteaToText,
                              100);
 }
 
-void RegisterFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader{db, "serenedb"};
+void RegisterFunctions(Functions& functions) {
   const auto blob = duckdb::LogicalType::BLOB;
   const auto bigint = duckdb::LogicalType::BIGINT;
   for (const auto name : {"substring", "substr"}) {
     for (auto arguments :
          {duckdb::vector<duckdb::LogicalType>{blob, bigint},
           duckdb::vector<duckdb::LogicalType>{blob, bigint, bigint}}) {
-      duckdb::ScalarFunction substring{name, std::move(arguments), blob,
-                                       SubstringFunction};
-      substring.SetFallible();
-      loader.AddFunctionOverload(std::move(substring));
+      Add(functions, name,
+          Fallible({std::move(arguments), blob, SubstringFunction}));
     }
   }
   for (auto arguments :
        {duckdb::vector<duckdb::LogicalType>{blob, blob, bigint},
         duckdb::vector<duckdb::LogicalType>{blob, blob, bigint, bigint}}) {
-    duckdb::ScalarFunction overlay{"overlay", std::move(arguments), blob,
-                                   OverlayFunction};
-    overlay.SetFallible();
-    loader.AddFunctionOverload(std::move(overlay));
+    Add(functions, "overlay",
+        Fallible({std::move(arguments), blob, OverlayFunction}));
   }
-  loader.AddFunctionOverload(duckdb::ScalarFunction{
-    "bit_count", {blob}, duckdb::LogicalType::BIGINT, BitCountFunction});
+  Add(functions, "bit_count",
+      {{blob}, duckdb::LogicalType::BIGINT, BitCountFunction});
 }
 
 }  // namespace
@@ -365,9 +355,9 @@ void ByteaOutEscape(char* buf, std::string_view value) {
   }
 }
 
-void RegisterBytea(duckdb::DatabaseInstance& db) {
-  RegisterCasts(db);
-  RegisterFunctions(db);
+void RegisterBytea(duckdb::CastFunctionSet& casts, Functions& functions) {
+  RegisterCasts(casts);
+  RegisterFunctions(functions);
 }
 
 }  // namespace sdb::pg

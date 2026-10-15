@@ -119,9 +119,7 @@ void LayoutSlop(CompiledPhrase& phrase) {
     groups[find(p)] = find(phrase.pattern_slots.front());
     for (const auto& term : phrase.terms) {
       if (slots[p].pattern->Accepts(term)) {
-        const auto* entry =
-          phrase.accept.Find(ViewCast<char>(bytes_view{term}));
-        groups[find(entry->slots.front())] = find(p);
+        groups[find(phrase.accept.Find(term)->slots.front())] = find(p);
       }
     }
   }
@@ -318,9 +316,9 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
     ++slot;
     ++part;
   }
-  accept.Reserve(terms.size());
+  accept.Reserve(terms);
   for (size_t i = 0; i != terms.size(); ++i) {
-    auto& listed = accept[ViewCast<char>(bytes_view{terms[i]})].slots;
+    auto& listed = accept[terms[i]].slots;
     if (listed.empty() || listed.back() != term_slots[i]) {
       listed.emplace_back(term_slots[i]);
     }

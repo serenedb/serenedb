@@ -28,6 +28,7 @@
 #include <cstring>
 #include <duckdb/common/crypto/md5.hpp>
 #include <iterator>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <tuple>
@@ -121,6 +122,8 @@ template<typename Value>
 IRS_FORCE_INLINE duckdb::string_t TermOf(const Value& value) noexcept {
   if constexpr (std::is_same_v<Value, duckdb::string_t>) {
     return value;
+  } else if constexpr (std::is_convertible_v<const Value&, bytes_view>) {
+    return MakeTermView(ViewCast<char>(bytes_view{value}));
   } else {
     return MakeTermView(std::string_view{value});
   }
@@ -143,6 +146,12 @@ template<typename Key>
 inline constexpr bool kIsLongKey =
   std::is_same_v<std::decay_t<Key>, std::string_view>;
 
+template<typename K>
+inline constexpr size_t kTableOf = kFixedClasses;
+
+template<size_t N>
+inline constexpr size_t kTableOf<Key<N>> = N - 2;
+
 template<template<typename...> typename Table, typename LongKey,
          typename... Mapped>
 class StringTable {
@@ -161,13 +170,8 @@ class StringTable {
     }
   }
 
-  template<size_t N>
-  IRS_FORCE_INLINE auto& TableFor(this auto& self, const Key<N>&) noexcept {
-    return std::get<N - 2>(self._tables);
-  }
-
-  IRS_FORCE_INLINE auto& TableFor(this auto& self, std::string_view) noexcept {
-    return std::get<kFixedClasses>(self._tables);
+  IRS_FORCE_INLINE auto& TableFor(this auto& self, const auto& key) noexcept {
+    return std::get<kTableOf<std::decay_t<decltype(key)>>>(self._tables);
   }
 
   void ForEachTable(this auto& self, auto&& visit) {
@@ -207,6 +211,18 @@ class StringTable {
   void Reserve(size_t words) {
     ForEachTable(
       [=](auto& table) { table.reserve(words / (kFixedClasses + 1)); });
+  }
+
+  template<std::ranges::input_range Words>
+  void Reserve(const Words& words) {
+    std::array<size_t, kFixedClasses + 1> counts{};
+    for (const auto& word : words) {
+      Dispatch(TermOf(word),
+               [&]<typename K>(const K&) { ++counts[kTableOf<K>]; });
+    }
+    [&]<size_t... I>(std::index_sequence<I...>) {
+      (std::get<I>(_tables).reserve(counts[I]), ...);
+    }(std::make_index_sequence<kFixedClasses + 1>{});
   }
 
   size_t MemoryBytes() const noexcept {

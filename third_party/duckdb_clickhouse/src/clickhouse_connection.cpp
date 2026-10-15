@@ -311,22 +311,31 @@ static void LoggedCall(optional_ptr<ClientContext> context, const string &sql, C
 	LogQuery(context, sql, start);
 }
 
-void ClickHouseConnection::Execute(optional_ptr<ClientContext> context, const clickhouse::Query &query) {
+static void SetOutputSettings(clickhouse::Query &query) {
+	query.SetSetting("output_format_native_write_json_as_string", clickhouse::QuerySettingsField {"1", 0});
+}
+
+void ClickHouseConnection::Execute(optional_ptr<ClientContext> context, clickhouse::Query query) {
+	SetOutputSettings(query);
 	LoggedCall(context, query.GetText(), [&] { GetClient().Execute(query); });
 }
 
 void ClickHouseConnection::Select(optional_ptr<ClientContext> context, const string &sql,
                                   clickhouse::SelectCallback callback) {
-	LoggedCall(context, sql, [&] { GetClient().Select(sql, std::move(callback)); });
+	clickhouse::Query query(sql);
+	query.OnData(std::move(callback));
+	SetOutputSettings(query);
+	LoggedCall(context, sql, [&] { GetClient().Select(query); });
 }
 
-void ClickHouseConnection::BeginSelect(optional_ptr<ClientContext> context, const clickhouse::Query &query) {
+void ClickHouseConnection::BeginSelect(optional_ptr<ClientContext> context, clickhouse::Query query) {
+	SetOutputSettings(query);
 	LoggedCall(context, query.GetText(), [&] { GetClient().BeginSelect(query); });
 }
 
-void ClickHouseConnection::BeginSelectWithExternalData(optional_ptr<ClientContext> context,
-                                                       const clickhouse::Query &query,
+void ClickHouseConnection::BeginSelectWithExternalData(optional_ptr<ClientContext> context, clickhouse::Query query,
                                                        const clickhouse::ExternalTables &external_tables) {
+	SetOutputSettings(query);
 	LoggedCall(context, query.GetText(), [&] { GetClient().BeginSelectWithExternalData(query, external_tables); });
 }
 

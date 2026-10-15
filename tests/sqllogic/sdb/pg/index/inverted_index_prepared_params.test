@@ -64,6 +64,13 @@ PREPARE ppas_range AS SELECT count(*) AS n FROM ppas_idx
   WHERE v BETWEEN $1 AND $2;
 
 statement ok
+PREPARE ppas_in AS SELECT count(*) AS n FROM ppas WHERE v IN ($1, $2);
+
+statement ok
+PREPARE ppas_between AS SELECT count(*) AS n FROM ppas
+  WHERE v BETWEEN $1 AND $2;
+
+statement ok
 PREPARE ppas_text AS SELECT count(*) AS n FROM ppas WHERE b @@ $1::VARCHAR;
 
 statement ok
@@ -116,6 +123,12 @@ pk
 
 query
 EXECUTE ppa_in(3, 5);
+----
+n
+20
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v IN (3, 5);
 ----
 n
 20
@@ -187,6 +200,30 @@ n
 
 query
 SELECT count(*) AS n FROM ppas_idx WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
+EXECUTE ppas_in(3, 5);
+----
+n
+20
+
+query
+SELECT count(*) AS n FROM ppas WHERE v IN (3, 5);
+----
+n
+20
+
+query
+EXECUTE ppas_between(2, 4);
+----
+n
+30
+
+query
+SELECT count(*) AS n FROM ppas WHERE v BETWEEN 2 AND 4;
 ----
 n
 30
@@ -304,6 +341,30 @@ pk
 
 query
 EXECUTE ppas_range(100, 149);
+----
+n
+50
+
+query
+EXECUTE ppas_in(3, 150);
+----
+n
+11
+
+query
+SELECT count(*) AS n FROM ppas WHERE v IN (3, 150);
+----
+n
+11
+
+query
+EXECUTE ppas_between(100, 149);
+----
+n
+50
+
+query
+SELECT count(*) AS n FROM ppas WHERE v BETWEEN 100 AND 149;
 ----
 n
 50

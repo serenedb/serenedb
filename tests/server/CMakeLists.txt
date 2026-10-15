@@ -36,6 +36,7 @@ add_executable(
     network_router_test.cpp
     number_of_cores_test.cpp
     pointer_union_test.cpp
+    query_prepared_cache_test.cpp
     random_test.cpp
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
@@ -43,7 +44,7 @@ add_executable(
     storage_version_test.cpp
     catalog/entry/tokenizer_test.cpp
     connector/ai_functions_test.cpp
-    connector/copy_in_bridge_test.cpp
+    connector/copy_in_batches_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp

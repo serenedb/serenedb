@@ -43,6 +43,8 @@ target_sources(
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp
         command_tag.cpp
+        copy_in_batches.cpp
+        copy_batch_builder.cpp
         connection_context.cpp
         pg_types.cpp
         serialize.cpp

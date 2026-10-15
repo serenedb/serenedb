@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
@@ -98,8 +99,10 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     _parked.push_back(std::move(p));
     return std::move(f);
   }
-  auto timer = std::make_shared<asio_ns::steady_timer>(
-    Server::instance().IoPool()->Next().Context(), d);
+  auto* pool = Server::instance().IoPool();
+  SDB_ASSERT(pool);
+  auto timer =
+    std::make_shared<asio_ns::steady_timer>(pool->Next().Context(), d);
   timer->async_wait(
     [this, timer, p = std::move(p)](const asio_ns::error_code&) mutable {
       {

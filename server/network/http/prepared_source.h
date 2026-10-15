@@ -26,32 +26,34 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "network/http/handler.h"
 
 namespace sdb::network {
 
-inline std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
-                                                       PreparedEntry& entry,
-                                                       const std::string& sql) {
-  try {
-    auto& connection = ctx.Connection();
-    if (entry.statement != nullptr && entry.sql != sql) {
-      entry.statement.reset();
-    }
-    if (entry.statement == nullptr) {
-      auto statement = connection.Prepare(sql);
-      if (statement->HasError()) {
-        return statement->GetErrorObject();
-      }
-      entry.statement = std::move(statement);
-      entry.sql = sql;
-    }
-  } catch (const std::exception& error) {
-    return duckdb::ErrorData{error};
+struct CachedStatement {
+  duckdb::PreparedStatement* statement = nullptr;
+  std::optional<duckdb::ErrorData> error;
+};
+
+inline CachedStatement PrepareCached(RequestContext& ctx, PreparedSlotId slot,
+                                     std::string_view sql) {
+  auto& cache = ctx.PreparedSlot(slot);
+  if (auto* statement = cache.Find(sql)) {
+    return {.statement = statement};
   }
-  return std::nullopt;
+  try {
+    auto statement = ctx.Connection().Prepare(sql);
+    if (statement->HasError()) {
+      return {.error = statement->GetErrorObject()};
+    }
+    return {.statement = &cache.Insert(std::string{sql}, std::move(statement),
+                                       PreparedSlotCapacity(slot))};
+  } catch (const std::exception& error) {
+    return {.error = duckdb::ErrorData{error}};
+  }
 }
 
 }  // namespace sdb::network

@@ -20,6 +20,7 @@
 
 #include "replication/functions.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
@@ -148,7 +149,7 @@ std::optional<idx_t> SubscriptionOriginOid(std::string_view name) {
   }
   const auto digits = name.substr(3);
   idx_t oid = 0;
-  if (digits.empty() || !std::ranges::all_of(digits, absl::ascii_isdigit) ||
+  if (digits.empty() || !absl::c_all_of(digits, absl::ascii_isdigit) ||
       !absl::SimpleAtoi(digits, &oid)) {
     return std::nullopt;
   }

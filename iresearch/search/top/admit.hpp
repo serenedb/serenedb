@@ -83,8 +83,18 @@ class Admit {
 
   IRS_FORCE_INLINE void Window(LoserScoreCollector& collector, score_t* scores,
                                uint64_t* mask, doc_id_t min, size_t words) {
-    _table.Window(min, mask, scores, static_cast<uint32_t>(words));
-    collector.ConsumeWindow(scores, mask, min, words);
+    if constexpr (kTable) {
+      std::array<uint64_t, irs::detail::kWindowWords> keep;
+      SDB_ASSERT(words <= keep.size());
+      if (_staged != 0) {
+        Drain(collector);
+      }
+      _table.Window(min, mask, keep.data(), scores,
+                    static_cast<uint32_t>(words));
+      collector.ConsumeWindow<true>(scores, mask, min, words, keep.data());
+    } else {
+      collector.ConsumeWindow(scores, mask, min, words, {});
+    }
   }
 
   IRS_FORCE_INLINE void Flush(LoserScoreCollector& collector) {

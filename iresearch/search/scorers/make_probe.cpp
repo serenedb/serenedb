@@ -20,10 +20,10 @@
 
 #include "iresearch/search/scorers/make_probe.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/optimization.h>
 
 #include <bit>
-#include <ranges>
 
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/bit_utils.hpp"
@@ -170,8 +170,8 @@ ScoreFunction Resolve(ScoreMergeType inner, ScoreFunction&& required,
 }
 
 bool AnyProbed(const std::vector<ScoreFunction>& probed) noexcept {
-  return std::ranges::any_of(
-    probed, [](const ScoreFunction& s) { return !s.IsDefault(); });
+  return absl::c_any_of(probed,
+                        [](const ScoreFunction& s) { return !s.IsDefault(); });
 }
 
 }  // namespace

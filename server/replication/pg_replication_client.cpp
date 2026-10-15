@@ -20,6 +20,7 @@
 
 #include "replication/pg_replication_client.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/random/random.h>
@@ -73,7 +74,6 @@
 #include "network/server.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
@@ -347,7 +347,7 @@ yaclib::Task<bool> PgReplicationClient::DescribeTables() {
     }
     if (!row[3]) {
       state.unfiltered = true;
-    } else if (!std::ranges::contains(state.filters, *row[3])) {
+    } else if (!absl::c_contains(state.filters, *row[3])) {
       state.filters.emplace_back(*row[3]);
     }
   }
@@ -752,8 +752,10 @@ yaclib::Task<> PgReplicationClient::Feeder() {
             break;
           }
           auto& subxacts = _subxacts[abort.xid];
-          const auto it = std::ranges::find(
-            subxacts, abort.subxid, &std::pair<uint32_t, size_t>::first);
+          const auto it = absl::c_find_if(
+            subxacts, [&](const std::pair<uint32_t, size_t>& subxact) {
+              return subxact.first == abort.subxid;
+            });
           if (it != subxacts.end()) {
             if (auto spool = _spools.find(abort.xid); spool != _spools.end()) {
               spool->second.Truncate(it->second);
@@ -768,8 +770,10 @@ yaclib::Task<> PgReplicationClient::Feeder() {
             const auto xid = StreamedMessageXid(message);
             if (xid != *_streamed_xid) {
               auto& subxacts = _subxacts[*_streamed_xid];
-              if (!std::ranges::contains(subxacts, xid,
-                                         &std::pair<uint32_t, size_t>::first)) {
+              if (absl::c_none_of(
+                    subxacts, [&](const std::pair<uint32_t, size_t>& subxact) {
+                      return subxact.first == xid;
+                    })) {
                 subxacts.emplace_back(xid, spool.Size());
               }
             }
@@ -1022,7 +1026,9 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       std::vector<size_t> positions;
       positions.reserve(names.size());
       for (const auto& name : names) {
-        const auto it = std::ranges::find(info.columns, name, &RelColumn::name);
+        const auto it = absl::c_find_if(
+          info.columns,
+          [&](const RelColumn& column) { return column.name == name; });
         if (it == info.columns.end()) {
           return;
         }
@@ -1069,9 +1075,8 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
               add_unique(names);
             });
   });
-  absl::erase_if(_stmts, [&](const auto& entry) {
-    return entry.first.relid == message.relation_id;
-  });
+  _stmts.EraseIf(
+    [&](const StmtKey& key) { return key.relid == message.relation_id; });
   _relations[message.relation_id] = std::move(info);
 }
 
@@ -1348,7 +1353,7 @@ yaclib::Task<> PgReplicationClient::ApplyTruncate(
   std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
   std::vector<duckdb::idx_t> owners;
   const auto add = [&](duckdb::TableCatalogEntry& table, duckdb::idx_t owner) {
-    if (std::ranges::none_of(tables, [&](const auto& member) {
+    if (absl::c_none_of(tables, [&](const auto& member) {
           return member.get().oid == table.oid;
         })) {
       tables.emplace_back(table);
@@ -1458,8 +1463,7 @@ void PgReplicationClient::LimitKeyFilter(const RelInfo& relation,
   const auto indexed = [&](const std::vector<size_t>& unique) {
     return unique.size() == 1 && unique.front() == shape.keys.front();
   };
-  if (shape.keys.size() == 1 &&
-      std::ranges::any_of(relation.unique_keys, indexed)) {
+  if (shape.keys.size() == 1 && absl::c_any_of(relation.unique_keys, indexed)) {
     if (const auto storage = relation.storage.lock()) {
       const auto rows =
         static_cast<double>(storage->GetTotalRows()) *
@@ -1481,8 +1485,8 @@ void PgReplicationClient::LimitKeyFilter(const RelInfo& relation,
 yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
   const auto& shape = _batch.shape;
-  auto it = _stmts.find(StmtKeyView{_batch.relid, shape});
-  if (it == _stmts.end()) {
+  auto* statement = _stmts.Find(StmtKeyView{_batch.relid, shape});
+  if (!statement) {
     const auto names = [&](const std::vector<size_t>& indexes) {
       std::vector<std::string> result;
       result.reserve(indexes.size());
@@ -1497,14 +1501,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     if (prepared->HasError()) {
       prepared->GetErrorObject().Throw();
     }
-    if (_stmts.size() >= kMaxStatements) {
-      _stmts.clear();
-    }
-    it = _stmts
-           .emplace(StmtKey{shape.op, _batch.relid, shape.keys, shape.cols,
-                            shape.full},
-                    std::move(prepared))
-           .first;
+    statement = &_stmts.Insert(
+      StmtKey{shape.op, _batch.relid, shape.keys, shape.cols, shape.full},
+      std::move(prepared), kMaxStatements);
   }
   _batch.rows = 0;
   _batch.ResetTouched();
@@ -1530,7 +1529,7 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   std::optional<int64_t> affected;
   irs::pg::SqlErrorData error;
   try {
-    affected = co_await RunPrepared(*it->second);
+    affected = co_await RunPrepared(*statement);
   } catch (const std::exception& ex) {
     error = network::pg::ToSqlError(ex);
   }

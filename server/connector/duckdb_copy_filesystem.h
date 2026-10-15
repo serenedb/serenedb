@@ -81,4 +81,6 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
   duckdb::FileType GetFileType(duckdb::FileHandle& handle) final;
 };
 
+void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle);
+
 }  // namespace sdb::connector

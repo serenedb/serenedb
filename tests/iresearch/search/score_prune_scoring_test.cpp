@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <cstring>
 #include <optional>
 #include <ostream>
 #include <span>
@@ -44,6 +45,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -90,6 +92,16 @@ irs::field_id ColumnIdFor(std::string_view name) {
 
 using namespace tests;
 
+std::unique_ptr<duckdb::ExpressionFilter> ScoreBelow(irs::score_t bound) {
+  return std::make_unique<duckdb::ExpressionFilter>(
+    duckdb::BoundComparisonExpression::Create(
+      duckdb::ExpressionType::COMPARE_LESSTHAN,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::FLOAT, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value::FLOAT(bound))));
+}
+
 // Top-k executor that applies a score cutoff between the scored plan and the
 // collector -- the production row-filter shape for `is_score`: docs with
 // score >= `reject_score` are dropped before they reach the collector, so
@@ -103,13 +115,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
 
   // Score filter `score < reject_score` as an ExpressionFilter over the single
   // score column -- the shape `ColFilterChain::FilterScores` applies.
-  auto cmp = duckdb::BoundComparisonExpression::Create(
-    duckdb::ExpressionType::COMPARE_LESSTHAN,
-    duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-      duckdb::LogicalType::FLOAT, 0),
-    duckdb::make_uniq<duckdb::BoundConstantExpression>(
-      duckdb::Value::FLOAT(reject_score)));
-  duckdb::ExpressionFilter score_filter{std::move(cmp)};
+  const auto score_filter = ScoreBelow(reject_score);
 
   duckdb::Connection con{irs::DuckDBEngine::Instance().instance()};
   duckdb::ClientContext& ctx = *con.context;
@@ -126,7 +132,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   prepare_collector.Finish();
 
   irs::ColFilterStateCache filter_states;
-  auto& score_state = filter_states.State(ctx, score_filter);
+  auto& score_state = filter_states.State(ctx, *score_filter);
 
   std::atomic<irs::score_t> score_threshold{
     std::numeric_limits<irs::score_t>::lowest()};
@@ -158,7 +164,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
         continue;
       }
       const auto passing = irs::ColFilterChain::FilterDocsScores(
-        score_filter, score_state, docs.data(), scores.data(), n);
+        *score_filter, score_state, docs.data(), scores.data(), n);
       collector.AddDocs(docs.data(), passing, scores.data());
     }
   }
@@ -168,6 +174,191 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
               return l.score > r.score;
             });
   return collector.TotalMatches();
+}
+
+struct ScoreBound {
+  const duckdb::TableFilter& filter;
+  duckdb::TableFilterState& state;
+  irs::score_t value;
+};
+
+class RowRuns final : public irs::detail::TableFilter {
+ public:
+  RowRuns(irs::doc_id_t run, const ScoreBound* bound) noexcept
+    : _run{run}, _bound{bound} {}
+
+  bool Keeps(irs::doc_id_t doc, irs::score_t score) const noexcept {
+    return KeepsRow(doc) && (_bound == nullptr || score < _bound->value);
+  }
+
+  bool Ordered() const noexcept { return _ordered; }
+
+  irs::doc_id_t Live(irs::doc_id_t doc) final {
+    if (KeepsRow(doc)) {
+      return doc;
+    }
+    return irs::doc_limits::min() +
+           ((doc - irs::doc_limits::min()) / _run + 1) * _run;
+  }
+
+  uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
+                         uint32_t words) final {
+    const uint64_t kept = NarrowRows(base, mask, mask, words);
+    std::memset(mask, 0, words * sizeof(uint64_t));
+    return kept;
+  }
+
+  uint32_t Narrow(irs::doc_id_t* docs, irs::score_t* scores, uint32_t n) final {
+    if (_bound != nullptr) {
+      n = static_cast<uint32_t>(irs::ColFilterChain::FilterDocsScores(
+        _bound->filter, _bound->state, docs, scores, n));
+    }
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i != n; ++i) {
+      if (!See(docs[i])) {
+        continue;
+      }
+      docs[kept] = docs[i];
+      if (scores != nullptr) {
+        scores[kept] = scores[i];
+      }
+      ++kept;
+    }
+    return kept;
+  }
+
+  uint32_t Narrow(irs::doc_id_t base, const uint64_t* in, uint64_t* out,
+                  irs::score_t* scores, uint32_t words) final {
+    if (_bound != nullptr) {
+      irs::ColFilterChain::FilterMaskScores(_bound->filter, _bound->state, in,
+                                            out, scores, words);
+      in = out;
+    }
+    return NarrowRows(base, in, out, words);
+  }
+
+ private:
+  bool KeepsRow(irs::doc_id_t doc) const noexcept {
+    return (doc - irs::doc_limits::min()) / _run % 2 == 0;
+  }
+
+  uint32_t NarrowRows(irs::doc_id_t base, const uint64_t* in, uint64_t* out,
+                      uint32_t words) {
+    uint32_t kept = 0;
+    for (uint32_t w = 0; w != words; ++w) {
+      auto word = in[w];
+      for (auto bits = in[w]; bits != 0; bits &= bits - 1) {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(bits));
+        if (See(base + w * 64 + bit)) {
+          ++kept;
+        } else {
+          word &= ~(uint64_t{1} << bit);
+        }
+      }
+      out[w] = word;
+    }
+    return kept;
+  }
+
+  bool See(irs::doc_id_t doc) noexcept {
+    _ordered &= doc > _last;
+    _last = doc;
+    return KeepsRow(doc);
+  }
+
+  irs::doc_id_t _run;
+  const ScoreBound* _bound;
+  irs::doc_id_t _last = irs::doc_limits::invalid();
+  bool _ordered = true;
+};
+
+std::vector<irs::QueryBuilder::ptr> PrepareScored(
+  const irs::DirectoryReader& reader, const irs::Filter& filter,
+  const irs::Scorer& scorer, irs::StatsArena& stats) {
+  irs::PreparedCollector collector{filter, scorer, stats, 1};
+  std::vector<irs::QueryBuilder::ptr> queries;
+  for (const auto& segment : reader) {
+    queries.emplace_back(
+      filter.PrepareSegment(segment, {.collector = collector.Get()}));
+  }
+  collector.Finish();
+  return queries;
+}
+
+std::vector<irs::score_t> FilteredRanking(const irs::DirectoryReader& reader,
+                                          const irs::Filter& filter,
+                                          const irs::Scorer& scorer,
+                                          irs::doc_id_t run,
+                                          const ScoreBound* bound, size_t k) {
+  irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
+  const auto queries = PrepareScored(reader, filter, scorer, stats);
+  const RowRuns rows{run, bound};
+  constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
+  irs::SlackBuf<irs::doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
+  irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
+  std::vector<irs::score_t> out;
+  for (size_t i = 0; i != reader.size(); ++i) {
+    if (!queries[i] || irs::QueryBuilder::IsEmpty(*queries[i])) {
+      continue;
+    }
+    irs::ColumnArgsFetcher fetcher;
+    auto plan = queries[i]->PlanScored({.scorer = scorer, .fetcher = fetcher});
+    const auto end = irs::doc_limits::min() +
+                     static_cast<irs::doc_id_t>(reader[i].docs_count());
+    for (auto min = irs::doc_limits::min(); min < end; min += kBatch) {
+      const auto max = std::min<irs::doc_id_t>(min + kBatch, end);
+      const auto n = plan->Run(min, max, docs.data(), scores.data());
+      for (uint32_t j = 0; j != n; ++j) {
+        if (rows.Keeps(docs.data()[j], scores.data()[j])) {
+          out.emplace_back(scores.data()[j]);
+        }
+      }
+    }
+  }
+  absl::c_sort(out, std::greater<>{});
+  out.resize(std::min(out.size(), k));
+  return out;
+}
+
+struct TableTop {
+  std::vector<irs::score_t> scores;
+  bool ordered = true;
+};
+
+TableTop TopThroughTable(const irs::DirectoryReader& reader,
+                         const irs::Filter& filter, const irs::Scorer& scorer,
+                         irs::doc_id_t run, const ScoreBound* bound, size_t k,
+                         bool prune) {
+  irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
+  const auto queries = PrepareScored(reader, filter, scorer, stats);
+  std::vector<irs::ScoreDoc> hits(k);
+  std::atomic<irs::score_t> threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
+  irs::LoserScoreCollector collector{threshold, hits};
+  TableTop out;
+  for (size_t i = 0; i != reader.size(); ++i) {
+    if (!queries[i] || irs::QueryBuilder::IsEmpty(*queries[i])) {
+      continue;
+    }
+    collector.SetSegment(static_cast<uint32_t>(i));
+    irs::ColumnArgsFetcher fetcher;
+    RowRuns rows{run, bound};
+    auto plan = queries[i]->PlanTop({.scorer = scorer,
+                                     .fetcher = fetcher,
+                                     .table = &rows,
+                                     .prune = prune,
+                                     .k = static_cast<uint32_t>(k)});
+    if (!plan) {
+      continue;
+    }
+    plan->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
+    out.ordered &= rows.Ordered();
+  }
+  for (size_t j = 0; j != collector.AcceptedCount(); ++j) {
+    out.scores.emplace_back(hits[j].score);
+  }
+  absl::c_sort(out.scores, std::greater<>{});
+  return out;
 }
 
 // Space-tokenized text field with Freq | Norm, so a term's bm25 score varies
@@ -873,6 +1064,99 @@ TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegResultValues) {
   auto result_count = std::min(count, kTopK);
 
   VerifyScoresAndDocs(hits, result_count);
+}
+
+TEST_P(ScorePruneScoringTestCase, TableFilteredTopMatchesFilteredRanking) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  auto reader = CreateLargeIndex(scorer, 40);
+  std::vector<std::pair<std::string, irs::Filter::ptr>> filters;
+  for (const std::string_view query : {
+         "content:quantum content:index",
+         "content:quantum content:index content:search",
+         "topic:database topic:physics topic:search",
+         "topic:database content:quantum content:index content:search",
+         "topic:database topic:physics -content:quantum",
+         "+topic:database content:quantum",
+         "+topic:database -content:index",
+       }) {
+    filters.emplace_back(std::string{query}, ParseQuery(query));
+  }
+  {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    for (const std::string_view term : {"database", "physics", "search"}) {
+      root->Add(
+        irs::TermClause{
+          .field = kTopicId,
+          .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+        },
+        irs::Occur::Should);
+    }
+    for (const std::string_view term : {"quantum", "index"}) {
+      root->Add(
+        irs::TermClause{
+          .field = kContentId,
+          .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+        },
+        irs::Occur::Should);
+    }
+    root->SetMinShouldMatch(2);
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter);
+    filters.emplace_back(
+      "2 of topic:database|physics|search content:quantum|index",
+      std::move(filter));
+  }
+  constexpr auto kAllRows = std::numeric_limits<irs::doc_id_t>::max();
+  duckdb::Connection con{irs::DuckDBEngine::Instance().instance()};
+  for (const auto& [query, filter] : filters) {
+    ASSERT_NE(nullptr, filter);
+    auto distinct = FilteredRanking(reader, *filter, scorer, kAllRows, nullptr,
+                                    std::numeric_limits<size_t>::max());
+    distinct.erase(std::unique(distinct.begin(), distinct.end()),
+                   distinct.end());
+    std::vector<irs::score_t> values;
+    if (const auto n = distinct.size(); n >= 2) {
+      values.emplace_back((distinct[0] + distinct[1]) / 2);
+      if (n >= 3) {
+        values.emplace_back((distinct[n - 3] + distinct[n - 2]) / 2);
+      }
+    }
+    std::vector<std::unique_ptr<duckdb::ExpressionFilter>> below;
+    irs::ColFilterStateCache states;
+    std::vector<ScoreBound> bounds;
+    for (const auto value : values) {
+      const auto& score_filter = *below.emplace_back(ScoreBelow(value));
+      bounds.emplace_back(score_filter,
+                          states.State(*con.context, score_filter), value);
+    }
+    std::vector<const ScoreBound*> cases{nullptr};
+    for (const auto& bound : bounds) {
+      cases.emplace_back(&bound);
+    }
+    for (const auto* bound : cases) {
+      for (const irs::doc_id_t run :
+           std::array<irs::doc_id_t, 4>{64, 300, 4133, kAllRows}) {
+        for (const size_t k : {1, 10, 100}) {
+          const auto expected =
+            FilteredRanking(reader, *filter, scorer, run, bound, k);
+          ASSERT_FALSE(expected.empty());
+          for (const bool prune : {false, true}) {
+            SCOPED_TRACE(testing::Message()
+                         << query << " run=" << run
+                         << " bound=" << (bound != nullptr ? bound->value : 0.F)
+                         << " k=" << k << " prune=" << prune);
+            const auto actual =
+              TopThroughTable(reader, *filter, scorer, run, bound, k, prune);
+            EXPECT_TRUE(actual.ordered);
+            ASSERT_EQ(expected.size(), actual.scores.size());
+            for (size_t i = 0; i != expected.size(); ++i) {
+              EXPECT_FLOAT_EQ(expected[i], actual.scores[i]) << i;
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

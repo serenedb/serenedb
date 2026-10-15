@@ -35,7 +35,8 @@
 
 namespace irs::docs {
 
-template<template<typename...> class Shape, typename... Parts, typename... Args>
+template<template<typename...> typename Shape, typename... Parts,
+         typename... Args>
 Root::ptr MakeShape(const Context&, Args&&... args) {
   return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
 }

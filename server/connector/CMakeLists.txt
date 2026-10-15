@@ -48,6 +48,8 @@ target_sources(
         duckdb_physical_search_update.cpp
         duckdb_pg_binary_copy.cpp
         duckdb_pg_text_copy.cpp
+        copy_from_batches.cpp
+        copy_batch_parse.cpp
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp
         duckdb_reindex_function.cpp

@@ -20,27 +20,27 @@
 
 #pragma once
 
-#include <memory>
+#include <duckdb/function/copy_function.hpp>
+#include <duckdb/function/table_function.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <string>
 
-// zstd's opaque contexts (typedef'd ZSTD_CCtx / ZSTD_DCtx). Forward-declared so
-// this header doesn't pull <zstd.h> into its includers; the deleters and
-// factories are defined in zstd_context.cpp.
-struct ZSTD_CCtx_s;
-struct ZSTD_DCtx_s;
+#include "pg/copy_in_batches.h"
 
-namespace irs::utils {
+namespace sdb::connector {
 
-struct ZstdCCtxDeleter {
-  void operator()(ZSTD_CCtx_s* cctx) const noexcept;  // ZSTD_freeCCtx
-};
-struct ZstdDCtxDeleter {
-  void operator()(ZSTD_DCtx_s* dctx) const noexcept;  // ZSTD_freeDCtx
-};
+bool BindCopyFrom(duckdb::ClientContext& context,
+                  duckdb::CopyFromFunctionBindInput& input, bool binary);
 
-using ZstdCCtxPtr = std::unique_ptr<ZSTD_CCtx_s, ZstdCCtxDeleter>;
-using ZstdDCtxPtr = std::unique_ptr<ZSTD_DCtx_s, ZstdDCtxDeleter>;
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
+  duckdb::ClientContext& context, const std::string& path,
+  pg::CopyInTarget target, bool ordered);
 
-ZstdCCtxPtr MakeZstdCCtx();  // ZSTD_createCCtx()
-ZstdDCtxPtr MakeZstdDCtx();  // ZSTD_createDCtx()
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitCopyFromLocal(
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global);
 
-}  // namespace irs::utils
+void ScanCopyFrom(duckdb::ClientContext& context,
+                  duckdb::TableFunctionInput& input, duckdb::DataChunk& output);
+
+}  // namespace sdb::connector

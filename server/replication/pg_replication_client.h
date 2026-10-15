@@ -41,6 +41,7 @@
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
 
+#include "query/prepared_cache.h"
 #include "replication/conninfo.h"
 #include "replication/pgoutput.h"
 #include "replication/publisher_session.h"
@@ -246,10 +247,7 @@ class PgReplicationClient final : public SyncSession {
     bool operator()(StmtKeyView a, StmtKeyView b) const { return a == b; }
   };
 
-  irs::containers::NodeHashMap<StmtKey,
-                               duckdb::unique_ptr<duckdb::PreparedStatement>,
-                               StmtKeyHash, StmtKeyEq>
-    _stmts;
+  query::PreparedCache<StmtKey, StmtKeyHash, StmtKeyEq> _stmts;
 };
 
 }  // namespace sdb::replication

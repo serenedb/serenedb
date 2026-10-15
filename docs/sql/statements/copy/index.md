@@ -103,6 +103,14 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 <SqlLogicTest id="sql/statements/copy/index/example_022" />
 
+### `COPY ... FROM STDIN`
+
+Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` in the `text` and `binary` formats parses rows on several threads, up to the `threads` setting, while the client is still sending them. Rows keep their input order when [`preserve_insertion_order`](../../../configuration/overview.md) is `true`, the default; when it is `false`, and for search tables, rows may be stored in any order. A client that sends slowly does not keep threads busy: they run other queries until more data arrives. The initial table copy of a [subscription](../create_subscription/index.md) loads rows the same way.
+
+`COPY ... FROM 'file'` in the `text` and `binary` formats also parses rows on several threads, with the same ordering rules. The file is read ahead on the asynchronous I/O pool, as the CSV reader does: `async_threads` sizes the pool and `read_ahead_depth` limits how far ahead it reads. A `text` file is read in parallel parts; a `binary` file, and a `text` file that cannot be read at an offset, such as a named pipe, are read in order while other threads parse what has arrived. With `async_threads` set to 0, or `read_ahead_depth` set to 0 for a `text` file, the query's own threads read the file.
+
+In the `text` format a row ends at a newline or at a carriage return followed by a newline, as in PostgreSQL. A newline or carriage return preceded by a backslash is part of the value, not the end of the row.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

@@ -41,9 +41,9 @@ class SearchTable;
 // Templated on the storage type so the same loops drive both an inverted index
 // and a search table (both expose the maintenance interface in maintenance.h).
 // Instantiated only for the two types below.
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak);
 
 extern template yaclib::Future<> RefreshLoop(

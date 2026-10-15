@@ -268,7 +268,7 @@ The suite runs with every other suite when duckdb or a dependency they share cha
 
 ### Changing the DuckDB on-disk format
 
-A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#duckdb-database-files), then:
+A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [Storage compatibility](../../.claude/rules/storage.md#duckdb-database-files), then:
 
 - if DuckDB can store the change, add its DDL/DML to `base.sql` or `changes.sql` and a query to `check_base.sql` or `check_changes.sql`;
 - if it cannot, add the refusal to `third_party/duckdb/test/sql/storage/serenedb_state_in_duckdb_file.test`;
@@ -279,7 +279,7 @@ A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored g
 
 Three things about the postgres fixture are non-obvious:
 
-- **It uses our `config/postgres_scanner.json`, not upstream's
+- **It runs without a test-config of its own, not with upstream's
   `attach_postgres.json`.** Upstream's config is for the inverse scenario
   (running DuckDB *core's* suite against postgres-as-storage); its
   `on_new_connection: USE pgdb;` breaks duckdb_postgres' own tests.

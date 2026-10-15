@@ -20,9 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -83,21 +83,21 @@ struct RoleClosure {
   }
 
   bool MemberOf(duckdb::idx_t r) const {
-    return is_superuser || std::ranges::binary_search(closure, r);
+    return is_superuser || absl::c_binary_search(closure, r);
   }
 
   bool Owns(duckdb::idx_t owner) const { return MemberOf(owner); }
 
   bool IsMember(duckdb::idx_t r) const {
-    return std::ranges::binary_search(members, r);
+    return absl::c_binary_search(members, r);
   }
 
   bool CanSet(duckdb::idx_t r) const {
-    return std::ranges::binary_search(settable, r);
+    return absl::c_binary_search(settable, r);
   }
 
   bool IsAdminOf(duckdb::idx_t r) const {
-    return std::ranges::binary_search(admin, r);
+    return absl::c_binary_search(admin, r);
   }
 
   bool Can(duckdb::CatalogType type, const duckdb::Permissions& perm,

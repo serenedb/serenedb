@@ -17,7 +17,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | Type                         | Support State | Details |
 |------------------------------|---------------|---------|
 | aclitem                      | 🟢            |         |
-| bit                          | 🟡            | A length is not enforced: `'1011'::bit(3)` stays `1011`. |
+| bit                          | 🟡            | A length is not enforced: `'1011'::bit(3)` stays `1011`. A bit string holds at least one bit: `B''` reads as `0`, and a `substring` without bits is an error. |
 | bool                         | 🟢            | `boolean` |
 | box                          | 🔴            |         |
 | bpchar                       | 🟡            | `character(n)`: trailing blanks count in comparisons and in `length()`, so `'a '::char(2) = 'a'::char(2)` is false. |
@@ -26,7 +26,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | cid                          | 🟢            |         |
 | cidr                         | 🟢            |         |
 | circle                       | 🔴            |         |
-| date                         | 🟢            |         |
+| date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
 | datemultirange               | 🔴            |         |
 | daterange                    | 🔴            |         |
 | float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. |
@@ -93,7 +93,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | tsvector                     | 🔴            |         |
 | txid_snapshot                | 🔴            |         |
 | uuid                         | 🟢            |         |
-| varbit                       | 🟡            | A length such as `varbit(3)` is not accepted. |
+| varbit                       | 🟡            | A length such as `varbit(3)` is not accepted. A bit string holds at least one bit, as for `bit`. |
 | varchar                      | 🟡            | A length is not enforced: `'abc'::varchar(2)` stays `abc`. |
 | xid                          | 🟢            |         |
 | xid8                         | 🟢            |         |

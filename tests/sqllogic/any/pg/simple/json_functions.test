@@ -653,6 +653,41 @@ statement ok
 DROP FUNCTION jsonfn_outs
 
 
+# json_object
+
+query
+SELECT json_object('{a,1,b,2}') AS one_d, json_object('{a,1,b,NULL}') AS null_value,
+       json_object(ARRAY['a','b'], ARRAY['1','2']) AS two_arrays, json_object('{}') AS empty,
+       json_object(ARRAY[['a','1'],['b','2']]) AS two_d, json_object('{"a b","x\"y"}') AS escaped;
+----
+one_d	null_value	two_arrays	empty	two_d	escaped
+{"a" : "1", "b" : "2"}	{"a" : "1", "b" : null}	{"a" : "1", "b" : "2"}	{}	{"a" : "1", "b" : "2"}	{"a b" : "x\\"y"}
+
+
+statement error
+SELECT json_object('{a,1,b}');
+----
+db error: ERROR: array must have even number of elements
+
+
+statement error
+SELECT json_object('{a,1,NULL,2}');
+----
+db error: ERROR: null value not allowed for object key
+
+
+statement error
+SELECT json_object(ARRAY['a','b'], ARRAY['1']);
+----
+db error: ERROR: mismatched array dimensions
+
+
+statement error
+SELECT json_object(ARRAY[['a','1','x'],['b','2','y']]);
+----
+db error: ERROR: array must have two columns
+
+
 statement ok
 DROP FUNCTION jsonfn_one
 

@@ -28,6 +28,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
+#include <absl/time/civil_time.h>
 
 #include <algorithm>
 #include <bit>
@@ -822,16 +823,62 @@ void WithWrapIfNested(SerializationContext& context, Body&& body) {
   }
 }
 
+constexpr size_t kDateTextBytes = sizeof("5881580-07-10") - 1;
+constexpr std::string_view kBcSuffix = " BC";
+constexpr int32_t kFirstCommonEraDay =
+  absl::CivilDay{1, 1, 1} - absl::CivilDay{1970, 1, 1};
+
+size_t WriteDateText(char* buf, duckdb::date_t date, bool& bc) {
+  int32_t units[3];
+  duckdb::Date::Convert(date, units[0], units[1], units[2]);
+  duckdb::idx_t year_length = 0;
+  const auto length = duckdb::DateToStringCast::Length(units, year_length, bc);
+  duckdb::DateToStringCast::Format(buf, units, year_length, false);
+  return bc ? length - (sizeof(" (BC)") - 1) : length;
+}
+
+bool WriteTimestampText(SerializationContext& ctx,
+                        duckdb::timestamp_t timestamp) {
+  duckdb::date_t date;
+  duckdb::dtime_t time;
+  duckdb::Timestamp::Convert(timestamp, date, time);
+  int32_t units[4];
+  duckdb::Time::Convert(time, units[0], units[1], units[2], units[3]);
+  char micros[6] = {};
+  const auto time_length = duckdb::TimeToStringCast::Length(units, micros);
+  bool bc = false;
+  ctx.writer->Write(kDateTextBytes + 1 + time_length, [&](uint8_t* dst) {
+    auto* buf = reinterpret_cast<char*>(dst);
+    const auto date_length = WriteDateText(buf, date, bc);
+    buf[date_length] = ' ';
+    duckdb::TimeToStringCast::Format(buf + date_length + 1, time_length, units,
+                                     micros);
+    return date_length + 1 + time_length;
+  });
+  return bc;
+}
+
+template<WrapContext InContainer>
+void RenderTimestampText(SerializationContext& ctx,
+                         duckdb::timestamp_t timestamp) {
+  WithWrapIfNested<InContainer>(ctx, [&] {
+    if (!timestamp.IsFinite()) {
+      ctx.writer->Write(duckdb::Timestamp::ToString(timestamp));
+    } else if (WriteTimestampText(ctx, timestamp)) {
+      ctx.writer->Write(kBcSuffix);
+    }
+  });
+}
+
 template<WrapContext InContainer>
 struct TimestampSecTextCore {
   using Value = duckdb::timestamp_sec_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
-    auto str = duckdb::Timestamp::ToString(
-      timestamp.IsFinite()
-        ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
-        : duckdb::timestamp_t(timestamp.value));
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    RenderTimestampText<InContainer>(
+      ctx, timestamp.IsFinite()
+             ? duckdb::Timestamp::FromEpochSeconds(timestamp.value)
+             : duckdb::timestamp_t(timestamp.value));
   }
 };
 
@@ -889,10 +936,10 @@ struct TimestampMsTextCore {
   using Value = duckdb::timestamp_ms_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
-    auto str = duckdb::Timestamp::ToString(
-      timestamp.IsFinite() ? duckdb::Timestamp::FromEpochMs(timestamp.value)
-                           : duckdb::timestamp_t(timestamp.value));
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    RenderTimestampText<InContainer>(
+      ctx, timestamp.IsFinite()
+             ? duckdb::Timestamp::FromEpochMs(timestamp.value)
+             : duckdb::timestamp_t(timestamp.value));
   }
 };
 
@@ -930,8 +977,7 @@ struct TimestampTextCore {
   using Value = duckdb::timestamp_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx,
                                       Value timestamp) {
-    auto str = duckdb::Timestamp::ToString(timestamp);
-    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(str); });
+    RenderTimestampText<InContainer>(ctx, timestamp);
   }
 };
 
@@ -1013,24 +1059,27 @@ struct TimestampTzTextCore {
   using Value = duckdb::timestamp_tz_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     const auto ts = duckdb::timestamp_t{tz};
-    if (ctx.time_zone && ts.IsFinite()) {
-      const auto offset_secs = SessionOffsetSeconds(ctx, ts.value);
+    if (!ts.IsFinite()) {
+      WithWrapIfNested<InContainer>(
+        ctx, [&] { ctx.writer->Write(duckdb::Timestamp::ToString(ts)); });
+      return;
+    }
+    int32_t offset_secs = 0;
+    auto local = ts;
+    if (ctx.time_zone) {
+      const auto offset = SessionOffsetSeconds(ctx, ts.value);
       int64_t local_us = 0;
       if (duckdb::TryAddOperator::Operation(
-            ts.value, int64_t{offset_secs} * 1'000'000, local_us)) {
-        auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{local_us});
-        WithWrapIfNested<InContainer>(ctx, [&] {
-          ctx.writer->Write(str);
-          WriteTzOffsetSuffix(ctx, offset_secs);
-        });
-        return;
+            ts.value, int64_t{offset} * 1'000'000, local_us)) {
+        offset_secs = offset;
+        local = duckdb::timestamp_t{local_us};
       }
     }
-    auto str = duckdb::Timestamp::ToString(ts);
     WithWrapIfNested<InContainer>(ctx, [&] {
-      ctx.writer->Write(str);
-      if (ts.IsFinite()) {
-        ctx.writer->Write("+00");
+      const auto bc = WriteTimestampText(ctx, local);
+      WriteTzOffsetSuffix(ctx, offset_secs);
+      if (bc) {
+        ctx.writer->Write(kBcSuffix);
       }
     });
   }
@@ -1165,9 +1214,11 @@ struct BitBinCore {
 
 struct DateTextCore {
   using Value = duckdb::date_t;
-  static constexpr uint32_t kMaxBytes = 13;
+  static constexpr uint32_t kMaxBytes = kDateTextBytes + kBcSuffix.size();
+  IRS_FORCE_INLINE static bool NeedsQuoting(Value date) {
+    return date.IsFinite() && date.days < kFirstCommonEraDay;
+  }
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
-    // days from 1970-01-01
     char* buf = reinterpret_cast<char*>(dst);
     if (date.days == std::numeric_limits<int32_t>::max()) {
       std::memcpy(buf, "infinity", 8);
@@ -1177,36 +1228,13 @@ struct DateTextCore {
       std::memcpy(buf, "-infinity", 9);
       return 9;
     }
-    // TODO(mkornaukhov) support BC date and add some validation for dates
-    // Format is "%04d-%02d-%02d", max year is 5874897
-    absl::CivilDay days{1970, 1, 1};
-    days += date.days;
-
-    char year_buf[absl::numbers_internal::kFastToBufferSize];
-    auto* const year_end =
-      absl::numbers_internal::FastIntToBuffer(days.year(), year_buf);
-
-    const auto year_digits = year_end - year_buf;
-    const auto extra_pad = 4 - year_digits;
-    if (extra_pad > 0) {
-      std::memset(buf, '0', extra_pad);
-      buf += extra_pad;
+    bool bc = false;
+    auto size = WriteDateText(buf, date, bc);
+    if (bc) {
+      std::memcpy(buf + size, kBcSuffix.data(), kBcSuffix.size());
+      size += kBcSuffix.size();
     }
-
-    std::memcpy(buf, year_buf, year_digits);
-    buf += year_digits;
-    *buf++ = '-';
-
-    const auto month_div = std::div(days.month(), 10);
-    *buf++ = '0' + month_div.quot;
-    *buf++ = '0' + month_div.rem;
-    *buf++ = '-';
-
-    const auto day_div = std::div(days.day(), 10);
-    *buf++ = '0' + day_div.quot;
-    *buf++ = '0' + day_div.rem;
-
-    return static_cast<size_t>(buf - reinterpret_cast<char*>(dst));
+    return size;
   }
 };
 
@@ -1667,6 +1695,31 @@ IRS_FORCE_INLINE void RenderValue(SerializationContext& ctx, const RUVF& v,
   }
 }
 
+template<typename C>
+concept QuotedCore =
+  requires(const typename C::Value& value) { C::NeedsQuoting(value); };
+
+template<typename Core>
+IRS_FORCE_INLINE bool ItemNeedsQuoting(const RUVF& v, duckdb::idx_t idx) {
+  if constexpr (QuotedCore<Core>) {
+    return Core::NeedsQuoting(ReadValue<typename Core::Value>(v, idx));
+  } else {
+    return false;
+  }
+}
+
+template<typename Core>
+IRS_FORCE_INLINE void RenderItem(SerializationContext& ctx, const RUVF& v,
+                                 duckdb::idx_t idx) {
+  if (ItemNeedsQuoting<Core>(v, idx)) {
+    ctx.writer->Write(ctx.quote_seq);
+    RenderValue<Core>(ctx, v, idx);
+    ctx.writer->Write(ctx.quote_seq);
+    return;
+  }
+  RenderValue<Core>(ctx, v, idx);
+}
+
 enum class Framing {
   BinaryField,
   CopyTextField,
@@ -1726,7 +1779,7 @@ bool RecordTextField(SerializationContext& ctx, const RUVF& v,
   if (!v.unified.validity.RowIsValid(idx)) {
     return true;
   }
-  RenderValue<Core>(ctx, v, idx);
+  RenderItem<Core>(ctx, v, idx);
   return false;
 }
 
@@ -1772,10 +1825,12 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
       }
     }
   } else if constexpr (SizedCore<Core>) {
-    // Bounded text leaves (numerics/dates/uuid/bool) never need quoting, so the
-    // whole comma-joined run fits one reservation; NULL is the 4-byte literal.
+    // Bounded text leaves (numerics/dates/uuid/bool) fit one reservation for
+    // the whole comma-joined run; NULL is the 4-byte literal.
     constexpr size_t kElem = (Core::kMaxBytes > 4 ? Core::kMaxBytes : 4) + 1;
-    ctx.writer->Write(count * kElem, [&](uint8_t* out) {
+    const auto quote = ctx.quote_seq;
+    const auto quotes = QuotedCore<Core> ? 2 * quote.size() : 0;
+    ctx.writer->Write(count * (kElem + quotes), [&](uint8_t* out) {
       uint8_t* p = out;
       for (duckdb::idx_t i = 0; i < count; ++i) {
         if (i > 0) {
@@ -1786,6 +1841,12 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
           std::memcpy(p, "NULL", 4);
           p += 4;
           has_null = true;
+        } else if (ItemNeedsQuoting<Core>(cv, idx)) {
+          std::memcpy(p, quote.data(), quote.size());
+          p += quote.size();
+          p += RenderSized<Core>(p, ctx, cv, idx);
+          std::memcpy(p, quote.data(), quote.size());
+          p += quote.size();
         } else {
           p += RenderSized<Core>(p, ctx, cv, idx);
         }
@@ -1986,7 +2047,7 @@ struct MultiDimArrayCore {
         if (!vdata.unified.validity.RowIsValid(row)) {
           context.writer->Write("NULL");
         } else {
-          RenderValue<Core>(context, vdata, row);
+          RenderItem<Core>(context, vdata, row);
         }
         return;
       }

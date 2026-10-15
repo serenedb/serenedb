@@ -31,7 +31,7 @@ docs/compatibility/system-table-compatibility.md and
 docs/compatibility/data-type-compatibility.md; the type page must list
 every PostgreSQL type. --check verifies every output is current without
 writing anything; without the third_party/postgres submodule it checks only
-those three, server/pg/catalog/system_oids.lock and the two OID tables
+those three, server/pg/catalog/generated/system_oids.lock and the two OID tables
 generated from it, and not whether the type page lists every PostgreSQL type.
 """
 

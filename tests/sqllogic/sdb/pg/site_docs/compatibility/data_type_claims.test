@@ -129,7 +129,7 @@ SELECT NULL::"circle" IS NULL;
 db error: ERROR: Type with name circle does not exist!<slt:ignore>
 
 
-# date (🟢)
+# date (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'date' AND typnamespace = 'pg_catalog'::regnamespace;
 ----

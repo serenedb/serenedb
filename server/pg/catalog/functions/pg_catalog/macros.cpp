@@ -277,15 +277,10 @@ constexpr SystemMacro kMacros[] = {
    R"((arr, old_elem, new_elem) AS list_transform(arr, x -> CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
 
   {"pg_catalog","array_lower",
-   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE 1 END)"},
+   R"((arr, dim) AS CASE WHEN array_length(arr, dim) IS NULL THEN NULL ELSE 1 END)"},
 
   {"pg_catalog","array_upper",
-   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE len(arr) END)"},
-
-  {"pg_catalog","overlay",
-   R"((s, repl, start, count) AS substr(s, 1, start - 1) || repl || substr(s, start + count))"},
-  {"pg_catalog","overlay",
-   R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
+   R"((arr, dim) AS array_length(arr, dim))"},
 
   // PG datetime functions missing from DuckDB
   // timeofday: wall clock as formatted text

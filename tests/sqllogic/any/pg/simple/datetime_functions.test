@@ -506,3 +506,14 @@ statement error
 SELECT timestamptz(TIMESTAMPTZ '2020-01-01 10:11:12+00', -2);
 ----
 db error: ERROR: timestamp(-2) precision must be between 0 and 6
+
+
+query
+SELECT date_trunc('day', TIMESTAMPTZ '2020-01-02 10:00+00', 'Europe/Berlin') AS day_berlin,
+       date_trunc('hour', TIMESTAMPTZ '2020-01-02 10:45+00', 'Asia/Kolkata') AS hour_kolkata,
+       date_trunc('month', TIMESTAMPTZ '2020-03-01 00:30+00', 'America/New_York') AS month_ny,
+       date_trunc('day', TIMESTAMPTZ 'infinity', 'UTC') AS inf,
+       date_trunc('day', TIMESTAMPTZ '2020-01-02 10:00+00', NULL) AS no_zone;
+----
+day_berlin	hour_kolkata	month_ny	inf	no_zone
+2020-01-01 23:00:00+00	2020-01-02 10:30:00+00	2020-02-01 05:00:00+00	infinity	NULL

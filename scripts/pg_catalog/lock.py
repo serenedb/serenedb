@@ -3,7 +3,7 @@ import re
 
 from .common import CATALOG_DIR, GENERATED_DIR, REPO_ROOT, cpp_str, generated
 
-PATH = os.path.join(CATALOG_DIR, 'system_oids.lock')
+PATH = os.path.join(GENERATED_DIR, 'system_oids.lock')
 OIDS = os.path.join(CATALOG_DIR, 'oids.h')
 
 KINDS = ('namespace', 'relation', 'domain', 'collation', 'function')

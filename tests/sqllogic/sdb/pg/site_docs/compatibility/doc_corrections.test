@@ -22,8 +22,7 @@ SELECT 1 << 4;
 statement ok
 SELECT 16 >> 2;
 
-# '#' (bitwise XOR) genuinely unsupported
-statement error
+statement ok
 SELECT 5 # 3;
 
 # --- Bit-string operators ---

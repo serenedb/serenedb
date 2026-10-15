@@ -776,11 +776,11 @@ statement ok
 SELECT 2 ^ 3;
 
 # op_math: |/
-statement error
+statement ok
 SELECT |/ 25.0;
 
 # op_math: ||/
-statement error
+statement ok
 SELECT ||/ 27.0;
 
 # op_math: @
@@ -796,7 +796,7 @@ statement ok
 SELECT 5 | 3;
 
 # op_math: #
-statement error
+statement ok
 SELECT 5 # 3;
 
 # op_math: ~
@@ -924,7 +924,7 @@ statement ok
 SELECT random();
 
 # op_math: random_normal
-statement error
+statement ok
 SELECT random_normal();
 
 # op_math: setseed
@@ -1244,7 +1244,7 @@ statement ok
 SELECT trim('\x03'::bytea from '\x010203'::bytea);
 
 # op_bytea: bit_count
-statement error
+statement ok
 SELECT bit_count('\x0102'::bytea);
 
 # op_bytea: crc32
@@ -1328,7 +1328,7 @@ statement ok
 SELECT '1010'::bit(4) | '1100'::bit(4);
 
 # op_bit: #
-statement error
+statement ok
 SELECT '1010'::bit(4) # '1100'::bit(4);
 
 # op_bit: ~
@@ -1360,15 +1360,15 @@ statement ok
 SELECT octet_length('1010'::bit(4));
 
 # op_bit: overlay
-statement error
+statement ok
 SELECT overlay('10101'::bit(5) placing '11'::bit(2) from 2 for 2);
 
 # op_bit: position
-statement error
+statement ok
 SELECT position('10'::bit(2) in '00100'::bit(5));
 
 # op_bit: substring
-statement error
+statement ok
 SELECT substring('10101'::bit(5) from 2 for 3);
 
 # op_bit: get_bit
@@ -1859,7 +1859,7 @@ statement error
 SELECT polygon(box '((0,0),(2,2))');
 
 # op_net: <<
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' << inet '192.168.1.0/24';
 
 # op_net: <<=
@@ -1867,7 +1867,7 @@ statement ok
 SELECT inet '192.168.1.5/24' <<= inet '192.168.1.0/24';
 
 # op_net: >>
-statement error
+statement ok
 SELECT inet '192.168.1.0/24' >> inet '192.168.1.5/24';
 
 # op_net: >>=
@@ -1875,19 +1875,19 @@ statement ok
 SELECT inet '192.168.1.0/24' >>= inet '192.168.1.0/24';
 
 # op_net: &&
-statement error
+statement ok
 SELECT inet '192.168.1.0/24' && inet '192.168.1.5/24';
 
 # op_net: ~
-statement error
+statement ok
 SELECT ~ inet '192.168.1.5/24';
 
 # op_net: &
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' & inet '0.0.0.255';
 
 # op_net: |
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' | inet '0.0.0.255';
 
 # op_net: +
@@ -1895,7 +1895,7 @@ statement ok
 SELECT inet '192.168.1.5/24' + 5;
 
 # op_net: -
-statement error
+statement ok
 SELECT inet '192.168.1.10/24' - inet '192.168.1.5/24';
 
 # op_net: abbrev
@@ -1919,11 +1919,11 @@ statement ok
 SELECT hostmask(inet '192.168.23.20/30');
 
 # op_net: inet_merge
-statement error
+statement ok
 SELECT inet_merge(inet '192.168.1.5/24', inet '192.168.2.5/24');
 
 # op_net: inet_same_family
-statement error
+statement ok
 SELECT inet_same_family(inet '192.168.1.5/24', inet '::1');
 
 # op_net: masklen

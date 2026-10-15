@@ -185,7 +185,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | @                | Yes           |                                                                         |
 | &                | Yes           |                                                                         |
 | |                | Yes            |                                                                         |
-| #                | No            |                                                                         |
+| #                | Yes           |                                                                         |
 | ~                | Yes           |                                                                         |
 | \<\<             | Yes           |                                                                         |
 | >>               | Yes           |                                                                         |
@@ -199,8 +199,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | exp              | Yes           | On `numeric`, returns `double precision`                                |
 | factorial        | Yes           |                                                                         |
 | floor            | Yes           |                                                                         |
-| gcd              | Yes           | Not for `numeric`                                                       |
-| lcm              | Yes           | Not for `numeric`                                                       |
+| gcd              | Yes           |                                                                         |
+| lcm              | Yes           |                                                                         |
 | ln               | Yes           | On `numeric`, returns `double precision`                                |
 | log              | Yes           | On `numeric`, returns `double precision`                                |
 | log10            | Yes           | On `numeric`, returns `double precision`                                |
@@ -217,7 +217,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |
 | random           | Yes           |                                                                         |
-| random_normal    | No            |                                                                         |
+| random_normal    | Yes           |                                                                         |
 | setseed          | Yes           |                                                                         |
 | acos             | Yes           |                                                                         |
 | acosd            | Yes           |                                                                         |
@@ -305,7 +305,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | rtrim          | Yes           |                           |
 | substring      | Yes           |                           |
 | trim           | Yes           |                           |
-| bit_count      | No            |                           |
+| bit_count      | Yes           |                           |
 | crc32          | Yes           |                           |
 | crc32c         | Yes           |                           |
 | get_bit        | Yes           |                           |
@@ -330,7 +330,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | \|\|          | Yes           |         |
 | &             | Yes           |         |
 | \|            | Yes           |         |
-| #             | No            |         |
+| #             | Yes           |         |
 | ~             | Yes           |         |
 | \<\<          | Yes           |         |
 | >>            | Yes           |         |
@@ -338,9 +338,9 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | bit_length    | Yes           |         |
 | length        | Yes           |         |
 | octet_length  | Yes           |         |
-| overlay       | No            |         |
-| position      | No            |         |
-| substring     | No            |         |
+| overlay       | Yes           |         |
+| position      | Yes           |         |
+| substring     | Partial       | A result without bits raises an error: a bit string holds at least one bit |
 | get_bit       | Yes           |         |
 | set_bit       | Yes           |         |
 
@@ -384,7 +384,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | date_bin               | Yes           |                          |
 | date_part              | Yes           |                          |
 | date_subtract          | Yes           |                          |
-| date_trunc             | Yes           | Without timezone         |
+| date_trunc             | Yes           |                          |
 | extract                | Yes           | `pg_catalog.extract(field, source)` returns `numeric`. An infinite source gives `NULL` where PostgreSQL gives `Infinity`, `julian` of a timestamp has 20 fractional digits, and a field that is not a constant gives six fractional digits |
 | isfinite               | Yes           |                          |
 | justify_days           | Yes           |                          |
@@ -472,26 +472,26 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 #### Network
 | Feature            | Support State | Details |
 |--------------------|---------------|---------|
-| \<\<               | No            |         |
-| \<\<=              | No            |         |
-| >>                 | No            |         |
-| \>\>=              | No            |         |
-| &&                 | No            |         |
-| ~                  | No            |         |
-| &                  | No            |         |
-| \|                 | No            |         |
-| +                  | No            |         |
-| -                  | No            |         |
+| \<\<               | Yes           |         |
+| \<\<=              | Yes           |         |
+| >>                 | Yes           |         |
+| \>\>=              | Yes           |         |
+| &&                 | Yes           |         |
+| ~                  | Yes           |         |
+| &                  | Yes           |         |
+| \|                 | Yes           |         |
+| +                  | Yes           |         |
+| -                  | Yes           |         |
 | abbrev             | Yes           |         |
-| broadcast          | No            |         |
-| family             | No            |         |
-| host               | No            |         |
+| broadcast          | Yes           |         |
+| family             | Yes           |         |
+| host               | Yes           |         |
 | hostmask           | Yes           |         |
-| inet_merge         | No            |         |
-| inet_same_family   | No            |         |
+| inet_merge         | Yes           |         |
+| inet_same_family   | Yes           |         |
 | masklen            | Yes           |         |
-| netmask            | No            |         |
-| network            | No            |         |
+| netmask            | Yes           |         |
+| network            | Yes           |         |
 | set_masklen        | Yes           |         |
 | text               | No            |         |
 
@@ -590,7 +590,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | jsonb_build_array | No |  |
 | json_build_object | Yes | Same as `json_object(key, value)` |
 | jsonb_build_object | No |  |
-| json_object | Partial | Requires even arg count; SereneDB `json_object(key, value)` |
+| json_object | Partial | Two `text` arguments are one `key, value` pair, as for `json_build_object`: the arrays of `json_object('{a,b}', '{1,2}')` need `::text[]` |
 | jsonb_object | No |  |
 | `IS JSON` | No | Use `json_valid()` |
 | json_array_elements | Yes |  |
@@ -843,6 +843,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_available_wal_summaries         | Yes           | Returns no rows |
 | pg_extension_update_paths          | Yes           | Fails for every extension name: no extension is available |
 | pg_wal_lsn_diff                    | Yes           | Also `pg_lsn(numeric)` |
+| pg_restore_relation_stats          | Partial       | Also `pg_restore_attribute_stats`; accept the arguments `pg_dump --statistics` writes and return `false`: imported statistics are not kept |
+| pg_clear_relation_stats            | Yes           | Also `pg_clear_attribute_stats`; there are no imported statistics to clear |
 | pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters and durations, function statistics included, are `0`, and timestamps `NULL` |
 
 ## Behavioral Differences from PostgreSQL

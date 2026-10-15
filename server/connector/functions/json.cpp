@@ -29,9 +29,10 @@
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
 
-#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/common/optional.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -39,7 +40,6 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -51,9 +51,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "connector/common.h"
+#include "connector/functions/duckdb_aliases.h"
 
 namespace sdb::connector {
 namespace {
@@ -1330,6 +1332,143 @@ void JsonPopulateRecordFunction(duckdb::DataChunk& args,
   local.writer.Flush(targets, count);
 }
 
+template<typename Members>
+std::string_view WriteJsonObject(simdjson::builder::string_builder& out,
+                                 duckdb::idx_t count, Members members) {
+  out.clear();
+  out.append('{');
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    const auto [key, value] = members(i);
+    if (!key.IsValid()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                      ERR_MSG("null value not allowed for object key"));
+    }
+    if (i != 0) {
+      out.append_raw(", ");
+    }
+    out.escape_and_append_with_quotes(AsView(key.GetValue()));
+    out.append_raw(" : ");
+    if (value.IsValid()) {
+      out.escape_and_append_with_quotes(AsView(value.GetValue()));
+    } else {
+      out.append_null();
+    }
+  }
+  out.append('}');
+  return Unwrap(out.view());
+}
+
+void WriteJsonObjectValue(duckdb::VectorWriter<duckdb::string_t>& writer,
+                          std::string_view object) {
+  writer.WriteValue(
+    duckdb::string_t{object.data(), static_cast<uint32_t>(object.size())});
+}
+
+void JsonObjectFromPairsFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState&,
+                                 duckdb::Vector& result) {
+  const auto lists =
+    args.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  simdjson::builder::string_builder out;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto list = lists[row];
+    if (!list.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    if (list.GetListLength() % 2 != 0) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+                      ERR_MSG("array must have even number of elements"));
+    }
+    WriteJsonObjectValue(
+      writer, WriteJsonObject(out, list.GetListLength() / 2, [&](auto i) {
+        return std::pair{list.GetChildValue(2 * i),
+                         list.GetChildValue(2 * i + 1)};
+      }));
+  }
+}
+
+void JsonObjectFromRowsFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState&,
+                                duckdb::Vector& result) {
+  const auto lists =
+    args.data[0]
+      .Values<
+        duckdb::VectorListType<duckdb::VectorListType<duckdb::string_t>>>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  simdjson::builder::string_builder out;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto list = lists[row];
+    if (!list.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    for (const auto pair : list.GetChildValues()) {
+      if (!pair.IsValid() || pair.GetListLength() != 2) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+                        ERR_MSG("array must have two columns"));
+      }
+    }
+    WriteJsonObjectValue(
+      writer, WriteJsonObject(out, list.GetListLength(), [&](auto i) {
+        const auto pair = list.GetChildValue(i);
+        return std::pair{pair.GetChildValue(0), pair.GetChildValue(1)};
+      }));
+  }
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> JsonObjectFromTextBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto text = input.TryGetConstant(0);
+  bool rows = false;
+  if (text && !text->IsNull()) {
+    const auto value = text->DefaultCastAs(duckdb::LogicalType::VARCHAR);
+    const auto literal =
+      absl::StripLeadingAsciiWhitespace(duckdb::StringValue::Get(value));
+    rows =
+      literal.starts_with('{') &&
+      absl::StripLeadingAsciiWhitespace(literal.substr(1)).starts_with('{');
+  }
+  const auto texts = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  auto& function = input.GetBoundFunction();
+  function.GetArguments()[0] = rows ? duckdb::LogicalType::LIST(texts) : texts;
+  function.SetFunctionCallback(rows ? JsonObjectFromRowsFunction
+                                    : JsonObjectFromPairsFunction);
+  return nullptr;
+}
+
+void JsonObjectFromKeysFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState&,
+                                duckdb::Vector& result) {
+  const auto keys =
+    args.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
+  const auto values =
+    args.data[1].Values<duckdb::VectorListType<duckdb::string_t>>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  simdjson::builder::string_builder out;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto key_list = keys[row];
+    const auto value_list = values[row];
+    if (!key_list.IsValid() || !value_list.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    if (key_list.GetListLength() != value_list.GetListLength()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+                      ERR_MSG("mismatched array dimensions"));
+    }
+    WriteJsonObjectValue(
+      writer, WriteJsonObject(out, key_list.GetListLength(), [&](auto i) {
+        return std::pair{key_list.GetChildValue(i),
+                         value_list.GetChildValue(i)};
+      }));
+  }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -1518,21 +1657,27 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(std::move(set));
   }
 
-  for (const auto& [source_name, alias] :
-       {std::pair{"json_array", "json_build_array"},
-        std::pair{"json_object", "json_build_object"}}) {
-    auto entry = loader.TryGetFunction(duckdb::Identifier{source_name});
-    if (!entry) {
-      continue;
-    }
-    auto& source = entry->Cast<duckdb::ScalarFunctionCatalogEntry>();
-    auto functions = source.functions;
-    functions.SetName(duckdb::Identifier{alias});
-    duckdb::CreateScalarFunctionInfo info{std::move(functions)};
-    info.descriptions = source.descriptions;
-    info.alias_of = source.name;
-    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    loader.RegisterFunction(std::move(info));
+  RegisterScalarAlias(loader, "json_array", "json_build_array");
+  RegisterScalarAlias(loader, "json_object", "json_build_object");
+
+  const auto texts = duckdb::LogicalType::LIST(VARCHAR);
+  for (auto function : {
+         duckdb::ScalarFunction{
+           "json_object", {texts}, JSON, JsonObjectFromPairsFunction},
+         duckdb::ScalarFunction{"json_object",
+                                {duckdb::LogicalType::LIST(texts)},
+                                JSON,
+                                JsonObjectFromRowsFunction},
+         duckdb::ScalarFunction{
+           "json_object", {texts, texts}, JSON, JsonObjectFromKeysFunction},
+         duckdb::ScalarFunction{"json_object",
+                                {VARCHAR},
+                                JSON,
+                                JsonObjectFromPairsFunction,
+                                JsonObjectFromTextBind},
+       }) {
+    function.SetFallible();
+    loader.AddFunctionOverload(std::move(function));
   }
 }
 

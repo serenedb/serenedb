@@ -29,14 +29,18 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/types/bit.hpp>
 #include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
+#include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -643,6 +647,79 @@ void WidthBucketFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
        duckdb::PrimitiveType<int32_t> count) -> duckdb::PrimitiveType<int32_t> {
       return {WidthBucket(operand.val, bound1.val, bound2.val, count.val)};
     });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> WidthBucketThresholdsBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto& operand = input.GetArguments()[0]->GetReturnType();
+  const auto& element =
+    duckdb::ListType::GetChildType(input.GetArguments()[1]->GetReturnType());
+  if (element.id() == duckdb::LogicalTypeId::LIST) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+                    ERR_MSG("thresholds must be one-dimensional array"));
+  }
+  duckdb::LogicalType common;
+  if (!duckdb::LogicalType::TryGetMaxLogicalType(input.GetClientContext(),
+                                                 operand, element, common)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+                    ERR_MSG("function width_bucket(", operand.ToString(), ", ",
+                            element.ToString(), "[]) does not exist"));
+  }
+  auto& function = input.GetBoundFunction();
+  function.GetArguments()[0] = common;
+  function.GetArguments()[1] = duckdb::LogicalType::LIST(common);
+  return nullptr;
+}
+
+void WidthBucketThresholdsFunction(duckdb::DataChunk& args,
+                                   duckdb::ExpressionState&,
+                                   duckdb::Vector& result) {
+  const auto count = args.size();
+  const auto& lists = args.data[1];
+  const auto threshold_count = duckdb::ListVector::GetListSize(lists);
+  const duckdb::OrderModifiers modifiers{duckdb::OrderType::ASCENDING,
+                                         duckdb::OrderByNullType::NULLS_LAST};
+  duckdb::Vector operand_keys{duckdb::LogicalType::BLOB, count};
+  duckdb::Vector threshold_keys{duckdb::LogicalType::BLOB, threshold_count};
+  duckdb::CreateSortKeyHelpers::CreateSortKeyWithValidity(
+    args.data[0], operand_keys, modifiers, count);
+  duckdb::CreateSortKeyHelpers::CreateSortKeyWithValidity(
+    duckdb::ListVector::GetEntry(lists), threshold_keys, modifiers,
+    threshold_count);
+  duckdb::UnifiedVectorFormat list_format;
+  lists.ToUnifiedFormat(count, list_format);
+  const auto* entries =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(list_format);
+  const auto operands = operand_keys.Values<duckdb::string_t>();
+  const auto thresholds = threshold_keys.Values<duckdb::string_t>();
+  auto writer = duckdb::FlatVector::Writer<int32_t>(result, count);
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto list = list_format.sel->get_index(row);
+    const auto operand = operands[row];
+    if (!list_format.validity.RowIsValid(list) || !operand.IsValid()) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto& entry = entries[list];
+    for (auto i = entry.offset; i < entry.offset + entry.length; ++i) {
+      if (!thresholds[i].IsValid()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                        ERR_MSG("thresholds array must not contain NULLs"));
+      }
+    }
+    duckdb::idx_t left = 0;
+    auto right = entry.length;
+    while (left < right) {
+      const auto middle = (left + right) / 2;
+      if (duckdb::LessThan::Operation(
+            operand.GetValue(), thresholds[entry.offset + middle].GetValue())) {
+        right = middle;
+      } else {
+        left = middle + 1;
+      }
+    }
+    writer.WriteValue(static_cast<int32_t>(left));
+  }
 }
 
 void NotSupportedFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
@@ -1264,6 +1341,17 @@ struct NullScalar {
   duckdb::LogicalType type;
 };
 
+struct NullProcedure {
+  std::string_view name;
+  duckdb::vector<duckdb::LogicalType> arguments;
+};
+
+duckdb::unique_ptr<duckdb::Expression> BindStatisticsNotRestored(
+  duckdb::FunctionBindExpressionInput&) {
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::BOOLEAN(false));
+}
+
 }  // namespace
 
 void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
@@ -1425,8 +1513,13 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{
       {float8, float8, float8, int4}, int4, WidthBucketFunction};
     function.SetFallible();
+    duckdb::ScalarFunction thresholds{{any, duckdb::LogicalType::LIST(any)},
+                                      int4,
+                                      WidthBucketThresholdsFunction,
+                                      WidthBucketThresholdsBind};
+    thresholds.SetFallible();
     RegisterScalar(loader, main, "width_bucket", CONSISTENT, nullptr,
-                   {function});
+                   {function, thresholds});
   }
 
   RegisterScalar(loader, main, "pg_current_xact_id", CONSISTENT_WITHIN_QUERY,
@@ -1520,6 +1613,24 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     function.SetBindExpressionCallback(BindNull);
     RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY, nullptr,
                    {function});
+  }
+
+  for (const auto name :
+       {"pg_restore_relation_stats", "pg_restore_attribute_stats"}) {
+    duckdb::ScalarFunction function{{any}, boolean, nullptr};
+    function.GetSignature().AddArgs("kwargs", any);
+    function.SetBindExpressionCallback(BindStatisticsNotRestored);
+    RegisterScalar(loader, pg_catalog, name, VOLATILE, nullptr, {function});
+  }
+  for (const auto& [name, arguments] : {
+         NullProcedure{.name = "pg_clear_relation_stats",
+                       .arguments = {text, text}},
+         NullProcedure{.name = "pg_clear_attribute_stats",
+                       .arguments = {text, text, text, boolean}},
+       }) {
+    duckdb::ScalarFunction function{arguments, VOID(), nullptr};
+    function.SetBindExpressionCallback(BindNull);
+    RegisterScalar(loader, pg_catalog, name, VOLATILE, nullptr, {function});
   }
 
   {

@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstring>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -36,6 +37,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
@@ -139,8 +141,239 @@ bool CidrCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
+template<typename Apply>
+void ForEachInetPair(const duckdb::Vector& lhs, const duckdb::Vector& rhs,
+                     duckdb::idx_t count, duckdb::Vector& result,
+                     Apply&& apply) {
+  duckdb::RecursiveUnifiedVectorFormat left;
+  duckdb::RecursiveUnifiedVectorFormat right;
+  duckdb::Vector::RecursiveToUnifiedFormat(lhs, left);
+  duckdb::Vector::RecursiveToUnifiedFormat(rhs, right);
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    const auto l = left.unified.sel->get_index(i);
+    const auto r = right.unified.sel->get_index(i);
+    if (!left.unified.validity.RowIsValid(l) ||
+        !right.unified.validity.RowIsValid(r)) {
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    INET_IPAddress a{};
+    INET_IPAddress b{};
+    ReadInet(left, l, a);
+    ReadInet(right, r, b);
+    apply(i, a, b);
+  }
+}
+
+constexpr uint64_t kIpv4Max = 0xFFFF'FFFF;
+
 uint16_t MaxBits(const INET_IPAddress& inet) {
   return inet.type == INET_IP_ADDRESS_V6 ? 128 : 32;
+}
+
+INET_IPAddress Complement(INET_IPAddress inet) {
+  inet.address.lower = ~inet.address.lower;
+  inet.address.upper = ~inet.address.upper;
+  if (inet.type != INET_IP_ADDRESS_V6) {
+    inet.address.lower &= kIpv4Max;
+    inet.address.upper = 0;
+  }
+  return inet;
+}
+
+bool SamePrefix(INET_IPAddress lhs, INET_IPAddress rhs, uint16_t bits) {
+  lhs.mask = bits;
+  rhs.mask = bits;
+  const auto left = ipaddress_network(&lhs);
+  const auto right = ipaddress_network(&rhs);
+  return left.address.lower == right.address.lower &&
+         left.address.upper == right.address.upper;
+}
+
+template<bool kOrEqual>
+bool ContainedBy(const INET_IPAddress& inner, const INET_IPAddress& outer) {
+  return inner.type == outer.type &&
+         (kOrEqual ? inner.mask >= outer.mask : inner.mask > outer.mask) &&
+         SamePrefix(inner, outer, outer.mask);
+}
+
+template<bool kOrEqual>
+bool Contains(const INET_IPAddress& outer, const INET_IPAddress& inner) {
+  return ContainedBy<kOrEqual>(inner, outer);
+}
+
+bool Overlaps(const INET_IPAddress& lhs, const INET_IPAddress& rhs) {
+  return lhs.type == rhs.type &&
+         SamePrefix(lhs, rhs, std::min(lhs.mask, rhs.mask));
+}
+
+bool SameFamily(const INET_IPAddress& lhs, const INET_IPAddress& rhs) {
+  return lhs.type == rhs.type;
+}
+
+void CheckSameFamily(const INET_IPAddress& lhs, const INET_IPAddress& rhs,
+                     std::string_view message) {
+  if (lhs.type != rhs.type) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(message));
+  }
+}
+
+[[noreturn]] void ThrowOutOfRange() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("result is out of range"));
+}
+
+template<bool kOr>
+INET_IPAddress Bitwise(const INET_IPAddress& lhs, const INET_IPAddress& rhs) {
+  CheckSameFamily(lhs, rhs,
+                  kOr ? "cannot OR inet values of different sizes"
+                      : "cannot AND inet values of different sizes");
+  auto result = lhs;
+  if constexpr (kOr) {
+    result.address.lower |= rhs.address.lower;
+    result.address.upper |= rhs.address.upper;
+  } else {
+    result.address.lower &= rhs.address.lower;
+    result.address.upper &= rhs.address.upper;
+  }
+  result.mask = std::max(lhs.mask, rhs.mask);
+  return result;
+}
+
+int64_t Difference(const INET_IPAddress& lhs, const INET_IPAddress& rhs) {
+  CheckSameFamily(lhs, rhs, "cannot subtract inet values of different sizes");
+  if (lhs.type != INET_IP_ADDRESS_V6) {
+    return static_cast<int64_t>(lhs.address.lower) -
+           static_cast<int64_t>(rhs.address.lower);
+  }
+  const uint64_t borrow = lhs.address.lower < rhs.address.lower ? 1 : 0;
+  const auto lower =
+    static_cast<int64_t>(lhs.address.lower - rhs.address.lower);
+  const auto upper = lhs.address.upper - rhs.address.upper - borrow;
+  if (upper != (lower < 0 ? ~uint64_t{0} : uint64_t{0})) {
+    ThrowOutOfRange();
+  }
+  return lower;
+}
+
+INET_IPAddress Offset(INET_IPAddress inet, bool negative, uint64_t magnitude) {
+  if (inet.type != INET_IP_ADDRESS_V6) {
+    if (negative ? magnitude > inet.address.lower
+                 : magnitude > kIpv4Max - inet.address.lower) {
+      ThrowOutOfRange();
+    }
+    inet.address.lower = negative ? inet.address.lower - magnitude
+                                  : inet.address.lower + magnitude;
+    return inet;
+  }
+  if (negative) {
+    const uint64_t borrow = inet.address.lower < magnitude ? 1 : 0;
+    if (borrow > inet.address.upper) {
+      ThrowOutOfRange();
+    }
+    inet.address.lower -= magnitude;
+    inet.address.upper -= borrow;
+    return inet;
+  }
+  const auto lower = inet.address.lower + magnitude;
+  const uint64_t carry = lower < magnitude ? 1 : 0;
+  if (carry > ~inet.address.upper) {
+    ThrowOutOfRange();
+  }
+  inet.address.lower = lower;
+  inet.address.upper += carry;
+  return inet;
+}
+
+uint64_t Magnitude(int64_t value) {
+  return value < 0 ? uint64_t{0} - static_cast<uint64_t>(value)
+                   : static_cast<uint64_t>(value);
+}
+
+INET_IPAddress Merge(const INET_IPAddress& lhs, const INET_IPAddress& rhs) {
+  CheckSameFamily(lhs, rhs, "cannot merge addresses from different families");
+  int common = 0;
+  if (lhs.type != INET_IP_ADDRESS_V6) {
+    common = std::countl_zero(
+      static_cast<uint32_t>(lhs.address.lower ^ rhs.address.lower));
+  } else if (const auto upper = lhs.address.upper ^ rhs.address.upper;
+             upper != 0) {
+    common = std::countl_zero(upper);
+  } else {
+    common = 64 + std::countl_zero(lhs.address.lower ^ rhs.address.lower);
+  }
+  auto result = lhs;
+  result.mask =
+    static_cast<uint16_t>(std::min(common, int{std::min(lhs.mask, rhs.mask)}));
+  return ipaddress_network(&result);
+}
+
+template<auto Test>
+void InetPredicateFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                           duckdb::Vector& result) {
+  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
+  ForEachInetPair(
+    args.data[0], args.data[1], args.size(), result,
+    [&](duckdb::idx_t row, const INET_IPAddress& lhs,
+        const INET_IPAddress& rhs) { out[row] = Test(lhs, rhs); });
+}
+
+template<auto Combine>
+void InetCombineFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
+  ForEachInetPair(args.data[0], args.data[1], args.size(), result,
+                  [&](duckdb::idx_t row, const INET_IPAddress& lhs,
+                      const INET_IPAddress& rhs) {
+                    StoreInet(result, row, Combine(lhs, rhs));
+                  });
+}
+
+void InetDifferenceFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  auto* out = duckdb::FlatVector::GetDataMutable<int64_t>(result);
+  ForEachInetPair(
+    args.data[0], args.data[1], args.size(), result,
+    [&](duckdb::idx_t row, const INET_IPAddress& lhs,
+        const INET_IPAddress& rhs) { out[row] = Difference(lhs, rhs); });
+}
+
+template<bool kInetFirst, bool kSubtract>
+void InetOffsetFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
+  duckdb::UnifiedVectorFormat offsets;
+  args.data[kInetFirst ? 1 : 0].ToUnifiedFormat(offsets);
+  const auto* values = duckdb::UnifiedVectorFormat::GetData<int64_t>(offsets);
+  ForEachInet(args.data[kInetFirst ? 0 : 1], args.size(), result,
+              [&](duckdb::idx_t row, const INET_IPAddress& inet) {
+                const auto idx = offsets.sel->get_index(row);
+                if (!offsets.validity.RowIsValid(idx)) {
+                  duckdb::FlatVector::SetNull(result, row, true);
+                  return;
+                }
+                const auto offset = values[idx];
+                StoreInet(result, row,
+                          Offset(inet, kSubtract ? offset > 0 : offset < 0,
+                                 Magnitude(offset)));
+              });
+}
+
+void InetNotFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
+  ForEachInet(args.data[0], args.size(), result,
+              [&](duckdb::idx_t row, const INET_IPAddress& inet) {
+                StoreInet(result, row, Complement(inet));
+              });
+}
+
+void NetmaskFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
+  ForEachInet(args.data[0], args.size(), result,
+              [&](duckdb::idx_t row, const INET_IPAddress& inet) {
+                auto mask = ipaddress_netmask(&inet);
+                mask.mask = MaxBits(inet);
+                StoreInet(result, row, mask);
+              });
 }
 
 std::array<uint8_t, 16> AddressBytes(const INET_IPAddress& inet) {
@@ -257,13 +490,7 @@ void HostmaskFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
   ForEachInet(args.data[0], args.size(), result,
               [&](duckdb::idx_t row, const INET_IPAddress& inet) {
-                auto host = ipaddress_netmask(&inet);
-                host.address.lower = ~host.address.lower;
-                host.address.upper = ~host.address.upper;
-                if (inet.type != INET_IP_ADDRESS_V6) {
-                  host.address.lower &= 0xFFFF'FFFF;
-                  host.address.upper = 0;
-                }
+                auto host = Complement(ipaddress_netmask(&inet));
                 host.mask = MaxBits(inet);
                 StoreInet(result, row, host);
               });
@@ -351,6 +578,57 @@ void RegisterFunctions(duckdb::DatabaseInstance& db) {
   abbrev.AddFunction(duckdb::ScalarFunction{
     {cidr}, duckdb::LogicalType::VARCHAR, AbbrevFunction<true>});
   loader.RegisterFunction(std::move(abbrev));
+
+  const auto boolean = duckdb::LogicalType::BOOLEAN;
+  const auto bigint = duckdb::LogicalType::BIGINT;
+  const auto fallible = [](duckdb::ScalarFunction function) {
+    function.SetFallible();
+    return function;
+  };
+  for (auto function : {
+         duckdb::ScalarFunction{"<<",
+                                {inet, inet},
+                                boolean,
+                                InetPredicateFunction<ContainedBy<false>>},
+         duckdb::ScalarFunction{
+           ">>", {inet, inet}, boolean, InetPredicateFunction<Contains<false>>},
+         duckdb::ScalarFunction{
+           "&&", {inet, inet}, boolean, InetPredicateFunction<Overlaps>},
+         duckdb::ScalarFunction{"~", {inet}, inet, InetNotFunction},
+         fallible(
+           {"&", {inet, inet}, inet, InetCombineFunction<Bitwise<false>>}),
+         fallible(
+           {"|", {inet, inet}, inet, InetCombineFunction<Bitwise<true>>}),
+         fallible({"-", {inet, inet}, bigint, InetDifferenceFunction}),
+         fallible({"+", {inet, bigint}, inet, InetOffsetFunction<true, false>}),
+         fallible(
+           {"+", {bigint, inet}, inet, InetOffsetFunction<false, false>}),
+         fallible({"-", {inet, bigint}, inet, InetOffsetFunction<true, true>}),
+       }) {
+    loader.AddFunctionOverload(std::move(function));
+  }
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"inet_same_family",
+                           {inet, inet},
+                           boolean,
+                           InetPredicateFunction<SameFamily>});
+  loader.RegisterFunction(
+    fallible({"inet_merge", {inet, inet}, cidr, InetCombineFunction<Merge>}));
+  for (auto function : {
+         duckdb::ScalarFunction{"<<=",
+                                {inet, inet},
+                                boolean,
+                                InetPredicateFunction<ContainedBy<true>>},
+         duckdb::ScalarFunction{
+           ">>=", {inet, inet}, boolean, InetPredicateFunction<Contains<true>>},
+         duckdb::ScalarFunction{"netmask", {inet}, inet, NetmaskFunction},
+       }) {
+    duckdb::ScalarFunctionSet set{function.name};
+    set.AddFunction(std::move(function));
+    duckdb::CreateScalarFunctionInfo info{std::move(set)};
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
+  }
 }
 
 }  // namespace

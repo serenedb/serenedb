@@ -848,6 +848,39 @@ zero	own	null_input
 {}	{}	NULL
 
 
+# pg_restore_relation_stats, pg_restore_attribute_stats, pg_clear_relation_stats, pg_clear_attribute_stats
+
+statement ok
+CREATE TABLE sif_stats (a int);
+
+
+query
+SELECT pg_restore_relation_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'sif_stats',
+                                 'relpages', 1::integer, 'reltuples', 10::real, 'relallvisible', 0::integer) IS NOT NULL AS relation,
+       pg_restore_attribute_stats('version', 180006::integer, 'schemaname', 'public', 'relname', 'sif_stats',
+                                  'attname', 'a', 'inherited', false, 'null_frac', 0.5::real, 'avg_width', 4::integer,
+                                  'n_distinct', -1::real) IS NOT NULL AS attribute;
+----
+relation	attribute
+t	t
+
+
+statement ok
+SELECT pg_clear_relation_stats('public', 'sif_stats');
+
+
+statement ok
+SELECT pg_clear_attribute_stats('public', 'sif_stats', 'a', false);
+
+
+statement error (function pg_restore_relation_stats\(\) does not exist|No function matches the given name and argument types 'pg_restore_relation_stats\(\)')
+SELECT pg_restore_relation_stats();
+
+
+statement ok
+DROP TABLE sif_stats;
+
+
 # pg_available_wal_summaries
 
 query

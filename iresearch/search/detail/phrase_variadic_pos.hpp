@@ -133,19 +133,6 @@ class PhraseVariadicPositions {
 
   uint32_t DocFreq() { return _freq; }
 
-  uint32_t Live() { return _size; }
-
-  auto& Term(uint32_t i) noexcept { return *_live[i]; }
-
-  bool Has(PosAttr::value_t low, PosAttr::value_t high) {
-    for (uint32_t i = 0; i != _size; ++i) {
-      if (_live[i]->seek(low) <= high) {
-        return true;
-      }
-    }
-    return false;
-  }
-
  private:
   IRS_FORCE_INLINE void Won([[maybe_unused]] uint32_t i) noexcept {
     if constexpr (kOffsets) {
@@ -186,10 +173,6 @@ class PhraseVariadicPos {
     SDB_ASSERT(_count != 0);
     std::make_heap(_heap.begin(), _heap.end(), Greater);
   }
-
-  doc_id_t Value() const noexcept { return _doc; }
-
-  const doc_id_t& ValueRef() const noexcept { return _doc; }
 
   uint32_t Estimate() const noexcept {
     uint32_t estimate = 0;

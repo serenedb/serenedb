@@ -25,20 +25,31 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/decimal.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/common/vector_operations/ternary_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <icu-datefunc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 namespace sdb::connector {
 namespace {
@@ -595,6 +606,169 @@ duckdb::unique_ptr<duckdb::FunctionData> BindMinScale(
   return nullptr;
 }
 
+duckdb::unique_ptr<duckdb::Expression> BindDateSubtract(
+  duckdb::FunctionBindExpressionInput& input) {
+  return duckdb::FunctionBinder{input.context}.BindScalarFunction(
+    duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"-"},
+    std::move(input.children), true);
+}
+
+duckdb::TZCalendar SessionCalendar(duckdb::ExpressionState& state) {
+  const auto& info = state.expr.Cast<duckdb::BoundFunctionExpression>()
+                       .BindInfo()
+                       ->Cast<duckdb::ICUDateFunc::BindData>();
+  return {*info.calendar, info.cal_setting};
+}
+
+void DateSubtractInZoneFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
+  auto& zones = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<duckdb::ICUDateFunc::CalendarCacheState>();
+  auto calendar = SessionCalendar(state);
+  const auto subtract = [&](duckdb::timestamp_tz_t instant,
+                            duckdb::interval_t span) {
+    return duckdb::ICUDateFunc::Sub(calendar, instant, span);
+  };
+  auto& zone = args.data[2];
+  if (zone.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    if (duckdb::ConstantVector::IsNull(zone)) {
+      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(result, true);
+      return;
+    }
+    zones.SetTimeZone(calendar.GetCalendar(),
+                      *duckdb::ConstantVector::GetData<duckdb::string_t>(zone));
+    duckdb::BinaryExecutor::Execute<duckdb::timestamp_tz_t, duckdb::interval_t,
+                                    duckdb::timestamp_tz_t>(
+      args.data[0], args.data[1], result, args.size(), subtract);
+    return;
+  }
+  duckdb::TernaryExecutor::Execute<duckdb::timestamp_tz_t, duckdb::interval_t,
+                                   duckdb::string_t, duckdb::timestamp_tz_t>(
+    args.data[0], args.data[1], zone, result, args.size(),
+    [&](duckdb::timestamp_tz_t instant, duckdb::interval_t span,
+        duckdb::string_t name) {
+      zones.SetTimeZone(calendar.GetCalendar(), name);
+      return subtract(instant, span);
+    });
+}
+
+template<typename T>
+std::optional<bool> Overlaps(std::optional<T> start1, std::optional<T> end1,
+                             std::optional<T> start2, std::optional<T> end2) {
+  if (!start1 || (end1 && *start1 > *end1)) {
+    std::swap(start1, end1);
+  }
+  if (!start2 || (end2 && *start2 > *end2)) {
+    std::swap(start2, end2);
+  }
+  if (!start1 || !start2) {
+    return std::nullopt;
+  }
+  if (*start1 > *start2) {
+    if (!end2) {
+      return std::nullopt;
+    }
+    if (*start1 < *end2) {
+      return true;
+    }
+    if (!end1) {
+      return std::nullopt;
+    }
+    return false;
+  }
+  if (*start1 < *start2) {
+    if (!end1) {
+      return std::nullopt;
+    }
+    if (*start2 < *end1) {
+      return true;
+    }
+    if (!end2) {
+      return std::nullopt;
+    }
+    return false;
+  }
+  if (!end1 || !end2) {
+    return std::nullopt;
+  }
+  return true;
+}
+
+template<typename T>
+std::optional<T> PeriodStart(const auto& start) {
+  if (!start.IsValid()) {
+    return std::nullopt;
+  }
+  return start.GetValue();
+}
+
+template<typename T, typename End>
+std::optional<T> PeriodEnd(const auto& start, const auto& end,
+                           const auto& add) {
+  if (!end.IsValid()) {
+    return std::nullopt;
+  }
+  if constexpr (std::is_same_v<End, duckdb::interval_t>) {
+    if (!start.IsValid()) {
+      return std::nullopt;
+    }
+    return add(start.GetValue(), end.GetValue());
+  } else {
+    return end.GetValue();
+  }
+}
+
+template<typename T, typename End1, typename End2>
+void ExecuteOverlaps(duckdb::DataChunk& args, duckdb::Vector& result,
+                     const auto& add) {
+  const auto start1 = args.data[0].Values<T>();
+  const auto end1 = args.data[1].Values<End1>();
+  const auto start2 = args.data[2].Values<T>();
+  const auto end2 = args.data[3].Values<End2>();
+  auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto overlaps =
+      Overlaps<T>(PeriodStart<T>(start1[row]),
+                  PeriodEnd<T, End1>(start1[row], end1[row], add),
+                  PeriodStart<T>(start2[row]),
+                  PeriodEnd<T, End2>(start2[row], end2[row], add));
+    if (overlaps) {
+      out.WriteValue(*overlaps);
+    } else {
+      out.WriteNull();
+    }
+  }
+}
+
+template<typename T, typename End1, typename End2>
+void OverlapsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  ExecuteOverlaps<T, End1, End2>(
+    args, result, [](auto start, duckdb::interval_t length) {
+      if constexpr (std::is_same_v<decltype(start), duckdb::dtime_t>) {
+        return duckdb::AddTimeOperator::Operation<
+          duckdb::dtime_t, duckdb::interval_t, duckdb::dtime_t>(start, length);
+      } else {
+        return duckdb::AddOperator::Operation<
+          duckdb::timestamp_t, duckdb::interval_t, duckdb::timestamp_t>(start,
+                                                                        length);
+      }
+    });
+}
+
+template<typename End1, typename End2>
+void OverlapsInSessionZoneFunction(duckdb::DataChunk& args,
+                                   duckdb::ExpressionState& state,
+                                   duckdb::Vector& result) {
+  auto calendar = SessionCalendar(state);
+  ExecuteOverlaps<duckdb::timestamp_tz_t, End1, End2>(
+    args, result, [&](duckdb::timestamp_tz_t start, duckdb::interval_t length) {
+      return duckdb::ICUDateFunc::Add(calendar, start, length);
+    });
+}
+
 }  // namespace
 
 void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
@@ -710,6 +884,95 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
                              {duckdb::LogicalType::INTERVAL},
                              duckdb::LogicalType::INTERVAL,
                              function});
+  }
+
+  {
+    duckdb::ScalarFunction in_session_zone{
+      "date_subtract",
+      {duckdb::LogicalType::TIMESTAMP_TZ, duckdb::LogicalType::INTERVAL},
+      duckdb::LogicalType::TIMESTAMP_TZ,
+      nullptr};
+    in_session_zone.SetBindExpressionCallback(BindDateSubtract);
+    in_session_zone.SetStability(
+      duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    duckdb::ScalarFunction in_zone{
+      "date_subtract",
+      {duckdb::LogicalType::TIMESTAMP_TZ, duckdb::LogicalType::INTERVAL,
+       duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::TIMESTAMP_TZ,
+      DateSubtractInZoneFunction,
+      duckdb::ICUDateFunc::Bind,
+      nullptr,
+      duckdb::ICUDateFunc::InitCalendarCache};
+    in_zone.SetFallible();
+    duckdb::ScalarFunctionSet set{"date_subtract"};
+    set.AddFunction(std::move(in_session_zone));
+    set.AddFunction(std::move(in_zone));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  {
+    using duckdb::dtime_t;
+    using duckdb::dtime_tz_t;
+    using duckdb::interval_t;
+    using duckdb::timestamp_t;
+    using duckdb::timestamp_tz_t;
+    const auto time = duckdb::LogicalType::TIME;
+    const auto timetz = duckdb::LogicalType::TIME_TZ;
+    const auto timestamp = duckdb::LogicalType::TIMESTAMP;
+    const auto timestamptz = duckdb::LogicalType::TIMESTAMP_TZ;
+    const auto interval = duckdb::LogicalType::INTERVAL;
+    duckdb::ScalarFunctionSet set{"overlaps"};
+    const auto add = [&](const duckdb::LogicalType& bound,
+                         const duckdb::LogicalType& end1,
+                         const duckdb::LogicalType& end2,
+                         duckdb::scalar_function_t function,
+                         duckdb::bind_scalar_function_t bind) {
+      duckdb::ScalarFunction overload{"overlaps",
+                                      {bound, end1, bound, end2},
+                                      duckdb::LogicalType::BOOLEAN,
+                                      std::move(function),
+                                      bind};
+      overload.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+      if (bind) {
+        overload.SetStability(
+          duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+      }
+      if (end1 == interval || end2 == interval) {
+        overload.SetFallible();
+      }
+      set.AddFunction(std::move(overload));
+    };
+    add(timetz, timetz, timetz,
+        OverlapsFunction<dtime_tz_t, dtime_tz_t, dtime_tz_t>, nullptr);
+    add(time, time, time, OverlapsFunction<dtime_t, dtime_t, dtime_t>, nullptr);
+    add(time, interval, interval,
+        OverlapsFunction<dtime_t, interval_t, interval_t>, nullptr);
+    add(time, time, interval, OverlapsFunction<dtime_t, dtime_t, interval_t>,
+        nullptr);
+    add(time, interval, time, OverlapsFunction<dtime_t, interval_t, dtime_t>,
+        nullptr);
+    add(timestamp, timestamp, timestamp,
+        OverlapsFunction<timestamp_t, timestamp_t, timestamp_t>, nullptr);
+    add(timestamp, interval, interval,
+        OverlapsFunction<timestamp_t, interval_t, interval_t>, nullptr);
+    add(timestamp, timestamp, interval,
+        OverlapsFunction<timestamp_t, timestamp_t, interval_t>, nullptr);
+    add(timestamp, interval, timestamp,
+        OverlapsFunction<timestamp_t, interval_t, timestamp_t>, nullptr);
+    add(timestamptz, timestamptz, timestamptz,
+        OverlapsFunction<timestamp_tz_t, timestamp_tz_t, timestamp_tz_t>,
+        nullptr);
+    add(timestamptz, interval, interval,
+        OverlapsInSessionZoneFunction<interval_t, interval_t>,
+        duckdb::ICUDateFunc::Bind);
+    add(timestamptz, timestamptz, interval,
+        OverlapsInSessionZoneFunction<timestamp_tz_t, interval_t>,
+        duckdb::ICUDateFunc::Bind);
+    add(timestamptz, interval, timestamptz,
+        OverlapsInSessionZoneFunction<interval_t, timestamp_tz_t>,
+        duckdb::ICUDateFunc::Bind);
+    loader.RegisterFunction(std::move(set));
   }
 
   {

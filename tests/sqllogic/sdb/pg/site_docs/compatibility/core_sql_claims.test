@@ -1488,7 +1488,7 @@ statement ok
 SELECT date_part('year', TIMESTAMP '2020-01-01');
 
 # op_datetime: date_subtract
-statement error
+statement ok
 SELECT date_subtract(TIMESTAMP '2020-01-01', INTERVAL '1 day');
 
 # op_datetime: date_trunc
@@ -1544,12 +1544,16 @@ statement ok
 SELECT now();
 
 # op_datetime: statement_timestamp
-statement error
+statement ok
 SELECT statement_timestamp();
 
 # op_datetime: timeofday
 statement ok
 SELECT timeofday();
+
+# op_datetime: timestamp
+statement ok
+SELECT pg_catalog.timestamp(DATE '2020-01-01'), timestamptz(DATE '2020-01-01');
 
 # op_datetime: transaction_timestamp
 statement ok
@@ -1560,7 +1564,7 @@ statement ok
 SELECT to_timestamp(1577836800);
 
 # op_datetime: OVERLAPS
-statement error
+statement ok
 SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15');
 
 # op_datetime: EXTRACT

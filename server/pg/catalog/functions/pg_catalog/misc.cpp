@@ -305,6 +305,19 @@ void ClockTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+void StatementTimestampFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
+  const auto client =
+    state.GetContext().registered_state->Get<connector::SereneDBClientState>(
+      connector::kSereneDBClientStateKey);
+  SDB_ASSERT(client);
+  const auto start =
+    client->progress_source->query_start_us.load(std::memory_order_relaxed);
+  result.Reference(duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{start}),
+                   duckdb::count_t(args.size()));
+}
+
 void PgEncodingToCharFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<int32_t, duckdb::string_t>(
@@ -1297,6 +1310,10 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     loader, pg_catalog, "clock_timestamp", VOLATILE, nullptr,
     {duckdb::ScalarFunction{
       {}, duckdb::LogicalType::TIMESTAMP_TZ, ClockTimestampFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "statement_timestamp", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{
+      {}, duckdb::LogicalType::TIMESTAMP_TZ, StatementTimestampFunction}});
   RegisterScalar(
     loader, pg_catalog, "pg_encoding_to_char", CONSISTENT_WITHIN_QUERY, nullptr,
     {duckdb::ScalarFunction{{int4}, NAME(), PgEncodingToCharFunction}});

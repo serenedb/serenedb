@@ -34,13 +34,17 @@
 #include <cstring>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/decimal.hpp>
+#include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <icu-datefunc.hpp>
 #include <icu-zone-lut.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -3519,6 +3523,634 @@ void ToTimestampFunction(duckdb::DataChunk& args,
     });
 }
 
+template<typename T>
+void TimestampPrecisionFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState&,
+                                duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<T, int32_t, T>(
+    args.data[0], args.data[1], result, args.size(),
+    [](T value, int32_t precision) {
+      if (!value.IsFinite() || precision == -1 ||
+          precision == kMaxTimestampPrecision) {
+        return value;
+      }
+      if (precision < 0 || precision > kMaxTimestampPrecision) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("timestamp(", precision, ") precision must be between 0 and ",
+                  kMaxTimestampPrecision));
+      }
+      return T{AdjustTimestampPrecision(value.value, precision)};
+    });
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindCastToResult(
+  duckdb::FunctionBindExpressionInput& input) {
+  return duckdb::BoundCastExpression::AddCastToType(
+    input.context, std::move(input.children[0]),
+    input.bound_function.GetReturnType());
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindSumToResult(
+  duckdb::FunctionBindExpressionInput& input) {
+  return duckdb::BoundCastExpression::AddCastToType(
+    input.context,
+    duckdb::FunctionBinder{input.context}.BindScalarFunction(
+      duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"+"},
+      std::move(input.children), true),
+    input.bound_function.GetReturnType());
+}
+
+enum class DateUnit : uint8_t {
+  kMicrosecond,
+  kMillisecond,
+  kSecond,
+  kMinute,
+  kHour,
+  kDay,
+  kWeek,
+  kMonth,
+  kQuarter,
+  kYear,
+  kDecade,
+  kCentury,
+  kMillennium,
+  kJulian,
+  kIsoYear,
+  kDow,
+  kIsoDow,
+  kDoy,
+  kTimezone,
+  kTimezoneHour,
+  kTimezoneMinute,
+  kEpoch,
+  kReserved,
+  kUnrecognized,
+};
+
+struct DateUnitToken {
+  std::string_view token;
+  DateUnit unit;
+};
+
+constexpr size_t kUnitTokenLength = 10;
+constexpr size_t kUnitNameMaxBytes = 63;
+
+constexpr DateUnitToken kDeltaUnits[] = {
+  {"c", DateUnit::kCentury},
+  {"cent", DateUnit::kCentury},
+  {"centuries", DateUnit::kCentury},
+  {"century", DateUnit::kCentury},
+  {"d", DateUnit::kDay},
+  {"day", DateUnit::kDay},
+  {"days", DateUnit::kDay},
+  {"dec", DateUnit::kDecade},
+  {"decade", DateUnit::kDecade},
+  {"decades", DateUnit::kDecade},
+  {"decs", DateUnit::kDecade},
+  {"h", DateUnit::kHour},
+  {"hour", DateUnit::kHour},
+  {"hours", DateUnit::kHour},
+  {"hr", DateUnit::kHour},
+  {"hrs", DateUnit::kHour},
+  {"m", DateUnit::kMinute},
+  {"microsecon", DateUnit::kMicrosecond},
+  {"mil", DateUnit::kMillennium},
+  {"millennia", DateUnit::kMillennium},
+  {"millennium", DateUnit::kMillennium},
+  {"millisecon", DateUnit::kMillisecond},
+  {"mils", DateUnit::kMillennium},
+  {"min", DateUnit::kMinute},
+  {"mins", DateUnit::kMinute},
+  {"minute", DateUnit::kMinute},
+  {"minutes", DateUnit::kMinute},
+  {"mon", DateUnit::kMonth},
+  {"mons", DateUnit::kMonth},
+  {"month", DateUnit::kMonth},
+  {"months", DateUnit::kMonth},
+  {"ms", DateUnit::kMillisecond},
+  {"msec", DateUnit::kMillisecond},
+  {"msecond", DateUnit::kMillisecond},
+  {"mseconds", DateUnit::kMillisecond},
+  {"msecs", DateUnit::kMillisecond},
+  {"qtr", DateUnit::kQuarter},
+  {"quarter", DateUnit::kQuarter},
+  {"s", DateUnit::kSecond},
+  {"sec", DateUnit::kSecond},
+  {"second", DateUnit::kSecond},
+  {"seconds", DateUnit::kSecond},
+  {"secs", DateUnit::kSecond},
+  {"timezone", DateUnit::kTimezone},
+  {"timezone_h", DateUnit::kTimezoneHour},
+  {"timezone_m", DateUnit::kTimezoneMinute},
+  {"us", DateUnit::kMicrosecond},
+  {"usec", DateUnit::kMicrosecond},
+  {"usecond", DateUnit::kMicrosecond},
+  {"useconds", DateUnit::kMicrosecond},
+  {"usecs", DateUnit::kMicrosecond},
+  {"w", DateUnit::kWeek},
+  {"week", DateUnit::kWeek},
+  {"weeks", DateUnit::kWeek},
+  {"y", DateUnit::kYear},
+  {"year", DateUnit::kYear},
+  {"years", DateUnit::kYear},
+  {"yr", DateUnit::kYear},
+  {"yrs", DateUnit::kYear},
+};
+
+constexpr DateUnitToken kSpecialUnits[] = {
+  {"+infinity", DateUnit::kReserved},
+  {"-infinity", DateUnit::kReserved},
+  {"allballs", DateUnit::kReserved},
+  {"dow", DateUnit::kDow},
+  {"doy", DateUnit::kDoy},
+  {"epoch", DateUnit::kEpoch},
+  {"infinity", DateUnit::kReserved},
+  {"isodow", DateUnit::kIsoDow},
+  {"isoyear", DateUnit::kIsoYear},
+  {"j", DateUnit::kJulian},
+  {"jd", DateUnit::kJulian},
+  {"julian", DateUnit::kJulian},
+  {"mm", DateUnit::kMinute},
+  {"now", DateUnit::kReserved},
+  {"today", DateUnit::kReserved},
+  {"tomorrow", DateUnit::kReserved},
+  {"yesterday", DateUnit::kReserved},
+};
+
+DateUnit DecodeDateUnit(std::string_view text) {
+  std::array<char, kUnitTokenLength> lowered{};
+  const auto size = std::min(text.size(), kUnitTokenLength);
+  for (size_t i = 0; i < size; ++i) {
+    lowered[i] = absl::ascii_tolower(text[i]);
+  }
+  const std::string_view key{lowered.data(), size};
+  for (const std::span<const DateUnitToken> tokens :
+       {std::span<const DateUnitToken>{kDeltaUnits},
+        std::span<const DateUnitToken>{kSpecialUnits}}) {
+    const auto it = absl::c_find_if(
+      tokens, [&](const DateUnitToken& unit) { return unit.token == key; });
+    if (it != tokens.end()) {
+      return it->unit;
+    }
+  }
+  return DateUnit::kUnrecognized;
+}
+
+std::string UnitName(std::string_view text) {
+  auto name = absl::AsciiStrToLower(text);
+  if (name.size() > kUnitNameMaxBytes) {
+    auto size = kUnitNameMaxBytes;
+    while (size > 0 && (static_cast<uint8_t>(name[size]) & 0xC0) == 0x80) {
+      --size;
+    }
+    name.resize(size);
+  }
+  return name;
+}
+
+enum class ExtractSource : uint8_t {
+  kDate,
+  kTime,
+  kTimeTz,
+  kTimestamp,
+  kTimestampTz,
+  kInterval,
+};
+
+constexpr std::string_view SourceTypeName(ExtractSource source) {
+  switch (source) {
+    case ExtractSource::kDate:
+      return "date";
+    case ExtractSource::kTime:
+      return "time without time zone";
+    case ExtractSource::kTimeTz:
+      return "time with time zone";
+    case ExtractSource::kTimestamp:
+      return "timestamp without time zone";
+    case ExtractSource::kTimestampTz:
+      return "timestamp with time zone";
+    case ExtractSource::kInterval:
+      return "interval";
+  }
+  return {};
+}
+
+[[noreturn]] void ThrowUnitNotRecognized(std::string_view text,
+                                         ExtractSource source) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("unit \"", UnitName(text), "\" not recognized for type ",
+            SourceTypeName(source)));
+}
+
+[[noreturn]] void ThrowUnitNotSupported(std::string_view text,
+                                        ExtractSource source) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("unit \"", UnitName(text), "\" not supported for type ",
+            SourceTypeName(source)));
+}
+
+constexpr uint8_t kMillisecondScale = 3;
+constexpr uint8_t kSecondScale = 6;
+constexpr uint8_t kJulianScale = 20;
+
+struct Extracted {
+  duckdb::hugeint_t digits;
+  uint8_t scale;
+};
+
+Extracted Whole(int64_t value) {
+  return {.digits = duckdb::hugeint_t{value}, .scale = 0};
+}
+
+Extracted SubSecond(int64_t micros, uint8_t scale) {
+  return {.digits = duckdb::hugeint_t{micros}, .scale = scale};
+}
+
+std::optional<Extracted> CalendarField(DateUnit unit, int32_t year,
+                                       int32_t month, int32_t day) {
+  switch (unit) {
+    case DateUnit::kDay:
+      return Whole(day);
+    case DateUnit::kMonth:
+      return Whole(month);
+    case DateUnit::kQuarter:
+      return Whole((month - 1) / 3 + 1);
+    case DateUnit::kWeek:
+      return Whole(DateToIsoWeek(year, month, day).week);
+    case DateUnit::kYear:
+      return Whole(year > 0 ? year : year - 1);
+    case DateUnit::kDecade:
+      return Whole(year >= 0 ? year / 10 : -((8 - (year - 1)) / 10));
+    case DateUnit::kCentury:
+      return Whole(year > 0 ? (year + 99) / 100 : -((99 - (year - 1)) / 100));
+    case DateUnit::kMillennium:
+      return Whole(year > 0 ? (year + 999) / 1000
+                            : -((999 - (year - 1)) / 1000));
+    case DateUnit::kIsoYear: {
+      const auto iso_year = DateToIsoWeek(year, month, day).year;
+      return Whole(iso_year <= 0 ? iso_year - 1 : iso_year);
+    }
+    case DateUnit::kDow:
+      return Whole(JulianToWeekday(DateToJulian(year, month, day)));
+    case DateUnit::kIsoDow: {
+      const auto weekday = JulianToWeekday(DateToJulian(year, month, day));
+      return Whole(weekday == 0 ? 7 : weekday);
+    }
+    case DateUnit::kDoy:
+      return Whole(DateToJulian(year, month, day) - DateToJulian(year, 1, 1) +
+                   1);
+    case DateUnit::kMicrosecond:
+    case DateUnit::kMillisecond:
+    case DateUnit::kSecond:
+    case DateUnit::kMinute:
+    case DateUnit::kHour:
+    case DateUnit::kJulian:
+    case DateUnit::kTimezone:
+    case DateUnit::kTimezoneHour:
+    case DateUnit::kTimezoneMinute:
+    case DateUnit::kEpoch:
+    case DateUnit::kReserved:
+    case DateUnit::kUnrecognized:
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<Extracted> ClockField(DateUnit unit, int64_t hour, int32_t minute,
+                                    int32_t second, int32_t fsec) {
+  const auto micros = int64_t{second} * kUsecsPerSec + fsec;
+  if (unit == DateUnit::kMicrosecond) {
+    return Whole(micros);
+  }
+  if (unit == DateUnit::kMillisecond) {
+    return SubSecond(micros, kMillisecondScale);
+  }
+  if (unit == DateUnit::kSecond) {
+    return SubSecond(micros, kSecondScale);
+  }
+  if (unit == DateUnit::kMinute) {
+    return Whole(minute);
+  }
+  if (unit == DateUnit::kHour) {
+    return Whole(hour);
+  }
+  return std::nullopt;
+}
+
+std::optional<Extracted> ZoneField(DateUnit unit, int32_t offset) {
+  if (unit == DateUnit::kTimezone) {
+    return Whole(offset);
+  }
+  if (unit == DateUnit::kTimezoneHour) {
+    return Whole(offset / kSecsPerHour);
+  }
+  if (unit == DateUnit::kTimezoneMinute) {
+    return Whole(offset / kSecsPerMinute % kMinsPerHour);
+  }
+  return std::nullopt;
+}
+
+std::optional<Extracted> DateField(DateUnit unit, duckdb::date_t value) {
+  if (unit == DateUnit::kEpoch) {
+    return Whole(int64_t{value.days} * kSecsPerHour * kHoursPerDay);
+  }
+  int32_t year = 0;
+  int32_t month = 0;
+  int32_t day = 0;
+  duckdb::Date::Convert(value, year, month, day);
+  if (unit == DateUnit::kJulian) {
+    return Whole(DateToJulian(year, month, day));
+  }
+  return CalendarField(unit, year, month, day);
+}
+
+std::optional<Extracted> ExtractFromDate(FormattingState&,
+                                         std::string_view text, DateUnit unit,
+                                         duckdb::date_t value) {
+  if (unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, ExtractSource::kDate);
+  }
+  const auto finite = value.IsFinite();
+  auto field = DateField(unit, finite ? value : duckdb::date_t{0});
+  if (!field) {
+    ThrowUnitNotSupported(text, ExtractSource::kDate);
+  }
+  if (!finite) {
+    return std::nullopt;
+  }
+  return field;
+}
+
+std::optional<Extracted> ExtractFromTime(FormattingState&,
+                                         std::string_view text, DateUnit unit,
+                                         duckdb::dtime_t value) {
+  if (unit == DateUnit::kEpoch) {
+    return SubSecond(value.value, kSecondScale);
+  }
+  if (unit == DateUnit::kReserved || unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, ExtractSource::kTime);
+  }
+  const auto tm = IntervalToTm({.months = 0, .days = 0, .micros = value.value});
+  if (auto field =
+        ClockField(unit, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.fsec)) {
+    return field;
+  }
+  ThrowUnitNotSupported(text, ExtractSource::kTime);
+}
+
+std::optional<Extracted> ExtractFromTimeTz(FormattingState&,
+                                           std::string_view text, DateUnit unit,
+                                           duckdb::dtime_tz_t value) {
+  const auto micros = value.time().value;
+  const auto offset = value.offset();
+  if (unit == DateUnit::kEpoch) {
+    return SubSecond(micros - int64_t{offset} * kUsecsPerSec, kSecondScale);
+  }
+  if (unit == DateUnit::kReserved || unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, ExtractSource::kTimeTz);
+  }
+  if (auto field = ZoneField(unit, offset)) {
+    return field;
+  }
+  const auto tm = IntervalToTm({.months = 0, .days = 0, .micros = micros});
+  if (auto field =
+        ClockField(unit, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.fsec)) {
+    return field;
+  }
+  ThrowUnitNotSupported(text, ExtractSource::kTimeTz);
+}
+
+std::optional<Extracted> TimestampField(DateUnit unit, const TmToChar& tm) {
+  if (auto field =
+        ClockField(unit, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.fsec)) {
+    return field;
+  }
+  if (unit == DateUnit::kJulian) {
+    const auto& powers = duckdb::Hugeint::POWERS_OF_TEN;
+    const int64_t time =
+      ((tm.tm_hour * kMinsPerHour + tm.tm_min) * kSecsPerMinute + tm.tm_sec) *
+        kUsecsPerSec +
+      tm.fsec;
+    const auto day_fraction = (duckdb::hugeint_t{time} * powers[kJulianScale] +
+                               duckdb::hugeint_t{kUsecsPerDay / 2}) /
+                              duckdb::hugeint_t{kUsecsPerDay};
+    return Extracted{
+      .digits =
+        duckdb::hugeint_t{DateToJulian(tm.tm_year, tm.tm_mon, tm.tm_mday)} *
+          powers[kJulianScale] +
+        day_fraction,
+      .scale = kJulianScale,
+    };
+  }
+  return CalendarField(unit, tm.tm_year, tm.tm_mon, tm.tm_mday);
+}
+
+std::optional<Extracted> ExtractFromInfiniteTimestamp(std::string_view text,
+                                                      DateUnit unit,
+                                                      ExtractSource source) {
+  if (unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, source);
+  }
+  if (unit == DateUnit::kReserved) {
+    ThrowUnitNotSupported(text, source);
+  }
+  return std::nullopt;
+}
+
+std::optional<Extracted> ExtractFromTimestamp(FormattingState&,
+                                              std::string_view text,
+                                              DateUnit unit,
+                                              duckdb::timestamp_t value) {
+  if (!value.IsFinite()) {
+    return ExtractFromInfiniteTimestamp(text, unit, ExtractSource::kTimestamp);
+  }
+  if (unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, ExtractSource::kTimestamp);
+  }
+  if (unit == DateUnit::kEpoch) {
+    return SubSecond(value.value, kSecondScale);
+  }
+  if (auto field = TimestampField(unit, TimestampToTm(value.value))) {
+    return field;
+  }
+  ThrowUnitNotSupported(text, ExtractSource::kTimestamp);
+}
+
+std::optional<Extracted> ExtractFromTimestampTz(FormattingState& local,
+                                                std::string_view text,
+                                                DateUnit unit,
+                                                duckdb::timestamp_tz_t value) {
+  if (!value.IsFinite()) {
+    return ExtractFromInfiniteTimestamp(text, unit,
+                                        ExtractSource::kTimestampTz);
+  }
+  if (unit == DateUnit::kUnrecognized) {
+    ThrowUnitNotRecognized(text, ExtractSource::kTimestampTz);
+  }
+  if (unit == DateUnit::kEpoch) {
+    return SubSecond(value.value, kSecondScale);
+  }
+  const auto offset = local.zone->OffsetSeconds(value.value);
+  if (auto field = ZoneField(unit, offset)) {
+    return field;
+  }
+  int64_t wall = 0;
+  if (__builtin_add_overflow(value.value, int64_t{offset} * kUsecsPerSec,
+                             &wall) ||
+      !duckdb::timestamp_t{wall}.IsFinite()) {
+    ThrowTimestampOutOfRange();
+  }
+  if (auto field = TimestampField(unit, TimestampToTm(wall))) {
+    return field;
+  }
+  ThrowUnitNotSupported(text, ExtractSource::kTimestampTz);
+}
+
+std::optional<Extracted> ExtractFromInterval(FormattingState&,
+                                             std::string_view text,
+                                             DateUnit unit,
+                                             duckdb::interval_t value) {
+  const int64_t years = value.months / kMonthsPerYear;
+  const int64_t months = value.months % kMonthsPerYear;
+  const auto tm = IntervalToTm(value);
+  switch (unit) {
+    case DateUnit::kMicrosecond:
+    case DateUnit::kMillisecond:
+    case DateUnit::kSecond:
+    case DateUnit::kMinute:
+    case DateUnit::kHour:
+      return ClockField(unit, tm.tm_hour, tm.tm_min, tm.tm_sec, tm.fsec);
+    case DateUnit::kDay:
+      return Whole(value.days);
+    case DateUnit::kWeek:
+      return Whole(value.days / 7);
+    case DateUnit::kMonth:
+      return Whole(months);
+    case DateUnit::kQuarter:
+      return Whole(value.months >= 0
+                     ? months / 3 + 1
+                     : -((-int64_t{value.months} % kMonthsPerYear) / 3 + 1));
+    case DateUnit::kYear:
+      return Whole(years);
+    case DateUnit::kDecade:
+      return Whole(years / 10);
+    case DateUnit::kCentury:
+      return Whole(years / 100);
+    case DateUnit::kMillennium:
+      return Whole(years / 1000);
+    case DateUnit::kEpoch: {
+      constexpr int64_t kQuarterDaysPerYear = 1461;
+      constexpr int64_t kQuarterDaysPerMonth = 4 * kDaysPerMonth;
+      const auto seconds =
+        (kQuarterDaysPerYear * years + kQuarterDaysPerMonth * months +
+         4 * int64_t{value.days}) *
+        (kSecsPerHour * kHoursPerDay / 4);
+      return Extracted{
+        .digits = duckdb::hugeint_t{seconds} * duckdb::hugeint_t{kUsecsPerSec} +
+                  duckdb::hugeint_t{value.micros},
+        .scale = kSecondScale,
+      };
+    }
+    case DateUnit::kReserved:
+    case DateUnit::kUnrecognized:
+      ThrowUnitNotRecognized(text, ExtractSource::kInterval);
+    case DateUnit::kJulian:
+    case DateUnit::kIsoYear:
+    case DateUnit::kDow:
+    case DateUnit::kIsoDow:
+    case DateUnit::kDoy:
+    case DateUnit::kTimezone:
+    case DateUnit::kTimezoneHour:
+    case DateUnit::kTimezoneMinute:
+      ThrowUnitNotSupported(text, ExtractSource::kInterval);
+  }
+  ThrowUnitNotSupported(text, ExtractSource::kInterval);
+}
+
+uint8_t ExtractScale(ExtractSource source, DateUnit unit) {
+  if (unit == DateUnit::kMillisecond) {
+    return kMillisecondScale;
+  }
+  if (unit == DateUnit::kSecond) {
+    return kSecondScale;
+  }
+  if (unit == DateUnit::kEpoch) {
+    return source == ExtractSource::kDate ? 0 : kSecondScale;
+  }
+  if (unit == DateUnit::kJulian && (source == ExtractSource::kTimestamp ||
+                                    source == ExtractSource::kTimestampTz)) {
+    return kJulianScale;
+  }
+  return 0;
+}
+
+template<ExtractSource kSource>
+duckdb::unique_ptr<duckdb::FunctionData> BindExtract(
+  duckdb::BindScalarFunctionInput& input) {
+  auto scale = kSecondScale;
+  if (const auto unit = BindTimeConstant(input, 0); unit && !unit->IsNull()) {
+    scale = ExtractScale(kSource, DecodeDateUnit(unit->ToString()));
+  }
+  input.GetBoundFunction().SetReturnType(
+    duckdb::LogicalType::DECIMAL(kNumericWidth, scale));
+  if constexpr (kSource == ExtractSource::kTimestampTz) {
+    return duckdb::ICUDateFunc::Bind(input);
+  }
+  return nullptr;
+}
+
+duckdb::hugeint_t ToScale(const Extracted& value, uint8_t scale) {
+  const auto& powers = duckdb::Hugeint::POWERS_OF_TEN;
+  if (value.scale <= scale) {
+    return value.digits * powers[scale - value.scale];
+  }
+  const auto divisor = powers[value.scale - scale];
+  const auto half = divisor / duckdb::hugeint_t{2};
+  return value.digits >= duckdb::hugeint_t{0}
+           ? (value.digits + half) / divisor
+           : -((-value.digits + half) / divisor);
+}
+
+template<typename T, std::optional<Extracted> (*kExtract)(
+                       FormattingState&, std::string_view, DateUnit, T)>
+void ExtractFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                     duckdb::Vector& result) {
+  auto& local = GetFormattingState(state);
+  const auto scale = duckdb::DecimalType::GetScale(result.GetType());
+  const auto extract = [&](std::string_view text, DateUnit unit,
+                           T value) -> duckdb::optional<duckdb::hugeint_t> {
+    const auto extracted = kExtract(local, text, unit, value);
+    if (!extracted) {
+      return duckdb::nullopt;
+    }
+    return ToScale(*extracted, scale);
+  };
+  auto& units = args.data[0];
+  if (units.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    if (duckdb::ConstantVector::IsNull(units)) {
+      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(result, true);
+      return;
+    }
+    const auto text =
+      AsView(*duckdb::ConstantVector::GetData<duckdb::string_t>(units));
+    const auto unit = DecodeDateUnit(text);
+    duckdb::UnaryExecutor::Execute<T, duckdb::hugeint_t>(
+      args.data[1], result, args.size(),
+      [&](T value) { return extract(text, unit, value); });
+    return;
+  }
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, T, duckdb::hugeint_t>(
+    units, args.data[1], result, args.size(),
+    [&](duckdb::string_t unit, T value) {
+      const auto text = AsView(unit);
+      return extract(text, DecodeDateUnit(text), value);
+    });
+}
+
 }  // namespace
 
 void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
@@ -3581,6 +4213,122 @@ void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
   add("to_timestamp",
       {{LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ, ToTimestampFunction,
         duckdb::ICUDateFunc::Bind, InitZonedFormattingState}});
+
+  using enum duckdb::FunctionStability;
+  {
+    struct ExtractOverload {
+      LogicalType source;
+      duckdb::scalar_function_t function;
+      duckdb::bind_scalar_function_t bind;
+      duckdb::init_local_state_t init;
+      duckdb::FunctionStability stability;
+    };
+    duckdb::ScalarFunctionSet set{"extract"};
+    for (const auto& overload : {
+           ExtractOverload{LogicalType::DATE,
+                           ExtractFunction<duckdb::date_t, ExtractFromDate>,
+                           BindExtract<ExtractSource::kDate>,
+                           InitFormattingState, CONSISTENT},
+           ExtractOverload{LogicalType::TIME,
+                           ExtractFunction<duckdb::dtime_t, ExtractFromTime>,
+                           BindExtract<ExtractSource::kTime>,
+                           InitFormattingState, CONSISTENT},
+           ExtractOverload{
+             LogicalType::TIME_TZ,
+             ExtractFunction<duckdb::dtime_tz_t, ExtractFromTimeTz>,
+             BindExtract<ExtractSource::kTimeTz>, InitFormattingState,
+             CONSISTENT},
+           ExtractOverload{
+             LogicalType::TIMESTAMP,
+             ExtractFunction<duckdb::timestamp_t, ExtractFromTimestamp>,
+             BindExtract<ExtractSource::kTimestamp>, InitFormattingState,
+             CONSISTENT},
+           ExtractOverload{
+             LogicalType::TIMESTAMP_TZ,
+             ExtractFunction<duckdb::timestamp_tz_t, ExtractFromTimestampTz>,
+             BindExtract<ExtractSource::kTimestampTz>, InitZonedFormattingState,
+             CONSISTENT_WITHIN_QUERY},
+           ExtractOverload{
+             LogicalType::INTERVAL,
+             ExtractFunction<duckdb::interval_t, ExtractFromInterval>,
+             BindExtract<ExtractSource::kInterval>, InitFormattingState,
+             CONSISTENT},
+         }) {
+      duckdb::ScalarFunction function{
+        "extract",
+        {LogicalType::VARCHAR, overload.source},
+        LogicalType::DECIMAL(kNumericWidth, kSecondScale),
+        overload.function,
+        overload.bind,
+        nullptr,
+        overload.init};
+      function.SetStability(overload.stability);
+      set.AddFunction(std::move(function));
+    }
+    set.SetFallible();
+    loader.RegisterFunction(std::move(set));
+  }
+
+  struct DatetimeForm {
+    duckdb::vector<LogicalType> arguments;
+    duckdb::scalar_function_t function;
+    duckdb::function_bind_expression_t bind_expression;
+    duckdb::FunctionStability stability;
+  };
+  const auto add_forms = [&](std::string_view name, const LogicalType& result,
+                             std::span<const DatetimeForm> forms) {
+    const duckdb::Identifier identifier{name};
+    duckdb::ScalarFunctionSet set{identifier};
+    for (const auto& form : forms) {
+      duckdb::ScalarFunction function{identifier, form.arguments, result,
+                                      form.function};
+      if (form.bind_expression) {
+        function.SetBindExpressionCallback(form.bind_expression);
+      } else {
+        function.SetFallible();
+      }
+      function.SetStability(form.stability);
+      set.AddFunction(std::move(function));
+    }
+    loader.RegisterFunction(std::move(set));
+  };
+  add_forms("timestamp", LogicalType::TIMESTAMP,
+            {
+              {{LogicalType::DATE}, nullptr, BindCastToResult, CONSISTENT},
+              {{LogicalType::DATE, LogicalType::TIME},
+               nullptr,
+               BindSumToResult,
+               CONSISTENT},
+              {{LogicalType::TIMESTAMP_TZ},
+               nullptr,
+               BindCastToResult,
+               CONSISTENT_WITHIN_QUERY},
+              {{LogicalType::TIMESTAMP, LogicalType::INTEGER},
+               TimestampPrecisionFunction<duckdb::timestamp_t>,
+               nullptr,
+               CONSISTENT},
+            });
+  add_forms(
+    "timestamptz", LogicalType::TIMESTAMP_TZ,
+    {
+      {{LogicalType::DATE}, nullptr, BindCastToResult, CONSISTENT_WITHIN_QUERY},
+      {{LogicalType::DATE, LogicalType::TIME},
+       nullptr,
+       BindSumToResult,
+       CONSISTENT_WITHIN_QUERY},
+      {{LogicalType::DATE, LogicalType::TIME_TZ},
+       nullptr,
+       BindSumToResult,
+       CONSISTENT},
+      {{LogicalType::TIMESTAMP},
+       nullptr,
+       BindCastToResult,
+       CONSISTENT_WITHIN_QUERY},
+      {{LogicalType::TIMESTAMP_TZ, LogicalType::INTEGER},
+       TimestampPrecisionFunction<duckdb::timestamp_tz_t>,
+       nullptr,
+       CONSISTENT},
+    });
 }
 
 }  // namespace sdb::connector

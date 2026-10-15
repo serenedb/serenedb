@@ -383,9 +383,9 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | date_add               | Yes           | possible with +          |
 | date_bin               | Yes           |                          |
 | date_part              | Yes           |                          |
-| date_subtract          | No            | possible with -          |
+| date_subtract          | Yes           |                          |
 | date_trunc             | Yes           | Without timezone         |
-| extract                | Yes           |                          |
+| extract                | Yes           | `pg_catalog.extract(field, source)` returns `numeric`. An infinite source gives `NULL` where PostgreSQL gives `Infinity`, `julian` of a timestamp has 20 fractional digits, and a field that is not a constant gives six fractional digits |
 | isfinite               | Yes           |                          |
 | justify_days           | Yes           |                          |
 | justify_hours          | Yes           |                          |
@@ -398,11 +398,12 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | make_timestamp         | Yes           |                          |
 | make_timestamptz       | Yes           | With time zone name      |
 | now                    | Yes           |                          |
-| statement_timestamp    | No            |                          |
+| statement_timestamp    | Yes           |                          |
 | timeofday              | Yes           |                          |
+| timestamp              | Yes           | Also `timestamptz`: the casts as functions, and `timestamp(value, precision)` rounds to the precision |
 | transaction_timestamp  | Yes           |                          |
 | to_timestamp           | Yes               |                          |
-| OVERLAPS               | No            |                          |
+| OVERLAPS               | Yes           |                          |
 | EXTRACT                | Yes           |                          |
 
 #### Enum

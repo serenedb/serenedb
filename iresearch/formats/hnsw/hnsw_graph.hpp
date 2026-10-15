@@ -200,7 +200,7 @@ enum class HnswWalk : uint8_t {
 };
 
 inline constexpr uint64_t kHnswAdaptiveProbe = 32;
-inline constexpr uint64_t kHnswAdaptiveScarcity = 4;
+inline constexpr uint64_t kHnswAdaptiveScarcity = 2;
 
 template<HnswWalk Walk>
 inline constexpr bool kHnswHops =
@@ -1058,6 +1058,20 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   s.frontier.assign(1, cur);
   if (accept(cur.node)) {
     s.nearest.assign(1, cur);
+  }
+  if constexpr (Walk == HnswWalk::Adaptive) {
+    uint64_t seen = 0;
+    uint64_t admitted = 0;
+    for (const auto& link : graph.Neighbors(cur.node, 0)) {
+      const auto id = HnswLoadLink(link);
+      if (id == kHnswInvalidNode) {
+        break;
+      }
+      ++seen;
+      admitted += accept(id) ? 1 : 0;
+    }
+    s.two_hop = static_cast<double>(admitted * kHnswAdaptiveScarcity) <
+                static_cast<double>(seen) * s.admit_share;
   }
   return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
 }

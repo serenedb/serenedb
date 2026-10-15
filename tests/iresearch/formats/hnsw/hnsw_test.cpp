@@ -1178,7 +1178,7 @@ TEST(HnswWalkTest, BridgeAsksTheAcceptorPerHop) {
 TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   constexpr uint32_t kD = 8;
   constexpr uint32_t kNodes = 3000;
-  constexpr uint32_t kM = 8;
+  constexpr uint32_t kM = 16;
   constexpr uint32_t kEf = 64;
   constexpr size_t kK = 10;
   constexpr size_t kQueries = 30;
@@ -1214,7 +1214,7 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
   std::vector<float> query(kD);
   WalkDist dist{.pts = &pts, .d = kD, .q = query.data()};
   irs::HnswSearchScratch s;
-  s.admit_share = 0.25;
+  s.admit_share = 0.5;
   size_t crossed_random = 0;
   size_t crossed_far = 0;
   size_t found_adaptive = 0;
@@ -1225,7 +1225,7 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
     }
     std::vector<uint8_t> random(kNodes);
     for (auto& a : random) {
-      a = rng() % 4 == 0 ? 1 : 0;
+      a = rng() % 2 == 0 ? 1 : 0;
     }
     irs::HnswSearchTopK<irs::HnswWalk::Adaptive>(
       graph, dist, kEf, s, [&](uint32_t n) { return random[n] != 0; });
@@ -1240,11 +1240,11 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
     }
     std::ranges::sort(by_score);
     std::vector<uint8_t> far(kNodes, 0);
-    for (size_t i = 0; i < kNodes / 4; ++i) {
+    for (size_t i = 0; i < kNodes / 2; ++i) {
       far[by_score[i].second] = 1;
     }
     std::vector<uint32_t> truth;
-    for (size_t i = kNodes / 4; i-- > kNodes / 4 - kK;) {
+    for (size_t i = kNodes / 2; i-- > kNodes / 2 - kK;) {
       truth.push_back(by_score[i].second);
     }
     const auto hits = [&] {
@@ -1259,9 +1259,11 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
       graph, dist, kEf, s, [&](uint32_t n) { return far[n] != 0; });
     crossed_far += s.two_hop ? 1 : 0;
     found_adaptive += hits();
+    const auto adaptive_scored = s.scored;
     irs::HnswSearchTopK<irs::HnswWalk::TwoHop>(
       graph, dist, kEf, s, [&](uint32_t n) { return far[n] != 0; });
     found_two_hop += hits();
+    EXPECT_EQ(adaptive_scored, s.scored) << "query " << qi;
   }
   EXPECT_EQ(crossed_random, 0U);
   EXPECT_EQ(crossed_far, kQueries);

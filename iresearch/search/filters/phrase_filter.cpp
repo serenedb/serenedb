@@ -456,46 +456,44 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
   const ColumnReader& column, std::vector<std::vector<bstring>> part_terms) {
+  SDB_ASSERT(state.Slots() == options.size());
   const bool covered = absl::c_any_of(options, [](const auto& info) {
     return std::holds_alternative<ShingleOptions>(info.part);
   });
+  auto stats = covered ? PhraseWordStats(options, reader)
+                       : std::vector<PhraseWordStat>(options.size());
+  std::vector<const PostingMeta*> word_metas(covered ? 0 : options.size());
   auto sub = ctx;
   sub.collector = nullptr;
   BooleanBuilder builder{segment, ctx.memory, 0, kNoBoost,
                          ScoreMergeType::Noop};
-  SDB_ASSERT(state.Slots() == options.size());
   containers::FlatHashSet<bytes_view> words;
-  std::vector<PhraseWordStat> stats(covered ? 0 : options.size());
-  std::vector<const PostingMeta*> word_metas(stats.size());
-  size_t slot = 0;
-  for (const auto& info : options) {
+  for (size_t slot = 0; const auto& info : options) {
     const auto begin = state.offsets[slot];
-    const auto end = state.offsets[++slot];
+    const auto end = state.offsets[slot + 1];
     if (end - begin == 1) {
       const bool term = ByPhraseOptions::KindOf(info.part) == SlotKind::Term;
       if (term && !covered) {
         const auto& meta = state.metas[begin];
-        stats[slot - 1] = {.docs = meta.docs_count, .freq = meta.freq};
-        word_metas[slot - 1] = &meta;
+        stats[slot] = {.docs = meta.docs_count, .freq = meta.freq};
+        word_metas[slot] = &meta;
       }
       if (!term || words.emplace(ByPhraseOptions::TermOf(info.part)).second) {
         builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
       }
-      continue;
+    } else {
+      auto terms = memory::make_tracked<MultiTermQuery>(
+        ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+      terms->State().Prepare(&reader);
+      for (auto i = begin; i != end; ++i) {
+        terms->State().Push(state.metas[i], kNoBoost);
+      }
+      builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
     }
-    auto terms = memory::make_tracked<MultiTermQuery>(
-      ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
-    terms->State().Prepare(&reader);
-    for (auto i = begin; i != end; ++i) {
-      terms->State().Push(state.metas[i], kNoBoost);
-    }
-    builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
+    ++slot;
   }
   auto approx = builder.Finish();
   SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
-  if (covered) {
-    stats = PhraseWordStats(options, reader);
-  }
   auto query = memory::make_tracked<TokenPhraseQuery>(
     ctx.memory, segment, reader, std::move(approx), options.tokenizer(), column,
     options, std::move(part_terms), stats, word_metas, ctx.boost);

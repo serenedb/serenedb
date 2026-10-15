@@ -147,7 +147,7 @@ Root::ptr MakePruned(const TokenPhraseQuery& query, const Context& ctx,
                      const irs::detail::ScoreArgs& args) {
   const auto* anchor = query.Anchor();
   const auto& field = query.Reader();
-  if (!anchor || anchor->docs_count <= doc_limits::kBlockSize ||
+  if (!ctx.prune || !anchor || anchor->docs_count <= doc_limits::kBlockSize ||
       !irs::detail::BoundsOf(field) || !HasScoreBounds(args.scorer) ||
       !FreqBoundedByAnchor(query)) {
     return {};
@@ -180,10 +180,8 @@ Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
     return irs::detail::MakeTokenPhrase<PlainConstantWalk, Root::ptr>(
       query, 0, utils::Empty{}, *value);
   }
-  if (ctx.prune) {
-    if (auto pruned = MakePruned(query, ctx, args)) {
-      return pruned;
-    }
+  if (auto pruned = MakePruned(query, ctx, args)) {
+    return pruned;
   }
   if (ctx.table) {
     return irs::detail::MakeTokenPhrase<FilteredWalk, Root::ptr, true,

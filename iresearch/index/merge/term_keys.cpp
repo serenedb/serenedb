@@ -69,6 +69,7 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
     if (want < _next || want - _next > TermKeys::kAnchorStep) {
       const auto anchor = _keys.Anchor(row);
       if (anchor && (want < _next || anchor->first >= _next)) {
+        _it = _keys.Reader().iterator();
         const bool found = _it->seek(anchor->second);
         SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
                    anchor->first);

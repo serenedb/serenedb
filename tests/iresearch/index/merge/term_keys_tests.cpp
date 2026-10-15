@@ -227,6 +227,31 @@ TEST_F(TermKeysTest, ReadsAnyRowForwardAndBack) {
   }
 }
 
+TEST_F(TermKeysTest, ReadsBackAfterWalkingNestedBlocks) {
+  std::vector<std::string> ids;
+  for (size_t n = 0; n != 6000; ++n) {
+    ids.emplace_back(std::to_string(n * 37 % 100003));
+  }
+  AddSegment(ids);
+  absl::c_sort(ids);
+  const auto inputs = Snapshot();
+  ASSERT_EQ(1, inputs.size());
+  const irs::TermKeys keys{*inputs[0]->field(kIdField)};
+  ASSERT_EQ(ids.size(), keys.Count());
+  const auto reader = keys.CreateReader();
+  for (size_t begin = 0; begin < ids.size(); begin += 2048) {
+    const auto count = std::min<size_t>(2048, ids.size() - begin);
+    ASSERT_EQ(Slice(ids, begin, count), Read(*reader, begin, count));
+  }
+  std::mt19937_64 rng{11};
+  for (size_t probe = 0; probe != 300; ++probe) {
+    const auto begin = rng() % ids.size();
+    const auto count = std::min<size_t>(1 + rng() % 40, ids.size() - begin);
+    SCOPED_TRACE(absl::StrCat("rows ", begin, " + ", count));
+    ASSERT_EQ(Slice(ids, begin, count), Read(*reader, begin, count));
+  }
+}
+
 TEST_F(TermKeysTest, ReadersShareTheirAnchors) {
   std::vector<std::string> ids;
   for (size_t n = 0; n != 3000; ++n) {

@@ -72,5 +72,22 @@ rec_arr	arr_rec
 {"(\\"0001-12-31 BC\\")"}	("{""0001-12-31 BC""}")
 
 
+skipif pg-wire-extended
+query
+SELECT ROW('infinity'::timestamp) AS a, ROW('-infinity'::timestamptz) AS b, ARRAY['infinity'::timestamp, '2020-01-01'::timestamp] AS c,
+       ROW('infinity'::timestamp, 1) AS d;
+----
+a	b	c	d
+(infinity)	(-infinity)	{infinity,"2020-01-01 00:00:00"}	(infinity,1)
+
+
+skipif pg-wire-extended
+query
+SELECT ARRAY[ROW('infinity'::timestamp)] AS e, ROW(ARRAY['-infinity'::timestamptz]) AS f, ARRAY[ROW('2020-01-01'::timestamp)] AS g;
+----
+e	f	g
+{(infinity)}	({-infinity})	{"(\\"2020-01-01 00:00:00\\")"}
+
+
 statement ok
 RESET TimeZone

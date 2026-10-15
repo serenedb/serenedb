@@ -885,10 +885,12 @@ bool WriteTimestampText(SerializationContext& ctx,
 template<WrapContext InContainer>
 void RenderTimestampText(SerializationContext& ctx,
                          duckdb::timestamp_t timestamp) {
+  if (!timestamp.IsFinite()) {
+    ctx.writer->Write(duckdb::Timestamp::ToString(timestamp));
+    return;
+  }
   WithWrapIfNested<InContainer>(ctx, [&] {
-    if (!timestamp.IsFinite()) {
-      ctx.writer->Write(duckdb::Timestamp::ToString(timestamp));
-    } else if (WriteTimestampText(ctx, timestamp)) {
+    if (WriteTimestampText(ctx, timestamp)) {
       ctx.writer->Write(kBcSuffix);
     }
   });
@@ -1032,9 +1034,12 @@ struct TimestampNsTextCore {
                                       Value timestamp) {
     duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
     const auto str = duckdb::StringCast::Operation(timestamp, heap);
-    WithWrapIfNested<InContainer>(ctx, [&] {
-      ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
-    });
+    const std::string_view text{str.GetData(), str.GetSize()};
+    if (!timestamp.IsFinite()) {
+      ctx.writer->Write(text);
+      return;
+    }
+    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(text); });
   }
 };
 
@@ -1095,8 +1100,7 @@ struct TimestampTzTextCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value tz) {
     const auto ts = duckdb::timestamp_t{tz};
     if (!ts.IsFinite()) {
-      WithWrapIfNested<InContainer>(
-        ctx, [&] { ctx.writer->Write(duckdb::Timestamp::ToString(ts)); });
+      ctx.writer->Write(duckdb::Timestamp::ToString(ts));
       return;
     }
     int32_t offset_secs = 0;
@@ -1149,9 +1153,12 @@ struct TimestampTzNsTextCore {
       }
     }
     const auto str = duckdb::StringCast::Operation(tz, heap);
-    WithWrapIfNested<InContainer>(ctx, [&] {
-      ctx.writer->Write(std::string_view{str.GetData(), str.GetSize()});
-    });
+    const std::string_view text{str.GetData(), str.GetSize()};
+    if (!tz.IsFinite()) {
+      ctx.writer->Write(text);
+      return;
+    }
+    WithWrapIfNested<InContainer>(ctx, [&] { ctx.writer->Write(text); });
   }
 };
 
@@ -1406,6 +1413,9 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ:
     case TIMESTAMP_TZ_NS:
+      return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::timestamp_t>(
+               vdata.unified)[vdata.unified.sel->get_index(row)]
+        .IsFinite();
     case BLOB:
     case TUPLE:
     case STRUCT:

@@ -1180,12 +1180,13 @@ void ActualVersionFunction(duckdb::DataChunk& args,
 }
 
 bool CollationExists(duckdb::ClientContext&, int64_t oid) {
-  return FindBuiltinCollation(oid) != nullptr;
+  return static_cast<bool>(FindBuiltinCollation(oid));
 }
 
 bool DatabaseExists(duckdb::ClientContext& context, int64_t oid) {
   return oid >= 0 &&
-         FindDatabaseById(context, static_cast<duckdb::idx_t>(oid)) != nullptr;
+         static_cast<bool>(
+           FindDatabaseById(context, static_cast<duckdb::idx_t>(oid)));
 }
 
 constexpr std::string_view kCollationKind = "collation";

@@ -10,7 +10,7 @@ split: headings
 - 🟡 Supported, with the differences described in Details
 - 🔴 Not supported: the type is in `pg_type` and its name resolves (`'point'::regtype`, `format_type(600, NULL)`), but no value, cast or column can use it
 
-The array type of each type, `<type>[]`, has the same support as the type, and the column shorthands `smallserial`, `serial` and `bigserial` work as in PostgreSQL. As in PostgreSQL, a call of a type's name with one argument, such as `int4('42')` or `text(123)`, is a cast to that type when no function of that name takes the argument. Pseudo-types such as `anyelement`, `record` and `trigger` are listed for function signatures and, as in PostgreSQL, hold no values. Besides these types, SereneDB has types of its own, such as [`VARIANT`](../sql/data_types/variant.md), [`MAP`](../sql/data_types/map.md) and [`UNION`](../sql/data_types/union.md).
+The array type of each type, `<type>[]`, has the same support as the type, and the column shorthands `smallserial`, `serial` and `bigserial` work as in PostgreSQL. An array type has a fixed number of dimensions, where a PostgreSQL array type takes any: `int4[]` holds one-dimensional arrays and `int4[][]` two-dimensional ones, so `'{{1,2},{3,4}}'::int4[]`, or a two-dimensional array a client sends for an `int4[]` parameter, is an error. As in PostgreSQL, a call of a type's name with one argument, such as `int4('42')` or `text(123)`, is a cast to that type when no function of that name takes the argument. Pseudo-types such as `anyelement`, `record` and `trigger` are listed for function signatures and, as in PostgreSQL, hold no values. Besides these types, SereneDB has types of its own, such as [`VARIANT`](../sql/data_types/variant.md), [`MAP`](../sql/data_types/map.md) and [`UNION`](../sql/data_types/union.md).
 
 ## Data Types
 
@@ -27,7 +27,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | cidr                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | circle                       | 🔴            |         |
 | date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
-| datemultirange               | 🔴            |         |
+| datemultirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | daterange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. |
 | float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. |
@@ -36,10 +36,10 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | int2                         | 🟢            | `smallint` |
 | int2vector                   | 🟢            |         |
 | int4                         | 🟢            | `integer` |
-| int4multirange               | 🔴            |         |
+| int4multirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int4range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int8                         | 🟢            | `bigint` |
-| int8multirange               | 🔴            |         |
+| int8multirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int8range                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | interval                     | 🟡            | Field restrictions are ignored: `'1 year 2 mons'::interval year` keeps the months. |
 | json                         | 🟢            |         |
@@ -52,7 +52,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. |
 | name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
-| nummultirange                | 🔴            |         |
+| nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | oid                          | 🟢            |         |
 | oidvector                    | 🟢            |         |
@@ -85,10 +85,10 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | timestamp                    | 🟡            | A precision keeps milliseconds or microseconds: `timestamp(2)` keeps three fractional digits. |
 | timestamptz                  | 🟡            | A precision such as `timestamptz(2)` is not accepted. |
 | timetz                       | 🟢            |         |
-| tsmultirange                 | 🔴            |         |
+| tsmultirange                 | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tsquery                      | 🟡            | SereneDB's own [`TSQUERY`](../sql/data_types/tsquery.md), a query for inverted-index search, not PostgreSQL's. |
 | tsrange                      | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
-| tstzmultirange               | 🔴            |         |
+| tstzmultirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tstzrange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | tsvector                     | 🔴            |         |
 | txid_snapshot                | 🔴            |         |

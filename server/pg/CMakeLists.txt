@@ -88,6 +88,7 @@ target_sources(
         types/name.cpp
         types/oid.cpp
         types/pg_lsn.cpp
+        types/multirange.cpp
         types/range.cpp
         types/reg.cpp
         types/register.cpp

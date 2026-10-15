@@ -1472,6 +1472,13 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case ARRAY:
     case LIST:
     case MAP:
+      if (IsInt2vector(type) || IsOidvector(type)) {
+        return GetArraySlice(vdata, row).size != 1;
+      }
+      if (IsMultirange(type)) {
+        return InContainer == WrapContext::Array ||
+               GetArraySlice(vdata, row).size != 0;
+      }
       // Rendered `{...}`. `{`/`}` are array triggers (always wraps inside an
       // array). For records: walk the singleton path -- any size>1 contributes
       // `,` (record trigger), size 0 collapses to `{}` (no trigger), else
@@ -1483,10 +1490,7 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
         const auto* cur = &vdata;
         duckdb::idx_t cur_row = row;
         while (true) {
-          const auto lid = cur->logical_type.id();
-          if (lid != duckdb::LogicalTypeId::ARRAY &&
-              lid != duckdb::LogicalTypeId::LIST &&
-              lid != duckdb::LogicalTypeId::MAP) {
+          if (!IsArrayDimension(cur->logical_type)) {
             return NeedsQuotingIn<WrapContext::Record>(cur->logical_type, *cur,
                                                        cur_row);
           }
@@ -1650,6 +1654,53 @@ struct RangeBinCore {
     };
     bound(kRangeLowerChild, kRangeLowerInfinite);
     bound(kRangeUpperChild, kRangeUpperInfinite);
+  }
+};
+
+template<WrapContext InContainer>
+struct MultirangeTextCore {
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    const auto [size, offset] = GetSliceResolved(vdata, row);
+    const auto& ranges = vdata.children[0];
+    const auto emit = [&] {
+      context.writer->Write("{");
+      for (duckdb::idx_t i = 0; i < size; ++i) {
+        if (i != 0) {
+          context.writer->Write(",");
+        }
+        RangeTextCore<WrapContext::None>::Render(
+          context, ranges, ranges.unified.sel->get_index(offset + i));
+      }
+      context.writer->Write("}");
+    };
+    if constexpr (InContainer == WrapContext::Record) {
+      if (size == 0) {
+        emit();
+        return;
+      }
+    }
+    WithWrapIfNested<InContainer>(context, emit);
+  }
+};
+
+struct MultirangeBinCore {
+  static void Render(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+    const auto [size, offset] = GetSliceResolved(vdata, row);
+    absl::big_endian::Store32(context.writer->Alloc(4),
+                              static_cast<int32_t>(size));
+    const auto& ranges = vdata.children[0];
+    for (duckdb::idx_t i = 0; i < size; ++i) {
+      auto* length = context.writer->Alloc(4);
+      const auto before = context.writer->Written();
+      RangeBinCore::Render(context, ranges,
+                           ranges.unified.sel->get_index(offset + i));
+      absl::big_endian::Store32(
+        length, static_cast<int32_t>(context.writer->Written() - before));
+    }
   }
 };
 
@@ -2064,9 +2115,9 @@ struct VectorArrayCore {
           RenderValue<Core>(context, child_vdata, idx);
         }
       };
-      if constexpr (InContainer == WrapContext::Record) {
-        if (array_size > 1) {
-          WriteWrapped<WrapContext::Record>(context, emit_inside);
+      if constexpr (InContainer != WrapContext::None) {
+        if (array_size != 1) {
+          WriteWrapped<InContainer>(context, emit_inside);
           return;
         }
       }
@@ -2096,9 +2147,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
   if (array_size == 0) {
     const auto* leaf = &child_vdata.logical_type;
     int32_t deeper = depth + 1;
-    while (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
-           leaf->id() == duckdb::LogicalTypeId::LIST ||
-           leaf->id() == duckdb::LogicalTypeId::MAP) {
+    while (IsArrayDimension(*leaf)) {
       absl::big_endian::Store32(dim_sizes_data + deeper * 8, 0);
       absl::big_endian::Store32(dim_sizes_data + deeper * 8 + 4, 1);
       ++deeper;
@@ -2109,10 +2158,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
     leaf_oid = Type2Oid(*leaf);
     return;
   }
-  const auto child_lid = child_vdata.logical_type.id();
-  if (child_lid != duckdb::LogicalTypeId::ARRAY &&
-      child_lid != duckdb::LogicalTypeId::LIST &&
-      child_lid != duckdb::LogicalTypeId::MAP) {
+  if (!IsArrayDimension(child_vdata.logical_type)) {
     leaf_oid = Type2Oid(child_vdata.logical_type);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
@@ -2150,10 +2196,7 @@ struct MultiDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
                                       const RUVF& vdata, duckdb::idx_t row) {
     if constexpr (Format == VarFormat::Text) {
-      const auto lid = vdata.logical_type.id();
-      if (lid != duckdb::LogicalTypeId::ARRAY &&
-          lid != duckdb::LogicalTypeId::LIST &&
-          lid != duckdb::LogicalTypeId::MAP) {
+      if (!IsArrayDimension(vdata.logical_type)) {
         // `row` is already the resolved source row.
         if (!vdata.unified.validity.RowIsValid(row)) {
           context.writer->Write("NULL");
@@ -2211,9 +2254,7 @@ struct MultiDimArrayCore {
       // Walk the type to find the leaf OID and count ndim.
       const auto* t = &vdata.logical_type;
       int32_t ndim = 0;
-      while (t->id() == duckdb::LogicalTypeId::ARRAY ||
-             t->id() == duckdb::LogicalTypeId::LIST ||
-             t->id() == duckdb::LogicalTypeId::MAP) {
+      while (IsArrayDimension(*t)) {
         ++ndim;
         t = t->id() == duckdb::LogicalTypeId::ARRAY
               ? &duckdb::ArrayType::GetChildType(*t)
@@ -2599,6 +2640,27 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case ENUM:
       return MakeArraySerializer<EnumTextCore<WrapContext::Array>, EnumBinCore,
                                  kDynamicOid>(format, context, kind);
+    case LIST:
+      if (IsInt2vector(type)) {
+        return MakeArraySerializer<
+          VectorArrayCore<IntTextCore<int16_t>, kInt2, VarFormat::Text,
+                          WrapContext::Array>,
+          VectorArrayCore<IntBinCore<int16_t>, kInt2, VarFormat::Binary,
+                          WrapContext::None>,
+          kInt2Vector>(format, context, kind);
+      }
+      if (IsOidvector(type)) {
+        return MakeArraySerializer<
+          VectorArrayCore<IntTextCore<int64_t>, kOid, VarFormat::Text,
+                          WrapContext::Array>,
+          VectorArrayCore<OidBinCore, kOid, VarFormat::Binary,
+                          WrapContext::None>,
+          kOidvector>(format, context, kind);
+      }
+      SDB_ASSERT(IsMultirange(type));
+      return MakeArraySerializer<MultirangeTextCore<WrapContext::Array>,
+                                 MultirangeBinCore, kDynamicOid>(format,
+                                                                 context, kind);
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("Array element type not supported"));
@@ -2887,16 +2949,17 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
         return MakeVectorSerializer<IntTextCore<int64_t>, OidBinCore, kOid>(
           format, context);
       }
+      if (IsMultirange(type)) {
+        return SelectFieldSerializer<MultirangeTextCore<WrapContext::None>,
+                                     MultirangeTextCore<WrapContext::Record>,
+                                     MultirangeBinCore>(format, context);
+      }
       const auto* element_type = &type;
       size_t dims = 0;
-      while (true) {
-        if (element_type->id() == ARRAY) {
-          element_type = &duckdb::ArrayType::GetChildType(*element_type);
-        } else if (element_type->id() == LIST || element_type->id() == MAP) {
-          element_type = &duckdb::ListType::GetChildType(*element_type);
-        } else {
-          break;
-        }
+      while (IsArrayDimension(*element_type)) {
+        element_type = element_type->id() == ARRAY
+                         ? &duckdb::ArrayType::GetChildType(*element_type)
+                         : &duckdb::ListType::GetChildType(*element_type);
         ++dims;
       }
       // >=2-D nesting -> PG multi-dim flatten (rectangular; a ragged inner

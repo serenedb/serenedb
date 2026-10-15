@@ -95,12 +95,18 @@ outside_pg_catalog
 
 # A known signature keeps its shape: upper(text) -> text, one argument.
 
-query
+query rowsort
 SELECT DISTINCT p.pronargs, format_type(p.prorettype, NULL) AS rettype
 FROM pg_proc p WHERE p.proname = 'upper'
 ----
 pronargs	rettype
+1	bigint
+1	date
+1	integer
+1	numeric
 1	text
+1	timestamp with time zone
+1	timestamp without time zone
 
 
 query
@@ -121,7 +127,7 @@ upper	i
 # collapsing to unknown (705) -- roughly a tenth of builtins are legitimately
 # generic, so the check is a ratio, not a count.
 
-query
+query error
 SELECT
   (SELECT DISTINCT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper')
     AS upper_arg1,
@@ -130,8 +136,23 @@ SELECT
    < (SELECT count(*) FROM pg_proc WHERE pronargs > 0) / 2
     AS most_args_resolve
 ----
+db error: ERROR: More than one row returned by a subquery used as an expression - scalar subqueries can only return a single row.
+
+Use "SET scalar_subquery_error_on_multiple_rows=false" to revert to previous behavior of returning a random row.
+
+
+query
+SELECT
+  (SELECT format_type(proargtypes[1], NULL) FROM pg_proc WHERE proname = 'upper' AND prorettype = 'text'::regtype)
+    AS upper_arg1,
+  (SELECT count(*) FROM pg_proc WHERE pronargs > 0
+     AND NOT EXISTS (SELECT 1 FROM unnest(proargtypes) t WHERE t <> 705))
+   < (SELECT count(*) FROM pg_proc WHERE pronargs > 0) / 2
+    AS most_args_resolve
+----
 upper_arg1	most_args_resolve
 text	t
+
 
 
 # pg_aggregate is one row per aggregate overload, keyed on the pg_proc oid.

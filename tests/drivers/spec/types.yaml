@@ -448,6 +448,67 @@
   skip:
     python_asyncpg: ["extended-text", "extended-binary"]
 
+# ---- multiranges ----
+- oid: 4451
+  name: int4multirange
+  pg_typname: int4multirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[1,5),[7,9]}", "{}", "{(,)}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 4536
+  name: int8multirange
+  pg_typname: int8multirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[1,9223372036854775806]}", "{}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 4532
+  name: nummultirange
+  pg_typname: nummultirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[1.5,2.5),(3,)}", "{}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 4535
+  name: datemultirange
+  pg_typname: datemultirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[2020-01-01,2020-02-01),(2020-03-01,infinity]}", "{}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 4533
+  name: tsmultirange
+  pg_typname: tsmultirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[\"2020-01-01 10:00:00\",\"2020-01-02 10:00:00\")}", "{(,)}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 4534
+  name: tstzmultirange
+  pg_typname: tstzmultirange
+  text: true
+  binary: true
+  array: true
+  samples: ["{[\"2020-01-01 10:00:00+00\",)}", "{}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
 # ---- arrays of common scalars (already covered by `array: true` above,
 #      but a small number of explicit array-OID entries keeps the harness
 #      honest about array-specific binary format) ----

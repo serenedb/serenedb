@@ -2386,87 +2386,87 @@ statement ok
 SELECT unnest('{1,2,3}'::int[]);
 
 # op_arr_range: @>
-statement error
+statement ok
 SELECT int4range(1,10) @> 5;
 
 # op_arr_range: <@
-statement error
+statement ok
 SELECT int4range(2,4) <@ int4range(1,10);
 
 # op_arr_range: &&
-statement error
+statement ok
 SELECT int4range(1,5) && int4range(4,10);
 
 # op_arr_range: <<
-statement error
+statement ok
 SELECT int4range(1,5) << int4range(6,10);
 
 # op_arr_range: >>
-statement error
+statement ok
 SELECT int4range(6,10) >> int4range(1,5);
 
 # op_arr_range: &<
-statement error
+statement ok
 SELECT int4range(1,5) &< int4range(4,10);
 
 # op_arr_range: &>
-statement error
+statement ok
 SELECT int4range(4,10) &> int4range(1,5);
 
 # op_arr_range: -|-
-statement error
+statement ok
 SELECT int4range(1,5) -|- int4range(5,10);
 
 # op_arr_range: +
-statement error
+statement ok
 SELECT int4range(1,5) + int4range(4,10);
 
 # op_arr_range: *
-statement error
+statement ok
 SELECT int4range(1,10) * int4range(4,20);
 
 # op_arr_range: -
-statement error
+statement ok
 SELECT int4range(1,10) - int4range(4,20);
 
 # op_arr_range: lower
-statement error
+statement ok
 SELECT lower(int4range(1,10));
 
 # op_arr_range: upper
-statement error
+statement ok
 SELECT upper(int4range(1,10));
 
 # op_arr_range: isempty
-statement error
+statement ok
 SELECT isempty(int4range(1,10));
 
 # op_arr_range: lower_inc
-statement error
+statement ok
 SELECT lower_inc(int4range(1,10));
 
 # op_arr_range: upper_inc
-statement error
+statement ok
 SELECT upper_inc(int4range(1,10));
 
 # op_arr_range: lower_inf
-statement error
+statement ok
 SELECT lower_inf(int4range(1,10));
 
 # op_arr_range: upper_inf
-statement error
+statement ok
 SELECT upper_inf(int4range(1,10));
 
 # op_arr_range: range_merge
-statement error
+statement ok
 SELECT range_merge(int4range(1,5), int4range(8,10));
 
 # op_arr_range: multirange
-statement error
+statement ok
 SELECT multirange(int4range(1,5));
 
 # op_arr_range: unnest
-statement error
+statement ok
 SELECT unnest(int4multirange(int4range(1,5), int4range(8,10)));
 
 # op_agg: any_value
@@ -2534,7 +2534,7 @@ statement ok
 SELECT min(c) FROM (VALUES (1),(2),(3)) t(c);
 
 # op_agg: range(_intersect)_agg
-statement error
+statement ok
 SELECT range_agg(c) FROM (VALUES ('[1,2)'::int4range),('[3,4)'::int4range)) t(c);
 
 # op_agg: string_agg

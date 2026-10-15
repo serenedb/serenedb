@@ -86,3 +86,36 @@ FROM range_csv c JOIN range_parquet p ON c.id = p.id ORDER BY c.id;
 id	r	d	t	n	same
 1	[1,5)	[2020-01-01,2020-02-01)	["2020-01-01 10:00:00","2020-01-02 10:00:00")	[1.500,2.500]	t
 2	empty	NULL	(,)	(,3.000]	t
+
+
+statement ok
+CREATE TABLE range_read (id INT, r int4range, d daterange, t tsrange, n numrange);
+
+
+statement count 2
+INSERT INTO range_read SELECT * FROM read_parquet('${__TEST_DIR__}/range_copy.parquet');
+
+
+query
+SELECT id, r, d, t, n FROM range_read ORDER BY id;
+----
+id	r	d	t	n
+1	[1,5)	[2020-01-01,2020-02-01)	["2020-01-01 10:00:00","2020-01-02 10:00:00")	[1.500,2.500]
+2	empty	NULL	(,)	(,3.000]
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 5, 'upper_inclusive': true} AS int4range) AS a,
+       TRY_CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+                 'upper': 1, 'upper_inclusive': false} AS int4range) IS NULL AS b;
+----
+a	b
+[2,6)	t
+
+
+statement error
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+             'upper': 1, 'upper_inclusive': false} AS int4range);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound

@@ -1137,16 +1137,13 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   // Resolve the leaf element deserializer once (the element type is fixed for
   // the whole array). LIST and MAP each contribute one dimension; ARRAY targets
   // aren't reconstructed by the multi-dim path.
-  const duckdb::LogicalType* leaf = &vec.GetType();
-  for (int32_t d = 0; d < ndim; ++d) {
-    const auto id = leaf->id();
-    if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::MAP) {
-      leaf = &duckdb::ListType::GetChildType(*leaf);
-    } else if (id == duckdb::LogicalTypeId::ARRAY) {
+  const auto* leaf = &duckdb::ListType::GetChildType(vec.GetType());
+  for (int32_t d = 1; d < ndim; ++d) {
+    if (leaf->id() == duckdb::LogicalTypeId::ARRAY ||
+        !IsArrayDimension(*leaf)) {
       return false;
-    } else {
-      break;
     }
+    leaf = &duckdb::ListType::GetChildType(*leaf);
   }
   const auto leaf_fn = GetDeserialization<VectorSink>(*leaf, VarFormat::Binary);
   if (leaf_fn == nullptr) {
@@ -1531,7 +1528,8 @@ bool DeserializeTextList(DeserializeContext& ctx, std::string_view data,
     return false;
   }
   const auto& child_type = duckdb::ListType::GetChildType(vec.GetType());
-  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST;
+  const bool nested = child_type.id() == duckdb::LogicalTypeId::LIST &&
+                      IsArrayDimension(child_type);
   const auto cur = duckdb::ListVector::GetListSize(vec);
   duckdb::idx_t count = 0;
   if (!ScanArrayItems(body, [&](std::string_view, bool) { ++count; })) {
@@ -1859,6 +1857,67 @@ bool DeserializeBinaryRange(DeserializeContext& ctx, std::string_view data,
          FinishRange(vec, row, flags);
 }
 
+template<typename Decode>
+bool DecodeMultirange(duckdb::Vector& vec, duckdb::idx_t row,
+                      duckdb::idx_t count, Decode&& decode) {
+  const auto cur = duckdb::ListVector::GetListSize(vec);
+  duckdb::ListVector::Reserve(vec, cur + count);
+  auto& child = duckdb::ListVector::GetChildMutable(vec);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (!decode(child, cur + i)) {
+      return false;
+    }
+  }
+  Out<duckdb::list_entry_t>(vec)[row] = {cur, count};
+  duckdb::ListVector::SetListSize(vec, cur + count);
+  FinishMultirange(vec, row);
+  return true;
+}
+
+bool DeserializeTextMultirange(DeserializeContext& ctx, std::string_view data,
+                               duckdb::Vector& vec, duckdb::idx_t row) {
+  std::vector<std::string_view> ranges;
+  if (SplitMultirange(data, ranges)) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  auto text = ranges.begin();
+  return DecodeMultirange(
+    vec, row, ranges.size(), [&](duckdb::Vector& child, duckdb::idx_t index) {
+      return DecodeChild(ctx, range, VarFormat::Text, *text++, child, index);
+    });
+}
+
+bool DeserializeBinaryMultirange(DeserializeContext& ctx, std::string_view data,
+                                 duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.size() < 4) {
+    return false;
+  }
+  const auto count = absl::big_endian::Load<int32_t>(data.data());
+  data.remove_prefix(4);
+  if (count < 0 || static_cast<size_t>(count) > data.size() / 5) {
+    return false;
+  }
+  const auto& range = duckdb::ListType::GetChildType(vec.GetType());
+  return DecodeMultirange(
+           vec, row, static_cast<duckdb::idx_t>(count),
+           [&](duckdb::Vector& child, duckdb::idx_t index) {
+             if (data.size() < 4) {
+               return false;
+             }
+             const auto length = absl::big_endian::Load<int32_t>(data.data());
+             data.remove_prefix(4);
+             if (length < 0 || static_cast<size_t>(length) > data.size()) {
+               return false;
+             }
+             const auto body = data.substr(0, length);
+             data.remove_prefix(length);
+             return DecodeChild(ctx, range, VarFormat::Binary, body, child,
+                                index);
+           }) &&
+         data.empty();
+}
+
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
@@ -1877,6 +1936,24 @@ struct RangeText {
                      Sink& sink) {
     return NestedAdapter<Sink>::template Run<DeserializeTextRange>(ctx, data,
                                                                    sink);
+  }
+};
+
+struct MultirangeBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryMultirange>(
+      ctx, data, sink);
+  }
+};
+
+struct MultirangeText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeTextMultirange>(
+      ctx, data, sink);
   }
 };
 
@@ -2139,6 +2216,9 @@ DeserializationFunction<Sink> GetDeserialization(
       if (IsOidvector(type)) {
         return SelectDecoder<ListBin, VectorText<int64_t, ParseOidVector>,
                              Sink>(binary);
+      }
+      if (IsMultirange(type)) {
+        return SelectDecoder<MultirangeBin, MultirangeText, Sink>(binary);
       }
       return SelectDecoder<ListBin, ListText, Sink>(binary);
     case ARRAY:

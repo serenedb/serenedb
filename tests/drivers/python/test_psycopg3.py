@@ -26,6 +26,15 @@ import psycopg
 import pytest
 from psycopg.adapt import Loader
 from psycopg.pq import Format, TransactionStatus
+from psycopg.types.multirange import (
+    DateMultirange,
+    Int4Multirange,
+    Int8Multirange,
+    Multirange,
+    NumericMultirange,
+    TimestampMultirange,
+    TimestamptzMultirange,
+)
 from psycopg.types.range import (
     DateRange,
     Int4Range,
@@ -582,6 +591,97 @@ def test_range_values_roundtrip():
                  Range(Decimal("1.5"), Decimal("2.5")), Range(empty=True)),
                 (2, None, None, None, None),
             ]
+    finally:
+        with c.cursor() as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
+def test_binary_array_deeper_than_its_type():
+    """A binary array carries its own number of dimensions. One with more
+    dimensions than the parameter's array type holds is refused as malformed
+    binary data, and the session keeps working.
+    """
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with c.cursor(binary=True) as cur:
+            with pytest.raises(psycopg.errors.InvalidBinaryRepresentation):
+                cur.execute("SELECT %b::int4[]", ([[1, 2], [3, 4]],))
+        assert c.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_multirange_values_roundtrip():
+    """Multirange values travel in both wire formats -- bound parameters,
+    results, arrays of multiranges and binary COPY -- and come back sorted and
+    merged as in PostgreSQL. Cross-checked against PostgreSQL 18. Integer
+    bounds need their full width, as for ranges.
+    """
+    utc = timezone.utc
+    cases = [
+        ("int4multirange",
+         Int4Multirange([Int4Range(100010, 100020), Int4Range(100000, 100005, "[]")]),
+         Multirange([Range(100000, 100006), Range(100010, 100020)])),
+        ("int4multirange", Int4Multirange(), Multirange()),
+        ("int8multirange",
+         Int8Multirange([Int8Range(None, 10_000_000_000, "(]"),
+                         Int8Range(10_000_000_001, 10_000_000_005)]),
+         Multirange([Range(None, 10_000_000_005, "()")])),
+        ("nummultirange",
+         NumericMultirange([NumericRange(Decimal("1.5"), Decimal("2.5"), "(]")]),
+         Multirange([Range(Decimal("1.5"), Decimal("2.5"), "(]")])),
+        ("datemultirange",
+         DateMultirange([DateRange(date(2020, 1, 1), date(2020, 1, 31), "(]"),
+                         DateRange(date(2020, 3, 1), None)]),
+         Multirange([Range(date(2020, 1, 2), date(2020, 2, 1)), Range(date(2020, 3, 1), None)])),
+        ("tsmultirange",
+         TimestampMultirange([TimestampRange(datetime(2020, 1, 1, 10), None)]),
+         Multirange([Range(datetime(2020, 1, 1, 10), None)])),
+        ("tstzmultirange",
+         TimestamptzMultirange([TimestamptzRange(datetime(2020, 1, 1, 10, tzinfo=utc),
+                                                 datetime(2020, 1, 2, tzinfo=utc), "[]")]),
+         Multirange([Range(datetime(2020, 1, 1, 10, tzinfo=utc),
+                           datetime(2020, 1, 2, tzinfo=utc), "[]")])),
+    ]
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    src = f"multirange_copy_src_{os.getpid()}"
+    dst = f"multirange_copy_dst_{os.getpid()}"
+    try:
+        for binary in (False, True):
+            with c.cursor(binary=binary) as cur:
+                for name, value, expected in cases:
+                    cur.execute(
+                        f"SELECT %s::{name}, ARRAY[%s::{name}, '{{}}'::{name}]",
+                        (value, value))
+                    assert cur.fetchone() == (expected, [expected, Multirange()]), (
+                        binary, name)
+        rows = [
+            (1, Int4Multirange([Int4Range(100000, 100005), Int4Range(100007, 100009)]),
+             DateMultirange([DateRange(date(2020, 1, 1), None)]), NumericMultirange()),
+            (2, None, None, None),
+        ]
+        with c.cursor(binary=True) as cur:
+            for table in (src, dst):
+                cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+                cur.execute(f'CREATE TABLE "{table}" '
+                            "(id int, m int4multirange, d datemultirange, n nummultirange)")
+            with cur.copy(f'COPY "{src}" FROM STDIN (FORMAT BINARY)') as cp:
+                cp.set_types(["int4", "int4multirange", "datemultirange", "nummultirange"])
+                for row in rows:
+                    cp.write_row(row)
+            for fmt in ("BINARY", "TEXT"):
+                cur.execute(f'DELETE FROM "{dst}"')
+                data = b""
+                with cur.copy(f'COPY "{src}" TO STDOUT (FORMAT {fmt})') as cp:
+                    for chunk in cp:
+                        data += bytes(chunk)
+                with cur.copy(f'COPY "{dst}" FROM STDIN (FORMAT {fmt})') as cp:
+                    cp.write(data)
+                cur.execute(f'SELECT * FROM "{dst}" ORDER BY id')
+                assert cur.fetchall() == [
+                    (1, Multirange([Range(100000, 100005), Range(100007, 100009)]),
+                     Multirange([Range(date(2020, 1, 1), None)]), Multirange()),
+                    (2, None, None, None),
+                ], fmt
     finally:
         with c.cursor() as cur:
             for table in (src, dst):

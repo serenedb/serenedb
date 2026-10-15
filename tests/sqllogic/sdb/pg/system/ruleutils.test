@@ -277,7 +277,7 @@ SELECT pg_get_function_arguments(oid) AS args, pg_get_function_result(oid) AS re
 FROM pg_proc WHERE proname = 'lower' AND pronamespace = 'pg_catalog'::regnamespace ORDER BY args LIMIT 1;
 ----
 args	result
-text	text
+datemultirange	date
 
 
 query

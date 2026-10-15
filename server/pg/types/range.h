@@ -28,6 +28,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sdb::pg {
 
@@ -37,6 +38,13 @@ inline constexpr std::string_view kNumrangeAlias = "numrange";
 inline constexpr std::string_view kDaterangeAlias = "daterange";
 inline constexpr std::string_view kTsrangeAlias = "tsrange";
 inline constexpr std::string_view kTstzrangeAlias = "tstzrange";
+
+inline constexpr std::string_view kInt4multirangeAlias = "int4multirange";
+inline constexpr std::string_view kInt8multirangeAlias = "int8multirange";
+inline constexpr std::string_view kNummultirangeAlias = "nummultirange";
+inline constexpr std::string_view kDatemultirangeAlias = "datemultirange";
+inline constexpr std::string_view kTsmultirangeAlias = "tsmultirange";
+inline constexpr std::string_view kTstzmultirangeAlias = "tstzmultirange";
 
 inline constexpr duckdb::idx_t kRangeNonemptyChild = 0;
 inline constexpr duckdb::idx_t kRangeLowerFiniteChild = 1;
@@ -59,7 +67,15 @@ duckdb::LogicalType DATERANGE();
 duckdb::LogicalType TSRANGE();
 duckdb::LogicalType TSTZRANGE();
 
+duckdb::LogicalType INT4MULTIRANGE();
+duckdb::LogicalType INT8MULTIRANGE();
+duckdb::LogicalType NUMMULTIRANGE();
+duckdb::LogicalType DATEMULTIRANGE();
+duckdb::LogicalType TSMULTIRANGE();
+duckdb::LogicalType TSTZMULTIRANGE();
+
 bool IsRange(const duckdb::LogicalType& type);
+bool IsMultirange(const duckdb::LogicalType& type);
 
 uint8_t ReadRangeFlags(const duckdb::RecursiveUnifiedVectorFormat& range,
                        duckdb::idx_t row);
@@ -74,6 +90,11 @@ std::optional<irs::pg::SqlErrorData> ParseRange(std::string_view text,
                                                 ParsedRange& range);
 
 bool FinishRange(duckdb::Vector& range, duckdb::idx_t row, uint8_t flags);
+
+std::optional<irs::pg::SqlErrorData> SplitMultirange(
+  std::string_view text, std::vector<std::string_view>& ranges);
+
+void FinishMultirange(duckdb::Vector& multirange, duckdb::idx_t row);
 
 void RegisterRange(duckdb::DatabaseInstance& db);
 

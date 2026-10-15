@@ -122,4 +122,6 @@ std::span<const PgTypeMapping> PgTypeMappings();
 duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type);
 ColumnType DescribeColumnType(const duckdb::LogicalType& type);
 
+bool IsArrayDimension(const duckdb::LogicalType& type);
+
 }  // namespace sdb::pg

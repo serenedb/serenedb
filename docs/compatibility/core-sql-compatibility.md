@@ -668,8 +668,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 #### Range
 | Feature                  | Support State | Details |
 |--------------------------|---------------|---------|
-| @>                       | Yes           | A string literal on the right is read as an element, not a range: write `r @> '[2,3)'::int4range` to test a range |
-| \<@                      | Yes           | A string literal on the left is read as an element, not a range: write `'[2,3)'::int4range <@ r` to test a range |
+| @>                       | Yes           | A string literal on the right is read as an element, not a range or multirange: write `r @> '[2,3)'::int4range` to test a range |
+| \<@                      | Yes           | A string literal on the left is read as an element, not a range or multirange: write `'[2,3)'::int4range <@ r` to test a range |
 | &&                       | Yes           |         |
 | \<\<                     | Yes           |         |
 | >>                       | Yes           |         |
@@ -687,8 +687,8 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | lower_inf                | Yes           |         |
 | upper_inf                | Yes           |         |
 | range_merge              | Yes           |         |
-| multirange               | No            |         |
-| unnest                   | No            |         |
+| multirange               | Yes           |         |
+| unnest                   | Yes           |         |
 | CREATE TYPE ... AS RANGE | No            |         |
 
 #### Aggregate Functions
@@ -712,7 +712,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | json_arrayagg              | No            |                               |
 | max                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | min                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| range(_intersect)_agg      | No            |                               |
+| range(_intersect)_agg      | Yes           |                               |
 | string_agg                 | Yes           |                                  |
 | sum                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | xmlagg                      | Yes           |                               |

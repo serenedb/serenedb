@@ -159,9 +159,9 @@ SELECT e FROM (
 ) g WHERE e NOT LIKE 'postgres=%';
 ----
 e
+=d/postgres
 xog_d_direct=rw/postgres
 xog_d_grp=a/postgres
-=d/postgres
 
 
 statement ok

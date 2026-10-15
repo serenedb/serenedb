@@ -105,6 +105,12 @@ constexpr PgTypeMapping kMappings[] = {
   {kRegnamespace, &REGNAMESPACE, true},
   {kRegrole, &REGROLE, true},
   {kRegcollation, &REGCOLLATION, true},
+  {kInt4Multirange, &INT4MULTIRANGE, true},
+  {kNummultirange, &NUMMULTIRANGE, true},
+  {kTsmultirange, &TSMULTIRANGE, true},
+  {kTstzmultirange, &TSTZMULTIRANGE, true},
+  {kDatemultirange, &DATEMULTIRANGE, true},
+  {kInt8Multirange, &INT8MULTIRANGE, true},
   {kPgMcvList, &PG_MCV_LIST, true},
   {kXid8, &XID8, true},
   {kCardinalNumber, &CARDINALNUMBER, true},
@@ -164,6 +170,21 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
     return std::nullopt;
   }
   return it->second.GetValue<uint64_t>();
+}
+
+const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
+                                   auto accept) {
+  if (!type.HasAlias()) {
+    return nullptr;
+  }
+  const auto& alias = type.GetTypeInfo().alias;
+  for (const auto& schema : kSystemNamespaces) {
+    if (const auto* row = FindBuiltinType(schema.oid, alias);
+        row && accept(*row)) {
+      return row;
+    }
+  }
+  return nullptr;
 }
 
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
@@ -369,14 +390,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
         return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
                 -1};
       }
-      if (type.HasAlias()) {
-        const auto& alias = type.GetTypeInfo().alias;
-        for (const auto& schema : kSystemNamespaces) {
-          if (const auto* row = FindBuiltinType(schema.oid, alias);
-              row && (row->relid != 0 || row->type == 'r')) {
-            return make(*row);
-          }
-        }
+      if (const auto* row = FindAliasedType(type, [](const BuiltinType& row) {
+            return row.relid != 0 || row.type == 'r';
+          })) {
+        return make(*row);
       }
       return make(kRecord);
     case MAP:
@@ -387,6 +404,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       }
       if (IsOidvector(type)) {
         return make(kOidvector);
+      }
+      if (const auto* row = FindAliasedType(
+            type, [](const BuiltinType& row) { return row.type == 'm'; })) {
+        return make(*row);
       }
       return Logical2Pg(duckdb::ListType::GetChildType(type), true, wire);
     case ARRAY:
@@ -495,8 +516,7 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
   const auto info = Logical2Pg(type, false, false);
   int16_t ndims = 0;
   const auto* element = &type;
-  while ((element->id() == TypeId::LIST || element->id() == TypeId::ARRAY) &&
-         !IsInt2vector(*element) && !IsOidvector(*element)) {
+  while (element->id() != TypeId::MAP && IsArrayDimension(*element)) {
     ++ndims;
     element = element->id() == TypeId::LIST
                 ? &duckdb::ListType::GetChildType(*element)
@@ -530,6 +550,15 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
     result.storage = 'p';
   }
   return result;
+}
+
+bool IsArrayDimension(const duckdb::LogicalType& type) {
+  const auto id = type.id();
+  if (id == TypeId::LIST) {
+    return !type.HasAlias() ||
+           (!IsInt2vector(type) && !IsOidvector(type) && !IsMultirange(type));
+  }
+  return id == TypeId::ARRAY || id == TypeId::MAP;
 }
 
 }  // namespace sdb::pg

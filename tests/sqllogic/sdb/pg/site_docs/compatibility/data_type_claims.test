@@ -141,7 +141,7 @@ statement ok
 SELECT NULL::"date" IS NULL;
 
 
-# datemultirange (🔴)
+# datemultirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'datemultirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -149,10 +149,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"datemultirange" IS NULL;
-----
-db error: ERROR: Type with name datemultirange does not exist!<slt:ignore>
 
 
 # daterange (🟡)
@@ -253,7 +251,7 @@ statement ok
 SELECT NULL::"int4" IS NULL;
 
 
-# int4multirange (🔴)
+# int4multirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'int4multirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -261,10 +259,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"int4multirange" IS NULL;
-----
-db error: ERROR: Type with name int4multirange does not exist!<slt:ignore>
 
 
 # int4range (🟡)
@@ -291,7 +287,7 @@ statement ok
 SELECT NULL::"int8" IS NULL;
 
 
-# int8multirange (🔴)
+# int8multirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'int8multirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -299,10 +295,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"int8multirange" IS NULL;
-----
-db error: ERROR: Type with name int8multirange does not exist!<slt:ignore>
 
 
 # int8range (🟡)
@@ -457,7 +451,7 @@ statement ok
 SELECT NULL::"numeric" IS NULL;
 
 
-# nummultirange (🔴)
+# nummultirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'nummultirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -465,10 +459,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"nummultirange" IS NULL;
-----
-db error: ERROR: Type with name nummultirange does not exist!<slt:ignore>
 
 
 # numrange (🟡)
@@ -867,7 +859,7 @@ statement ok
 SELECT NULL::"timetz" IS NULL;
 
 
-# tsmultirange (🔴)
+# tsmultirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'tsmultirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -875,10 +867,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"tsmultirange" IS NULL;
-----
-db error: ERROR: Type with name tsmultirange does not exist!<slt:ignore>
 
 
 # tsquery (🟡)
@@ -905,7 +895,7 @@ statement ok
 SELECT NULL::"tsrange" IS NULL;
 
 
-# tstzmultirange (🔴)
+# tstzmultirange (🟡)
 query
 SELECT count(*) AS listed FROM pg_catalog.pg_type WHERE typname = 'tstzmultirange' AND typnamespace = 'pg_catalog'::regnamespace;
 ----
@@ -913,10 +903,8 @@ listed
 1
 
 
-statement error
+statement ok
 SELECT NULL::"tstzmultirange" IS NULL;
-----
-db error: ERROR: Type with name tstzmultirange does not exist!<slt:ignore>
 
 
 # tstzrange (🟡)

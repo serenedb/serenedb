@@ -672,6 +672,37 @@ CREATE JOB jd_invalid AFTER 1 HOUR AS SELECT $1;
 db error: ERROR: <slt:ignore>CREATE JOB cannot have parameters<slt:ignore>
 
 
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing, jd_other;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing RESTART IDENTITY;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN c INT NOT NULL DEFAULT 0;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS DROP ROLE jd_role_a, jd_role_b;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+
+
+query
+SELECT count(*) FROM sdb_jobs() WHERE job_name = 'jd_invalid';
+----
+count
+0
+
+
 statement ok
 DROP TABLE IF EXISTS jd_calls;
 

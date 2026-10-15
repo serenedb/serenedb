@@ -1,0 +1,156 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA obns_outer;
+
+
+statement ok
+CREATE SCHEMA obns_outer.obns_inner;
+
+
+statement ok
+CREATE SCHEMA obns_inner;
+
+
+statement ok
+CREATE TABLE obns_outer.obns_inner.t (id INT, n INT);
+
+
+statement ok
+CREATE TABLE obns_inner.t (id INT);
+
+
+statement ok
+CREATE SEQUENCE obns_outer.obns_inner.qualified OWNED BY obns_outer.obns_inner.t.n;
+
+
+statement ok
+CREATE SEQUENCE obns_outer.obns_inner.short OWNED BY t.n;
+
+
+statement ok
+CREATE SEQUENCE obns_outer.obns_inner.altered;
+
+
+statement ok
+ALTER SEQUENCE obns_outer.obns_inner.altered OWNED BY t.id;
+
+
+statement ok
+CREATE SEQUENCE obns_inner.top OWNED BY t.id;
+
+
+statement error
+ALTER SEQUENCE obns_outer.obns_inner.altered OWNED BY obns_inner.t.id;
+----
+db error: ERROR: sequence must be in same schema as table it is linked to
+
+
+statement error
+CREATE SEQUENCE obns_outer.obns_inner.other OWNED BY obns_outer.t.id;
+----
+db error: ERROR: sequence must be in same schema as table it is linked to
+
+
+statement ok
+DROP TABLE obns_inner.t;
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner' ORDER BY 1;
+----
+sequence_name
+altered
+qualified
+short
+
+
+statement ok
+DROP TABLE obns_outer.obns_inner.t;
+
+
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database() AND schema_name = 'obns_inner';
+----
+sequences
+0
+
+
+statement ok
+DROP SCHEMA obns_outer CASCADE;
+
+
+statement ok
+DROP SCHEMA obns_inner CASCADE;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/obns_duck.duckdb' AS obns_duck_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA obns_duck_${__DATABASE__}.a;
+
+
+statement ok
+CREATE SCHEMA obns_duck_${__DATABASE__}.a.b;
+
+
+statement ok
+CREATE SCHEMA obns_duck_${__DATABASE__}.b;
+
+
+statement ok
+CREATE TABLE obns_duck_${__DATABASE__}.b.t (id INTEGER);
+
+
+statement ok
+CREATE TABLE obns_duck_${__DATABASE__}.a.b.t (id INTEGER);
+
+
+statement ok
+CREATE SEQUENCE obns_duck_${__DATABASE__}.a.b.by_top;
+
+
+statement ok
+CREATE SEQUENCE obns_duck_${__DATABASE__}.a.b.by_create OWNED BY obns_duck_${__DATABASE__}.b.t;
+
+
+statement ok
+USE obns_duck_${__DATABASE__};
+
+
+statement ok
+ALTER SEQUENCE a.b.by_top OWNED BY b.t;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP TABLE obns_duck_${__DATABASE__}.a.b.t;
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}' ORDER BY 1;
+----
+sequence_name
+by_create
+by_top
+
+
+statement ok
+DROP TABLE obns_duck_${__DATABASE__}.b.t;
+
+
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = 'obns_duck_${__DATABASE__}';
+----
+sequences
+0
+
+
+statement ok
+DETACH obns_duck_${__DATABASE__};

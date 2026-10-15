@@ -2,7 +2,7 @@ control substitution on
 
 
 statement ok
-DROP DATABASE IF EXISTS exrj_target;
+DROP DATABASE IF EXISTS exrj_${__DATABASE__};
 
 
 system ok
@@ -23,7 +23,49 @@ CREATE INDEX exrj_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval
 
 
 statement ok
-CREATE JOB exrj_job AFTER 1 HOUR AS SELECT 1;
+CREATE INDEX exrj_paused_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval = 600000);
+
+
+statement ok
+ALTER JOB exrj_paused_idx SUSPEND;
+
+
+statement ok
+CREATE INDEX exrj_old_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval = 900000);
+
+
+statement ok
+ALTER INDEX exrj_old_idx RENAME TO exrj_renamed_idx;
+
+
+statement ok
+CREATE INDEX exrj_every_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval = 1200000);
+
+
+statement ok
+ALTER JOB exrj_every_idx SET SCHEDULE EVERY 30 MINUTES;
+
+
+statement ok
+CREATE INDEX exrj_manual_idx ON exrj_v USING inverted (id, body) WITH (reindex_interval = 0);
+
+
+statement ok
+CREATE MACRO exrj_refresh() AS TABLE SELECT * FROM execute_job('exrj_idx');
+
+
+statement ok
+CREATE VIEW exrj_paused_run AS SELECT * FROM execute_job('exrj_paused_idx');
+
+
+query
+SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+job_name	schedule	suspended
+exrj_every_idx	EVERY INTERVAL '00:30:00'	f
+exrj_idx	AFTER INTERVAL '01:00:00'	f
+exrj_old_idx	AFTER INTERVAL '00:15:00'	f
+exrj_paused_idx	AFTER INTERVAL '00:10:00'	t
 
 
 statement ok
@@ -31,21 +73,53 @@ EXPORT DATABASE '${__TEST_DIR__}/exrj_export';
 
 
 query
-SELECT position('CREATE JOB' IN content) AS job,
-       position('reindex_interval' IN content) AS reindex,
-       position('CREATE INDEX exrj_idx' IN content) > 0 AS idx
+SELECT regexp_extract(line, '^CREATE INDEX (\w+) ', 1) AS index_name,
+       regexp_extract(line, 'reindex_interval = (\d+)', 1) AS reindex_interval
+FROM (
+    SELECT unnest(string_split(content, chr(10))) AS line
+    FROM read_text('${__TEST_DIR__}/exrj_export/schema.sql')
+)
+WHERE line LIKE 'CREATE INDEX %'
+ORDER BY 1;
+----
+index_name	reindex_interval
+exrj_every_idx	1800000
+exrj_idx	3600000
+exrj_manual_idx	0
+exrj_paused_idx	600000
+exrj_renamed_idx	900000
+
+
+query
+SELECT line
+FROM (
+    SELECT unnest(string_split(content, chr(10))) AS line
+    FROM read_text('${__TEST_DIR__}/exrj_export/schema.sql')
+)
+WHERE line LIKE '%JOB %'
+ORDER BY 1;
+----
+line
+ALTER JOB public.exrj_every_idx SET SCHEDULE EVERY INTERVAL '00:30:00';
+ALTER JOB public.exrj_paused_idx SUSPEND;
+ALTER JOB public.exrj_renamed_idx RENAME TO exrj_old_idx;
+
+
+query
+SELECT position('CREATE INDEX exrj_idx ' IN content) < position('exrj_refresh' IN content) AS macro_after_index,
+       position('CREATE INDEX exrj_paused_idx ' IN content) < position('exrj_paused_run' IN content) AS view_after_index
 FROM read_text('${__TEST_DIR__}/exrj_export/schema.sql');
 ----
-job	reindex	idx
-0	0	t
+macro_after_index	view_after_index
+t	t
 
 
 statement ok
-CREATE DATABASE exrj_target;
+CREATE DATABASE exrj_${__DATABASE__};
 
 
 statement ok
-USE exrj_target;
+USE exrj_${__DATABASE__};
 
 
 statement ok
@@ -61,10 +135,13 @@ RESET reindex_interval;
 
 
 query
-SELECT job_name, schedule FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
 ----
-job_name	schedule
-exrj_idx	AFTER INTERVAL '02:00:00'
+job_name	schedule	suspended
+exrj_every_idx	EVERY INTERVAL '00:30:00'	f
+exrj_idx	AFTER INTERVAL '01:00:00'	f
+exrj_old_idx	AFTER INTERVAL '00:15:00'	f
+exrj_paused_idx	AFTER INTERVAL '00:10:00'	t
 
 
 query
@@ -74,16 +151,31 @@ body
 arelav is skuf
 
 
-statement ok
-USE $__DATABASE__;
+query
+SELECT (SELECT count(*) FROM duckdb_functions() WHERE database_name = current_database() AND function_name = 'exrj_refresh') AS macros,
+       (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name = 'exrj_paused_run') AS views;
+----
+macros	views
+1	1
 
 
 statement ok
-DROP DATABASE exrj_target;
+DROP INDEX exrj_renamed_idx;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'exrj_old_idx';
+----
+jobs
+0
 
 
 statement ok
-DROP JOB exrj_job;
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE exrj_${__DATABASE__};
 
 
 statement ok

@@ -491,7 +491,7 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
 tgname	tgenabled
 orders_audited	A
 
-# DOCS_TEST: example_038
+# DOCS_TEST: search_table_triggers
 
 statement ok
 DROP TABLE IF EXISTS events_audit;

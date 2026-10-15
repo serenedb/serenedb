@@ -20,50 +20,10 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
-
-#include <atomic>
-#include <cstdint>
-#include <utility>
+#include "utils/drain_gate.h"
 
 namespace sdb::backup {
 
-class CommitGate final {
- public:
-  class [[nodiscard]] Pass {
-   public:
-    Pass() = default;
-    explicit Pass(CommitGate* gate) noexcept : _gate{gate} {}
-    Pass(Pass&& other) noexcept : _gate{std::exchange(other._gate, nullptr)} {}
-    Pass& operator=(Pass&& other) noexcept {
-      if (this != &other) {
-        Release();
-        _gate = std::exchange(other._gate, nullptr);
-      }
-      return *this;
-    }
-    ~Pass() { Release(); }
-
-    explicit operator bool() const noexcept { return _gate != nullptr; }
-    void Release() noexcept;
-
-   private:
-    CommitGate* _gate = nullptr;
-  };
-
-  static CommitGate& Instance();
-
-  Pass Enter();
-  bool Close(absl::FunctionRef<bool()> cancelled) noexcept;
-  void Open() noexcept;
-  void Leave() noexcept;
-
- private:
-  absl::Mutex _mutex;
-  absl::CondVar _cv;
-  std::atomic<bool> _closed{false};
-  std::atomic<uint32_t> _in_flight{0};
-};
+utils::DrainGate& CommitGate();
 
 }  // namespace sdb::backup

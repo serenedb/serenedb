@@ -21,9 +21,7 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
-#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <atomic>
@@ -31,6 +29,8 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
+
+#include "utils/drain_gate.h"
 
 namespace sdb {
 namespace search {
@@ -123,20 +123,11 @@ class SearchEngine final {
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
-  bool IsBackupActive() const noexcept {
-    return _backup_active.load(std::memory_order_acquire);
-  }
-  bool TryBeginMaintenance();
-  void EndMaintenance();
-  bool BeginBackup(absl::FunctionRef<bool()> cancelled) noexcept;
-  void EndBackup();
-  bool WaitForBackupEnd(absl::FunctionRef<bool()> cancelled);
+  bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
+  utils::DrainGate& Maintenance() noexcept { return _maintenance; }
 
  private:
-  absl::Mutex _backup_mutex;
-  absl::CondVar _backup_cv;
-  std::atomic<bool> _backup_active{false};
-  std::atomic<uint32_t> _maintenance{0};
+  utils::DrainGate _maintenance;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
@@ -149,32 +140,12 @@ class SearchEngine final {
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
 
 inline bool IsBackupActive() noexcept {
-  const auto* engine = SearchEngine::gInstance;
-  return engine && engine->IsBackupActive();
+  return GetSearchEngine().IsBackupActive();
 }
 
-class [[nodiscard]] MaintenanceClaim {
- public:
-  MaintenanceClaim() : _engine{SearchEngine::gInstance} {
-    if (_engine && !_engine->TryBeginMaintenance()) {
-      _engine = nullptr;
-      _held = false;
-    }
-  }
-  MaintenanceClaim(const MaintenanceClaim&) = delete;
-  MaintenanceClaim& operator=(const MaintenanceClaim&) = delete;
-  ~MaintenanceClaim() {
-    if (_engine) {
-      _engine->EndMaintenance();
-    }
-  }
-
-  explicit operator bool() const noexcept { return _held; }
-
- private:
-  SearchEngine* _engine;
-  bool _held = true;
-};
+inline utils::DrainGate::Pass ClaimMaintenance() noexcept {
+  return GetSearchEngine().Maintenance().TryEnter();
+}
 
 inline absl::Status BackupInProgressError() {
   return absl::UnavailableError("a backup is in progress");

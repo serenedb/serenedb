@@ -101,7 +101,7 @@ std::optional<Cut> RecordCut(
   std::span<duckdb::SingleFileBlockManager* const> block_managers,
   absl::FunctionRef<bool()> cancelled) {
   Cut cut;
-  auto& gate = CommitGate::Instance();
+  auto& gate = CommitGate();
   if (!gate.Close(cancelled)) {
     return std::nullopt;
   }
@@ -130,7 +130,7 @@ std::optional<Cut> RecordCut(
 
 void Resume(
   std::span<duckdb::SingleFileBlockManager* const> block_managers) noexcept {
-  search::GetSearchEngine().EndBackup();
+  search::GetSearchEngine().Maintenance().Open();
   catalog::ResumeRemovals();
   for (auto* block_manager : block_managers) {
     block_manager->SetDeferBlockReuse(false);
@@ -213,7 +213,7 @@ std::optional<uint64_t> BackupSession::Begin(
     Resume(block_managers);
     catalog::RemoveTree(backup_dir);
   };
-  if (!search::GetSearchEngine().BeginBackup(cancelled)) {
+  if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
     return std::nullopt;
   }
   auto cut = RecordCut(backup_dir, pins, block_managers, cancelled);

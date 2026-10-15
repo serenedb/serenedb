@@ -363,7 +363,7 @@ auto SearchTable::CompactUnsafeAsync(
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
   empty_compaction = false;
-  const MaintenanceClaim maintenance;
+  const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     co_return ResultWithTime{BackupInProgressError(), 0};
   }
@@ -401,7 +401,7 @@ auto SearchTable::CompactUnsafeAsync(
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
-  const MaintenanceClaim maintenance;
+  const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     return {absl::OkStatus(), 0};
   }
@@ -462,7 +462,7 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments,
       auto res =
         CompactUnsafe(bucket, progress, empty, field_options.get()).res;
       while (absl::IsUnavailable(res)) {
-        if (!GetSearchEngine().WaitForBackupEnd(cancelled)) {
+        if (!GetSearchEngine().Maintenance().WaitOpen(cancelled)) {
           return absl::CancelledError("compaction cancelled");
         }
         res = CompactUnsafe(bucket, progress, empty, field_options.get()).res;

@@ -82,55 +82,6 @@ void SearchEngine::stop() {
   _loops.Wait();
 }
 
-bool SearchEngine::TryBeginMaintenance() {
-  _maintenance.fetch_add(1);
-  if (_backup_active.load()) {
-    EndMaintenance();
-    return false;
-  }
-  return true;
-}
-
-void SearchEngine::EndMaintenance() {
-  [[maybe_unused]] const auto previous = _maintenance.fetch_sub(1);
-  SDB_ASSERT(previous != 0);
-  if (_backup_active.load()) {
-    absl::MutexLock lock{&_backup_mutex};
-    _backup_cv.SignalAll();
-  }
-}
-
-bool SearchEngine::BeginBackup(absl::FunctionRef<bool()> cancelled) noexcept {
-  constexpr auto kPoll = absl::Milliseconds(100);
-  absl::MutexLock lock{&_backup_mutex};
-  _backup_active.store(true);
-  while (_maintenance.load() != 0) {
-    if (_backup_cv.WaitWithTimeout(&_backup_mutex, kPoll) && cancelled()) {
-      _backup_active.store(false);
-      _backup_cv.SignalAll();
-      return false;
-    }
-  }
-  return true;
-}
-
-void SearchEngine::EndBackup() {
-  absl::MutexLock lock{&_backup_mutex};
-  _backup_active.store(false, std::memory_order_release);
-  _backup_cv.SignalAll();
-}
-
-bool SearchEngine::WaitForBackupEnd(absl::FunctionRef<bool()> cancelled) {
-  constexpr auto kPoll = absl::Milliseconds(100);
-  absl::MutexLock lock{&_backup_mutex};
-  while (_backup_active.load(std::memory_order_relaxed)) {
-    if (_backup_cv.WaitWithTimeout(&_backup_mutex, kPoll) && cancelled()) {
-      return false;
-    }
-  }
-  return true;
-}
-
 template<typename Storage>
 void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   if (_stopping.load(std::memory_order_acquire)) {

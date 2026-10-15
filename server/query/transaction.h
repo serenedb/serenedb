@@ -214,7 +214,7 @@ class Transaction : public Config {
   // Whether the in-flight statement modifies data; folded into _had_dml at
   // OnStatementEnd. Never spans a statement boundary.
   bool _statement_is_dml = false;
-  backup::CommitGate::Pass _commit_pass;
+  utils::DrainGate::Pass _commit_pass;
 };
 
 }  // namespace sdb::query

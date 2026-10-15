@@ -22,63 +22,11 @@
 
 #include <absl/base/no_destructor.h>
 
-#include <iresearch/utils/assert.hpp>
-
 namespace sdb::backup {
 
-CommitGate& CommitGate::Instance() {
-  static absl::NoDestructor<CommitGate> gGate;
+utils::DrainGate& CommitGate() {
+  static absl::NoDestructor<utils::DrainGate> gGate;
   return *gGate;
-}
-
-auto CommitGate::Enter() -> Pass {
-  for (;;) {
-    _in_flight.fetch_add(1);
-    if (!_closed.load()) {
-      return Pass{this};
-    }
-    Leave();
-    absl::MutexLock lock{&_mutex};
-    while (_closed.load()) {
-      _cv.Wait(&_mutex);
-    }
-  }
-}
-
-bool CommitGate::Close(absl::FunctionRef<bool()> cancelled) noexcept {
-  constexpr auto kPoll = absl::Milliseconds(100);
-  absl::MutexLock lock{&_mutex};
-  SDB_ASSERT(!_closed.load());
-  _closed.store(true);
-  while (_in_flight.load() != 0) {
-    if (_cv.WaitWithTimeout(&_mutex, kPoll) && cancelled()) {
-      _closed.store(false);
-      _cv.SignalAll();
-      return false;
-    }
-  }
-  return true;
-}
-
-void CommitGate::Open() noexcept {
-  absl::MutexLock lock{&_mutex};
-  _closed.store(false);
-  _cv.SignalAll();
-}
-
-void CommitGate::Leave() noexcept {
-  [[maybe_unused]] const auto previous = _in_flight.fetch_sub(1);
-  SDB_ASSERT(previous != 0);
-  if (_closed.load()) {
-    absl::MutexLock lock{&_mutex};
-    _cv.SignalAll();
-  }
-}
-
-void CommitGate::Pass::Release() noexcept {
-  if (auto* gate = std::exchange(_gate, nullptr)) {
-    gate->Leave();
-  }
 }
 
 }  // namespace sdb::backup

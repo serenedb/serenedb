@@ -243,7 +243,7 @@ void Transaction::Commit() {
 
 void Transaction::EnterCommitGate() {
   if (!_commit_pass) {
-    _commit_pass = backup::CommitGate::Instance().Enter();
+    _commit_pass = backup::CommitGate().Enter();
   }
 }
 

@@ -278,7 +278,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     };
     auto res = compact();
     while (absl::IsUnavailable(res)) {
-      if (!engine.WaitForBackupEnd([&] { return context.IsInterrupted(); })) {
+      if (!engine.Maintenance().WaitOpen(
+            [&] { return context.IsInterrupted(); })) {
         context.InterruptCheck();
       }
       res = compact();

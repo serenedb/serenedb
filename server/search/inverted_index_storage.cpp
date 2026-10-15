@@ -183,9 +183,12 @@ auto InvertedIndexStorage::ReindexClaim::Acquire(
   absl::Cleanup leave = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS noexcept {
     --storage._reindex_waiters;
   };
-  while (storage._reindex_in_flight) {
-    if (storage._reindex_cv.WaitWithTimeout(&storage._reindex_mutex, poll) &&
-        cancelled()) {
+  const auto idle = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    return !storage._reindex_in_flight;
+  };
+  while (
+    !storage._reindex_mutex.AwaitWithTimeout(absl::Condition{&idle}, poll)) {
+    if (cancelled()) {
       return ReindexClaim{nullptr};
     }
   }
@@ -199,7 +202,6 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   }
   absl::MutexLock lock{&_storage->_reindex_mutex};
   _storage->_reindex_in_flight = false;
-  _storage->_reindex_cv.SignalAll();
 }
 
 absl::Status InvertedIndexStorage::Refresh(
@@ -217,7 +219,7 @@ StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
 }
 
 ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
-  const MaintenanceClaim maintenance;
+  const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     return {absl::OkStatus(), 0};
   }
@@ -236,7 +238,7 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
   empty_compaction = false;
-  const MaintenanceClaim maintenance;
+  const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     co_return ResultWithTime{BackupInProgressError(), 0};
   }

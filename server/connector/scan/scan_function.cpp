@@ -37,7 +37,6 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
-#include <iresearch/search/queries/hnsw_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -522,7 +521,7 @@ void IResearchSetScanOrder(
     }
     return;
   }
-  if (bd.score.top_k || bd.score.top_k_expr) {
+  if (bd.score.HasTopK()) {
     return;
   }
   const auto take_limit = [&] {

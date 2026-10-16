@@ -281,7 +281,6 @@ struct DeferredClaimBuilder {
   std::map<connector::BindingKey, connector::DeferredColumn> columns;
   const BindingColumnId* column_id = nullptr;
   bool used_expr_getter = false;
-  bool any_parameter = false;
   bool declined_parameter = false;
 
   connector::ColumnGetter Recording(const connector::ColumnGetter& getter) {
@@ -385,7 +384,6 @@ bool TryClaimIResearchConjunctImpl(
     if (!deferred) {
       return false;
     }
-    deferred->any_parameter = true;
     if (ParameterShapesConjunction(*conjunct)) {
       deferred->declined_parameter = true;
       return false;
@@ -1429,9 +1427,7 @@ bool ClaimSearchConjuncts(
     scan.plan_cache.deferred = std::move(deferred.claim);
   }
 
-  const bool has_clauses = absl::c_any_of(
-    irs::kAllOccur,
-    [&](irs::Occur occur) { return root_and->Size(occur) != 0; });
+  const bool has_clauses = !root_and->Empty();
   irs::Filter::ptr root = std::move(root_and);
   connector::EnsureIncludeSides(*root);
   if (has_clauses) {

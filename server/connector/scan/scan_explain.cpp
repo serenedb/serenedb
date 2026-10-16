@@ -357,7 +357,7 @@ void ScanBindData::AppendSummary(
     out.insert("Score",
                absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
                             name_of(col_id), ", ", ctype.ToString(), ")"));
-    if (vector->exact || (!score.top_k && !score.top_k_expr)) {
+    if (vector->exact || !score.HasTopK()) {
       out.insert("Exact", "brute force over the stored vectors");
     }
   }
@@ -365,7 +365,7 @@ void ScanBindData::AppendSummary(
     query_scorer = search::MakeScorer(*score.text);
     out.insert("Score", query_scorer->ToString());
   }
-  if (score.top_k || score.top_k_expr) {
+  if (score.HasTopK()) {
     std::string topk_val =
       score.top_k ? absl::StrCat(*score.top_k -
                                  (score.top_n_consumed ? score.top_offset : 0))
@@ -475,7 +475,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   }
   bind.AppendSummary(result);
   if (bind.score.static_floor > std::numeric_limits<float>::lowest() &&
-      (bind.score.top_k || bind.score.top_k_expr || bind.score.text)) {
+      (bind.score.HasTopK() || bind.score.text)) {
     result.insert("Min Score", absl::StrCat(bind.score.static_floor));
   }
   if (count_only) {

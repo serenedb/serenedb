@@ -950,6 +950,12 @@ bool RangeTooWide(const SearchColumnInfo& info, T value, ComparisonOp op) {
   }
 }
 
+absl::Status DeclineWideRange() {
+  return absl::UnimplementedError(
+    "wide numeric range on a stored column: the column filter is "
+    "cheaper than the term union");
+}
+
 template<bool GenericVersion>
 absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
@@ -1048,9 +1054,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
         });
       }
       if (wide) {
-        return absl::UnimplementedError(
-          "wide numeric range on a stored column: the column filter is "
-          "cheaper than the term union");
+        return DeclineWideRange();
       }
     }
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
@@ -1103,9 +1107,7 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
             RangeShare(*column_info, lower_val->GetValue<double>(),
                        upper_val->GetValue<double>())) {
         if (*share > kMaxIndexRangeShare) {
-          return absl::UnimplementedError(
-            "wide numeric range on a stored column: the column filter is "
-            "cheaper than the term union");
+          return DeclineWideRange();
         }
         sub_ctx.wide_ranges = WideRanges::Build;
       }
@@ -1756,9 +1758,7 @@ BoolTarget ScopeTarget(const std::unique_ptr<irs::BooleanFilter>& scope) {
 }
 
 void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
-  if (absl::c_any_of(irs::kAllOccur, [&](irs::Occur occur) {
-        return scope->Size(occur) != 0;
-      })) {
+  if (!scope->Empty()) {
     parent.Add(std::move(scope));
   }
 }
@@ -2873,9 +2873,7 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const auto status =
     MakeSearchFilter(*node, {&conjunct, 1}, column_getter, context, expr_getter,
                      scorers, wide_ranges);
-  if (!status.ok() || absl::c_none_of(irs::kAllOccur, [&](irs::Occur occur) {
-        return node->Size(occur) != 0;
-      })) {
+  if (!status.ok() || node->Empty()) {
     return nullptr;
   }
   return node;

@@ -88,6 +88,8 @@ struct ScoreSpec {
   size_t top_offset = 0;
   bool top_n_consumed = false;
   float static_floor = std::numeric_limits<float>::lowest();
+
+  bool HasTopK() const noexcept { return top_k || top_k_expr; }
 };
 
 struct ScanOrderSpec {

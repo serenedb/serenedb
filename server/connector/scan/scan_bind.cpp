@@ -216,6 +216,21 @@ double AutoOversample(const VectorScorerOptions& vs) noexcept {
   return 0.0;
 }
 
+template<typename AnnFilter>
+std::unique_ptr<AnnFilter> MakeAnnFilter(
+  const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner) {
+  auto f = std::make_unique<AnnFilter>();
+  *f->mutable_field_id() = vs.field_id;
+  auto* o = f->mutable_options();
+  o->query = vs.query_vector;
+  o->centroids_id = vs.centroids_id;
+  o->postings_id = vs.postings_id;
+  o->metric = vs.metric;
+  o->quant = vs.quant;
+  o->inner = std::move(inner);
+  return f;
+}
+
 }  // namespace
 
 double SegmentBeamShare(double k, size_t segments) noexcept {
@@ -528,10 +543,11 @@ DeferredBuild BuildDeferredFilter(
     return std::nullopt;
   };
   DeferredBuild out;
-  std::map<ColumnId,
-           std::pair<duckdb::LogicalType,
-                     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>>>
-    wide;
+  struct WideColumn {
+    duckdb::LogicalType type;
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
+  };
+  std::map<ColumnId, WideColumn> wide;
   const auto to_column = [&](duckdb::unique_ptr<duckdb::Expression> range) {
     const duckdb::BoundColumnRefExpression* ref = nullptr;
     duckdb::ExpressionIterator::VisitExpression<
@@ -545,18 +561,13 @@ DeferredBuild BuildDeferredFilter(
     type = ref->GetReturnType();
     if (range->GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
       using duckdb::BoundBetweenExpression;
-      using duckdb::ExpressionType;
       const auto& between = range->Cast<duckdb::BoundFunctionExpression>();
       parts.push_back(duckdb::BoundComparisonExpression::Create(
-        BoundBetweenExpression::LowerInclusive(between)
-          ? ExpressionType::COMPARE_GREATERTHANOREQUALTO
-          : ExpressionType::COMPARE_GREATERTHAN,
+        BoundBetweenExpression::LowerComparisonType(between),
         BoundBetweenExpression::Input(between).Copy(),
         BoundBetweenExpression::LowerBound(between).Copy()));
       parts.push_back(duckdb::BoundComparisonExpression::Create(
-        BoundBetweenExpression::UpperInclusive(between)
-          ? ExpressionType::COMPARE_LESSTHANOREQUALTO
-          : ExpressionType::COMPARE_LESSTHAN,
+        BoundBetweenExpression::UpperComparisonType(between),
         BoundBetweenExpression::Input(between).Copy(),
         BoundBetweenExpression::UpperBound(between).Copy()));
     } else {
@@ -668,27 +679,14 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     return f;
   }
   if (vs.radius != std::numeric_limits<float>::max()) {
-    auto f = std::make_unique<irs::ByRadius>();
-    *f->mutable_field_id() = vs.field_id;
+    auto f = MakeAnnFilter<irs::ByRadius>(vs, std::move(inner));
     auto* o = f->mutable_options();
-    o->query = vs.query_vector;
-    o->centroids_id = vs.centroids_id;
-    o->postings_id = vs.postings_id;
-    o->metric = vs.metric;
-    o->quant = vs.quant;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
-    o->inner = std::move(inner);
     return f;
   }
-  auto f = std::make_unique<irs::ByVectorSimilarity>();
-  *f->mutable_field_id() = vs.field_id;
+  auto f = MakeAnnFilter<irs::ByVectorSimilarity>(vs, std::move(inner));
   auto* o = f->mutable_options();
-  o->query = vs.query_vector;
-  o->centroids_id = vs.centroids_id;
-  o->postings_id = vs.postings_id;
-  o->metric = vs.metric;
-  o->quant = vs.quant;
   o->nprobe = vs.nprobe;
   o->min_search_fanout = vs.min_search_fanout;
   o->max_search_fanout = vs.max_search_fanout;
@@ -698,7 +696,6 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->posting_size = vs.posting_size;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
-  o->inner = std::move(inner);
   return f;
 }
 

@@ -32,7 +32,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <span>
-#include <utility>
 
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -131,7 +130,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
       if (_offset == _batch->segments[_segment].size()) {
         _offset = 0;
         if (++_segment == _batch->segments.size()) {
-          _batches.Done(std::exchange(_batch, nullptr)->seq);
+          _batch.Reset();
         }
       }
     }
@@ -144,7 +143,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
  private:
   SereneDBClientState& _state;
   pg::CopyInBatches& _batches;
-  pg::CopyBatch* _batch = nullptr;
+  pg::CopyBatchLease _batch;
   size_t _segment = 0;
   size_t _offset = 0;
 };

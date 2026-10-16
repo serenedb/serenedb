@@ -1126,7 +1126,7 @@ struct BitBinCore {
 
 struct DateTextCore {
   using Value = duckdb::date_t;
-  static constexpr uint32_t kMaxBytes = 13;
+  static constexpr uint32_t kMaxBytes = sizeof("-5877641-06-25") - 1;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
     // days from 1970-01-01
     char* buf = reinterpret_cast<char*>(dst);
@@ -1139,7 +1139,7 @@ struct DateTextCore {
       return 9;
     }
     // TODO(mkornaukhov) support BC date and add some validation for dates
-    // Format is "%04d-%02d-%02d", max year is 5874897
+    // Format is "%04d-%02d-%02d"
     absl::CivilDay days{1970, 1, 1};
     days += date.days;
 

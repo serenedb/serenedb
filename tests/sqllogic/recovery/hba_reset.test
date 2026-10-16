@@ -1,0 +1,89 @@
+control substitution on
+
+statement ok
+CREATE ROLE hbr_kuzya LOGIN PASSWORD 'kuzya_pw';
+
+statement ok
+SET hba = 'host all all 0.0.0.0/0 reject';
+
+connection c_rejected user=hbr_kuzya password=kuzya_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: no pg_hba.conf entry for host, user "hbr_kuzya"<slt:ignore>
+
+
+statement ok
+RESET hba;
+
+query
+SELECT rule_number, type, database, user_name, address, auth_method
+FROM pg_hba_file_rules ORDER BY rule_number;
+----
+rule_number	type	database	user_name	address	auth_method
+1	local	{all}	{postgres}	(empty)	trust
+2	host	{all}	{postgres}	127.0.0.1/32	trust
+3	host	{all}	{postgres}	::1/128	trust
+4	local	{all}	{all}	(empty)	scram-sha-256
+5	host	{all}	{all}	0.0.0.0/0	scram-sha-256
+6	host	{all}	{all}	::/0	scram-sha-256
+
+connection c_after_reset user=hbr_kuzya password=kuzya_pw
+query
+SELECT current_user;
+----
+current_user
+hbr_kuzya
+
+statement ok
+SET hba = 'host all all 0.0.0.0/0 reject';
+
+statement ok
+SET hba = '';
+
+connection c_after_empty user=hbr_kuzya password=kuzya_pw
+query
+SELECT current_user;
+----
+current_user
+hbr_kuzya
+
+statement ok
+SET hba = 'host all all 0.0.0.0/0 reject';
+
+statement ok
+SET hba = '# no rules yet';
+
+connection c_after_comment user=hbr_kuzya password=kuzya_pw
+query
+SELECT current_user;
+----
+current_user
+hbr_kuzya
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS rules FROM pg_hba_file_rules;
+----
+rules
+6
+
+connection after_crash
+query
+SELECT current_setting('hba') = '# no rules yet' AS loaded;
+----
+loaded
+t
+
+connection c_after_crash user=hbr_kuzya password=kuzya_pw
+query
+SELECT current_user;
+----
+current_user
+hbr_kuzya

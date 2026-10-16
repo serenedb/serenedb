@@ -430,3 +430,21 @@ TEST(HbaDefault, SuperuserLocalTrustEveryoneElseScram) {
   EXPECT_EQ(KindOf(*GetHbaRuleset(), bob_loop), Decision::Kind::Reject);
   SetHbaRuleset(std::make_shared<const Ruleset>(DefaultRuleset()));  // restore
 }
+
+TEST(HbaDefault, RulesetWithoutRulesRestoresDefault) {
+  ClientInfo su_loop{.family = AF_INET,
+                     .addr = V4("127.0.0.1"),
+                     .user = "postgres",
+                     .database = "d"};
+  ClientInfo bob_unix{.is_local = true, .user = "bob", .database = "d"};
+  ClientInfo bob_loop{
+    .family = AF_INET, .addr = V4("127.0.0.1"), .user = "bob", .database = "d"};
+  for (const std::string_view text : {"", "# no rules yet\n\n"}) {
+    ASSERT_FALSE(SetHbaFromText("host all all 0.0.0.0/0 reject\n"));
+    EXPECT_EQ(KindOf(*GetHbaRuleset(), bob_loop), Decision::Kind::Reject);
+    ASSERT_FALSE(SetHbaFromText(text));
+    EXPECT_EQ(KindOf(*GetHbaRuleset(), su_loop), Decision::Kind::Trust);
+    EXPECT_EQ(KindOf(*GetHbaRuleset(), bob_unix), Decision::Kind::Method);
+    EXPECT_EQ(KindOf(*GetHbaRuleset(), bob_loop), Decision::Kind::Method);
+  }
+}

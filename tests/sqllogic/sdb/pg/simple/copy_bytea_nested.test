@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok
+CREATE TABLE cbn_src (id INTEGER, s STRUCT(b BYTEA, t VARCHAR), m MAP(VARCHAR, BYTEA));
+
+statement ok
+INSERT INTO cbn_src VALUES (1, {'b': '\x000102030405060708090a0b0c0d0e0f'::BYTEA, 't': 'x'}, MAP {'k1': 'abcdefghijklmnop\001'::BYTEA, 'k2': '\x'::BYTEA}), (2, {'b': 'q\\r'::BYTEA, 't': NULL}, MAP {'k1': NULL, 'k2': '\x0f0e0d0c0b0a09080706050403020100'::BYTEA}), (3, NULL, NULL);
+
+statement count 3
+COPY cbn_src TO '${__TEST_DIR__}/copy_bytea_nested.txt' (FORMAT text);
+
+statement ok
+CREATE TABLE cbn_text (id INTEGER, s STRUCT(b BYTEA, t VARCHAR), m MAP(VARCHAR, BYTEA));
+
+statement count 3
+COPY cbn_text FROM '${__TEST_DIR__}/copy_bytea_nested.txt' (FORMAT text);
+
+query
+SELECT id, encode(s.b, 'hex') AS b, s.t AS t, encode(m['k1'], 'hex') AS k1, encode(m['k2'], 'hex') AS k2 FROM cbn_text ORDER BY id;
+----
+id	b	t	k1	k2
+1	000102030405060708090a0b0c0d0e0f	x	6162636465666768696a6b6c6d6e6f7001	(empty)
+2	715c72	NULL	NULL	0f0e0d0c0b0a09080706050403020100
+3	NULL	NULL	NULL	NULL
+
+query
+SELECT count(*) AS mismatched FROM cbn_src x JOIN cbn_text y USING (id) WHERE x.s IS DISTINCT FROM y.s OR x.m IS DISTINCT FROM y.m;
+----
+mismatched
+0
+
+statement count 3
+COPY cbn_src TO '${__TEST_DIR__}/copy_bytea_nested.bin' (FORMAT binary);
+
+statement ok
+CREATE TABLE cbn_bin (id INTEGER, s STRUCT(b BYTEA, t VARCHAR), m MAP(VARCHAR, BYTEA));
+
+statement count 3
+COPY cbn_bin FROM '${__TEST_DIR__}/copy_bytea_nested.bin' (FORMAT binary);
+
+query
+SELECT id, encode(s.b, 'hex') AS b, s.t AS t, encode(m['k1'], 'hex') AS k1, encode(m['k2'], 'hex') AS k2 FROM cbn_bin ORDER BY id;
+----
+id	b	t	k1	k2
+1	000102030405060708090a0b0c0d0e0f	x	6162636465666768696a6b6c6d6e6f7001	(empty)
+2	715c72	NULL	NULL	0f0e0d0c0b0a09080706050403020100
+3	NULL	NULL	NULL	NULL
+
+query
+SELECT count(*) AS mismatched FROM cbn_src x JOIN cbn_bin y USING (id) WHERE x.s IS DISTINCT FROM y.s OR x.m IS DISTINCT FROM y.m;
+----
+mismatched
+0

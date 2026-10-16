@@ -46,10 +46,9 @@ bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept {
 }
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
-  VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
-  uint32_t pq_niter, uint32_t nb_bits, bool row_major, bool half_bit,
-  uint32_t query_bits) {
-  switch (quant) {
+  const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
+  uint32_t pq_niter, bool row_major) {
+  switch (quant.kind) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaWriter(d, metric);
     case VectorQuantization::SQ8:
@@ -58,19 +57,21 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
     case VectorQuantization::USQ4:
     case VectorQuantization::FP16:
     case VectorQuantization::BF16:
-      return quantizers::MakeScalarWriter(d, quant);
+      return quantizers::MakeScalarWriter(d, quant.kind);
     case VectorQuantization::PQ:
-      return quantizers::MakePqWriter(metric, d, pq_m, pq_niter, row_major);
+      return quantizers::MakePqWriter(metric, d, quant.pq_m, pq_niter,
+                                      row_major);
     case VectorQuantization::TQ:
-      return quantizers::MakeTurboQuantWriter(metric, d, nb_bits, half_bit,
-                                              row_major);
+      return quantizers::MakeTurboQuantWriter(metric, d, quant.nb_bits,
+                                              quant.half_bit, row_major);
     case VectorQuantization::RaBitQ:
-      return quantizers::MakeRaBitQWriter(metric, d, nb_bits, row_major);
+      return quantizers::MakeRaBitQWriter(metric, d, quant.nb_bits, row_major);
     case VectorQuantization::BQ:
-      return quantizers::MakeBinaryWriter(metric, d, nb_bits, half_bit,
-                                          query_bits);
+      return quantizers::MakeBinaryWriter(metric, d, quant.nb_bits,
+                                          quant.half_bit, quant.query_bits);
     case VectorQuantization::OSQ:
-      return quantizers::MakeOsqWriter(metric, d, nb_bits, query_bits);
+      return quantizers::MakeOsqWriter(metric, d, quant.nb_bits,
+                                       quant.query_bits);
   }
   return nullptr;
 }

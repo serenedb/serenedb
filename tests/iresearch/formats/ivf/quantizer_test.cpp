@@ -235,8 +235,8 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
                                    const std::vector<float>& centroid,
                                    const std::vector<float>& points,
                                    const std::vector<float>& query) {
-  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
-                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::PQ, .pq_m = pq_m}, d, metric);
   EXPECT_EQ(writer->Kind(), VectorQuantization::PQ);
   writer->SetClusterCentroid(centroid.data());
 
@@ -293,8 +293,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
     NormalizeRows(query.data(), 1, d);
   }
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::None, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
+  auto writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::None}, d, metric);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::None);
   EXPECT_EQ(writer->BlockSetting().record_size, d * sizeof(float));
@@ -412,8 +412,8 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   if (metric == VectorMetric::Cosine) {
     NormalizeRows(points.data(), index.n, d);
   }
-  index.writer = MakeQuantizerWriter(VectorQuantization::None, d, metric,
-                                     /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
+  index.writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::None}, d, metric);
   ASSERT_NE(index.writer, nullptr);
   index.writer->Train(points.data(), index.n);
   index.blob = SerializeStats(*index.writer);
@@ -604,8 +604,8 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
   constexpr size_t n = 600;
   auto points = MakePanoramaData(d, n, 13);
 
-  auto l1 = MakeQuantizerWriter(VectorQuantization::None, d, VectorMetric::L1,
-                                /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
+  auto l1 = MakeQuantizerWriter({.kind = VectorQuantization::None}, d,
+                                VectorMetric::L1);
   ASSERT_NE(l1, nullptr);
   l1->Train(points.data(), n);
   EXPECT_TRUE(SerializeStats(*l1).empty());
@@ -616,9 +616,8 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
   constexpr uint32_t small = 32;
   ASSERT_FALSE(PanoramaApplies(VectorMetric::L2Sqr, small));
   auto narrow = MakePanoramaData(small, n, 17);
-  auto tiny = MakeQuantizerWriter(VectorQuantization::None, small,
-                                  VectorMetric::L2Sqr, /*pq_m=*/0,
-                                  /*pq_niter=*/0, /*nb_bits=*/0);
+  auto tiny = MakeQuantizerWriter({.kind = VectorQuantization::None}, small,
+                                  VectorMetric::L2Sqr);
   ASSERT_NE(tiny, nullptr);
   tiny->Train(narrow.data(), n);
   EXPECT_TRUE(SerializeStats(*tiny).empty());
@@ -642,8 +641,8 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   points[2 * static_cast<size_t>(d)] = 20.f;  // p2 (farthest)
   constexpr size_t n = 3;
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, d, metric);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::RaBitQ);
   const size_t rd = std::max<uint32_t>(4, std::bit_ceil(d));
@@ -695,8 +694,8 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   };
   constexpr size_t n = 3;
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, d, metric);
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
@@ -760,8 +759,8 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   };
   constexpr size_t n = 3;
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, d, metric);
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
@@ -801,8 +800,8 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
                                      const std::vector<float>& points,
                                      const std::vector<float>& query) {
   const size_t n = points.size() / d;
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, d, metric);
   EXPECT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
@@ -881,8 +880,8 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
   points2[0] = 101.f;
   points2[d] = 104.f;
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::RaBitQ, d, metric,
-                                    /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/1);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = 1}, d, metric);
   ASSERT_NE(writer, nullptr);
 
   SimpleMemoryAccounter memory;
@@ -1055,8 +1054,8 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
   points2[0] = 96.f;
   points2[d] = 99.f;
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
-                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::PQ, .pq_m = pq_m}, d, metric);
   ASSERT_NE(writer, nullptr);
 
   std::vector<float> train;
@@ -1130,8 +1129,8 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
     points[i * d] = is_near[i] ? 1.f : 100.f;
   }
 
-  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
-                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  auto writer = MakeQuantizerWriter(
+    {.kind = VectorQuantization::PQ, .pq_m = pq_m}, d, metric);
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
   writer->Train(points.data(), n);
@@ -1178,8 +1177,8 @@ std::unique_ptr<QuantizerWriter> MakeTrainedPq(VectorMetric metric, uint32_t d,
                                                uint32_t pq_m,
                                                const std::vector<float>& pts,
                                                const std::vector<float>& cen) {
-  auto w = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
-                               /*pq_niter=*/0, /*nb_bits=*/0);
+  auto w = MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m},
+                               d, metric);
   w->Train(pts.data(), pts.size() / d);
   w->SetClusterCentroid(cen.data());
   return w;
@@ -1187,9 +1186,9 @@ std::unique_ptr<QuantizerWriter> MakeTrainedPq(VectorMetric metric, uint32_t d,
 
 std::unique_ptr<QuantizerWriter> MakeRaBitQ(uint32_t d, uint32_t nb_bits,
                                             const std::vector<float>& cen) {
-  auto w = MakeQuantizerWriter(VectorQuantization::RaBitQ, d,
-                               VectorMetric::L2Sqr, /*pq_m=*/0,
-                               /*pq_niter=*/0, nb_bits);
+  auto w = MakeQuantizerWriter(
+    {.kind = VectorQuantization::RaBitQ, .nb_bits = nb_bits}, d,
+    VectorMetric::L2Sqr);
   w->SetClusterCentroid(cen.data());
   return w;
 }
@@ -1524,9 +1523,11 @@ CodeFixture BuildCodes(VectorQuantization quant, uint32_t d, uint32_t nb_bits,
                        size_t n, const std::vector<float>& centroid,
                        bool half_bit = false, uint32_t query_bits = 0) {
   CodeFixture f;
-  auto writer = MakeQuantizerWriter(quant, d, metric, /*pq_m=*/0,
-                                    /*pq_niter=*/0, nb_bits,
-                                    /*row_major=*/true, half_bit, query_bits);
+  auto writer = MakeQuantizerWriter({.kind = quant,
+                                     .nb_bits = nb_bits,
+                                     .half_bit = half_bit,
+                                     .query_bits = query_bits},
+                                    d, metric, 0, /*row_major=*/true);
   EXPECT_NE(writer, nullptr);
   if (writer->TrainSamples(n) != 0) {
     writer->Train(points.data(), n);
@@ -1628,9 +1629,11 @@ TEST_P(code_rekey_test, encode_into_matches_encode) {
   const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
                             GetParam().half_bit, GetParam().query_bits);
 
-  auto writer = MakeQuantizerWriter(quant, d, metric, 0, 0, nb_bits,
-                                    /*row_major=*/true, GetParam().half_bit,
-                                    GetParam().query_bits);
+  auto writer = MakeQuantizerWriter({.kind = quant,
+                                     .nb_bits = nb_bits,
+                                     .half_bit = GetParam().half_bit,
+                                     .query_bits = GetParam().query_bits},
+                                    d, metric, 0, /*row_major=*/true);
   ASSERT_NE(writer, nullptr);
   if (writer->TrainSamples(n) != 0) {
     writer->Train(points.data(), n);
@@ -2356,9 +2359,9 @@ namespace {
 CodeFixture BuildPqCodes(uint32_t d, uint32_t pq_m, VectorMetric metric,
                          const std::vector<float>& points, size_t n) {
   CodeFixture f;
-  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
-                                    /*pq_niter=*/0, /*nb_bits=*/0,
-                                    /*row_major=*/true);
+  auto writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                        metric, 0, /*row_major=*/true);
   EXPECT_NE(writer, nullptr);
   writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
   f.record_size = writer->BlockSetting().record_size;
@@ -2592,9 +2595,9 @@ TEST(hnsw_pq_quantizer_test, encode_into_matches_encode) {
   constexpr size_t n = 300;
   const auto points = MakeSpread(d, n, 71);
   const auto f = BuildPqCodes(d, pq_m, VectorMetric::InnerProduct, points, n);
-  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d,
-                                    VectorMetric::InnerProduct, pq_m, 0, 0,
-                                    /*row_major=*/true);
+  auto writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                        VectorMetric::InnerProduct, 0, /*row_major=*/true);
   ASSERT_NE(writer, nullptr);
   writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
   SimpleMemoryAccounter memory;

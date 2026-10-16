@@ -1241,10 +1241,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
   if (_info.quant.kind != VectorQuantization::None) {
-    _qw = MakeQuantizerWriter(
-      _info.quant.kind, _d, EffectiveQuantMetric(_info.metric),
-      _info.quant.pq_m, 0, _info.quant.nb_bits,
-      /*row_major=*/true, _info.quant.half_bit, _info.quant.query_bits);
+    _qw = MakeQuantizerWriter(_info.quant, _d,
+                              EffectiveQuantMetric(_info.metric), 0,
+                              /*row_major=*/true);
   }
 
   const auto m = _info.m;

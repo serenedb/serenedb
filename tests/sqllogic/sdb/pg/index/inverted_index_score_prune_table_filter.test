@@ -239,7 +239,7 @@ FROM range(1, 40001) t(g);
 
 
 statement ok
-CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n)
+CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n, body)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
@@ -341,6 +341,38 @@ count	bool_and	round	round
 100	t	1.765	2.014
 
 
+query
+EXPLAIN SELECT BM25(wtw_idx.tableoid) FROM wtw_idx
+WHERE body @@ ts_phrase('w4 w4') AND n = 1
+ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: wtw_idx                            │
+│ Index Filter:                             │
+│ ╭─ Phrase ──────────────────────────────╮ │
+│ │ Field: body(string)                   │ │
+│ │ Parts: Term:w4(0, 0); Term:w4(1, 1);  │ │
+│ │ Verify: inline                        │ │
+│ ╰───────────────────────────────────────╯ │
+│ Column Filter: n = 1                      │
+│ Score: bm25(k1=1.2, b=0.75)               │
+│ Top: 100, optimized                       │
+│ Projections: sdb_inverted_index_score     │
+│ ~3,996 rows                               │
+╰───────────────────────────────────────────╯
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE body @@ ts_phrase('w4 w4') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.647	1.720
+
+
 statement ok
 SET sdb_disable_top_k_optimization = true;
 
@@ -396,6 +428,16 @@ SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score
 ----
 count	bool_and	round	round
 100	t	1.765	2.014
+
+
+query
+SELECT count(*), bool_and(n = 1), round(min(score)::numeric, 4), round(max(score)::numeric, 4) FROM (
+  SELECT n, BM25(wtw_idx.tableoid) AS score FROM wtw_idx
+  WHERE body @@ ts_phrase('w4 w4') AND n = 1
+  ORDER BY BM25(wtw_idx.tableoid) DESC LIMIT 100);
+----
+count	bool_and	round	round
+100	t	1.647	1.720
 
 
 statement ok

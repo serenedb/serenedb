@@ -29,14 +29,8 @@ namespace irs::hits {
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto record = query.Stats(ScoredOf(ctx));
-  const auto value = irs::detail::AllDocsScore(
-    query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
-                                            .stats = record.stats,
-                                            .fetcher = &ctx.fetcher,
-                                            .boost = query.Boost()});
-  return irs::detail::MakeWildcardNGram<ConstantWalk, Root::ptr>(query, 0,
-                                                                 value);
+  return irs::detail::MakeWildcardNGram<ConstantWalk, Root::ptr>(
+    query, 0, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
 }
 
 }  // namespace irs::hits

@@ -29,6 +29,7 @@
 #include <limits>
 
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -38,9 +39,6 @@ bool IsListLike(const duckdb::LogicalType& type) noexcept {
   return type.id() == duckdb::LogicalTypeId::LIST ||
          type.id() == duckdb::LogicalTypeId::MAP;
 }
-
-}  // namespace
-namespace {
 
 constexpr duckdb::idx_t kDenseDensity = 32;
 constexpr duckdb::idx_t kMinDenseBatch = 64;
@@ -121,7 +119,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     c.out_type = r.Type();
     c.list_like = IsListLike(r.Type());
     c.state = std::make_unique<irs::ColumnReader::ScanState>(r.InitScan(*_ctx));
-    if (_rg_col == nullptr) {
+    if (!_rg_col) {
       _rg_col = &r;
     }
   };
@@ -147,6 +145,9 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     if (!p.IsExtract() &&
         _filters.AttachOutputSlot(static_cast<irs::field_id>(p.column_id),
                                   p.output_slot)) {
+      if (!_rg_col) {
+        _rg_col = r;
+      }
       continue;
     }
     auto& c = _columns.emplace_back();
@@ -159,7 +160,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
       c.extract_binding = std::make_unique<ExtractBinding>();
       c.extract_binding->Bind(*r, *_ctx, p.extract_path, p.extract_scan_type,
                               context);
-      if (_rg_col == nullptr) {
+      if (!_rg_col) {
         _rg_col = r;
       }
     } else {
@@ -362,16 +363,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     c.extract_binding->MaterializeRows(rows, out, at, dense);
     return;
   }
-  // A "dense" group only bounds hit *density*, not the doc-id span: sparse
-  // hits across a wide row group can give span > STANDARD_VECTOR_SIZE while
-  // hits <= STANDARD_VECTOR_SIZE. GatherDense scans the whole span into one
-  // vector and requires span <= STANDARD_VECTOR_SIZE; fall back to the
-  // run-based GatherScatter otherwise (same guard as GatherRows).
-  if (dense && span <= STANDARD_VECTOR_SIZE) {
-    c.reader->GatherDense(*c.state, anchor, _sel, hits, span, out);
-    return;
-  }
-  if (hits * kPointDensity < span && IsFlat(c.out_type)) {
+  const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
+  if (!whole && hits * kPointDensity < span && IsFlat(c.out_type)) {
     if (!c.point) {
       c.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
                                                                  *c.reader);
@@ -383,7 +376,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     c.point->FetchRows(_rows, out, at);
     return;
   }
-  c.reader->GatherScatter(*c.state, anchor, _sel, hits, out, at);
+  column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,
+                                  out, at, dense);
 }
 
 HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {

@@ -20,18 +20,33 @@
 
 #pragma once
 
-#include <iresearch/search/filters/filter.hpp>
+#include <duckdb/common/types.hpp>
+#include <vector>
 
-namespace sdb::connector {
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/filters/filter.hpp"
+#include "iresearch/types.hpp"
 
-struct ScanGlobalState;
+namespace irs {
 
-// Moves the stored-terms check of wildcard and regexp n-gram filters out of
-// the query into a table filter. Only the root and the Must children of a
-// root BooleanFilter qualify: a document passes the root only if it passes
-// each of them, so checking it after the rest of the tree gives the same set.
-void DeferWildcardVerify(irs::Filter& root);
+enum class DeferredKind : uint8_t {
+  Phrase,
+  Wildcard,
+  Geo,
+  GeoDistance,
+};
 
-void AddDeferredVerifyFilters(ScanGlobalState& state, const irs::Filter& root);
+struct DeferredFilter {
+  DeferredKind kind;
+  const Filter* filter;
+  field_id column;
+  duckdb::LogicalType type;
+  Filter::ptr owned;
+};
 
-}  // namespace sdb::connector
+struct Deferral {
+  const IndexReader& reader;
+  std::vector<DeferredFilter> filters;
+};
+
+}  // namespace irs

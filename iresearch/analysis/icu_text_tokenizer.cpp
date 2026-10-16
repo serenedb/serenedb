@@ -62,19 +62,27 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
 
   size_t MemoryUsage() const noexcept final { return 0; }
 
-  template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool DoFill(const duckdb::string_t& raw, TokenSink& sink) {
+  bool Scan(const duckdb::string_t& value, ScanSink& sink,
+            BlockTraits known) final {
+    return this->ScanWithProgress(value, sink, known);
+  }
+
+  template<TokenLayout Layout, Accept A, bool KnownAscii,
+           typename Progress = classify::NoProgress>
+  bool DoFill(const duckdb::string_t& raw, TokenSink& sink,
+              Progress progress = {}) {
     if constexpr (S == Options::Separate::Word && KnownAscii) {
-      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw);
+      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw, progress);
       return true;
     } else {
-      return FillValue<Layout, A, KnownAscii>(sink, raw);
+      return FillValue<Layout, A, KnownAscii>(sink, raw, progress);
     }
   }
 
  private:
-  template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool FillValue(TokenSink& sink, const duckdb::string_t& value) {
+  template<TokenLayout Layout, Accept A, bool KnownAscii, typename Progress>
+  bool FillValue(TokenSink& sink, const duckdb::string_t& value,
+                 Progress progress) {
     const char* data = value.GetData();
     const uint32_t n = value.GetSize();
     if (n == 0) {
@@ -82,6 +90,7 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     _break.SetText(data, n);
 
+    uint32_t reported = 0;
     uint32_t begin = 0;
     for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
          end = _break.Next()) {
@@ -99,6 +108,9 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
                                                                  begin, stop);
       }
       begin = stop;
+      if (!classify::KeepScanning(progress, reported, stop)) {
+        return true;
+      }
     }
     return true;
   }

@@ -41,6 +41,8 @@ The query `shape` may equally be supplied as **GeoJSON text** instead of a `GEOM
 
 **How it works.** `ST_Intersects` is **commutative**: `ST_Intersects(field, shape)` and `ST_Intersects(shape, field)` return the same rows, so argument order is free. Intersection includes shared boundaries — a point lying exactly on a polygon's edge intersects it. It is the complement of disjointness, so "find everything *not* near this region" is `NOT ST_Intersects(...)`.
 
+Testing a `Point` or `MultiPoint` against a `LineString` or `MultiLineString`, in either order, is not supported: the query fails with `The case GEO_INTERSECTS(<some points>, <some polylines>) is numerically unstable and thus not supported.`
+
 **Behavior matrix.** Against a fixed query polygon — the square `[0,0]–[10,10]` — over a small set of shapes:
 
 | Row | Shape | Intersects `[0,0]–[10,10]`? | Why |
@@ -90,6 +92,8 @@ True where `a` fully contains `b` — every part of `b` lies inside `a` (boundar
   | `edge_point`, `far_point` | points | ❌ | a point can only contain itself |
 
 Swapping the arguments flips the result set, so always frame the containing shape first.
+
+A line never contains a point: `ST_Contains` of a `LineString` or `MultiLineString` with a `Point` or `MultiPoint` is false even when every point lies on the line. A point or a line never contains a shape of a higher dimension either, so `ST_Contains` of a `Point` or `MultiPoint` with a line or a polygon, and of a line with a polygon, is false.
 
 #### `ST_Distance_Between(field, centroid, min, max [, incl_min [, incl_max]])` {#st_distance_between}
 

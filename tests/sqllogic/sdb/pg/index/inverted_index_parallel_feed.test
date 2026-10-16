@@ -266,3 +266,30 @@ id
 
 statement ok
 DROP TABLE ipn;
+
+statement ok
+CREATE TABLE ipj(id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+CREATE INDEX ipj_idx ON ipj USING inverted(id, doc);
+
+statement ok
+INSERT INTO ipj SELECT g, ('{"n":' || g || '}')::JSON FROM generate_series(1, 200000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipj;
+
+query
+SELECT count(*) FROM ipj_idx;
+----
+count
+200000
+
+query
+SELECT id FROM ipj_idx WHERE doc @@ '{"n":199999}';
+----
+id
+199999
+
+statement ok
+DROP TABLE ipj;

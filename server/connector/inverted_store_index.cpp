@@ -59,7 +59,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_create_index.h"
-#include "connector/index_expression.hpp"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -166,6 +165,18 @@ TokenizerProvider BoundTokenizers(catalog::IndexTokenizers::Bound tokenizers) {
     return it == tokenizers.end() ? catalog::ColumnTokenizer{}
                                   : std::move(it->second);
   };
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> FieldExpressions(
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& expressions,
+  const InvertedIndexConfig& config) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> fields;
+  for (size_t i = 0; i < expressions.size(); ++i) {
+    if (i >= config.keys.size() || config.WritesField(config.keys[i])) {
+      fields.emplace_back(expressions[i]->Copy());
+    }
+  }
+  return fields;
 }
 
 constexpr duckdb::idx_t kMinSlotRows = 8 * STANDARD_VECTOR_SIZE;
@@ -402,7 +413,8 @@ InvertedStoreIndex::InvertedStoreIndex(
   std::shared_ptr<const InvertedIndexConfig> config,
   catalog::IndexTokenizers tokenizers, bool has_predicate)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
-               input.table_io_manager, input.unbound_expressions, input.db),
+               input.table_io_manager,
+               FieldExpressions(input.unbound_expressions, *config), input.db),
     _index_id{index_id},
     _table_oid{table_oid},
     _storage{std::move(storage)},
@@ -410,6 +422,19 @@ InvertedStoreIndex::InvertedStoreIndex(
     _tokenizers{std::move(tokenizers)},
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
+  for (const auto& key : _config->keys) {
+    if (!_config->WritesField(key)) {
+      continue;
+    }
+    const duckdb::idx_t slot = _columns.size() + _expressions.size();
+    if (bound_expressions[slot]->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_REF) {
+      _columns.emplace_back(
+        slot, ColumnDescriptor{key.field_id, logical_types[slot]});
+    } else {
+      _expressions.emplace_back(key.field_id, slot);
+    }
+  }
   gBoundInvertedIndexes.fetch_add(1, std::memory_order_release);
 }
 
@@ -435,7 +460,6 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
   if (bound_expressions.empty()) {
     return total;
   }
-  const auto keys = std::span{_config->keys};
   if (results.ColumnCount() == 0) {
     results.Initialize(duckdb::Allocator::DefaultAllocator(), logical_types);
   } else {
@@ -445,12 +469,6 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
     executor->Execute(chunk, results);
   } else {
     ExecuteExpressions(chunk, results);
-  }
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const auto* entry = _config->FindEntry(keys[i].field_id);
-    if (!entry || entry->IsTokenized()) {
-      RejectJsonObjectArrayLeaves(results.data[i], total);
-    }
   }
   if (!_has_predicate) {
     return total;
@@ -469,7 +487,6 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
                               duckdb::DataChunk& results, duckdb::Vector& rows,
                               duckdb::idx_t count) {
   if (count != 0) {
-    const auto keys = std::span{_config->keys};
     duckdb::UnifiedVectorFormat row_fmt;
     rows.ToUnifiedFormat(count, row_fmt);
     const auto* row_data =
@@ -480,19 +497,8 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
       key_views[i] =
         primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
     }
-    std::vector<ExpressionValue> values;
-    values.reserve(keys.size());
-    for (size_t i = 0; i < keys.size(); ++i) {
-      const auto first = absl::c_none_of(
-        keys.first(i), [&](const catalog::InvertedIndexKey& earlier) {
-          return earlier.field_id == keys[i].field_id;
-        });
-      if (first) {
-        values.emplace_back(keys[i].field_id, &results.data[i]);
-      }
-    }
     FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},
-              results, {}, values);
+              results, _columns, _expressions);
   }
   trx.AdvanceQueries(1);
 }

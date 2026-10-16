@@ -22,29 +22,38 @@
 
 #include "phrase_filter.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
 #include <memory>
 #include <span>
 #include <string_view>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/compiled_phrase.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -422,7 +431,7 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   for (const auto& word : options) {
     switch (ByPhraseOptions::KindOf(word.part)) {
       case SlotKind::Term:
-        add_term(std::get<ByTermOptions>(word.part).term, slot);
+        add_term(ByPhraseOptions::TermOf(word.part), slot);
         break;
       case SlotKind::Set:
         for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
@@ -443,6 +452,55 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   }
 }
 
+QueryBuilder::ptr MakeTokenPhraseQuery(
+  const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
+  const PhraseState& state, const ByPhraseOptions& options,
+  const ColumnReader& column, std::vector<std::vector<bstring>> part_terms) {
+  SDB_ASSERT(state.Slots() == options.size());
+  const bool covered = absl::c_any_of(options, [](const auto& info) {
+    return std::holds_alternative<ShingleOptions>(info.part);
+  });
+  auto stats = covered ? PhraseWordStats(options, reader)
+                       : std::vector<PhraseWordStat>(options.size());
+  std::vector<const PostingMeta*> word_metas(covered ? 0 : options.size());
+  auto sub = ctx;
+  sub.collector = nullptr;
+  BooleanBuilder builder{segment, ctx.memory, 0, kNoBoost,
+                         ScoreMergeType::Noop};
+  containers::FlatHashSet<bytes_view> words;
+  for (size_t slot = 0; const auto& info : options) {
+    const auto begin = state.offsets[slot];
+    const auto end = state.offsets[slot + 1];
+    if (end - begin == 1) {
+      const bool term = ByPhraseOptions::KindOf(info.part) == SlotKind::Term;
+      if (term && !covered) {
+        const auto& meta = state.metas[begin];
+        stats[slot] = {.docs = meta.docs_count, .freq = meta.freq};
+        word_metas[slot] = &meta;
+      }
+      if (!term || words.emplace(ByPhraseOptions::TermOf(info.part)).second) {
+        builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
+      }
+    } else {
+      auto terms = memory::make_tracked<MultiTermQuery>(
+        ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+      terms->State().Prepare(&reader);
+      for (auto i = begin; i != end; ++i) {
+        terms->State().Push(state.metas[i], kNoBoost);
+      }
+      builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
+    }
+    ++slot;
+  }
+  auto approx = builder.Finish();
+  SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
+  auto query = memory::make_tracked<TokenPhraseQuery>(
+    ctx.memory, segment, reader, std::move(approx), options.tokenizer(), column,
+    options, std::move(part_terms), stats, word_metas, ctx.boost);
+  query->SetStats(ctx.Record());
+  return query;
+}
+
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        irs::field_id field,
@@ -456,8 +514,17 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
+  const ColumnReader* column = nullptr;
   if (!detail::ResolvePhrase(reader, state.handles)) {
-    return QueryBuilder::Empty();
+    if (!field_limits::valid(options.text()) || !reader ||
+        !detail::DocOf(*reader)) {
+      return QueryBuilder::Empty();
+    }
+    const auto* col_reader = segment.GetColReader();
+    column = col_reader ? col_reader->Column(options.text()) : nullptr;
+    if (!column) {
+      return QueryBuilder::Empty();
+    }
   }
   if (collector) {
     collector->Field(ctx.thread).Collect(*reader);
@@ -496,13 +563,13 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0) {
+    if (options.slop() != 0 || column) {
       part_terms.resize(phrase_size);
     }
   }
 
   state.metas.reserve(counts.terms);
-  const bool boosted = counts.boosted && !is_ord_empty;
+  const bool boosted = counts.boosted && !is_ord_empty && !column;
   if (boosted) {
     state.boosts.reserve(counts.terms);
   }
@@ -519,7 +586,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   for (const auto& word : options) {
     switch (ByPhraseOptions::KindOf(word.part)) {
       case SlotKind::Term: {
-        if (terms->seek(std::get<ByTermOptions>(word.part).term)) {
+        if (terms->seek(ByPhraseOptions::TermOf(word.part))) {
           const auto& meta = terms->cookie();
           if (collector) {
             collector->Term(ctx.thread, counter_idx).Collect(meta);
@@ -572,6 +639,11 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
 
   if (!ptv.HasBoosts()) {
     state.boosts.clear();
+  }
+
+  if (column) {
+    return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, *column,
+                                std::move(part_terms));
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {
@@ -627,6 +699,38 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
+}
+
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool constant) {
+  return std::visit(
+    [&]<typename Options>(Options& options) -> Filter::ptr {
+      if constexpr (std::is_same_v<Options, TermSetOptions>) {
+        if (options.terms.empty()) {
+          return Filter::empty();
+        }
+        auto node = std::make_unique<BooleanFilter>();
+        for (const auto& term : options.terms) {
+          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
+        }
+        node->SetMinShouldMatch(1);
+        if (constant) {
+          node->SetMergeType(ScoreMergeType::Max);
+        }
+        return node;
+      } else if constexpr (std::is_same_v<Options, ShingleOptions>) {
+        auto node = std::make_unique<ByTerm>();
+        *node->mutable_field_id() = field;
+        node->mutable_options()->term = std::move(options.term);
+        return node;
+      } else {
+        auto node = std::make_unique<typename Options::FilterType>();
+        *node->mutable_field_id() = field;
+        *node->mutable_options() = std::move(options);
+        return node;
+      }
+    },
+    part);
 }
 
 bool ByPhraseOptions::LowerParts() {

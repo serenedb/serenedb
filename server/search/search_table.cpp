@@ -290,21 +290,18 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   std::span<const IndexConfig> configs,
   std::optional<duckdb::idx_t> skip) const {
-  auto merged = std::make_shared<catalog::InvertedIndexConfig>();
-  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
-  merged->top_k_scorer = _topk_options;
-  merged->row_group_size = _row_group_size;
-  merged->codec_params = _codec_params;
-  merged->declared_compression = _compression;
+  std::vector<catalog::InvertedIndexKey> keys;
+  catalog::InvertedIndexFields fields;
+  auto declared_compression = _compression;
   for (const auto& index : configs) {
     if (index.oid == skip) {
       continue;
     }
     for (const auto& [id, field] : index.config->fields) {
-      merged->fields.emplace(id, field);
+      fields.emplace(id, field);
     }
-    merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
-                        index.config->keys.end());
+    keys.insert(keys.end(), index.config->keys.begin(),
+                index.config->keys.end());
     for (const auto& key : index.config->keys) {
       if (key.field_id == key.column_id ||
           !irs::field_limits::valid(key.column_id)) {
@@ -320,7 +317,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       if (!own_codec && !options.hyperloglog) {
         continue;
       }
-      auto& declared = merged->declared_compression[key.column_id];
+      auto& declared = declared_compression[key.column_id];
       if (own_codec) {
         declared.type = options.compression;
         declared.compression_level = options.compression_level;
@@ -328,6 +325,13 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
     }
   }
+  auto merged = std::make_shared<catalog::InvertedIndexConfig>(
+    std::move(keys), std::move(fields));
+  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
+  merged->top_k_scorer = _topk_options;
+  merged->row_group_size = _row_group_size;
+  merged->codec_params = _codec_params;
+  merged->declared_compression = std::move(declared_compression);
   return merged;
 }
 

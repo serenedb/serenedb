@@ -106,9 +106,10 @@ IRS_FORCE_INLINE bool AcceptSegment(const char* data,
   }
 }
 
-template<typename Finder, typename OnMatch>
+template<typename Finder, typename OnMatch,
+         typename Progress = classify::NoProgress>
 void ForEachSzMatch(Finder finder, const char* data, size_t n,
-                    OnMatch&& on_match) {
+                    OnMatch&& on_match, Progress progress = {}) {
   constexpr size_t kBatch = 64;
   size_t starts[kBatch];
   size_t lengths[kBatch];
@@ -125,6 +126,9 @@ void ForEachSzMatch(Finder finder, const char* data, size_t n,
       break;
     }
     offset += consumed;
+    if (!progress()) {
+      return;
+    }
   }
 }
 
@@ -171,8 +175,10 @@ IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
   EmitAccepted<Layout, C, A, Ascii>(sink, data, value_size, begin, end);
 }
 
-template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
+template<TokenLayout Layout, Case C, Accept A, bool Ascii,
+         typename Progress = classify::NoProgress>
+IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value,
+                                 Progress progress = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   const auto emit = [&](const words::Segment& seg) IRS_FORCE_INLINE {
@@ -188,11 +194,11 @@ IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
     }
   };
   if constexpr (!Ascii) {
-    words::ScanUnicode(value, emit);
+    words::ScanUnicode(value, emit, progress);
   } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-    words::ScanAsciiRuns(value, emit);
+    words::ScanAsciiRuns(value, emit, progress);
   } else {
-    words::ScanAscii(value, emit);
+    words::ScanAscii(value, emit, progress);
   }
 }
 
@@ -206,23 +212,31 @@ IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
   });
 }
 
-template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value) {
+template<TokenLayout Layout, Case C, Accept A, bool Ascii,
+         typename Progress = classify::NoProgress>
+IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
+                                     Progress progress = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
+    uint32_t reported = 0;
     for (uint32_t i = 0; i != n; ++i) {
+      if (!classify::KeepScanning(progress, reported, i)) {
+        return;
+      }
       if (static_cast<uint8_t>(data[i]) > ' ') {
         EmitAccepted<Layout, C, A, true>(sink, data, n, i, i + 1);
       }
     }
   } else {
     ForEachSzMatch(
-      sz::GraphemesFor(data, n), data, n, [&](size_t begin, size_t end) {
+      sz::GraphemesFor(data, n), data, n,
+      [&](size_t begin, size_t end) {
         EmitTrimmedSegment<Layout, C, A, false>(sink, data, n,
                                                 static_cast<uint32_t>(begin),
                                                 static_cast<uint32_t>(end));
-      });
+      },
+      progress);
   }
 }
 

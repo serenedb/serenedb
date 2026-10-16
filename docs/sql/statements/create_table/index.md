@@ -201,13 +201,13 @@ A search table can keep its rows sorted by a key, given after the column list as
 -   Every segment of the table holds its rows in key order from the moment it is written, and merges keep that order. Rows with equal keys are stored in no particular order.
 -   A merge in key order takes at most 256 segments: background compaction merges at most 256 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
 -   Rows close in key order are stored together, so filters on the key columns skip more data and those columns compress better.
--   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported yet. Renaming a key column keeps it in the key.
+-   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported. Renaming a key column keeps it in the key.
 -   A key is a stored column: an expression, a `COLLATE` clause or a generated column is rejected, and so is a column listed twice.
 -   Regular tables reject `SORTED BY`.
 
 ## Partition Keys
 
-The syntax below includes `PARTITIONED BY (...)`, but it is not supported yet. `CREATE TABLE` rejects a definition that uses it, for search tables and regular tables alike, including `CREATE TABLE ... AS SELECT`.
+The syntax below includes `PARTITIONED BY (...)`, which is not supported. `CREATE TABLE` rejects a definition that uses it, for search tables and regular tables alike, including `CREATE TABLE ... AS SELECT`.
 
 ## Syntax
 

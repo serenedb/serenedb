@@ -317,7 +317,7 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 <DocCallout type="attention">
 
-`pg_indexes_size()` is not yet meaningful for inverted indexes -- it returns `0`. Use `sdb_indexes()` / `pg_indexes` for index metadata.
+`pg_indexes_size()` returns `0` for inverted indexes. Use `sdb_indexes()` / `pg_indexes` for index metadata.
 
 </DocCallout>
 

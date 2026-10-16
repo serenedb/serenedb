@@ -102,7 +102,10 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (!index) {
     return false;
   }
-  TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
+  TraverseScoped(index, ctx,
+                 [](Filter::ptr& node, const OptimizeContext& scope) {
+                   RunRules(node, scope);
+                 });
   ctx.deferral->filters.emplace_back(DeferredKind::Phrase, &phrase, column,
                                      std::move(type),
                                      std::exchange(slot, std::move(index)));
@@ -172,10 +175,12 @@ void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
     Defer(root, ctx);
     return;
   }
+  auto scope = ctx;
+  scope.scorer = ScorerOf(*root, ctx);
   bool deferred = false;
   for (auto& child :
        downCast<BooleanFilter>(*root).Bucket(Occur::Must).filters) {
-    deferred |= Defer(child, ctx);
+    deferred |= Defer(child, scope);
   }
   if (deferred) {
     RunRules(root, ctx);

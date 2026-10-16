@@ -51,8 +51,7 @@ inline score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
 
 inline const Scorer* ScorerOf(const Filter& node,
                               const OptimizeContext& ctx) noexcept {
-  const auto* const scorer = node.GetScorer();
-  return scorer ? scorer : ctx.scorer;
+  return ResolveScorer(node.GetScorer(), ctx.scorer);
 }
 
 inline bool ScoreIsIgnored(const Filter& node,

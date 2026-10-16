@@ -269,13 +269,14 @@ void LowerNode(Filter::ptr& slot) {
 }  // namespace
 
 void LowerAutomatons(Filter::ptr& root, const OptimizeContext& ctx) {
-  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
-    LowerNode(slot);
-    if (slot->type() == Type<BooleanFilter>::id()) {
-      auto& node = irs::utils::downCast<BooleanFilter>(*slot);
-      NormalizeTerms(node, !negated && !ScoreIsIgnored(node, ctx));
-    }
-  });
+  TraverseScoped(root, ctx,
+                 [](Filter::ptr& slot, const OptimizeContext& scope) {
+                   LowerNode(slot);
+                   if (slot->type() == Type<BooleanFilter>::id()) {
+                     auto& node = irs::utils::downCast<BooleanFilter>(*slot);
+                     NormalizeTerms(node, !ScoreIsIgnored(node, scope));
+                   }
+                 });
 }
 
 }  // namespace irs::optimizer

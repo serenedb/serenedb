@@ -77,15 +77,10 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
 namespace {
 
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
-  if (!ctx.scored) {
-    TraverseFilter(root, [&](Filter::ptr& slot, bool) { RunRules(slot, ctx); });
-    return;
-  }
-  auto negated_ctx = ctx;
-  negated_ctx.scored = false;
-  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
-    RunRules(slot, negated ? negated_ctx : ctx);
-  });
+  TraverseScoped(root, ctx,
+                 [](Filter::ptr& slot, const OptimizeContext& scope) {
+                   RunRules(slot, scope);
+                 });
 }
 
 template<typename GeoType>
@@ -95,7 +90,7 @@ void PlanOnce(Filter& filter) {
 }
 
 void PlanGeoFilters(Filter::ptr& root) {
-  TraverseFilter(root, [](Filter::ptr& slot, bool) {
+  TraverseFilter(root, nullptr, [](Filter::ptr& slot, bool, const Scorer*) {
     const auto type = slot->type();
     if (type == Type<GeoFilter>::id()) {
       PlanOnce<GeoFilter>(*slot);
@@ -146,7 +141,7 @@ void InitOptimizeRules() {
 namespace {
 
 void AssertNoTermChild(Filter::ptr& root) {
-  TraverseFilter(root, [](Filter::ptr& slot, bool) {
+  TraverseFilter(root, nullptr, [](Filter::ptr& slot, bool, const Scorer*) {
     if (slot->type() != Type<BooleanFilter>::id()) {
       return;
     }
@@ -165,7 +160,7 @@ void AssertDeferredAlive(Filter::ptr& root, const OptimizeContext& ctx) {
   }
   for (const auto& deferred : ctx.deferral->filters) {
     bool found = deferred.owned.get() == deferred.filter;
-    TraverseFilter(root, [&](Filter::ptr& slot, bool) {
+    TraverseFilter(root, nullptr, [&](Filter::ptr& slot, bool, const Scorer*) {
       found |= slot.get() == deferred.filter;
     });
     SDB_ASSERT(found);

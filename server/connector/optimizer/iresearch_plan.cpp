@@ -1334,7 +1334,7 @@ bool ClaimSearchConjuncts(
   const auto scorer =
     scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
   irs::OptimizeContext optimize{.scored = static_cast<bool>(scan.score.text),
-                                .analyzed_fields = std::move(analyzed_fields),
+                                .analyzed_fields = &analyzed_fields,
                                 .null_markers = &null_markers,
                                 .scorer = scorer.get()};
   irs::Deferral deferral{.reader = scan.search.snapshot->reader};

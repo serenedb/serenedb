@@ -165,7 +165,7 @@ rm -rf $__TEST_DIR__/sfd_torn $__TEST_DIR__/sfd_torn_shop && mkdir $__TEST_DIR__
 statement error
 CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfd_torn_shop');
 ----
-db error: ERROR: the directory "<slt:ignore>" of notes (oid <slt:ignore>) is missing
+db error: ERROR: the directory holds no committed index
 
 
 query

@@ -172,6 +172,15 @@ CREATE SERVER sfa_missing FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__T
 db error: ERROR: could not open database directory "<slt:ignore>": No such file or directory
 
 
+system ok
+rm -rf $__TEST_DIR__/sfa_nolog && mkdir $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/5 $__TEST_DIR__/sfa_nolog/5
+
+statement error
+CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog/5');
+----
+db error: ERROR: Cannot open catalog log "<slt:ignore>/catalog.wal" in read-only mode: catalog log does not exist
+
+
 statement error
 CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/5');
 ----

@@ -40,11 +40,38 @@ touch $__TEST_DIR__/sfl_owner.release
 wait
 
 
+system ok
+rm -f $__TEST_DIR__/sfl_log.locked $__TEST_DIR__/sfl_log.release
+
+system async ok
+python3 -c "import fcntl,os,sys,time; f=open(sys.argv[1],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" $__TEST_DIR__/sfl_copy/catalog.wal $__TEST_DIR__/sfl_log.locked $__TEST_DIR__/sfl_log.release
+
+system ok
+for i in $(seq 1 400); do [ -f $__TEST_DIR__/sfl_log.locked ] && exit 0; sleep 0.05; done; exit 1
+
+statement error
+CREATE SERVER sfl_logged FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>/catalog.wal": Conflicting lock is held in <slt:ignore>
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+touch $__TEST_DIR__/sfl_log.release
+
+wait
+
+
 statement ok
 CREATE SERVER sfl_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
 
 system ok
 python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
 
 query
 SELECT count(*) AS n FROM sfl_copy.public.sfl_docs;
@@ -57,6 +84,9 @@ DROP SERVER sfl_copy;
 
 system ok
 python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
 
 
 system ok
@@ -139,11 +169,20 @@ python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,f
 system ok
 python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
 
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
 statement ok
 DROP SERVER sfl_first;
 
 system ok
 python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
 
 query
 SELECT count(*) AS n FROM sfl_second.public.sfl_docs;
@@ -157,8 +196,66 @@ DROP SERVER sfl_second;
 system ok
 python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
 
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
 query
 SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfl_%';
 ----
 n
 0
+
+
+system ok
+rm -rf ${SDB_DATADIR}/engine_v1/4000000 && cp -r ${SDB_DATADIR}/engine_v1/5 ${SDB_DATADIR}/engine_v1/4000000
+
+statement error
+CREATE SERVER sfl_leftover FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/4000000');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>/catalog.wal": Conflicting lock is held by another open of this file
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/4000000/data.db
+
+system ok
+rm -rf ${SDB_DATADIR}/engine_v1/4000000
+
+
+system ok
+stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfl_log.inode
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+statement ok
+CREATE TABLE postgres.public.sfl_compacted (x INT);
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+system ok
+[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfl_log.inode)" ]
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/catalog.wal
+
+
+connection restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection restart
+statement error
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM postgres.public.sfl_docs;
+----
+n
+3
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/catalog.wal

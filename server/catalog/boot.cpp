@@ -57,6 +57,10 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
+#include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "search/wal_recovery.h"
 
 ABSL_FLAG(std::string, missing_database, "refuse",
@@ -119,6 +123,40 @@ void RemoveUnowned(const std::filesystem::path& directory,
   }
 }
 
+template<typename Storage>
+void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
+  if (storage.Absent()) {
+    SDB_FATAL(STARTUP, "the directory '", storage.Path().string(), "' of ",
+              entry.name.GetIdentifierName(), " (oid ", entry.oid,
+              ") is missing");
+  }
+}
+
+absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  absl::flat_hash_set<duckdb::idx_t> oids;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
+          RequirePresent(*table->Storage(), entry);
+          oids.insert(entry.oid);
+        }
+      });
+    schema.get().Scan(
+      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
+        if (index && index->Storage()) {
+          RequirePresent(*index->Storage(), entry);
+          oids.insert(entry.oid);
+        }
+      });
+  }
+  return oids;
+}
+
 void RemoveUnownedDatabases(const DataDirectory& layout,
                             ClusterCatalog& cluster) {
   absl::flat_hash_set<duckdb::idx_t> databases;
@@ -135,7 +173,7 @@ void RemoveUnownedStorages(const DataDirectory& layout,
     if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
         !catalog.InMemory()) {
       RemoveUnowned(layout.DatabaseDir(db->oid),
-                    catalog.Cast<SereneDBCatalog>().StorageOids());
+                    StorageOids(catalog.Cast<SereneDBCatalog>()));
     }
   }
 }

@@ -87,6 +87,48 @@ SET sdb_faults = 'pause_ctas_mid_ingest';
 
 connection ctas
 statement async ok
+CREATE TABLE sfi_during AS SELECT a FROM sfi_copy.public.sfi_big;
+
+connection watcher
+query ok retry 40 backoff 250ms
+SELECT count(*) AS paused FROM sdb_progress WHERE command = 'CREATE TABLE AS' AND tuples_processed > 0;
+----
+paused
+1
+
+connection pg database=postgres
+statement ok
+INSERT INTO sfi_big SELECT i FROM range(300000, 300100) t(i);
+
+connection pg database=postgres
+statement ok
+CHECKPOINT postgres;
+
+connection watcher
+statement ok
+SET sdb_faults = '-pause_ctas_mid_ingest';
+
+wait
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM sfi_during;
+----
+n	s
+300000	44999850000
+
+query
+SELECT (SELECT count(*) FROM postgres.public.sfi_big) AS live, (SELECT count(*) FROM sfi_copy.public.sfi_big) AS copy;
+----
+live	copy
+300100	300000
+
+
+connection ctas
+statement ok
+SET sdb_faults = 'pause_ctas_mid_ingest';
+
+connection ctas
+statement async ok
 CREATE TABLE sfi_read AS SELECT a FROM sfi_copy.public.sfi_big;
 
 connection watcher

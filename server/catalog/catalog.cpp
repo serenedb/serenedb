@@ -65,7 +65,6 @@
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -444,32 +443,6 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   return ClusterOf(GetDatabase()).CatalogLog();
 }
 
-namespace {
-
-template<typename Visit>
-void ForEachStore(SereneDBCatalog& catalog, Visit&& visit) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          visit(entry, *table->Storage());
-        }
-      });
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-        if (index && index->Storage()) {
-          visit(entry, *index->Storage());
-        }
-      });
-  }
-}
-
-}  // namespace
-
 void SereneDBCatalog::FinalizeLoad(
   duckdb::optional_ptr<duckdb::ClientContext> context) {
   if (!GetAttached().IsReadOnly()) {
@@ -486,35 +459,41 @@ void SereneDBCatalog::FinalizeLoad(
                             "\" is not a SereneDB database directory: its "
                             "name is not a database oid"));
   }
+  const auto log_path = (path.parent_path() / kCatalogLog).string();
+  _catalog_log_lock =
+    duckdb::FileSystem::Get(GetAttached())
+      .OpenFile(log_path, duckdb::FileFlags::FILE_FLAGS_READ |
+                            duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS |
+                            duckdb::FileLockType::READ_LOCK);
+  if (!_catalog_log_lock) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("Cannot open catalog log \"", log_path,
+              "\" in read-only mode: catalog log does not exist"));
+  }
   auto& storage = GetAttached().GetStorageManager();
-  duckdb::WriteAheadLog::ReplayCatalog(
-    *context, storage, (path.parent_path() / kCatalogLog).string(), oid);
-  ForEachStore(*this, [](const duckdb::CatalogEntry& entry, auto& store) {
-    if (store.Absent()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("the directory \"", store.Path().string(),
-                              "\" of ", entry.name.GetIdentifierName(),
-                              " (oid ", entry.oid, ") is missing"));
-    }
-    store.OpenReader();
-  });
+  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [](duckdb::CatalogEntry& entry) {
+        if (auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
+          table->Storage()->OpenReader();
+        }
+      });
+    schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
+                      [](duckdb::CatalogEntry& entry) {
+                        auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
+                        if (index && index->Storage()) {
+                          index->Storage()->OpenReader();
+                        }
+                      });
+  }
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);
   storage.FinishLoad(*context);
-}
-
-absl::flat_hash_set<duckdb::idx_t> SereneDBCatalog::StorageOids() {
-  absl::flat_hash_set<duckdb::idx_t> oids;
-  ForEachStore(*this,
-               [&](const duckdb::CatalogEntry& entry, const auto& store) {
-                 if (store.Absent()) {
-                   SDB_FATAL(STARTUP, "the directory '", store.Path().string(),
-                             "' of ", entry.name.GetIdentifierName(), " (oid ",
-                             entry.oid, ") is missing");
-                 }
-                 oids.insert(entry.oid);
-               });
-  return oids;
 }
 
 bool SereneDBCatalog::AppendLocalIndexes(

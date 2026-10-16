@@ -109,6 +109,27 @@ VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
 statement ok
 VACUUM (REFRESH_INDEX) postgres.public.sfr_docs_idx;
 
+statement ok
+CHECKPOINT postgres;
+
+statement ok
+FORCE CHECKPOINT postgres;
+
+system ok
+stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfr_log.inode
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+statement ok
+CREATE TABLE postgres.public.sfr_compacted (x INT);
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+system ok
+[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfr_log.inode)" ]
+
 query
 SELECT (SELECT count(*) FROM sfr_snap.public.sfr_docs) AS docs, (SELECT count(*) FROM sfr_snap.public.sfr_notes) AS notes;
 ----
@@ -164,6 +185,16 @@ SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
 ----
 n
 40
+
+connection after_restart
+query
+SELECT (SELECT count(*) FROM postgres.public.sfr_docs_idx WHERE body @@ 'even') AS live_docs,
+       (SELECT count(*) FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even') AS snap_docs,
+       (SELECT count(*) FROM postgres.public.sfr_notes WHERE body @@ 'note1') AS live_notes,
+       (SELECT count(*) FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1') AS snap_notes;
+----
+live_docs	snap_docs	live_notes	snap_notes
+51	50	11	10
 
 connection after_restart
 query

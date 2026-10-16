@@ -163,11 +163,11 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 ### Many readers or one writer
 
-A database file is locked for reading by every read-only attachment and for writing by the server that owns it, so the two exclude each other:
+A database file and the catalog log beside it are locked for reading by every read-only attachment and for writing by the server that owns them, so the two exclude each other:
 
 - Any number of read-only attachments, in one server or in several, can read the same directory at once.
 - `CREATE SERVER` fails while a server runs on the data directory the database belongs to.
-- A server does not start while any of its databases is attached read-only, in this server or another.
+- A server does not start while any database directory inside its data directory is attached read-only, in this server or another.
 - A server never attaches its own databases read-only, also through a symbolic link, a hard-linked copy or another mount of the same files.
 
 The lock is the file system's: on a file system without POSIX locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
@@ -175,6 +175,7 @@ The lock is the file system's: on a file system without POSIX locks nothing dete
 `CREATE SERVER` refuses a directory:
 
 - inside the data directory of a running server,
+- without the catalog log, `catalog.wal`, beside it,
 - missing the directory of one of its search tables or inverted indexes,
 - whose name is not a database oid, or
 - that belongs to the attaching server itself.

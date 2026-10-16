@@ -19,6 +19,33 @@ a6
 
 
 query
+SELECT '192.168.1.5'::inet::text AS a, '192.168.1.5/24'::inet::text AS b, text('10.0.0.1'::inet) AS c,
+       '::1'::inet::text AS d, CAST('10.0.0.1'::inet AS varchar) AS e, '192.168.1.5'::inet AS f,
+       'x' || '10.0.0.1'::inet AS g;
+----
+a	b	c	d	e	f	g
+192.168.1.5/32	192.168.1.5/24	10.0.0.1/32	::1/128	10.0.0.1/32	192.168.1.5	x10.0.0.1/32
+
+
+onlyif postgres
+query
+SELECT concat('x', '10.0.0.1'::inet) AS c, format('%s', '10.0.0.1'::inet) AS f,
+       array_to_string(ARRAY['10.0.0.1'::inet], ',') AS a;
+----
+c	f	a
+x10.0.0.1	10.0.0.1	10.0.0.1
+
+
+skipif postgres
+query
+SELECT concat('x', '10.0.0.1'::inet) AS c, format('%s', '10.0.0.1'::inet) AS f,
+       array_to_string(ARRAY['10.0.0.1'::inet], ',') AS a;
+----
+c	f	a
+x10.0.0.1/32	10.0.0.1/32	10.0.0.1/32
+
+
+query
 SELECT host('192.168.0.1/24'::INET) AS host;
 ----
 host

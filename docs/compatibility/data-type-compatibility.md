@@ -32,7 +32,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. A whole number prints without an exponent, so `1000000::float4` is `1000000` where PostgreSQL prints `1e+06`, and a negative zero prints as `0`. |
 | float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. A whole number prints without an exponent, so `1e15::float8` is `1000000000000000` where PostgreSQL prints `1e+15`; other values print in their shortest form, so `0.0001::float8` is `1e-04`, and a negative zero prints as `0`. |
 | gtsvector                    | 🔴            |         |
-| inet                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
+| inet                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. `concat`, `format` and `array_to_string` print an address with its netmask, as a cast to `text` does (`10.0.0.1/32`), where PostgreSQL prints `10.0.0.1`. |
 | int2                         | 🟢            | `smallint` |
 | int2vector                   | 🟢            |         |
 | int4                         | 🟢            | `integer` |

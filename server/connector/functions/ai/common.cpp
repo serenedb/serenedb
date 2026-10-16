@@ -403,7 +403,7 @@ struct FetchState {
       work{work},
       out{out},
       scheduler{duckdb::TaskScheduler::GetScheduler(exec.context)},
-      token{scheduler.CreateProducer()} {}
+      token{scheduler.CreateProducer(exec.context.GetSchedulerAccount())} {}
 
   bool Stop() const {
     return stop.load(std::memory_order_relaxed) || exec.context.IsInterrupted();
@@ -465,6 +465,7 @@ struct FetchState {
       if (helpers == 0) {
         return;
       }
+      duckdb::TaskScheduler::BlockingScope blocking;
       mutex.AwaitWithTimeout(absl::Condition(
                                +[](size_t* n) { return *n == 0; }, &helpers),
                              absl::Milliseconds(5));

@@ -31,6 +31,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <optional>
 #include <yaclib/async/run.hpp>
 #include <yaclib/async/wait.hpp>
@@ -335,6 +336,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     }
     run_part(0);
     if (!runs.empty()) {
+      duckdb::TaskScheduler::BlockingScope blocking;
       yaclib::Wait(runs.begin(), runs.end());
     }
     if (!ok.load(std::memory_order_relaxed)) {
@@ -836,6 +838,7 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
                                  [&job, w = size_t{i}] { job.RunWorker(w); }));
     }
     job.RunWorker(0);
+    duckdb::TaskScheduler::BlockingScope blocking;
     yaclib::Wait(runs.begin(), runs.end());
   };
 

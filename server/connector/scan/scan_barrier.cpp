@@ -21,6 +21,7 @@
 #include <chrono>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/parallel/interrupt.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <thread>
 
@@ -111,6 +112,7 @@ void ScanBarrier::Wait() {
   if (Released()) {
     return;
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   _notification.WaitForNotification();
 }
 

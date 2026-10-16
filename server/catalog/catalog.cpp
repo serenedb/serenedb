@@ -473,23 +473,13 @@ void SereneDBCatalog::FinalizeLoad(
   }
   auto& storage = GetAttached().GetStorageManager();
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [](duckdb::CatalogEntry& entry) {
-        if (auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          table->Storage()->OpenReader();
-        }
-      });
-    schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
-                      [](duckdb::CatalogEntry& entry) {
-                        auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-                        if (index && index->Storage()) {
-                          index->Storage()->OpenReader();
-                        }
-                      });
+  for (auto& table : SearchTableStorages(*this)) {
+    table->OpenReader();
+  }
+  for (auto& index : InvertedIndexEntries(*this)) {
+    if (const auto& index_storage = index.get().Storage()) {
+      index_storage->OpenReader();
+    }
   }
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);

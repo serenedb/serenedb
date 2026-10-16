@@ -175,10 +175,12 @@ void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
     Defer(root, ctx);
     return;
   }
+  auto scope = ctx;
+  scope.scorer = ScorerOf(*root, ctx);
   bool deferred = false;
   for (auto& child :
        downCast<BooleanFilter>(*root).Bucket(Occur::Must).filters) {
-    deferred |= Defer(child, ctx);
+    deferred |= Defer(child, scope);
   }
   if (deferred) {
     RunRules(root, ctx);

@@ -133,26 +133,10 @@ struct HnswFrontierOrder {
 };
 
 struct HnswWalkFilterScratch {
-  std::vector<uint64_t> known;
-  std::vector<uint64_t> pass;
-  std::vector<uint32_t> dirty;
+  HnswVisited known;
+  HnswVisited pass;
   std::vector<doc_id_t> ask;
   std::vector<uint32_t> keep;
-
-  void Grow(size_t words) {
-    if (known.size() < words) {
-      known.resize(words, 0);
-      pass.resize(words, 0);
-    }
-  }
-
-  void Clear() {
-    for (const auto w : dirty) {
-      known[w] = 0;
-      pass[w] = 0;
-    }
-    dirty.clear();
-  }
 };
 
 struct HnswSearchScratch {
@@ -518,21 +502,55 @@ inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
 }
 
+template<typename Fn>
+IRS_FORCE_INLINE void HnswForEachUnvisited(std::span<const uint32_t> links,
+                                           HnswVisited& visited, Fn&& fn) {
+  for (const auto& link : links) {
+    const auto id = HnswLoadLink(link);
+    if (id == kHnswInvalidNode) {
+      break;
+    }
+    if (!visited.TestAndSet(id)) {
+      fn(id);
+    }
+  }
+}
+
+template<typename Dist>
+IRS_FORCE_INLINE void HnswBatchUnvisited(std::span<const uint32_t> links,
+                                         Dist& dist, HnswSearchScratch& s) {
+  HnswForEachUnvisited(links, s.visited, [&](uint32_t id) {
+    s.batch.push_back(id);
+    dist.Prefetch(id);
+  });
+}
+
+inline IRS_FORCE_INLINE void HnswKeepNearest(
+  std::vector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
+  nearest.push_back(cand);
+  std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+  if (nearest.size() > ef) {
+    std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+    nearest.pop_back();
+  }
+}
+
+inline void HnswResetSearch(HnswSearchScratch& s) noexcept {
+  s.nearest.clear();
+  s.frontier.clear();
+  s.scored = 0;
+  s.admitted = 0;
+  s.two_hop = false;
+}
+
 template<HnswWalk Walk, typename Dist, typename Accept>
 void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
                       std::span<const uint32_t> neighbors, HnswSearchScratch& s,
                       const Accept& accept) {
   auto& hop = s.hop;
   hop.clear();
-  for (const auto& link : neighbors) {
-    const auto id = HnswLoadLink(link);
-    if (id == kHnswInvalidNode) {
-      break;
-    }
-    if (!s.visited.TestAndSet(id)) {
-      hop.push_back(id);
-    }
-  }
+  HnswForEachUnvisited(neighbors, s.visited,
+                       [&](uint32_t id) { hop.push_back(id); });
   accept.Prepare(std::span<const uint32_t>{hop});
   auto& bridges = s.bridges;
   bridges.clear();
@@ -599,58 +617,45 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
 
     s.batch.clear();
     const auto neighbors = graph.Neighbors(cur.node, level);
-    const auto width = neighbors.size();
     // Bridge: a node reached through a rejected one only offers its admitted
     // neighbours; an admitted node offers them all, as Through does.
     const bool through = Walk == HnswWalk::Through ||
                          (Walk == HnswWalk::Adaptive && !s.two_hop) ||
                          (Walk == HnswWalk::Bridge && accept(cur.node));
-    bool asked = false;
-    if constexpr (Walk != HnswWalk::Through &&
-                  requires { accept.Prepare(std::span<const uint32_t>{}); }) {
-      if (!through) {
-        HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
-        asked = true;
-      }
-    }
-    for (size_t i = 0; !asked && i < width; ++i) {
-      const auto id = HnswLoadLink(neighbors[i]);
-      if (id == kHnswInvalidNode) {
-        break;
-      }
-      if (s.visited.TestAndSet(id)) {
-        continue;
-      }
-      if (through) {
-        s.batch.push_back(id);
-        dist.Prefetch(id);
-        continue;
-      }
-      if (accept(id)) {
-        s.batch.push_back(id);
-        dist.Prefetch(id);
-        continue;
-      }
-      if constexpr (kHnswHops<Walk>) {
-        // The rejected node is a bridge: its admitted neighbours stand in
-        // for it, at most one level width of them.
-        const auto limit = s.batch.size() + width;
-        const auto hop = graph.Neighbors(id, level);
-        for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
-          const auto w = HnswLoadLink(hop[j]);
-          if (w == kHnswInvalidNode) {
-            break;
-          }
-          if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
-            continue;
-          }
-          if (accept(w)) {
-            s.visited.Set(w);
-            s.batch.push_back(w);
-            dist.Prefetch(w);
+    if (through) {
+      HnswBatchUnvisited(neighbors, dist, s);
+    } else if constexpr (Walk != HnswWalk::Through && requires {
+                           accept.Prepare(std::span<const uint32_t>{});
+                         }) {
+      HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
+    } else {
+      HnswForEachUnvisited(neighbors, s.visited, [&](uint32_t id) {
+        if (accept(id)) {
+          s.batch.push_back(id);
+          dist.Prefetch(id);
+          return;
+        }
+        if constexpr (kHnswHops<Walk>) {
+          // The rejected node is a bridge: its admitted neighbours stand in
+          // for it, at most one level width of them.
+          const auto limit = s.batch.size() + neighbors.size();
+          const auto hop = graph.Neighbors(id, level);
+          for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
+            const auto w = HnswLoadLink(hop[j]);
+            if (w == kHnswInvalidNode) {
+              break;
+            }
+            if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
+              continue;
+            }
+            if (accept(w)) {
+              s.visited.Set(w);
+              s.batch.push_back(w);
+              dist.Prefetch(w);
+            }
           }
         }
-      }
+      });
     }
     if (s.batch.empty()) {
       continue;
@@ -689,12 +694,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
       if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge &&
            Walk != HnswWalk::Adaptive) ||
           accept(cand.node)) {
-        nearest.push_back(cand);
-        std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-        if (nearest.size() > ef) {
-          std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-          nearest.pop_back();
-        }
+        HnswKeepNearest(nearest, cand, ef);
       }
       // The candidate's links are what its expansion reads first; fetching
       // them now overlaps that miss with the rest of this batch.
@@ -730,18 +730,7 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
     for (bool improved = true; improved;) {
       improved = false;
       s.batch.clear();
-      const auto neighbors = graph.Neighbors(cur.node, level);
-      for (size_t i = 0; i < neighbors.size(); ++i) {
-        const auto id = HnswLoadLink(neighbors[i]);
-        if (id == kHnswInvalidNode) {
-          break;
-        }
-        if (s.visited.TestAndSet(id)) {
-          continue;
-        }
-        s.batch.push_back(id);
-        dist.Prefetch(id);
-      }
+      HnswBatchUnvisited(graph.Neighbors(cur.node, level), dist, s);
       if (s.batch.empty()) {
         break;
       }
@@ -755,6 +744,21 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
       }
     }
   }
+  return cur;
+}
+
+template<typename Dist>
+HnswCandidate HnswDescendToBase(const HnswGraph& graph, Dist& dist,
+                                HnswSearchScratch& s) {
+  const uint32_t entry = graph.EntryPoint();
+  const uint32_t entry_top = graph.LevelOf(entry) - 1;
+  s.visited.Reset(graph.Size());
+  HnswCandidate cur{dist.One(entry), entry};
+  if (entry_top > 0) {
+    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
+  }
+  s.visited.Next();
+  s.visited.TestAndSet(cur.node);
   return cur;
 }
 
@@ -1031,27 +1035,14 @@ template<HnswWalk Walk = HnswWalk::Through, typename Dist,
 bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
                     HnswSearchScratch& s, const Accept& accept = {},
                     uint64_t budget = kHnswNoBudget) {
-  s.nearest.clear();
-  s.frontier.clear();
-  s.scored = 0;
-  s.admitted = 0;
-  s.two_hop = false;
+  HnswResetSearch(s);
   if (graph.Empty()) {
     return true;
   }
-  const uint32_t entry = graph.EntryPoint();
-  const uint32_t entry_top = graph.LevelOf(entry) - 1;
-
-  s.visited.Reset(graph.Size());
   if constexpr (kHnswHops<Walk>) {
     s.visited_hop2.Reset(graph.Size());
   }
-  HnswCandidate cur{dist.One(entry), entry};
-  if (entry_top > 0) {
-    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
-  }
-  s.visited.Next();
-  s.visited.TestAndSet(cur.node);
+  const auto cur = HnswDescendToBase(graph, dist, s);
   // The landing node seeds the frontier whatever the predicate says: the walk
   // must start somewhere, and a Prune walk that could not pass through it
   // would otherwise never leave it.
@@ -1080,16 +1071,11 @@ template<HnswWalk Walk, typename Dist, typename Accept>
 bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
                         HnswSearchScratch& s, std::span<const uint32_t> seeds,
                         const Accept& accept, uint64_t budget) {
-  s.nearest.clear();
-  s.frontier.clear();
-  s.scored = 0;
-  s.admitted = 0;
-  s.two_hop = false;
+  HnswResetSearch(s);
   s.visited.Reset(graph.Size());
   if constexpr (kHnswHops<Walk>) {
     s.visited_hop2.Reset(graph.Size());
   }
-  s.visited.Next();
   s.batch.clear();
   for (const auto node : seeds) {
     if (!s.visited.TestAndSet(node)) {
@@ -1136,19 +1122,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     found.clear();
     return;
   }
-
-  const uint32_t entry = graph.EntryPoint();
-  const uint32_t entry_top = graph.LevelOf(entry) - 1;
-
-  s.visited.Reset(graph.Size());
-  HnswCandidate cur{dist.One(entry), entry};
-  if (entry_top > 0) {
-    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
-  }
-
-  s.visited.Next();
-  s.visited.TestAndSet(cur.node);
-  found.assign(1, cur);
+  found.assign(1, HnswDescendToBase(graph, dist, s));
   HnswSearchLevel(graph, dist, 0, kHnswDefaultEfSearch, s);
 
   frontier.assign(found.begin(), found.end());
@@ -1169,18 +1143,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     }
 
     s.batch.clear();
-    const auto neighbors = graph.Neighbors(node.node, 0);
-    for (size_t i = 0; i < neighbors.size(); ++i) {
-      const auto id = HnswLoadLink(neighbors[i]);
-      if (id == kHnswInvalidNode) {
-        break;
-      }
-      if (s.visited.TestAndSet(id)) {
-        continue;
-      }
-      s.batch.push_back(id);
-      dist.Prefetch(id);
-    }
+    HnswBatchUnvisited(graph.Neighbors(node.node, 0), dist, s);
     if (s.batch.empty()) {
       continue;
     }

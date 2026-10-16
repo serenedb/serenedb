@@ -202,10 +202,9 @@ class WalkFilter {
       _s{s},
       _docs_count{docs_count},
       _points{table.PointReads() != detail::PointRead::None} {
-    _s.Grow((size_t{docs_count} + 63) / 64);
+    _s.known.Reset(docs_count);
+    _s.pass.Reset(docs_count);
   }
-
-  ~WalkFilter() { _s.Clear(); }
 
   WalkFilter(const WalkFilter&) = delete;
   WalkFilter& operator=(const WalkFilter&) = delete;
@@ -218,17 +217,17 @@ class WalkFilter {
     auto& ask = _s.ask;
     ask.clear();
     for (const auto node : batch) {
-      if (node < _docs_count && !Bit(_s.known, node)) {
+      if (node < _docs_count && !_s.known.Test(node)) {
         ask.push_back(node + doc_limits::min());
       }
     }
     if (ask.empty()) {
       return;
     }
-    std::sort(ask.begin(), ask.end());
+    absl::c_sort(ask);
     ask.erase(std::unique(ask.begin(), ask.end()), ask.end());
     for (const auto doc : ask) {
-      Mark(doc - doc_limits::min());
+      _s.known.Set(doc - doc_limits::min());
     }
     // The previous hop left the scans wherever it ended; this one starts
     // anywhere, and the readers only go forwards.
@@ -236,7 +235,7 @@ class WalkFilter {
     const auto kept =
       _table->Narrow(ask.data(), nullptr, static_cast<uint32_t>(ask.size()));
     for (uint32_t i = 0; i < kept; ++i) {
-      Set(_s.pass, ask[i] - doc_limits::min());
+      _s.pass.Set(ask[i] - doc_limits::min());
     }
   }
 
@@ -244,35 +243,18 @@ class WalkFilter {
     if (node >= _docs_count) {
       return false;
     }
-    if (!Bit(_s.known, node)) {
+    if (!_s.known.TestAndSet(node)) {
       // Reached without a hop of its own: the seed of the walk, or a node a
       // mode admits outside the batch. One question, still ascending on its
       // own.
-      Mark(node);
       if (_table->Admits(node + doc_limits::min())) {
-        Set(_s.pass, node);
+        _s.pass.Set(node);
       }
     }
-    return Bit(_s.pass, node);
+    return _s.pass.Test(node);
   }
 
  private:
-  static bool Bit(const std::vector<uint64_t>& w, uint32_t i) noexcept {
-    return ((w[i / 64] >> (i % 64)) & 1U) != 0;
-  }
-  static void Set(std::vector<uint64_t>& w, uint32_t i) noexcept {
-    w[i / 64] |= uint64_t{1} << (i % 64);
-  }
-  // A word is recorded the first time anything in it is set, so the clear at
-  // the end touches only the words the walk reached.
-  void Mark(uint32_t node) const {
-    const auto w = node / 64;
-    if (_s.known[w] == 0) {
-      _s.dirty.push_back(w);
-    }
-    _s.known[w] |= uint64_t{1} << (node % 64);
-  }
-
   detail::TableFilter* _table;
   HnswWalkFilterScratch& _s;
   doc_id_t _docs_count;
@@ -447,6 +429,72 @@ bool HnswPreferScan(uint64_t matches, uint32_t ef, uint32_t m0, uint64_t nodes,
   return scan <= walk;
 }
 
+struct HnswFilterPlan {
+  bool walks = false;
+  HnswWalk walk = HnswWalk::Through;
+  bool two_hop = false;
+  bool ask_per_hop = false;
+};
+
+HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
+                              HnswColumnFilter column_filter,
+                              const HnswGraph& graph, uint32_t record,
+                              uint32_t ef, uint64_t matches,
+                              const detail::TableFilter* table) {
+  HnswFilterPlan plan;
+  plan.two_hop =
+    forced == HnswFilterMode::Auto && HnswBridgeRejected(record, graph.M0());
+  auto mode = forced;
+  if (mode == HnswFilterMode::Auto) {
+    mode = HnswPreferScan(matches, ef, graph.M0(), graph.Size(), record,
+                          plan.two_hop)
+             ? HnswFilterMode::Scan
+             : HnswFilterMode::Walk;
+  }
+  // A walk asks the columnstore about the nodes it reaches; only a scan needs
+  // the predicate applied to the whole segment up front, which is what building
+  // the set with the table does. Where the walk is wide enough that probing
+  // costs more than the fold it saves, the walk still runs -- against the
+  // folded set, one bit test a node.
+  const auto point_read =
+    !table || plan.two_hop ? detail::PointRead::None : table->PointReads();
+  const auto probe_ratio =
+    point_read == detail::PointRead::Row      ? kPointReadFoldRatio
+    : point_read == detail::PointRead::Vector ? kVectorPointReadFoldRatio
+                                              : kProbeFoldRatio;
+  plan.ask_per_hop =
+    table && mode == HnswFilterMode::Walk &&
+    (column_filter == HnswColumnFilter::Read ||
+     (column_filter == HnswColumnFilter::Auto &&
+      HnswWalkNodes(matches, ef, graph.M0(), graph.Size()) * probe_ratio <=
+        static_cast<long double>(graph.Size())));
+  switch (mode) {
+    case HnswFilterMode::Walk:
+      plan.walk = plan.two_hop && !plan.ask_per_hop ? HnswWalk::TwoHop
+                  : forced == HnswFilterMode::Auto && !plan.ask_per_hop
+                    ? HnswWalk::Adaptive
+                    : HnswWalk::Through;
+      plan.walks = true;
+      break;
+    case HnswFilterMode::Prune:
+      plan.walk = HnswWalk::Prune;
+      plan.walks = true;
+      break;
+    case HnswFilterMode::TwoHop:
+      plan.walk = HnswWalk::TwoHop;
+      plan.walks = true;
+      break;
+    case HnswFilterMode::Bridge:
+      plan.walk = HnswWalk::Bridge;
+      plan.walks = true;
+      break;
+    case HnswFilterMode::Scan:
+    case HnswFilterMode::Auto:
+      break;
+  }
+  return plan;
+}
+
 template<typename Dist>
 void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   auto& nearest = s.nearest;
@@ -458,12 +506,7 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
     if (nearest.size() >= ef && cand.score <= nearest.front().score) {
       continue;
     }
-    nearest.push_back(cand);
-    std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-    if (nearest.size() > ef) {
-      std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-      nearest.pop_back();
-    }
+    HnswKeepNearest(nearest, cand, ef);
   }
   s.batch.clear();
 }
@@ -542,41 +585,20 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   } else {
     matches = _inner->EstimateMax();
   }
-  auto mode = _filter_mode;
-  const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
-  const bool two_hop = _filter_mode == HnswFilterMode::Auto &&
-                       HnswBridgeRejected(record, graph.M0());
-  if (_ef != 0 && mode == HnswFilterMode::Auto) {
-    mode =
-      HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), record, two_hop)
-        ? HnswFilterMode::Scan
-        : HnswFilterMode::Walk;
-  }
-  // A walk asks the columnstore about the nodes it reaches; only a scan needs
-  // the predicate applied to the whole segment up front, which is what building
-  // the set with the table does. Where the walk is wide enough that probing
-  // costs more than the fold it saves, the walk still runs -- against the
-  // folded set, one bit test a node.
-  const auto point_read =
-    !table || two_hop ? detail::PointRead::None : table->PointReads();
-  const auto probe_ratio =
-    point_read == detail::PointRead::Row      ? kPointReadFoldRatio
-    : point_read == detail::PointRead::Vector ? kVectorPointReadFoldRatio
-                                              : kProbeFoldRatio;
-  const bool ask_per_hop =
-    table && _ef != 0 && mode == HnswFilterMode::Walk &&
-    (_column_filter == HnswColumnFilter::Read ||
-     (_column_filter == HnswColumnFilter::Auto &&
-      HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * probe_ratio <=
-        static_cast<long double>(graph.Size())));
-  if (ask_per_hop) {
+  const auto plan =
+    _ef == 0
+      ? HnswFilterPlan{}
+      : PlanHnswFilter(_filter_mode, _column_filter, graph,
+                       HnswCandidateBytes(_record_size, _d, _data->stats.get()),
+                       _ef, matches, table);
+  if (plan.ask_per_hop) {
     // The walk asks the columnstore itself, so the sampled set -- which has the
     // predicate folded into it -- is not the set it walks against.
     probe.reset();
   }
   auto set = probe ? std::move(*probe)
                    : detail::MakeDocSet(_inner.get(), docs_count,
-                                        ask_per_hop ? nullptr : table);
+                                        plan.ask_per_hop ? nullptr : table);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -598,11 +620,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // the predicate admits enough docs lost the admitted subgraph's connectivity:
   // the scan answers exactly.
   uint64_t budget = matches;
-  if (two_hop && mode == HnswFilterMode::Walk && !ask_per_hop) {
-    mode = HnswFilterMode::TwoHop;
-  }
-  const bool adaptive = _filter_mode == HnswFilterMode::Auto &&
-                        mode == HnswFilterMode::Walk && !ask_per_hop;
   scratch.admit_share =
     std::min(1.0, static_cast<double>(matches) /
                     static_cast<double>(std::max<uint64_t>(1, graph.Size())));
@@ -611,30 +628,16 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                         (bounded && scratch.nearest.size() >= matches));
   };
   const auto run = [&](const auto& acc) {
-    switch (mode) {
-      case HnswFilterMode::Walk:
-        if (adaptive) {
-          return walked(HnswSearchTopK<HnswWalk::Adaptive>(
-            graph, dist, _ef, scratch, acc, budget));
-        }
-        return walked(HnswSearchTopK<HnswWalk::Through>(graph, dist, _ef,
-                                                        scratch, acc, budget));
-      case HnswFilterMode::Prune:
-        return walked(HnswSearchTopK<HnswWalk::Prune>(graph, dist, _ef, scratch,
-                                                      acc, budget));
-      case HnswFilterMode::TwoHop:
-        return walked(HnswSearchTopK<HnswWalk::TwoHop>(graph, dist, _ef,
-                                                       scratch, acc, budget));
-      case HnswFilterMode::Bridge:
-        return walked(HnswSearchTopK<HnswWalk::Bridge>(graph, dist, _ef,
-                                                       scratch, acc, budget));
-      case HnswFilterMode::Scan:
-      case HnswFilterMode::Auto:
-        return false;
+    bool done = false;
+    if (plan.walks) {
+      ResolveEnum<HnswWalk>(plan.walk, [&]<HnswWalk Walk>() {
+        done =
+          walked(HnswSearchTopK<Walk>(graph, dist, _ef, scratch, acc, budget));
+      });
     }
-    return false;
+    return done;
   };
-  if (ask_per_hop) {
+  if (plan.ask_per_hop) {
     const WalkFilter walk_filter{*table, docs_count, scratch.walk_filter};
     const bool done =
       _inner ? run(InnerAndTableFilter{set, walk_filter, scratch.walk_filter})
@@ -649,7 +652,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     set = detail::MakeDocSet(_inner.get(), docs_count, table);
   } else if (run(admit)) {
     return;
-  } else if (two_hop && mode == HnswFilterMode::TwoHop &&
+  } else if (plan.two_hop && plan.walk == HnswWalk::TwoHop &&
              scratch.scored < budget) {
     budget -= scratch.scored;
     const auto seeds = AdmittedSeeds(set, graph, 2 * _ef);
@@ -691,10 +694,11 @@ bool HnswQuery::ScansByColumn() const {
   if (_filter_mode != HnswFilterMode::Auto) {
     return _filter_mode == HnswFilterMode::Scan;
   }
-  const auto& graph = _data->graph;
-  const auto record = HnswCandidateBytes(_record_size, _d, _data->stats.get());
-  return HnswPreferScan(matches, _ef, graph.M0(), graph.Size(), record,
-                        HnswBridgeRejected(record, graph.M0()));
+  return !PlanHnswFilter(
+            _filter_mode, _column_filter, _data->graph,
+            HnswCandidateBytes(_record_size, _d, _data->stats.get()), _ef,
+            matches, nullptr)
+            .walks;
 }
 
 void HnswQuery::ScanColumn(HnswSearchScratch& s) const {

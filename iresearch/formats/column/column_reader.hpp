@@ -151,6 +151,8 @@ struct ListDictionary {
   uint64_t missed_block = 0;
   uint64_t oversized_block = 0;
   std::optional<duckdb::Vector> lists;
+  std::vector<uint64_t> decoded;
+  std::vector<uint32_t> ranks;
 };
 
 class ColumnReader {

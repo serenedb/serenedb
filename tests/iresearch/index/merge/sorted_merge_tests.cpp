@@ -620,6 +620,61 @@ TEST_F(SortedMergeTest, LargeInputsSpanWindowsAndCheckpoints) {
   }
 }
 
+TEST_F(SortedMergeTest, ListsReferencedFarApartMergeIntact) {
+  constexpr irs::field_id kList = kFirstColumn + 5;
+  constexpr int64_t kInputs = 3;
+  constexpr int64_t kRows = 12000;
+  const auto text = duckdb::LogicalType::VARCHAR;
+  const auto list_type = duckdb::LogicalType::LIST(text);
+  irs::MemoryDirectory dir;
+  auto writer = MakeWriter(dir, DEFAULT_ROW_GROUP_SIZE, PlainColumns);
+  size_t next = 0;
+  for (int64_t input = 0; input != kInputs; ++input) {
+    auto trx = writer->GetBatch();
+    for (int64_t row = 0; row != kRows; ++row) {
+      auto doc = trx.Insert();
+      tests::StringField id{"id", absl::StrCat("doc-", next++)};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+      WriteValue(doc, kBigint, duckdb::LogicalType::BIGINT,
+                 duckdb::Value::BIGINT(row * kInputs + input));
+      const auto item = row < 8000 ? row / 2 : 1000 + (row - 8000) / 2 % 2000;
+      auto value =
+        row % 194 == 10 ? duckdb::Value{list_type}
+        : row % 2 == 0
+          ? duckdb::Value::LIST(
+              text, {duckdb::Value{"common"}, duckdb::Value{"pair"}})
+          : duckdb::Value::LIST(text, {duckdb::Value{"item"},
+                                       duckdb::Value{absl::StrCat("n", item)}});
+      WriteValue(doc, kList, list_type, value);
+    }
+    trx.Commit();
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  std::vector<std::string> removed;
+  for (int64_t row = kRows; row != 2 * kRows; row += 5) {
+    removed.push_back(absl::StrCat("doc-", row));
+  }
+  RemoveTerms(*writer, kIdField, removed);
+  const auto reader = writer->GetSnapshot();
+  const auto inputs = Segments(reader);
+  ASSERT_EQ(kInputs, inputs.size());
+  const irs::SortSpec spec{{{.column = kBigint}}};
+  for (const size_t threads : {1, 4}) {
+    SCOPED_TRACE(threads);
+    ThreadedMergeExecutor executor{threads};
+    irs::MemoryDirectory out;
+    bool flushed = false;
+    const auto merged =
+      SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE, PlainColumns,
+                  flushed, threads == 1 ? nullptr : &executor);
+    ASSERT_TRUE(flushed);
+    ASSERT_NE(nullptr, merged);
+    EXPECT_EQ(
+      "", FirstDifference(ExpectedSortedMerge(inputs, spec), Dump(*merged)));
+  }
+}
+
 TEST_F(SortedMergeTest, EveryCancellationStopsTheMerge) {
   AddSegment(Keys(0, 2, 9000), true, true, false);
   AddSegment(Keys(1, 2, 9000), true, true, false);

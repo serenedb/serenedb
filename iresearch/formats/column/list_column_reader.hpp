@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <bit>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -133,6 +134,7 @@ class ListColumnReader final : public ColumnReader {
   static constexpr uint64_t kReadAheadLists = 2048;
   static constexpr uint64_t kWholeBlockElems = 1 << 19;
   static constexpr uint64_t kWholeBlockLists = 8192;
+  static constexpr uint64_t kRunGapLists = 256;
 
   bool Deduplicated() const noexcept { return _children.size() == 2; }
 
@@ -314,12 +316,122 @@ class ListColumnReader final : public ColumnReader {
     return true;
   }
 
+  static uint64_t Index(const ListDictionary& d, uint64_t code) noexcept {
+    const uint64_t off = code - d.begin;
+    if (d.decoded.empty()) {
+      return off + 1;
+    }
+    const auto below = d.decoded[off / 64] & ((uint64_t{1} << (off % 64)) - 1);
+    return 1 + d.ranks[off / 64] + static_cast<uint64_t>(std::popcount(below));
+  }
+
+  static bool Covers(const ListDictionary& d, const uint64_t* codes,
+                     const duckdb::ValidityMask& validity, duckdb::idx_t offset,
+                     duckdb::idx_t count, uint64_t lo, uint64_t hi) noexcept {
+    if (!d.lists || d.decoded.empty() || lo < d.begin || hi >= d.end) {
+      return false;
+    }
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      if (!validity.RowIsValid(offset + i)) {
+        continue;
+      }
+      const uint64_t off = codes[i] - d.begin;
+      if (((d.decoded[off / 64] >> (off % 64)) & 1) == 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static uint64_t NextBit(const std::vector<uint64_t>& bits, uint64_t pos,
+                          bool set) noexcept {
+    const uint64_t limit = bits.size() * 64;
+    if (pos >= limit) {
+      return limit;
+    }
+    const uint64_t flip = set ? 0 : ~uint64_t{0};
+    uint64_t w = pos / 64;
+    uint64_t word = (bits[w] ^ flip) & (~uint64_t{0} << (pos % 64));
+    while (word == 0) {
+      if (++w == bits.size()) {
+        return limit;
+      }
+      word = bits[w] ^ flip;
+    }
+    return w * 64 + static_cast<uint64_t>(std::countr_zero(word));
+  }
+
+  static void SetBits(std::vector<uint64_t>& bits, uint64_t from,
+                      uint64_t to) noexcept {
+    for (; from < to && from % 64 != 0; ++from) {
+      bits[from / 64] |= uint64_t{1} << (from % 64);
+    }
+    for (; from + 64 <= to; from += 64) {
+      bits[from / 64] = ~uint64_t{0};
+    }
+    for (; from < to; ++from) {
+      bits[from / 64] |= uint64_t{1} << (from % 64);
+    }
+  }
+
+  ListDictionary& ReferencedLists(ScanState& s, const uint64_t* codes,
+                                  const duckdb::ValidityMask& validity,
+                                  duckdb::idx_t offset, duckdb::idx_t count,
+                                  uint64_t lo, uint64_t hi) const {
+    auto& d = Dictionary(s);
+    if (Covers(d, codes, validity, offset, count, lo, hi)) {
+      return d;
+    }
+    auto& bits = d.decoded;
+    bits.assign((hi - lo) / 64 + 1, 0);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      if (validity.RowIsValid(offset + i)) {
+        const uint64_t off = codes[i] - lo;
+        bits[off / 64] |= uint64_t{1} << (off % 64);
+      }
+    }
+    const uint64_t limit = bits.size() * 64;
+    for (uint64_t from = NextBit(bits, 0, true), prev = from; from < limit;) {
+      const uint64_t to = NextBit(bits, from, false);
+      if (from > prev && from - prev <= kRunGapLists) {
+        SetBits(bits, prev, from);
+      }
+      prev = to;
+      from = NextBit(bits, to, true);
+    }
+    d.ranks.resize(bits.size());
+    uint64_t total = 0;
+    for (size_t w = 0; w != bits.size(); ++w) {
+      d.ranks[w] = static_cast<uint32_t>(total);
+      total += static_cast<uint64_t>(std::popcount(bits[w]));
+    }
+    duckdb::Vector lists{_type, static_cast<duckdb::idx_t>(total + 1)};
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(lists);
+    duckdb::FlatVector::ValidityMutable(lists).SetInvalid(0);
+    entries[0] = duckdb::list_entry_t{0, 0};
+    uint64_t index = 1;
+    for (uint64_t from = NextBit(bits, 0, true); from < limit;) {
+      const uint64_t to = NextBit(bits, from, false);
+      ReadLists(s, d, lo + from, to - from, lists, entries + index,
+                duckdb::ListVector::GetListSize(lists),
+                [](uint64_t) noexcept { return true; });
+      index += to - from;
+      from = NextBit(bits, to, true);
+    }
+    d.lists.emplace(std::move(lists));
+    d.begin = lo;
+    d.end = hi + 1;
+    return d;
+  }
+
   ListDictionary& Lists(ScanState& s, uint64_t lo, uint64_t hi,
                         duckdb::idx_t rows) const {
     auto& d = Dictionary(s);
-    if (d.lists && lo >= d.begin && hi < d.end) {
+    if (d.lists && d.decoded.empty() && lo >= d.begin && hi < d.end) {
       return d;
     }
+    d.decoded.clear();
     const uint64_t distinct = _children[1]->RowCount();
     SDB_ASSERT(hi < distinct);
     uint64_t first = lo;
@@ -389,12 +501,15 @@ class ListColumnReader final : public ColumnReader {
                                       static_cast<duckdb::idx_t>(child_base));
       return scan_count;
     }
-    auto& d = Lists(s, lo, hi, scan_count);
+    auto& d = s.ctx->ReadAhead()
+                ? Lists(s, lo, hi, scan_count)
+                : ReferencedLists(s, codes, validity, result_offset, scan_count,
+                                  lo, hi);
     if constexpr (kDictionary) {
       duckdb::SelectionVector sel{scan_count};
       for (duckdb::idx_t i = 0; i < scan_count; ++i) {
         sel.set_index(i, validity.RowIsValid(i)
-                           ? static_cast<duckdb::idx_t>(codes[i] - d.begin + 1)
+                           ? static_cast<duckdb::idx_t>(Index(d, codes[i]))
                            : 0);
       }
       result.Slice(*d.lists, sel, scan_count);
@@ -405,7 +520,7 @@ class ListColumnReader final : public ColumnReader {
     uint64_t total = 0;
     for (duckdb::idx_t i = 0; i < scan_count; ++i) {
       if (validity.RowIsValid(result_offset + i)) {
-        total += lists[codes[i] - d.begin + 1].length;
+        total += lists[Index(d, codes[i])].length;
       }
     }
     duckdb::ListVector::Reserve(result,
@@ -417,7 +532,7 @@ class ListColumnReader final : public ColumnReader {
         entries[result_offset + i] = duckdb::list_entry_t{child_base + pos, 0};
         continue;
       }
-      const auto& list = lists[codes[i] - d.begin + 1];
+      const auto& list = lists[Index(d, codes[i])];
       entries[result_offset + i] =
         duckdb::list_entry_t{child_base + pos, list.length};
       for (uint64_t k = 0; k < list.length; ++k) {

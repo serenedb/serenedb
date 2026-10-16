@@ -60,6 +60,8 @@ class ReadContext final : public BlockManager,
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
   bool RandomAccess() const noexcept { return _random_access; }
+  bool ReadAhead() const noexcept { return _read_ahead; }
+  void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;
@@ -112,6 +114,7 @@ class ReadContext final : public BlockManager,
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   std::vector<CacheSlot> _cache_slots;
   bool _random_access = false;
+  bool _read_ahead = true;
   std::atomic<size_t> _live_handles{0};
 };
 

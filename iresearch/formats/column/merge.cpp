@@ -647,7 +647,9 @@ struct ColumnMerger::State {
     if (!in.col) {
       return;
     }
-    in.state = in.col->InitScan(std::make_shared<ReadContext>(*s.col_reader));
+    auto ctx = std::make_shared<ReadContext>(*s.col_reader);
+    ctx->SetReadAhead(false);
+    in.state = in.col->InitScan(std::move(ctx));
     const uint64_t total = in.col->RowCount();
     if (!HasRemovals(s.reader->Meta())) {
       in.valued = total;

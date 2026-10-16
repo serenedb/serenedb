@@ -76,8 +76,10 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     data->graph = HnswGraph::Deserialize(*in);
     const auto read_floats = [&](std::vector<float>& out, size_t count) {
       out.resize(count);
-      in->ReadData(reinterpret_cast<byte_type*>(out.data()),
-                   out.size() * sizeof(float));
+      if (count != 0) {
+        in->ReadData(reinterpret_cast<byte_type*>(out.data()),
+                     count * sizeof(float));
+      }
     };
     const auto read_rotation = [&] {
       std::vector<float> rotation;
@@ -88,11 +90,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
           : std::make_shared<const std::vector<float>>(std::move(rotation));
     };
     if (_header.quant == VectorQuantization::None) {
-      data->vectors.resize(static_cast<size_t>(_header.rows) * _header.d);
-      if (!data->vectors.empty()) {
-        in->ReadData(reinterpret_cast<byte_type*>(data->vectors.data()),
-                     data->vectors.size() * sizeof(float));
-      }
+      read_floats(data->vectors, static_cast<size_t>(_header.rows) * _header.d);
       if (_header.rotated) {
         read_rotation();
         read_floats(data->norms, static_cast<size_t>(_header.rows));
@@ -111,9 +109,7 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
         return;
       }
       if (QuantizerNeedsCentroid(_header.quant)) {
-        data->centroid.resize(_header.d);
-        in->ReadData(reinterpret_cast<byte_type*>(data->centroid.data()),
-                     data->centroid.size() * sizeof(float));
+        read_floats(data->centroid, _header.d);
       }
       data->codes.resize(static_cast<size_t>(_header.rows) *
                          _header.record_size);

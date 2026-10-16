@@ -228,30 +228,38 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
 }
 
 template<typename Fn>
-uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
-                     uint32_t d, bool normalize, std::vector<float>& buf,
-                     Fn&& fn) {
+void ForEachVectorBatch(const ColumnReader& col, ReadContext& ctx,
+                        uint64_t rows, Fn&& fn) {
   ColumnReader::VectorScratch scratch{col.Type()};
   auto scan = col.InitScan(ctx);
   for (uint64_t done = 0; done < rows;) {
-    const auto take = static_cast<duckdb::idx_t>(
+    const auto take = static_cast<size_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
     auto& batch = scratch.Reset();
     col.Scan(scan, batch, take);
-    const auto& mask = duckdb::FlatVector::Validity(batch);
     const auto* src =
       duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
-    const size_t chunk = static_cast<size_t>(take) * d;
-    buf.assign(src, src + chunk);
-    if (normalize) {
-      for (duckdb::idx_t i = 0; i < take; ++i) {
-        float* v = buf.data() + static_cast<size_t>(i) * d;
-        duckdb::L2NormalizeOp::Operation(v, v, d);
-      }
+    if (!fn(src, take, done, duckdb::FlatVector::Validity(batch))) {
+      return;
     }
-    fn(buf.data(), static_cast<size_t>(take), done, mask);
     done += take;
   }
+}
+
+template<typename Fn>
+uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
+                     uint32_t d, bool normalize, std::vector<float>& buf,
+                     Fn&& fn) {
+  ForEachVectorBatch(col, ctx, rows,
+                     [&](const float* src, size_t take, uint64_t done,
+                         const duckdb::ValidityMask& mask) {
+                       buf.assign(src, src + take * d);
+                       if (normalize) {
+                         NormalizeRows(buf.data(), take, d);
+                       }
+                       fn(buf.data(), take, done, mask);
+                       return true;
+                     });
   return rows;
 }
 
@@ -259,38 +267,31 @@ template<typename Fn>
 uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
                           uint64_t rows, uint64_t limit, uint32_t d,
                           bool normalize, std::vector<float>& buf, Fn&& fn) {
-  ColumnReader::VectorScratch scratch{col.Type()};
-  auto scan = col.InitScan(ctx);
   uint64_t delivered = 0;
-  for (uint64_t done = 0; done < rows && delivered < limit;) {
-    const auto take = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
-    auto& batch = scratch.Reset();
-    col.Scan(scan, batch, take);
-    const auto& mask = duckdb::FlatVector::Validity(batch);
-    const auto* src =
-      duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
-    buf.clear();
-    size_t n = 0;
-    for (duckdb::idx_t i = 0; i < take && delivered + n < limit; ++i) {
-      if (mask.RowIsValid(i)) {
-        buf.insert(buf.end(), src + static_cast<size_t>(i) * d,
-                   src + static_cast<size_t>(i + 1) * d);
-        ++n;
-      }
-    }
-    if (normalize) {
-      for (size_t i = 0; i < n; ++i) {
-        float* v = buf.data() + i * d;
-        duckdb::L2NormalizeOp::Operation(v, v, d);
-      }
-    }
-    if (n != 0) {
-      fn(buf.data(), n);
-    }
-    delivered += n;
-    done += take;
+  if (limit == 0) {
+    return delivered;
   }
+  ForEachVectorBatch(
+    col, ctx, rows,
+    [&](const float* src, size_t take, uint64_t,
+        const duckdb::ValidityMask& mask) {
+      buf.clear();
+      size_t n = 0;
+      for (size_t i = 0; i < take && delivered + n < limit; ++i) {
+        if (mask.RowIsValid(i)) {
+          buf.insert(buf.end(), src + i * d, src + (i + 1) * d);
+          ++n;
+        }
+      }
+      if (normalize) {
+        NormalizeRows(buf.data(), n, d);
+      }
+      if (n != 0) {
+        fn(buf.data(), n);
+      }
+      delivered += n;
+      return delivered < limit;
+    });
   return delivered;
 }
 
@@ -608,6 +609,30 @@ struct HnswCodeDistFactory {
     return reader;
   }
 };
+
+HnswCodeDistFactory MakeCodeFactory(const bstring& codes, uint32_t record_size,
+                                    const QuantizerStats& stats,
+                                    const std::vector<float>& centroid,
+                                    uint32_t d, const float* resident,
+                                    uint64_t rows,
+                                    std::vector<float>& pair_terms) {
+  HnswCodeDistFactory factory{
+    .codes = codes.data(),
+    .record_size = record_size,
+    .stats = &stats,
+    .centroid = centroid.empty() ? nullptr : centroid.data(),
+    .d = d,
+    .resident = resident,
+    .rows = resident ? static_cast<uint32_t>(rows) : 0};
+  SDB_ENSURE(factory.CanRekey(),
+             "hnsw: quantizer produced a code layout the build cannot score "
+             "(Decode/SetQuery round-trip failed) for quant kind ",
+             static_cast<uint32_t>(stats.Kind()));
+  if (factory.PreparePairTerms(rows, pair_terms)) {
+    factory.pair_terms = pair_terms;
+  }
+  return factory;
+}
 
 template<typename Factory>
 struct HnswInsertJob {
@@ -1066,8 +1091,7 @@ std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
 
 void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
                        std::span<const float> basis, const AnnBuildEnv* env,
-                       std::vector<float>& rotation,
-                       std::vector<float>& norms) {
+                       std::vector<float>& rotation) {
   SDB_ASSERT(basis.size() == size_t{d} * d);
   faiss::LinearTransform transform{static_cast<int>(d), static_cast<int>(d),
                                    /*have_bias=*/false};
@@ -1083,17 +1107,42 @@ void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
                                    vectors.data() + first * d, chunk.data());
            std::copy_n(chunk.data(), n * d, vectors.data() + first * d);
          });
-  norms.resize(rows);
+}
+
+std::vector<float> RowNorms(const std::vector<float>& vectors, size_t rows,
+                            uint32_t d) {
+  std::vector<float> norms(rows);
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
   }
+  return norms;
+}
+
+bool RotationApplies(VectorMetric metric, uint32_t d) noexcept {
+  return d >= kHnswPanoramaMinDim && d <= kHnswPanoramaMaxDim &&
+         PanoramaApplies(metric, d);
 }
 
 bool RotatesCodes(const AnnInfo& info, uint32_t d) noexcept {
   return info.quant.kind == VectorQuantization::SQ8 &&
          EffectiveQuantMetric(info.metric) == VectorMetric::InnerProduct &&
-         d >= kHnswPanoramaMinDim && d <= kHnswPanoramaMaxDim &&
-         PanoramaApplies(info.metric, d);
+         RotationApplies(info.metric, d);
+}
+
+template<typename Fn>
+void ForEachValidRun(std::span<const uint8_t> valid, Fn&& fn) {
+  for (size_t first = 0; first < valid.size();) {
+    if (valid[first] == 0) {
+      ++first;
+      continue;
+    }
+    size_t last = first;
+    while (last < valid.size() && valid[last] != 0) {
+      ++last;
+    }
+    fn(first, last - first);
+    first = last;
+  }
 }
 
 HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
@@ -1154,6 +1203,30 @@ HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
 
 HnswWriter::~HnswWriter() = default;
 
+std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
+  BytesOutput blob_out{_stats_blob};
+  _qw->Serialize(blob_out);
+  return MakeQuantizerStats(
+    _info.quant.kind, _d,
+    std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
+    EffectiveQuantMetric(_info.metric), /*row_major=*/true);
+}
+
+std::shared_ptr<const QuantizerStats> HnswWriter::EncodeRotated(
+  std::span<const uint8_t> valid, const AnnBuildEnv* env) {
+  ForEachValidRun(valid, [&](size_t first, size_t count) {
+    _qw->Train(_vectors.data() + first * _d, count);
+  });
+  _record_size = _qw->BlockSetting().record_size;
+  _codes.resize(static_cast<size_t>(_rows) * _record_size);
+  SDB_ENSURE(_qw->EncodeInto(_codes.data(), _vectors.data(), _rows),
+             "hnsw: sq8 encodes rows in place");
+  auto stats = SerializeStats();
+  SDB_ENSURE(stats, "hnsw: sq8 statistics round-trip");
+  ComputeCodeTails(*stats, _codes.data(), _record_size, _rows, _d, env, _tails);
+  return stats;
+}
+
 yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                    const AnnBuildEnv* env) {
   _d = static_cast<uint32_t>(col.ArraySize());
@@ -1198,45 +1271,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, _vectors,
                                     valid, _d, enough);
     if (basis && enough) {
-      RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation,
-                        _norms);
-      _norms = {};
-      for (size_t first = 0; first < valid.size();) {
-        if (valid[first] == 0) {
-          ++first;
-          continue;
-        }
-        size_t last = first;
-        while (last < valid.size() && valid[last] != 0) {
-          ++last;
-        }
-        _qw->Train(_vectors.data() + first * _d, last - first);
-        first = last;
-      }
-      _record_size = _qw->BlockSetting().record_size;
-      _codes.resize(static_cast<size_t>(_rows) * _record_size);
-      SDB_ENSURE(_qw->EncodeInto(_codes.data(), _vectors.data(), _rows),
-                 "hnsw: sq8 encodes rows in place");
-      BytesOutput blob_out{_stats_blob};
-      _qw->Serialize(blob_out);
-      const auto stats = MakeQuantizerStats(
-        _info.quant.kind, _d,
-        std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
-        EffectiveQuantMetric(_info.metric), /*row_major=*/true);
-      SDB_ENSURE(stats, "hnsw: sq8 statistics round-trip");
-      ComputeCodeTails(*stats, _codes.data(), _record_size, _rows, _d, env,
-                       _tails);
-      HnswCodeDistFactory factory{.codes = _codes.data(),
-                                  .record_size = _record_size,
-                                  .stats = stats.get(),
-                                  .centroid = nullptr,
-                                  .d = _d,
-                                  .resident = _vectors.data(),
-                                  .rows = static_cast<uint32_t>(_rows)};
+      RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
+      const auto stats = EncodeRotated(valid, env);
       std::vector<float> pair_terms;
-      if (factory.PreparePairTerms(_rows, pair_terms)) {
-        factory.pair_terms = pair_terms;
-      }
+      const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
+                                           _vectors.data(), _rows, pair_terms);
       co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
                              donor, env, HnswOriginals{}, _d);
       _vectors = {};
@@ -1352,43 +1391,26 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                 n * _d * sizeof(float));
                   }
                 });
-    if (!_qw && _d >= kHnswPanoramaMinDim && _d <= kHnswPanoramaMaxDim &&
-        PanoramaApplies(_info.metric, _d)) {
+    if (!_qw && RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
       const auto basis = AcquireBasis(_bases, _info.centroids_id, donor,
                                       _vectors, valid, _d, enough);
       if (basis && enough) {
-        RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation,
-                          _norms);
+        RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
+        _norms = RowNorms(_vectors, valid.size(), _d);
       }
     }
   }
 
   std::shared_ptr<const QuantizerStats> stats;
   if (encoding) {
-    BytesOutput blob_out{_stats_blob};
-    _qw->Serialize(blob_out);
-    stats = MakeQuantizerStats(
-      _info.quant.kind, _d,
-      std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
-      EffectiveQuantMetric(_info.metric), /*row_major=*/true);
+    stats = SerializeStats();
   }
 
   if (stats && !raw_build) {
-    HnswCodeDistFactory factory{
-      .codes = _codes.data(),
-      .record_size = _record_size,
-      .stats = stats.get(),
-      .centroid = _centroid.empty() ? nullptr : _centroid.data(),
-      .d = _d};
-    SDB_ENSURE(factory.CanRekey(),
-               "hnsw: quantizer produced a code layout the build cannot score "
-               "(Decode/SetQuery round-trip failed) for quant kind ",
-               static_cast<uint32_t>(_info.quant.kind));
     std::vector<float> pair_terms;
-    if (factory.PreparePairTerms(_rows, pair_terms)) {
-      factory.pair_terms = pair_terms;
-    }
+    const auto factory = MakeCodeFactory(
+      _codes, _record_size, *stats, _centroid, _d, nullptr, _rows, pair_terms);
     const HnswOriginals originals{
       .col = &col, .ctx = &ctx, .normalize = normalize};
     co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
@@ -1436,29 +1458,23 @@ void HnswWriter::Flush() {
   out.WriteU32(_record_size);
   out.WriteU64(_rows);
   out.WriteByte(_rotation.empty() ? 0 : 1);
+  const auto write_floats = [&](std::span<const float> values) {
+    out.WriteData(reinterpret_cast<const byte_type*>(values.data()),
+                  values.size() * sizeof(float));
+  };
   _graph.Serialize(out);
   if (_qw) {
     _qw->Serialize(out);
     if (!_centroid.empty()) {
-      out.WriteData(reinterpret_cast<const byte_type*>(_centroid.data()),
-                    _centroid.size() * sizeof(float));
+      write_floats(_centroid);
     }
     out.WriteData(_codes.data(), _codes.size());
-    if (!_rotation.empty()) {
-      out.WriteData(reinterpret_cast<const byte_type*>(_rotation.data()),
-                    _rotation.size() * sizeof(float));
-      out.WriteData(reinterpret_cast<const byte_type*>(_tails.data()),
-                    _tails.size() * sizeof(float));
-    }
   } else {
-    out.WriteData(reinterpret_cast<const byte_type*>(_vectors.data()),
-                  static_cast<size_t>(_rows) * _d * sizeof(float));
-    if (!_rotation.empty()) {
-      out.WriteData(reinterpret_cast<const byte_type*>(_rotation.data()),
-                    _rotation.size() * sizeof(float));
-      out.WriteData(reinterpret_cast<const byte_type*>(_norms.data()),
-                    _norms.size() * sizeof(float));
-    }
+    write_floats({_vectors.data(), static_cast<size_t>(_rows) * _d});
+  }
+  if (!_rotation.empty()) {
+    write_floats(_rotation);
+    write_floats(_qw ? _tails : _norms);
   }
 
   _idx->AddHnsw(

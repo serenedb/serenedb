@@ -57,6 +57,11 @@ class HnswWriter final : public AnnWriter {
   void Flush() final;
 
  private:
+  std::shared_ptr<const QuantizerStats> SerializeStats();
+
+  std::shared_ptr<const QuantizerStats> EncodeRotated(
+    std::span<const uint8_t> valid, const AnnBuildEnv* env);
+
   AnnInfo _info;
   HnswBases* _bases;
   std::span<const MergeSource> _merge_sources;

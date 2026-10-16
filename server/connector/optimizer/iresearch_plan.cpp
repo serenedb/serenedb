@@ -953,6 +953,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 bool DependsOnSession(const duckdb::LogicalType& type) {
   return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
     return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
            t.id() == duckdb::LogicalTypeId::TIME_TZ ||
            t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
   });

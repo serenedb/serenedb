@@ -492,7 +492,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "string: one rule per line, first match wins, applied to connections "
         "opened after the SET. An un-removable local + loopback trust rule is "
         "force-prepended so a bad ruleset cannot lock you out; an empty value "
-        "restores the default (unix trust + SCRAM for TCP). Server-global.",
+        "restores the default (SCRAM for every role). Server-global.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
           RequireHbaSuperuser(ctx);
@@ -504,7 +504,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireHbaSuperuser(ctx);
-          network::pg::hba::SetHbaFromTextString("");  // RESET => default
+          // RESET => default
+          if (auto err = network::pg::hba::SetHbaFromTextString("")) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
+          }
         },
         duckdb::SetScope::GLOBAL,
       },

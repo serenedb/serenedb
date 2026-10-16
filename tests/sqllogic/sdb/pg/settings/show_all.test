@@ -139,7 +139,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
@@ -480,7 +480,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set

@@ -107,4 +107,12 @@ class AnnQueryCache {
   std::vector<SharedCodebook> _codebooks;
 };
 
+std::shared_ptr<const PanoramaQuery> RotateQuery(
+  AnnQueryCache* cache, const HnswBases::Basis& basis,
+  const HnswBases::ByteBasis& bytes, std::span<const float> query);
+
+std::shared_ptr<const QuantizerCodebook> QueryCodebook(
+  AnnQueryCache* cache, const QuantizerStats& stats,
+  std::span<const float> query);
+
 }  // namespace irs

@@ -249,4 +249,17 @@ std::shared_ptr<const QuantizerCodebook> AnnQueryCache::Codebook(
   return codebook;
 }
 
+std::shared_ptr<const PanoramaQuery> RotateQuery(
+  AnnQueryCache* cache, const HnswBases::Basis& basis,
+  const HnswBases::ByteBasis& bytes, std::span<const float> query) {
+  return cache ? cache->Get(basis, bytes, query)
+               : AnnQueryCache{}.Get(basis, bytes, query);
+}
+
+std::shared_ptr<const QuantizerCodebook> QueryCodebook(
+  AnnQueryCache* cache, const QuantizerStats& stats,
+  std::span<const float> query) {
+  return cache ? cache->Codebook(stats, query) : stats.MakeCodebook(query);
+}
+
 }  // namespace irs

@@ -182,16 +182,8 @@ ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
   if (QueryBuilder::IsEmpty(*_query)) {
     return;
   }
-  auto node = _query->PlanFill({}, ScoreMergeType::Noop);
-  SDB_ASSERT(node);
-  if (auto* folded = node->Folded()) {
-    _set = std::make_unique<detail::LazyBitset>(std::move(*folded),
-                                                fill::DocsMask{nullptr});
-    return;
-  }
-  _set = std::make_unique<detail::LazyBitset>(
-    std::move(node), static_cast<doc_id_t>(segment.docs_count()),
-    fill::DocsMask{nullptr});
+  _set = std::make_unique<detail::LazyBitset>(detail::MakeDocSet(
+    _query.get(), static_cast<doc_id_t>(segment.docs_count())));
 }
 
 bool ColFilterLeaf::Contains(doc_id_t doc) {

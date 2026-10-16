@@ -49,13 +49,7 @@ class ExactScanner {
     _doc = _last;
     _end = _last;
     if (const auto* inner = query.Inner()) {
-      auto node = inner->PlanFill({}, ScoreMergeType::Noop);
-      SDB_ASSERT(node);
-      if (auto* folded = node->Folded()) {
-        _set.emplace(std::move(*folded), fill::DocsMask{nullptr});
-      } else {
-        _set.emplace(std::move(node), rows, fill::DocsMask{nullptr});
-      }
+      _set.emplace(MakeDocSet(inner, rows));
     }
     if (const auto& column = query.Column();
         column.HasValidity() && column.MergedStatistics().CanHaveNull()) {
@@ -94,6 +88,10 @@ class ExactScanner {
         return kept;
       }
     }
+  }
+
+  uint32_t NextMatches(doc_id_t* docs, score_t* dists) {
+    return Gated() ? Next(docs, dists) : NextDocs(docs);
   }
 
   bool Gated() const noexcept { return static_cast<bool>(_threshold); }

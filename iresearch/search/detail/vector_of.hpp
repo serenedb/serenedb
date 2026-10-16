@@ -266,36 +266,6 @@ class RawVectorReader {
       _vreader.ReadDocBatch(first, count));
   }
 
-  const byte_type* Read(doc_id_t first, size_t count) {
-    const auto* child = _column->Child();
-    SDB_ASSERT(child != nullptr);
-    const uint64_t elem =
-      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
-    // The rows a scan hands over ascend, so the block one lands in is almost
-    // always the block the last one landed in. Locate takes the previous
-    // window as a hint and answers from it instead of searching the block
-    // list -- which a selective predicate would otherwise pay for once per
-    // row, its runs being a single row each.
-    _win = child->Locate(elem, _win);
-    const auto& window = _win;
-    const auto& meta = child->DataBlocks()[window.block];
-    const size_t bytes = count * _d * sizeof(float);
-    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
-        elem + count * _d <= window.end) {
-      const uint64_t offset =
-        meta.file_offset + (elem - window.begin) * sizeof(float);
-      if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
-        return reinterpret_cast<const byte_type*>(p);
-      }
-      _buf.resize(bytes);
-      _read_ctx.Read(offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
-                     bytes);
-      return _buf.data();
-    }
-    return reinterpret_cast<const byte_type*>(
-      _vreader.ReadDocBatch(first, count));
-  }
-
   ReadContext _read_ctx;
   irs::BlockWindow _win{};
   IvfVectorReader _vreader;

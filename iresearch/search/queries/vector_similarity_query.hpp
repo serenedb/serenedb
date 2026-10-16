@@ -98,7 +98,7 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
       _inclusive{inclusive} {}
 
   score_t Threshold() const noexcept {
-    return VectorMetricIsAngular(_metric) ? _radius : -_radius;
+    return RadiusThreshold(_metric, _radius);
   }
 
   bool Inclusive() const noexcept { return _inclusive; }

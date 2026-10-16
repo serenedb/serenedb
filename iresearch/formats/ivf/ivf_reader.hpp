@@ -61,6 +61,8 @@ uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
 
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
 
+score_t RadiusThreshold(VectorMetric metric, float radius) noexcept;
+
 class IvfVectorReader {
  public:
   IvfVectorReader(const ColumnReader& vector_column, ReadContext& ctx);

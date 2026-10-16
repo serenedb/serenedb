@@ -33,8 +33,7 @@ class ExactCount : public Root {
     _scanner.Reset(min, max);
     uint64_t count = 0;
     for (;;) {
-      auto n = _scanner.Gated() ? _scanner.Next(_docs, _dists)
-                                : _scanner.NextDocs(_docs);
+      auto n = _scanner.NextMatches(_docs, _dists);
       if (n == 0) {
         return count;
       }

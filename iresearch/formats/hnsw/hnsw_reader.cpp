@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -139,8 +140,7 @@ std::shared_ptr<const PanoramaQuery> MakePanoramaQuery(
   if (!data.rotation) {
     return nullptr;
   }
-  return cache ? cache->Get(data.rotation, data.byte_rotation, query)
-               : AnnQueryCache{}.Get(data.rotation, data.byte_rotation, query);
+  return RotateQuery(cache, data.rotation, data.byte_rotation, query);
 }
 
 }  // namespace
@@ -160,9 +160,9 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   const bool rotated = static_cast<bool>(data->rotation);
-  auto codebook = !data->stats || rotated ? nullptr
-                  : cache                 ? cache->Codebook(*data->stats, query)
-                                          : data->stats->MakeCodebook(query);
+  auto codebook = !data->stats || rotated
+                    ? nullptr
+                    : QueryCodebook(cache, *data->stats, query);
   SDB_ASSERT(!data->stats || rotated || codebook);
   SDB_ASSERT(opts.ef_search != 0);
   const auto ef = std::max(opts.ef_search, opts.min_ef);
@@ -203,9 +203,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
       : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;
-  const bool angular = opts.metric == VectorMetric::InnerProduct ||
-                       opts.metric == VectorMetric::Cosine;
-  const score_t threshold = angular ? radius : -radius;
+  const score_t threshold = RadiusThreshold(opts.metric, radius);
   QueryBuilder::ptr inner;
   if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
     return QueryBuilder::Empty();

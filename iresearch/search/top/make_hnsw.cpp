@@ -47,16 +47,8 @@ class HnswHits : public Root {
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
       _fetcher{fetcher},
       _table{table} {
-    SDB_ASSERT(args.scorer != nullptr);
-    _provider.attr.value = _block;
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = irs::detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareBlockScorer(
+      args, segment, irs::detail::NoField(), _provider, _block);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {

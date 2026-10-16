@@ -32,8 +32,7 @@ class ExactDocs : public Root {
     _scanner.Reset(min, max);
     uint32_t n = 0;
     for (;;) {
-      const auto m = _scanner.Gated() ? _scanner.Next(out + n, _dists)
-                                      : _scanner.NextDocs(out + n);
+      const auto m = _scanner.NextMatches(out + n, _dists);
       if (m == 0) {
         return n;
       }

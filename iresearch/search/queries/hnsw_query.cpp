@@ -181,27 +181,6 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
-// The set the segment's predicates fold into for the graph walk: the inner
-// query's docs (every doc, without one), narrowed by the table filter's
-// column predicates. The walk asks about nodes in graph order, not doc order,
-// so the set ends up filled to the last node touched; that is the cost of
-// evaluating the predicates once, the same set ts_dict folds its WHERE into.
-// Deleted docs are not dropped here: the hits are masked once, in CollectHits.
-detail::LazyBitset MakeSet(const QueryBuilder* inner,
-                           detail::TableFilter* table, doc_id_t docs_count) {
-  if (!inner) {
-    return detail::LazyBitset{docs_count, fill::DocsMask{nullptr}, table};
-  }
-  auto node = inner->PlanFill({}, ScoreMergeType::Noop);
-  SDB_ASSERT(node);
-  if (auto* folded = node->Folded()) {
-    return detail::LazyBitset{std::move(*folded), fill::DocsMask{nullptr},
-                              table};
-  }
-  return detail::LazyBitset{std::move(node), docs_count,
-                            fill::DocsMask{nullptr}, table};
-}
-
 // A predicate only the columnstore answers, asked one hop at a time.
 //
 // The set above is filled as a prefix, so the first hop that lands near the end
@@ -556,7 +535,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   uint64_t matches = 0;
   bool bounded = true;
   if (table || _inner->Kind() == QueryKind::Boolean) {
-    probe.emplace(MakeSet(_inner.get(), table, docs_count));
+    probe.emplace(detail::MakeDocSet(_inner.get(), docs_count, table));
     matches =
       table ? probe->EstimateCount(kCountSampleWindows) : probe->Count();
     bounded = probe->Filled() >= probe->End();
@@ -595,9 +574,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     // predicate folded into it -- is not the set it walks against.
     probe.reset();
   }
-  auto set =
-    probe ? std::move(*probe)
-          : MakeSet(_inner.get(), ask_per_hop ? nullptr : table, docs_count);
+  auto set = probe ? std::move(*probe)
+                   : detail::MakeDocSet(_inner.get(), docs_count,
+                                        ask_per_hop ? nullptr : table);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -667,7 +646,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     // over the whole set, which this set was built without, and the scans are
     // wherever the last hop left them.
     table->Rewind();
-    set = MakeSet(_inner.get(), table, docs_count);
+    set = detail::MakeDocSet(_inner.get(), docs_count, table);
   } else if (run(admit)) {
     return;
   } else if (two_hop && mode == HnswFilterMode::TwoHop &&
@@ -691,12 +670,9 @@ void HnswQuery::Rotate() const {
       return;
     }
     _panorama =
-      _cache
-        ? _cache->Get(_data->rotation, _data->byte_rotation, _query)
-        : AnnQueryCache{}.Get(_data->rotation, _data->byte_rotation, _query);
+      RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
     if (_data->stats) {
-      _codebook = _cache ? _cache->Codebook(*_data->stats, _panorama->rotated)
-                         : _data->stats->MakeCodebook(_panorama->rotated);
+      _codebook = QueryCodebook(_cache, *_data->stats, _panorama->rotated);
     }
   });
 }
@@ -722,8 +698,8 @@ bool HnswQuery::ScansByColumn() const {
 }
 
 void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
-  auto set = MakeSet(_inner.get(), nullptr,
-                     static_cast<doc_id_t>(_segment.docs_count()));
+  auto set = detail::MakeDocSet(_inner.get(),
+                                static_cast<doc_id_t>(_segment.docs_count()));
   detail::RawVectorReader reader{*_exact, *_segment.GetColReader(), _d};
   reader.SetQuery(_query, _metric);
   std::vector<doc_id_t> docs;

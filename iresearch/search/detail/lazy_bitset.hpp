@@ -285,6 +285,20 @@ class LazyBitset {
   doc_id_t _filled = kMin;
 };
 
+inline LazyBitset MakeDocSet(const QueryBuilder* query, doc_id_t docs_count,
+                             TableFilter* table = nullptr) {
+  if (!query) {
+    return LazyBitset{docs_count, fill::DocsMask{nullptr}, table};
+  }
+  auto node = query->PlanFill({}, ScoreMergeType::Noop);
+  SDB_ASSERT(node);
+  if (auto* folded = node->Folded()) {
+    return LazyBitset{std::move(*folded), fill::DocsMask{nullptr}, table};
+  }
+  return LazyBitset{std::move(node), docs_count, fill::DocsMask{nullptr},
+                    table};
+}
+
 class CountAgainst {
  public:
   static constexpr auto kBits = BitsetStorage::kBits;

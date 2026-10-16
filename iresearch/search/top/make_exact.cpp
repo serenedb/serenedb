@@ -46,16 +46,8 @@ class ExactChain : public Root {
       _k{ctx.k},
       _ranked{_codes.bound && !ctx.table && score.boost > 0.f && ctx.k != 0 &&
               ctx.k < query.Segment().live_docs_count()} {
-    SDB_ASSERT(score.scorer);
-    _provider.attr.value = _block;
-    _score = score.scorer->PrepareScorer({
-      .segment = query.Segment(),
-      .field = irs::detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = ctx.fetcher,
-      .stats = score.stats,
-      .boost = score.boost,
-    });
+    _score = irs::detail::PrepareBlockScorer(
+      score, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {

@@ -69,6 +69,10 @@ bool VectorMetricIsAngular(VectorMetric metric) noexcept {
   return metric == VectorMetric::InnerProduct || metric == VectorMetric::Cosine;
 }
 
+score_t RadiusThreshold(VectorMetric metric, float radius) noexcept {
+  return VectorMetricIsAngular(metric) ? radius : -radius;
+}
+
 IvfVectorReader::IvfVectorReader(const ColumnReader& vector_column,
                                  ReadContext& ctx)
   : _d{static_cast<uint32_t>(vector_column.ArraySize())},

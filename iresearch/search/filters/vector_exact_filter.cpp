@@ -47,7 +47,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   }
   std::optional<score_t> threshold;
   if (opts.radius != std::numeric_limits<float>::max()) {
-    threshold = VectorMetricIsAngular(opts.metric) ? opts.radius : -opts.radius;
+    threshold = RadiusThreshold(opts.metric, opts.radius);
   }
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns, opts.query, opts.metric,

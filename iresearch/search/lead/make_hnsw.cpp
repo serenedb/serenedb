@@ -39,16 +39,8 @@ class HnswHits : public Node {
            const detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {
-    SDB_ASSERT(args.scorer != nullptr);
-    _provider.attr.value = _block;
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = detail::PrepareBlockScorer(args, segment, detail::NoField(),
+                                        _provider, _block);
   }
 
   HnswHits(HnswHits&&) = delete;

@@ -33,16 +33,8 @@ class ExactHits : public Root {
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
     : _scanner{query}, _fetcher{ctx.fetcher} {
-    SDB_ASSERT(args.scorer);
-    _provider.attr.value = _block;
-    _score = args.scorer->PrepareScorer({
-      .segment = query.Segment(),
-      .field = irs::detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = ctx.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareBlockScorer(
+      args, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,

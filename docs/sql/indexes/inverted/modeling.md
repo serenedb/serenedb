@@ -40,6 +40,8 @@ Indexed expressions must be deterministic and reference at least one column. Agg
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_007" />
 
+Conversions to or from the `reg*` types, such as `regclass` and `regtype`, are rejected too, because they read the catalog. Index the `oid` column instead and compare it with a `reg*` value, as in `oid_column = 'name'::regclass`: the name is resolved when the query runs.
+
 ## Generated columns
 
 A [generated column](../../statements/create_table/index.md) is indexed like any other column — index the column itself rather than repeating its expression. A `STORED` generated column works directly:

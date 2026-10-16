@@ -78,7 +78,7 @@ cp $__TEST_DIR__/jrec_glob/f1.parquet $__TEST_DIR__/jrec_glob/f2.parquet
 
 
 connection r1
-query ok retry 80 backoff 250ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT job_name, schedule, suspended, regexp_replace(body, '[0-9]+', 'N', 'g') AS body
 FROM sdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
 ----
@@ -195,7 +195,7 @@ SELECT 1;
 
 
 connection r2
-query ok retry 80 backoff 250ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) >= 1 AS healed FROM jrec_crash;
 ----
 healed

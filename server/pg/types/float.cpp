@@ -106,11 +106,10 @@ bool FloatToText(duckdb::Vector& source, duckdb::Vector& result,
   }
   duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
     source, result, count, [&](T value) {
-      char buffer[kFloatText];
-      const auto size =
-        kShortest ? WriteFloatShortest(value, buffer)
-                  : WriteFloatRounded(value, extra_float_digits, buffer);
-      return duckdb::StringVector::AddString(result, buffer, size);
+      char buffer[utils::kNumberStrMaxLen];
+      return duckdb::StringVector::AddString(
+        result, buffer,
+        WriteFloat<kShortest>(value, extra_float_digits, buffer));
     });
   return true;
 }

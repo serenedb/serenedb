@@ -67013,7 +67013,7 @@ skipif postgres
 query I rowsort
 SELECT DISTINCT - CAST ( - 0 AS REAL ) AS col1 FROM tab2 cor0
 ----
--0
+0
 
 query I rowsort
 SELECT + 62 + col2 * cor0.col0 AS col2 FROM tab0 cor0

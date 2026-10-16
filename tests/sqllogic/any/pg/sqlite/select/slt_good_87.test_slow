@@ -18374,7 +18374,7 @@ query I rowsort
 SELECT ALL - - CAST ( + cor0.col1 AS REAL ) * - col0 * ( cor0.col2 + - col2 * - 4 ) AS col2 FROM tab0 cor0
 ----
 -16975
--3.32059e+06
+-3320590
 -340560
 
 onlyif mysql # use DIV operator for integer division

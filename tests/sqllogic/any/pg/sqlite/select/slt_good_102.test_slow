@@ -5332,7 +5332,7 @@ skipif postgres
 query I rowsort
 SELECT DISTINCT - CAST ( 0 AS REAL ) AS col1 FROM tab2
 ----
--0
+0
 
 query I rowsort
 SELECT ALL + 38 * - tab2.col0 + col0 AS col0 FROM tab2

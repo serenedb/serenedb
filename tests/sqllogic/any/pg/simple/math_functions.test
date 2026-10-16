@@ -117,6 +117,7 @@ NaN
 
 # dround
 
+onlyif postgres
 query
 SELECT dround(0.5), dround(1.5), dround(2.5), dround(-2.5), dround(2.6), dround(-0.4), dround('Infinity'), dround(NULL);
 ----
@@ -124,13 +125,30 @@ dround	dround	dround	dround	dround	dround	dround	dround
 0	2	2	-2	3	-0	Infinity	NULL
 
 
+skipif postgres
+query
+SELECT dround(0.5), dround(1.5), dround(2.5), dround(-2.5), dround(2.6), dround(-0.4), dround('Infinity'), dround(NULL);
+----
+dround	dround	dround	dround	dround	dround	dround	dround
+0	2	2	-2	3	0	Infinity	NULL
+
+
 # dtrunc
 
+onlyif postgres
 query
 SELECT dtrunc(2.7), dtrunc(-2.7), dtrunc(-0.5), dtrunc(42), dtrunc('-Infinity'), dtrunc('NaN'), dtrunc(NULL);
 ----
 dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc
 2	-2	-0	42	-Infinity	NaN	NULL
+
+
+skipif postgres
+query
+SELECT dtrunc(2.7), dtrunc(-2.7), dtrunc(-0.5), dtrunc(42), dtrunc('-Infinity'), dtrunc('NaN'), dtrunc(NULL);
+----
+dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc	dtrunc
+2	-2	0	42	-Infinity	NaN	NULL
 
 
 # int4inc

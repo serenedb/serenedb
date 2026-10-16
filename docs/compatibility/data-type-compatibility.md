@@ -29,8 +29,8 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
 | datemultirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | daterange                    | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
-| float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. |
-| float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. |
+| float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. A whole number prints without an exponent, so `1000000::float4` is `1000000` where PostgreSQL prints `1e+06`, and a negative zero prints as `0`. |
+| float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. A whole number prints without an exponent, so `1e15::float8` is `1000000000000000` where PostgreSQL prints `1e+15`; other values print in their shortest form, so `0.0001::float8` is `1e-04`, and a negative zero prints as `0`. |
 | gtsvector                    | 🔴            |         |
 | inet                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | int2                         | 🟢            | `smallint` |

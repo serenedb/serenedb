@@ -32574,9 +32574,9 @@ skipif postgres
 query I rowsort
 SELECT ALL - CAST ( - col1 + col1 AS REAL ) col1 FROM tab1
 ----
--0
--0
--0
+0
+0
+0
 
 onlyif mysql # support for MySQL specific system types and syntax
 query I rowsort label-3925

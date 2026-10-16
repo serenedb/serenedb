@@ -20,13 +20,46 @@
 
 #pragma once
 
+#include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/function/cast/cast_function_set.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <limits>
+#include <type_traits>
+
+#include "server/utils/dtoa.h"
 
 namespace sdb::pg {
 
 inline constexpr size_t kFloatText = sizeof("-2.2250738585072014e-308") - 1;
+
+template<bool Precise, typename T>
+size_t WriteFloat(T value, int8_t extra_float_digits, char* buffer) {
+  static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
+  if (value == 0) {
+    value = 0;
+  }
+  if (char* end = utils::dtoa_literals<utils::kPgDtoaLiterals>(value, buffer)) {
+    return static_cast<size_t>(end - buffer);
+  }
+  if constexpr (Precise) {
+    return static_cast<size_t>(utils::dtoa_fast(value, buffer) - buffer);
+  } else {
+    int digits = std::numeric_limits<T>::digits10 + extra_float_digits;
+    if constexpr (std::is_same_v<float, T>) {
+      digits = std::max(0, digits);
+    } else {
+      SDB_ASSERT(digits >= 0);
+    }
+    const auto result =
+      std::to_chars(buffer, buffer + utils::kNumberStrMaxLen, value,
+                    std::chars_format::general, digits);
+    SDB_ASSERT(result);
+    return static_cast<size_t>(result.ptr - buffer);
+  }
+}
 
 size_t WriteFloatShortest(float value, char* buffer);
 size_t WriteFloatShortest(double value, char* buffer);

@@ -817,6 +817,9 @@ struct FloatBinCore {
   using Value = T;
   static constexpr uint32_t kMaxBytes = sizeof(T);
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value v) {
+    if (v == 0) {  // postgres renders -0.0 as 0.0
+      v = 0;
+    }
     absl::big_endian::Store(dst, v);
     return sizeof(T);
   }
@@ -825,15 +828,11 @@ struct FloatBinCore {
 template<typename T, bool Precise>
 struct FloatTextCore {
   using Value = T;
-  static constexpr uint32_t kMaxBytes = kFloatText;
+  static constexpr uint32_t kMaxBytes = utils::kNumberStrMaxLen;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, SerializationContext& ctx,
                                         Value v) {
-    char* buf = reinterpret_cast<char*>(dst);
-    if constexpr (Precise) {
-      return WriteFloatShortest(v, buf);
-    } else {
-      return WriteFloatRounded(v, ctx.extra_float_digits, buf);
-    }
+    return WriteFloat<Precise>(v, ctx.extra_float_digits,
+                               reinterpret_cast<char*>(dst));
   }
 };
 

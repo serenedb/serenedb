@@ -46771,9 +46771,9 @@ skipif postgres
 query I rowsort
 SELECT + ( ( - col2 ) ) * CAST ( + 0 AS REAL ) FROM tab0 cor0
 ----
--0
--0
--0
+0
+0
+0
 
 onlyif mysql # support for MySQL specific system types and syntax
 query I rowsort label-5627
@@ -73165,7 +73165,7 @@ query I rowsort
 SELECT - col2 * - cor0.col1 * + CAST ( col1 * cor0.col1 AS REAL ) AS col2 FROM tab2 cor0
 ----
 186694
-5.339854e+06
+5339854
 804357
 
 onlyif mysql # support for MySQL specific system types and syntax

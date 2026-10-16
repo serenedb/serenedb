@@ -9068,7 +9068,7 @@ skipif mysql # not compatible
 query I rowsort
 SELECT col0 * col1 * CAST ( col0 + col0 AS REAL ) AS col0 FROM tab0
 ----
-1.441622e+06
+1441622
 237650
 99072
 

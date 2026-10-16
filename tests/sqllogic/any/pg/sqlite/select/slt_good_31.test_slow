@@ -46588,7 +46588,7 @@ skipif mysql # not compatible
 query I rowsort
 SELECT DISTINCT - 59 + col1 * CAST ( - col1 + - col2 AS REAL ) * col0 FROM tab0 AS cor0
 ----
--1.401186e+06
+-1401186
 -245675
 -332769
 

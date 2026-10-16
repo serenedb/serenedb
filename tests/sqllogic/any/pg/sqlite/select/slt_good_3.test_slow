@@ -69765,7 +69765,7 @@ query I rowsort
 SELECT ALL + ( + col0 + col1 ) * CAST ( col2 * + col2 + + col2 * + col1 AS REAL ) AS col2 FROM tab0
 ----
 12936
-2.55348e+06
+2553480
 431970
 
 query I rowsort

@@ -7674,9 +7674,9 @@ skipif mysql # not compatible
 query I rowsort
 SELECT col1 * col2 * - ( - 68 * col2 ) + - CAST ( col0 AS REAL ) / + col0 + col0 AS col0 FROM tab2 AS cor0
 ----
-1.536738e+06
-1.669342e+06
-2.712189e+06
+1536738
+1669342
+2712189
 
 query I rowsort
 SELECT ALL col0 * 90 AS col1 FROM tab0

@@ -49,8 +49,9 @@ statement is for manual checkpoint actions.
 
 ## Behavior
 
-The default `CHECKPOINT` command will fail if there are any running transactions. Including `FORCE` will abort any
-transactions and execute the checkpoint operation.
+The default `CHECKPOINT` command fails if other write transactions are running on the database. `FORCE CHECKPOINT` stops new transactions on the database from starting, waits for the running write transactions to finish, and then checkpoints.
+
+While a backup is in progress, between `pg_backup_start` and `pg_backup_stop`, both `CHECKPOINT` and `FORCE CHECKPOINT` fail with `cannot checkpoint while a backup is in progress`. Run the checkpoint again after `pg_backup_stop`. A `pg_backup_start` issued while a checkpoint is running waits for it to finish.
 
 Also see the related [`PRAGMA` option](../../../configuration/pragmas.md#force-checkpoint) for further behavior modification.
 

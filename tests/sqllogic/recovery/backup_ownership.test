@@ -1,0 +1,107 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+connection holder
+query
+SELECT pg_backup_start('held') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection holder
+statement error
+SELECT pg_backup_start('again');
+----
+db error: ERROR: a backup is already in progress in this session
+
+
+connection other
+statement error
+SELECT pg_backup_start('other');
+----
+db error: ERROR: a backup is already in progress
+DETAIL: It is held by the session with PID <slt:ignore>.
+
+
+connection other
+statement error
+SELECT * FROM pg_backup_stop();
+----
+db error: ERROR: backup is not in progress
+HINT: Did you call pg_backup_start()?
+
+
+connection other
+query
+SELECT count(*) > 0 AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+active
+t
+
+
+connection other
+statement ok
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE query LIKE '%pg_backup_start(''again'')%' AND pid <> pg_backend_pid();
+
+
+connection other
+query ok retry 40 backoff 250ms
+SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+active
+0
+
+
+connection other
+query
+SELECT pg_backup_start('after terminate') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection other
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label,
+  lsn >= '0/0'::pg_lsn AS lsn, spcmapfile
+FROM pg_backup_stop();
+----
+label	lsn	spcmapfile
+t	t	(empty)
+
+
+connection other
+query
+SELECT lsn IS NOT NULL AS started FROM pg_backup_start('from') AS lsn;
+----
+started
+t
+
+
+connection other
+query
+SELECT starts_with((pg_backup_stop()).labelfile, 'START WAL LOCATION: ') AS label;
+----
+label
+t
+
+
+connection other
+statement error
+SELECT pg_backup_stop();
+----
+db error: ERROR: backup is not in progress
+HINT: Did you call pg_backup_start()?
+
+
+connection other
+query
+SELECT count(*) AS active FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+active
+0

@@ -80,9 +80,15 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
     const auto& text = label.GetValue();
     const auto ownership =
       context.registered_state->GetOrCreate<BackupOwnership>(kOwnershipKey);
+    pg::ProgressMetrics* progress = nullptr;
+    if (auto client_state = context.registered_state->Get<SereneDBClientState>(
+          kSereneDBClientStateKey);
+        client_state && client_state->progress_source) {
+      progress = &client_state->Progress();
+    }
     const auto start = backup::BackupSession::Instance().Begin(
       {ownership.get(), conn.GetBackendPid()},
-      std::string_view{text.GetData(), text.GetSize()},
+      std::string_view{text.GetData(), text.GetSize()}, progress,
       [&] { return context.IsInterrupted(); });
     if (!start) {
       context.InterruptCheck();

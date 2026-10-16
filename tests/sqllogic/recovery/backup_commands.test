@@ -1,0 +1,280 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bcmd_docs (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bcmd_docs SELECT i, 'first' FROM range(0, 100) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_docs;
+
+
+statement ok
+CREATE TABLE bcmd_merge (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(0, 100) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_merge;
+
+
+statement ok
+INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(100, 200) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_merge;
+
+
+statement ok
+INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(200, 300) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_merge;
+
+
+statement ok
+INSERT INTO bcmd_merge SELECT i, 'fox dog' FROM range(300, 400) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_merge;
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
+----
+segments
+4
+
+
+statement ok
+CREATE TABLE bcmd_gone (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO bcmd_gone VALUES (1, 'gone');
+
+
+statement ok
+CREATE DATABASE bcmd_db;
+
+
+statement ok
+CREATE TABLE bcmd_db.public.t (x BIGINT);
+
+
+statement ok
+INSERT INTO bcmd_db.public.t VALUES (1);
+
+
+statement ok
+CHECKPOINT bcmd_db;
+
+
+statement ok
+CREATE TEMP TABLE bcmd_oids AS
+SELECT
+  (SELECT database_oid FROM duckdb_databases() WHERE database_name = current_database()) AS db,
+  (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'bcmd_db') AS other,
+  'bcmd_gone'::regclass::oid AS gone,
+  'bcmd_docs'::regclass::oid AS docs;
+
+
+query
+SELECT count(*) = 1 AS one_meta FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
+WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
+----
+one_meta
+t
+
+
+connection holder
+query
+SELECT pg_backup_start('bcmd') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection default
+statement error
+CHECKPOINT;
+----
+db error: ERROR: cannot checkpoint while a backup is in progress
+HINT: Retry after pg_backup_stop().
+
+
+connection default
+statement error
+FORCE CHECKPOINT;
+----
+db error: ERROR: cannot checkpoint while a backup is in progress
+HINT: Retry after pg_backup_stop().
+
+
+connection default
+statement ok
+INSERT INTO bcmd_docs SELECT i, 'during' FROM range(100, 200) r(i);
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bcmd_docs;
+
+
+connection default
+query
+SELECT count(*) AS metas FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/segments_*'), bcmd_oids
+WHERE file LIKE '%/engine_v1/' || db || '/' || docs || '/segments_%';
+----
+metas
+2
+
+
+connection default
+statement ok
+DROP TABLE bcmd_gone;
+
+
+connection default
+statement ok
+DROP DATABASE bcmd_db;
+
+
+connection default
+statement ok
+SELECT pg_sleep(1);
+
+
+connection default
+query
+SELECT
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') > 0 AS table_kept,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') > 0 AS database_kept
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+----
+table_kept	database_kept
+t	t
+
+
+connection default
+statement ok
+ALTER TABLE bcmd_merge SET (compaction_interval = 100);
+
+
+connection compactor
+statement async ok
+VACUUM (COMPACT_TABLE) bcmd_merge;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS compacting FROM pg_stat_activity
+WHERE query LIKE 'VACUUM (COMPACT_TABLE) bcmd_merge%' AND state = 'active';
+----
+compacting
+1
+
+
+connection default
+statement ok
+SELECT pg_sleep(1);
+
+
+connection default
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
+----
+segments
+4
+
+
+connection default
+statement ok
+CREATE TEMP TABLE bcmd_wal AS
+SELECT max(size) AS size FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
+WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+
+
+connection default
+query
+SELECT size > 0 AS has_wal FROM bcmd_wal;
+----
+has_wal
+t
+
+
+connection holder
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+wait
+
+
+connection default
+statement ok
+FORCE CHECKPOINT;
+
+
+connection default
+query
+SELECT coalesce(max(size), 0) < (SELECT size FROM bcmd_wal) AS checkpointed
+FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal'), bcmd_oids
+WHERE filename LIKE '%/engine_v1/' || db || '/data.db.wal';
+----
+checkpointed
+t
+
+
+connection default
+query
+SELECT count(DISTINCT row_group_id) < 4 AS merged FROM pragma_storage_info('bcmd_merge') WHERE column_name = 'id';
+----
+merged
+t
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || db || '/' || gone || '/%') AS table_files,
+  count(*) FILTER (WHERE file LIKE '%/engine_v1/' || other || '/%') AS database_files
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), bcmd_oids;
+----
+table_files	database_files
+0	0
+
+
+connection default
+query
+SELECT body, count(*) AS n FROM bcmd_docs GROUP BY body ORDER BY body;
+----
+body	n
+during	100
+first	100
+
+
+connection default
+query
+SELECT count(*) AS n FROM bcmd_merge;
+----
+n
+400

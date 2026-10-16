@@ -25,5 +25,6 @@
 namespace sdb::backup {
 
 utils::DrainGate& CommitGate();
+utils::DrainGate& CheckpointGate();
 
 }  // namespace sdb::backup

@@ -45,6 +45,8 @@ std::string_view ProgressCommandName(ProgressCommand command) {
       return "VACUUM";
     case ProgressCommand::Reindex:
       return "REINDEX";
+    case ProgressCommand::BaseBackup:
+      return "BASEBACKUP";
   }
   return "";
 }
@@ -111,6 +113,18 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
           return "waiting for running reindex";
         case progress_phase::Reindex::Refreshing:
           return "refreshing index";
+      }
+      return "";
+    case ProgressCommand::BaseBackup:
+      switch (static_cast<progress_phase::BaseBackup>(phase)) {
+        case progress_phase::BaseBackup::Initializing:
+          return "initializing";
+        case progress_phase::BaseBackup::WaitingForCheckpoint:
+          return "waiting for checkpoint to finish";
+        case progress_phase::BaseBackup::WaitingForMaintenance:
+          return "waiting for search maintenance to stop";
+        case progress_phase::BaseBackup::WaitingForCommits:
+          return "waiting for in-flight commits";
       }
       return "";
     default:

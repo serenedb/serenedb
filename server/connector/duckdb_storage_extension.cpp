@@ -44,6 +44,7 @@
 #include <memory>
 #include <vector>
 
+#include "backup/commit_gate.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -123,8 +124,27 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
 }
 
+struct CheckpointPass final : duckdb::CheckpointRequest {
+  explicit CheckpointPass(utils::DrainGate::Pass pass)
+    : pass{std::move(pass)} {}
+
+  utils::DrainGate::Pass pass;
+};
+
 class SereneDBStorageExtension final : public duckdb::StorageExtension {
  public:
+  duckdb::unique_ptr<duckdb::CheckpointRequest> OnCheckpointRequest(
+    duckdb::AttachedDatabase&) final {
+    auto pass = backup::CheckpointGate().TryEnter();
+    if (!pass) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+        ERR_MSG("cannot checkpoint while a backup is in progress"),
+        ERR_HINT("Retry after pg_backup_stop()."));
+    }
+    return duckdb::make_uniq<CheckpointPass>(std::move(pass));
+  }
+
   void OnCheckpointBeforeHeader(duckdb::AttachedDatabase& db,
                                 duckdb::CheckpointOptions) final {
     const auto iteration =

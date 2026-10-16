@@ -18,14 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/container/btree_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/utils/debugging.hpp>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -116,6 +120,41 @@ class RestoreTest : public ::testing::Test {
     return std::filesystem::exists(path);
   }
 
+  static absl::btree_map<std::string, uintmax_t> Tree(
+    const std::filesystem::path& root) {
+    absl::btree_map<std::string, uintmax_t> tree;
+    for (const auto& entry :
+         std::filesystem::recursive_directory_iterator{root}) {
+      tree[entry.path().lexically_relative(root).string()] =
+        entry.is_regular_file() ? entry.file_size() : 0;
+    }
+    return tree;
+  }
+
+  void ExpectACrashedRestoreFinishes(bool (*arm)()) {
+    WriteLabel();
+    const auto reference =
+      std::filesystem::path{absl::StrCat(_root.string(), "_reference")};
+    std::filesystem::remove_all(reference);
+    std::filesystem::copy(_root, reference,
+                          std::filesystem::copy_options::recursive);
+    absl::Cleanup drop = [&] { std::filesystem::remove_all(reference); };
+    PrepareDataDirectory(catalog::DataDirectory{reference.string()});
+
+    if (!arm()) {
+      GTEST_SKIP() << "this build has no fault injection";
+    }
+    EXPECT_EXIT(Prepare(), ::testing::ExitedWithCode(1), "");
+    irs::ClearFailurePointsDebugging();
+    EXPECT_TRUE(Exists(_root / kBackupLabelFile));
+
+    Prepare();
+    EXPECT_EQ(Tree(_root), Tree(reference));
+    const auto control = ReadPgControl(_root);
+    ASSERT_TRUE(control);
+    EXPECT_EQ(control->checkpoint, kStartLsn);
+  }
+
   std::filesystem::path _root;
   std::unique_ptr<catalog::DataDirectory> _layout;
   Cut _cut;
@@ -187,6 +226,43 @@ TEST_F(RestoreTest, ARestartedRestoreFinishes) {
   EXPECT_EQ(std::filesystem::file_size(_layout->CatalogLogFile()), 250);
   EXPECT_EQ(std::filesystem::file_size(Wal()), 120);
   EXPECT_TRUE(Exists(_root / "backup_label.old"));
+}
+
+TEST_F(RestoreTest, ACrashAfterTheCatalogLogIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging("crash_in_restore_after_catalog_log");
+  });
+}
+
+TEST_F(RestoreTest, ACrashAfterTheDatabaseWalsIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging(
+      "crash_in_restore_after_database_wals");
+  });
+}
+
+TEST_F(RestoreTest, ACrashAfterTheStoresIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging("crash_in_restore_after_stores");
+  });
+}
+
+TEST_F(RestoreTest, ACrashAfterTheCleanupIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging("crash_in_restore_after_cleanup");
+  });
+}
+
+TEST_F(RestoreTest, ACrashAfterTheControlFileIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging("crash_in_restore_after_control");
+  });
+}
+
+TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
+  ExpectACrashedRestoreFinishes([] {
+    return irs::AddFailurePointDebugging("crash_in_restore_before_retire");
+  });
 }
 
 TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {

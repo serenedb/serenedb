@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bcut (x BIGINT);
+
+
+statement ok
+INSERT INTO bcut VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'pause_commit_in_gate';
+
+
+connection committer
+statement async ok
+INSERT INTO bcut SELECT i FROM range(2, 1000) r(i);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_commit_in_gate:parked';
+
+
+connection starter
+statement async ok
+SELECT pg_backup_start('bcut');
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_basebackup;
+----
+phase
+waiting for in-flight commits
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_commit_in_gate:release';
+
+
+wait
+
+
+statement ok
+RESET sdb_faults;
+
+
+connection starter
+statement ok
+CREATE TEMP TABLE bcut_label AS SELECT labelfile FROM pg_backup_stop();
+
+
+connection starter
+query
+SELECT regexp_extract(labelfile, 'SERENEDB DATABASE: ' || d.database_oid || ' \d+ (\d+) ', 1)::BIGINT = w.size AS cut_after_commit
+FROM bcut_label,
+  (SELECT database_oid FROM duckdb_databases() WHERE database_name = current_database()) AS d,
+  read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal') AS w
+WHERE w.filename LIKE '%/engine_v1/' || d.database_oid || '/data.db.wal';
+----
+cut_after_commit
+t
+
+
+connection starter
+query
+SELECT count(*) AS n FROM bcut;
+----
+n
+999

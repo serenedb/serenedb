@@ -33,9 +33,11 @@
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <string>
 #include <string_view>
 
@@ -193,6 +195,9 @@ void Restore(const catalog::DataDirectory& layout,
     }
   }
   TruncateFile(catalog_log, cut.catalog_log_size);
+  SDB_IF_FAILURE("crash_in_restore_after_catalog_log") {
+    SDB_IMMEDIATE_ABORT();
+  }
 
   irs::containers::FlatHashSet<duckdb::idx_t> with_failed_checkpoint;
   for (const auto& database : cut.databases) {
@@ -215,20 +220,26 @@ void Restore(const catalog::DataDirectory& layout,
     }
     Remove(absl::StrCat(wal, ".recovery"));
   }
+  SDB_IF_FAILURE("crash_in_restore_after_database_wals") {
+    SDB_IMMEDIATE_ABORT();
+  }
   for (const auto& store : cut.stores) {
     PruneStore(layout.StorageDir(store.database_oid, store.oid),
                store.generation,
                with_failed_checkpoint.contains(store.database_oid));
   }
+  SDB_IF_FAILURE("crash_in_restore_after_stores") { SDB_IMMEDIATE_ABORT(); }
 
   RemoveStaleLocks(engine_dir);
   Remove(data_dir / "recovery.signal");
   Remove(data_dir / "standby.signal");
   Remove(engine_dir / kBackupDir);
+  SDB_IF_FAILURE("crash_in_restore_after_cleanup") { SDB_IMMEDIATE_ABORT(); }
   utils::file_utils::Spit((engine_dir / kSubscriptionHoldFile).string(), "",
                           true);
   WritePgControl(data_dir, {.system_identifier = control->system_identifier,
                             .checkpoint = label->start_lsn});
+  SDB_IF_FAILURE("crash_in_restore_after_control") { SDB_IMMEDIATE_ABORT(); }
 
   for (const auto& database : cut.databases) {
     utils::file_utils::SyncDirectory(layout.DatabaseDir(database.oid));
@@ -238,6 +249,7 @@ void Restore(const catalog::DataDirectory& layout,
       layout.StorageDir(store.database_oid, store.oid));
   }
   utils::file_utils::SyncDirectory(engine_dir);
+  SDB_IF_FAILURE("crash_in_restore_before_retire") { SDB_IMMEDIATE_ABORT(); }
   std::filesystem::rename(label_path, data_dir / kRetiredLabelFile, ec);
   if (ec) {
     utils::file_utils::ThrowFileError("retire", label_path.string(), ec);

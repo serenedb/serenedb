@@ -35,6 +35,8 @@
 #include <string_view>
 #include <vector>
 
+#include "pg/progress_registry.h"
+
 namespace sdb::backup {
 
 inline constexpr std::string_view kBackupDir = "backup";
@@ -81,6 +83,7 @@ class BackupSession final {
   static BackupSession& Instance();
 
   std::optional<StartedBackup> Begin(BackupOwner owner, std::string_view label,
+                                     pg::ProgressMetrics* progress,
                                      absl::FunctionRef<bool()> cancelled);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;

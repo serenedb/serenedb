@@ -98,12 +98,20 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
     });
 }
 
+void SetPhase(pg::ProgressMetrics* progress,
+              pg::progress_phase::BaseBackup phase) {
+  if (progress) {
+    progress->SetPhase(phase);
+  }
+}
+
 std::optional<Cut> RecordCut(
   const std::filesystem::path& backup_dir,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  absl::FunctionRef<bool()> cancelled) {
+  pg::ProgressMetrics* progress, absl::FunctionRef<bool()> cancelled) {
   Cut cut;
   auto& gate = CommitGate();
+  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForCommits);
   if (!gate.Close(cancelled)) {
     return std::nullopt;
   }
@@ -132,6 +140,7 @@ std::optional<Cut> RecordCut(
 void Resume() noexcept {
   search::GetSearchEngine().Maintenance().Open();
   catalog::ResumeRemovals();
+  CheckpointGate().Open();
 }
 
 }  // namespace
@@ -142,8 +151,12 @@ BackupSession& BackupSession::Instance() {
 }
 
 std::optional<StartedBackup> BackupSession::Begin(
-  BackupOwner owner, std::string_view label,
+  BackupOwner owner, std::string_view label, pg::ProgressMetrics* progress,
   absl::FunctionRef<bool()> cancelled) {
+  if (progress) {
+    progress->SetCommand(pg::ProgressCommand::BaseBackup);
+  }
+  SetPhase(progress, pg::progress_phase::BaseBackup::Initializing);
   absl::MutexLock lock{&_mutex};
   if (_active && _owner.session == owner.session) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -156,6 +169,12 @@ std::optional<StartedBackup> BackupSession::Begin(
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
+  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  auto& checkpoints = CheckpointGate();
+  if (!checkpoints.Close(cancelled)) {
+    return std::nullopt;
+  }
+  absl::Cleanup reopen = [&checkpoints] { checkpoints.Open(); };
   auto pins = catalog::SereneDBDatabases(
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
   std::erase_if(pins,
@@ -207,10 +226,11 @@ std::optional<StartedBackup> BackupSession::Begin(
     Resume();
     catalog::RemoveTree(backup_dir);
   };
+  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForMaintenance);
   if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
     return std::nullopt;
   }
-  auto cut = RecordCut(backup_dir, pins, cancelled);
+  auto cut = RecordCut(backup_dir, pins, progress, cancelled);
   if (!cut) {
     return std::nullopt;
   }
@@ -220,6 +240,7 @@ std::optional<StartedBackup> BackupSession::Begin(
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), *cut);
   std::move(undo).Cancel();
+  std::move(reopen).Cancel();
 
   // Noexcept committing of backup start
   _pins = std::move(pins);

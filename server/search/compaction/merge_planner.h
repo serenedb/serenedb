@@ -93,6 +93,7 @@ struct MergeRoundRequest {
   const TasksSettings* settings = nullptr;
   size_t merges = 1;
   uint32_t target_segments = 1;
+  bool exact_target = false;
   uint32_t row_group_size = 0;
   size_t inputs_max = std::numeric_limits<size_t>::max();
   bool single_output = false;

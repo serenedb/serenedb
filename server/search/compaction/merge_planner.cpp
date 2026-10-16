@@ -275,11 +275,13 @@ void PlanCompact(const irs::IndexReader& reader,
 
 void PlanOptimize(const irs::IndexReader& reader,
                   const MergeRoundRequest& request, MergeRoundPlan& plan) {
-  const auto by_size =
-    reader.live_docs_count() /
-    std::max<uint64_t>(1, kOptimizeRowGroups * request.row_group_size);
-  const auto target = static_cast<uint32_t>(std::clamp<uint64_t>(
-    by_size, 1, std::max<uint32_t>(1, request.target_segments)));
+  auto target = std::max<uint32_t>(1, request.target_segments);
+  if (!request.exact_target) {
+    const auto by_size =
+      reader.live_docs_count() /
+      std::max<uint64_t>(1, kOptimizeRowGroups * request.row_group_size);
+    target = static_cast<uint32_t>(std::clamp<uint64_t>(by_size, 1, target));
+  }
   PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
                 request.inputs_max, request.copy_check, plan);
 }

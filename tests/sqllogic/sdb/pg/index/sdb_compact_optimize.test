@@ -197,6 +197,21 @@ VACUUM (REFRESH_TABLE) opt_small
 
 query
 SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('opt_small', mode := 'optimize', target_segments := 2)
+----
+merge	outcome	input_docs	output_docs
+1	merged	2000	2000
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('opt_small')
+----
+segments	docs
+2	3000
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
 FROM sdb_compact('opt_small', mode := 'optimize')
 ----
 merge	outcome	input_docs	output_docs

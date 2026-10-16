@@ -350,7 +350,8 @@ PlannedSegment DescribeSegment(const irs::SubReader& segment) {
     .live_docs = segment.live_docs_count(),
     .bytes = segment.Meta().byte_size,
   };
-  if (const auto* column = segment.Column(connector::kGeneratedPKId)) {
+  if (const auto* column = segment.Column(connector::kGeneratedPKId);
+      column && column->Type().id() == duckdb::LogicalTypeId::BIGINT) {
     const auto& stats = column->MergedStatistics();
     if (duckdb::NumericStats::HasMinMax(stats)) {
       result.rowid_min = duckdb::NumericStats::GetMin<int64_t>(stats);

@@ -5,7 +5,7 @@ statement ok
 CREATE TABLE scs (id INTEGER, k INTEGER, body VARCHAR);
 
 statement ok
-INSERT INTO scs SELECT i, (i * 7919) % 1009, 'w' || (i % 13) FROM range(600000) t(i);
+INSERT INTO scs SELECT i, (i * 7919) % 1009, 'w' || (i % 13) FROM range(2400000) t(i);
 
 statement ok
 CREATE INDEX scs_idx ON scs USING inverted (body) SORTED BY (k)
@@ -15,7 +15,7 @@ query
 SELECT count(*) AS segments FROM sdb_segments('scs_idx');
 ----
 segments
-293
+1172
 
 statement ok
 SET sdb_faults = 'pause_merge_unit';
@@ -33,7 +33,7 @@ origin	state
 vacuum	running
 
 statement ok
-INSERT INTO scs SELECT 600000 + i, (i * 31) % 1009, 'w' || (i % 13) FROM range(100000) t(i);
+INSERT INTO scs SELECT 2400000 + i, (i * 31) % 1009, 'w' || (i % 13) FROM range(400000) t(i);
 
 statement ok
 SET sdb_faults = '-pause_merge_unit';
@@ -44,7 +44,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('scs_idx');
 ----
 segments	docs
-305	700000
+1220	2800000
 
 query
 SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
@@ -52,7 +52,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_idx') AND typ
 ORDER BY id;
 ----
 outcome	inputs
-merged	38
+merged	149
 
 statement ok
 SET sdb_faults = 'irs::KeyOrder::Finish';
@@ -67,7 +67,7 @@ query
 SELECT count(*) AS segments FROM sdb_segments('scs_idx');
 ----
 segments
-305
+1220
 
 statement ok
 VACUUM (COMPACT_INDEX) scs_idx;
@@ -76,13 +76,13 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('scs_idx');
 ----
 segments	docs
-1	700000
+1	2800000
 
 query
 SELECT count(*) AS n, list(k) = list(k ORDER BY k) AS sorted FROM scs_idx;
 ----
 n	sorted
-700000	t
+2800000	t
 
 statement ok
 DROP TABLE scs CASCADE;
@@ -92,7 +92,7 @@ CREATE TABLE scs_t (k INTEGER, n INTEGER) SORTED BY (k)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1);
 
 statement ok
-INSERT INTO scs_t SELECT (i * 7919) % 1009, i FROM range(600000) t(i);
+INSERT INTO scs_t SELECT (i * 7919) % 1009, i FROM range(2400000) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) scs_t;
@@ -110,7 +110,7 @@ SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_t') AND type = 'merge';
 ----
 outcome	inputs
-merged	38
+merged	149
 
 statement ok
 SELECT pg_cancel_backend(pid) FROM pg_stat_activity
@@ -125,7 +125,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('scs_t');
 ----
 segments	docs
-256	600000
+1024	2400000
 
 query
 SELECT count(*) AS merges FROM sdb_compact_history

@@ -63,7 +63,7 @@ CREATE TABLE sof_steps (k INTEGER, n INTEGER) SORTED BY (k)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1);
 
 statement ok
-INSERT INTO sof_steps SELECT (i * 7919) % 1009, i FROM range(600000) t(i);
+INSERT INTO sof_steps SELECT (i * 7919) % 1009, i FROM range(2400000) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) sof_steps;
@@ -74,7 +74,7 @@ SET sdb_faults = 'irs::KeyOrder::Finish';
 statement error
 VACUUM (COMPACT_TABLE) sof_steps;
 ----
-db error: ERROR: failed to compact search table 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 38 segments does not hold every live document once
+db error: ERROR: failed to compact search table 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 149 segments does not hold every live document once
 
 
 statement ok
@@ -84,7 +84,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sof_steps');
 ----
 segments	docs
-293	600000
+1172	2400000
 
 query
 SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
@@ -92,7 +92,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sof_steps') AND t
 ORDER BY id;
 ----
 outcome	inputs
-failed	38
+failed	149
 
 statement ok
 VACUUM (COMPACT_TABLE) sof_steps;
@@ -101,7 +101,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sof_steps');
 ----
 segments	docs
-1	600000
+1	2400000
 
 query
 SELECT count(*) AS out_of_order FROM (

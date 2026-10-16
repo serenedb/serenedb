@@ -279,7 +279,8 @@ bool RebuildGroup(duckdb::ClientContext& context,
   absl::Cleanup abort_slices = abort_all;
 
   {
-    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                  context.GetSchedulerAccount()};
     for (auto& slice : slices) {
       if (slice->segments.empty()) {
         continue;

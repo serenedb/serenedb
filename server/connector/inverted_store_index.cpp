@@ -548,6 +548,7 @@ void InvertedStoreIndex::Enqueue(duckdb::TaskExecutor& executor,
     }
     task->Execute(duckdb::TaskExecutionMode::PROCESS_ALL);
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   absl::MutexLock lock{&queue.mutex};
   queue.mutex.Await(absl::Condition(&queue, &FeedQueue::NotFull));
 }
@@ -821,7 +822,8 @@ bool InvertedStoreIndex::AppendLocal(
   }
   const auto count = source.GetTotalRows();
   auto& context = conn->GetClientContext();
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                context.GetSchedulerAccount()};
   const auto ranges = std::max<duckdb::idx_t>(2, slots - 1);
   for (duckdb::idx_t k = 0; k < ranges; ++k) {
     auto begin = k * count / ranges;

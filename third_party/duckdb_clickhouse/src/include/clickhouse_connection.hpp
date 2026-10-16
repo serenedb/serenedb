@@ -64,6 +64,8 @@ public:
 	void BeginSelectWithExternalData(optional_ptr<ClientContext> context, clickhouse::Query query,
 	                                 const clickhouse::ExternalTables &external_tables);
 	void Insert(optional_ptr<ClientContext> context, const string &table, const clickhouse::Block &block);
+	std::optional<clickhouse::Block> NextBlock();
+	void Ping();
 
 	//! Uniform error translation: throw an IOException naming the failed operation and
 	//! carrying the SQL that failed.

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/top/make.hpp>
@@ -366,6 +367,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& ss = g.Bind();
   t.limit = *ss.score.top_k;
   t.offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
+  t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
   if (ss.score.vector &&
       (ss.score.vector->quant != irs::VectorQuantization::None ||
        g.has_lookup_filter)) {
@@ -416,7 +418,12 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       Merge(g);
       t.merge_barrier.Release(input);
     } else {
-      if (t.merge_barrier.Park(input)) {
+      if (!t.shared_fetch &&
+          duckdb::TaskScheduler::GetScheduler(ctx).GetNumberOfTasks() != 0) {
+        output.SetChildCardinality(0);
+        return;
+      }
+      if (t.merge_barrier.Park(input, ctx)) {
         l.parked_on = &t.merge_barrier;
         return;
       }

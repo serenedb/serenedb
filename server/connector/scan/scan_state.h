@@ -138,7 +138,7 @@ class ScanBarrier {
 
   void Release(duckdb::TableFunctionInput& input);
 
-  bool Park(duckdb::TableFunctionInput& input);
+  bool Park(duckdb::TableFunctionInput& input, duckdb::ClientContext& context);
 
   void Resume() const noexcept;
 
@@ -267,6 +267,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::atomic_uint32_t published{0};
     ScanBarrier merge_barrier;
     std::atomic_bool merge_taken{false};
+    bool shared_fetch = false;
 
     struct FetchUnit {
       uint32_t seg;

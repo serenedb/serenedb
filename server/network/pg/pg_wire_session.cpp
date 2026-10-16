@@ -435,6 +435,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   const bool superuser = login.superuser;
 
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
+  _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
@@ -1473,12 +1474,6 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
 template<SocketKind Kind>
 yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
   duckdb::QueryResult& pending, WireSinkContext* wire, bool own_waiter) {
-  // Productive slices run back-to-back: a per-slice scheduler round-trip
-  // costs an enqueue + futex wake per query, and the common short query
-  // finishes on its second slice. The budget bounds worker hogging by long
-  // CPU-bound queries.
-  static constexpr int kInlineSliceBudget = 8;
-  int inline_slices = 0;
   // Wire drives splice/unblock on every wake; direct-mode backpressure unblocks
   // ride writer progress, so their parks must receive FlushDone wakes. When the
   // caller owns the waiter (DriveToResult, spanning the following
@@ -1512,15 +1507,12 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
       co_return status;
     }
     if (status == duckdb::QueryResultState::NOT_READY) {
-      if (++inline_slices < kInlineSliceBudget) {
-        continue;
+      if (duckdb::TaskScheduler::ShouldYield()) {
+        co_await this->_task->Yield();
       }
-      inline_slices = 0;
-      co_await this->_task->Yield();
     } else {
       // NO_TASKS / BLOCKED: the pool is executing the query (or it is
       // blocked); the executor's on_reschedule wake re-runs us.
-      inline_slices = 0;
       co_await this->_task->Park();
     }
   }

@@ -4,6 +4,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
@@ -259,6 +260,7 @@ ClickHouseConnection::ClickHouseConnection(std::unique_ptr<clickhouse::Client> c
 }
 
 ClickHouseConnection ClickHouseConnection::Open(const ClickHouseConnectionParams &params) {
+	TaskScheduler::BlockingScope blocking;
 	try {
 		return ClickHouseConnection(std::make_unique<clickhouse::Client>(params.ToClientOptions()));
 	} catch (const std::exception &e) {
@@ -301,6 +303,7 @@ static void LogQuery(optional_ptr<ClientContext> context, const string &sql,
 
 template <class CALL>
 static void LoggedCall(optional_ptr<ClientContext> context, const string &sql, CALL &&call) {
+	TaskScheduler::BlockingScope blocking;
 	auto start = std::chrono::steady_clock::now();
 	try {
 		call();
@@ -343,6 +346,16 @@ void ClickHouseConnection::Insert(optional_ptr<ClientContext> context, const str
                                   const clickhouse::Block &block) {
 	LoggedCall(context, absl::StrCat("INSERT INTO ", table, " (", block.GetRowCount(), " rows)"),
 	           [&] { GetClient().Insert(table, block); });
+}
+
+std::optional<clickhouse::Block> ClickHouseConnection::NextBlock() {
+	TaskScheduler::BlockingScope blocking;
+	return GetClient().NextBlock();
+}
+
+void ClickHouseConnection::Ping() {
+	TaskScheduler::BlockingScope blocking;
+	GetClient().Ping();
 }
 
 void ClickHouseConnection::ThrowError(const char *op, const string &sql, const std::exception &error) {

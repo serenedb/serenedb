@@ -26,6 +26,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
+#include <duckdb/parallel/task_scheduler.hpp>
 
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
@@ -646,6 +647,7 @@ bool FSDirectory::sync(std::string_view name) noexcept {
 }
 
 bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {
+  duckdb::TaskScheduler::BlockingScope blocking;
   return absl::c_all_of(files, [this](std::string_view name) mutable noexcept {
     return this->sync(name);
   });

@@ -269,7 +269,7 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 		if (!done) {
 			if (borrowed_tx) {
 				try {
-					while (borrowed_tx->GetConnection().GetClient().NextBlock()) {
+					while (borrowed_tx->GetConnection().NextBlock()) {
 					}
 				} catch (...) {
 					borrowed_tx->InvalidateConnection();
@@ -317,8 +317,7 @@ void ClickHouseDiscoverColumns(ClientContext &context, ClickHouseConnection &con
                                vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
                                vector<bool> &stringified, vector<string> &clickhouse_types) {
 	connection.BeginSelect(context, describe_sql);
-	auto &client = connection.GetClient();
-	while (auto block = client.NextBlock()) {
+	while (auto block = connection.NextBlock()) {
 		idx_t name_idx = block->GetColumnCount();
 		idx_t type_idx = block->GetColumnCount();
 		for (idx_t c = 0; c < block->GetColumnCount(); c++) {
@@ -599,7 +598,7 @@ OperatorResultType ClickHouseLookupScan(ExecutionContext &context, TableFunction
 				return OperatorResultType::NEED_MORE_INPUT;
 			}
 			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
-				auto block = gstate.Conn().GetClient().NextBlock();
+				auto block = gstate.Conn().NextBlock();
 				if (!block) {
 					gstate.done = true;
 					if (output.size() == 0) {
@@ -668,7 +667,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				return;
 			}
 			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
-				auto block = gstate.Conn().GetClient().NextBlock();
+				auto block = gstate.Conn().NextBlock();
 				if (!block) {
 					gstate.done = true;
 					if (output.size() == 0) {

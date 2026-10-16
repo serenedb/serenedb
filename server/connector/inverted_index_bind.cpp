@@ -31,12 +31,14 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
@@ -57,6 +59,7 @@
 #include "connector/column_id.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
+#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "connector/view_fast_path.h"
 #include "query/config.h"
@@ -1040,6 +1043,18 @@ duckdb::optional_ptr<const duckdb::BoundColumnRefExpression> AsColumnRef(
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
 }
 
+bool ContainsRegLike(const duckdb::Expression& expr) {
+  if (duckdb::TypeVisitor::Contains(expr.GetReturnType(), pg::IsRegLike)) {
+    return true;
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || ContainsRegLike(child);
+    });
+  return found;
+}
+
 std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   const duckdb::IndexCatalogEntry& entry, duckdb::ClientContext& context,
   duckdb::CatalogEntry& relation,
@@ -1091,6 +1106,14 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
         record.field_id = it->second;
       }
     } else {
+      if (ContainsRegLike(*exprs[i])) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+          ERR_MSG("Index keys cannot convert to or from reg* types: the "
+                  "conversion reads the catalog."),
+          ERR_HINT("Index the OID column and compare it with a reg* value, "
+                   "such as oid_column = 'name'::regclass."));
+      }
       record.type = value_type;
       label = entry.parsed_expressions[i]->ToString();
       record.expression_text = label;

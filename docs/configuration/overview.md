@@ -345,7 +345,7 @@ Local paths, remote object stores and the external file cache.
 
 #### Database connectors
 
-Settings for the PostgreSQL and ClickHouse connectors.
+Settings for the PostgreSQL, ClickHouse and Quack connectors.
 
 | Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
@@ -361,6 +361,18 @@ Settings for the PostgreSQL and ClickHouse connectors.
 | `pg_use_binary_copy` | Whether or not to use BINARY copy to read data. | `BOOLEAN` | `on` |
 | `pg_use_ctid_scan` | Whether or not to parallelize scanning using table ctids. | `BOOLEAN` | `on` |
 | `pg_use_text_protocol` | Whether or not to use TEXT protocol to read data. This is slower, but provides better compatibility with non-Postgres systems. | `BOOLEAN` | `off` |
+| `quack_cache_max_rows` | Rows of a result a Quack server keeps for a client that reconnects; a larger result is not kept. 0 keeps any size. | `UBIGINT` | `100000` |
+| `quack_default_client_id` | The client id of an `ATTACH` or `quack_query` without `CLIENT_ID`. Empty sends none. | `VARCHAR` | the `QUACK_CLIENT_ID` environment variable, or a random id |
+| `quack_default_heartbeat_timeout` | Seconds a Quack server keeps a session without a request from the client, for an `ATTACH` or `quack_query` without `HEARTBEAT_TIMEOUT` | `UBIGINT` | `60` |
+| `quack_enable_reconnects` | A Quack server keeps each client's last result until the client acknowledges it, so a client that reconnects gets it again | `BOOLEAN` | `off` |
+| `quack_fetch_read_ahead` | Result batches a Quack client requests ahead of the query; 0 uses the number of async threads | `UBIGINT` | `0` |
+| `quack_max_heartbeat_timeout` | Most seconds a Quack server keeps a session without a request from its client, so a session of a client that is gone ends at the latest after this time. A client asking for a longer `HEARTBEAT_TIMEOUT` gets this one. | `UBIGINT` | `600` |
+| `quack_max_sessions` | Most Quack sessions a server keeps open at once; a client beyond it fails with `Too many Quack sessions`. 0 means no limit. | `UBIGINT` | `0` |
+| `quack_prepare_inline_rows` | Rows a Quack server returns with its first answer to a query | `UBIGINT` | `24576` |
+| `quack_rebalance_buffer_bytes` | Bytes a Quack client buffers while it sends rows to a server; 0 sizes it from the memory limit | `UBIGINT` | `0` |
+| `quack_result_ttl` | Seconds a Quack server keeps an idle result for a client that reconnects; 0 keeps it until the session ends | `UBIGINT` | `3600` |
+| `quack_server_stream_buffer_bytes` | Bytes a Quack server buffers per query ahead of the client, at most a quarter of `memory_limit`; 0 sets no limit | `UBIGINT` | `268435456` |
+| `quack_target_batch_bytes` | Size of one batch of rows a Quack client or server sends | `UBIGINT` | `33554432` |
 
 #### File formats
 

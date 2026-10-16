@@ -64,6 +64,7 @@
 #include "network/http/handler.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
+#include "network/http/sql_connection.h"
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
@@ -175,37 +176,14 @@ class HttpSession final
   // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
-      const std::string_view dbname =
-        _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      duckdb::idx_t database_id = 0;
-      duckdb::Permissions permissions;
-      if (!catalog::ReadDatabase(
-            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
-              database_id = database.oid;
-              permissions = database.permissions;
-            })) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                        ERR_MSG("database \"", dbname, "\" does not exist"));
-      }
-      const std::string_view user =
-        _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
-      if (!login.role) {
-        THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
-      }
-      const auto& role = login.role;
-
-      _conn = irs::DuckDBEngine::Instance().CreateConnection();
-      _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, role, dbname, database_id, nullptr,
-        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      auto sql =
+        http::OpenSqlConnection(_user, _database, _cancel_key, _cancel);
+      _conn = std::move(sql.conn);
+      _connection_ctx = std::move(sql.context);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
       }
-      connector::SereneDBClientState::Register(*_conn->context,
-                                               _connection_ctx);
-      connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
     return *_conn;
@@ -256,7 +234,7 @@ class HttpSession final
     return _schema.empty() ? std::string_view{"public"} : _schema;
   }
 
-  bool PeerIsLoopback() const final { return _peer_is_loopback; }
+  const pg::LoginPeer& Peer() const final { return _peer; }
 
   const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
 
@@ -342,7 +320,6 @@ class HttpSession final
   yaclib::Task<bool> Negotiate();
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
-  // io-side: the deadline of the pending socket read.
   void ArmReadDeadline();
 
   void ReleaseConnection() {
@@ -389,14 +366,15 @@ class HttpSession final
 
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout), mid-request (strict header/body timeout), or
-  // handling a request that is fully read (no deadline: the client waits for
-  // the response).
+  // handling a request that is fully read (the client waits for the
+  // response, and is cut only when a pending response stops moving).
   enum class ReadPhase : uint8_t {
     Idle,
     Request,
     Handling,
   };
   std::atomic<ReadPhase> _read_phase{ReadPhase::Idle};
+  std::optional<size_t> _stalled_at;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -406,7 +384,7 @@ class HttpSession final
   std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
-  bool _peer_is_loopback = false;
+  pg::LoginPeer _peer;
 };
 
 template<SocketKind Kind>
@@ -488,18 +466,27 @@ void HttpSession<Kind>::ArmReadDeadline() {
                               ReadPhase::Request
                             ? gHttpBodyTimeout
                             : gHttpKeepAliveTimeout);
-  _deadline.async_wait(
-    [self = this->shared_from_this()](const asio_ns::error_code& ec) {
-      if (ec) {
+  _deadline.async_wait([self = this->shared_from_this()](
+                         const asio_ns::error_code& ec) {
+    if (ec) {
+      return;
+    }
+    if (self->_read_phase.load(std::memory_order_acquire) ==
+        ReadPhase::Handling) {
+      const auto written = self->_send_written.load(std::memory_order_acquire);
+      if (!self->HasUnsentBytes()) {
+        self->_stalled_at.reset();
+      } else if (self->_stalled_at != written) {
+        self->_stalled_at = written;
+      } else {
+        self->_socket.Close();
         return;
       }
-      if (self->_read_phase.load(std::memory_order_acquire) ==
-          ReadPhase::Handling) {
-        self->ArmReadDeadline();
-        return;
-      }
-      self->_socket.Close();
-    });
+      self->ArmReadDeadline();
+      return;
+    }
+    self->_socket.Close();
+  });
 }
 
 template<SocketKind Kind>
@@ -722,12 +709,15 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
 
         asio_ns::error_code peer_ec;
         const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+        _peer = {.address = peer_ec
+                              ? asio_ns::ip::address{}
+                              : pg::NormalizePeerAddress(peer_ep.address()),
+                 .is_ssl = _socket.IsTls()};
         HttpHandler* handler = _router.Match(request);
         http::AuthResult auth;
         if (!handler || !handler->AuthenticatesItself()) {
           auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
-                                    _peer_is_loopback);
+                                    _peer, _database);
         }
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {

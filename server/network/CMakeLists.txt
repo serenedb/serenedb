@@ -12,6 +12,7 @@ target_sources(
         http/routes.cpp
         http/h1_codec.cpp
         http/response_writer.cpp
+        http/sql_connection.cpp
         http/es/common.cpp
         http/es/dsl.cpp
         http/es/handlers.cpp
@@ -39,6 +40,7 @@ target_sources(
         pg/scram_messages.cpp
         pg/scram_client.cpp
         pg/hba.cpp
+        pg/login.cpp
         credentials.cpp
         server.cpp
 )

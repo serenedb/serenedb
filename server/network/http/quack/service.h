@@ -23,6 +23,7 @@
 #include <atomic>
 #include <quack_server.hpp>
 #include <string>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/task.hpp>
@@ -31,16 +32,18 @@
 #include "network/credentials.h"
 #include "network/http/auth.h"
 #include "network/http/handler.h"
+#include "server/utils/asio_ns.h"
 
 namespace sdb::network::http::quack {
 
 class Service final {
  public:
-  // `server_id` names the service in quack_active_connections()
   Service(const CredentialProvider* credentials,
           const ApiKeyValidator* api_keys, const BearerValidator* bearer,
           CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
-          std::string server_id);
+          std::string server_id,
+          std::vector<asio_ns::ip::tcp::endpoint> endpoints);
+  ~Service();
 
   void Start();
   void RequestStop() noexcept;

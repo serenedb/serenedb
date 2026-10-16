@@ -29,7 +29,7 @@ free_port() {
 # One test file against a fresh serened, which serves quack with the token the templates attach with. The
 # server reads files from the client's working directory, as the in-process server of the upstream suite does.
 run_one() {
-	local test=$1 dir pid port rc attempt
+	local test=$1 dir pid port rc attempt ready_by
 	dir=$(mktemp -d "$WORK/test.XXXXXX")
 	echo "$test" >"$dir/name"
 	for attempt in 1 2 3; do
@@ -38,13 +38,18 @@ run_one() {
 			"--listen=postgres://127.0.0.1:$(free_port),http://127.0.0.1:$port?api=quack" \
 			--auth_bearer_token=asdf) >"$dir/serened.log" 2>&1 &
 		pid=$!
+		ready_by=$((SECONDS + 60))
 		while kill -0 "$pid" 2>/dev/null && ! curl -s -o /dev/null "http://127.0.0.1:$port/quack"; do
+			if ((SECONDS > ready_by)); then
+				kill "$pid"
+				break
+			fi
 			sleep 0.1
 		done
 		kill -0 "$pid" 2>/dev/null && break
 		wait "$pid"
 	done
-	QUACK_SERVER="quack:127.0.0.1:$port" "$UNITTEST" --test-dir "$WORKSPACE/third_party/duckdb" \
+	QUACK_SERVER="quack:127.0.0.1:$port" timeout 300 "$UNITTEST" --test-dir "$WORKSPACE/third_party/duckdb" \
 		--test-config "$CONFIG" --env-passthrough QUACK_SERVER "$test" >"$dir/unittest.log" 2>&1
 	rc=$?
 	kill "$pid" 2>/dev/null

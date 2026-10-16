@@ -26,6 +26,7 @@
 
 #include "network/credentials.h"
 #include "network/http/common.h"
+#include "network/pg/login.h"
 
 namespace sdb::network::http {
 
@@ -87,13 +88,11 @@ struct AuthResult {
   AuthContext context;
 };
 
-// Authorization-header authentication over the SAME credential store as the
-// pg wire (one user database for both protocols): Basic verifies the
-// cleartext against the stored credential (direct constant-time compare or
-// the scram-verifier derivation). A passwordless role (or an unconfigured
-// server) is trusted only over a LOCAL (loopback/unix) connection -- the
-// caller passes `is_loopback`; a remote peer with no stored credential is
-// refused, matching the pg session's loopback-gated trust fallback.
+// Authorization-header authentication over the SAME credential store and
+// client authentication rules (pg_hba) as the pg wire: a password login is
+// decided by the rules for the peer, the role and the database, verified
+// against the stored credential, and refused once the role's VALID UNTIL
+// passed. An unconfigured server trusts only a local (loopback/unix) client.
 class HttpAuthenticator {
  public:
   HttpAuthenticator(const network::CredentialProvider* credentials,
@@ -104,16 +103,18 @@ class HttpAuthenticator {
   bool Enabled() const noexcept { return _credentials != nullptr; }
 
   AuthResult Authenticate(std::string_view authorization_header,
-                          bool is_loopback) const;
-  // A credential a protocol carries in its own messages: an Authorization
-  // header value, "user:password", or a bearer token.
+                          const pg::LoginPeer& peer,
+                          std::string_view database) const;
   AuthResult AuthenticateCredential(std::string_view credential,
-                                    bool is_loopback) const;
+                                    const pg::LoginPeer& peer,
+                                    std::string_view database) const;
 
  private:
-  AuthResult Basic(std::string_view payload, bool is_loopback) const;
+  AuthResult Basic(std::string_view payload, const pg::LoginPeer& peer,
+                   std::string_view database) const;
   AuthResult Password(std::string_view user, std::string_view password,
-                      bool is_loopback) const;
+                      const pg::LoginPeer& peer,
+                      std::string_view database) const;
   AuthResult ApiKey(std::string_view payload) const;
   AuthResult Bearer(std::string_view payload) const;
 

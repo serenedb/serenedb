@@ -36,6 +36,7 @@
 #include "network/http/request.h"
 #include "network/http/response_writer.h"
 #include "network/io_executor.h"
+#include "network/pg/login.h"
 #include "query/prepared_cache.h"
 
 namespace duckdb {
@@ -98,8 +99,7 @@ class RequestContext {
   virtual std::string_view Schema() const = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;
-  virtual bool PeerIsLoopback() const = 0;
-  // A wake can be spurious: park in a loop on the awaited condition.
+  virtual const pg::LoginPeer& Peer() const = 0;
   virtual const duckdb::shared_ptr<CpuResumer>& Resumer() = 0;
   virtual IoExecutor& Io() = 0;
 };

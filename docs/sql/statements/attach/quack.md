@@ -16,6 +16,10 @@ ORDER BY o.id;
 
 The attached database lists the server's schemas and the tables and views in them, so a table `orders` in the server's `public` schema is `remote.public.orders`. A name without a schema, such as `remote.orders`, means the server's default schema: `public` on a SereneDB server, `main` on DuckDB.
 
+Attaching a Quack server and `quack_query` require superuser: they log in to another server with the credential given, and a server trusts its own superuser on a local connection.
+
+A server cannot attach or query its own Quack listener, under any of its addresses or host names: that fails with `... is a Quack listener of this server, which cannot connect to itself`.
+
 ## Address
 
 The path is `quack:host` or `quack:host:port`; an IPv6 host goes in brackets, as in `quack:[::1]:9494`. Without a port the address means port 9494.
@@ -77,4 +81,5 @@ It takes the `token`, `disable_ssl`, `client_id` and `heartbeat_timeout` options
 ## Limitations
 
 - `UPDATE` and `DELETE` that read local tables fail with `PlanUpdate not implemented yet` and `PlanDelete not implemented yet`.
-- On a server other than SereneDB, a statement that runs on the server as a whole, and `quack_query`, run there already when they are prepared, explained or described, to learn their result columns, and the first `EXECUTE` returns the rows of that run. So `PREPARE p AS DELETE FROM remote.main.t WHERE ...` deletes the rows at `PREPARE`. On a SereneDB server they run once per execution, as `quack_query` with several statements does on any server.
+- `quack_query` takes one SQL command, as a prepared statement does. A SereneDB server refuses several with `cannot insert multiple commands into a prepared statement`.
+- On a server other than SereneDB, a statement that runs on the server as a whole, and `quack_query`, run there already when they are prepared, explained or described, to learn their result columns, and the first `EXECUTE` returns the rows of that run. So `PREPARE p AS DELETE FROM remote.main.t WHERE ...` deletes the rows at `PREPARE`. On a SereneDB server they run once per execution.

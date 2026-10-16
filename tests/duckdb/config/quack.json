@@ -95,6 +95,12 @@
         "test/sql/logging.test",
         "test/sql/self_connect.test"
       ]
+    },
+    {
+      "reason": "A quack PREPARE holds one command, as a prepared statement does in PostgreSQL, and fails with `cannot insert multiple commands into a prepared statement` otherwise: pgbench.test sends a whole transaction script in one query.",
+      "paths": [
+        "test/sql/pgbench.test"
+      ]
     }
   ]
 }

@@ -189,6 +189,42 @@ def test_ddl(servers) -> None:
         "SELECT * FROM made_remotely").fetchall() == [(1, "one")]
 
 
+def test_no_self_connection(servers) -> None:
+    _, conn_b, quack_b, _ = servers
+    for host in ("127.0.0.1", "localhost"):
+        with pytest.raises(psycopg.Error, match="cannot connect to itself"):
+            conn_b.execute(_remote(quack_b, "SELECT 1").replace(
+                "127.0.0.1", host))
+        with pytest.raises(psycopg.Error, match="cannot connect to itself"):
+            conn_b.execute(f"ATTACH 'quack:{host}:{quack_b}' AS self_b "
+                           "(TOKEN 'postgres:')")
+
+
+def test_no_self_connection_on_every_interface(tmp_path: Path) -> None:
+    pg_port, quack_port = _free_port(), _free_port()
+    server = Server(tmp_path, f"postgres://127.0.0.1:{pg_port},"
+                    f"http://0.0.0.0:{quack_port}?api=quack")
+    try:
+        with _connect(pg_port, time.monotonic() + 60) as conn:
+            with pytest.raises(psycopg.Error, match="cannot connect to itself"):
+                conn.execute(_remote(quack_port, "SELECT 1"))
+    finally:
+        server.stop()
+
+
+def test_one_command(servers) -> None:
+    conn_a, conn_b, quack_b, _ = servers
+    for sql in ("SELECT 1; SELECT 2",
+                "CREATE TABLE one_command (x INT); SELECT * FROM one_command"):
+        with pytest.raises(psycopg.errors.SyntaxError,
+                           match="cannot insert multiple commands"):
+            conn_a.execute(_remote(quack_b, sql))
+    assert conn_b.execute(
+        "SELECT count(*) FROM information_schema.tables "
+        "WHERE table_name = 'one_command'").fetchone() == (0,)
+    assert conn_a.execute(_remote(quack_b, "SELECT 3;")).fetchone() == (3,)
+
+
 def test_remote_error(servers) -> None:
     conn_a, _, quack_b, _ = servers
     with pytest.raises(psycopg.Error, match="nonexistent"):
@@ -217,6 +253,52 @@ def test_credentials(servers) -> None:
         ).fetchone() == ("postgres",)
     with pytest.raises(psycopg.Error, match="authentication failed"):
         conn_a.execute(_remote(quack_b, "SELECT 1", token="not-the-token"))
+    with pytest.raises(psycopg.Error, match="authentication failed"):
+        conn_a.execute(_remote(quack_b, "SELECT current_user", token=":"))
+
+
+def test_login_rules(servers) -> None:
+    conn_a, conn_b, quack_b, _ = servers
+    conn_b.execute(
+        "CREATE ROLE bob LOGIN PASSWORD 'pw' VALID UNTIL '2000-01-01'")
+    with pytest.raises(psycopg.Error, match="authentication failed"):
+        conn_a.execute(_remote(quack_b, "SELECT 1", token="bob:pw"))
+    conn_b.execute("ALTER ROLE bob VALID UNTIL '2100-01-01'")
+    assert conn_a.execute(
+        _remote(quack_b, "SELECT current_user", token="bob:pw")
+    ).fetchone() == ("bob",)
+    conn_b.execute("SET hba = 'host all bob 0.0.0.0/0 reject\n"
+                   "host all all 0.0.0.0/0 scram-sha-256'")
+    try:
+        with pytest.raises(psycopg.Error, match="authentication failed"):
+            conn_a.execute(_remote(quack_b, "SELECT 1", token="bob:pw"))
+        assert conn_a.execute(
+            _remote(quack_b, "SELECT current_user", token="alice:secret")
+        ).fetchone() == ("alice",)
+    finally:
+        conn_b.execute("RESET hba")
+
+
+def test_superuser_only(servers) -> None:
+    conn_a, _, quack_b, pg_a = servers
+    conn_a.execute("CREATE ROLE mallory LOGIN PASSWORD 'm'")
+    conn_a.execute("CREATE ROLE creator LOGIN CREATEDB PASSWORD 'c'")
+    with psycopg.connect(host="127.0.0.1", port=pg_a, user="mallory",
+                         password="m", dbname="postgres",
+                         autocommit=True) as mallory:
+        for statement in (_remote(quack_b, "SELECT current_user"),
+                          "SELECT * FROM quack_active_connections()",
+                          "SELECT * FROM quack_identify(name := 'x')"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                               match="must be superuser"):
+                mallory.execute(statement)
+    with psycopg.connect(host="127.0.0.1", port=pg_a, user="creator",
+                         password="c", dbname="postgres",
+                         autocommit=True) as creator:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                           match="must be superuser"):
+            creator.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS c "
+                            "(TOKEN 'postgres:')")
 
 
 def test_statement_longer_than_body_timeout(servers) -> None:
@@ -232,17 +314,14 @@ def test_statement_longer_than_body_timeout(servers) -> None:
 def test_request_longer_than_body_timeout(servers) -> None:
     conn_a, _, quack_b, _ = servers
     # The padding spreads the request over many reads, and PREPARE answers
-    # only once the statement before the SELECT is done.
+    # only once the statement is done.
     padding = "-- " + "x" * (1 << 20) + "\n"
     started = time.monotonic()
-    (total,) = conn_a.execute(_remote(
+    assert conn_a.execute(_remote(
         quack_b, padding +
         "CREATE OR REPLACE TEMP TABLE slow AS "
-        "SELECT sum(a % 7) AS s FROM range(1000000000) r(a); "
-        "SELECT s FROM slow")).fetchone()
+        "SELECT sum(a % 7) AS s FROM range(1000000000) r(a)")).fetchone() == (1,)
     assert time.monotonic() - started > 1
-    assert total == sum(i % 7 for i in range(7)) * (1000000000 // 7) + sum(
-        range(1000000000 % 7))
 
 
 def test_cancel(servers) -> None:
@@ -310,6 +389,122 @@ def test_statement_timeout(servers, path: str) -> None:
         conn.execute("RESET statement_timeout")
         assert conn.execute(
             "SELECT count(*) FROM b.public.t").fetchone() == (3,)
+
+
+def test_timeout_ends_with_its_statement(servers) -> None:
+    _, _, _, pg_a = servers
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        conn.execute("SET statement_timeout = '1s'")
+        assert conn.execute(
+            "SELECT count(*) FROM b.public.t").fetchone() == (3,)
+        conn.execute("RESET statement_timeout")
+        assert conn.execute(
+            "SELECT * FROM b.query('CREATE OR REPLACE TEMP TABLE pause AS "
+            "SELECT pg_sleep(2) AS s')").fetchone() == (1,)
+
+
+def test_lost_session_reconnects(servers) -> None:
+    _, conn_b, _, pg_a = servers
+    with _connect(pg_a, time.monotonic() + 10) as conn:
+        assert conn.execute(
+            "SELECT * FROM b.query('SELECT 42 AS lost_session')").fetchone() == (42,)
+        assert conn_b.execute(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+            "WHERE query LIKE '%42 AS lost_session%' "
+            "AND pid <> pg_backend_pid()").fetchone() == (1,)
+        with pytest.raises(psycopg.Error, match="Invalid connection id"):
+            conn.execute("SELECT count(*) FROM b.public.t")
+        assert conn.execute(
+            "SELECT count(*) FROM b.public.t").fetchone() == (3,)
+
+
+def test_session_limit(servers) -> None:
+    conn_a, conn_b, quack_b, _ = servers
+    conn_b.execute("SET quack_max_sessions = 1")
+    try:
+        with pytest.raises(psycopg.Error, match="Too many Quack sessions"):
+            conn_a.execute(_remote(quack_b, "SELECT 1"))
+    finally:
+        conn_b.execute("RESET quack_max_sessions")
+    assert conn_a.execute(_remote(quack_b, "SELECT 1")).fetchone() == (1,)
+
+
+def test_heartbeat_keeps_the_session(servers) -> None:
+    conn_a, _, quack_b, pg_a = servers
+    conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS hb "
+                   "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 2)")
+    try:
+        with _connect(pg_a, time.monotonic() + 10) as conn:
+            (session,) = conn.execute(
+                "SELECT quack_connection_id('hb')").fetchone()
+            time.sleep(5)
+            assert conn.execute(
+                "SELECT count(*) FROM hb.public.t").fetchone() == (3,)
+            assert conn.execute(
+                "SELECT quack_connection_id('hb')").fetchone() == (session,)
+    finally:
+        conn_a.execute("DETACH hb")
+
+
+def test_remote_statement_leaves_the_worker_free(servers,
+                                                tmp_path: Path) -> None:
+    _, conn_b, quack_b, _ = servers
+    # B answers a PREPARE only once its rows are there, as a DuckDB server does
+    try:
+        conn_b.execute("SET sdb_faults = 'quack_prepare_answers_late'")
+    except psycopg.Error:
+        pytest.skip("needs SDB_FAULT_INJECTION")
+    pg_c = _free_port()
+    c = Server(tmp_path, f"postgres://127.0.0.1:{pg_c}", "--cpu_threads=1")
+    try:
+        deadline = time.monotonic() + 60
+        with _connect(pg_c, deadline) as slow, _connect(pg_c, deadline) as fast:
+            slow.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS b "
+                         "(TOKEN 'postgres:')")
+            outcome: list[object] = []
+
+            def run() -> None:
+                outcome.append(slow.execute(
+                    "SELECT * FROM b.query('SELECT sum(a % 7) AS s "
+                    "FROM range(3000000000) r(a)')").fetchone())
+
+            worker = threading.Thread(target=run)
+            worker.start()
+            time.sleep(0.5)
+            assert fast.execute("SELECT 42").fetchone() == (42,)
+            assert worker.is_alive(), "the remote statement ended too soon"
+            worker.join(timeout=120)
+            assert outcome == [(sum(range(7)) * (3000000000 // 7) +
+                                sum(range(3000000000 % 7)),)]
+    finally:
+        conn_b.execute("SET sdb_faults = '-quack_prepare_answers_late'")
+        c.stop()
+
+
+def test_lease_limit(servers, tmp_path: Path) -> None:
+    _, conn_b, quack_b, _ = servers
+    conn_b.execute("SET quack_max_heartbeat_timeout = 2")
+    pg_c = _free_port()
+    c = Server(tmp_path, f"postgres://127.0.0.1:{pg_c}")
+    try:
+        with _connect(pg_c, time.monotonic() + 60) as conn_c:
+            conn_c.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS b "
+                           "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 3600)")
+            assert conn_c.execute(
+                "SELECT * FROM b.query('SELECT 7 AS lease_limit')"
+            ).fetchone() == (7,)
+        c.proc.kill()
+        c.proc.wait(timeout=30)
+        gone_by = time.monotonic() + 15
+        while conn_b.execute(
+                "SELECT count(*) FROM quack_active_connections() "
+                "WHERE query LIKE '%7 AS lease_limit%'").fetchone()[0]:
+            assert time.monotonic() < gone_by, "the session outlived its lease"
+            time.sleep(0.2)
+    finally:
+        conn_b.execute("RESET quack_max_heartbeat_timeout")
+        if c.proc.poll() is None:
+            c.stop()
 
 
 def test_sessions_run_concurrently(servers) -> None:

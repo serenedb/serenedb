@@ -394,10 +394,12 @@ void Server::StartListeners() {
   const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
   std::vector<std::string_view> quack_urls;
+  std::vector<asio_ns::ip::tcp::endpoint> quack_endpoints;
   for (const auto& spec : specs) {
     if (spec.protocol == network::ListenProtocol::Http &&
         absl::c_linear_search(spec.apis, network::HttpApi::Quack)) {
       quack_urls.emplace_back(spec.url);
+      quack_endpoints.push_back(spec.endpoint);
     }
   }
   for (const auto& spec : specs) {
@@ -424,7 +426,8 @@ void Server::StartListeners() {
     if (!_quack && absl::c_linear_search(spec.apis, network::HttpApi::Quack)) {
       _quack = std::make_unique<network::http::quack::Service>(
         _credentials.get(), _api_key_validator.get(), _bearer_validator.get(),
-        _cancel, _sessions, absl::StrJoin(quack_urls, ","));
+        _cancel, _sessions, absl::StrJoin(quack_urls, ","),
+        std::move(quack_endpoints));
       _quack->Start();
     }
   }

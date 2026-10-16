@@ -249,6 +249,8 @@ quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested 
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
 quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load
+quack_max_heartbeat_timeout	600	Most seconds a server keeps a session without a request from its client; a client asking for longer gets this
+quack_max_sessions	0	Most sessions a server keeps open at once (0 = unlimited)
 quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
 quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
 quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)
@@ -612,6 +614,8 @@ quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested 
 quack_enable_reconnects	off	Enable reconnect support (clients acknowledge results, the server caches the last result until acknowledged)
 quack_fetch_read_ahead	0	FETCH requests kept in flight ahead of the scan (0 = number of async threads)
 quack_loaded_at_us	<slt:ignore>	Epoch microseconds at extension load
+quack_max_heartbeat_timeout	600	Most seconds a server keeps a session without a request from its client; a client asking for longer gets this
+quack_max_sessions	0	Most sessions a server keeps open at once (0 = unlimited)
 quack_prepare_inline_rows	24576	Rows returned inline in the PREPARE response before the remainder is left to FETCH; drains whole batches, so it may overshoot to a batch boundary
 quack_rebalance_buffer_bytes	0	Pending (unstamped) bytes the batch rebalancer buffers before gating non-minimum producers (0 = automatic, memory-manager governed)
 quack_result_ttl	3600	Seconds an idle cached result is kept before it is dropped (0 = never)

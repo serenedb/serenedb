@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -98,6 +100,8 @@ struct VectorSink {
       duckdb::StringVector::AddStringOrBlob(vec, v);
   }
 
+  bool ByteaText(std::string_view text);
+
   // `bits` is the "0101" bit-char form; the cast packs it into the bitstring.
   bool Bit(std::string_view bits) {
     duckdb::CastParameters params(/*strict=*/true, nullptr);
@@ -149,6 +153,8 @@ struct ValueSink {
                               v.GetSize());
   }
 
+  bool ByteaText(std::string_view text);
+
   // The bitstring cast needs a Vector for its heap; bind BIT is rare, so pack
   // through a one-slot scratch and lift out the Value rather than duplicating
   // the bit-packing logic non-throwing here.
@@ -182,6 +188,28 @@ struct ValueSink {
 
   void SetNull() { out = duckdb::Value(type); }
 };
+
+enum class ByteaTextError : uint8_t {
+  None,
+  InvalidHexDigit,
+  OddHexDigits,
+  InvalidEscape,
+};
+
+struct ByteaTextDecoded {
+  size_t size = 0;
+  ByteaTextError error = ByteaTextError::None;
+  size_t error_pos = 0;
+};
+
+inline size_t ByteaTextCapacity(std::string_view input) noexcept {
+  // Worst case: every 2 chars = 1 byte
+  return input.starts_with("\\x") ? (input.size() - 2) / 2 : input.size();
+}
+
+// PG-compatible byteain. Handles \x hex format (whitespace between pairs
+// ignored) and PG escape format (\\ and \NNN octal).
+ByteaTextDecoded DecodeByteaText(std::string_view input, char* out) noexcept;
 
 template<typename Sink>
 using DeserializationFunction = bool (*)(DeserializeContext& context,

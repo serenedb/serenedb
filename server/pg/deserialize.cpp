@@ -73,6 +73,86 @@ void ValueSink::Tsquery(std::string_view text) {
   out = connector::MakeTSQueryValue(type, text);
 }
 
+ByteaTextDecoded DecodeByteaText(std::string_view input, char* out) noexcept {
+  char* const begin = out;
+  if (input.starts_with("\\x")) {
+    for (size_t i = 2; i < input.size();) {
+      const char c = input[i];
+      if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+        ++i;
+        continue;
+      }
+      const auto hi = absl::kHexValueStrict[static_cast<unsigned char>(c)];
+      if (hi == -1) {
+        return {.error = ByteaTextError::InvalidHexDigit, .error_pos = i};
+      }
+      if (i + 1 == input.size()) {
+        return {.error = ByteaTextError::OddHexDigits, .error_pos = i};
+      }
+      const auto lo =
+        absl::kHexValueStrict[static_cast<unsigned char>(input[i + 1])];
+      if (lo == -1) {
+        return {.error = ByteaTextError::InvalidHexDigit, .error_pos = i + 1};
+      }
+      *out++ = static_cast<char>((hi << 4) + lo);
+      i += 2;
+    }
+    return {.size = static_cast<size_t>(out - begin)};
+  }
+  // Escape format: \\ -> backslash, \NNN -> octal byte, rest literal
+  for (size_t i = 0; i < input.size();) {
+    const char c = input[i];
+    if (c != '\\') {
+      *out++ = c;
+      ++i;
+      continue;
+    }
+    if (i + 1 < input.size() && input[i + 1] == '\\') {
+      *out++ = '\\';
+      i += 2;
+      continue;
+    }
+    if (i + 3 >= input.size()) {
+      return {.error = ByteaTextError::InvalidEscape, .error_pos = i};
+    }
+    const char* octal = input.data() + i + 1;
+    unsigned value = 0;
+    const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
+    if (res.ec != std::errc{} || res.ptr != octal + 3 || value > 0xFFU) {
+      return {.error = ByteaTextError::InvalidEscape, .error_pos = i};
+    }
+    *out++ = static_cast<char>(value);
+    i += 4;
+  }
+  return {.size = static_cast<size_t>(out - begin)};
+}
+
+bool VectorSink::ByteaText(std::string_view text) {
+  const auto capacity = ByteaTextCapacity(text);
+  auto target = duckdb::StringVector::EmptyString(vec, capacity);
+  const auto decoded = DecodeByteaText(text, target.GetDataWriteable());
+  if (decoded.error != ByteaTextError::None) {
+    return false;
+  }
+  target.SetSizeAndFinalize(static_cast<uint32_t>(decoded.size), capacity);
+  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] = target;
+  return true;
+}
+
+bool ValueSink::ByteaText(std::string_view text) {
+  ByteaTextDecoded decoded;
+  std::string bytes;
+  bytes.resize_and_overwrite(ByteaTextCapacity(text), [&](char* data, size_t) {
+    decoded = DecodeByteaText(text, data);
+    return decoded.size;
+  });
+  if (decoded.error != ByteaTextError::None) {
+    return false;
+  }
+  out = duckdb::Value::BLOB_RAW(std::move(bytes));
+  return true;
+}
+
 namespace {
 
 // Decode cores are the deserialize twin of the serialize framework's leaf
@@ -605,18 +685,12 @@ struct VarcharText {
 struct BlobText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data.starts_with("\\x")) {
-      std::string bytes;
-      if (!absl::HexStringToBytes(data.substr(2), &bytes)) {
-        return false;
-      }
+    if (!data.contains('\\')) {
       sink.Blob(
-        duckdb::string_t{bytes.data(), static_cast<uint32_t>(bytes.size())});
+        duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())});
       return true;
     }
-    sink.Blob(
-      duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())});
-    return true;
+    return sink.ByteaText(data);
   }
 };
 

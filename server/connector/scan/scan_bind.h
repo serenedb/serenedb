@@ -79,9 +79,6 @@ struct SearchSpec {
 
 struct ScoreSpec {
   std::optional<catalog::ScorerOptions> text;
-  // A LIMIT that is a prepared-statement parameter is not a number at plan
-  // time. It is kept as the expression the scan evaluates at execution, so
-  // the top-k still runs inside the scan instead of a sort above it.
   std::shared_ptr<const duckdb::Expression> top_k_expr;
   std::shared_ptr<const duckdb::Expression> top_offset_expr;
   std::optional<VectorScorerOptions> vector;
@@ -145,29 +142,21 @@ struct TsDictSpec {
   TsDictRequest& For(irs::field_id field_id);
 };
 
-// A column a deferred conjunct references, by the scan column it resolved to
-// at plan time; its search info is resolved again at execution.
 struct DeferredColumn {
   ColumnId column;
   bool column_stored = false;
 };
 
-// The claimed WHERE as expressions, kept when some conjunct carries a
-// prepared-statement parameter: the filter is then rebuilt at execution with
-// the parameters' values, over the columns resolved at plan time.
 struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
   std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
-  // What the filter optimizer is told about the claimed fields.
   std::set<irs::field_id> analyzed_fields;
   std::map<irs::field_id, irs::field_id> null_markers;
 };
 
 struct PlanCacheSpec {
   std::optional<DeferredClaim> deferred;
-  // A conjunct with a parameter the claim could not shape: it stays a filter
-  // above the scan, so the plan must be re-bound with values.
   bool declined_parameter = false;
 };
 
@@ -279,17 +268,8 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
-// The share of a global top-k that one of `segments` segments is expected to
-// hold. Every segment is searched with its own beam and the results are
-// merged, so a segment never has to be able to answer the whole query alone --
-// only to hold its part of the answer. How many of the top k land in one
-// segment is Binomial(k, 1/segments); three standard deviations above the mean
-// covers the segment that happens to draw more than its share. One segment
-// gets the whole k, and a beam this narrow is pointless below a few dozen.
 double SegmentBeamShare(double k, size_t segments) noexcept;
 
-// The oversample the engine picks for a quantizer when sdb_ann_oversample is
-// -1, and the session's value otherwise; `chosen_here` reports which.
 double AnnOversample(duckdb::ClientContext& context,
                      const VectorScorerOptions& vs, bool& chosen_here);
 
@@ -297,8 +277,6 @@ double OversamplePool(double factor, double count) noexcept;
 
 uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 
-// The search knobs a vector scan reads from the session at execution, rather
-// than from the session that planned it.
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context);
 

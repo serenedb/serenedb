@@ -51,11 +51,6 @@ inline constexpr uint32_t kHnswSerialWarmup = 256;
 inline constexpr size_t kHnswMinRowsPerWorker = 1024;
 inline constexpr uint32_t kHnswMaxWorkers = 64;
 inline constexpr size_t kHnswInsertGranule = 256;
-// Rows fed to a quantizer that trains on a bounded sample -- k-means and the
-// like, where the cost is in the training and more rows buy little. A trainer
-// that streams (scalar quantization, whose training is a per-dimension
-// min/max) is given every row instead: there a row the trainer never saw is a
-// row the encoder silently clamps.
 inline constexpr uint64_t kHnswTrainSample = 262144;
 inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
 inline constexpr size_t kHnswLinksPerLine = 64 / sizeof(uint32_t);
@@ -142,8 +137,6 @@ struct HnswWalkFilterScratch {
 struct HnswSearchScratch {
   HnswWalkFilterScratch walk_filter;
   HnswVisited visited;
-  // Rejected nodes reached as a neighbour's neighbour (TwoHop): explored
-  // once from there, yet still handled when reached as a direct neighbour.
   HnswVisited visited_hop2;
   std::vector<HnswCandidate> nearest;
   std::vector<HnswCandidate> frontier;
@@ -152,33 +145,21 @@ struct HnswSearchScratch {
   std::vector<uint32_t> bridges;
   std::vector<uint32_t> hop2;
   std::vector<score_t> scores;
-  // Distances computed by the level walk of the current search.
   uint64_t scored = 0;
   double admit_share = 1.0;
   uint64_t admitted = 0;
   bool two_hop = false;
 };
 
-// The predicate of an unfiltered search: every node may enter the result.
 struct HnswAcceptAll {
   static constexpr bool kAll = true;
   bool operator()(uint32_t) const noexcept { return true; }
 };
 
-// What the level walk does with a node the predicate rejects.
 enum class HnswWalk : uint8_t {
-  // Scored and passed through, never admitted: the graph stays connected
-  // whatever the predicate, at the price of scoring rejected nodes.
   Through,
-  // Neither scored nor expanded: cheap, but the admitted subgraph may fall
-  // apart under a selective predicate.
   Prune,
-  // Not scored; its neighbours are the candidates instead (ACORN-1), up to
-  // the level's width per rejected node.
   TwoHop,
-  // Scored and passed through for one hop: a rejected node's expansion only
-  // scores its admitted neighbours, so rejected regions are crossed but not
-  // explored.
   Bridge,
   Adaptive,
 };
@@ -587,13 +568,6 @@ void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
   }
 }
 
-// Best-first expansion of `level` from the seeded heaps: `s.frontier` holds
-// the nodes still to expand and `s.nearest` the admitted results, both already
-// heaps. The walk passes through every reachable node so a predicate never
-// disconnects the graph, but only nodes `accept` passes enter `nearest`, and
-// the beam is measured in admitted nodes. Returns false once `budget`
-// distances were computed with the frontier still live: the caller then knows
-// the predicate is too sparse for the graph and answers another way.
 template<HnswWalk Walk = HnswWalk::Through, typename Dist, typename Accept>
 bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s, const Accept& accept,
@@ -617,8 +591,6 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
 
     s.batch.clear();
     const auto neighbors = graph.Neighbors(cur.node, level);
-    // Bridge: a node reached through a rejected one only offers its admitted
-    // neighbours; an admitted node offers them all, as Through does.
     const bool through = Walk == HnswWalk::Through ||
                          (Walk == HnswWalk::Adaptive && !s.two_hop) ||
                          (Walk == HnswWalk::Bridge && accept(cur.node));
@@ -636,8 +608,6 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
           return;
         }
         if constexpr (kHnswHops<Walk>) {
-          // The rejected node is a bridge: its admitted neighbours stand in
-          // for it, at most one level width of them.
           const auto limit = s.batch.size() + neighbors.size();
           const auto hop = graph.Neighbors(id, level);
           for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
@@ -666,12 +636,6 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
     s.scored += s.batch.size();
 
-    // An acceptor that answers a whole hop at once says so, and is handed the
-    // hop before it is asked about any single node. A predicate only the
-    // columnstore answers costs a positioned read per call, so asking about
-    // thirty-two scattered nodes one at a time is thirty-two of them; asking
-    // once, in ascending order, is one. A plain callable has no Prepare and is
-    // untouched.
     if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
       accept.Prepare(std::span<const uint32_t>{s.batch});
     }
@@ -696,8 +660,6 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
           accept(cand.node)) {
         HnswKeepNearest(nearest, cand, ef);
       }
-      // The candidate's links are what its expansion reads first; fetching
-      // them now overlaps that miss with the rest of this batch.
       __builtin_prefetch(graph.Neighbors(cand.node, level).data(), 0, 1);
       frontier.push_back(cand);
       std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
@@ -709,8 +671,6 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
   return true;
 }
 
-// The classic level search: `s.nearest` seeds the frontier and every node is
-// admitted. Used by construction and as the seed pass of a radius search.
 template<typename Dist>
 void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
                      uint32_t ef, HnswSearchScratch& s) {
@@ -790,12 +750,6 @@ struct HnswBuildScratch {
   std::vector<uint8_t> rev_kept_processed;
 };
 
-// The "not closer than base" test: a candidate is dropped when a link already
-// selected sits closer to it than the target does. The comparison is strict
-// except between candidates exactly equidistant from the target -- without
-// that exception a group of byte-identical vectors never prunes itself, fills
-// every slot of every member, and turns the group into a sink the walk cannot
-// leave.
 inline bool HnswRedundant(score_t to_selected, score_t candidate,
                           score_t selected) noexcept {
   return candidate == selected ? to_selected >= candidate
@@ -928,9 +882,6 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   }
   items.push_back(
     {.score = dist.Pair(peer, node), .node = node, .processed = false});
-  // Stable: the links the last heuristic kept are already in its order, and a
-  // score tie between two of them must not reshuffle them, or the pairs it
-  // cleared below stop lining up.
   absl::c_stable_sort(items,
                       [](const HnswReverseItem& l, const HnswReverseItem& r) {
                         return l.score > r.score;
@@ -945,8 +896,6 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   for (const auto& cand : items) {
     bool keep = true;
     for (size_t w = 0; w < kept.size(); ++w) {
-      // Two links a previous heuristic already kept side by side cleared this
-      // test then, against the same target and the same scores.
       if (cand.processed && kept_processed[w] != 0) {
         continue;
       }
@@ -1026,10 +975,6 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
   }
 }
 
-// Top-`ef` search. With a predicate the descent is unfiltered (it only
-// navigates), the level-0 walk admits what `accept` passes and treats the
-// rest per `Walk`, and `budget` caps the distances the walk may spend; see
-// HnswExpandLevel for the false return.
 template<HnswWalk Walk = HnswWalk::Through, typename Dist,
          typename Accept = HnswAcceptAll>
 bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
@@ -1043,9 +988,6 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
     s.visited_hop2.Reset(graph.Size());
   }
   const auto cur = HnswDescendToBase(graph, dist, s);
-  // The landing node seeds the frontier whatever the predicate says: the walk
-  // must start somewhere, and a Prune walk that could not pass through it
-  // would otherwise never leave it.
   s.frontier.assign(1, cur);
   if (accept(cur.node)) {
     s.nearest.assign(1, cur);

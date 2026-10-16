@@ -52,11 +52,6 @@ class HnswHits : public Root {
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    // The hits are ascending by doc, so a window of them is a run: a caller
-    // that splits a segment by row group asks for its range and no other.
-    // Scoring the whole segment for every range would be quadratic in the
-    // parts, and the assert that used to stand here only holds while a vector
-    // scan cannot be split at all.
     const auto by_doc = [](const ScoreDoc& hit, doc_id_t doc) {
       return hit.doc < doc;
     };
@@ -75,8 +70,6 @@ class HnswHits : public Root {
       }
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
-      // The hits are ascending by doc, so a block is the run the table
-      // filter narrows in place.
       const auto live = _table ? _table->Narrow(_docs, _scores, n) : n;
       collector.AddDocs(_docs, live, _scores);
       i += n;
@@ -97,16 +90,10 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  // A table that folded into the search has been applied; one that did not
-  // (a predicate on the score) narrows the hits.
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
   auto hits = query.RunSearch(ctx.table);
   if (hits.empty()) {
-    // Nothing matched -- a part of a split scan whose doc range holds no row
-    // the predicate admits, or a search that found none. That is an answer,
-    // not a missing plan, and null here would be read as the latter and
-    // fail the query.
     return MakeEmpty();
   }
   const auto record = query.Stats(ScoredOf(ctx));

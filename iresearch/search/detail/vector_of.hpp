@@ -139,8 +139,6 @@ class RawVectorReader {
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
       size_t run = ConsecutiveRunLength(docs, i);
-      // A run of one is the scattered case: the row after the next is far
-      // enough ahead to be worth naming now.
       if (run == 1 && i + 2 < docs.size()) {
         PrefetchRow(docs[i + 2]);
       }
@@ -148,10 +146,6 @@ class RawVectorReader {
         size_t got = 0;
         const auto* base = ReadSome(docs[i], run, got);
         SDB_ASSERT(got != 0 && got <= run);
-        // The rows are contiguous and each is several cache lines, so the
-        // hardware prefetcher has to recognise the stream afresh every row it
-        // strides over. Ninety-six threads streaming at once leave it little
-        // room; naming the next row keeps the scan ahead of its own reads.
         const size_t stride = static_cast<size_t>(_d) * sizeof(float);
         constexpr size_t kAhead = 2;
         for (size_t k = 0; k < got; ++k) {
@@ -170,10 +164,6 @@ class RawVectorReader {
   }
 
  private:
-  // Name the lines of a row that is coming but not next, without disturbing
-  // the window the scan is reading from. A selective predicate leaves the rows
-  // scattered, so each one is its own miss; naming a later row now lets that
-  // miss overlap the one being scored instead of following it.
   void PrefetchRow(doc_id_t doc) noexcept {
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
@@ -198,31 +188,17 @@ class RawVectorReader {
     }
   }
 
-  // The rows of a run that one stable window can serve, and how many that was.
-  //
-  // A data block holds a few thousand floats, so a run of rows is spread over
-  // several of them: asking for the whole run at once fails the in-place read
-  // every time and falls back to copying the lot through the columnstore. On a
-  // brute-force scan that copy was 17% of the server's CPU and doubled the
-  // memory traffic -- the vectors were read once into a buffer and once again
-  // to score. Stopping at the window edge keeps the pointer.
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
     const auto* child = _column->Child();
     SDB_ASSERT(child);
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
     _win = child->Locate(elem, _win);
-    const auto window = _win;  // by value: the walk below moves the hint
+    const auto window = _win;
     const auto& blocks = child->DataBlocks();
     const auto& meta = blocks[window.block];
     if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
         elem >= window.begin && elem < window.end) {
-      // Blocks of an uncompressed column are written back to back, so the run
-      // one read can serve reaches over every block that follows this one
-      // contiguously in the file. Stopping at the first block edge instead
-      // leaves any row sitting on a seam to the columnstore's scan path -- a
-      // pin and an output vector to move one row -- and on a million-row scan
-      // those seams were 11% of the server's CPU.
       const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
       uint64_t end = window.end;
       for (auto w = window; end < want;) {
@@ -239,10 +215,8 @@ class RawVectorReader {
         }
         end = next.end;
         w = next;
-        _win = next;  // the next call starts where this run ended
+        _win = next;
       }
-      // Whole rows only: a block boundary that falls inside a row leaves none,
-      // and that row goes the slow way so the next one can start clean.
       const auto fit = static_cast<size_t>((end - elem) / _d);
       if (fit != 0) {
         got = std::min(count, fit);
@@ -310,13 +284,6 @@ class VectorCluster {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
     SDB_ASSERT(_setting.group_size != 0);
-    // ServeGroup decodes a whole group at once, so the cache is sized by the
-    // format's group, not by the run. They are unrelated numbers: a run is at
-    // most kRun docs, while a group is whatever the quantizer packs together
-    // -- 32 lanes for fast scan, but 1024 for Panorama, which is eight times
-    // kRun. Sizing this by kRun overflowed it by 896 floats, straight over the
-    // members below, and the SDB_ASSERT that would have caught it is compiled
-    // out of the build that ships.
     _cache.resize(_setting.group_size);
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
@@ -458,7 +425,6 @@ class VectorCluster {
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
-  /// One decoded group; sized from the quantizer's group_size, not kRun.
   std::vector<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();

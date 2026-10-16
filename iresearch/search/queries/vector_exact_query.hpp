@@ -32,10 +32,6 @@
 
 namespace irs {
 
-// The exact answer to a vector query: every row of the segment (or every row
-// the inner predicate admits) scored against the query from its stored
-// vector, no index. What an approximate index is measured against, and the
-// right plan for a predicate that admits few rows.
 class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
  public:
   ExactVectorQuery(const SubReader& segment, const ColumnReader& column,

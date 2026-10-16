@@ -171,28 +171,8 @@ inline std::vector<FastScanChunk> MakeFastScanChunks(uint32_t m) {
   return out;
 }
 
-/// A distance table quantized and packed for faiss fast scan, together with
-/// the affine transform that reads an accumulator back as a float.
-///
-/// PQ, RaBitQ and TurboQuant differ only in how they fill the float table.
-/// From there the steps are the same for all three -- quantize it against its
-/// own range, pack it into fast-scan lane order, and undo the scale on
-/// whatever the accumulator returns -- so this holds the only copy of them,
-/// and so the only copy of the degenerate case below. TurboQuant splits its
-/// table into chunks it accumulates in turn, which is why the transform is
-/// per chunk; the other two have a single chunk.
 class FastScanLut {
  public:
-  /// Quantize and pack `table`, laid out as `ksub` entries per sub-quantizer.
-  ///
-  /// faiss reports a scale `a` with the true value at `code / a + b`. A table
-  /// with no range -- every entry equal, which is exactly what an all-zero
-  /// query produces, since every inner product with it really is zero -- comes
-  /// back as a = 0 with the whole answer already in `b`. Reciprocating that
-  /// gives inf, and `0 * inf` is NaN, which loses every `score > threshold`
-  /// comparison: the query then returns nothing at all rather than something
-  /// merely imprecise. A step of zero is the correct reading of a = 0, and it
-  /// leaves `b` as the constant faiss put there.
   void Build(const float* table, std::span<const FastScanChunk> chunks,
              size_t ksub) {
     size_t total = 0;
@@ -218,7 +198,6 @@ class FastScanLut {
     }
   }
 
-  /// Single-chunk form, for the quantizers that do not split their table.
   void Build(const float* table, size_t m, size_t ksub) {
     const FastScanChunk c{.m = static_cast<uint32_t>(m),
                           .nsq = static_cast<uint32_t>(FastScanNsq(m)),
@@ -229,14 +208,11 @@ class FastScanLut {
 
   const uint8_t* Packed() const noexcept { return _packed.data(); }
 
-  /// Read chunk `c`'s accumulated code back as the float it stood for.
   float Decode(size_t c, uint16_t accu) const noexcept {
     return static_cast<float>(accu) * _step[c] + _bias[c];
   }
   float Decode(uint16_t accu) const noexcept { return Decode(0, accu); }
 
-  /// The distance one code step stands for, zero when the table had no range.
-  /// Half a step is the worst rounding error the quantization can introduce.
   float Step(size_t c) const noexcept { return _step[c]; }
 
  private:
@@ -452,15 +428,6 @@ inline int32_t BitPlaneSum(const uint8_t* bits, uint32_t bytes,
 }
 #endif
 
-/// Transpose `count` row-major nibble codes into one fast-scan block.
-///
-/// A row-major record stores its nibbles sequentially; the fast-scan kernels
-/// want them interleaved across 32 lanes. Both row-major quantizers pay this
-/// transpose to reach the same kernel their grouped layout uses directly, so
-/// the scoring below has one shape rather than two.
-///
-/// `row(k)` returns record k, `code_off` is where its codes start within it,
-/// and lanes past `count` are packed as zero.
 template<typename Row>
 void PackFastScanRows(Row row, size_t count, size_t code_off, size_t nsq,
                       uint8_t* blocks) {

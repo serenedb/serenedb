@@ -276,10 +276,6 @@ bool ColumnFilterCanTake(const duckdb::Expression& conjunct) {
            duckdb::ExpressionType::COMPARE_BETWEEN;
 }
 
-// A parameterized conjunct is claimed on its shape: built once with NULLs in
-// the parameters' places to prove the filter compiles, then rebuilt at every
-// execution with the values (connector::BuildDeferredFilter). Its columns are
-// resolved now and remembered, since the scan's binding is gone by then.
 struct DeferredClaimBuilder {
   connector::DeferredClaim claim;
   std::map<connector::BindingKey, connector::DeferredColumn> columns;
@@ -385,11 +381,6 @@ bool TryClaimIResearchConjunctImpl(
   duckdb::ClientContext& context, connector::FilterScorers* scorers,
   DeferredClaimBuilder* deferred,
   std::optional<connector::WideRanges> range_mode = std::nullopt) {
-  // A conjunct with an unbound parameter appears in a prepared statement's
-  // template plan. Where the scan can read the parameter at execution
-  // (`deferred`), the conjunct is claimed on its shape and rebuilt then; where
-  // it cannot, duckdb rebinds the statement with the values as constants
-  // before every execution, so declining here costs nothing.
   if (conjunct->HasParameter()) {
     if (!deferred) {
       return false;
@@ -856,8 +847,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   duckdb::LogicalOperator& root, duckdb::ClientContext& context) {
   const auto [col_arg, value_arg] =
     [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
-    // The query side references no column: a constant, or a prepared
-    // statement's parameter (not foldable, read at execution).
     if (info.is_norm) {
       if (func.GetChildren().empty() || func.GetChildren()[0]->IsScalar()) {
         return {nullptr, nullptr};
@@ -913,9 +902,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (info.is_norm) {
     call_qvec.assign(ann_info->d, 0.0f);
   } else if (!TryFoldQueryVector(context, *value_arg, ann_info->d, call_qvec)) {
-    // A prepared statement's template plan: the vector is a parameter whose
-    // value the execution supplies. Kept as the expression, evaluated at
-    // scan init; the plan can then be cached across executions.
     if (!value_arg->HasParameter()) {
       return nullptr;
     }
@@ -1429,8 +1415,6 @@ bool ClaimSearchConjuncts(
     return false;
   }
   if (deferring && !deferred.used_expr_getter) {
-    // The whole WHERE is rebuilt at execution, the constant conjuncts with
-    // it, so the executed filter is one boolean the optimizer has seen whole.
     for (auto& e : claimed_exprs) {
       deferred.claim.conjuncts.push_back(std::move(e));
     }
@@ -1711,9 +1695,6 @@ void IResearchPushdownComplexFilter(
 
 namespace {
 
-// A stand-in for a parameter's value while a conjunct is claimed on its shape:
-// non-NULL, since a comparison with NULL is no shape the filter builder
-// accepts, and of the parameter's type.
 duckdb::Value ShapeValue(const duckdb::LogicalType& type) {
   if (type.IsNumeric()) {
     return duckdb::Value::Numeric(type, 1);
@@ -1735,11 +1716,6 @@ duckdb::Value ShapeValue(const duckdb::LogicalType& type) {
   return duckdb::Value{type};
 }
 
-// `CAST(col AS wider)` against a constant of the wider type, as the binder
-// shapes a comparison of a narrow integer column with a parameter of a wider
-// integer type. The filter builder wants the bare column: the constant moves
-// to the column's type when it fits there, else the predicate is decided by
-// the column's range (nothing, or every non-NULL row).
 bool IsPlainInteger(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::TINYINT:
@@ -1771,8 +1747,6 @@ const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
   return &child.Cast<duckdb::BoundColumnRefExpression>();
 }
 
-// `col <op> value` with the value of the column's type; `op` is the
-// comparison with the column on the left.
 duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
   const duckdb::BoundColumnRefExpression& col, duckdb::ExpressionType op,
   const duckdb::Value& value) {
@@ -1786,8 +1760,6 @@ duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
   if (auto fitted = value.DefaultTryCastAs(type); fitted && !fitted->IsNull()) {
     return compare(op, std::move(*fitted));
   }
-  // Out of the column's range: above it when positive (every plain integer
-  // type holds zero), below it otherwise.
   const bool above = value.GetValue<duckdb::hugeint_t>() > 0;
   const bool all = [&] {
     switch (op) {
@@ -1807,7 +1779,6 @@ duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
     return compare(ExpressionType::COMPARE_GREATERTHANOREQUALTO,
                    duckdb::Value::MinimumValue(type));
   }
-  // A comparison with NULL: the builder's "matches nothing".
   return compare(ExpressionType::COMPARE_EQUAL, duckdb::Value{type});
 }
 

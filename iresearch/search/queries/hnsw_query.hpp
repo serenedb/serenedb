@@ -45,12 +45,6 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             AnnQueryCache* cache);
 
-  // The hits of the graph search, ascending by doc, deleted docs dropped.
-  // With an inner predicate, or a table filter whose predicates fold into a
-  // set (TableFilter::Foldable), only docs they admit are returned: the walk
-  // keeps moving through every node but admits what the set passes, and a
-  // set too sparse for the graph is answered by scanning its docs. A table
-  // that does not fold is left to the caller to apply to the hits.
   std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
 
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }

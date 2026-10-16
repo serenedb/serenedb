@@ -196,23 +196,6 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
   return data;
 }
 
-// Auto is 0 or 1 and never more: a default decides *whether* to re-score, not
-// how much to spend on it. 1 gives every segment its own pool, re-scored
-// exactly, with only real scores crossing a segment boundary -- Qdrant's
-// property. 0 lets quantized scores merge across segments directly.
-//
-// Which side a quantizer falls on is measured rather than read off its bit
-// count. On 120k x 64, eight segments, k=10, moving from 0 to 1 gains:
-//
-//     sq8   +0.018 hnsw  +0.021 ivf     sq4     +0.298  +0.318
-//     usq8  +0.020       +0.025         usq4    +0.347  +0.363
-//                                       pq          --  +0.442
-//                                       rabitq3 +0.265  +0.281
-//                                       tq3     +0.360  +0.418
-//
-// Eight-bit codes rank well enough alone that re-scoring buys two points of
-// recall for the reads it costs, which is not a trade to make for everyone by
-// default. Every narrower code is unusable without it.
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
   switch (vs.quant) {
     case irs::VectorQuantization::None:

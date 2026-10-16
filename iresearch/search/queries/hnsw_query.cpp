@@ -167,8 +167,6 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
-    // A hit names a row the caller will read columns for, so a node outside
-    // the segment is a torn read rather than an answer.
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
     if (it_mask.Contains(doc)) {
@@ -209,7 +207,6 @@ class WalkFilter {
   WalkFilter(const WalkFilter&) = delete;
   WalkFilter& operator=(const WalkFilter&) = delete;
 
-  // The hop, before anything is asked about a single node of it.
   void Prepare(std::span<const uint32_t> batch) const {
     if (_points) {
       return;
@@ -229,8 +226,6 @@ class WalkFilter {
     for (const auto doc : ask) {
       _s.known.Set(doc - doc_limits::min());
     }
-    // The previous hop left the scans wherever it ended; this one starts
-    // anywhere, and the readers only go forwards.
     _table->Rewind();
     const auto kept =
       _table->Narrow(ask.data(), nullptr, static_cast<uint32_t>(ask.size()));
@@ -244,9 +239,6 @@ class WalkFilter {
       return false;
     }
     if (!_s.known.TestAndSet(node)) {
-      // Reached without a hop of its own: the seed of the walk, or a node a
-      // mode admits outside the batch. One question, still ascending on its
-      // own.
       if (_table->Admits(node + doc_limits::min())) {
         _s.pass.Set(node);
       }
@@ -261,17 +253,6 @@ class WalkFilter {
   bool _points;
 };
 
-// A predicate the term index answers, conjoined with one only the columnstore
-// answers.
-//
-// Building the set with both applies the column predicate to every doc the
-// postings admit, in the set's own constructor, before anything has decided how
-// the query will be answered: on sift at a million rows the conjunction row
-// costs 1.53 ms more than the equality row of the same final selectivity, which
-// is a hundred thousand scattered column reads for a walk that reaches a few
-// hundred nodes. The set is built from the postings alone here, and the column
-// predicate is asked only about the nodes the walk reaches that the postings
-// already admit.
 class InnerAndTableFilter {
  public:
   InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table,
@@ -299,9 +280,6 @@ class InnerAndTableFilter {
   HnswWalkFilterScratch& _s;
 };
 
-// The hop hook is found by shape, so a signature that drifts apart would leave
-// the walk asking one question per node with nothing to say it had stopped
-// batching. This is what that would cost: a positioned column read per node.
 static_assert(
   requires(const WalkFilter& f) { f.Prepare(std::span<const uint32_t>{}); },
   "WalkFilter::Prepare must match the hop hook HnswExpandLevel looks for");
@@ -310,19 +288,8 @@ static_assert(
     f.Prepare(std::span<const uint32_t>{});
   }, "InnerAndTableFilter::Prepare must match it too");
 
-// The walk computes on the order of `ef * m0` distances unfiltered; with a
-// predicate admitting a share `p` of the graph it needs about `1 / p` times
-// as many candidates before `ef` of them are admitted, but far fewer than
-// that in distances, since most of a node's neighbours were already visited:
-// `kWalkShare` is that observed fraction. Scanning the predicate's own docs
-// costs one distance per match. The walk is taken where it is expected to be
-// the cheaper of the two; a walk that then overspends its budget (the match
-// count, what the scan would have cost) falls back to the scan.
 inline constexpr long double kWalkShare = 0.25L;
 
-// The nodes a walk is expected to touch, in the units `HnswPreferScan`
-// compares: `kWalkShare * ef * m0` candidates per admitted node, scaled by how
-// much of the graph the predicate rejects.
 long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
                           uint64_t nodes) noexcept {
   if (matches == 0) {
@@ -332,53 +299,16 @@ long double HnswWalkNodes(uint64_t matches, uint32_t ef, uint32_t m0,
          static_cast<long double>(matches);
 }
 
-// Asking the columnstore about the nodes a walk reaches, instead of folding the
-// predicate over the segment once, is only worth it while the walk stays small.
-// The two are not the same kind of work: a fold is a vectorised compare per row
-// (about a nanosecond), a probe is a positioned read that locates a block,
-// checks its zonemap and decodes it for one row (microseconds), and the walk
-// re-decodes the same block every time it comes back to it. Measured on a
-// million-row search table the probe came out near four thousand times the
-// per-row fold, which is the ratio here: below it the walk touches few enough
-// nodes to beat reading the column, above it -- which is every beam over a
-// segment of any size -- folding wins, by 4x at a tenth selectivity.
-//
-// This is the columnstore's price alone. A predicate the term index answers
-// costs a bit test per node and never reaches this decision.
 inline constexpr long double kProbeFoldRatio = 4096;
 
 inline constexpr long double kPointReadFoldRatio = 32;
 
 inline constexpr long double kVectorPointReadFoldRatio = 456;
 
-// Windows of the set filled to estimate its size before a plan is chosen: about
-// thirty thousand docs, a twentieth of a millisecond on a million-row segment.
 inline constexpr uint32_t kCountSampleWindows = 8;
 
 inline constexpr uint64_t kHnswColumnScanShare = 16;
 
-// What one scanned row costs against one walked candidate. They are not the
-// same work, and the difference is not a constant. Both read one row's codes,
-// so both carry `record_size` bytes; on top of that a walked candidate arrives
-// through a random read, loads its links, and pays the visited set and two
-// heaps, while a scanned row arrives in a batch off a stream the distance
-// kernel prefetches. That fixed extra is what this measures, in bytes of code
-// read, so the ratio is `record / (record + kWalkCandidateOverhead)`: near
-// zero for short codes, where the overhead is everything, and approaching one
-// for long ones, where both plans are just reading vectors.
-//
-// Calibrated by forcing both plans and reading off where they cross, over
-// clustered corpora, sq8, one thread, six predicates (term index and
-// columnstore, 1% to 20% selectivity) and four beams. Writing the decision as
-// `walk / matches`, the crossover bracket came out:
-//
-//   d=128,  1M rows, 3 segments   walk wins <= 0.24    scan wins >= 0.60
-//   d=1024, 300k rows, 2 segments walk wins <= 0.53    scan wins >= 1.33
-//
-// One overhead fits both: 0.40 lands inside the first bracket and 0.84 inside
-// the second. Getting this wrong is worth 10% to 31% -- the flat 1.0 this
-// replaces gave that up on seven of twenty-eight cells at d=128, and a flat
-// 0.4 would give up 10% on two of twenty-four at d=1024.
 inline constexpr long double kWalkCandidateOverhead = 192;
 
 long double ScanCandidateCost(uint32_t record_size) noexcept {
@@ -451,11 +381,6 @@ HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
-  // A walk asks the columnstore about the nodes it reaches; only a scan needs
-  // the predicate applied to the whole segment up front, which is what building
-  // the set with the table does. Where the walk is wide enough that probing
-  // costs more than the fold it saves, the walk still runs -- against the
-  // folded set, one bit test a node.
   const auto point_read =
     !table || plan.two_hop ? detail::PointRead::None : table->PointReads();
   const auto probe_ratio =
@@ -549,12 +474,9 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
     if (node >= size) {
       break;
     }
-    // A row without a vector owns a node id but no place in the graph.
     if (graph.LevelOf(node) == 0) {
       continue;
     }
-    // No prefetch here: a batch of 256 codes outgrows L1, the distance kernel
-    // fetches its own lookahead.
     s.batch.push_back(node);
     if (s.batch.size() == limit) {
       HnswAdmit(dist, ef, s);
@@ -619,8 +541,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                        HnswCandidateBytes(_record_size, _d, _data->stats.get()),
                        _ef, matches, table);
   if (plan.ask_per_hop) {
-    // The walk asks the columnstore itself, so the sampled set -- which has the
-    // predicate folded into it -- is not the set it walks against.
     probe.reset();
   }
   auto set = probe ? std::move(*probe)
@@ -672,9 +592,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     if (done) {
       return;
     }
-    // The walk gave up, so the scan answers exactly. It needs the predicate
-    // over the whole set, which this set was built without, and the scans are
-    // wherever the last hop left them.
     table->Rewind();
     set = detail::MakeDocSet(_inner.get(), docs_count, table);
   } else if (run(admit)) {

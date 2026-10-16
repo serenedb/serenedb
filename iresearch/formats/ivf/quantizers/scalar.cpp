@@ -229,12 +229,9 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
       _sq{d, FaissScalarType(quant)},
       _vmin(d, std::numeric_limits<float>::max()),
       _vmax(d, std::numeric_limits<float>::lowest()) {
-    // faiss lays `trained` out per quantizer: [vmin(d), vdiff(d)] for the
-    // per-dimension types, [vmin, vdiff] for the uniform ones.
     _sq.trained.assign(TrainedSize(_quant, _d), 0.f);
   }
 
-  /// Floats faiss expects in `trained` for this quantizer.
   static size_t TrainedSize(VectorQuantization quant, uint32_t d) noexcept {
     if (IsHalfFloat(quant)) {
       return 0;
@@ -258,7 +255,6 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
       }
     }
     if (IsUniformScalar(_quant)) {
-      // One range for the whole vector: the widest span any dimension needs.
       const float lo = *std::min_element(_vmin.begin(), _vmin.end());
       const float hi = *std::max_element(_vmax.begin(), _vmax.end());
       _sq.trained[0] = lo;
@@ -629,10 +625,6 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
  private:
   void PrepareFast(std::span<const float> query, bool integer) {
-    // faiss dispatches the kernel by runtime SIMD level, so there is no CPU
-    // probe here any more: AVX-512 where the machine has it, AVX2 or NEON
-    // otherwise, and a scalar loop on anything else. Nothing here is x86, and
-    // gating it on x86 is what made the NEON kernel we wrote unreachable.
     const auto qt = _cb->Sq().qtype;
     _fast = (qt == faiss::ScalarQuantizer::QT_8bit ||
              qt == faiss::ScalarQuantizer::QT_8bit_uniform) &&

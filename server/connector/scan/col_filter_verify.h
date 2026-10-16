@@ -46,8 +46,6 @@ class ColFilterVerify : public irs::detail::TableFilter {
     return _chain.Empty() && _score_filter == nullptr;
   }
 
-  // Only a predicate on the computed score needs a score to decide; the
-  // column chain narrows a window before one exists.
   bool Foldable() const noexcept final { return !_score_filter; }
 
   irs::doc_id_t Live(irs::doc_id_t doc) final {

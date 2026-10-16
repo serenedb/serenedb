@@ -30,10 +30,6 @@
 
 namespace irs::detail {
 
-// The rows an exact vector query scores, in ascending doc order, a run at a
-// time: every doc of the window it is reset to, or every doc the inner
-// predicate admits within it. The distances of a run come from the stored
-// vectors.
 class ExactScanner {
  public:
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
@@ -57,15 +53,11 @@ class ExactScanner {
     }
   }
 
-  // The window the following runs answer for, as the root is given it: `max`
-  // is exclusive and may be eof, which stands for the end of the segment.
   void Reset(doc_id_t min, doc_id_t max) noexcept {
     _doc = std::clamp(min, doc_limits::min(), _last);
     _end = doc_limits::eof(max) ? _last : std::clamp(max, _doc, _last);
   }
 
-  // The next run of docs and their distances ("larger = nearer"); 0 at the
-  // end of the window.
   uint32_t Next(doc_id_t* docs, score_t* dists) {
     for (;;) {
       const auto n = NextDocs(docs);

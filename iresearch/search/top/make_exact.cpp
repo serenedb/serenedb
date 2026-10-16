@@ -31,9 +31,6 @@
 namespace irs::top {
 namespace {
 
-// Every row of the part scored exactly and offered to the collector. Rows
-// whose distance cannot enter the collector's top-k are dropped before the
-// column fetch and the scorer run.
 class ExactChain : public Root {
  public:
   ExactChain(const ExactVectorQuery& query, const Context& ctx,

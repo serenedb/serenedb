@@ -826,15 +826,6 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
-// A granular numeric range is a union of trie terms: whole blocks of
-// kPrecisionStepDef bits above the finest level, plus the finest level's terms
-// between each bound and its block's edge. On a dense integer column that edge
-// run is up to 2^16 single-document terms per bound, and collecting, sorting
-// and merging them costs far more than reading the column itself: a search
-// table's columnstore answers a range with zonemaps and one vectorised
-// compare. A bound whose estimated edge run is longer than this leaves the
-// conjunct to the column filter. Encoded floats are dense at the leaf level,
-// so any float bound is treated as wide.
 inline constexpr uint64_t kMaxRangeEdgeTerms = 1024;
 
 template<typename T>

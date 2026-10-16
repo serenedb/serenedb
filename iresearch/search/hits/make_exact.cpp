@@ -27,7 +27,6 @@
 namespace irs::hits {
 namespace {
 
-// Every row of the segment with its exact score, ascending by doc.
 class ExactHits : public Root {
  public:
   ExactHits(const ExactVectorQuery& query, const Context& ctx,

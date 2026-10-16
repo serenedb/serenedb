@@ -78,12 +78,6 @@ struct AnswerWorstFirst {
   }
 };
 
-// One segment's pool, re-scored exactly and merged into the worker's answer.
-// The collector then restarts from nothing: seeding the next segment with this
-// one's quantized k-th is exactly the comparison this path exists to avoid,
-// and the exact k-th cannot seed a quantized threshold either without a bound
-// on the quantizer's error. Until that bound exists the segment is walked
-// unpruned rather than pruned wrongly.
 void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
   if (!l.collector) {
     return;
@@ -92,8 +86,6 @@ void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
   const size_t accepted = c.AcceptedCount();
   if (accepted != 0) {
     auto pool = l.hit_slice.first(accepted);
-    // Ascending by doc so the exact vectors come off the columnstore in one
-    // forward pass instead of a scatter.
     SortByAddress(pool);
     RerankHits(g, pool);
     const size_t k = *g.top_k;
@@ -120,8 +112,6 @@ void FlushSegmentPool(ScanGlobalState& g, TopKLocalState& l) {
 void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
   const auto& unit = l.unit;
   if (!l.collector) {
-    // A pool that exists to survive a lookup filter is not a rescore and keeps
-    // the old shape, as does an index whose scores are already exact.
     l.per_segment_rescore =
       g.topk.rerank_pool != 0 && !g.has_lookup_filter && g.vector_scorer &&
       g.vector_scorer->quant != irs::VectorQuantization::None;
@@ -166,8 +156,6 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
   if (l.per_segment_rescore) {
-    // Every segment re-scored and merged itself; `answer` is this worker's
-    // top-k on exact scores and nothing else needs doing to it.
     FlushSegmentPool(g, l);
     std::copy_n(l.answer.begin(), l.answer_size, l.hit_slice.begin());
     t.accepted[l.worker].store(static_cast<uint32_t>(l.answer_size),
@@ -241,18 +229,11 @@ bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
          g.lookup_projected_columns[col] == duckdb::DConstants::INVALID_INDEX;
 }
 
-// Whether anything writes this slot of the batch. A projected column outside
-// the output set gets neither a columnstore projection nor a lookup entry
-// (ClassifyColumnstoreProjections drops it), so its vector is never touched.
-// The streaming shape hands such a slot straight to duckdb, which does not
-// read it; the top-k shape copies the batch twice on its way to the answer,
-// and an untouched vector is not something to copy.
 bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
                     duckdb::idx_t col) noexcept {
   if (col == g.score_output_idx || col == g.tableoid_output_idx) {
     return true;
   }
-  // ts_offsets() is written by WriteChunkOffsets, not from the columnstore.
   if (absl::c_any_of(f.offsets_entries,
                      [col](const auto& e) { return e.output_idx == col; })) {
     return true;
@@ -572,9 +553,6 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (vs && !vs->exact &&
       (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
     const auto k = static_cast<double>(*g.top_k);
-    // The search walks on quantized codes and this many of its candidates are
-    // read back at full precision. Zero means the query answers from the
-    // codes.
     bool chosen_here = false;
     const auto factor = AnnOversample(context, *vs, chosen_here);
     double pool = OversamplePool(factor, k);

@@ -64,9 +64,6 @@ inline float ApplyScoreEmit(ScoreEmit emit, float score) {
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
-  // The query vector as an expression over prepared-statement parameters,
-  // when it is not a constant at plan time; evaluated at execution into
-  // `query_vector`. `dims` is the indexed dimension it must cast to.
   std::shared_ptr<const duckdb::Expression> query_expr;
   uint32_t dims = 0;
   irs::VectorMetric metric;
@@ -86,8 +83,6 @@ struct VectorScorerOptions {
   uint32_t top_k = 0;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
   irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
-  // Brute force over the stored vectors instead of the ANN index: the exact
-  // answer, split across workers segment by segment.
   bool exact = false;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;

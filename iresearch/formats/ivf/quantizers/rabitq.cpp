@@ -59,27 +59,14 @@ struct RaBitQStatsHeader {
 constexpr uint8_t kRaBitQQueryBits = 8;
 constexpr bool kRaBitQCentered = false;
 
-/// Where RaBitQ puts a vector's parts, in either of the two layouts.
-///
-/// Grouped (IVF): 32 lanes interleaved for fast scan -- every sign code, then
-/// every aux record, then every centroid correction. Row-major (HNSW): one
-/// self-contained record per vector, because a graph walk visits nodes in no
-/// order anyone chose and cannot read a lane out of a block it never fetched.
-/// Both hold the same numbers per vector and cost the same per vector; only
-/// the interleaving differs, so the grouped layout on disk is unchanged.
 struct RaBitQLayout {
   uint32_t d = 0;
   uint32_t rd = 0;
   uint32_t nb_bits = 0;
   uint32_t ex_bits = 0;
-  /// Sign nibbles per vector, four rotated dimensions each.
   uint32_t m = 0;
-  /// m padded to the even count fast scan wants.
   uint32_t nsq = 0;
-  /// Sign bytes in a row-major record. The nibbles sit in dimension order, so
-  /// these bytes are already the sign bitmap the refine step reads.
   uint32_t row_code_bytes = 0;
-  /// Sign bytes in a whole fast-scan group.
   uint32_t group_code_bytes = 0;
   uint32_t storage = 0;
   uint32_t ex_code_size = 0;
@@ -88,12 +75,6 @@ struct RaBitQLayout {
 
   uint32_t RowAuxOffset() const noexcept { return row_code_bytes; }
   uint32_t RowCsOffset() const noexcept { return row_code_bytes + storage; }
-  /// Only the row-major record stores the residual norm. A graph build has to
-  /// decode a code back to a vector to re-key on it, and the stored factors
-  /// cannot give the norm back under inner product, where or_minus_c_l2sqr is
-  /// already net of the vector's own norm. TurboQuant's row-major record keeps
-  /// one for the same reason. The grouped layout has no decode step and so
-  /// stays exactly as it is on disk.
   uint32_t RowNormOffset() const noexcept {
     return RowCsOffset() + static_cast<uint32_t>(sizeof(float));
   }
@@ -177,9 +158,6 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  /// HNSW encodes straight into its own code array, in parallel, from a clone
-  /// per thread -- it never sees an IndexOutput. Only the row-major layout can
-  /// answer, since a fast-scan group is not addressable one record at a time.
   bool EncodeInto(byte_type* dst, const float* vecs, size_t n) final {
     if (!_lay.row_major) {
       return false;
@@ -197,7 +175,6 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     }
     auto clone = std::make_unique<RaBitQuantizerWriter>(_lay.d, _lay.nb_bits,
                                                         _lay.row_major);
-    // The centroid is already rotated, so it is copied rather than re-set.
     clone->_centroid = _centroid;
     clone->_centroid_sum = _centroid_sum;
     return clone;
@@ -229,10 +206,6 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                              : faiss::MetricType::METRIC_INNER_PRODUCT;
 
-  /// Sign-encode one vector and write its aux record, handing each sign nibble
-  /// to `set(sq, nib)` so the caller decides where it lands. Returns the
-  /// centroid correction. This is everything the two layouts share, which is
-  /// every number either of them stores.
   template<typename SetNib>
   float EncodeVector(const float* vec, uint8_t* aux, float* norm_out,
                      SetNib&& set) {
@@ -289,15 +262,12 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
                    });
   }
 
-  /// One self-contained record: sign bytes in dimension order, then the aux
-  /// record, then the correction.
   void PackRecord(byte_type* dst, const float* vec) {
     std::fill_n(dst, _lay.record_size, byte_type{0});
     uint8_t* code = reinterpret_cast<uint8_t*>(dst);
     float norm = 0.f;
     const float cs = EncodeVector(
       vec, code + _lay.RowAuxOffset(), &norm,
-      // SetNibble ORs into a zeroed record, which this one is.
       [code](uint32_t sq, uint8_t nib) { SetNibble(code, sq, nib); });
     std::memcpy(dst + _lay.RowCsOffset(), &cs, sizeof(float));
     std::memcpy(dst + _lay.RowNormOffset(), &norm, sizeof(float));
@@ -327,7 +297,6 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   std::vector<uint8_t> _packed;
   std::vector<uint8_t> _aux;
   std::array<float, kFastScanBbs> _cs{};
-  /// One row-major record, staged before it goes to an IndexOutput.
   std::vector<byte_type> _row;
 };
 
@@ -373,8 +342,6 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
     Rekey(query);
   }
 
-  /// Point this codebook at another query, reusing what it already allocated.
-  /// The graph build re-keys once per inserted node, so this is a hot path.
   void Rekey(std::span<const float> query) {
     _query.assign(query.begin(), query.end());
     static_assert(!kRaBitQCentered);
@@ -462,8 +429,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     RefreshQuery();
   }
 
-  /// The graph build decodes a node's code and searches with it, so the reader
-  /// has to take a new query without rebuilding the stats or the rotation.
   bool SetQuery(std::span<const float> query) final {
     SDB_ASSERT(query.size() == _lay.d);
     if (!_own) {
@@ -477,9 +442,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     return true;
   }
 
-  /// Reconstruct the vector a row-major code stands for: the sign bits give
-  /// the residual's direction, the stored norm its length, and the rotation is
-  /// orthogonal so it inverts by transpose.
   bool Decode(const byte_type* code, float* out) const final {
     if (!_lay.row_major || !_cluster) {
       return false;
@@ -505,8 +467,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     const auto d = static_cast<uint16_t>(query.size());
     const float* centroid = _cluster;
 
-    // Decode rebuilds around the rotated centroid, so it is kept whether or
-    // not there are refine bits to spend it on.
     _rot_centroid.resize(_rd);
     RotateInto(_cb->Signs().data(), centroid, _rot_centroid.data(), _lay.d,
                static_cast<uint32_t>(_rd));
@@ -529,8 +489,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     }
   }
 
-  /// HNSW reaches codes by node id, never as a run, so the gathered form is
-  /// the one it uses.
   void ComputeGathered(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t threshold,
                        score_t* out) final {
@@ -581,7 +539,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     return M == VectorMetric::L2Sqr ? -threshold : threshold;
   }
 
-  /// A group is already in fast-scan order and its aux records sit in one run.
   void ScoreGroup(const byte_type* codes, float mt, score_t* out) {
     const byte_type* aux = codes + _lay.AuxOffset();
     const auto* cs = reinterpret_cast<const float*>(codes + _lay.CsOffset());
@@ -589,8 +546,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     ScoreLanes(
       codes, [aux, storage](size_t i) { return aux + i * storage; },
       [this, codes](size_t i) {
-        // A group interleaves the sign bits across lanes, so the flat bitmap
-        // compute_full_multibit_distance wants has to be rebuilt per lane.
         faiss::rabitq_utils::unpack_sign_bits_from_packed(
           codes, kFastScanBbs, _lay.nsq, i, _lay.group_code_bytes,
           _sign_bits.data());
@@ -599,8 +554,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
       cs, kFastScanBbs, mt, out);
   }
 
-  /// Row-major records are transposed into one fast-scan block so the same
-  /// kernel scores them; their aux records stay where they are, one per row.
   template<typename Row>
   void ScoreRows(Row row, size_t count, float mt, score_t* out) {
     _packed.resize(_lay.group_code_bytes);
@@ -611,9 +564,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     const uint32_t aux_off = _lay.RowAuxOffset();
     ScoreLanes(
       _packed.data(), [row, aux_off](size_t i) { return row(i) + aux_off; },
-      // The nibbles sit in dimension order, so a record's sign bytes already
-      // are the bitmap the refine wants -- packing them into a fast-scan block
-      // and unpacking them back out again was work that cancelled itself.
       [row](size_t i) { return reinterpret_cast<const uint8_t*>(row(i)); },
       _rm_cs.data(), count, mt, out);
   }
@@ -669,7 +619,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
   }
 
   std::shared_ptr<const RaBitQuantizerCodebook<M>> _cb;
-  /// The codebook in force: the shared one until SetQuery makes a private one.
   const RaBitQuantizerCodebook<M>* _cur;
   std::unique_ptr<RaBitQuantizerCodebook<M>> _own;
   RaBitQLayout _lay;

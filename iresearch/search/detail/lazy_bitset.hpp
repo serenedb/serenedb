@@ -55,12 +55,6 @@ inline IRS_FORCE_INLINE uint64_t CountBitRange(
   return total + static_cast<uint64_t>(std::popcount(words[last] & tail));
 }
 
-// One set the segment's predicates fold into, filled window by window as it
-// is asked about docs further on: the fill node's docs, less the removals,
-// less what the table filter's column predicates reject. Without a fill node
-// every doc is in until a predicate takes it out. The table filter's column
-// scans only move forward, which the sequential fill honours; the set is what
-// a walk that visits docs in any order asks, and what a count sums.
 class LazyBitset {
  public:
   static constexpr auto kBits = BitsetStorage::kBits;
@@ -97,7 +91,6 @@ class LazyBitset {
     SDB_ASSERT(!_table || _table->Foldable());
   }
 
-  // Every doc of the segment, narrowed by the removals and the table filter.
   LazyBitset(doc_id_t docs_count, fill::DocsMask&& mask, TableFilter* table)
     : _set{docs_count},
       _mask{std::move(mask)},
@@ -142,8 +135,6 @@ class LazyBitset {
         const auto last =
           std::min<size_t>(first + kWindowWords, _set.WordCount());
         if (last == _set.WordCount()) {
-          // The table reads the docs the bits name, so none may lie past the
-          // segment's end.
           _set.Trim();
         }
         _table->Narrow(min, words + first, words + first, nullptr,
@@ -153,9 +144,6 @@ class LazyBitset {
         _filled = end;
         break;
       }
-      // Windows the node has no doc in stay zero and are skipped; a table only
-      // ever looks at set bits, and skipping forward is the one direction its
-      // column scans move in.
       _filled = std::max(min + kWindowDocs, BitsetStorage::WindowMin(next));
     } while (_filled < upto);
     if (_filled >= end) {
@@ -163,7 +151,6 @@ class LazyBitset {
     }
   }
 
-  // The number of docs in the set; fills whatever is left first.
   uint64_t Count() {
     const auto end = _set.End();
     Reach(end);
@@ -173,16 +160,6 @@ class LazyBitset {
     return CountBitRange(_set.Words(), 0, end - kMin);
   }
 
-  // A bounded sample of the set, for a caller that has to choose a plan before
-  // it can afford the whole thing. Counting the set outright is what forces a
-  // column predicate over the entire segment; on a million rows that is a flat
-  // 1.6 ms, spent before anything is known about whether the answer even needs
-  // it. This fills a prefix of `windows` windows, counts that, and scales to
-  // the segment, rounding up because a caller weighing a scan against a walk
-  // can recover from too large a count and not from too small a one.
-  //
-  // The prefix is filled the way `Reach` fills it, so a caller that goes on to
-  // fold the whole set pays for the sample once, not twice.
   uint64_t EstimateCount(uint32_t windows) {
     const auto end = _set.End();
     if (end <= kMin) {

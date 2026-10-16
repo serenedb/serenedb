@@ -140,10 +140,6 @@ bool SameLimit(const duckdb::BoundLimitNode& node,
   }
 }
 
-// The query vector of a parameterized statement, from the parameters bound to
-// this execution. The expression is evaluated into a vector and cast in one
-// vectorised step, never through one duckdb::Value per dimension: at 1024
-// dimensions that materialisation was a fifth of the query.
 std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
                                        const VectorScorerOptions& vs) {
   const auto target =
@@ -180,36 +176,16 @@ const VectorScorerOptions& PrepareVectorScorer(
   ScanGlobalState& state, duckdb::ClientContext& context,
   const VectorScorerOptions& planned) {
   auto& vs = state.owned_vector_scorer.emplace(planned);
-  // The knobs are the executing session's, not the planning session's: a
-  // cached plan sees every SET made since it was prepared.
   RefreshVectorKnobs(vs, context);
-  // A parameterized query vector is kept as an expression at plan time and
-  // read from this execution's parameters.
   if (vs.query_expr) {
     vs.query_vector = EvaluateQueryVector(context, vs);
   }
   SDB_ENSURE(!vs.query_vector.empty(),
              "a vector search has a query vector to search for");
   if (state.top_k) {
-    // The beam is the result ceiling, so it is at least k -- and at least
-    // the rescore pool, which is the same thing said of the pool: a search
-    // that returns a hundred cannot hand four hundred to the rescorer. This
-    // has to be decided here rather than next to the pool itself, because
-    // the filter below captures min_ef as it is built. Qdrant takes
-    // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
-    // reason; docs/hnsw-parity.md in vectorbench has the mapping.
-    //
-    // HNSW is the one kind whose search can return fewer candidates than
-    // asked for. An IVF probe returns whatever the collector keeps, so the
-    // pool is the candidate count outright and nothing needs widening.
     if (vs.kind == irs::AnnKind::Hnsw) {
       bool chosen_here = false;
       const auto factor = AnnOversample(context, vs, chosen_here);
-      // The floor is what one segment must hold, not what the query returns.
-      // Asking each of eight segments for a thousand is eight thousand
-      // candidates produced to answer with one thousand. This is a floor and
-      // never a cap: a wider `ef_search` still wins, and a single-segment
-      // index still gets the whole k.
       const auto k = static_cast<double>(*state.top_k);
       const double share = SegmentBeamShare(k, state.total_segments);
       const double seg_pool = OversamplePool(factor, share);
@@ -340,15 +316,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifySegments(*state);
 
-  state->splittable =
-    !(where && HasNested(*where)) &&
-    // A vector scan stays one unit. Letting it into the row-group split was
-    // measured on wiki-1m, eight segments, one client: p99 got worse on 18 of
-    // 25 groups and better on 1, and turning only the split back off returned
-    // it to parity (2 better, 4 worse -- noise). These queries are 1.5 to 8 ms,
-    // and claiming units, the merge barrier and a fresh set per range cost
-    // more than the cores can win back. The exclusion is not an oversight.
-    !ss.score.vector;
+  state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
     BuildClaimPlan(*state, context);
@@ -557,8 +525,6 @@ void IResearchSetScanOrder(
   if (bd.score.top_k || bd.score.top_k_expr) {
     return;
   }
-  // A constant LIMIT is the top-k the plan carries; a parameterized one is
-  // kept as the expression the scan evaluates at execution.
   const auto take_limit = [&] {
     if (options->row_limit.IsValid()) {
       bd.score.top_k = options->row_limit.GetIndex();

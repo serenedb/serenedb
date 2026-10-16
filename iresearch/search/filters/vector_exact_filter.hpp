@@ -30,8 +30,6 @@ namespace irs {
 
 class ByVectorExact;
 
-// Exact (brute-force) nearest neighbours over the stored vectors of a field:
-// the field is the vector column, no ANN index is consulted.
 struct ByVectorExactOptions {
   using FilterType = ByVectorExact;
 

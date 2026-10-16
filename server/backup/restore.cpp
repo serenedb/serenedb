@@ -77,7 +77,7 @@ bool Exists(const std::filesystem::path& path) {
 void RequireDirectory(const std::filesystem::path& path) {
   std::error_code ec;
   if (!std::filesystem::is_directory(path, ec)) {
-    if (ec) {
+    if (ec && ec != std::errc::no_such_file_or_directory) {
       utils::file_utils::ThrowFileError("check", path.string(), ec);
     }
     Fail("the backup names a missing directory", path, "it does not exist");

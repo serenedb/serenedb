@@ -5,9 +5,13 @@ add_executable(
     tests_main.cpp
     assertions_tests.cpp
     background_scheduler_test.cpp
+    backup/backup_label_test.cpp
+    backup/pg_control_test.cpp
+    backup/restore_test.cpp
     database_directory_test.cpp
     drain_gate_test.cpp
     docs_search_test.cpp
+    duckdb_defer_block_reuse_test.cpp
     duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp

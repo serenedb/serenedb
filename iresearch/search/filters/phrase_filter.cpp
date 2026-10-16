@@ -702,7 +702,7 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
 }
 
 Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
-                       bool constant) {
+                       bool max_synonyms) {
   return std::visit(
     [&]<typename Options>(Options& options) -> Filter::ptr {
       if constexpr (std::is_same_v<Options, TermSetOptions>) {
@@ -714,7 +714,7 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
           node->Add(TermClause{.field = field, .term = term}, Occur::Should);
         }
         node->SetMinShouldMatch(1);
-        if (constant) {
+        if (max_synonyms) {
           node->SetMergeType(ScoreMergeType::Max);
         }
         return node;

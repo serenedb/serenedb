@@ -31,14 +31,15 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
-class DuckDBDeferBlockReuse : public ::testing::Test {
+class DuckDBWalBlockReuse : public ::testing::Test {
  protected:
   void SetUp() final {
     _root = std::filesystem::temp_directory_path() /
-            absl::StrCat("defer_block_reuse_", ::getpid());
+            absl::StrCat("wal_block_reuse_", ::getpid());
     std::filesystem::remove_all(_root);
     std::filesystem::create_directory(_root);
     _db = std::make_unique<duckdb::DuckDB>(nullptr);
@@ -89,7 +90,7 @@ class DuckDBDeferBlockReuse : public ::testing::Test {
   std::unique_ptr<duckdb::Connection> _con;
 };
 
-TEST_F(DuckDBDeferBlockReuse, ANewlyUsedBlockIsReusedAtOnceByDefault) {
+TEST_F(DuckDBWalBlockReuse, ABlockNoWalEntryReferencesIsReusedAtOnce) {
   auto& blocks = Blocks();
   const auto block = blocks.GetFreeBlockId();
   blocks.MarkBlockAsModified(block);
@@ -97,19 +98,29 @@ TEST_F(DuckDBDeferBlockReuse, ANewlyUsedBlockIsReusedAtOnceByDefault) {
   EXPECT_EQ(blocks.GetFreeBlockId(), block);
 }
 
-TEST_F(DuckDBDeferBlockReuse, ADeferredBlockWaitsForTheNextCheckpoint) {
-  auto& blocks = Blocks();
-  blocks.SetDeferBlockReuse(true);
-  const auto block = blocks.GetFreeBlockId();
-  const auto free_before = blocks.FreeBlocks();
-  blocks.MarkBlockAsModified(block);
-  EXPECT_EQ(blocks.FreeBlocks(), free_before);
-  EXPECT_NE(blocks.GetFreeBlockId(), block);
+TEST_F(DuckDBWalBlockReuse,
+       ADroppedTableKeepsItsWalBlocksUntilTheNextCheckpoint) {
+  Run("CREATE TABLE blocks.bulk (i BIGINT)");
+  Run("INSERT INTO blocks.bulk SELECT i FROM range(1000000) r(i)");
+  auto result = _con->Query(
+    "SELECT DISTINCT block_id FROM pragma_storage_info('blocks.bulk') "
+    "WHERE block_id >= 0");
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  std::vector<duckdb::block_id_t> bulk;
+  for (auto& row : *result) {
+    bulk.push_back(row.GetValue<int64_t>(0));
+  }
+  ASSERT_FALSE(bulk.empty());
+  Run("DROP TABLE blocks.bulk");
 
-  blocks.SetDeferBlockReuse(false);
+  for (const auto block : bulk) {
+    EXPECT_FALSE(HandsOut(block)) << block;
+  }
   Run("INSERT INTO blocks.t VALUES (2)");
   Run("CHECKPOINT blocks");
-  EXPECT_TRUE(HandsOut(block));
+  for (const auto block : bulk) {
+    EXPECT_TRUE(HandsOut(block)) << block;
+  }
 }
 
 }  // namespace

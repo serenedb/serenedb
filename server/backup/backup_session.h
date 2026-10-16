@@ -28,7 +28,6 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/storage/single_file_block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <filesystem>
 #include <optional>
@@ -96,8 +95,6 @@ class BackupSession final {
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
     ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> _checkpoint_keys
-    ABSL_GUARDED_BY(_mutex);
-  std::vector<duckdb::SingleFileBlockManager*> _block_managers
     ABSL_GUARDED_BY(_mutex);
   std::filesystem::path _backup_dir ABSL_GUARDED_BY(_mutex);
   BackupOwner _owner ABSL_GUARDED_BY(_mutex);

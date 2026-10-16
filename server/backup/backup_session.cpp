@@ -26,13 +26,11 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/storage/single_file_block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -57,11 +55,6 @@
 
 namespace sdb::backup {
 namespace {
-
-duckdb::SingleFileBlockManager& BlockManagerOf(duckdb::AttachedDatabase& db) {
-  return irs::utils::downCast<duckdb::SingleFileBlockManager>(
-    db.GetStorageManager().GetBlockManager());
-}
 
 bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
   const auto wal = storage.GetWAL();
@@ -136,13 +129,9 @@ std::optional<Cut> RecordCut(
   return cut;
 }
 
-void Resume(
-  std::span<duckdb::SingleFileBlockManager* const> block_managers) noexcept {
+void Resume() noexcept {
   search::GetSearchEngine().Maintenance().Open();
   catalog::ResumeRemovals();
-  for (auto* block_manager : block_managers) {
-    block_manager->SetDeferBlockReuse(false);
-  }
 }
 
 }  // namespace
@@ -172,11 +161,9 @@ std::optional<StartedBackup> BackupSession::Begin(
   std::erase_if(pins,
                 [](const auto& db) { return db->GetCatalog().InMemory(); });
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> checkpoint_keys;
-  std::vector<duckdb::SingleFileBlockManager*> block_managers;
   for (auto& db : pins) {
     checkpoint_keys.push_back(
       duckdb::DuckTransactionManager::Get(*db).SharedCheckpointLock());
-    block_managers.push_back(&BlockManagerOf(*db));
   }
   std::vector<std::string> with_failed_checkpoint;
   for (auto& db : pins) {
@@ -215,12 +202,9 @@ std::optional<StartedBackup> BackupSession::Begin(
   }
   catalog::CreateDirectory(backup_dir);
 
-  for (auto* block_manager : block_managers) {
-    block_manager->SetDeferBlockReuse(true);
-  }
   catalog::DeferRemovals();
   absl::Cleanup undo = [&]() noexcept {
-    Resume(block_managers);
+    Resume();
     catalog::RemoveTree(backup_dir);
   };
   if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
@@ -240,7 +224,6 @@ std::optional<StartedBackup> BackupSession::Begin(
   // Noexcept committing of backup start
   _pins = std::move(pins);
   _checkpoint_keys = std::move(checkpoint_keys);
-  _block_managers = std::move(block_managers);
   _backup_dir = std::move(backup_dir);
   _owner = owner;
   _label_file = std::move(label_file);
@@ -278,8 +261,7 @@ void BackupSession::End() noexcept {
 }
 
 void BackupSession::Stop() noexcept {
-  Resume(_block_managers);
-  _block_managers.clear();
+  Resume();
   _checkpoint_keys.clear();
   _pins.clear();
   catalog::RemoveTree(_backup_dir);

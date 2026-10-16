@@ -637,3 +637,46 @@ def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: st
         source.stop()
         if restored is not None:
             restored.stop()
+
+
+BULK_ROWS = 500_000
+
+
+def test_backup_keeps_a_table_dropped_during_the_backup(tmp_path: Path) -> None:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    restored = None
+    try:
+        source.start()
+        with _connect(source) as conn:
+            conn.execute("CREATE TABLE kept (x BIGINT, tag TEXT)")
+            conn.execute(f"INSERT INTO kept SELECT i, 'kept' FROM range({BULK_ROWS}) r(i)")
+
+        copy = tmp_path / "copy"
+        with _connect(source) as backup:
+            backup.execute("SELECT pg_backup_start('drop')")
+            with _connect(source) as conn:
+                conn.execute("DROP TABLE kept")
+                conn.execute("CREATE TABLE reused (x BIGINT, tag TEXT)")
+                conn.execute(f"INSERT INTO reused SELECT -i, 'reused' "
+                             f"FROM range({BULK_ROWS}) r(i)")
+            shutil.copytree(source.datadir, copy, symlinks=True)
+            (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
+        source.stop()
+
+        (copy / "backup_label").write_text(label)
+        restored = Serened(SERENED_BIN, datadir=str(copy),
+                           log_path=str(tmp_path / "restored.log"))
+        restored.start()
+        with _connect(restored) as conn:
+            assert conn.execute(
+                "SELECT count(*), sum(x), count(*) FILTER (WHERE tag = 'kept') "
+                "FROM kept").fetchone() == (
+                    BULK_ROWS, BULK_ROWS * (BULK_ROWS - 1) // 2, BULK_ROWS)
+            assert conn.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_name = 'reused'").fetchone() == (0,)
+    finally:
+        source.stop()
+        if restored is not None:
+            restored.stop()

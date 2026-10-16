@@ -1213,10 +1213,11 @@ void ReindexPragma(duckdb::ClientContext& context,
 void ReindexByIdPragma(duckdb::ClientContext& context,
                        const duckdb::FunctionParameters& parameters) {
   const auto index_id = parameters.values[0].GetValue<int64_t>();
-  const auto& home =
-    duckdb::ClientData::Get(context).catalog_search_path->GetDefault();
-  auto& catalog = duckdb::Catalog::GetCatalog(context, home.GetCatalog())
-                    .Cast<catalog::SereneDBCatalog>();
+  auto database = catalog::DefaultSereneDBCatalog(context);
+  if (!database) {
+    return;
+  }
+  auto& catalog = *database;
   const auto trx = catalog.GetCatalogTransaction(context);
   auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
     &context, static_cast<duckdb::idx_t>(index_id));

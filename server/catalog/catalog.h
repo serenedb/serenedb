@@ -124,20 +124,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::CreateJobInfo& info) final;
 
-  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
-    duckdb::ClientContext& context, duckdb::idx_t id);
-
-  duckdb::optional_ptr<duckdb::CatalogEntry> FindEntryById(
-    duckdb::optional_ptr<duckdb::ClientContext> context,
-    duckdb::CatalogType type, duckdb::idx_t id);
-
-  template<typename T>
-  duckdb::optional_ptr<T> FindIn(
-    duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
-    auto entry = FindEntryById(context, T::Type, id);
-    return entry ? &entry->template Cast<T>() : nullptr;
-  }
-
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,
@@ -205,5 +191,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   std::shared_ptr<DatabaseDirectory> _directory;
   std::atomic_bool _detached{false};
 };
+
+duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
+  duckdb::ClientContext& context);
+
+duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
+  duckdb::ClientContext& context);
 
 }  // namespace sdb::catalog

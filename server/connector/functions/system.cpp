@@ -326,10 +326,8 @@ duckdb::optional_ptr<duckdb::Catalog> SessionCatalog(
 // session database's sets.
 duckdb::optional_ptr<duckdb::CatalogEntry> FindByOid(
   duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t id) {
-  auto database = SessionCatalog(context);
-  return database ? database->Cast<catalog::SereneDBCatalog>().FindEntryById(
-                      &context, type, id)
-                  : nullptr;
+  auto database = catalog::DefaultDuckCatalog(context);
+  return database ? database->FindEntryById(&context, type, id) : nullptr;
 }
 
 template<typename T>
@@ -756,13 +754,13 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
   // A schema oid resolves in the session's own database, as it does in pg.
-  auto database = SessionCatalog(context);
-  SDB_ASSERT(database);
+  auto database = catalog::DefaultDuckCatalog(context);
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-        context, pg::OidFromSql(oid));
+      auto schema = database
+                      ? database->FindSchemaById(context, pg::OidFromSql(oid))
+                      : nullptr;
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
@@ -1268,11 +1266,9 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     }
   }
   if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
-    auto database = SessionCatalog(context);
-    auto schema = database
-                    ? database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-                        context, obj_id)
-                    : nullptr;
+    auto database = catalog::DefaultDuckCatalog(context);
+    auto schema =
+      database ? database->FindSchemaById(context, obj_id) : nullptr;
     if (!schema) {
       is_null = true;
       return false;

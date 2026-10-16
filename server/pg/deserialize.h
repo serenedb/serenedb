@@ -31,6 +31,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <tz_calendar.hpp>
 #include <vector>
 
@@ -64,8 +65,8 @@ void FillDeserializeContext(duckdb::ClientContext& client,
 // straight into a duckdb::Value (ValueSink) -- no per-param scratch Vector.
 //
 // The store primitives split into three groups: Fixed<T> covers every type
-// Value::CreateValue maps faithfully (all the numerics, temporals, hugeints and
-// string_t); Varchar handles plain text; and the type-specific Blob/Uuid/Bit/
+// Value::CreateValue maps faithfully (all the numerics, temporals and
+// hugeints); Varchar handles plain text; and the type-specific Blob/Uuid/Bit/
 // Decimal/Enum exist only because CreateValue would build the wrong Value for
 // them. SetNull writes a NULL slot (nested children only).
 //
@@ -83,6 +84,7 @@ struct VectorSink {
 
   template<typename T>
   void Fixed(T v) {
+    static_assert(!std::is_same_v<T, duckdb::string_t>);
     duckdb::FlatVector::GetDataMutable<T>(vec)[row] = v;
   }
 
@@ -92,7 +94,8 @@ struct VectorSink {
   }
 
   void Blob(duckdb::string_t v) {
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] = v;
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddStringOrBlob(vec, v);
   }
 
   // `bits` is the "0101" bit-char form; the cast packs it into the bitstring.

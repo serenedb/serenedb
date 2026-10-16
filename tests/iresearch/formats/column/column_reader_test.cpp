@@ -1030,6 +1030,144 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
   }
 }
 
+TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
+  constexpr uint64_t kRows = 8192;
+  constexpr irs::field_id kT = 9;
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  auto b_val = [](uint64_t g) {
+    return "value_" + std::to_string(g) + "_padding";
+  };
+  duckdb::Connection con{Db()};
+  for (const bool nulls : {false, true}) {
+    for (const std::string codec : {"auto", "uncompressed"}) {
+      SCOPED_TRACE(testing::Message()
+                   << "nulls " << nulls << " codec " << codec);
+      auto set = con.Query("SET force_compression = '" + codec + "'");
+      ASSERT_FALSE(set->HasError()) << set->GetError();
+      auto s_valid = [&](uint64_t g) { return !nulls || g % 7 != 0; };
+      irs::MemoryDirectory dir{};
+      {
+        irs::ColWriter w{dir, "seg", Db()};
+        auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
+        for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+          duckdb::Vector v{stype, STANDARD_VECTOR_SIZE};
+          auto& entries = duckdb::StructVector::GetEntries(v);
+          auto* da = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+          auto* db =
+            duckdb::FlatVector::GetDataMutable<duckdb::string_t>(entries[1]);
+          auto& vs = duckdb::FlatVector::ValidityMutable(v);
+          vs.Reset(STANDARD_VECTOR_SIZE);
+          for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+            const auto g = pos + k;
+            if (!s_valid(g)) {
+              vs.SetInvalid(k);
+            }
+            da[k] = static_cast<int64_t>(g);
+            db[k] = duckdb::StringVector::AddString(entries[1], b_val(g));
+          }
+          duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+          cw.Append(v, STANDARD_VECTOR_SIZE);
+        }
+        w.Commit(0);
+      }
+      irs::ColReader r{dir, "seg", Db()};
+      const auto* ct = r.Column(kT);
+      ASSERT_NE(ct, nullptr);
+      auto state = ct->InitScan(r.Ctx());
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      auto gather = [&](uint64_t anchor, duckdb::idx_t hits,
+                        duckdb::idx_t step) {
+        for (duckdb::idx_t i = 0; i < hits; ++i) {
+          sel.set_index(i, i * step);
+        }
+        duckdb::Vector out{stype, STANDARD_VECTOR_SIZE};
+        ct->GatherDense(state, anchor, sel, hits, STANDARD_VECTOR_SIZE, out);
+        out.Flatten(hits);
+        auto& entries = duckdb::StructVector::GetEntries(out);
+        const auto* da = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+        const auto* db =
+          duckdb::FlatVector::GetData<duckdb::string_t>(entries[1]);
+        const auto& sv = duckdb::FlatVector::Validity(out);
+        for (duckdb::idx_t i = 0; i < hits; ++i) {
+          const auto g = anchor + i * step;
+          ASSERT_EQ(sv.RowIsValid(i), s_valid(g)) << "row " << g;
+          if (s_valid(g)) {
+            ASSERT_EQ(da[i], static_cast<int64_t>(g)) << "row " << g;
+            ASSERT_EQ(db[i].GetString(), b_val(g)) << "row " << g;
+          }
+        }
+      };
+      gather(0, 1900, 1);
+      gather(2048, STANDARD_VECTOR_SIZE, 1);
+      gather(4096, 1024, 2);
+      gather(6144, STANDARD_VECTOR_SIZE, 1);
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
+TEST_F(ColumnReaderTest, ScanStructAfterNullBlockKeepsFieldsOnOneRow) {
+  constexpr uint64_t kRows = 8192;
+  constexpr uint64_t kNullRows = 4096;
+  constexpr irs::field_id kT = 9;
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  auto b_val = [](uint64_t g) {
+    return "value_" + std::to_string(g) + "_padding";
+  };
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{stype, STANDARD_VECTOR_SIZE};
+      auto& entries = duckdb::StructVector::GetEntries(v);
+      auto* da = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+      auto* db =
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(entries[1]);
+      auto& vs = duckdb::FlatVector::ValidityMutable(v);
+      vs.Reset(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        const auto g = pos + k;
+        if (g < kNullRows) {
+          vs.SetInvalid(k);
+        }
+        da[k] = static_cast<int64_t>(g);
+        db[k] = duckdb::StringVector::AddString(entries[1], b_val(g));
+      }
+      duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* ct = r.Column(kT);
+  ASSERT_NE(ct, nullptr);
+  auto state = ct->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector out{stype, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(ct->Scan(state, out, STANDARD_VECTOR_SIZE), STANDARD_VECTOR_SIZE);
+    out.Flatten(STANDARD_VECTOR_SIZE);
+    auto& entries = duckdb::StructVector::GetEntries(out);
+    const auto* da = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+    const auto* db = duckdb::FlatVector::GetData<duckdb::string_t>(entries[1]);
+    const auto& sv = duckdb::FlatVector::Validity(out);
+    for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+      const auto g = pos + i;
+      ASSERT_EQ(sv.RowIsValid(i), g >= kNullRows) << "row " << g;
+      if (g >= kNullRows) {
+        ASSERT_EQ(da[i], static_cast<int64_t>(g)) << "row " << g;
+        ASSERT_EQ(db[i].GetString(), b_val(g)) << "row " << g;
+      }
+    }
+  }
+}
+
 // Fixed-size ARRAY(BIGINT, 3) with array-level + element-level NULLs, multi-rg.
 TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
   constexpr uint64_t kRows = 5000;

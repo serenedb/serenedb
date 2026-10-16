@@ -48,11 +48,12 @@ class StructColumnReader final : public ColumnReader {
   }
 
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
-    if (_validity) {
-      return _validity->ColumnReader::GatherCursor(s.child_states[0]);
-    }
-    SDB_ASSERT(!_children.empty() && s.child_states.size() > 1);
-    return _children.front()->GatherCursor(s.child_states[1]);
+    SDB_ASSERT(_validity || (!_children.empty() && s.child_states.size() > 1));
+    const uint64_t row =
+      _validity ? _validity->ColumnReader::GatherCursor(s.child_states[0])
+                : _children.front()->GatherCursor(s.child_states[1]);
+    SDB_ASSERT(InStep(s, row));
+    return row;
   }
 
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,
@@ -65,6 +66,9 @@ class StructColumnReader final : public ColumnReader {
         _validity->ColumnReader::Scan(s.child_states[0], result, count);
       if (result.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
         SDB_ASSERT(duckdb::ConstantVector::IsNull(result));
+        for (size_t fi = 0; fi < _children.size(); ++fi) {
+          _children[fi]->Skip(s.child_states[fi + 1], scan_count);
+        }
         return scan_count;
       }
     }
@@ -131,6 +135,32 @@ class StructColumnReader final : public ColumnReader {
     for (size_t fi = 0; fi < _children.size(); ++fi) {
       _children[fi]->GatherDense(s.child_states[fi + 1], anchor, sel, hits,
                                  span, entries[fi]);
+    }
+    SkipTo(s, anchor + span);
+  }
+
+ private:
+  bool InStep(const ScanState& s, uint64_t row) const noexcept {
+    for (size_t fi = 0; fi < _children.size(); ++fi) {
+      if (_children[fi]->GatherCursor(s.child_states[fi + 1]) != row) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void SkipTo(ScanState& s, uint64_t row) const {
+    if (_validity) {
+      auto& vs = s.child_states[0];
+      if (const auto at = _validity->ColumnReader::GatherCursor(vs); at < row) {
+        _validity->ColumnReader::Skip(vs, row - at);
+      }
+    }
+    for (size_t fi = 0; fi < _children.size(); ++fi) {
+      auto& fs = s.child_states[fi + 1];
+      if (const auto at = _children[fi]->GatherCursor(fs); at < row) {
+        _children[fi]->Skip(fs, row - at);
+      }
     }
   }
 };

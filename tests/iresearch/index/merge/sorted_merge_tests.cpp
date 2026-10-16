@@ -454,8 +454,15 @@ TEST_F(SortedMergeTest, PartitionsExpandInAnyOrder) {
   ASSERT_LT(1, split.KeyMerge()->PartitionCount());
   expand_backwards(split);
   split.Finish();
-  EXPECT_TRUE(
-    std::ranges::equal(serial.Order().Inputs(), split.Order().Inputs()));
+  const auto ids = [](const irs::MergeOrder& order) {
+    const auto inputs = order.Inputs();
+    std::vector<size_t> out(inputs.size());
+    for (uint64_t row = 0; row != inputs.size(); ++row) {
+      out[row] = inputs[row];
+    }
+    return out;
+  };
+  EXPECT_EQ(ids(serial.Order()), ids(split.Order()));
   for (size_t i = 0; i != inputs.size(); ++i) {
     SCOPED_TRACE(i);
     EXPECT_TRUE(std::ranges::equal(serial_map[i].remap.id_map,
@@ -765,6 +772,73 @@ TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {
     ASSERT_TRUE(irs::RunSerially(plan));
     EXPECT_EQ("", MergedDifference(out, mixed, spec));
   }
+}
+
+TEST_F(SortedMergeTest, MoreInputsThanAByteNamesAreInterleaved) {
+  constexpr int64_t kInputs = 300;
+  for (int64_t input = 0; input != kInputs; ++input) {
+    AddSegment(Keys(input, kInputs, 250));
+  }
+  const auto inputs = Snapshot();
+  ASSERT_EQ(kInputs, inputs.size());
+  const irs::SortSpec spec{{{.column = kBigint}}};
+  for (const size_t threads : {1, 4}) {
+    SCOPED_TRACE(threads);
+    irs::MemoryDirectory out;
+    auto plan = MakePlan(out, inputs, spec);
+    ASSERT_TRUE(plan.Prepare(threads));
+    ASSERT_TRUE(irs::RunSerially(plan));
+    EXPECT_EQ("", MergedDifference(out, inputs, spec));
+  }
+}
+
+TEST_F(SortedMergeTest, WideMergesReadInputsInSmallerBatches) {
+  constexpr irs::field_id kList = kFirstColumn + 5;
+  constexpr int64_t kInputs = 520;
+  constexpr int64_t kRows = 1100;
+  const auto text = duckdb::LogicalType::VARCHAR;
+  const auto list_type = duckdb::LogicalType::LIST(text);
+  irs::MemoryDirectory dir;
+  auto writer = MakeWriter(dir, DEFAULT_ROW_GROUP_SIZE, PlainColumns);
+  size_t next = 0;
+  std::vector<std::string> removed;
+  for (int64_t input = 0; input != kInputs; ++input) {
+    auto trx = writer->GetBatch();
+    for (int64_t row = 0; row != kRows; ++row) {
+      auto doc = trx.Insert();
+      const auto name = absl::StrCat("doc-", next++);
+      tests::StringField id{"id", name};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+      WriteValue(doc, kBigint, duckdb::LogicalType::BIGINT,
+                 duckdb::Value::BIGINT(row * kInputs + input));
+      WriteValue(
+        doc, kList, list_type,
+        row % 3 == 0
+          ? duckdb::Value::LIST(text, {duckdb::Value{"common"}})
+          : duckdb::Value::LIST(
+              text, {duckdb::Value{absl::StrCat("v", row % 40, "-", input)}}));
+      if (input % 3 == 1 && row % 7 == 3) {
+        removed.push_back(name);
+      }
+    }
+    trx.Commit();
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  RemoveTerms(*writer, kIdField, removed);
+  const auto reader = writer->GetSnapshot();
+  const auto inputs = Segments(reader);
+  ASSERT_EQ(kInputs, inputs.size());
+  const irs::SortSpec spec{{{.column = kBigint}}};
+  ThreadedMergeExecutor executor{4};
+  irs::MemoryDirectory out;
+  bool flushed = false;
+  const auto merged = SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE,
+                                  PlainColumns, flushed, &executor);
+  ASSERT_TRUE(flushed);
+  ASSERT_NE(nullptr, merged);
+  EXPECT_EQ("",
+            FirstDifference(ExpectedSortedMerge(inputs, spec), Dump(*merged)));
 }
 
 TEST_F(SortedMergeTest, MoreInputsThanTheFanInAreRefused) {

@@ -29,28 +29,52 @@
 
 namespace irs {
 
-inline constexpr size_t kSortedMergeInputsMax = 256;
+inline constexpr size_t kSortedMergeInputsMax = 1024;
 
 class MergeOrder {
  public:
+  class InputIds {
+   public:
+    InputIds() = default;
+    InputIds(std::span<const uint8_t> narrow,
+             std::span<const uint16_t> wide) noexcept
+      : _narrow{narrow}, _wide{wide} {}
+
+    size_t operator[](uint64_t row) const noexcept {
+      return _wide.empty() ? _narrow[row] : _wide[row];
+    }
+
+    uint64_t size() const noexcept { return _narrow.size() + _wide.size(); }
+
+   private:
+    std::span<const uint8_t> _narrow;
+    std::span<const uint16_t> _wide;
+  };
+
   MergeOrder(size_t inputs, uint64_t rows, IResourceManager& memory);
 
   void Set(uint64_t row, size_t input) noexcept {
-    _inputs[row] = static_cast<uint8_t>(input);
+    if (_wide.empty()) {
+      _narrow[row] = static_cast<uint8_t>(input);
+    } else {
+      _wide[row] = static_cast<uint16_t>(input);
+    }
   }
 
   void Finish();
 
-  uint64_t Rows() const noexcept { return _inputs.size(); }
+  uint64_t Rows() const noexcept { return _narrow.size() + _wide.size(); }
 
-  std::span<const uint8_t> Inputs() const noexcept { return _inputs; }
+  InputIds Inputs() const noexcept { return {_narrow, _wide}; }
 
   void LiveRowsBefore(uint64_t row, std::span<uint64_t> live) const;
 
  private:
   static constexpr uint64_t kCheckpointRows = uint64_t{1} << 16;
+  static constexpr size_t kNarrowInputs = size_t{1} << 8;
 
-  ManagedVector<uint8_t> _inputs;
+  ManagedVector<uint8_t> _narrow;
+  ManagedVector<uint16_t> _wide;
   std::vector<uint64_t> _checkpoints;
   std::vector<uint64_t> _live;
 };

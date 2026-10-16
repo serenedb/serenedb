@@ -199,7 +199,7 @@ A search table can keep its rows sorted by a key, given after the column list as
 
 -   Each key is a column of the table, listed in key order. A key is ascending unless it says `DESC`. NULLs come last in an ascending key and first in a descending one, as in PostgreSQL's `ORDER BY`, unless `NULLS FIRST` or `NULLS LAST` says otherwise. The table's definition always shows both, as in `SORTED BY (service ASC NULLS LAST, ts DESC NULLS FIRST)`.
 -   Every segment of the table holds its rows in key order from the moment it is written, and merges keep that order. Rows with equal keys are stored in no particular order.
--   A merge in key order takes at most 256 segments: background compaction merges at most 256 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
+-   A merge in key order takes at most 1024 segments: background compaction merges at most 1024 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
 -   Rows close in key order are stored together, so filters on the key columns skip more data and those columns compress better.
 -   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported. Renaming a key column keeps it in the key.
 -   A key is a stored column: an expression, a `COLLATE` clause or a generated column is rejected, and so is a column listed twice.

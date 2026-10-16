@@ -100,7 +100,7 @@ class OrderedInputNormReader : public NormReader {
     }
   }
 
-  std::span<const uint8_t> _inputs;
+  MergeOrder::InputIds _inputs;
   std::span<const doc_id_t> _sources;
   std::vector<const NormColumnReader*> _columns;
   std::vector<const NormRegion*> _regions;

@@ -7,7 +7,7 @@ CREATE TABLE iiss (id INTEGER, k INTEGER, body VARCHAR);
 
 
 statement ok
-INSERT INTO iiss SELECT i, (i * 7919) % 1009, 'w' || (i % 13) FROM range(600000) t(i);
+INSERT INTO iiss SELECT i, (i * 7919) % 1009, 'w' || (i % 13) FROM range(2400000) t(i);
 
 
 statement ok
@@ -19,7 +19,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_idx');
 ----
 segments	docs
-293	600000
+1172	2400000
 
 
 statement ok
@@ -30,7 +30,7 @@ query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_idx');
 ----
 segments	docs
-1	600000
+1	2400000
 
 
 query
@@ -39,22 +39,22 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'iiss_idx') AND ty
 ORDER BY id;
 ----
 outcome	inputs	input_docs
-merged	38	77760
-merged	256	600000
+merged	149	304896
+merged	1024	2400000
 
 
 query
 SELECT count(*) AS n, list(k) = list(k ORDER BY k DESC) AS sorted FROM iiss_idx;
 ----
 n	sorted
-600000	t
+2400000	t
 
 
 query
 SELECT count(*) AS n, sum(id) AS total FROM iiss_idx WHERE body @@ 'w3';
 ----
 n	total
-46154	13846084615
+184616	221539292308
 
 
 statement ok
@@ -66,25 +66,37 @@ query
 SELECT count(*) AS segments FROM sdb_segments('iiss_opt');
 ----
 segments
-293
+1172
 
 
-statement ok
-VACUUM (OPTIMIZE_INDEX) iiss_opt;
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs
+FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
+----
+merge	outcome	inputs
+1	merged	149
+
+
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs
+FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
+----
+merge	outcome	inputs
+1	merged	1024
 
 
 query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iiss_opt');
 ----
 segments	docs
-1	600000
+1	2400000
 
 
 query
 SELECT count(*) AS n, list(k) = list(k ORDER BY k) AS sorted FROM iiss_opt;
 ----
 n	sorted
-600000	t
+2400000	t
 
 
 statement ok

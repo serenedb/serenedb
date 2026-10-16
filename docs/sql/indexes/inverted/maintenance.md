@@ -62,7 +62,7 @@ Background compaction merges runs of neighbouring segments in the order their ro
 
 A segment holds at most 2,147,418,110 rows. A merge whose segments hold more live rows than that together is refused and logged, and its segments stay as they are; this applies to background compaction, `VACUUM` and [`sdb_compact`](#sdb-compact) alike.
 
-A merge of a search table or an index with a sort key (`SORTED BY`) takes at most 256 segments, so its background compaction merges at most 256 at a time, whatever `compaction_max_segments` says. `VACUUM` merges a larger group [in steps](../../statements/vacuum/index.md#compact).
+A merge of a search table or an index with a sort key (`SORTED BY`) takes at most 1024 segments, so its background compaction merges at most 1024 at a time, whatever `compaction_max_segments` says. `VACUUM` merges a larger group [in steps](../../statements/vacuum/index.md#compact).
 
 - **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX ... SET` for an index and [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
@@ -125,9 +125,9 @@ Each result row describes one merge:
 | `Merge N Postings` | Indexed fields whose postings the merge combines |
 | `Merge N ANN` | Vector columns whose ANN index the merge builds |
 | `Not Merged` | Segments left out, with the reason: `not selected by the adjacent policy`, `at or above the merge size cap`, `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) or `later step` |
-| `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, the only listed segment has no deletes, or a merge in key order takes at most 256 segments |
+| `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, the only listed segment has no deletes, or a merge in key order takes at most 1024 segments |
 
-On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 256 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it runs only the first of the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes: it merges just enough neighbouring segments, those with the fewest live rows, to leave at most 256, and lists the rest as `later step`. Call it again for the next step.
+On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it runs only the first of the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes: it merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and lists the rest as `later step`. Call it again for the next step.
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
 

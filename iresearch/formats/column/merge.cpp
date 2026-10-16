@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
@@ -338,6 +339,16 @@ bool IngestsLists(const duckdb::LogicalType& type) {
     });
 }
 
+constexpr uint64_t kOrderedRowsInFlight = uint64_t{1} << 19;
+constexpr uint64_t kOrderedStepMin = 64;
+
+uint32_t OrderedStep(size_t inputs) {
+  const auto rows =
+    std::clamp<uint64_t>(kOrderedRowsInFlight / std::max<size_t>(inputs, 1),
+                         kOrderedStepMin, STANDARD_VECTOR_SIZE);
+  return static_cast<uint32_t>(std::bit_floor(rows));
+}
+
 }  // namespace
 
 struct ColumnMerger::State {
@@ -608,12 +619,12 @@ struct ColumnMerger::State {
   }
 
   struct OrderedInput {
-    OrderedInput(const duckdb::LogicalType& type, bool fresh)
-      : scratch{type}, fresh{fresh} {}
+    OrderedInput(const duckdb::LogicalType& type, bool fresh, uint32_t step)
+      : scratch{type}, fresh{fresh}, step{step} {}
 
     duckdb::Vector& NextBatch() {
       if (fresh) {
-        return owned.emplace(scratch.vector.GetType(), STANDARD_VECTOR_SIZE);
+        return owned.emplace(scratch.vector.GetType(), step);
       }
       return scratch.Reset();
     }
@@ -623,8 +634,10 @@ struct ColumnMerger::State {
     ColumnReader::VectorScratch scratch;
     std::optional<duckdb::Vector> owned;
     bool fresh;
+    uint32_t step;
     const duckdb::Vector* batch = nullptr;
     const duckdb::sel_t* rows = nullptr;
+    std::vector<duckdb::sel_t> kept;
     duckdb::SelectionVector pending_sel{STANDARD_VECTOR_SIZE};
     uint64_t valued = 0;
     uint64_t live = 0;
@@ -680,8 +693,7 @@ struct ColumnMerger::State {
     const uint64_t total = in.col->RowCount();
     auto& batch = in.NextBatch();
     if (!in.masked) {
-      const auto take =
-        std::min<uint64_t>(total - in.window, STANDARD_VECTOR_SIZE);
+      const auto take = std::min<uint64_t>(total - in.window, in.step);
       in.col->Scan(in.state, batch, take);
       in.batch = &batch;
       in.at = 0;
@@ -691,10 +703,14 @@ struct ColumnMerger::State {
     }
     while (true) {
       const auto pos = in.window;
-      const auto take = std::min<uint64_t>(total - pos, STANDARD_VECTOR_SIZE);
+      const auto take = std::min<uint64_t>(total - pos, in.step);
       const auto& kept = KeptFor(si, pos);
-      const auto n = ValuedIn(kept, take);
-      in.window = pos + STANDARD_VECTOR_SIZE;
+      const auto off = static_cast<duckdb::sel_t>(pos % STANDARD_VECTOR_SIZE);
+      const auto first = absl::c_lower_bound(kept, off);
+      const auto last = std::lower_bound(
+        first, kept.end(), static_cast<duckdb::sel_t>(off + take));
+      const auto n = static_cast<uint32_t>(last - first);
+      in.window = pos + take;
       if (n <= in.skip) {
         in.skip -= n;
         continue;
@@ -703,7 +719,15 @@ struct ColumnMerger::State {
       in.col->Scan(in.state, batch, take);
       in.scanned = pos + take;
       in.batch = &batch;
-      in.rows = kept.data();
+      if (off == 0) {
+        in.rows = kept.data();
+      } else {
+        in.kept.clear();
+        for (auto it = first; it != last; ++it) {
+          in.kept.emplace_back(*it - off);
+        }
+        in.rows = in.kept.data();
+      }
       in.at = static_cast<uint32_t>(in.skip);
       in.size = n;
       in.skip = 0;
@@ -722,6 +746,7 @@ struct ColumnMerger::State {
     std::vector<std::unique_ptr<OrderedInput>> cursors(sources.size());
     std::vector<uint32_t> active;
     const bool fresh = IngestsLists(type);
+    const auto step = OrderedStep(sources.size());
     ColumnReader::VectorScratch staging{type};
     std::optional<duckdb::Vector> owned;
     const duckdb::Vector null_row{duckdb::Value{type}, duckdb::count_t{1}};
@@ -776,7 +801,7 @@ struct ColumnMerger::State {
       }
       auto& cursor = cursors[i];
       if (!cursor) {
-        cursor = std::make_unique<OrderedInput>(type, fresh);
+        cursor = std::make_unique<OrderedInput>(type, fresh, step);
         OpenOrdered(*cursor, i, column, live[i]);
       }
       auto& in = *cursor;

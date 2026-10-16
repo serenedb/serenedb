@@ -163,7 +163,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | money                                             | No            |                          |
 | numeric [ (p, s) ]                                | Yes           |    |
 | path                                              | No            |                          |
-| pg_lsn                                            | No            |                          |
+| pg_lsn                                            | Yes           |                          |
 | pg_snapshot                                       | No            |                          |
 | point                                             | No            |                          |
 | polygon                                           | No            |                          |

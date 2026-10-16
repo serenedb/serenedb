@@ -568,6 +568,33 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
 
 }  // namespace
 
+HnswQuery::HnswQuery(const SubReader& segment,
+                     std::shared_ptr<const HnswData> data,
+                     const VectorFilterOptions& opts, uint32_t record_size,
+                     HnswSearchLimits limits, score_t boost,
+                     QueryBuilder::ptr&& inner, AnnQueryCache* cache)
+  : QueryBuilderImpl{segment},
+    _data{std::move(data)},
+    _cache{cache},
+    _inner{std::move(inner)},
+    _exact{segment.Column(opts.centroids_id)},
+    _query{opts.query.size(),
+           [&](float& slot, size_t i) noexcept { slot = opts.query[i]; }},
+    _metric{opts.metric},
+    _d{static_cast<uint32_t>(opts.query.size())},
+    _record_size{record_size},
+    _ef{limits.ef},
+    _threshold{limits.threshold},
+    _max_results{limits.max_results},
+    _boost{boost},
+    _filter_mode{opts.hnsw_filter_mode},
+    _column_filter{opts.hnsw_column_filter},
+    _inclusive{limits.inclusive} {
+  if (_metric == VectorMetric::Cosine) {
+    duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
+  }
+}
+
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                             HnswSearchScratch& scratch) const {
@@ -667,15 +694,18 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   HnswScanTopK(set, graph, dist, _ef, scratch);
 }
 
-void HnswQuery::Rotate() const {
-  absl::call_once(_rotated, [&] {
-    if (!_data->rotation || _panorama) {
-      return;
+void HnswQuery::PrepareDistance() const {
+  absl::call_once(_distance_prepared, [&] {
+    std::span<const float> query = _query;
+    if (_data->rotation) {
+      _panorama =
+        RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
+      query = _panorama->rotated;
     }
-    _panorama =
-      RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
     if (_data->stats) {
-      _codebook = QueryCodebook(_cache, *_data->stats, _panorama->rotated);
+      _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
+                           : QueryCodebook(_cache, *_data->stats, query);
+      SDB_ASSERT(_codebook);
     }
   });
 }
@@ -720,7 +750,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
     ScanColumn(scratch);
     return CollectHits(scratch.nearest, _segment);
   }
-  Rotate();
+  PrepareDistance();
   WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
                  if (_inner || table) {
@@ -737,7 +767,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                  });
                });
   auto hits = CollectHits(scratch.nearest, _segment);
-  if (_ef == 0 && _exact && !hits.empty()) {
+  if (_ef == 0 && _data->stats && _exact && !hits.empty()) {
     RerankExactDistances(_segment, *_exact, _d, _query, _metric, hits);
     std::erase_if(hits, [&](const ScoreDoc& hit) {
       return _inclusive ? hit.score < _threshold : hit.score <= _threshold;

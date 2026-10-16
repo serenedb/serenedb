@@ -56,6 +56,13 @@ struct HnswData {
   std::shared_ptr<const QuantizerStats> stats;
 };
 
+struct HnswSearchLimits {
+  uint32_t ef = 0;
+  score_t threshold = kHnswNoThreshold;
+  size_t max_results = 0;
+  bool inclusive = false;
+};
+
 class HnswIndex final : public AnnIndex {
  public:
   HnswIndex(HnswHeader header, HnswMeta meta, field_id field,
@@ -98,6 +105,12 @@ class HnswIndex final : public AnnIndex {
   const HnswHeader& Header() const noexcept { return _header; }
 
  private:
+  QueryBuilder::ptr PrepareSearch(const SubReader& segment,
+                                  const PrepareContext& ctx,
+                                  const VectorFilterOptions& opts,
+                                  HnswSearchLimits limits,
+                                  AnnQueryCache* cache) const;
+
   HnswHeader _header;
   HnswMeta _meta;
   field_id _field;

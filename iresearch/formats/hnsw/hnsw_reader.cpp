@@ -129,52 +129,14 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
   return _data;
 }
 
-namespace {
-
-std::shared_ptr<const PanoramaQuery> MakePanoramaQuery(
-  const HnswData& data, std::span<const float> query, AnnQueryCache* cache) {
-  if (!data.rotation) {
-    return nullptr;
-  }
-  return RotateQuery(cache, data.rotation, data.byte_rotation, query);
-}
-
-}  // namespace
-
 QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
                                         const PrepareContext& ctx,
                                         const VectorFilterOptions& opts,
                                         uint32_t /*effort*/,
                                         AnnQueryCache* cache) const {
-  SDB_ASSERT(opts.query.size() == _header.d);
-  if (Empty()) {
-    return QueryBuilder::Empty();
-  }
-  auto data = Load(segment);
-  if (!data || data->graph.Empty()) {
-    return QueryBuilder::Empty();
-  }
-  auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
-  const bool rotated = static_cast<bool>(data->rotation);
-  auto codebook = !data->stats || rotated
-                    ? nullptr
-                    : QueryCodebook(cache, *data->stats, query);
-  SDB_ASSERT(!data->stats || rotated || codebook);
   SDB_ASSERT(opts.ef_search != 0);
-  const auto ef = std::max(opts.ef_search, opts.min_ef);
-  QueryBuilder::ptr inner;
-  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
-    return QueryBuilder::Empty();
-  }
-  const auto* column = rotated ? segment.Column(opts.centroids_id) : nullptr;
-  auto built = memory::make_tracked<HnswQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
-    opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost, std::move(inner),
-    opts.hnsw_filter_mode, opts.hnsw_column_filter, column,
-    /*panorama=*/nullptr, cache);
-  built->SetStats(ctx.Record());
-  return built;
+  return PrepareSearch(segment, ctx, opts,
+                       {.ef = std::max(opts.ef_search, opts.min_ef)}, cache);
 }
 
 QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
@@ -183,6 +145,18 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
                                           float radius, bool inclusive,
                                           uint32_t /*effort*/,
                                           AnnQueryCache* cache) const {
+  return PrepareSearch(segment, ctx, opts,
+                       {.threshold = RadiusThreshold(opts.metric, radius),
+                        .max_results = static_cast<size_t>(_header.rows),
+                        .inclusive = inclusive},
+                       cache);
+}
+
+QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
+                                           const PrepareContext& ctx,
+                                           const VectorFilterOptions& opts,
+                                           HnswSearchLimits limits,
+                                           AnnQueryCache* cache) const {
   SDB_ASSERT(opts.query.size() == _header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
@@ -191,24 +165,13 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
-  auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
-  auto panorama = MakePanoramaQuery(*data, query, cache);
-  auto codebook =
-    data->stats
-      ? data->stats->MakeRangeCodebook(panorama ? panorama->rotated : query)
-      : nullptr;
-  SDB_ASSERT(!data->stats || codebook);
-  const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;
-  const score_t threshold = RadiusThreshold(opts.metric, radius);
   QueryBuilder::ptr inner;
   if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
     return QueryBuilder::Empty();
   }
   auto built = memory::make_tracked<HnswQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
-    opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
-    static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner),
-    opts.hnsw_filter_mode, opts.hnsw_column_filter, exact, std::move(panorama));
+    ctx.memory, segment, std::move(data), opts, _header.record_size, limits,
+    ctx.boost, std::move(inner), cache);
   built->SetStats(ctx.Record());
   return built;
 }
@@ -226,7 +189,10 @@ AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
     return {};
   }
   const auto normalized = NormalizedQuery(query, metric, _header.d);
-  const auto panorama = MakePanoramaQuery(*data, normalized, nullptr);
+  const auto panorama =
+    data->rotation
+      ? RotateQuery(nullptr, data->rotation, data->byte_rotation, normalized)
+      : nullptr;
   auto bound = data->stats->MakeCodeBound(
     panorama ? panorama->rotated : normalized, metric);
   if (!bound) {

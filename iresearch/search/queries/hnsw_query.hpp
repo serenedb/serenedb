@@ -41,35 +41,9 @@ namespace irs {
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
-            std::shared_ptr<const QuantizerCodebook> codebook,
-            std::vector<float> query, VectorMetric metric, uint32_t d,
-            uint32_t record_size, uint32_t ef, score_t threshold,
-            size_t max_results, bool inclusive, score_t boost,
-            QueryBuilder::ptr&& inner = nullptr,
-            HnswFilterMode filter_mode = HnswFilterMode::Auto,
-            HnswColumnFilter column_filter = HnswColumnFilter::Auto,
-            const ColumnReader* exact = nullptr,
-            std::shared_ptr<const PanoramaQuery> panorama = nullptr,
-            AnnQueryCache* cache = nullptr)
-    : QueryBuilderImpl{segment},
-      _data{std::move(data)},
-      _codebook{std::move(codebook)},
-      _panorama{std::move(panorama)},
-      _cache{cache},
-      _inner{std::move(inner)},
-      _exact{exact},
-      _query{query.size(),
-             [&](float& slot, size_t i) noexcept { slot = query[i]; }},
-      _metric{metric},
-      _d{d},
-      _record_size{record_size},
-      _ef{ef},
-      _threshold{threshold},
-      _max_results{max_results},
-      _boost{boost},
-      _filter_mode{filter_mode},
-      _column_filter{column_filter},
-      _inclusive{inclusive} {}
+            const VectorFilterOptions& opts, uint32_t record_size,
+            HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
+            AnnQueryCache* cache);
 
   // The hits of the graph search, ascending by doc, deleted docs dropped.
   // With an inner predicate, or a table filter whose predicates fold into a
@@ -90,7 +64,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   void RunFiltered(Dist& dist, detail::TableFilter* table,
                    HnswSearchScratch& scratch) const;
 
-  void Rotate() const;
+  void PrepareDistance() const;
 
   bool ScansByColumn() const;
 
@@ -99,7 +73,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
-  mutable absl::once_flag _rotated;
+  mutable absl::once_flag _distance_prepared;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   const ColumnReader* _exact;

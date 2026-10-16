@@ -540,3 +540,100 @@ def test_backup_without_a_retained_wal_refuses_to_boot(tmp_path: Path, missing: 
         assert (copy / "backup_label").is_file()
     finally:
         restored.stop()
+
+
+def _failed_checkpoint_state(server: Serened) -> tuple[Counter, Counter, int]:
+    with _connect(server, "fc") as conn:
+        conn.execute("VACUUM (REFRESH_INDEX) t_idx")
+        conn.execute("VACUUM (REFRESH_TABLE) s")
+        table = Counter(dict(conn.execute("SELECT b, count(*) FROM t GROUP BY b").fetchall()))
+        index = Counter()
+        for body in table:
+            (n,) = conn.execute(
+                f"SELECT count(*) FROM t_idx WHERE b @@ '{body}'").fetchone()
+            index[body] = n
+        (search,) = conn.execute("SELECT count(*) FROM s").fetchone()
+    return table, index, search
+
+
+def _expect_one_warning(log: Path, message: str) -> None:
+    logged = f'"{message.replace(chr(34), chr(34) * 2)}"' if '"' in message else message
+    lines = [line for line in log.read_text().splitlines() if logged in line]
+    assert len(lines) == 1 and "\tWARNING\t" in lines[0], f"{log}: {lines}"
+
+
+@pytest.mark.parametrize("abort", ["before_header_non_fatal", "before_wal_finish_non_fatal"])
+def test_backup_of_a_database_with_a_failed_checkpoint(tmp_path: Path, abort: str) -> None:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    restored = None
+    try:
+        source.start()
+        with _connect(source) as conn:
+            conn.execute("CREATE DATABASE fc")
+        with _connect(source, "fc") as conn:
+            conn.execute("CREATE TABLE t (id BIGINT, b TEXT)")
+            conn.execute("CREATE INDEX t_idx ON t USING inverted (b)")
+            conn.execute("CREATE TABLE s (id BIGINT PRIMARY KEY, body TEXT) "
+                         "WITH (storage = 'search')")
+            conn.execute("INSERT INTO t SELECT i, 'base' FROM range(0, 1000) r(i)")
+            conn.execute("INSERT INTO s SELECT i, 'base' FROM range(0, 100) r(i)")
+            conn.execute("CHECKPOINT fc")
+            conn.execute("INSERT INTO t SELECT i, 'unchecked' FROM range(1000, 1500) r(i)")
+            conn.execute("INSERT INTO s SELECT i, 'unchecked' FROM range(100, 150) r(i)")
+            conn.execute(f"SET debug_checkpoint_abort = '{abort}'")
+            with pytest.raises(psycopg.Error, match="non-fatal"):
+                conn.execute("CHECKPOINT fc")
+            conn.execute("RESET debug_checkpoint_abort")
+            conn.execute("INSERT INTO t SELECT i, 'failed' FROM range(1500, 2000) r(i)")
+            conn.execute("INSERT INTO s SELECT i, 'failed' FROM range(150, 200) r(i)")
+            (oid,) = conn.execute(
+                "SELECT database_oid FROM duckdb_databases() "
+                "WHERE database_name = 'fc'").fetchone()
+
+        copy = tmp_path / "copy"
+        notices: list[tuple[str | None, str | None, str | None]] = []
+        with _connect(source) as backup:
+            backup.add_notice_handler(lambda n: notices.append(
+                (n.severity_nonlocalized, n.message_primary, n.message_hint)))
+            backup.execute("SELECT pg_backup_start('failed checkpoint')")
+            with _connect(source, "fc") as conn:
+                conn.execute("INSERT INTO t SELECT i, 'after' FROM range(5000, 5100) r(i)")
+                conn.execute("INSERT INTO s SELECT i, 'after' FROM range(5000, 5010) r(i)")
+            shutil.copytree(source.datadir, copy, symlinks=True)
+            (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
+        assert notices == [(
+                    "WARNING",
+                    'checkpoints of database "fc" have failed; the backup holds its WAL '
+                    "as the failed checkpoint left it",
+                    "Check the database before relying on the backup.")]
+        line = next(line for line in label.splitlines()
+                    if line.startswith(f"SERENEDB DATABASE: {oid} "))
+        assert line.endswith(" failed_checkpoint"), line
+        _expect_one_warning(tmp_path / "source.log",
+                            'checkpoints of database "fc" have failed; the backup holds its '
+                            "WAL as the failed checkpoint left it; check the database before "
+                            "relying on the backup")
+        source.stop()
+
+        (copy / "backup_label").write_text(label)
+        restored = Serened(SERENED_BIN, datadir=str(copy),
+                           log_path=str(tmp_path / "restored.log"))
+        restored.start()
+        _expect_one_warning(tmp_path / "restored.log",
+                            f"database {oid} was backed up while its checkpoints were "
+                            "failing; boot recovers it as after a crash; check its state")
+        expected = Counter({"base": 1000, "unchecked": 500, "failed": 500})
+        assert _failed_checkpoint_state(restored) == (expected, expected, 200)
+
+        with _connect(restored, "fc") as conn:
+            conn.execute("INSERT INTO t SELECT i, 'restored' FROM range(6000, 6010) r(i)")
+            conn.execute("INSERT INTO s VALUES (6000, 'restored')")
+            conn.execute("CHECKPOINT fc")
+        restored.restart()
+        expected["restored"] = 10
+        assert _failed_checkpoint_state(restored) == (expected, expected, 201)
+    finally:
+        source.stop()
+        if restored is not None:
+            restored.stop()

@@ -1298,6 +1298,11 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
   scan.ScanFiltered(result, codes, vector_count, sel, sel_count);
 }
 
+struct EntryAt {
+  uint32_t entry;
+  idx_t at;
+};
+
 struct FetchCache final : duckdb::SegmentScanState {
   duckdb::block_id_t block = INVALID_BLOCK;
   Header header;
@@ -1332,6 +1337,7 @@ struct FetchCache final : duckdb::SegmentScanState {
   uint64_t walked = 0;
   std::string fsst_heap;
   std::vector<uint32_t> fsst_ends;
+  std::vector<EntryAt> order;
 
   void DecodeAllFsst(const Header& h, const_data_ptr_t base) {
     const auto* frames = base + h.off_frames;
@@ -1459,13 +1465,8 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
   return cache;
 }
 
-void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
-              duckdb::row_t row_id, duckdb::Vector& result, idx_t result_idx) {
-  auto& handle = state.GetOrInsertHandle(segment);
-  auto* base = handle.GetDataMutable() + segment.GetBlockOffset();
-  auto& cache = CacheFor(state, segment, base);
+std::optional<uint32_t> EntryOf(FetchCache& cache, data_ptr_t base, idx_t row) {
   const auto& h = cache.header;
-  const auto row = static_cast<idx_t>(row_id);
   SDB_ENSURE(row < h.row_count, "col codec: row out of range");
   uint32_t entry = static_cast<uint32_t>(row);
   if (h.shape == static_cast<uint8_t>(Shape::Dedup)) {
@@ -1501,10 +1502,16 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       entry = cache.codes.At(row);
     }
     if (entry == 0) {
-      duckdb::FlatVector::ValidityMutable(result).SetInvalid(result_idx);
-      return;
+      return std::nullopt;
     }
   }
+  return entry;
+}
+
+void EmitEntry(duckdb::ColumnSegment& segment, FetchCache& cache,
+               data_ptr_t base, uint32_t entry, duckdb::Vector& result,
+               idx_t result_idx, bool batched) {
+  const auto& h = cache.header;
   SDB_ENSURE(entry < h.entry_count && h.frame_count != 0,
              "col codec: corrupted row codes");
 
@@ -1613,7 +1620,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     }
     cache.frame = lo;
     cache.first_entry = f.first_entry;
-    cache.dense = cache.hits > 1;
+    cache.dense = !batched && cache.hits > 1;
     cache.hits = 0;
     cache.decoded = 0;
   }
@@ -1623,7 +1630,8 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   const auto len = cache.offsets[k + 1] - offset;
   const size_t want = offset + len;
   if (cache.decoded < want) {
-    const size_t target = cache.hits > 1 || cache.dense ? f.raw_len : want;
+    const size_t target =
+      !batched && (cache.hits > 1 || cache.dense) ? f.raw_len : want;
     const bool with_dictionary = h.flags == kFrameDictionary && lo != 0;
     const auto* trained = TrainedOf(segment, h);
     switch (static_cast<ByteCodec>(h.codec)) {
@@ -1656,9 +1664,28 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
 void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  auto& handle = state.GetOrInsertHandle(segment);
+  auto* base = handle.GetDataMutable() + segment.GetBlockOffset();
+  auto& cache = CacheFor(state, segment, base);
+  auto& order = cache.order;
+  order.clear();
   for (idx_t i = 0; i < count; ++i) {
-    FetchRow(segment, state, static_cast<duckdb::row_t>(rows[i]), result,
-             result_offset + result_sel.get_index(i));
+    const auto at = result_offset + result_sel.get_index(i);
+    if (const auto entry = EntryOf(cache, base, rows[i])) {
+      order.push_back({.entry = *entry, .at = at});
+    } else {
+      duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
+    }
+  }
+  const bool batched = order.size() > 1;
+  if (batched && cache.header.shape == static_cast<uint8_t>(Shape::Dedup)) {
+    absl::c_sort(
+      order, [](const auto& l, const auto& r) { return l.entry > r.entry; });
+  } else if (batched) {
+    absl::c_reverse(order);
+  }
+  for (const auto& [entry, at] : order) {
+    EmitEntry(segment, cache, base, entry, result, at, batched);
   }
 }
 

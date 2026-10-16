@@ -118,6 +118,7 @@ class HitBatcher {
     uint8_t scratch_idx = 0;
     duckdb::LogicalType out_type;
     std::unique_ptr<irs::ColumnReader::ScanState> state;
+    std::unique_ptr<irs::ColumnReader::PointReader> point;
     std::unique_ptr<ExtractBinding> extract_binding;
     std::array<std::unique_ptr<irs::ColumnReader::VectorScratch>, 2> scratch;
   };
@@ -162,7 +163,9 @@ class HitBatcher {
   const bool _track_scores;
 
   std::unique_ptr<irs::ReadContext> _ctx;
+  const irs::ColReader* _col_reader = nullptr;
   std::vector<Column> _columns;
+  std::vector<uint64_t> _rows;
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 

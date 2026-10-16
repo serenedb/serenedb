@@ -319,7 +319,13 @@ class ColumnReader {
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
+    void FetchRows(std::span<const uint64_t> rows, duckdb::Vector& out,
+                   duckdb::idx_t out_offset);
+
    protected:
+    duckdb::ColumnSegment& DataBlock(uint64_t row);
+    duckdb::ColumnSegment& ValidityBlock(uint64_t row);
+
     ReadContext _ctx;
     const ColumnReader* _reader;
     std::unique_ptr<duckdb::ColumnSegment> _block;
@@ -330,6 +336,9 @@ class ColumnReader {
     BlockWindow _validity_window{};
     size_t _cached_block = static_cast<size_t>(-1);
     size_t _cached_validity_block = static_cast<size_t>(-1);
+    std::vector<duckdb::idx_t> _local;
+    std::vector<duckdb::idx_t> _fetched;
+    duckdb::SelectionVector _sel{STANDARD_VECTOR_SIZE};
   };
 
   class BlobPointReader final : public PointReader {
@@ -356,8 +365,30 @@ class ColumnReader {
       return IsNullRow(static_cast<uint64_t>(doc) - doc_limits::min());
     }
 
+    void FetchDocs(std::span<const doc_id_t> docs) {
+      SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
+      _rows.clear();
+      for (const auto doc : docs) {
+        _rows.push_back(static_cast<uint64_t>(doc) - doc_limits::min());
+      }
+      _batch.ResetFromCache(_batch_cache);
+      PointReader::FetchRows(_rows, _batch, 0);
+    }
+    bytes_view Fetched(size_t i) const {
+      if (!duckdb::FlatVector::Validity(_batch).RowIsValid(i)) {
+        return {};
+      }
+      const auto& s = duckdb::FlatVector::GetData<duckdb::string_t>(_batch)[i];
+      return bytes_view{reinterpret_cast<const byte_type*>(s.GetData()),
+                        s.GetSize()};
+    }
+
    private:
     duckdb::Vector _buf{duckdb::LogicalType::BLOB, 1};
+    duckdb::VectorCache _batch_cache{duckdb::Allocator::DefaultAllocator(),
+                                     duckdb::LogicalType::BLOB};
+    duckdb::Vector _batch{_batch_cache};
+    std::vector<uint64_t> _rows;
   };
 
  protected:

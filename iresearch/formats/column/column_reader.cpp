@@ -49,6 +49,7 @@
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -109,6 +110,34 @@ void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                   SerializeColumnBlockMeta(obj, blocks[i]);
                 });
               });
+}
+
+bool KeepsFetchCache(duckdb::ColumnSegment& segment) {
+  return segment.GetType().InternalType() == duckdb::PhysicalType::VARCHAR &&
+         duckdb::IsSereneDBCompressionType(
+           segment.GetCompressionFunction().type);
+}
+
+bool BorrowsBlockStrings(duckdb::ColumnSegment& segment) {
+  return segment.GetType().InternalType() == duckdb::PhysicalType::VARCHAR &&
+         !duckdb::IsSereneDBCompressionType(
+           segment.GetCompressionFunction().type);
+}
+
+void SwitchFetchSegment(duckdb::ColumnFetchState& state,
+                        duckdb::ColumnSegment* from,
+                        duckdb::ColumnSegment& to) {
+  duckdb::unique_ptr<duckdb::SegmentScanState> cache;
+  if (from && KeepsFetchCache(*from) && KeepsFetchCache(to)) {
+    if (auto it = state.segment_states.find(*from);
+        it != state.segment_states.end()) {
+      cache = std::move(it->second);
+    }
+  }
+  state = duckdb::ColumnFetchState{};
+  if (cache) {
+    state.segment_states.emplace(to, std::move(cache));
+  }
 }
 
 }  // namespace
@@ -880,6 +909,28 @@ ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        const ColumnReader& col)
   : _ctx{col_reader}, _reader{&col} {}
 
+duckdb::ColumnSegment& ColumnReader::PointReader::ValidityBlock(uint64_t row) {
+  const auto& validity = *_reader->_validity;
+  _validity_window = validity.Locate(row, _validity_window);
+  if (_validity_window.block != _cached_validity_block) {
+    _validity_fetch_state = duckdb::ColumnFetchState{};
+    _validity_block = validity.Open(_validity_window, _ctx);
+    _cached_validity_block = _validity_window.block;
+  }
+  return *_validity_block;
+}
+
+duckdb::ColumnSegment& ColumnReader::PointReader::DataBlock(uint64_t row) {
+  _window = _reader->Locate(row, _window);
+  if (_window.block != _cached_block) {
+    auto next = _reader->Open(_window, _ctx);
+    SwitchFetchSegment(_fetch_state, _block.get(), *next);
+    _block = std::move(next);
+    _cached_block = _window.block;
+  }
+  return *_block;
+}
+
 bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
                                          duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
@@ -887,15 +938,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
     return false;
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  const auto* validity = _reader->_validity.get();
-  if (validity) {
-    _validity_window = validity->Locate(row, _validity_window);
-    if (_validity_window.block != _cached_validity_block) {
-      _validity_fetch_state = duckdb::ColumnFetchState{};
-      _validity_block = validity->Open(_validity_window, _ctx);
-      _cached_validity_block = _validity_window.block;
-    }
-    _validity_block->FetchRow(
+  if (_reader->_validity) {
+    ValidityBlock(row).FetchRow(
       _validity_fetch_state,
       static_cast<duckdb::row_t>(row - _validity_window.begin), out,
       out_offset);
@@ -903,16 +947,66 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
       return false;
     }
   }
-  _window = _reader->Locate(row, _window);
-  if (_window.block != _cached_block) {
-    _fetch_state = duckdb::ColumnFetchState{};
-    _block = _reader->Open(_window, _ctx);
-    _cached_block = _window.block;
-  }
-  _block->FetchRow(_fetch_state,
-                   static_cast<duckdb::row_t>(row - _window.begin), out,
-                   out_offset);
+  DataBlock(row).FetchRow(_fetch_state,
+                          static_cast<duckdb::row_t>(row - _window.begin), out,
+                          out_offset);
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
+}
+
+void ColumnReader::PointReader::FetchRows(std::span<const uint64_t> rows,
+                                          duckdb::Vector& out,
+                                          duckdb::idx_t out_offset) {
+  SDB_ASSERT(out_offset + rows.size() <= STANDARD_VECTOR_SIZE);
+  SDB_ASSERT(absl::c_adjacent_find(rows, std::greater_equal<>{}) == rows.end());
+  auto& mask = duckdb::FlatVector::ValidityMutable(out);
+  auto count = rows.size();
+  for (size_t i = 0; i < count; ++i) {
+    mask.SetValid(out_offset + i);
+  }
+  while (count != 0 && rows[count - 1] >= _reader->RowCount()) {
+    mask.SetInvalid(out_offset + --count);
+  }
+  if (_reader->_validity) {
+    for (size_t i = 0; i < count;) {
+      auto& block = ValidityBlock(rows[i]);
+      _local.clear();
+      size_t j = i;
+      for (; j < count && rows[j] < _validity_window.end; ++j) {
+        _local.push_back(rows[j] - _validity_window.begin);
+      }
+      block.FetchRows(_validity_fetch_state, _local.data(), _local.size(), out,
+                      *duckdb::FlatVector::IncrementalSelectionVector(),
+                      out_offset + i);
+      i = j;
+    }
+  }
+  _fetched.clear();
+  for (size_t i = 0; i < count; ++i) {
+    if (mask.RowIsValid(out_offset + i)) {
+      _fetched.push_back(out_offset + i);
+    }
+  }
+  for (size_t i = 0; i < _fetched.size();) {
+    auto& block = DataBlock(rows[_fetched[i] - out_offset]);
+    _local.clear();
+    size_t j = i;
+    for (; j < _fetched.size() && rows[_fetched[j] - out_offset] < _window.end;
+         ++j) {
+      _sel.set_index(_local.size(), _fetched[j]);
+      _local.push_back(rows[_fetched[j] - out_offset] - _window.begin);
+    }
+    block.FetchRows(_fetch_state, _local.data(), _local.size(), out, _sel, 0);
+    if (BorrowsBlockStrings(block)) {
+      auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(out);
+      for (size_t k = 0; k < _local.size(); ++k) {
+        auto& value = data[_sel.get_index(k)];
+        if (!value.IsInlined()) {
+          value = duckdb::StringVector::AddStringOrBlob(out, value);
+        }
+      }
+    }
+    i = j;
+  }
 }
 
 }  // namespace irs

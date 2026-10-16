@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -216,6 +217,32 @@ class ColCodecsTest : public TestBase {
         const bool valid = cursor.FetchRow(g, out, 0);
         EXPECT_EQ(valid, value(g).has_value()) << "row " << g;
         ExpectRow(out, 0, g, value);
+      }
+    }
+    {
+      irs::ColumnReader::PointReader cursor{r, *col};
+      constexpr duckdb::idx_t kOffset = 5;
+      for (const uint64_t step : {uint64_t{1}, uint64_t{7}, uint64_t{97}}) {
+        std::vector<uint64_t> batch;
+        for (uint64_t g = step / 2; g < rows + 3; g += step) {
+          batch.push_back(g);
+          if (batch.size() + kOffset < STANDARD_VECTOR_SIZE &&
+              g + step < rows) {
+            continue;
+          }
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          cursor.FetchRows(batch, out, kOffset);
+          for (size_t k = 0; k < batch.size(); ++k) {
+            if (batch[k] >= rows) {
+              EXPECT_FALSE(
+                duckdb::FlatVector::Validity(out).RowIsValid(kOffset + k));
+              continue;
+            }
+            ExpectRow(out, kOffset + k, batch[k], value);
+          }
+          batch.clear();
+        }
       }
     }
   }
@@ -849,6 +876,66 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
   RoundTrip(duckdb::CompressionType::COMPRESSION_AUTO,
             {.segment_target = 16 * 1024}, 60000, DEFAULT_ROW_GROUP_SIZE,
             value);
+}
+
+TEST_F(ColCodecsTest, PointReadsAlternateBlocksOfDifferentCodecs) {
+  constexpr uint64_t kRows = 6 * 1024;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if ((g / 1024) % 2 == 0) {
+      return absl::StrCat("v", g % 3);
+    }
+    return absl::StrCat("unique-", g * 7919, "-", g);
+  };
+  irs::MemoryDirectory dir;
+  Write(dir, duckdb::CompressionType::COMPRESSION_AUTO, {}, kRows, 1024, value);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  absl::flat_hash_set<duckdb::CompressionType> codecs;
+  for (const auto& block : col->DataBlocks()) {
+    codecs.insert(block.codec->type);
+  }
+  ASSERT_GT(codecs.size(), 1u);
+
+  irs::ColumnReader::PointReader cursor{r, *col};
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+  for (uint64_t i = 0; i < kRows; i += 37) {
+    for (const auto g : {i, kRows - 1 - i}) {
+      duckdb::FlatVector::ValidityMutable(out).Reset();
+      EXPECT_TRUE(cursor.FetchRow(g, out, 0)) << "row " << g;
+      ExpectRow(out, 0, g, value);
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, BatchedPointReadsKeepTheStringsOfEveryBlock) {
+  constexpr uint64_t kRows = 8 * 1024;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("uncompressed-row-", g * 7919, "-", g);
+  };
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                           duckdb::CompressionType::COMPRESSION_LZ4}) {
+    irs::MemoryDirectory dir;
+    Write(dir, codec, {}, kRows, 1024, value);
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    ASSERT_GT(col->DataBlocks().size(), 4u);
+    for (const auto& block : col->DataBlocks()) {
+      ASSERT_EQ(block.codec->type, Written(codec));
+    }
+
+    irs::ColumnReader::PointReader cursor{r, *col};
+    std::vector<uint64_t> rows;
+    for (uint64_t g = 5; g < kRows; g += 13) {
+      rows.push_back(g);
+    }
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    cursor.FetchRows(rows, out, 0);
+    for (size_t k = 0; k < rows.size(); ++k) {
+      ExpectRow(out, k, rows[k], value);
+    }
+  }
 }
 
 TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {

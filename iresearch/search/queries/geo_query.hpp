@@ -22,6 +22,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <type_traits>
 #include <utility>
 
@@ -46,8 +47,17 @@ class GeoVerifier {
     }
   }
 
-  bool Check(doc_id_t doc) {
-    const auto bytes = _cursor.FetchDoc(doc);
+  bool Check(doc_id_t doc) { return Matches(_cursor.FetchDoc(doc), doc); }
+
+  void Check(std::span<const doc_id_t> docs, std::span<bool> matched) {
+    _cursor.FetchDocs(docs);
+    for (size_t i = 0; i < docs.size(); ++i) {
+      matched[i] = Matches(_cursor.Fetched(i), docs[i]);
+    }
+  }
+
+ private:
+  bool Matches(bytes_view bytes, doc_id_t doc) {
     if (bytes.empty()) {
       SDB_DEBUG(IRESEARCH, "Missing stored geo value, doc='", doc, "'");
       return false;
@@ -55,7 +65,6 @@ class GeoVerifier {
     return _parser(bytes, _shape) && _acceptor(_shape);
   }
 
- private:
   irs::geo::ShapeContainer _shape;
   ColumnReader::BlobPointReader _cursor;
   Acceptor& _acceptor;

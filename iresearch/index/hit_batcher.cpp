@@ -44,6 +44,18 @@ namespace {
 
 constexpr duckdb::idx_t kDenseDensity = 32;
 constexpr duckdb::idx_t kMinDenseBatch = 64;
+constexpr duckdb::idx_t kPointDensity = 64;
+
+bool IsFlat(const duckdb::LogicalType& type) noexcept {
+  switch (type.InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+    case duckdb::PhysicalType::LIST:
+    case duckdb::PhysicalType::ARRAY:
+      return false;
+    default:
+      return true;
+  }
+}
 
 }  // namespace
 
@@ -80,6 +92,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _rg_col = nullptr;
   _rg_cache_begin = 1;
   _rg_cache_end = 0;
+  _col_reader = col_reader;
   if (col_reader == nullptr) {
     _ctx.reset();
     return;
@@ -356,9 +369,21 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   // run-based GatherScatter otherwise (same guard as GatherRows).
   if (dense && span <= STANDARD_VECTOR_SIZE) {
     c.reader->GatherDense(*c.state, anchor, _sel, hits, span, out);
-  } else {
-    c.reader->GatherScatter(*c.state, anchor, _sel, hits, out, at);
+    return;
   }
+  if (hits * kPointDensity < span && IsFlat(c.out_type)) {
+    if (!c.point) {
+      c.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
+                                                                 *c.reader);
+    }
+    _rows.clear();
+    for (duckdb::idx_t i = 0; i < hits; ++i) {
+      _rows.push_back(anchor + _sel.get_index(i));
+    }
+    c.point->FetchRows(_rows, out, at);
+    return;
+  }
+  c.reader->GatherScatter(*c.state, anchor, _sel, hits, out, at);
 }
 
 HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {

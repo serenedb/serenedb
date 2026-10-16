@@ -20,6 +20,8 @@
 
 #include "connector/functions/backup.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -27,6 +29,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
@@ -85,7 +88,19 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
       context.InterruptCheck();
     }
     SDB_ASSERT(start);
-    out.WriteValue(static_cast<int64_t>(*start));
+    for (const auto& name : start->with_failed_checkpoint) {
+      auto message =
+        absl::StrCat("checkpoints of database \"", name,
+                     "\" have failed; the backup holds its WAL as the failed "
+                     "checkpoint left it");
+      SDB_WARN(GENERAL, message,
+               "; check the database before relying on the backup");
+      conn.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(std::move(message)),
+                       ERR_HINT("Check the database before relying on the "
+                                "backup.")));
+    }
+    out.WriteValue(static_cast<int64_t>(start->lsn));
   }
 }
 

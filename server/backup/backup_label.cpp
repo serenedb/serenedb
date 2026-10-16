@@ -47,6 +47,8 @@ constexpr std::string_view kCatalogKey = "SERENEDB CATALOG LOG: ";
 constexpr std::string_view kDatabaseKey = "SERENEDB DATABASE: ";
 constexpr std::string_view kStoreKey = "SERENEDB STORE: ";
 constexpr std::string_view kChecksumKey = "SERENEDB CHECKSUM: ";
+constexpr std::string_view kCutMode = "cut";
+constexpr std::string_view kFailedCheckpointMode = "failed_checkpoint";
 constexpr std::string_view kSereneDBPrefix = "SERENEDB ";
 
 std::string Checksum(std::string_view text) {
@@ -93,9 +95,10 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
     kFormatKey, kBackupLabelFormat, "\n", kSystemKey, system_identifier, "\n",
     kCatalogKey, cut.catalog_link.string(), " ", cut.catalog_log_size, "\n");
   for (const auto& database : cut.databases) {
-    absl::StrAppend(&out, kDatabaseKey, database.oid, " ",
-                    database.checkpoint_iteration, " ", database.wal_size,
-                    "\n");
+    absl::StrAppend(
+      &out, kDatabaseKey, database.oid, " ", database.checkpoint_iteration, " ",
+      database.wal_size, " ",
+      database.with_failed_checkpoint ? kFailedCheckpointMode : kCutMode, "\n");
   }
   for (const auto& store : cut.stores) {
     absl::StrAppend(&out, kStoreKey, store.database_oid, "/", store.oid, " ",
@@ -162,8 +165,17 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
       has_catalog = true;
     } else if (absl::ConsumePrefix(&value, kDatabaseKey)) {
       DatabaseCut database;
-      if (!ParseFields(value, database.oid, database.checkpoint_iteration,
-                       database.wal_size) ||
+      const auto mode_at = value.rfind(' ');
+      if (mode_at == std::string_view::npos) {
+        return Malformed(line);
+      }
+      const auto mode = value.substr(mode_at + 1);
+      if (mode != kCutMode && mode != kFailedCheckpointMode) {
+        return Malformed(line);
+      }
+      database.with_failed_checkpoint = mode == kFailedCheckpointMode;
+      if (!ParseFields(value.substr(0, mode_at), database.oid,
+                       database.checkpoint_iteration, database.wal_size) ||
           !databases.insert(database.oid).second) {
         return Malformed(line);
       }

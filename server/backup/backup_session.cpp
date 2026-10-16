@@ -26,10 +26,10 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/main/valid_checker.hpp>
 #include <duckdb/storage/single_file_block_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -61,6 +61,12 @@ namespace {
 duckdb::SingleFileBlockManager& BlockManagerOf(duckdb::AttachedDatabase& db) {
   return irs::utils::downCast<duckdb::SingleFileBlockManager>(
     db.GetStorageManager().GetBlockManager());
+}
+
+bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
+  const auto wal = storage.GetWAL();
+  SDB_ASSERT(wal);
+  return wal->GetPath() != storage.GetWALPath();
 }
 
 uint64_t GenerationOf(const irs::DirectoryReader& reader) {
@@ -100,6 +106,7 @@ std::optional<Cut> RecordCut(
     auto& entry = cut.databases.emplace_back();
     entry.oid = db->oid;
     auto commit_lock = storage.GetCommitLock();
+    entry.with_failed_checkpoint = LeftByFailedCheckpoint(storage);
     entry.wal_size = storage.GetWALSize();
     entry.checkpoint_iteration =
       storage.GetBlockManager().GetCheckpointIteration();
@@ -127,7 +134,7 @@ BackupSession& BackupSession::Instance() {
   return *gSession;
 }
 
-std::optional<uint64_t> BackupSession::Begin(
+std::optional<StartedBackup> BackupSession::Begin(
   BackupOwner owner, std::string_view label,
   absl::FunctionRef<bool()> cancelled) {
   absl::MutexLock lock{&_mutex};
@@ -153,21 +160,29 @@ std::optional<uint64_t> BackupSession::Begin(
       duckdb::DuckTransactionManager::Get(*db).SharedCheckpointLock());
     block_managers.push_back(&BlockManagerOf(*db));
   }
+  std::vector<std::string> with_failed_checkpoint;
   for (auto& db : pins) {
-    for (const auto& storage : connector::BoundStorages(*db)) {
-      if (!storage->HasPendingCheckpoint()) {
-        continue;
-      }
-      if (duckdb::ValidChecker::IsInvalidated(*db)) {
+    auto& storage = db->GetStorageManager();
+    const bool failed_checkpoint = [&] {
+      auto commit_lock = storage.GetCommitLock();
+      if (!storage.GetWAL()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
           ERR_MSG("cannot start a backup: database \"",
-                  db->GetName().GetIdentifierName(), "\" is invalidated"),
-          ERR_HINT("Re-attach the database, then retry."));
+                  db->GetName().GetIdentifierName(),
+                  "\" has no active WAL after a failed checkpoint"),
+          ERR_HINT("Restart the server, then retry."));
       }
-      SDB_ENSURE(false, "cannot start a backup: inverted index ",
-                 storage->GetId(), " in database \"",
-                 db->GetName().GetIdentifierName(),
+      return LeftByFailedCheckpoint(storage);
+    }();
+    if (failed_checkpoint) {
+      with_failed_checkpoint.push_back(db->GetName().GetIdentifierName());
+      continue;
+    }
+    for (const auto& storage : connector::BoundStorages(*db)) {
+      SDB_ENSURE(!storage->HasPendingCheckpoint(),
+                 "cannot start a backup: inverted index ", storage->GetId(),
+                 " in database \"", db->GetName().GetIdentifierName(),
                  "\" has an unfinished checkpoint save");
     }
   }
@@ -212,7 +227,7 @@ std::optional<uint64_t> BackupSession::Begin(
   _owner = owner;
   _label_file = std::move(label_file);
   _active = true;
-  return start_lsn;
+  return StartedBackup{start_lsn, std::move(with_failed_checkpoint)};
 }
 
 FinishedBackup BackupSession::Finish(const void* session) {

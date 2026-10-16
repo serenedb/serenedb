@@ -32,6 +32,7 @@
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -124,11 +125,13 @@ void ForEachFile(const std::filesystem::path& directory, Visit&& visit) {
   }
 }
 
-void PruneStore(const std::filesystem::path& directory, uint64_t generation) {
+void PruneStore(const std::filesystem::path& directory, uint64_t generation,
+                bool keep_pending) {
   ForEachFile(directory,
               [&](const std::filesystem::path& path, std::string_view name) {
-                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix) ||
-                    irs::index_meta::ParseGeneration(name) > generation) {
+                if (absl::StartsWith(name, irs::index_meta::kPendingPrefix)
+                      ? !keep_pending
+                      : irs::index_meta::ParseGeneration(name) > generation) {
                   Remove(path);
                 }
               });
@@ -180,19 +183,31 @@ void Restore(const catalog::DataDirectory& layout,
   }
   TruncateFile(catalog_log, cut.catalog_log_size);
 
+  irs::containers::FlatHashSet<duckdb::idx_t> with_failed_checkpoint;
   for (const auto& database : cut.databases) {
     const auto wal = absl::StrCat(layout.DatabaseFile(database.oid), ".wal");
+    const auto checkpoint_wal = absl::StrCat(wal, ".checkpoint");
+    const auto& active_wal =
+      database.with_failed_checkpoint ? checkpoint_wal : wal;
     if (database.wal_size == 0) {
-      Remove(wal);
+      Remove(active_wal);
     } else {
-      TruncateFile(wal, database.wal_size);
+      TruncateFile(active_wal, database.wal_size);
     }
-    Remove(absl::StrCat(wal, ".checkpoint"));
+    if (database.with_failed_checkpoint) {
+      with_failed_checkpoint.insert(database.oid);
+      SDB_WARN(STARTUP, "database ", database.oid,
+               " was backed up while its checkpoints were failing; boot "
+               "recovers it as after a crash; check its state");
+    } else {
+      Remove(checkpoint_wal);
+    }
     Remove(absl::StrCat(wal, ".recovery"));
   }
   for (const auto& store : cut.stores) {
     PruneStore(layout.StorageDir(store.database_oid, store.oid),
-               store.generation);
+               store.generation,
+               with_failed_checkpoint.contains(store.database_oid));
   }
 
   RemoveStaleLocks(engine_dir);

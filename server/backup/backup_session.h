@@ -45,6 +45,7 @@ struct DatabaseCut {
   duckdb::idx_t oid = 0;
   uint64_t checkpoint_iteration = 0;
   duckdb::idx_t wal_size = 0;
+  bool with_failed_checkpoint = false;
 };
 
 struct StoreCut {
@@ -65,6 +66,11 @@ struct BackupOwner {
   int32_t pid = 0;
 };
 
+struct StartedBackup {
+  uint64_t lsn = 0;
+  std::vector<std::string> with_failed_checkpoint;
+};
+
 struct FinishedBackup {
   uint64_t lsn = 0;
   std::string label_file;
@@ -74,8 +80,8 @@ class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  std::optional<uint64_t> Begin(BackupOwner owner, std::string_view label,
-                                absl::FunctionRef<bool()> cancelled);
+  std::optional<StartedBackup> Begin(BackupOwner owner, std::string_view label,
+                                     absl::FunctionRef<bool()> cancelled);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;

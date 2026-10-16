@@ -31,6 +31,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -115,8 +116,13 @@ struct MergeUnitRun {
 
   std::optional<size_t> Next() {
     absl::MutexLock lock{&mutex};
-    mutex.Await(absl::Condition{this, &MergeUnitRun::Claimable});
-    return schedule.Claim();
+    for (;;) {
+      mutex.Await(absl::Condition{this, &MergeUnitRun::Claimable});
+      SDB_PARK_ONCE_ON_FAILURE("pause_merge_unit_before_claim");
+      if (auto unit = schedule.Claim(); unit || schedule.Done()) {
+        return unit;
+      }
+    }
   }
 
   bool Finish() {

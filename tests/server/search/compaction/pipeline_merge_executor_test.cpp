@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/notification.h>
+#include <absl/time/clock.h>
 
 #include <algorithm>
 #include <array>
@@ -641,6 +643,56 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
   while (const auto next = run.Next()) {
     run.Run(*next);
   }
+  EXPECT_TRUE(run.Finish());
+}
+
+TEST_F(PipelineMergeExecutorTest, NextWaitsForTheUnitsOtherThreadsClaimed) {
+  if (!irs::AddFailurePointDebugging("pause_merge_unit_before_claim")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  const absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("pause_merge_unit_before_claim");
+    irs::RemoveFailurePointDebugging("pause_merge_unit_before_claim:release");
+  };
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(4));
+  if (plan.PostingsPending()) {
+    ASSERT_TRUE(plan.RunPostings());
+  }
+  search::MergeUnitRun run{plan, std::chrono::steady_clock::now()};
+  absl::Notification ended;
+  bool done = false;
+  std::thread driver{[&] {
+    while (const auto unit = run.Next()) {
+      run.Run(*unit);
+    }
+    done = run.schedule.Done();
+    ended.Notify();
+  }};
+  while (
+    !irs::RemoveFailurePointDebugging("pause_merge_unit_before_claim:parked")) {
+    absl::SleepFor(absl::Milliseconds(1));
+  }
+  std::vector<size_t> taken;
+  while (const auto unit = run.schedule.Claim()) {
+    taken.push_back(*unit);
+  }
+  EXPECT_FALSE(taken.empty());
+  irs::AddFailurePointDebugging("pause_merge_unit_before_claim:release");
+  EXPECT_FALSE(ended.WaitForNotificationWithTimeout(absl::Milliseconds(100)));
+  for (const auto unit : taken) {
+    run.Run(unit);
+  }
+  driver.join();
+  EXPECT_TRUE(done);
   EXPECT_TRUE(run.Finish());
 }
 

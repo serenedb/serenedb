@@ -793,6 +793,16 @@ void ColumnReader::PointReader::Evict(uint64_t incoming) {
   }
 }
 
+IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchValidity(
+  const ColumnReader& validity, uint64_t row, duckdb::Vector& out,
+  duckdb::idx_t out_offset) {
+  auto& block = Block(_validity_blocks, validity, _validity_window, row);
+  block.segment->FetchRow(
+    block.state, static_cast<duckdb::row_t>(row - _validity_window.begin), out,
+    out_offset);
+  return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
+}
+
 bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
                                          duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
@@ -801,14 +811,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
   const auto* validity = _reader->_validity.get();
-  if (validity) {
-    auto& block = Block(_validity_blocks, *validity, _validity_window, row);
-    block.segment->FetchRow(
-      block.state, static_cast<duckdb::row_t>(row - _validity_window.begin),
-      out, out_offset);
-    if (!duckdb::FlatVector::Validity(out).RowIsValid(out_offset)) {
-      return false;
-    }
+  if (validity && !FetchValidity(*validity, row, out, out_offset)) {
+    return false;
   }
   auto& block = Block(_blocks, *_reader, _window, row);
   block.segment->FetchRow(block.state,
@@ -827,11 +831,7 @@ bool ColumnReader::PointReader::ValidRow(uint64_t row,
     return true;
   }
   duckdb::FlatVector::ValidityMutable(scratch).SetValid(0);
-  auto& block = Block(_validity_blocks, *validity, _validity_window, row);
-  block.segment->FetchRow(
-    block.state, static_cast<duckdb::row_t>(row - _validity_window.begin),
-    scratch, 0);
-  return duckdb::FlatVector::Validity(scratch).RowIsValid(0);
+  return FetchValidity(*validity, row, scratch, 0);
 }
 
 }  // namespace irs

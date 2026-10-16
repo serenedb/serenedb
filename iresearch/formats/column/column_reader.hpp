@@ -283,6 +283,8 @@ class ColumnReader {
 
     OpenBlock& Block(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
                      BlockWindow& window, uint64_t row);
+    bool FetchValidity(const ColumnReader& validity, uint64_t row,
+                       duckdb::Vector& out, duckdb::idx_t out_offset);
     void Evict(uint64_t incoming);
 
     ReadContext _ctx;

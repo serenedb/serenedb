@@ -329,6 +329,7 @@ class ColFilterChain {
     std::span<ColFilterLeaf> leaves;
   };
 
+  duckdb::idx_t EvaluateRow(Row& row, duckdb::idx_t count, const auto& doc_of);
   duckdb::idx_t FilterRows(uint64_t anchor, duckdb::idx_t span,
                            duckdb::SelectionVector& sel,
                            duckdb::idx_t survivors);

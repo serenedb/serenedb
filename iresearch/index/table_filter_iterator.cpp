@@ -560,6 +560,22 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
   return _rows.empty() ? survivors : FilterRows(anchor, span, sel, survivors);
 }
 
+IRS_FORCE_INLINE duckdb::idx_t ColFilterChain::EvaluateRow(Row& row,
+                                                           duckdb::idx_t count,
+                                                           const auto& doc_of) {
+  auto& chunk = *row.chunk;
+  for (size_t l = 0; l < row.leaves.size(); ++l) {
+    auto writer = duckdb::FlatVector::Writer<bool>(
+      chunk.data[row.readers.size() + l], count);
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      writer.WriteValue(row.leaves[l].Contains(doc_of(k)));
+    }
+  }
+  chunk.SetCardinality(count);
+  auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
+  return executor.SelectExpression(chunk, _row_sel);
+}
+
 duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
                                          duckdb::SelectionVector& sel,
                                          duckdb::idx_t survivors) {
@@ -580,18 +596,10 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
         reader->GatherScatter(row.scans[j], anchor, sel, survivors, vector, 0);
       }
     }
-    for (size_t l = 0; l < row.leaves.size(); ++l) {
-      auto writer = duckdb::FlatVector::Writer<bool>(
-        chunk.data[row.readers.size() + l], survivors);
-      for (duckdb::idx_t k = 0; k < survivors; ++k) {
-        writer.WriteValue(row.leaves[l].Contains(
-          static_cast<doc_id_t>(anchor + sel.get_index(k)) +
-          doc_limits::min()));
-      }
-    }
-    chunk.SetCardinality(survivors);
-    auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
-    const auto approved = executor.SelectExpression(chunk, _row_sel);
+    const auto approved = EvaluateRow(row, survivors, [&](duckdb::idx_t k) {
+      return static_cast<doc_id_t>(anchor + sel.get_index(k)) +
+             doc_limits::min();
+    });
     for (duckdb::idx_t k = 0; k < approved; ++k) {
       sel.set_index(k, sel.get_index(_row_sel.get_index(k)));
     }
@@ -617,15 +625,9 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
       }
       r.points[j]->FetchRow(row, vector, 0);
     }
-    for (size_t l = 0; l < r.leaves.size(); ++l) {
-      auto writer =
-        duckdb::FlatVector::Writer<bool>(chunk.data[r.readers.size() + l], 1);
-      writer.WriteValue(
-        r.leaves[l].Contains(static_cast<doc_id_t>(row) + doc_limits::min()));
-    }
-    chunk.SetCardinality(1);
-    auto& executor = *r.state->Cast<duckdb::ExpressionFilterState>().executor;
-    if (executor.SelectExpression(chunk, _row_sel) == 0) {
+    if (EvaluateRow(r, 1, [&](duckdb::idx_t) {
+          return static_cast<doc_id_t>(row) + doc_limits::min();
+        }) == 0) {
       return false;
     }
   }
@@ -675,23 +677,23 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 }
 
 detail::PointRead ColFilterChain::PointReads() const noexcept {
+  const auto zstd = [](const irs::ColumnReader& reader) {
+    return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
+      return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+    });
+  };
   auto read = detail::PointRead::Row;
   for (const auto& c : _cols) {
     if (c.nested) {
       return detail::PointRead::None;
     }
-    if (absl::c_any_of(c.reader->DataBlocks(), [](const auto& block) {
-          return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
-        })) {
+    if (zstd(*c.reader)) {
       read = detail::PointRead::Vector;
     }
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
-      if (reader && absl::c_any_of(reader->DataBlocks(), [](const auto& block) {
-            return block.codec->type ==
-                   duckdb::CompressionType::COMPRESSION_ZSTD;
-          })) {
+      if (reader && zstd(*reader)) {
         read = detail::PointRead::Vector;
       }
     }

@@ -28,11 +28,14 @@
 
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/operator/decimal_cast_operators.hpp>
 #include <duckdb/common/types/bit.hpp>
+#include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/decimal.hpp>
+#include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
@@ -49,6 +52,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -93,7 +97,13 @@ struct LoadBin {
     if (data.size() != sizeof(Wire)) {
       return false;
     }
-    sink.Fixed(static_cast<Logical>(absl::big_endian::Load<Wire>(data.data())));
+    const auto wire = absl::big_endian::Load<Wire>(data.data());
+    if constexpr (std::is_integral_v<Logical>) {
+      if (!std::in_range<Logical>(wire)) {
+        return false;
+      }
+    }
+    sink.Fixed(static_cast<Logical>(wire));
     return true;
   }
 };
@@ -126,14 +136,17 @@ struct BlobBin {
   }
 };
 
-int64_t TimestampMicrosFromWire(int64_t us) {
+bool TimestampFromWire(int64_t us, duckdb::timestamp_t& ts) {
   if (us == std::numeric_limits<int64_t>::max()) {
-    return us;
+    ts = duckdb::timestamp_t::infinity();
+    return true;
   }
   if (us == std::numeric_limits<int64_t>::min()) {
-    return -std::numeric_limits<int64_t>::max();
+    ts = duckdb::timestamp_t::ninfinity();
+    return true;
   }
-  return us + kGapUs;
+  return duckdb::TryAddOperator::Operation(us, kGapUs, ts.value) &&
+         ts.IsFinite();
 }
 
 int64_t TimestampSecondsFromWire(int64_t us) {
@@ -156,14 +169,8 @@ int64_t TimestampMillisFromWire(int64_t us) {
   return us / 1000 + kGapMs;
 }
 
-int64_t TimestampNanosFromWire(int64_t us) {
-  if (us == std::numeric_limits<int64_t>::max()) {
-    return us;
-  }
-  if (us == std::numeric_limits<int64_t>::min()) {
-    return -std::numeric_limits<int64_t>::max();
-  }
-  return (us + kGapUs) * 1000;
+bool IsTimeOfDay(int64_t us) {
+  return us >= 0 && us <= duckdb::Interval::MICROS_PER_DAY;
 }
 
 struct TimestampBin {
@@ -172,8 +179,11 @@ struct TimestampBin {
     if (data.size() != 8) {
       return false;
     }
-    const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_t{TimestampMicrosFromWire(us)});
+    duckdb::timestamp_t ts;
+    if (!TimestampFromWire(absl::big_endian::Load<int64_t>(data.data()), ts)) {
+      return false;
+    }
+    sink.Fixed(ts);
     return true;
   }
 };
@@ -184,8 +194,11 @@ struct TimestampTzBin {
     if (data.size() != 8) {
       return false;
     }
-    const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_tz_t{TimestampMicrosFromWire(us)});
+    duckdb::timestamp_t ts;
+    if (!TimestampFromWire(absl::big_endian::Load<int64_t>(data.data()), ts)) {
+      return false;
+    }
+    sink.Fixed(duckdb::timestamp_tz_t{ts.value});
     return true;
   }
 };
@@ -197,6 +210,9 @@ struct TimeBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
+    if (!IsTimeOfDay(us)) {
+      return false;
+    }
     sink.Fixed(duckdb::dtime_t{us});
     return true;
   }
@@ -211,6 +227,10 @@ struct TimeTzBin {
     const auto us = absl::big_endian::Load<int64_t>(data.data());
     // PG zone is seconds WEST; DuckDB offset() is seconds EAST -- negate.
     const auto pg_zone = absl::big_endian::Load<int32_t>(data.data() + 8);
+    if (!IsTimeOfDay(us) || pg_zone < duckdb::dtime_tz_t::MIN_OFFSET ||
+        pg_zone > duckdb::dtime_tz_t::MAX_OFFSET) {
+      return false;
+    }
     sink.Fixed(duckdb::dtime_tz_t{duckdb::dtime_t{us}, -pg_zone});
     return true;
   }
@@ -229,7 +249,14 @@ struct DateBin {
     } else if (days == std::numeric_limits<int32_t>::min()) {
       result = duckdb::date_t::ninfinity();
     } else {
-      result = duckdb::date_t(days + kGapDays);
+      const int64_t shifted = int64_t{days} + kGapDays;
+      if (!std::in_range<int32_t>(shifted)) {
+        return false;
+      }
+      result = duckdb::date_t(static_cast<int32_t>(shifted));
+      if (!result.IsFinite()) {
+        return false;
+      }
     }
     sink.Fixed(result);
     return true;
@@ -246,6 +273,10 @@ struct TimestampSecBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
+    duckdb::timestamp_t ts;
+    if (!TimestampFromWire(us, ts)) {
+      return false;
+    }
     sink.Fixed(duckdb::timestamp_sec_t(TimestampSecondsFromWire(us)));
     return true;
   }
@@ -258,6 +289,10 @@ struct TimestampMsBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
+    duckdb::timestamp_t ts;
+    if (!TimestampFromWire(us, ts)) {
+      return false;
+    }
     sink.Fixed(duckdb::timestamp_ms_t(TimestampMillisFromWire(us)));
     return true;
   }
@@ -269,8 +304,13 @@ struct TimestampNsBin {
     if (data.size() != 8) {
       return false;
     }
-    const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_ns_t(TimestampNanosFromWire(us)));
+    duckdb::timestamp_t ts;
+    duckdb::timestamp_ns_t ns;
+    if (!TimestampFromWire(absl::big_endian::Load<int64_t>(data.data()), ts) ||
+        !duckdb::Timestamp::TryFromTimestampNanos(ts, 0, ns)) {
+      return false;
+    }
+    sink.Fixed(ns);
     return true;
   }
 };
@@ -281,8 +321,13 @@ struct TimestampTzNsBin {
     if (data.size() != 8) {
       return false;
     }
-    const auto us = absl::big_endian::Load<int64_t>(data.data());
-    sink.Fixed(duckdb::timestamp_tz_ns_t(TimestampNanosFromWire(us)));
+    duckdb::timestamp_t ts;
+    duckdb::timestamp_ns_t ns;
+    if (!TimestampFromWire(absl::big_endian::Load<int64_t>(data.data()), ts) ||
+        !duckdb::Timestamp::TryFromTimestampNanos(ts, 0, ns)) {
+      return false;
+    }
+    sink.Fixed(duckdb::timestamp_tz_ns_t(ns.value));
     return true;
   }
 };
@@ -294,6 +339,9 @@ struct TimeNsBin {
       return false;
     }
     const auto us = absl::big_endian::Load<int64_t>(data.data());
+    if (!IsTimeOfDay(us)) {
+      return false;
+    }
     sink.Fixed(duckdb::dtime_ns_t(us * 1000));
     return true;
   }
@@ -418,12 +466,12 @@ struct DecimalIntBin {
     if (negative) {
       value = -value;
     }
-    if (value < std::numeric_limits<Phys>::min() ||
-        value > std::numeric_limits<Phys>::max()) {
+    const auto width = duckdb::DecimalType::GetWidth(type);
+    const auto limit = duckdb::NumericHelper::POWERS_OF_TEN[width];
+    if (value <= -limit || value >= limit) {
       return false;
     }
-    sink.template Decimal<Phys>(static_cast<Phys>(value),
-                                duckdb::DecimalType::GetWidth(type), scale);
+    sink.template Decimal<Phys>(static_cast<Phys>(value), width, scale);
     return true;
   }
 };
@@ -440,9 +488,13 @@ struct DecimalHugeintBin {
         !MagnitudeToHugeint(negative, magnitude, value)) {
       return false;
     }
+    const auto width = duckdb::DecimalType::GetWidth(type);
+    const auto& limit = duckdb::Hugeint::POWERS_OF_TEN[width];
+    if (value <= -limit || value >= limit) {
+      return false;
+    }
     sink.template Decimal<duckdb::hugeint_t>(
-      value, duckdb::DecimalType::GetWidth(type),
-      duckdb::DecimalType::GetScale(type));
+      value, width, duckdb::DecimalType::GetScale(type));
     return true;
   }
 };

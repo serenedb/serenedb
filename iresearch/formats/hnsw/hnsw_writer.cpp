@@ -295,6 +295,26 @@ uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
   return delivered;
 }
 
+std::vector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
+                               uint64_t rows, uint32_t d, bool normalize,
+                               std::span<uint8_t> valid,
+                               std::vector<float>& buf) {
+  std::vector<float> vectors(static_cast<size_t>(rows) * d);
+  ScanVectors(col, ctx, rows, d, normalize, buf,
+              [&](const float* src, size_t n, uint64_t first,
+                  const duckdb::ValidityMask& mask) {
+                std::memcpy(vectors.data() + first * d, src,
+                            n * d * sizeof(float));
+                for (size_t i = 0; i < n; ++i) {
+                  if (!mask.RowIsValid(i)) {
+                    valid[first + i] = 0;
+                    std::fill_n(vectors.data() + (first + i) * d, d, 0.f);
+                  }
+                }
+              });
+  return vectors;
+}
+
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 
 class HnswCrew {
@@ -1207,18 +1227,80 @@ std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
 }
 
 std::shared_ptr<const QuantizerStats> HnswWriter::EncodeRotated(
-  std::span<const uint8_t> valid, const AnnBuildEnv* env) {
+  std::span<const float> vectors, std::span<const uint8_t> valid,
+  const AnnBuildEnv* env) {
   ForEachValidRun(valid, [&](size_t first, size_t count) {
-    _qw->Train(_vectors.data() + first * _d, count);
+    _qw->Train(vectors.data() + first * _d, count);
   });
   _record_size = _qw->BlockSetting().record_size;
   _codes.resize(static_cast<size_t>(_rows) * _record_size);
-  SDB_ENSURE(_qw->EncodeInto(_codes.data(), _vectors.data(), _rows),
+  SDB_ENSURE(_qw->EncodeInto(_codes.data(), vectors.data(), _rows),
              "hnsw: sq8 encodes rows in place");
   auto stats = SerializeStats();
   SDB_ENSURE(stats, "hnsw: sq8 statistics round-trip");
   ComputeCodeTails(*stats, _codes.data(), _record_size, _rows, _d, env, _tails);
   return stats;
+}
+
+bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
+                                bool normalize, std::vector<float>& batch_buf,
+                                const AnnBuildEnv* env) {
+  const bool train =
+    _qw->TrainSamples(_rows) == QuantizerWriter::kTrainStreaming;
+  const size_t train_rows = train ? 0 : _qw->TrainSamples(_rows);
+  const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
+  if (train || train_rows != 0 || needs_centroid) {
+    if (needs_centroid) {
+      _centroid.assign(_d, 0.f);
+    }
+    std::vector<float> train_buf;
+    const uint64_t sample =
+      train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
+    const uint64_t trained_rows = ScanValidVectors(
+      col, ctx, _rows, sample, _d, normalize, batch_buf,
+      [&](const float* rows, size_t n) {
+        if (train) {
+          _qw->Train(rows, n);
+        }
+        if (const size_t have = train_buf.size() / _d; have < train_rows) {
+          const size_t take = std::min(n, train_rows - have);
+          train_buf.insert(train_buf.end(), rows, rows + take * _d);
+        }
+        if (needs_centroid) {
+          for (size_t i = 0; i < n; ++i) {
+            const float* row = rows + i * size_t{_d};
+            for (uint32_t j = 0; j < _d; ++j) {
+              _centroid[j] += row[j];
+            }
+          }
+        }
+      });
+    if (trained_rows == 0) {
+      return false;
+    }
+    if (train_rows != 0) {
+      _qw->TrainParallel(
+        train_buf.data(), train_buf.size() / _d,
+        [env](size_t tasks, absl::FunctionRef<void(size_t)> task) {
+          FanOut(env, tasks, task);
+        });
+    }
+    if (needs_centroid) {
+      const float inv = 1.f / static_cast<float>(trained_rows);
+      for (uint32_t j = 0; j < _d; ++j) {
+        _centroid[j] *= inv;
+      }
+      _qw->SetClusterCentroid(_centroid.data());
+    }
+  }
+  const uint64_t refine = _qw->RefineSamples(_rows);
+  if (refine != 0) {
+    ScanValidVectors(
+      col, ctx, _rows, std::min<uint64_t>(_rows, refine), _d, normalize,
+      batch_buf, [&](const float* rows, size_t n) { _qw->Refine(rows, n); });
+    _qw->RefineDone();
+  }
+  return true;
 }
 
 yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
@@ -1247,106 +1329,25 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
 
   if (_qw && RotatesCodes(_info, _d)) {
-    _vectors.resize(static_cast<size_t>(_rows) * _d);
-    ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
-                [&](const float* rows, size_t n, uint64_t first,
-                    const duckdb::ValidityMask& mask) {
-                  std::memcpy(_vectors.data() + first * _d, rows,
-                              n * _d * sizeof(float));
-                  for (size_t i = 0; i < n; ++i) {
-                    if (!mask.RowIsValid(i)) {
-                      valid[first + i] = 0;
-                      std::fill_n(_vectors.data() + (first + i) * _d, _d, 0.f);
-                    }
-                  }
-                });
+    auto vectors =
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
     const bool enough = PanoramaEnough(valid, _d);
-    const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, _vectors,
+    const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, vectors,
                                     valid, _d, enough);
     if (basis && enough) {
-      RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation);
-      const auto stats = EncodeRotated(valid, env);
+      RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
+      const auto stats = EncodeRotated(vectors, valid, env);
       std::vector<float> pair_terms;
       const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
-                                           _vectors.data(), _rows, pair_terms);
+                                           vectors.data(), _rows, pair_terms);
       co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
                              donor, env, HnswOriginals{}, _d);
-      _vectors = {};
       co_return {};
     }
-    _vectors = {};
   }
 
-  const bool train =
-    _qw && _qw->TrainSamples(_rows) == QuantizerWriter::kTrainStreaming;
-  const size_t train_rows = _qw && !train ? _qw->TrainSamples(_rows) : 0;
-  std::vector<float> train_buf;
-  const bool needs_centroid = _qw && QuantizerNeedsCentroid(_info.quant.kind);
-  if (needs_centroid) {
-    _centroid.assign(_d, 0.f);
-  }
-
-  uint64_t trained_rows = 0;
-  if (_qw && (train || train_rows != 0 || needs_centroid)) {
-    // A streaming trainer asked for every row and has to get every row. For
-    // scalar quantization what it trains is a per-dimension min/max, and
-    // faiss silently clamps a component outside that range -- so a row the
-    // trainer never saw encodes with an error the range cannot describe, and
-    // on a segment past the sample that was three quarters of the rows. The
-    // pass costs one sequential read of a column this build reads again to
-    // encode, and the arithmetic is two comparisons per component. Trainers
-    // that want a bounded sample (k-means and friends) still get one.
-    const uint64_t sample =
-      train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
-    trained_rows = ScanValidVectors(
-      col, ctx, _rows, sample, _d, normalize, batch_buf,
-      [&](const float* rows, size_t n) {
-        if (train) {
-          _qw->Train(rows, n);
-        }
-        if (const size_t have = train_buf.size() / _d; have < train_rows) {
-          const size_t take = std::min(n, train_rows - have);
-          train_buf.insert(train_buf.end(), rows, rows + take * _d);
-        }
-        if (needs_centroid) {
-          for (size_t i = 0; i < n; ++i) {
-            const float* row = rows + i * size_t{_d};
-            for (uint32_t j = 0; j < _d; ++j) {
-              _centroid[j] += row[j];
-            }
-          }
-        }
-      });
-    if (trained_rows == 0) {
-      co_return {};
-    }
-    if (train_rows != 0) {
-      _qw->TrainParallel(
-        train_buf.data(), train_buf.size() / _d,
-        [env](size_t tasks, absl::FunctionRef<void(size_t)> task) {
-          FanOut(env, tasks, task);
-        });
-      train_buf = {};
-    }
-  }
-
-  if (needs_centroid) {
-    SDB_ASSERT(trained_rows != 0);
-    const float inv = 1.f / static_cast<float>(trained_rows);
-    for (uint32_t j = 0; j < _d; ++j) {
-      _centroid[j] *= inv;
-    }
-    _qw->SetClusterCentroid(_centroid.data());
-  }
-
-  if (_qw) {
-    const uint64_t refine = _qw->RefineSamples(_rows);
-    if (refine != 0) {
-      ScanValidVectors(
-        col, ctx, _rows, std::min<uint64_t>(_rows, refine), _d, normalize,
-        batch_buf, [&](const float* rows, size_t n) { _qw->Refine(rows, n); });
-      _qw->RefineDone();
-    }
+  if (_qw && !TrainQuantizer(col, ctx, normalize, batch_buf, env)) {
+    co_return {};
   }
 
   bool encoding = _qw && _qw->BlockSetting().group_size == 1;
@@ -1354,37 +1355,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   if (encoding) {
     _record_size = _qw->BlockSetting().record_size;
     _codes.resize(static_cast<size_t>(_rows) * _record_size);
-  }
-  if (!_qw || raw_build) {
-    _vectors.resize(static_cast<size_t>(_rows) * _d);
-  }
-
-  if (encoding) {
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
                             _record_size, valid, env);
-    if (encoding && raw_build) {
-      ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
-                  [&](const float* rows, size_t n, uint64_t first,
-                      const duckdb::ValidityMask& /*mask*/) {
-                    std::memcpy(_vectors.data() + first * _d, rows,
-                                n * _d * sizeof(float));
-                  });
-    }
-  } else {
-    ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
-                [&](const float* rows, size_t n, uint64_t first,
-                    const duckdb::ValidityMask& mask) {
-                  for (size_t i = 0; i < n; ++i) {
-                    if (!mask.RowIsValid(i)) {
-                      valid[first + i] = 0;
-                    }
-                  }
-                  if (!_qw) {
-                    std::memcpy(_vectors.data() + first * _d, rows,
-                                n * _d * sizeof(float));
-                  }
-                });
-    if (!_qw && RotationApplies(_info.metric, _d)) {
+  } else if (!_qw) {
+    _vectors = LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
+    if (RotationApplies(_info.metric, _d)) {
       const bool enough = PanoramaEnough(valid, _d);
       const auto basis = AcquireBasis(_bases, _info.centroids_id, donor,
                                       _vectors, valid, _d, enough);
@@ -1420,18 +1395,21 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     "raw-float build of ",
     _rows, " x ", _d, " vectors");
 
+  std::vector<float> build_vectors;
+  if (raw_build) {
+    build_vectors =
+      LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);
+  }
+  const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
-      HnswRawDistFactory<M> factory{.base = _vectors.data(), .d = _d};
+      HnswRawDistFactory<M> factory{.base = base, .d = _d};
       built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
                             donor, env, HnswOriginals{}, _d);
     });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);
-  if (raw_build) {
-    _vectors = {};
-  }
   co_return {};
 }
 

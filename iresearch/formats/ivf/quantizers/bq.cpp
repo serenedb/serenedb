@@ -400,8 +400,10 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
     if (!_cell_count.empty()) {
       BqFitLevels(_lay, _cell_count.data(), _cell_sum.data(), _model.data());
     }
-    _cell_count = {};
-    _cell_sum = {};
+    _cell_count.clear();
+    _cell_count.shrink_to_fit();
+    _cell_sum.clear();
+    _cell_sum.shrink_to_fit();
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
@@ -505,7 +507,8 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
         step1[i] = fit.means[2] - fit.means[1];
       }
     }
-    _sample = {};
+    _sample.clear();
+    _sample.shrink_to_fit();
   }
 
   BqLayout _lay;

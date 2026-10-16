@@ -60,7 +60,11 @@ class HnswWriter final : public AnnWriter {
   std::shared_ptr<const QuantizerStats> SerializeStats();
 
   std::shared_ptr<const QuantizerStats> EncodeRotated(
-    std::span<const uint8_t> valid, const AnnBuildEnv* env);
+    std::span<const float> vectors, std::span<const uint8_t> valid,
+    const AnnBuildEnv* env);
+
+  bool TrainQuantizer(const ColumnReader& col, ReadContext& ctx, bool normalize,
+                      std::vector<float>& batch_buf, const AnnBuildEnv* env);
 
   AnnInfo _info;
   HnswBases* _bases;

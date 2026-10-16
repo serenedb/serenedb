@@ -680,3 +680,57 @@ def test_backup_keeps_a_table_dropped_during_the_backup(tmp_path: Path) -> None:
         source.stop()
         if restored is not None:
             restored.stop()
+
+
+def _subscription_enabled(server: Serened) -> bool:
+    with _connect(server) as conn:
+        (enabled,) = conn.execute(
+            "SELECT subenabled FROM pg_subscription WHERE subname = 'bsub'").fetchone()
+    return enabled
+
+
+def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> None:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    restored = None
+    try:
+        source.start()
+        with _connect(source) as conn:
+            conn.execute("CREATE TABLE bsub_rows (id INT PRIMARY KEY)")
+            conn.execute(
+                "CREATE SUBSCRIPTION bsub CONNECTION "
+                "'host=127.0.0.1 port=1 dbname=postgres connect_timeout=1' "
+                "PUBLICATION bsub_pub WITH (connect = false, slot_name = 'bsub')")
+            conn.execute("ALTER SUBSCRIPTION bsub ENABLE")
+        assert _subscription_enabled(source)
+
+        copy = tmp_path / "copy"
+        with _connect(source) as backup:
+            backup.execute("SELECT pg_backup_start('subscriptions')")
+            shutil.copytree(source.datadir, copy, symlinks=True)
+            (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
+        source.restart()
+        assert _subscription_enabled(source)
+        source.stop()
+
+        (copy / "backup_label").write_text(label)
+        restored = Serened(SERENED_BIN, datadir=str(copy),
+                           log_path=str(tmp_path / "restored.log"))
+        restored.start()
+        assert not _subscription_enabled(restored)
+        assert not (copy / "engine_v1" / "subscriptions.hold").exists()
+        _expect_one_warning(
+            tmp_path / "restored.log",
+            'subscription "bsub" in database "postgres" was disabled because the '
+            "server was restored from a backup; check its replication slot, then "
+            "ALTER SUBSCRIPTION ... ENABLE")
+
+        restored.restart()
+        assert not _subscription_enabled(restored)
+        with _connect(restored) as conn:
+            conn.execute("ALTER SUBSCRIPTION bsub ENABLE")
+        assert _subscription_enabled(restored)
+    finally:
+        source.stop()
+        if restored is not None:
+            restored.stop()

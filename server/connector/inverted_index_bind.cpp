@@ -32,6 +32,7 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/type_visitor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -1055,6 +1056,20 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   return found;
 }
 
+void ValidateConstantParts(const duckdb::Expression& expr,
+                           duckdb::ClientContext& context) {
+  if (expr.IsFoldable()) {
+    if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+      duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
+    }
+    return;
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      ValidateConstantParts(child, context);
+    });
+}
+
 std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   const duckdb::IndexCatalogEntry& entry, duckdb::ClientContext& context,
   duckdb::CatalogEntry& relation,
@@ -1114,6 +1129,7 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
           ERR_HINT("Index the OID column and compare it with a reg* value, "
                    "such as oid_column = 'name'::regclass."));
       }
+      ValidateConstantParts(*exprs[i], context);
       record.type = value_type;
       label = entry.parsed_expressions[i]->ToString();
       record.expression_text = label;

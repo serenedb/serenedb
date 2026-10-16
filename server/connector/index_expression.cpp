@@ -65,11 +65,11 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
           expr->Cast<duckdb::BoundFunctionExpression>())
           .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::Value folded;
-      SDB_ENSURE(
-        duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
-        "Failed to fold constant cast for inverted index");
-      return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-        std::move(folded));
+      if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr,
+                                                        folded)) {
+        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(folded));
+      }
     }
   }
   return expr;

@@ -42,6 +42,8 @@ Indexed expressions must be deterministic and reference at least one column. Agg
 
 Conversions to or from the `reg*` types, such as `regclass` and `regtype`, are rejected too, since their result changes when an object is renamed or dropped. Index the `oid` column instead and compare it with a `reg*` value in the query, as in `oid_column = 'name'::regclass`.
 
+A constant in the expression that can't be computed, such as `CAST(300 AS TINYINT)` or `chr(-1)`, fails `CREATE INDEX` with its error, even in a `CASE` branch that no row reaches.
+
 ## Generated columns
 
 A [generated column](../../statements/create_table/index.md) is indexed like any other column — index the column itself rather than repeating its expression. A `STORED` generated column works directly:

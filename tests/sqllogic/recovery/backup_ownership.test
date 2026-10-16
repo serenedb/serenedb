@@ -92,6 +92,58 @@ t
 
 
 connection other
+query
+SELECT pg_backup_start(label => 'named', fast => true) IS NOT NULL AS started;
+----
+started
+t
+
+
+connection other
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label,
+  strpos(labelfile, chr(10) || 'LABEL: named' || chr(10)) > 0 AS named
+FROM pg_backup_stop(wait_for_archive => false);
+----
+label	named
+t	t
+
+
+connection other
+query
+SELECT pg_backup_start(fast => false, label => 'reordered') IS NOT NULL AS started;
+----
+started
+t
+
+
+connection other
+query
+SELECT strpos((pg_backup_stop(wait_for_archive => true)).labelfile,
+  chr(10) || 'LABEL: reordered' || chr(10)) > 0 AS reordered;
+----
+reordered
+t
+
+
+connection other
+query
+SELECT pg_backup_start('positional', true) IS NOT NULL AS started;
+----
+started
+t
+
+
+connection other
+query
+SELECT strpos(labelfile, chr(10) || 'LABEL: positional' || chr(10)) > 0 AS positional
+FROM pg_backup_stop(false);
+----
+positional
+t
+
+
+connection other
 statement error
 SELECT pg_backup_stop();
 ----

@@ -20,3 +20,9 @@ SELECT '1/0'::pg_lsn > '0/FFFFFFFF'::pg_lsn AS later;
 ----
 later
 t
+
+query
+SELECT pg_walfile_name('16/B374D848'::pg_lsn) AS walfile, pg_walfile_name('0/0'::pg_lsn) AS first;
+----
+walfile	first
+0000000100000016000000B3	000000010000000000000000

@@ -187,38 +187,35 @@ void PgBackupStopExecute(duckdb::ClientContext& context,
 
 void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  duckdb::ScalarFunctionSet start{duckdb::Identifier{kPgBackupStart}};
-  for (const auto& arguments :
-       {duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
-        duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR,
-                                            duckdb::LogicalType::BOOLEAN}}) {
-    duckdb::ScalarFunction function{arguments, pg::PG_LSN(),
-                                    PgBackupStartFunction};
-    function.SetVolatile();
-    start.AddFunction(std::move(function));
-  }
+  duckdb::ScalarFunction start{duckdb::Identifier{kPgBackupStart},
+                               {},
+                               pg::PG_LSN(),
+                               PgBackupStartFunction};
+  start.GetSignature()
+    .AddParameter("label", duckdb::LogicalType::VARCHAR)
+    .AddParameter("fast", duckdb::LogicalType::BOOLEAN,
+                  duckdb::Value::BOOLEAN(false));
+  start.SetVolatile();
   loader.RegisterFunction(std::move(start));
-  duckdb::TableFunctionSet stop{duckdb::Identifier{kPgBackupStop}};
-  for (const auto& arguments :
-       {duckdb::vector<duckdb::LogicalType>{},
-        duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::BOOLEAN}}) {
-    stop.AddFunction(duckdb::TableFunction{arguments, PgBackupStopExecute,
-                                           PgBackupStopBind,
-                                           PgBackupStopState::Init});
-  }
+  duckdb::TableFunction stop{duckdb::Identifier{kPgBackupStop},
+                             {},
+                             PgBackupStopExecute,
+                             PgBackupStopBind,
+                             PgBackupStopState::Init};
+  stop.GetSignature().AddParameter("wait_for_archive",
+                                   duckdb::LogicalType::BOOLEAN,
+                                   duckdb::Value::BOOLEAN(true));
   loader.RegisterFunction(std::move(stop));
   const auto record =
     duckdb::LogicalType::STRUCT({{"lsn", pg::PG_LSN()},
                                  {"labelfile", duckdb::LogicalType::VARCHAR},
                                  {"spcmapfile", duckdb::LogicalType::VARCHAR}});
-  duckdb::ScalarFunctionSet stop_record{duckdb::Identifier{kPgBackupStop}};
-  for (const auto& arguments :
-       {duckdb::vector<duckdb::LogicalType>{},
-        duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::BOOLEAN}}) {
-    duckdb::ScalarFunction function{arguments, record, PgBackupStopFunction};
-    function.SetVolatile();
-    stop_record.AddFunction(std::move(function));
-  }
+  duckdb::ScalarFunction stop_record{
+    duckdb::Identifier{kPgBackupStop}, {}, record, PgBackupStopFunction};
+  stop_record.GetSignature().AddParameter("wait_for_archive",
+                                          duckdb::LogicalType::BOOLEAN,
+                                          duckdb::Value::BOOLEAN(true));
+  stop_record.SetVolatile();
   loader.RegisterFunction(std::move(stop_record));
   loader.RegisterFunction(
     duckdb::ScalarFunction{duckdb::Identifier{kPgWalfileName},

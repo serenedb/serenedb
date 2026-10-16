@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <cstring>
 #include <optional>
@@ -389,6 +390,23 @@ class TokenizedField final : public tests::Ifield {
   std::string _value;
   mutable std::unique_ptr<irs::analysis::DelimitedTokenizer> _tokenizer;
 };
+
+struct ContentDocs {
+  std::string_view content;
+  size_t count;
+};
+
+std::string ContentJson(std::span<const ContentDocs> groups) {
+  std::string json;
+  for (const auto& group : groups) {
+    for (size_t i = 0; i != group.count; ++i) {
+      absl::StrAppend(&json, json.empty() ? "[" : ",", R"({"content":")",
+                      group.content, R"("})");
+    }
+  }
+  absl::StrAppend(&json, "]");
+  return json;
+}
 
 void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
                             const tests::JsonDocGenerator::JsonValue& data) {
@@ -940,6 +958,37 @@ TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
       << "a rejected high scorer leaked into the filtered top-k at position "
       << i;
   }
+}
+
+TEST_P(ScorePruneScoringTestCase, ShortListNonEssentialFromTheFirstWindow) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  irs::IndexWriterOptions opts;
+  opts.reader_options.scorer = &scorer;
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto& index_ref = const_cast<tests::index_t&>(index());
+  constexpr ContentDocs kFirst[] = {
+    {"alpha f f f f f f f f f", 1000},
+    {"beta f f f f f f f f f", 5000},
+  };
+  constexpr ContentDocs kSecond[] = {
+    {"alpha alpha alpha f f", 300},
+    {"alpha alpha alpha beta f", 50},
+    {"beta f f f f f f f f f", 100},
+  };
+  for (const auto segment : {std::span<const ContentDocs>{kFirst},
+                             std::span<const ContentDocs>{kSecond}}) {
+    const auto json = ContentJson(segment);
+    tests::JsonDocGenerator gen(json.c_str(), &ScorePruneFieldFactory);
+    index_ref.emplace_back();
+    write_segment(*writer, index_ref.back(), gen);
+    writer->RefreshCommit();
+  }
+  auto reader = writer->GetSnapshot();
+  ASSERT_EQ(2, reader.size());
+
+  auto filter = ParseQuery("content:beta content:alpha");
+  ASSERT_NE(nullptr, filter);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
 }
 
 // BM25 with small k=3, 4200 docs (~2100 matching "tech" = ~16 blocks)

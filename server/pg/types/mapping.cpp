@@ -274,9 +274,6 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       if (IsRegcollation(type)) {
         return make(kRegcollation);
       }
-      if (IsMoney(type)) {
-        return make(kMoney);
-      }
       return make(kInt8);
     case UBIGINT:
       if (IsPgLsn(type)) {
@@ -294,6 +291,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case BIGNUM:
       return make(kNumeric);
     case DECIMAL:
+      if (IsMoney(type)) {
+        return make(kMoney);
+      }
       typmod = NumericTypmod(duckdb::DecimalType::GetWidth(type),
                              duckdb::DecimalType::GetScale(type));
       return make(kNumeric);

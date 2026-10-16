@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/decimal.hpp>
 #include <duckdb/inet/inet_type.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string_view>
@@ -63,7 +64,6 @@ DECLARE_PG_TYPE(TID,            Tid,            "tid",             BIGINT)
 DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
 DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
 DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
-DECLARE_PG_TYPE(MONEY,          Money,          "money",           BIGINT)
 DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
 DECLARE_PG_TYPE(REFCURSOR,      Refcursor,      "refcursor",       VARCHAR)
 DECLARE_PG_TYPE(ACLITEM,        Aclitem,        "aclitem",         VARCHAR)
@@ -121,6 +121,20 @@ inline duckdb::LogicalType CTID() {
       {{"block_number", duckdb::LogicalType::UINTEGER},
        {"tuple_offset", duckdb::LogicalType::USMALLINT}})
       .WithAlias(std::string{kCtidAlias});
+  return kType;
+}
+
+inline constexpr std::string_view kMoneyAlias = "money";
+
+inline bool IsMoney(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::DECIMAL &&
+         type.GetTypeInfo().alias == kMoneyAlias;
+}
+
+inline duckdb::LogicalType MONEY() {
+  static const auto kType =
+    duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_INT64 + 1, 2)
+      .WithAlias(std::string{kMoneyAlias});
   return kType;
 }
 

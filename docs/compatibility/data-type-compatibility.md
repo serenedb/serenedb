@@ -49,7 +49,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | lseg                         | 🟡            | The comparison operators `<`, `<=`, `>` and `>=` compare the end points one by one, where PostgreSQL compares lengths. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
-| money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. |
+| money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet and JSON files hold an amount as a decimal number of dollars, such as `12.34`. |
 | name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |

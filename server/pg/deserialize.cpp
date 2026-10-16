@@ -2134,10 +2134,6 @@ DeserializationFunction<Sink> GetDeserialization(
         return SelectDecoder<LoadBin<int64_t, uint32_t>,
                              ParseFixed<int64_t, &TryParseOid>, Sink>(binary);
       }
-      if (IsMoney(type)) {
-        return SelectDecoder<LoadBin<int64_t>,
-                             ParseFixed<int64_t, &TryParseMoney>, Sink>(binary);
-      }
       if (binary) {
         return IsOidLike(type)
                  ? &LoadBin<int64_t, uint32_t>::template Decode<Sink>
@@ -2174,6 +2170,11 @@ DeserializationFunction<Sink> GetDeserialization(
     case UHUGEINT:
       return SelectDecoder<UhugeintBin, UhugeintText, Sink>(binary);
     case DECIMAL: {
+      if (IsMoney(type)) {
+        return SelectDecoder<LoadBin<duckdb::hugeint_t, int64_t>,
+                             ParseFixed<duckdb::hugeint_t, &TryParseMoney>,
+                             Sink>(binary);
+      }
       const auto width = duckdb::DecimalType::GetWidth(type);
       if (width <= duckdb::Decimal::MAX_WIDTH_INT16) {
         return SelectDecoder<DecimalIntBin<int16_t>, DecimalText<int16_t>,

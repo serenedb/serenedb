@@ -921,13 +921,22 @@ struct TidTextCore {
 };
 
 struct MoneyTextCore {
-  using Value = int64_t;
+  using Value = duckdb::hugeint_t;
   static constexpr uint32_t kMaxBytes = kMoneyText;
   IRS_FORCE_INLINE static bool NeedsQuoting(Value money) {
     return money <= -kMoneyThousand || money >= kMoneyThousand;
   }
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value money) {
     return WriteMoney(money, reinterpret_cast<char*>(dst));
+  }
+};
+
+struct MoneyBinCore {
+  using Value = duckdb::hugeint_t;
+  static constexpr uint32_t kMaxBytes = sizeof(int64_t);
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value money) {
+    absl::big_endian::Store(dst, MoneyCents(money));
+    return sizeof(int64_t);
   }
 };
 
@@ -1379,12 +1388,11 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
   using enum duckdb::LogicalTypeId;
   switch (type.id()) {
     case BIGINT:
-      if (IsTid(type)) {
-        return true;
-      }
+      return IsTid(type);
+    case DECIMAL:
       return IsMoney(type) &&
              MoneyTextCore::NeedsQuoting(
-               duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(
+               duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::hugeint_t>(
                  vdata.unified)[vdata.unified.sel->get_index(row)]);
     case DATE:
       return DateTextCore::NeedsQuoting(
@@ -1402,7 +1410,6 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case UHUGEINT:
     case FLOAT:
     case DOUBLE:
-    case DECIMAL:
     case TIME:
     case TIME_NS:
     case TIME_TZ:
@@ -2498,10 +2505,6 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<TidTextCore<WrapContext::Array>, TidBinCore,
                                    kTid>(format, context, kind);
       }
-      if (IsMoney(type)) {
-        return MakeArraySerializer<MoneyTextCore, IntBinCore<int64_t>, kMoney>(
-          format, context, kind);
-      }
       // XID8 or BIGINT
       return MakeArraySerializer<IntTextCore<int64_t>, IntBinCore<int64_t>,
                                  kInt8>(format, context, kind);
@@ -2542,6 +2545,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
             format, context, kind);
         });
     case DECIMAL:
+      if (IsMoney(type)) {
+        return MakeArraySerializer<MoneyTextCore, MoneyBinCore, kMoney>(
+          format, context, kind);
+      }
       switch (type.InternalType()) {
         using enum duckdb::PhysicalType;
         case INT16:
@@ -2785,10 +2792,6 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                      TidTextCore<WrapContext::Record>,
                                      TidBinCore>(format, context);
       }
-      if (IsMoney(type)) {
-        return SelectFieldSerializer<MoneyTextCore, MoneyTextCore,
-                                     IntBinCore<int64_t>>(format, context);
-      }
       if (IsOidLike(type)) {
         return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,
                                      OidBinCore>(format, context);
@@ -2844,6 +2847,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        FloatBinCore<double>>(format, context);
         });
     case DECIMAL:
+      if (IsMoney(type)) {
+        return SelectFieldSerializer<MoneyTextCore, MoneyTextCore,
+                                     MoneyBinCore>(format, context);
+      }
       switch (type.InternalType()) {
         using enum duckdb::PhysicalType;
         case INT16:

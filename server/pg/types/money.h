@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <optional>
@@ -35,8 +36,9 @@ inline constexpr size_t kMoneyText = sizeof("-$92,233,720,368,547,758.08") - 1;
 inline constexpr int64_t kMoneyThousand = 100'000;
 
 std::optional<irs::pg::SqlErrorData> TryParseMoney(std::string_view text,
-                                                   int64_t& money);
-size_t WriteMoney(int64_t money, char* buffer);
+                                                   duckdb::hugeint_t& money);
+int64_t MoneyCents(duckdb::hugeint_t money);
+size_t WriteMoney(duckdb::hugeint_t money, char* buffer);
 
 void RegisterMoney(duckdb::CastFunctionSet& casts, Functions& functions);
 

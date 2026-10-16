@@ -55,17 +55,19 @@ constexpr int kGroupDigits = 3;
                   ERR_MSG(message));
 }
 
-int64_t AddMoney(int64_t left, int64_t right) {
+duckdb::hugeint_t AddMoney(duckdb::hugeint_t left, duckdb::hugeint_t right) {
   int64_t sum = 0;
-  if (__builtin_add_overflow(left, right, &sum)) {
+  if (__builtin_add_overflow(MoneyCents(left), MoneyCents(right), &sum)) {
     ThrowOutOfRange("money out of range");
   }
   return sum;
 }
 
-int64_t SubtractMoney(int64_t left, int64_t right) {
+duckdb::hugeint_t SubtractMoney(duckdb::hugeint_t left,
+                                duckdb::hugeint_t right) {
   int64_t difference = 0;
-  if (__builtin_sub_overflow(left, right, &difference)) {
+  if (__builtin_sub_overflow(MoneyCents(left), MoneyCents(right),
+                             &difference)) {
     ThrowOutOfRange("money out of range");
   }
   return difference;
@@ -89,14 +91,15 @@ double CheckFloatResult(double result, double operand) {
 }
 
 template<typename T>
-int64_t MultiplyMoney(int64_t money, T factor) {
+duckdb::hugeint_t MultiplyMoney(duckdb::hugeint_t money, T factor) {
+  const auto cents = MoneyCents(money);
   if constexpr (std::is_floating_point_v<T>) {
     const auto operand = static_cast<double>(factor);
     return RoundMoney(
-      CheckFloatResult(static_cast<double>(money) * operand, operand));
+      CheckFloatResult(static_cast<double>(cents) * operand, operand));
   } else {
     int64_t product = 0;
-    if (__builtin_mul_overflow(money, static_cast<int64_t>(factor), &product)) {
+    if (__builtin_mul_overflow(cents, static_cast<int64_t>(factor), &product)) {
       ThrowOutOfRange("money out of range");
     }
     return product;
@@ -104,27 +107,29 @@ int64_t MultiplyMoney(int64_t money, T factor) {
 }
 
 template<typename T>
-int64_t DivideMoney(int64_t money, T divisor) {
+duckdb::hugeint_t DivideMoney(duckdb::hugeint_t money, T divisor) {
   if (divisor == 0) {
     ThrowDivisionByZero();
   }
+  const auto cents = MoneyCents(money);
   if constexpr (std::is_floating_point_v<T>) {
-    const auto dividend = static_cast<double>(money);
+    const auto dividend = static_cast<double>(cents);
     return RoundMoney(
       CheckFloatResult(dividend / static_cast<double>(divisor), dividend));
   } else {
-    if (divisor == -1 && money == std::numeric_limits<int64_t>::min()) {
+    if (divisor == -1 && cents == std::numeric_limits<int64_t>::min()) {
       ThrowOutOfRange("money out of range");
     }
-    return money / static_cast<int64_t>(divisor);
+    return cents / static_cast<int64_t>(divisor);
   }
 }
 
-double MoneyRatio(int64_t dividend, int64_t divisor) {
+double MoneyRatio(duckdb::hugeint_t dividend, duckdb::hugeint_t divisor) {
   if (divisor == 0) {
     ThrowDivisionByZero();
   }
-  return static_cast<double>(dividend) / static_cast<double>(divisor);
+  return static_cast<double>(MoneyCents(dividend)) /
+         static_cast<double>(MoneyCents(divisor));
 }
 
 std::optional<int64_t> MoneyFromInteger(int64_t amount) {
@@ -208,16 +213,17 @@ std::string CashWords(int64_t money) {
 
 void CashWordsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](int64_t money) {
-      return duckdb::StringVector::AddString(result, CashWords(money));
+  duckdb::UnaryExecutor::Execute<duckdb::hugeint_t, duckdb::string_t>(
+    args.data[0], result, args.size(), [&](duckdb::hugeint_t money) {
+      return duckdb::StringVector::AddString(result,
+                                             CashWords(MoneyCents(money)));
     });
 }
 
 bool MoneyToText(duckdb::Vector& source, duckdb::Vector& result,
                  duckdb::idx_t count, duckdb::CastParameters&) {
-  duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
-    source, result, count, [&](int64_t money) {
+  duckdb::UnaryExecutor::Execute<duckdb::hugeint_t, duckdb::string_t>(
+    source, result, count, [&](duckdb::hugeint_t money) {
       char buffer[kMoneyText];
       return duckdb::StringVector::AddString(result, buffer,
                                              WriteMoney(money, buffer));
@@ -229,8 +235,8 @@ template<typename T>
 bool IntegerToMoney(duckdb::Vector& source, duckdb::Vector& result,
                     duckdb::idx_t count, duckdb::CastParameters& parameters) {
   bool converted = true;
-  duckdb::UnaryExecutor::Execute<T, int64_t>(
-    source, result, count, [&](T amount) -> std::optional<int64_t> {
+  duckdb::UnaryExecutor::Execute<T, duckdb::hugeint_t>(
+    source, result, count, [&](T amount) -> std::optional<duckdb::hugeint_t> {
       if (const auto money = MoneyFromInteger(amount)) {
         return *money;
       }
@@ -259,18 +265,6 @@ struct DecimalCastData final : duckdb::BoundCastData {
   duckdb::BoundCastInfo decimal;
 };
 
-bool MoneyToDecimal(duckdb::Vector& source, duckdb::Vector& result,
-                    duckdb::idx_t count, duckdb::CastParameters& parameters) {
-  const auto& decimal = parameters.cast_data->Cast<DecimalCastData>().decimal;
-  duckdb::Vector cents{CentsType(), count};
-  duckdb::UnaryExecutor::Execute<int64_t, duckdb::hugeint_t>(
-    source, cents, count,
-    [](int64_t money) { return duckdb::hugeint_t{money}; });
-  duckdb::CastParameters decimal_parameters{parameters, decimal.GetCastData(),
-                                            parameters.local_state};
-  return decimal.Cast(cents, result, count, decimal_parameters);
-}
-
 bool DecimalToMoney(duckdb::Vector& source, duckdb::Vector& result,
                     duckdb::idx_t count, duckdb::CastParameters& parameters) {
   const auto& decimal = parameters.cast_data->Cast<DecimalCastData>().decimal;
@@ -278,12 +272,12 @@ bool DecimalToMoney(duckdb::Vector& source, duckdb::Vector& result,
   duckdb::CastParameters decimal_parameters{parameters, decimal.GetCastData(),
                                             parameters.local_state};
   bool converted = decimal.Cast(source, cents, count, decimal_parameters);
-  duckdb::UnaryExecutor::Execute<duckdb::hugeint_t, int64_t>(
+  duckdb::UnaryExecutor::Execute<duckdb::hugeint_t, duckdb::hugeint_t>(
     cents, result, count,
-    [&](duckdb::hugeint_t value) -> std::optional<int64_t> {
+    [&](duckdb::hugeint_t value) -> std::optional<duckdb::hugeint_t> {
       int64_t money = 0;
       if (duckdb::Hugeint::TryCast(value, money)) {
-        return money;
+        return value;
       }
       InputError(SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                                 ERR_MSG("bigint out of range")),
@@ -295,10 +289,15 @@ bool DecimalToMoney(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 duckdb::BoundCastInfo BindMoneyToDecimal(duckdb::BindCastInput& input,
-                                         const duckdb::LogicalType&,
+                                         const duckdb::LogicalType& source,
                                          const duckdb::LogicalType& target) {
-  return {MoneyToDecimal, duckdb::make_uniq<DecimalCastData>(
-                            input.GetCastFunction(CentsType(), target))};
+  auto storage =
+    duckdb::LogicalType::DECIMAL(duckdb::DecimalType::GetWidth(source),
+                                 duckdb::DecimalType::GetScale(source));
+  if (target == storage) {
+    return duckdb::DefaultCasts::ReinterpretCast;
+  }
+  return input.GetCastFunction(storage, target);
 }
 
 duckdb::BoundCastInfo BindDecimalToMoney(duckdb::BindCastInput& input,
@@ -310,8 +309,8 @@ duckdb::BoundCastInfo BindDecimalToMoney(duckdb::BindCastInput& input,
 
 void RegisterCasts(duckdb::CastFunctionSet& casts) {
   const auto money = MONEY();
-  RegisterTextInput(casts, money, TextInputCast<int64_t, TryParseMoney>,
-                    InitInput);
+  RegisterTextInput(casts, money,
+                    TextInputCast<duckdb::hugeint_t, TryParseMoney>, InitInput);
   casts.RegisterCastFunction(money, duckdb::LogicalType::VARCHAR, MoneyToText,
                              50);
   casts.RegisterCastFunction(money, duckdb::LogicalTypeId::DECIMAL,
@@ -332,23 +331,26 @@ void RegisterFactorOperators(Functions& functions,
   Add(functions, "*",
       Fallible({{money, type},
                 money,
-                BinaryExecute<int64_t, T, int64_t, &MultiplyMoney<T>>}));
+                BinaryExecute<duckdb::hugeint_t, T, duckdb::hugeint_t,
+                              &MultiplyMoney<T>>}));
   Add(functions, "*",
       Fallible({{type, money},
                 money,
-                BinaryExecute<T, int64_t, int64_t, [](T factor, int64_t m) {
-                  return MultiplyMoney(m, factor);
-                }>}));
+                BinaryExecute<T, duckdb::hugeint_t, duckdb::hugeint_t,
+                              [](T factor, duckdb::hugeint_t m) {
+                                return MultiplyMoney(m, factor);
+                              }>}));
   AddDivision(functions,
               Fallible({{money, type},
                         money,
-                        BinaryExecute<int64_t, T, int64_t, &DivideMoney<T>>}));
+                        BinaryExecute<duckdb::hugeint_t, T, duckdb::hugeint_t,
+                                      &DivideMoney<T>>}));
 }
 
 struct MoneySumState {
-  using STATE_TYPE = duckdb::OptionalStateType<int64_t>;
+  using STATE_TYPE = duckdb::OptionalStateType<duckdb::hugeint_t>;
 
-  int64_t val;
+  duckdb::hugeint_t val;
   bool is_set;
 };
 
@@ -374,18 +376,21 @@ struct MoneySum : duckdb::EmptyValAggregate<MoneyAdd, duckdb::ConstantInit<0>> {
 
 void RegisterFunctions(Functions& functions) {
   const auto money = MONEY();
+  using duckdb::hugeint_t;
   Add(functions, "+",
       Fallible({{money, money},
                 money,
-                BinaryExecute<int64_t, int64_t, int64_t, &AddMoney>}));
-  Add(functions, "-",
-      Fallible({{money, money},
-                money,
-                BinaryExecute<int64_t, int64_t, int64_t, &SubtractMoney>}));
-  AddDivision(functions,
-              Fallible({{money, money},
-                        duckdb::LogicalType::DOUBLE,
-                        BinaryExecute<int64_t, int64_t, double, &MoneyRatio>}));
+                BinaryExecute<hugeint_t, hugeint_t, hugeint_t, &AddMoney>}));
+  Add(
+    functions, "-",
+    Fallible({{money, money},
+              money,
+              BinaryExecute<hugeint_t, hugeint_t, hugeint_t, &SubtractMoney>}));
+  AddDivision(
+    functions,
+    Fallible({{money, money},
+              duckdb::LogicalType::DOUBLE,
+              BinaryExecute<hugeint_t, hugeint_t, double, &MoneyRatio>}));
   RegisterFactorOperators<int16_t>(functions, duckdb::LogicalType::SMALLINT);
   RegisterFactorOperators<int32_t>(functions, duckdb::LogicalType::INTEGER);
   RegisterFactorOperators<int64_t>(functions, duckdb::LogicalType::BIGINT);
@@ -394,18 +399,18 @@ void RegisterFunctions(Functions& functions) {
   Add(functions, "cashlarger",
       {{money, money},
        money,
-       BinaryExecute<int64_t, int64_t, int64_t,
-                     [](int64_t l, int64_t r) { return std::max(l, r); }>});
+       BinaryExecute<hugeint_t, hugeint_t, hugeint_t,
+                     [](hugeint_t l, hugeint_t r) { return std::max(l, r); }>});
   Add(functions, "cashsmaller",
       {{money, money},
        money,
-       BinaryExecute<int64_t, int64_t, int64_t,
-                     [](int64_t l, int64_t r) { return std::min(l, r); }>});
+       BinaryExecute<hugeint_t, hugeint_t, hugeint_t,
+                     [](hugeint_t l, hugeint_t r) { return std::min(l, r); }>});
   Add(functions, "cash_words",
       {{money}, duckdb::LogicalType::VARCHAR, CashWordsFunction});
-  auto sum =
-    duckdb::AggregateFunction::UnaryAggregate<MoneySumState, int64_t, int64_t,
-                                              MoneySum>(money, money);
+  auto sum = duckdb::AggregateFunction::UnaryAggregate<MoneySumState, hugeint_t,
+                                                       hugeint_t, MoneySum>(
+    money, money);
   sum.GetSignature().GetParameter(0).SetName("arg");
   Add(functions, "sum", std::move(sum));
 }
@@ -413,7 +418,7 @@ void RegisterFunctions(Functions& functions) {
 }  // namespace
 
 std::optional<irs::pg::SqlErrorData> TryParseMoney(std::string_view text,
-                                                   int64_t& money) {
+                                                   duckdb::hugeint_t& money) {
   const auto out_of_range = [&] {
     return SQL_ERROR_DATA(
       ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
@@ -493,11 +498,18 @@ std::optional<irs::pg::SqlErrorData> TryParseMoney(std::string_view text,
   return std::nullopt;
 }
 
-size_t WriteMoney(int64_t money, char* buffer) {
+int64_t MoneyCents(duckdb::hugeint_t money) {
+  int64_t cents = 0;
+  if (!duckdb::Hugeint::TryCast(money, cents)) {
+    ThrowOutOfRange("money out of range");
+  }
+  return cents;
+}
+
+size_t WriteMoney(duckdb::hugeint_t money, char* buffer) {
   std::array<char, kMoneyText> digits{};
   auto begin = digits.end();
-  auto value =
-    money < 0 ? 0 - static_cast<uint64_t>(money) : static_cast<uint64_t>(money);
+  auto value = static_cast<uint64_t>(money < 0 ? -money : money);
   int position = kFractionDigits;
   do {
     if (position == 0) {

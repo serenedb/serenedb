@@ -1572,6 +1572,17 @@ bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
     priv);
 }
 
+bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                       const pg::VirtualTable& sys, std::string_view priv) {
+  return ColumnsPrivHeld(
+    context, role_id, SystemRelationPermissions(sys),
+    duckdb::StructType::GetChildTypes(sys.RowType()),
+    [&](const auto& child) {
+      return sys.ColumnAcl(child.first.GetIdentifierName());
+    },
+    priv);
+}
+
 bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,
                          const duckdb::TableCatalogEntry& table,
                          std::string_view col, std::string_view priv) {
@@ -1598,8 +1609,6 @@ bool HasColumnPrivByAttnum(duckdb::ClientContext& context,
     table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(), priv);
 }
 
-// System relations have no per-column ACLs: the column privilege reduces to the
-// relation-level privilege once the column is known to exist.
 bool SystemRelationColumnPriv(ConnectionContext& conn_ctx,
                               duckdb::idx_t role_id,
                               const duckdb::QualifiedName& name,
@@ -1613,9 +1622,9 @@ bool SystemRelationColumnPriv(ConnectionContext& conn_ctx,
                     ERR_MSG("column \"", col, "\" of relation \"",
                             sys->GetName(), "\" does not exist"));
   }
-  return HasAnyPermissionsPrivilegeText(conn_ctx.GetClientContext(), role_id,
-                                        SystemRelationPermissions(*sys),
-                                        duckdb::CatalogType::TABLE_ENTRY, priv);
+  return ColumnPrivHeld(conn_ctx.GetClientContext(), role_id,
+                        SystemRelationPermissions(*sys), sys->ColumnAcl(col),
+                        priv);
 }
 
 void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
@@ -1727,15 +1736,13 @@ std::optional<bool> ColumnPrivByNameTableAttnum(ConnectionContext& conn_ctx,
   if (sys == nullptr) {
     ThrowRelationNotFound(name.Name().GetIdentifierName());
   }
-  // System relations carry no per-column ACL; a valid attnum reduces to the
-  // relation-level privilege.
   const auto cols = duckdb::StructType::GetChildTypes(sys->RowType());
   if (attnum < 1 || attnum > static_cast<int64_t>(cols.size())) {
     return std::nullopt;
   }
-  return HasAnyPermissionsPrivilegeText(conn_ctx.GetClientContext(), role_id,
-                                        SystemRelationPermissions(*sys),
-                                        duckdb::CatalogType::TABLE_ENTRY, priv);
+  return ColumnPrivHeld(
+    conn_ctx.GetClientContext(), role_id, SystemRelationPermissions(*sys),
+    sys->ColumnAcl(cols[attnum - 1].first.GetIdentifierName()), priv);
 }
 
 void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
@@ -1833,9 +1840,8 @@ void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
           return AnyColumnPrivHeld(state.GetContext(), role->oid, *table,
                                    {p.GetData(), p.GetSize()});
         } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return HasAnyTablePrivilegeText(state.GetContext(), role->oid,
-                                          SystemRelationPermissions(*sys),
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), role->oid, *sys,
+                                   {p.GetData(), p.GetSize()});
         } else {
           ThrowRelationNotFound(name.Name().GetIdentifierName());
         }
@@ -1894,9 +1900,8 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
           return AnyColumnPrivHeld(state.GetContext(), current->oid, *table,
                                    {p.GetData(), p.GetSize()});
         } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return HasAnyTablePrivilegeText(state.GetContext(), current->oid,
-                                          SystemRelationPermissions(*sys),
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), current->oid, *sys,
+                                   {p.GetData(), p.GetSize()});
         } else {
           ThrowRelationNotFound(name.Name().GetIdentifierName());
         }

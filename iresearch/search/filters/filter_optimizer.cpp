@@ -26,6 +26,8 @@
 
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
+#include "iresearch/search/filters/deferral.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/filters/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/filters/lowering_rules.hpp"
 #include "iresearch/search/filters/range_rules.hpp"
@@ -47,6 +49,8 @@ void AssertValid([[maybe_unused]] const Filter& filter) {
   SDB_ASSERT(filter.type() != Type<BooleanFilter>::id() ||
              irs::utils::downCast<BooleanFilter>(filter).Valid());
 }
+
+}  // namespace
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   AssertValid(*slot);
@@ -70,6 +74,8 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   AssertValid(*slot);
 }
 
+namespace {
+
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!ctx.scored) {
     TraverseFilter(root, [&](Filter::ptr& slot, bool) { RunRules(slot, ctx); });
@@ -79,6 +85,23 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   negated_ctx.scored = false;
   TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
     RunRules(slot, negated ? negated_ctx : ctx);
+  });
+}
+
+template<typename GeoType>
+void PlanOnce(Filter& filter) {
+  auto& options = *utils::downCast<GeoType>(filter).mutable_options();
+  options.plan = PlanGeo(options);
+}
+
+void PlanGeoFilters(Filter::ptr& root) {
+  TraverseFilter(root, [](Filter::ptr& slot, bool) {
+    const auto type = slot->type();
+    if (type == Type<GeoFilter>::id()) {
+      PlanOnce<GeoFilter>(*slot);
+    } else if (type == Type<GeoDistanceFilter>::id()) {
+      PlanOnce<GeoDistanceFilter>(*slot);
+    }
   });
 }
 
@@ -136,6 +159,19 @@ void AssertNoTermChild(Filter::ptr& root) {
   });
 }
 
+void AssertDeferredAlive(Filter::ptr& root, const OptimizeContext& ctx) {
+  if (!ctx.deferral) {
+    return;
+  }
+  for (const auto& deferred : ctx.deferral->filters) {
+    bool found = deferred.owned.get() == deferred.filter;
+    TraverseFilter(root, [&](Filter::ptr& slot, bool) {
+      found |= slot.get() == deferred.filter;
+    });
+    SDB_ASSERT(found);
+  }
+}
+
 }  // namespace
 #endif
 
@@ -144,10 +180,13 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
     return;
   }
   RunPass(root, ctx);
+  optimizer::ApplyDeferral(root, ctx);
   optimizer::LowerAutomatons(root, ctx);
   optimizer::FuseConjunctions(root, ctx);
+  PlanGeoFilters(root);
 #ifdef SDB_DEV
   AssertNoTermChild(root);
+  AssertDeferredAlive(root, ctx);
 #endif
 }
 

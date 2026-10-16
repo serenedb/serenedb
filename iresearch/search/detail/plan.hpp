@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <type_traits>
 
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/window.hpp"
@@ -45,6 +46,8 @@ class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
+class ApproxQuery;
+class TokenPhraseQuery;
 class ByNestedQuery;
 class HnswQuery;
 class KnnVectorQuery;
@@ -187,6 +190,19 @@ inline bool SubtractsConjunction(doc_id_t rarest,
 inline bool SubtractsDisjunction(doc_id_t rarest, doc_id_t densest) noexcept {
   constexpr uint64_t kSkew = 256;
   return uint64_t{rarest} * kSkew <= densest;
+}
+
+template<typename Result>
+using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
+                                      probe::Erased, lead::Erased>;
+
+template<typename Result>
+auto PlanApprox(const QueryBuilder& approx, uint64_t interrogations) {
+  if constexpr (std::is_same_v<Result, ProbeNode::ptr>) {
+    return approx.PlanProbe({}, interrogations);
+  } else {
+    return approx.PlanLead({});
+  }
 }
 
 }  // namespace detail

@@ -33,14 +33,8 @@ Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
                                   const detail::ScoredCtx& ctx,
                                   ScoreMergeType merge) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto record = query.Stats(ctx);
-  const auto value = detail::AllDocsScore(
-    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                       .stats = record.stats,
-                                       .fetcher = ctx.fetcher,
-                                       .boost = query.Boost()});
   return detail::MakeWildcardNGram<WalkConstantScored, Node::ptr>(
-    query, 0, merge, *ctx.fetcher, value);
+    query, 0, merge, *ctx.fetcher, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::fill

@@ -49,8 +49,29 @@ QUERY PLAN
 │ ╭─ Term ───────────╮ │
 │ │ Field: w(string) │ │
 │ │ Value: alpha     │ │
-│ │ Boost: 5         │ │
+│ │ Boost: 2         │ │
 │ ╰──────────────────╯ │
 │ Projections: id      │
 │ ~1 row               │
 ╰──────────────────────╯
+
+
+query
+EXPLAIN SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
+WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_bst_idx                      │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ───────────╮                   │
+│ │ Field: w(string) │                   │
+│ │ Value: alpha     │                   │
+│ │ Boost: 5         │                   │
+│ ╰──────────────────╯                   │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

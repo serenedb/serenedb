@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -126,6 +127,25 @@ TEST(string_set_tests, reserve_prevents_rehash) {
   EXPECT_EQ(reserved, set.MemoryBytes());
   set.Insert(std::string{kBeyondSso});
   EXPECT_EQ(reserved + kBeyondSso.size(), set.MemoryBytes());
+}
+
+TEST(string_set_tests, reserve_by_words_sizes_each_class) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 300; ++i) {
+    words.emplace_back(absl::StrCat("w", i));
+  }
+  const std::string_view zero_tail{"abcdefghijklmn\0", 15};
+  words.emplace_back(kLonger);
+  words.emplace_back(zero_tail);
+  words.emplace_back(kBeyondSso);
+  StringSet set;
+  set.Reserve(words);
+  const auto reserved = set.MemoryBytes();
+  for (const auto& word : words) {
+    set.Insert(word);
+  }
+  EXPECT_EQ(words.size(), set.Size());
+  EXPECT_EQ(reserved + zero_tail.size() + kBeyondSso.size(), set.MemoryBytes());
 }
 
 TEST(string_set_tests, size_class_boundaries) {

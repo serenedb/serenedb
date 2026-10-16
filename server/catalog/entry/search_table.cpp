@@ -159,14 +159,15 @@ duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
 
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   const duckdb::TableCatalogEntry& table) {
-  auto config = std::make_shared<InvertedIndexConfig>();
+  std::vector<InvertedIndexKey> keys;
+  InvertedIndexFields fields;
   for (const auto index : connector::primary_key::KeyColumns(table)) {
     const auto column = table.GetColumn(index).Oid();
-    config->fields.emplace(column,
-                           InvertedIndexField{{.indexed_term_dict = true}});
-    config->keys.push_back({{.field_id = column, .column_id = column}, {}});
+    fields.emplace(column, InvertedIndexField{{.indexed_term_dict = true}});
+    keys.push_back({{.field_id = column, .column_id = column}, {}});
   }
-  return config;
+  return std::make_shared<InvertedIndexConfig>(std::move(keys),
+                                               std::move(fields));
 }
 
 }  // namespace

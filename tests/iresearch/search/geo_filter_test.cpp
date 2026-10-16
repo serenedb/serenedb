@@ -18,10 +18,12 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/collectors.hpp>
+#include <iresearch/search/detail/geo_parsers.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -116,6 +118,31 @@ struct CustomSort final : public irs::ScorerBase<void> {
   CustomSort() = default;
 };
 
+struct WithoutColumns final : irs::SubReader {
+  explicit WithoutColumns(const irs::SubReader& segment) noexcept
+    : segment{segment} {}
+
+  uint64_t CountMappedMemory() const final { return 0; }
+  const irs::SegmentInfo& Meta() const final { return segment.Meta(); }
+  const irs::DocumentMask* docs_mask() const final {
+    return segment.docs_mask();
+  }
+  irs::lead::Node::ptr docs_iterator() const final {
+    return segment.docs_iterator();
+  }
+  std::span<const irs::field_id> field_ids() const final {
+    return segment.field_ids();
+  }
+  const irs::TermReader* field(irs::field_id id) const final {
+    return segment.field(id);
+  }
+  irs::NormReader::ptr norms(irs::field_id id) const final {
+    return segment.norms(id);
+  }
+
+  const irs::SubReader& segment;
+};
+
 }  // namespace
 
 TEST(GeoFilterTest, options) {
@@ -201,6 +228,122 @@ TEST(GeoFilterTest, equal) {
     *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
+}
+
+TEST(GeoFilterTest, empty_shapes_plan_nothing) {
+  GeoFilterOptions options;
+  EXPECT_EQ(GeoPlan::Kind::Empty, PlanGeo(options)->kind);
+
+  options.shape.reset(std::make_unique<S2Polygon>(),
+                      irs::geo::ShapeContainer::Type::S2Polygon);
+  EXPECT_EQ(GeoPlan::Kind::Empty, PlanGeo(options)->kind);
+}
+
+TEST(GeoFilterTest, parser_of_stored_type) {
+  GeoFilterOptions options;
+  EXPECT_TRUE(std::holds_alternative<SourceJsonParser>(ParserOf(options)));
+  options.stored = StoredType::S2Region;
+  EXPECT_TRUE(std::holds_alternative<S2ShapeParser>(ParserOf(options)));
+  options.stored = StoredType::S2Point;
+  EXPECT_TRUE(std::holds_alternative<S2PointParser>(ParserOf(options)));
+  options.stored = StoredType::S2Centroid;
+  EXPECT_TRUE(std::holds_alternative<S2PointParser>(ParserOf(options)));
+}
+
+TEST(GeoFilterTest, check_reads_the_stored_shape) {
+  struct Doc {
+    std::string_view name;
+    std::string_view geometry;
+    std::string_view stored;
+  };
+  constexpr std::string_view kPoint =
+    R"({"type": "Point", "coordinates": [37.610235, 55.709754]})";
+  const Doc docs[] = {
+    {"Q", kPoint, kPoint},
+    {"R", R"({"type": "Point", "coordinates": [37.605, 55.707917]})", ""},
+    {"S", R"({"type": "Point", "coordinates": [37.607, 55.709]})", " "},
+  };
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    GeoField geo_field;
+    geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
+    StringField name_field;
+    name_field.field_name = "name";
+    name_field.id = kName;
+    {
+      auto segment = writer->GetBatch();
+      for (const auto& entry : docs) {
+        geo_field.value = entry.geometry;
+        name_field.value = entry.name;
+        auto doc = segment.Insert();
+        ASSERT_TRUE(::tests::InsertField(doc, name_field));
+        ASSERT_TRUE(::tests::InsertField(doc, geo_field));
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
+                                 name_field);
+        geo_field.value = entry.stored;
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
+                                 geo_field);
+      }
+      segment.Commit();
+    }
+    writer->RefreshCommit();
+    reader = writer->GetSnapshot();
+  }
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(1, reader->size());
+
+  auto json = irs::tests::FromJson(R"({
+    "type": "Polygon",
+    "coordinates": [
+        [
+            [37.602682, 55.706853],
+            [37.613025, 55.706853],
+            [37.613025, 55.711906],
+            [37.602682, 55.711906],
+            [37.602682, 55.706853]
+        ]
+    ]
+  })");
+  GeoFilter q;
+  q.mutable_options()->type = GeoFilterType::Intersects;
+  json::ParseRegion(json.value(), q.mutable_options()->shape);
+  *q.mutable_field_id() = kGeo;
+
+  const auto execute = [&](const irs::Filter& filter) {
+    std::set<std::string> names;
+    ::tests::PreparedFilter prepared{filter, *reader};
+    const auto& segment = (*reader)[0];
+    const auto* column = segment.Column(kName);
+    EXPECT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{segment, *column};
+    auto it = prepared.Execute(0);
+    EXPECT_NE(nullptr, it);
+    while (!irs::doc_limits::eof(it->Next())) {
+      names.emplace(
+        irs::tests::ReadStoredStr<std::string>(values, it->Value()));
+    }
+    return names;
+  };
+
+  EXPECT_EQ((std::set<std::string>{"Q", "R", "S"}), execute(q));
+
+  q.mutable_options()->store_field_id = kGeo;
+  EXPECT_EQ(std::set<std::string>{"Q"}, execute(q));
+
+  const WithoutColumns without_columns{(*reader)[0]};
+  ::tests::PreparedFilter unstored{q, without_columns};
+  EXPECT_TRUE(irs::QueryBuilder::IsEmpty(*unstored.Query(0)));
+
+  constexpr irs::field_id kAbsent = 3;
+  q.mutable_options()->store_field_id = kAbsent;
+  ::tests::PreparedFilter absent{q, *reader};
+  EXPECT_TRUE(irs::QueryBuilder::IsEmpty(*absent.Query(0)));
 }
 
 TEST(GeoFilterTest, boost) {
@@ -447,6 +590,9 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {1, 1}));
+
+    q.mutable_options()->store_field_id = irs::field_limits::invalid();
+    EXPECT_TRUE(std::ranges::includes(execute_query(q, {1, 1}), expected));
   }
 
   {

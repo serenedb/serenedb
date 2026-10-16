@@ -33,6 +33,7 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -105,6 +106,11 @@ struct InvertedIndexKey : persistence::KeyRecord {
   std::string expression_text;
 };
 
+struct ExpressionKeys {
+  const InvertedIndexKey* term = nullptr;
+  const InvertedIndexKey* stored = nullptr;
+};
+
 using InvertedIndexFields =
   irs::containers::NodeHashMap<irs::field_id, InvertedIndexField>;
 
@@ -137,7 +143,11 @@ InvertedIndexSettings ResolveSettings(
 using CompressionByColumn =
   irs::containers::FlatHashMap<irs::field_id, duckdb::CompressionType>;
 
-struct InvertedIndexConfig final : irs::IndexFieldOptions {
+class InvertedIndexConfig final : public irs::IndexFieldOptions {
+ public:
+  InvertedIndexConfig(std::vector<InvertedIndexKey> index_keys,
+                      InvertedIndexFields index_fields);
+
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
 
@@ -156,12 +166,40 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
 
   irs::field_id FindFieldIdByExpression(
     std::string_view normalized) const noexcept;
+  ExpressionKeys FindExpressionKeys(std::string_view normalized) const noexcept;
+  const InvertedIndexKey* FindKey(irs::field_id field_id) const noexcept;
+  bool WritesField(const InvertedIndexKey& key) const noexcept {
+    return FindKey(key.field_id) == &key;
+  }
+  bool StoresExpression(irs::field_id field_id) const noexcept;
+  bool StoresExpressions() const noexcept { return _stores_expressions; }
+  bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
 
+  const std::vector<InvertedIndexKey> keys;
+  const InvertedIndexFields fields;
   PkPolicy pk;
-  std::vector<InvertedIndexKey> keys;
-  InvertedIndexFields fields;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
+
+ private:
+  static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
+
+  struct ExpressionSlots {
+    uint32_t first = kNoKey;
+    uint32_t term = kNoKey;
+    uint32_t stored = kNoKey;
+  };
+
+  const InvertedIndexKey* KeyAt(uint32_t key) const noexcept {
+    return key == kNoKey ? nullptr : &keys[key];
+  }
+  ExpressionSlots SlotsOf(std::string_view normalized) const noexcept;
+
+  irs::containers::FlatHashMap<irs::field_id, uint32_t> _field_keys;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> _column_fields;
+  irs::containers::FlatHashMap<std::string, ExpressionSlots> _expressions;
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> _owners;
+  bool _stores_expressions = false;
 };
 
 inline const duckdb::Value* FindOption(

@@ -30,7 +30,6 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -78,14 +77,17 @@ void VariantColumnReader::NewOutputVector(ScanState& s) const {
   }
   for (size_t i = 0; i < s.variant->rgs.size(); ++i) {
     auto& vs = s.variant->rgs[i];
+    if (_variant_offsets[i + 1] <= s.variant->cursor) {
+      vs.unshredded.reset();
+      vs.shredded.reset();
+      vs.intermediate.reset();
+      continue;
+    }
     if (vs.unshredded) {
       ResetOutput(*_variant_rgs[i].unshredded, *vs.unshredded);
     }
     if (vs.shredded) {
       ResetOutput(*_variant_rgs[i].shredded, *vs.shredded);
-    }
-    if (vs.leaf && vs.leaf_reader) {
-      ResetOutput(*vs.leaf_reader, *vs.leaf);
     }
   }
 }
@@ -184,20 +186,14 @@ VariantColumnReader::ShreddedLeafScan(
   return {vstate.leaf_reader, vstate.leaf.get()};
 }
 
-void VariantColumnReader::ExtractShreddedLeafRun(
-  ScanState& s, size_t rg, std::span<const std::string_view> path,
-  duckdb::idx_t local_start, duckdb::idx_t run, duckdb::Vector& out,
-  duckdb::idx_t out_off, bool allow_entire) const {
-  const auto [leaf_reader, leaf] = ShreddedLeafScan(s, rg, path);
-  const uint64_t cur = leaf_reader->GatherCursor(*leaf);
-  SDB_ASSERT(local_start >= cur);
-  if (local_start > cur) {
-    leaf_reader->Skip(*leaf, local_start - cur);
+void VariantColumnReader::ReleaseLeavesBefore(ScanState& s,
+                                              uint64_t row) const {
+  if (!s.variant) {
+    return;
   }
-  if (allow_entire) {
-    leaf_reader->Scan(*leaf, out, run);
-  } else {
-    leaf_reader->ScanCount(*leaf, out, run, out_off);
+  auto& rgs = s.variant->rgs;
+  for (size_t i = 0; i < rgs.size() && _variant_offsets[i + 1] <= row; ++i) {
+    rgs[i].leaf.reset();
   }
 }
 
@@ -278,20 +274,6 @@ void VariantColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
     [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
         duckdb::idx_t /*done*/) { SeekVariantRg(s, rg, local_start + run); });
   vs.cursor += count;
-}
-
-void VariantColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
-                                        const duckdb::SelectionVector& sel,
-                                        duckdb::idx_t hits, duckdb::Vector& out,
-                                        duckdb::idx_t at) const {
-  column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
-}
-
-void VariantColumnReader::GatherDense(ScanState& s, uint64_t anchor,
-                                      const duckdb::SelectionVector& sel,
-                                      duckdb::idx_t hits, duckdb::idx_t span,
-                                      duckdb::Vector& out) const {
-  column_internal::DenseRuns(*this, s, anchor, sel, hits, span, out);
 }
 
 }  // namespace irs

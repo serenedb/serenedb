@@ -93,6 +93,8 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr Make(const AllQuery& query, const Context& ctx);
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
+Root::ptr Make(const ApproxQuery& query, const Context& ctx);
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
@@ -109,8 +111,6 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting,
                       const SubReader& segment, const Context& ctx);
 Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);

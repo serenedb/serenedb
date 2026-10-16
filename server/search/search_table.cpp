@@ -420,21 +420,8 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
-  auto& engine = GetSearchEngine();
-  const bool slot = engine.TryAcquireCompaction();
-  absl::Cleanup release_slot = [&engine, slot] {
-    if (slot) {
-      engine.ReleaseCompaction();
-    }
-  };
-  const auto acquire = [&engine](uint32_t want, uint32_t held) {
-    return engine.AcquireAnnWorkers(want, held,
-                                    SearchEngine::MaxAnnBuildWorkers());
-  };
-  const irs::AnnBuildEnv round_env{.executor = AnnBuildEnv().executor,
-                                   .acquire = acquire,
-                                   .release = AnnReleaseWorkers};
-  const irs::AnnBuildEnv* env = slot ? &round_env : nullptr;
+  const ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets;
     {

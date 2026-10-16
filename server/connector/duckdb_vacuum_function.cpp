@@ -257,21 +257,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
-  auto& engine = search::GetSearchEngine();
-  const bool slot = engine.TryAcquireCompaction();
-  absl::Cleanup release_slot = [&engine, slot] {
-    if (slot) {
-      engine.ReleaseCompaction();
-    }
-  };
-  const auto acquire = [&engine](uint32_t want, uint32_t held) {
-    return engine.AcquireAnnWorkers(want, held,
-                                    search::SearchEngine::MaxAnnBuildWorkers());
-  };
-  const irs::AnnBuildEnv env{.executor = search::AnnBuildEnv().executor,
-                             .acquire = acquire,
-                             .release = search::AnnReleaseWorkers};
-  const irs::AnnBuildEnv* env_ptr = slot ? &env : nullptr;
+  const search::ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
 
   search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (size_t pass = 0; pass < 8; ++pass) {

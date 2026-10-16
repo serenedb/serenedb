@@ -145,5 +145,19 @@ inline void AnnReleaseWorkers(uint32_t n) noexcept {
   GetSearchEngine().ReleaseAnnWorkers(n);
 }
 
+class [[nodiscard]] ManualCompactionSlot {
+ public:
+  ManualCompactionSlot() noexcept;
+  ~ManualCompactionSlot();
+
+  ManualCompactionSlot(const ManualCompactionSlot&) = delete;
+  ManualCompactionSlot& operator=(const ManualCompactionSlot&) = delete;
+
+  const irs::AnnBuildEnv* AnnEnv() const noexcept;
+
+ private:
+  bool _held;
+};
+
 }  // namespace search
 }  // namespace sdb

@@ -199,6 +199,39 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
 }
 
 template<irs::utils::detail::FixedString Name>
+void PositiveOrMinusOne(duckdb::ClientContext&, duckdb::SetScope,
+                        duckdb::Value& value) {
+  const auto n = value.GetValue<int32_t>();
+  if (n == 0 || n < -1) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", std::string_view{Name},
+              "\": \"", value.ToString(), "\""));
+  }
+}
+
+template<typename E, irs::utils::detail::FixedString Name>
+void OneOfEnum(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+  const auto mode = value.ToString();
+  if (magic_enum::enum_cast<E>(mode, magic_enum::case_insensitive)) {
+    return;
+  }
+  constexpr auto kNames = magic_enum::enum_names<E>();
+  std::string choices;
+  for (size_t i = 0; i < kNames.size(); ++i) {
+    absl::StrAppend(&choices,
+                    i == 0                   ? ""
+                    : i + 1 == kNames.size() ? " or "
+                                             : ", ",
+                    absl::AsciiStrToLower(kNames[i]));
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("invalid value for parameter \"", std::string_view{Name}, "\": \"",
+            mode, "\" (", choices, ")"));
+}
+
+template<irs::utils::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -733,15 +766,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "the segment's rows over the index's posting size, which keeps recall "
         "near 0.95 at any LIMIT and segment size.",
         [] { return duckdb::Value::INTEGER(-1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n == 0 || n < -1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_search_nprobe\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        PositiveOrMinusOne<"sdb_ivf_search_nprobe">,
       },
     },
     {
@@ -756,15 +781,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "sdb_ivf_min_search_fanout. -1 (the default) leaves the beam "
         "unbounded.",
         [] { return duckdb::Value::INTEGER(-1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n == 0 || n < -1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_max_search_fanout\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        PositiveOrMinusOne<"sdb_ivf_max_search_fanout">,
       },
     },
     {
@@ -779,15 +796,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "list count makes the descent exact. -1 (the default) leaves the "
         "beam unbounded.",
         [] { return duckdb::Value::INTEGER(-1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n == 0 || n < -1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_min_search_fanout\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        PositiveOrMinusOne<"sdb_ivf_min_search_fanout">,
       },
     },
     {
@@ -802,15 +811,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "query keeps its recall at any LIMIT. With a quantized index every "
         "hit of the beam is rescored exactly.",
         [] { return duckdb::Value::INTEGER(-1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n == 0 || n < -1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_hnsw_ef_search\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        PositiveOrMinusOne<"sdb_hnsw_ef_search">,
       },
     },
     {
@@ -828,21 +829,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "neighbour but expanding a rejected row into admitted ones only. "
         "Default 'auto'.",
         [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "walk") &&
-              !absl::EqualsIgnoreCase(mode, "scan") &&
-              !absl::EqualsIgnoreCase(mode, "prune") &&
-              !absl::EqualsIgnoreCase(mode, "twohop") &&
-              !absl::EqualsIgnoreCase(mode, "bridge")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_hnsw_filter_mode\": "
-                      "\"",
-                      mode, "\" (auto, scan, walk, prune, twohop or bridge)"));
-          }
-        },
+        OneOfEnum<irs::HnswFilterMode, "sdb_hnsw_filter_mode">,
       },
     },
     {
@@ -856,18 +843,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "than the fold, weighing what one read costs in the columns' "
         "encodings. Default 'auto'.",
         [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "fold") &&
-              !absl::EqualsIgnoreCase(mode, "read")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_hnsw_column_filter\": "
-                      "\"",
-                      mode, "\" (auto, fold or read)"));
-          }
-        },
+        OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
       },
     },
     {

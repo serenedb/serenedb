@@ -103,6 +103,50 @@ constexpr std::string_view kBQQuant = "bq";
 constexpr std::string_view kOSQQuant = "osq";
 constexpr std::string_view kNoneQuant = "none";
 
+struct QuantName {
+  std::string_view name;
+  irs::VectorQuantization quant;
+};
+
+constexpr std::array kQuantNames{
+  QuantName{kSQ8Quant, irs::VectorQuantization::SQ8},
+  QuantName{kSQ4Quant, irs::VectorQuantization::SQ4},
+  QuantName{kUSQ8Quant, irs::VectorQuantization::USQ8},
+  QuantName{kUSQ4Quant, irs::VectorQuantization::USQ4},
+  QuantName{kFP16Quant, irs::VectorQuantization::FP16},
+  QuantName{kBF16Quant, irs::VectorQuantization::BF16},
+  QuantName{kPQQuant, irs::VectorQuantization::PQ},
+  QuantName{kRaBitQQuant, irs::VectorQuantization::RaBitQ},
+  QuantName{kTQQuant, irs::VectorQuantization::TQ},
+  QuantName{kBQQuant, irs::VectorQuantization::BQ},
+  QuantName{kOSQQuant, irs::VectorQuantization::OSQ},
+  QuantName{kNoneQuant, irs::VectorQuantization::None},
+};
+
+std::string JoinQuantNames(std::string_view separator,
+                           std::span<const irs::VectorQuantization> skip = {}) {
+  std::vector<std::string_view> names;
+  for (const auto& [name, quant] : kQuantNames) {
+    if (!absl::c_linear_search(skip, quant)) {
+      names.push_back(name);
+    }
+  }
+  return absl::StrJoin(names, separator);
+}
+
+std::string DescribeQuantBits() {
+  return absl::StrCat(
+    "int ", irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, " for quant='",
+    kRaBitQQuant, "' with default ", irs::kRaBitQMinBits, "; int ",
+    irs::kTQMinBits, "-", irs::kTQMaxBits, " or 1.5 for quant='", kTQQuant,
+    "' with default ", irs::kTQDefaultBits, "; 1, 1.5 or 2 for quant='",
+    kBQQuant, "' with default ", irs::kBQDefaultBits,
+    "; 1, 2, 4, 7 or 8 for quant='", kOSQQuant, "' with default ",
+    irs::kOSQDefaultBits, "), ", "query_bits (int 1|4|8 for quant='", kBQQuant,
+    "' with default ", irs::kBQDefaultQueryBits, "; 4|8 for quant='", kOSQQuant,
+    "' with nb_bits up to 4, default 4, otherwise equal to nb_bits), ");
+}
+
 constexpr std::array<std::string_view, 3> kKnownOpclassTypes{
   catalog::kIncludedKind,
   catalog::kIVFKind,
@@ -257,15 +301,10 @@ std::string DescribeKnownOpclassTypes() {
 std::string DescribeIVFOptions() {
   const std::string metrics = absl::StrJoin(
     std::array{kL2Metric, kL1Metric, kCosineMetric, kIPMetric}, "|");
-  const std::string quants =
-    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kUSQ8Quant, kUSQ4Quant,
-                             kFP16Quant, kBF16Quant, kPQQuant, kRaBitQQuant,
-                             kTQQuant, kBQQuant, kOSQQuant, kNoneQuant},
-                  "|");
-  const std::string quants_cosine = absl::StrJoin(
-    std::array{kSQ8Quant, kSQ4Quant, kUSQ8Quant, kUSQ4Quant, kFP16Quant,
-               kBF16Quant, kPQQuant, kTQQuant, kBQQuant, kOSQQuant},
-    "|");
+  const std::string quants = JoinQuantNames("|");
+  const std::string quants_cosine = JoinQuantNames(
+    "|",
+    std::array{irs::VectorQuantization::RaBitQ, irs::VectorQuantization::None});
   return absl::StrCat(
     "metric (string: ", metrics, ", REQUIRED), ", "quant (string: ", quants,
     ", default ", kSQ8Quant, " for ", kL2Metric, "|", kIPMetric, "|",
@@ -273,42 +312,20 @@ std::string DescribeIVFOptions() {
     " need ", kL2Metric, "|", kIPMetric, "|", kCosineMetric, ", ", kRaBitQQuant,
     " needs ", kL2Metric, "|", kIPMetric, "), ",
     "pq_m (int >= 1, divides dimension, quant='", kPQQuant,
-    "' only, default auto ~d/2), ", "nb_bits (alias ", kRaBitQBitsField,
-    "; int ", irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, " for quant='",
-    kRaBitQQuant, "' with default ", irs::kRaBitQMinBits, "; int ",
-    irs::kTQMinBits, "-", irs::kTQMaxBits, " or 1.5 for quant='", kTQQuant,
-    "' with default ", irs::kTQDefaultBits, "; 1, 1.5 or 2 for quant='",
-    kBQQuant, "' with default ", irs::kBQDefaultBits,
-    "; 1, 2, 4, 7 or 8 for quant='", kOSQQuant, "' with default ",
-    irs::kOSQDefaultBits, "), ", "query_bits (int 1|4|8 for quant='", kBQQuant,
-    "' with default ", irs::kBQDefaultQueryBits, "; 4|8 for quant='", kOSQQuant,
-    "' with nb_bits up to 4, default 4, otherwise equal to nb_bits), ",
+    "' only, default auto ~d/2), ", "nb_bits (alias ", kRaBitQBitsField, "; ",
+    DescribeQuantBits(),
     "compression (bool, default true; false stores the index vectors "
     "uncompressed (increases the search performance and the disk "
     "consumption))");
 }
 
 std::string DescribeHNSWOptions() {
-  const std::string quants =
-    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kUSQ8Quant, kUSQ4Quant,
-                             kFP16Quant, kBF16Quant, kPQQuant, kRaBitQQuant,
-                             kTQQuant, kBQQuant, kOSQQuant, kNoneQuant},
-                  "|");
   return absl::StrCat(
-    "metric (string: l2|l1|cosine|ip, REQUIRED), ", "quant (string: ", quants,
-    ", default ", kSQ8Quant, ", ", kNoneQuant, " for l1), ",
-    "pq_m (int >= 1, divides dimension, quant='", kPQQuant,
-    "' only, default auto ~d/", kHNSWPqDsub, "), ", "nb_bits (int ",
-    irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, " for quant='", kRaBitQQuant,
-    "' with default ", irs::kRaBitQMinBits, "; int ", irs::kTQMinBits, "-",
-    irs::kTQMaxBits, " or 1.5 for quant='", kTQQuant, "' with default ",
-    irs::kTQDefaultBits, "; 1, 1.5 or 2 for quant='", kBQQuant,
-    "' with default ", irs::kBQDefaultBits, "; 1, 2, 4, 7 or 8 for quant='",
-    kOSQQuant, "' with default ", irs::kOSQDefaultBits, "), ",
-    "query_bits (int 1|4|8 for quant='", kBQQuant, "' with default ",
-    irs::kBQDefaultQueryBits, "; 4|8 for quant='", kOSQQuant,
-    "' with nb_bits up to 4, default 4, otherwise equal to nb_bits), ",
-    "m (int >= 2, default ", irs::kHnswDefaultM, "), ",
+    "metric (string: l2|l1|cosine|ip, REQUIRED), ",
+    "quant (string: ", JoinQuantNames("|"), ", default ", kSQ8Quant, ", ",
+    kNoneQuant, " for l1), ", "pq_m (int >= 1, divides dimension, quant='",
+    kPQQuant, "' only, default auto ~d/", kHNSWPqDsub, "), ", "nb_bits (",
+    DescribeQuantBits(), "m (int >= 2, default ", irs::kHnswDefaultM, "), ",
     "ef_construction (int >= 1, default ", irs::kHnswDefaultEfConstruction,
     ", must be >= m), ", "compression (bool, default true)");
 }
@@ -338,33 +355,14 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
                                       std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
-  static constexpr std::pair<std::string_view, irs::VectorQuantization> kMap[] =
-    {
-      {kSQ8Quant, irs::VectorQuantization::SQ8},
-      {kSQ4Quant, irs::VectorQuantization::SQ4},
-      {kUSQ8Quant, irs::VectorQuantization::USQ8},
-      {kUSQ4Quant, irs::VectorQuantization::USQ4},
-      {kFP16Quant, irs::VectorQuantization::FP16},
-      {kBF16Quant, irs::VectorQuantization::BF16},
-      {kPQQuant, irs::VectorQuantization::PQ},
-      {kRaBitQQuant, irs::VectorQuantization::RaBitQ},
-      {kTQQuant, irs::VectorQuantization::TQ},
-      {kBQQuant, irs::VectorQuantization::BQ},
-      {kOSQQuant, irs::VectorQuantization::OSQ},
-      {kNoneQuant, irs::VectorQuantization::None},
-    };
-  for (const auto& [k, v] : kMap) {
+  for (const auto& [k, v] : kQuantNames) {
     if (n == k) {
       return v;
     }
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
-            "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant, " ", kUSQ8Quant,
-            " ", kUSQ4Quant, " ", kFP16Quant, " ", kBF16Quant, " ", kPQQuant,
-            " ", kRaBitQQuant, " ", kTQQuant, " ", kBQQuant, " ", kOSQQuant,
-            " ", kNoneQuant));
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
+                          "'. Expected one of: ", JoinQuantNames(" ")));
 }
 
 void ValidateQuantBits(std::string_view kind, std::string_view column_name,

@@ -1293,7 +1293,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "archive_mode",
       {
         LogicalTypeId::VARCHAR,
-        "Shows whether WAL archiving is enabled; SereneDB has no WAL archive.",
+        "Not used. Added for PostgreSQL compatibility only.",
         [] { return duckdb::Value{"off"}; },
         nullptr,  // refused via kUnchangeableSettings
       },
@@ -1302,7 +1302,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "archive_command",
       {
         LogicalTypeId::VARCHAR,
-        "Shows the WAL archive command; SereneDB has no WAL archive.",
+        "Not used. Added for PostgreSQL compatibility only.",
         [] { return duckdb::Value{""}; },
         nullptr,  // refused via kUnchangeableSettings
       },
@@ -1311,7 +1311,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "checkpoint_timeout",
       {
         LogicalTypeId::INTEGER,
-        "Shows the maximum time between automatic WAL checkpoints, in seconds.",
+        "Not used. Added for PostgreSQL compatibility only.",
         [] { return duckdb::Value::INTEGER(300); },
         nullptr,  // refused via kUnchangeableSettings
       },
@@ -1320,7 +1320,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "max_parallel_workers_per_gather",
       {
         LogicalTypeId::INTEGER,
-        "Accepted for PostgreSQL compatibility; has no effect.",
+        "Not used. Added for PostgreSQL compatibility only.",
         [] { return duckdb::Value::INTEGER(2); },
       },
     },

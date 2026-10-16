@@ -220,12 +220,16 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
 | `access_mode`                                 | Access mode of the database (`AUTOMATIC`, `READ_ONLY` or `READ_WRITE`)                                                                                                                                         | `VARCHAR`   | `automatic`                                         |
+| `archive_command` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` |  |
+| `archive_mode` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `off` |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `hex` |
 | `Calendar`                                    | The current calendar                                                                                                                                                                                           | `VARCHAR`   | System (locale) calendar                            |
+| `checkpoint_timeout` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `300` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `notice` |
 | `current_transaction_invalidation_policy`     | Which types of exceptions invalidate the database for the current transaction                                                                                                                                  | `VARCHAR`   | `STANDARD_POLICY`                                   |
 | `custom_user_agent`                           | Metadata from SereneDB callers                                                                                                                                                                                 | `VARCHAR`   |                                                     |
+| `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `ISO, MDY` |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `repeatable read` |
@@ -240,6 +244,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `integer_datetimes` | Shows whether datetimes are integer based. | `BOOLEAN` | `on` |
 | `IntervalStyle` | Sets the display format for interval values. | `VARCHAR` | `postgres` |
 | `lock_configuration`                          | Whether or not configurations can be altered                                                                                                                                                                   | `BOOLEAN`   | `false`                                             |
+| `max_parallel_workers_per_gather` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `2` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `0` |
 | `pg_idle_in_transaction_timeout_millis` | Postgres idle in transaction timeout in milliseconds to set on scan connections. | `UINTEGER` |  |
 | `regex_match_operator_semantics` | Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `partial` |

@@ -49,7 +49,6 @@
 #include <string>
 
 #include "catalog/catalog.h"
-#include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
@@ -173,6 +172,21 @@ duckdb::JobSchedule ReindexSchedule(uint32_t interval_ms) {
   return {.kind = duckdb::JobScheduleKind::AFTER,
           .interval = duckdb::Value::INTERVAL(
             duckdb::Interval::FromMicro(int64_t{interval_ms} * 1000))};
+}
+
+void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
+                   duckdb::Catalog& catalog, const duckdb::Identifier& schema,
+                   const duckdb::Identifier& job,
+                   const duckdb::Identifier& owner) {
+  duckdb::ChangeOwnershipInfo ownership{
+    duckdb::CatalogType::JOB_ENTRY,
+    catalog.GetName(),
+    schema,
+    job,
+    schema,
+    owner,
+    duckdb::OnEntryNotFound::THROW_EXCEPTION};
+  catalog.Alter(transaction, ownership);
 }
 
 }  // namespace

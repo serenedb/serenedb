@@ -39,6 +39,7 @@ add_executable(
     query_prepared_cache_test.cpp
     random_test.cpp
     scorer_bounds_test.cpp
+    search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp

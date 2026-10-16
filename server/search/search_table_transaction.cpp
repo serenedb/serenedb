@@ -20,6 +20,7 @@
 
 #include "search/search_table_transaction.h"
 
+#include <algorithm>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/storage/storage_lock.hpp>
@@ -51,28 +52,23 @@ namespace {
 uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
   uint64_t size = changes.BufferedBytes();
   for (const auto& op : changes.ops) {
-    size += op.delete_rows.size() * sizeof(int64_t);
+    size += op.delete_ranges.size() * 2 * sizeof(int64_t);
   }
   return size;
 }
 
-// The rowids this transaction deleted. The buffer already holds them raw, so a
-// build's log takes them as they are.
+// The rowid ranges this transaction deleted, taken by a build's log as they
+// are.
 void RecordDeletesForBuild(SearchTable& shard,
                            const LocalTableChangesEntry& changes,
                            const irs::SourcePosition& position) noexcept {
-  std::vector<int64_t> rows;
-  std::vector<Expiry> expiries;
+  std::vector<RowRange> rows;
   bool truncated = false;
   for (const auto& op : changes.ops) {
     truncated |= op.IsTruncate();
-    rows.insert(rows.end(), op.delete_rows.begin(), op.delete_rows.end());
-    if (op.expiry) {
-      expiries.push_back(*op.expiry);
-    }
+    rows.insert(rows.end(), op.delete_ranges.begin(), op.delete_ranges.end());
   }
   shard.AppendDeleteLog(rows);
-  shard.AppendExpiryLog(expiries);
   if (truncated) {
     shard.RecordTruncateForBuild(position);
   }
@@ -113,17 +109,19 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       },
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
-        if (op.expiry) {
-          _entries.WriteExpireRows(op.expiry->column, op.expiry->cutoff);
+        SDB_IF_FAILURE("search_delete_wal_rowids") {
+          WriteDeletedRowids(op.delete_ranges);
           return;
         }
-        duckdb::DataChunk rows;
-        rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
-        rows.data[0].Reference(duckdb::Vector(
-          duckdb::LogicalType::ROW_TYPE,
-          duckdb::data_ptr_cast(op.delete_rows.data()), op.delete_rows.size()));
-        rows.SetChildCardinality(op.delete_rows.size());
-        _entries.WriteDelete(rows);
+        duckdb::vector<duckdb::row_t> starts;
+        duckdb::vector<duckdb::idx_t> counts;
+        starts.reserve(op.delete_ranges.size());
+        counts.reserve(op.delete_ranges.size());
+        for (const auto& range : op.delete_ranges) {
+          starts.push_back(range.begin);
+          counts.push_back(static_cast<duckdb::idx_t>(range.end - range.begin));
+        }
+        _entries.WriteDeleteRowRanges(starts, counts);
       });
   }
 
@@ -133,6 +131,27 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
   }
 
  private:
+  void WriteDeletedRowids(std::span<const RowRange> ranges) {
+    std::vector<int64_t> rowids;
+    for (const auto& range : ranges) {
+      for (auto row = range.begin; row != range.end; ++row) {
+        rowids.push_back(row);
+      }
+    }
+    for (size_t offset = 0; offset < rowids.size();
+         offset += STANDARD_VECTOR_SIZE) {
+      const auto count =
+        std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - offset);
+      duckdb::DataChunk rows;
+      rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
+      rows.data[0].Reference(
+        duckdb::Vector(duckdb::LogicalType::ROW_TYPE,
+                       duckdb::data_ptr_cast(rowids.data() + offset), count));
+      rows.SetChildCardinality(count);
+      _entries.WriteDelete(rows);
+    }
+  }
+
   const catalog::SearchTableEntry& _table;
   duckdb::WALEntryBuffer _entries;
 };
@@ -218,12 +237,9 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
-      if (op.expiry) {
-        trx.Remove(std::make_shared<connector::SearchExpireFilter>(
-          op.expiry->column, op.expiry->cutoff));
-        return;
+      if (auto removal = connector::MakeRowRangeRemoval(op.delete_ranges)) {
+        trx.Remove(std::move(removal));
       }
-      connector::RemoveGeneratedRows(trx, op.delete_rows);
     });
   entry.applied_ops = entry.ops.size();
 }
@@ -265,12 +281,6 @@ void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
   EnsureShardWrites(shard);
   _changes[shard->GetTableId()].AppendDeletes(rows);
-}
-
-void SearchTableTransaction::AddSearchExpiry(
-  const std::shared_ptr<SearchTable>& shard, Expiry expiry) {
-  EnsureShardWrites(shard);
-  _changes[shard->GetTableId()].AppendExpiry(std::move(expiry));
 }
 
 void SearchTableTransaction::AddSearchTruncate(

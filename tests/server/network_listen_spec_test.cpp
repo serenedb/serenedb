@@ -117,6 +117,15 @@ TEST(ListenSpec, HttpOtelIndexParam) {
     Parse({"http://127.0.0.1:4318?otel_index=none&api=otel"})[0].otel_index);
 }
 
+TEST(ListenSpec, HttpOtelIndexWithoutOtelApiIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://127.0.0.1:9200?api=es&otel_index=none"});
+    },
+    "'otel_index' requires api=otel");
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

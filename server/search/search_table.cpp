@@ -203,7 +203,6 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
-  _expiry_log.clear();
   _build_truncate = {};
   _delete_log_open.store(true, std::memory_order_release);
 }
@@ -216,7 +215,7 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
   if (rows.empty()) {
     return;
   }
@@ -227,22 +226,10 @@ void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
 }
 
-void SearchTable::AppendExpiryLog(std::span<const Expiry> expiries) {
-  if (expiries.empty()) {
-    return;
-  }
-  absl::MutexLock lock{&_delete_log_mutex};
-  if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return;
-  }
-  _expiry_log.insert(_expiry_log.end(), expiries.begin(), expiries.end());
-}
-
 void SearchTable::CloseDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log_open.store(false, std::memory_order_release);
   _delete_log.clear();
-  _expiry_log.clear();
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
@@ -526,16 +513,21 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
                     duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
 }
 
-void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
-  if (auto* session = BeginReplay(db)) {
-    session->trx.Remove(std::make_shared<irs::All>());
+void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                                     std::vector<RowRange> rows) {
+  auto* session = BeginReplay(db);
+  if (!session) {
+    return;
+  }
+  NormalizeRowRanges(rows);
+  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
+    session->trx.Remove(std::move(removal));
   }
 }
 
-void SearchTable::ReplayExpiry(duckdb::AttachedDatabase& db, Expiry expiry) {
+void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
-    session->trx.Remove(std::make_shared<connector::SearchExpireFilter>(
-      expiry.column, std::move(expiry.cutoff)));
+    session->trx.Remove(std::make_shared<irs::All>());
   }
 }
 

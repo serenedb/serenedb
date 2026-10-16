@@ -1215,8 +1215,11 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   const auto index_id = parameters.values[0].GetValue<int64_t>();
   const auto& home =
     duckdb::ClientData::Get(context).catalog_search_path->GetDefault();
-  auto& catalog = duckdb::Catalog::GetCatalog(context, home.GetCatalog())
-                    .Cast<catalog::SereneDBCatalog>();
+  auto& home_catalog = duckdb::Catalog::GetCatalog(context, home.GetCatalog());
+  if (home_catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+    return;
+  }
+  auto& catalog = home_catalog.Cast<catalog::SereneDBCatalog>();
   const auto trx = catalog.GetCatalogTransaction(context);
   auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
     &context, static_cast<duckdb::idx_t>(index_id));

@@ -24,7 +24,6 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
-#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
@@ -132,21 +131,6 @@ void ForEachJob(duckdb::DuckCatalog& catalog,
                   callback(entry.Cast<JobCatalogEntry>());
                 });
   });
-}
-
-void SetJobOwnedBy(duckdb::CatalogTransaction transaction,
-                   duckdb::Catalog& catalog, const duckdb::Identifier& schema,
-                   const duckdb::Identifier& job,
-                   const duckdb::Identifier& owner) {
-  duckdb::ChangeOwnershipInfo ownership{
-    duckdb::CatalogType::JOB_ENTRY,
-    catalog.GetName(),
-    schema,
-    job,
-    schema,
-    owner,
-    duckdb::OnEntryNotFound::THROW_EXCEPTION};
-  catalog.Alter(transaction, ownership);
 }
 
 }  // namespace sdb::catalog

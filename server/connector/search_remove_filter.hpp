@@ -22,8 +22,8 @@
 
 #include <absl/functional/any_invocable.h>
 
-#include <duckdb/common/types/value.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -31,7 +31,10 @@
 #include <iresearch/utils/memory.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
+
+#include "search/search_table_changes.h"
 
 namespace sdb::connector {
 
@@ -163,9 +166,10 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   mutable std::vector<Entry> _entries;
 };
 
-class SearchExpireFilter final : public irs::Filter, public irs::lead::Node {
+class SearchRowRangeFilter final : public irs::Filter, public irs::lead::Node {
  public:
-  SearchExpireFilter(irs::field_id column, duckdb::Value cutoff);
+  explicit SearchRowRangeFilter(std::vector<search::RowRange> rows)
+    : _rows{std::move(rows)} {}
 
   irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
                                 const irs::DocumentMask* pending) const;
@@ -173,7 +177,7 @@ class SearchExpireFilter final : public irs::Filter, public irs::lead::Node {
   irs::doc_id_t Next() final;
 
   irs::TypeInfo::type_id type() const noexcept final {
-    return irs::Type<SearchExpireFilter>::id();
+    return irs::Type<SearchRowRangeFilter>::id();
   }
 
   irs::QueryBuilder::ptr PrepareSegment(
@@ -190,13 +194,11 @@ class SearchExpireFilter final : public irs::Filter, public irs::lead::Node {
     irs::doc_id_t end;
   };
 
-  template<typename T>
-  void Collect(const irs::SubReader& segment,
+  void Collect(const irs::SubReader& segment, const irs::ColReader& store,
                const irs::ColumnReader& column) const;
 
   irs::doc_id_t _doc = irs::doc_limits::invalid();
-  const irs::field_id _column;
-  const duckdb::Value _cutoff;
+  const std::vector<search::RowRange> _rows;
   mutable std::vector<DocRange> _ranges;
   mutable size_t _range = 0;
 };
@@ -228,7 +230,10 @@ class SearchRemoveUnion final : public irs::Filter, public irs::lead::Node {
   std::vector<std::shared_ptr<const irs::Filter>> _filters;
   mutable std::vector<irs::QueryBuilder::ptr> _prepared;
   mutable std::vector<irs::lead::Node::ptr> _leads;
-  mutable size_t _lead = 0;
+  mutable std::vector<irs::doc_id_t> _heads;
 };
+
+std::shared_ptr<const irs::Filter> MakeRowRangeRemoval(
+  std::span<const search::RowRange> rows);
 
 }  // namespace sdb::connector

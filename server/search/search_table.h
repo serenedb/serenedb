@@ -125,10 +125,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk, uint64_t row_start);
   void ReplayDelete(duckdb::AttachedDatabase& db, duckdb::DataChunk& chunk);
+  void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                          std::vector<RowRange> rows);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
-  void ReplayExpiry(duckdb::AttachedDatabase& db, Expiry expiry);
   bool FinishReplay(duckdb::AttachedDatabase& db);
 
   void Publish();
@@ -241,25 +242,16 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _delete_log_open.load(std::memory_order_acquire);
   }
   void OpenDeleteLog();
-  void AppendDeleteLog(std::span<const int64_t> rows);
-  void AppendExpiryLog(std::span<const Expiry> expiries);
+  void AppendDeleteLog(std::span<const RowRange> rows);
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
     absl::MutexLock lock{&_delete_log_mutex};
     return _build_truncate > position;
   }
 
-  struct DrainedDeletes {
-    std::vector<int64_t> rows;
-    std::vector<Expiry> expiries;
-    irs::SourcePosition truncate;
-  };
-
-  DrainedDeletes DrainDeleteLog() {
+  std::pair<std::vector<RowRange>, irs::SourcePosition> DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return {.rows = std::exchange(_delete_log, {}),
-            .expiries = std::exchange(_expiry_log, {}),
-            .truncate = _build_truncate};
+    return {std::exchange(_delete_log, {}), _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>
@@ -326,8 +318,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // entirely when no build is running, which is the normal case.
   std::atomic<bool> _delete_log_open{false};
   absl::Mutex _delete_log_mutex;
-  std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
-  std::vector<Expiry> _expiry_log ABSL_GUARDED_BY(_delete_log_mutex);
+  std::vector<RowRange> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_delete_log_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement

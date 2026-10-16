@@ -137,6 +137,93 @@ FROM (VALUES ([1, 2], [1.0]), ([1, 2], [2.0])) AS t(counts, bounds);
 db error: ERROR: histogram_quantile(): all rows of a group must have the same quantile and explicit_bounds
 
 
+statement error
+SELECT histogram_quantile(0.5, [1, 2, 3], [1.0, NULL]);
+----
+db error: ERROR: histogram_quantile(): explicit_bounds must not contain NULL
+
+
+query
+SELECT increase(value, ts) AS increase, rate(value, ts) AS rate
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 1.0),
+             (TIMESTAMP '2026-01-01 00:00:10', 3.0),
+             ('infinity'::TIMESTAMP, 100.0),
+             ('-infinity'::TIMESTAMP, 0.0)) AS t(ts, value);
+----
+increase	rate
+2	0.2
+
+query
+SELECT increase(counts, ts) AS increase
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', [1.0, 2.0]),
+             (TIMESTAMP '2026-01-01 00:00:10', ['NaN'::DOUBLE, 0.0]),
+             (TIMESTAMP '2026-01-01 00:00:20', [3.0, 5.0]),
+             ('infinity'::TIMESTAMP, [9.0, 9.0])) AS t(ts, counts);
+----
+increase
+{2,3}
+
+query
+SELECT increase(counts, ts) AS increase
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', [1, 2]),
+             (TIMESTAMP '2026-01-01 00:00:10', [2, 3]),
+             (TIMESTAMP '2026-01-01 00:00:20', [1, 1, 1]),
+             (TIMESTAMP '2026-01-01 00:00:30', [2, 2, 2])) AS t(ts, counts);
+----
+increase
+{2,2,2}
+
+query
+SELECT ts,
+       increase(value, ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS delta
+FROM counters
+WHERE series = 'a' AND ts <= TIMESTAMP_NS '2026-01-01 00:00:40' AND value <> 30
+ORDER BY ts;
+----
+ts	delta
+2026-01-01 00:00:00	NULL
+2026-01-01 00:00:10	10
+2026-01-01 00:00:20	25
+2026-01-01 00:00:30	20
+2026-01-01 00:00:40	25
+
+statement ok
+CREATE TABLE big_counter AS
+SELECT i % 4 AS g, TIMESTAMP '2026-01-01' + to_seconds(i) AS ts, i::DOUBLE AS value
+FROM range(1000000) t(i);
+
+query
+SELECT g, increase(value, ts) AS increase, rate(value, ts) AS rate
+FROM big_counter
+GROUP BY g
+ORDER BY g;
+----
+g	increase	rate
+0	999996	1
+1	999996	1
+2	999996	1
+3	999996	1
+
+statement ok
+CREATE TABLE big_histograms AS
+SELECT i, [2, 1] AS counts, CASE WHEN i = 999999 THEN [2.0] ELSE [1.0] END AS bounds
+FROM range(1000000) t(i);
+
+query
+SELECT round(histogram_quantile(0.5, counts, bounds), 6) AS p50
+FROM big_histograms
+WHERE i <> 999999;
+----
+p50
+0.75
+
+statement error
+SELECT histogram_quantile(0.5, counts, bounds)
+FROM big_histograms;
+----
+db error: ERROR: histogram_quantile(): all rows of a group must have the same quantile and explicit_bounds
+
+
 include schema.inc
 
 statement ok
@@ -201,3 +288,295 @@ ORDER BY minute;
 ----
 minute	p50	p75
 2026-09-08 12:00:00	10	325
+
+query
+SELECT round(histogram_fraction('-inf'::DOUBLE, 100, buckets, explicit_bounds), 6) AS under_100,
+       round(histogram_stddev(buckets, explicit_bounds), 6) AS stddev,
+       histogram_stdvar(buckets, explicit_bounds) AS stdvar
+FROM (
+  SELECT resource_attributes, attributes, explicit_bounds,
+         increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+);
+----
+under_100	stddev	stdvar
+0.7	333.414532	111165.25
+
+statement ok
+CREATE TABLE gauges (series VARCHAR, ts TIMESTAMP, value DOUBLE);
+
+statement ok
+INSERT INTO gauges VALUES
+  ('a', TIMESTAMP '2026-01-01 00:00:20', 7),
+  ('a', TIMESTAMP '2026-01-01 00:00:00', 5),
+  ('a', TIMESTAMP '2026-01-01 00:00:10', 7),
+  ('a', TIMESTAMP '2026-01-01 00:00:40', 10),
+  ('a', TIMESTAMP '2026-01-01 00:00:30', 3),
+  ('a', TIMESTAMP '2026-01-01 00:00:50', 'NaN'::DOUBLE),
+  ('a', NULL, 100),
+  ('b', TIMESTAMP '2026-01-01 00:00:00', 4),
+  ('c', TIMESTAMP '2026-01-01 00:00:00', 2),
+  ('c', TIMESTAMP '2026-01-01 00:00:30', 2);
+
+query
+SELECT series,
+       delta(value, ts) AS delta,
+       idelta(value, ts) AS idelta,
+       round(deriv(value, ts), 6) AS deriv,
+       round(predict_linear(value, ts, 60), 6) AS predicted,
+       changes(value, ts) AS changes,
+       resets(value, ts) AS resets
+FROM gauges
+GROUP BY series
+ORDER BY series;
+----
+series	delta	idelta	deriv	predicted	changes	resets
+a	5	7	0.06	11.2	3	1
+b	NULL	NULL	NULL	NULL	0	0
+c	0	0	0	2	0	0
+
+query
+SELECT round(deriv(value, ts::TIMESTAMP_NS), 6) AS nanos,
+       round(predict_linear(value, ts::TIMESTAMPTZ, 60), 6) AS tz,
+       changes(value, ts::TIMESTAMP_NS) AS changes
+FROM gauges
+WHERE series = 'a';
+----
+nanos	tz	changes
+0.06	11.2	3
+
+query
+SELECT delta(value, ts) AS delta, changes(value, ts) AS changes
+FROM gauges
+WHERE false;
+----
+delta	changes
+NULL	NULL
+
+query
+SELECT ts,
+       changes(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS changes,
+       idelta(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS idelta
+FROM gauges
+WHERE series = 'a' AND ts <= TIMESTAMP '2026-01-01 00:00:40'
+ORDER BY ts;
+----
+ts	changes	idelta
+2026-01-01 00:00:00	0	NULL
+2026-01-01 00:00:10	1	2
+2026-01-01 00:00:20	0	0
+2026-01-01 00:00:30	1	-4
+2026-01-01 00:00:40	1	7
+
+statement error
+SELECT predict_linear(value, ts, CASE WHEN value > 5 THEN 60 ELSE 30 END)
+FROM gauges
+WHERE series = 'a';
+----
+db error: ERROR: predict_linear(): all rows of a group must have the same seconds
+
+
+query
+SELECT histogram_fraction(0, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS f02,
+       histogram_fraction('-inf'::DOUBLE, 1.5, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS below,
+       histogram_fraction(3, 'inf'::DOUBLE, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS above,
+       histogram_fraction(2, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS empty,
+       histogram_fraction('NaN'::DOUBLE, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS nan,
+       round(histogram_fraction(5, 'inf'::DOUBLE, [10, 20, 10, 6], [1.0, 2.0, 4.0]), 6) AS last;
+----
+f02	below	above	empty	nan	last
+0.75	0.5	0.125	0	NaN	0.130435
+
+query
+SELECT histogram_fraction('-inf'::DOUBLE, -2, [2, 2, 2, 2], [-1.0, 0.0, 1.0]) AS first,
+       histogram_fraction(-0.5, 0.5, [2, 2, 2, 2], [-1.0, 0.0, 1.0]) AS middle,
+       histogram_fraction(0, 1, [0, 0], [1.0]) AS empty;
+----
+first	middle	empty
+0.25	0.25	NULL
+
+query
+SELECT round(histogram_stddev([10, 20, 10, 0], [1.0, 2.0, 4.0]), 6) AS stddev,
+       histogram_stdvar([10, 20, 10, 0], [1.0, 2.0, 4.0]) AS stdvar,
+       histogram_stddev([0, 0], [1.0]) AS empty;
+----
+stddev	stdvar	empty
+0.892679	0.796875	NULL
+
+statement error
+SELECT histogram_fraction(0, 1, b, e)
+FROM (VALUES ([1, 1], [1.0]), ([1, 1], [2.0])) t(b, e);
+----
+db error: ERROR: histogram_fraction(): all rows of a group must have the same lower, upper and explicit_bounds
+
+
+statement error
+SELECT histogram_stddev(b, e)
+FROM (VALUES ([1, 1], [1.0]), ([1, 1], [2.0])) t(b, e);
+----
+db error: ERROR: histogram_stddev(): all rows of a group must have the same explicit_bounds
+
+
+statement error
+SELECT histogram_fraction(0, 1, [1, 1, 1], [1.0]);
+----
+db error: ERROR: histogram_fraction(): bucket_counts must have one element more than explicit_bounds, got 3 and 1
+
+
+query
+SELECT q, round(histogram_quantile(q, exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2])), 6) AS value
+FROM (SELECT unnest([0, 0.1, 0.25, 0.5, 0.9, 1, -1, 2]::DOUBLE[]) AS q)
+GROUP BY q
+ORDER BY q;
+----
+q	value
+-1	-Infinity
+0	-4
+0.1	-2.828427
+0.25	0
+0.5	2.828427
+0.9	6.727171
+1	8
+2	Infinity
+
+query
+SELECT histogram_fraction(0, 4, h) AS f04,
+       round(histogram_fraction('-inf'::DOUBLE, 3, h), 6) AS below_3,
+       round(histogram_fraction(-3, 0, h), 6) AS negative,
+       histogram_fraction('-inf'::DOUBLE, 'inf'::DOUBLE, h) AS everything,
+       round(histogram_stddev(h), 6) AS stddev,
+       round(histogram_stdvar(h), 6) AS stdvar
+FROM (SELECT exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
+----
+f04	below_3	negative	everything	stddev	stdvar
+0.3	0.516993	0.216993	1	3.228002	10.42
+
+query
+SELECT round(histogram_quantile(0.5, h), 6) AS p50,
+       histogram_fraction(2, 4, h) AS inside
+FROM (VALUES (exponential_histogram(1, 0, 2, [1, 1], 0, [])),
+             (exponential_histogram(0, 0, 1, [2], 0, [])),
+             (NULL),
+             (exponential_histogram(NULL, 5, 0, [5], 0, []))) t(h);
+----
+p50	inside
+2.828427	1
+
+query
+SELECT histogram_quantile(0.5, exponential_histogram(0, 0, 0, [], 0, [])) AS empty,
+       histogram_quantile(0.5, exponential_histogram(0, NULL, 0, NULL, 0, NULL)) AS nulls;
+----
+empty	nulls
+NULL	NULL
+
+statement error
+SELECT histogram_quantile(q, exponential_histogram(0, 0, 0, [1], 0, []))
+FROM (VALUES (0.5), (0.9)) t(q);
+----
+db error: ERROR: histogram_quantile(): all rows of a group must have the same quantile
+
+
+statement ok
+CREATE TABLE exp_series (series VARCHAR, ts TIMESTAMP, scale INTEGER, zero_count BIGINT,
+                         positive_offset INTEGER, positive_bucket_counts BIGINT[],
+                         negative_offset INTEGER, negative_bucket_counts BIGINT[]);
+
+statement ok
+INSERT INTO exp_series VALUES
+  ('grow', TIMESTAMP '2026-01-01 00:00:30', 0, 2, 0, [3, 1, 2], 0, []),
+  ('grow', TIMESTAMP '2026-01-01 00:00:00', 0, 1, 0, [1, 1], 0, []),
+  ('rescaled', TIMESTAMP '2026-01-01 00:00:00', 1, 0, 0, [2, 2], 0, []),
+  ('rescaled', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [5], 0, []),
+  ('reset', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [5, 5], 0, []),
+  ('reset', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [1, 1], 0, []),
+  ('negative', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [], 2, [1]),
+  ('negative', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [], 2, [4, 1]),
+  ('single', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [1], 0, []);
+
+query
+SELECT series, h.scale, h.zero_count, h.positive_offset, h.positive_bucket_counts,
+       h.negative_offset, h.negative_bucket_counts
+FROM (
+  SELECT series,
+         increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                        negative_offset, negative_bucket_counts), ts) AS h
+  FROM exp_series
+  GROUP BY series
+)
+ORDER BY series;
+----
+series	scale	zero_count	positive_offset	positive_bucket_counts	negative_offset	negative_bucket_counts
+grow	0	1	0	{2,0,2}	0	{}
+negative	0	0	0	{}	2	{3,1}
+rescaled	0	0	0	{1}	0	{}
+reset	0	0	0	{1,1}	0	{}
+single	NULL	NULL	NULL	NULL	NULL	NULL
+
+statement ok
+INSERT INTO otel_metrics_exponential_histogram ("timestamp", service_name, metric_name, attributes,
+    scale, zero_count, positive_offset, positive_bucket_counts, negative_offset,
+    negative_bucket_counts, aggregation_temporality)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{}', 1, 0, 0, [2, 2], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'rpc.duration', '{}', 0, 1, 0, [6, 2], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [1], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [5], 0, [], 'Cumulative');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
+
+query
+SELECT minute,
+       round(histogram_quantile(0.5, h), 6) AS p50,
+       round(histogram_fraction('-inf'::DOUBLE, 2, h), 6) AS under_2
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, resource_attributes, attributes,
+         increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                        negative_offset, negative_bucket_counts), "timestamp") AS h
+  FROM otel_metrics_exponential_histogram
+  WHERE metric_name = 'rpc.duration'
+  GROUP BY ALL
+)
+GROUP BY minute
+ORDER BY minute;
+----
+minute	p50	under_2
+2026-09-08 12:00:00	2.378414	0.333333
+
+query
+SELECT histogram_quantile(0.5, h) AS p50,
+       round(histogram_quantile(0.75, h), 6) AS p75,
+       histogram_fraction('-inf'::DOUBLE, 2, h) AS under_2
+FROM (
+  SELECT CASE WHEN i % 2 = 0
+              THEN exponential_histogram(0, 0, 0, [1, 1], 0, [])
+              ELSE exponential_histogram(1, 0, 0, [1, 1, 1, 1], 0, [])
+         END AS h
+  FROM range(0, 100000) r(i)
+);
+----
+p50	p75	under_2
+2	2.828427	0.5
+
+query
+SELECT round(deriv(value, ts), 6) AS deriv,
+       round(predict_linear(value, ts, 10), 6) AS predicted,
+       delta(value, ts) AS delta
+FROM (
+  SELECT TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts, 3.0 * i AS value
+  FROM range(0, 1000000) r(i)
+);
+----
+deriv	predicted	delta
+3	3000027	2999997
+
+query
+SELECT changes(i // 10, ts) AS changes, resets(i % 1000, ts) AS resets
+FROM (
+  SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts
+  FROM range(0, 1000000) r(i)
+);
+----
+changes	resets
+99999	999

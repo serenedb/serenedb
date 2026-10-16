@@ -191,20 +191,6 @@ Two expressions that PostgreSQL rejects are accepted by SereneDB:
 -   the expression may **reference other generated columns**, not just regular columns of the same row;
 -   the expression is **not required to be immutable** — volatile functions such as `random()` are accepted.
 
-## Row Expiry (TTL)
-
-A search table can expire its rows. The `WITH` options `ttl`, an interval, and `ttl_column`, a timestamp column, delete every row whose `ttl_column` is at least `ttl` in the past:
-
-<SqlLogicTest id="sql/statements/create_table/index/example_031" />
-
-The two options are set together or not at all. `ttl` must be a positive interval, and `ttl_column` must name a stored column of type `TIMESTAMP`, `TIMESTAMP_S`, `TIMESTAMP_MS`, `TIMESTAMP_NS` or `TIMESTAMPTZ`. A row whose `ttl_column` is `NULL` never expires. Renaming the column keeps the option pointing at it, and `pg_class.reloptions` lists both options.
-
-A run costs about the same however many rows have expired: it reads only the parts of the table that hold both expired and unexpired rows.
-
-The deletion runs as a [job](../create_job/index.md) that the table owns, named `<table>_ttl`. It runs every hour as the table's owner. `ALTER JOB` changes the schedule, `EXECUTE JOB` runs it at once, and `sdb_jobs()` shows its runs and failures. Expired rows stay visible to queries until the job has deleted them. Renaming the table keeps the job working, dropping the table drops the job, and [`ALTER TABLE ... SET`](../alter_table/index.md#set--reset-storage-options) changes or removes the TTL.
-
-The TTL options exist only for tables created `WITH (storage = 'search')`.
-
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

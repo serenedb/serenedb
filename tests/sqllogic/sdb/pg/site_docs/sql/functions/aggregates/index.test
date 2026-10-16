@@ -477,3 +477,78 @@ FROM (
 ----
 p90
 88.75
+
+# DOCS_TEST: gauges
+
+statement ok
+CREATE TABLE disk (ts TIMESTAMP, free_gb DOUBLE);
+
+statement ok
+INSERT INTO disk VALUES
+    (TIMESTAMP '2026-01-01 00:00:00', 100),
+    (TIMESTAMP '2026-01-01 00:10:00', 98),
+    (TIMESTAMP '2026-01-01 00:20:00', 98),
+    (TIMESTAMP '2026-01-01 00:30:00', 95),
+    (TIMESTAMP '2026-01-01 00:40:00', 94);
+
+# DOCS_TEST_BODY
+
+query
+SELECT delta(free_gb, ts) AS delta,
+       idelta(free_gb, ts) AS idelta,
+       round(deriv(free_gb, ts), 6) AS per_second,
+       round(predict_linear(free_gb, ts, 3600), 6) AS in_an_hour,
+       changes(free_gb, ts) AS changes,
+       resets(free_gb, ts) AS drops
+FROM disk;
+----
+delta	idelta	per_second	in_an_hour	changes	drops
+-6	-1	-0.0025	85	3	3
+
+# DOCS_TEST: histogram_fraction
+# DOCS_TEST_BODY
+
+query
+SELECT histogram_fraction('-inf'::DOUBLE, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS at_most_2,
+       round(histogram_stddev([10, 20, 10, 0], [1.0, 2.0, 4.0]), 6) AS stddev;
+----
+at_most_2	stddev
+0.75	0.892679
+
+# DOCS_TEST: exponential_histogram
+# DOCS_TEST_BODY
+
+query
+SELECT round(histogram_quantile(0.5, h), 6) AS p50,
+       histogram_fraction(0, 4, h) AS above_0_up_to_4
+FROM (SELECT exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
+----
+p50	above_0_up_to_4
+2.828427	0.3
+
+# DOCS_TEST: exponential_increase
+
+statement ok
+CREATE TABLE rpc (ts TIMESTAMP, scale INTEGER, zero_count BIGINT,
+                  positive_offset INTEGER, positive_bucket_counts BIGINT[],
+                  negative_offset INTEGER, negative_bucket_counts BIGINT[]);
+
+statement ok
+INSERT INTO rpc VALUES
+    (TIMESTAMP '2026-01-01 00:00:00', 0, 1, 0, [1, 1], 0, []),
+    (TIMESTAMP '2026-01-01 00:01:00', 0, 2, 0, [3, 1, 2], 0, []);
+
+# DOCS_TEST_BODY
+
+query
+SELECT h.zero_count, h.positive_offset, h.positive_bucket_counts,
+       round(histogram_quantile(0.5, h), 6) AS p50
+FROM (
+    SELECT increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                          negative_offset, negative_bucket_counts), ts) AS h
+    FROM rpc
+)
+GROUP BY ALL;
+----
+zero_count	positive_offset	positive_bucket_counts	p50
+1	0	{2,0,2}	1.681793

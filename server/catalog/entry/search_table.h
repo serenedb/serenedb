@@ -68,8 +68,6 @@ enum class TableEngine : uint8_t {
 };
 
 inline constexpr std::string_view kStorageOption = "storage";
-inline constexpr std::string_view kTtlOption = "ttl";
-inline constexpr std::string_view kTtlColumnOption = "ttl_column";
 
 inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kRefreshIntervalSetting,
@@ -101,8 +99,6 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
   kOptimizeTopKSetting,
-  kTtlOption,
-  kTtlColumnOption,
 });
 
 TableEngine ReadStorageEngine(
@@ -188,19 +184,14 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
                     duckdb::optional_idx row_start) final;
   void ReplayDelete(duckdb::ClientContext& context,
                     duckdb::DataChunk& chunk) final;
+  void ReplayDeleteRanges(duckdb::ClientContext& context,
+                          const duckdb::vector<duckdb::row_t>& starts,
+                          const duckdb::vector<duckdb::idx_t>& counts) final;
   void ReplayTruncate(duckdb::ClientContext& context) final;
   void ReplayAdoptSegments(duckdb::ClientContext& context,
                            duckdb::vector<std::string> segments) final;
-  void ReplayExpire(duckdb::ClientContext& context, duckdb::idx_t column,
-                    const duckdb::Value& cutoff) final;
 
   const auto& Storage() const noexcept { return _storage; }
-
-  const SearchTableOptions& Options() const noexcept { return _options; }
-
-  bool HasTtl() const noexcept { return !_options.ttl_column.empty(); }
-
-  duckdb::CatalogEntry& CreateTtlJob(duckdb::CatalogTransaction transaction);
 
  private:
   duckdb::unique_ptr<SearchTableEntry> Rebuilt(
@@ -208,7 +199,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     duckdb::unique_ptr<duckdb::CreateInfo> create) const;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
-  void UpdateTtlJob(duckdb::ClientContext& context, bool has_ttl);
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;

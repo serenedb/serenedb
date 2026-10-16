@@ -135,7 +135,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::optional_ptr<T> FindIn(
     duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
     auto entry = FindEntryById(context, T::Type, id);
-    return entry ? &entry->template Cast<T>() : nullptr;
+    return entry && entry->type == T::Type ? &entry->template Cast<T>()
+                                           : nullptr;
   }
 
   duckdb::PhysicalOperator& PlanInsert(

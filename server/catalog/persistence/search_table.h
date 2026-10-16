@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/common/types/interval.hpp>
 #include <string>
 
 namespace sdb::catalog::persistence {
@@ -36,8 +35,6 @@ struct SearchTableOptions {
   uint64_t compaction_max_segments_bytes{5368709120};
   uint64_t compaction_floor_segment_bytes{2097152};
   std::string optimize_top_k;
-  duckdb::interval_t ttl{};
-  std::string ttl_column;
 
   bool operator==(const SearchTableOptions& rhs) const = default;
 };

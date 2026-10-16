@@ -310,6 +310,10 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
       SDB_FATAL(GENERAL, "http endpoint '", url,
                 "' requires ?api= (e.g. ?api=es); there is no default api");
     }
+    if (!base.otel_index && !absl::c_linear_search(base.apis, HttpApi::Otel)) {
+      SDB_FATAL(GENERAL, "'otel_index' requires api=otel in endpoint '", url,
+                "'");
+    }
   };
 
   if (parsed->has_empty_hostname()) {

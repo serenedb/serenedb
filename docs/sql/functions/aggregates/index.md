@@ -664,9 +664,9 @@ They all ignore `NULL` values (in the case of a single input column `x`), or pai
 
 ## Counter and Histogram Aggregates
 
-These aggregates read counters that only grow and histograms of bucket counts, such as the cumulative sums and histograms OpenTelemetry SDKs export. Each takes the time of the sample (`TIMESTAMP`, `TIMESTAMP_NS` or `TIMESTAMPTZ`) as its second argument and orders the samples by it, so the order of the input rows does not matter. Of several samples with the same time, the largest counts. Samples with a `NULL` value or time, and `NaN` values, are ignored. A counter that goes down was restarted: the first sample after the drop counts in full as the increase since the restart.
+These aggregates read counters that only grow, gauges that go up and down, and histograms of bucket counts, such as the sums, gauges and histograms OpenTelemetry SDKs export. Each takes the time of the sample (`TIMESTAMP`, `TIMESTAMP_NS` or `TIMESTAMPTZ`) as its second argument and orders the samples by it, so the order of the input rows does not matter. Of several samples with the same time, the largest counts. Samples with a `NULL` value or time, and `NaN` values, are ignored. A counter that goes down was restarted: the first sample after the drop counts in full as the increase since the restart.
 
-They return `NULL` for a group with fewer than two samples, and they don't extrapolate: the increase is measured from the first to the last sample of the group, so the change between the last sample of one time bucket and the first sample of the next is counted in neither. Over a window of the current and the previous row, `increase` gives the change since the previous sample:
+They return `NULL` for a group with fewer than two samples (`changes` and `resets` return 0 for a single sample), and they don't extrapolate: the change is measured from the first to the last sample of the group, so the change between the last sample of one time bucket and the first sample of the next is counted in neither. Over a window of the current and the previous row, `increase` gives the change since the previous sample:
 
 <SqlLogicTest id="sql/functions/aggregates/index/counter_delta" />
 
@@ -690,6 +690,32 @@ The per-second rate of the counter `value`: `increase(value, ts)` divided by the
 
 The per-second rate of the counter `value` between the last two samples.
 
+#### `delta(value, ts)`
+
+The change of the gauge `value` from the first to the last sample.
+
+#### `idelta(value, ts)`
+
+The change of the gauge `value` between the last two samples.
+
+#### `deriv(value, ts)`
+
+The per-second slope of the gauge `value`, fitted by least squares over all samples. A `value` that never changes gives 0.
+
+#### `predict_linear(value, ts, seconds)`
+
+The value the least-squares line through the samples of `value` reaches `seconds` after the last sample. The rows of a group must have the same `seconds`; otherwise the function fails.
+
+#### `changes(value, ts)`
+
+The number of samples whose `value` differs from the previous sample, as a `BIGINT`.
+
+#### `resets(value, ts)`
+
+The number of samples whose `value` is lower than the previous sample, the restarts of a counter, as a `BIGINT`.
+
+<SqlLogicTest id="sql/functions/aggregates/index/gauges" />
+
 #### `histogram_quantile(q, bucket_counts, explicit_bounds)`
 
 The `q`-quantile of a histogram with explicit bucket bounds, the layout OpenTelemetry uses: bucket `i` counts the values up to `explicit_bounds[i]` and the last bucket the values above the last bound, so `bucket_counts` has one element more than `explicit_bounds`. The counts of all rows of a group are added up, so the rows must have the same `q` and `explicit_bounds`; otherwise the function fails.
@@ -697,6 +723,46 @@ The `q`-quantile of a histogram with explicit bucket bounds, the layout OpenTele
 The result is interpolated linearly inside the bucket that holds the quantile. The first bucket starts at 0, unless its bound is 0 or less, in which case the result is that bound. A quantile in the last bucket is the last bound. A `q` below 0 gives `-Infinity` and above 1 `Infinity`. Rows with empty `bucket_counts` are skipped, and a group with no observations or no bounds gives `NULL`.
 
 <SqlLogicTest id="sql/functions/aggregates/index/histogram_quantile" />
+
+#### `histogram_fraction(lower, upper, bucket_counts, explicit_bounds)`
+
+The fraction of the observations of a histogram with explicit bucket bounds that lie between `lower` and `upper`, for example the share of requests that took at most 300 ms. Rows are added up as for `histogram_quantile`, so they must have the same `lower`, `upper` and `explicit_bounds`.
+
+Inside a bucket the observations are taken to be spread evenly, as for `histogram_quantile`, and the first bucket starts at 0 when its bound is above 0. The last bucket, which has no upper bound, counts in full when `upper` is `Infinity` and not at all otherwise; a first bucket whose bound is 0 or less has no lower bound and counts in full when `lower` is `-Infinity` and not at all otherwise. A `lower` of `-Infinity` gives the fraction of observations up to `upper`. A `lower` at or above `upper` gives 0, a `NaN` bound gives `NaN`, and a group with no observations gives `NULL`.
+
+<SqlLogicTest id="sql/functions/aggregates/index/histogram_fraction" />
+
+#### `histogram_stddev(bucket_counts, explicit_bounds)`
+
+The estimated population standard deviation of the observations of a histogram with explicit bucket bounds. Each observation is taken to lie at the middle of its bucket: the first bucket at half its bound (at its bound when that is 0 or less), the last bucket at the last bound. Rows are added up as for `histogram_quantile`. A group with no observations gives `NULL`.
+
+#### `histogram_stdvar(bucket_counts, explicit_bounds)`
+
+The square of `histogram_stddev`: the estimated population variance.
+
+#### `exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts, negative_offset, negative_bucket_counts)`
+
+Packs the columns of an exponential histogram, the layout OpenTelemetry uses for base-2 exponential histograms, into one value for the aggregates below. Bucket `i` of the positive side counts the values above 2^(i·2^-`scale`) up to 2^((i+1)·2^-`scale`); `positive_bucket_counts[k]` is bucket `positive_offset + k`. The negative side holds the same buckets for the absolute values of negative observations, and `zero_count` counts the zeros. A `NULL` `zero_count`, offset or list counts as 0 or empty; a value with a `NULL` `scale` is ignored by the aggregates.
+
+#### `histogram_quantile(q, histogram)`
+
+The `q`-quantile of the exponential histograms of a group, added up. Rows at different scales are added at the coarsest of them, and at a coarser scale still when their buckets would otherwise span more than 4096 buckets on one side. Inside a bucket the result is interpolated on a logarithmic scale; a quantile among the zeros is 0. The rows of a group must have the same `q`. The other edge cases are those of `histogram_quantile` for explicit bounds.
+
+<SqlLogicTest id="sql/functions/aggregates/index/exponential_histogram" />
+
+#### `histogram_fraction(lower, upper, histogram)`
+
+The fraction of the observations between `lower` and `upper`, interpolated on a logarithmic scale inside a bucket. Zeros count when `lower` is below 0 and `upper` at or above 0. The edge cases are those of `histogram_fraction` for explicit bounds.
+
+#### `histogram_stddev(histogram)` and `histogram_stdvar(histogram)`
+
+The estimated population standard deviation and variance of the observations, each observation taken to lie at the geometric mean of its bucket's bounds and the zeros at 0.
+
+#### `increase(histogram, ts)`
+
+The increase of each bucket of an exponential histogram whose counts only grow, as an exponential histogram value: the samples are compared at the coarsest scale among them, and when any bucket or `zero_count` goes down, the histogram was restarted and the sample after the drop counts in full. Buckets with no increase at either end are left out.
+
+<SqlLogicTest id="sql/functions/aggregates/index/exponential_increase" />
 
 ## Ordered Set Aggregate Functions
 

@@ -380,6 +380,50 @@ GROUP BY minute ORDER BY minute;
 
 Points exported with delta temporality (`aggregation_temporality = 'Delta'`) need neither: `sum(value)` and `histogram_quantile(q, bucket_counts, explicit_bounds)` over the rows of a time bucket give what happened in it.
 
+The same per-series buckets give the share of requests under a latency target with `histogram_fraction`, and the spread with `histogram_stddev`:
+
+```sql
+SELECT minute,
+       histogram_fraction('-inf'::DOUBLE, 0.3, buckets, explicit_bounds) AS under_300ms,
+       histogram_stddev(buckets, explicit_bounds) AS stddev
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Exponential histograms (`otel_metrics_exponential_histogram`) are read the same way once [`exponential_histogram`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) packs their bucket columns into one value; rows at different scales are combined:
+
+```sql
+SELECT minute,
+       histogram_quantile(0.99, h) AS p99,
+       histogram_fraction('-inf'::DOUBLE, 0.3, h) AS under_300ms
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, resource_attributes, attributes,
+         increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                        negative_offset, negative_bucket_counts), "timestamp") AS h
+  FROM otel_metrics_exponential_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute ORDER BY minute;
+```
+
+Gauges (`otel_metrics_gauge`) are averaged or compared directly; `deriv` gives their per-second trend and `predict_linear` extrapolates it, for example the free disk space an hour after the last sample:
+
+```sql
+SELECT service_name, predict_linear(value, "timestamp", 3600) AS free_in_an_hour
+FROM otel_metrics_gauge
+WHERE metric_name = 'system.filesystem.free'
+  AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
+GROUP BY service_name;
+```
+
 On a column indexed without a dictionary, such as `service_name` or
 `severity_text`, a plain `=` is served by the index exactly like `@@`. On an
 analyzed column such as `body`, `=` compares the whole value as a columnstore
@@ -398,15 +442,20 @@ VACUUM (REFRESH_TABLE) otel_logs;
 
 ## Retention
 
-The tables keep every row until it is deleted. Give a table a [TTL](../sql/statements/create_table/index.md#row-expiry-ttl) and SereneDB deletes its expired rows every hour, each table on its own terms:
+The tables keep every row until it is deleted. A [job](../sql/statements/create_job/index.md) that deletes old rows on a schedule keeps each table to a [retention period](../sql/statements/delete/index.md#retention) of its own:
 
 ```sql
-ALTER TABLE otel_logs SET (ttl = '30 days', ttl_column = 'timestamp');
-ALTER TABLE otel_traces SET (ttl = '30 days', ttl_column = 'timestamp');
-ALTER TABLE otel_metrics_sum SET (ttl = '90 days', ttl_column = 'timestamp');
+CREATE JOB otel_logs_retention EVERY 1 HOUR AS
+    DELETE FROM otel_logs WHERE "timestamp" < now() - INTERVAL '30 days';
+
+CREATE JOB otel_traces_retention EVERY 1 HOUR AS
+    DELETE FROM otel_traces WHERE "timestamp" < now() - INTERVAL '30 days';
+
+CREATE JOB otel_metrics_sum_retention EVERY 1 HOUR AS
+    DELETE FROM otel_metrics_sum WHERE "timestamp" < now() - INTERVAL '90 days';
 ```
 
-A schema of your own can set the same options in `CREATE TABLE ... WITH (storage = 'search', ttl = ..., ttl_column = ...)` instead.
+Telemetry arrives in roughly time order, so each run removes runs of consecutive rows, which keeps it cheap however many rows it deletes.
 
 ## Schema evolution
 

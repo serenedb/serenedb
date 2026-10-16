@@ -42,18 +42,6 @@ bool IsListLike(const duckdb::LogicalType& type) noexcept {
 
 constexpr duckdb::idx_t kDenseDensity = 32;
 constexpr duckdb::idx_t kMinDenseBatch = 64;
-constexpr duckdb::idx_t kPointDensity = 64;
-
-bool IsFlat(const duckdb::LogicalType& type) noexcept {
-  switch (type.InternalType()) {
-    case duckdb::PhysicalType::STRUCT:
-    case duckdb::PhysicalType::LIST:
-    case duckdb::PhysicalType::ARRAY:
-      return false;
-    default:
-      return true;
-  }
-}
 
 }  // namespace
 
@@ -364,7 +352,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     return;
   }
   const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
-  if (!whole && hits * kPointDensity < span && IsFlat(c.out_type)) {
+  if (!whole && hits * column_internal::kPointDensity < span &&
+      column_internal::PointReadable(c.out_type)) {
     if (!c.point) {
       c.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
                                                                  *c.reader);

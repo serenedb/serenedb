@@ -28,6 +28,19 @@
 
 namespace irs::column_internal {
 
+inline constexpr duckdb::idx_t kPointDensity = 64;
+
+inline bool PointReadable(const duckdb::LogicalType& type) noexcept {
+  switch (type.InternalType()) {
+    case duckdb::PhysicalType::STRUCT:
+    case duckdb::PhysicalType::LIST:
+    case duckdb::PhysicalType::ARRAY:
+      return false;
+    default:
+      return true;
+  }
+}
+
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
                  const duckdb::SelectionVector& sel, duckdb::idx_t hits,

@@ -1356,6 +1356,37 @@ TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {
   }
 }
 
+TEST(TokenPhraseIndexTest, sparse_and_dense_candidates_agree_with_positions) {
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 20000; ++i) {
+    auto text = absl::StrCat("x", i % 13, " y z");
+    if (i % 211 == 0) {
+      absl::StrAppend(&text, " quick brown");
+    } else if (i % 307 == 0) {
+      absl::StrAppend(&text, " brown quick");
+    } else if (i >= 9000 && i < 9600 && i % 3 != 0) {
+      absl::StrAppend(&text,
+                      i % 2 == 0 ? " quick brown fox" : " brown fox quick");
+    }
+    if (i % 5 == 0) {
+      absl::StrAppend(&text, " rare");
+    }
+    docs.push_back(std::move(text));
+  }
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  for (const auto* text :
+       {"quick brown", "brown quick", "brown fox", "quick brown fox"}) {
+    SCOPED_TRACE(text);
+    ExpectLikePositions<DenseWords>(index, Phrase(text));
+    const auto expected =
+      index.Run(*LoweredAnd(PhraseOn(kPositionalId, Phrase(text)), "rare"));
+    ExpectFamilies(
+      expected,
+      index.Run(*LoweredAnd(
+        PhraseOn(kPlainId, Phrase(text), Tokens<DenseWords>()), "rare")));
+  }
+}
+
 TEST(TokenPhraseIndexTest, without_frequency_every_family_scores_constant) {
   const std::vector<std::string> docs{"quick brown quick brown rare",
                                       "quick brown rare", "brown quick rare",

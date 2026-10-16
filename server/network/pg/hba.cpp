@@ -1094,11 +1094,11 @@ std::vector<RenderedRule> RenderHbaRules() {
   return out;
 }
 
-void LoadPersistedHba() {
+std::string LoadPersistedHba() {
   namespace fs = std::filesystem;
   const std::string& path = ConfigPath();
   if (path.empty()) {
-    return;  // no data directory configured -> keep the built-in default
+    return {};  // no data directory configured -> keep the built-in default
   }
   std::error_code ec;
   if (!fs::exists(fs::path{path}, ec)) {
@@ -1106,7 +1106,7 @@ void LoadPersistedHba() {
       SDB_ERROR(GENERAL, "hba config file '", path,
                 "' could not be read: ", ec.message(), " -- keeping default");
     }
-    return;  // no config file -> keep the built-in default
+    return {};  // no config file -> keep the built-in default
   }
   std::string text;
   try {
@@ -1114,12 +1114,14 @@ void LoadPersistedHba() {
   } catch (const std::exception& e) {
     SDB_ERROR(GENERAL, "hba config file '", path,
               "' could not be read: ", e.what(), " -- keeping default");
-    return;
+    return {};
   }
   if (auto err = SetHbaFromText(text)) {
     SDB_ERROR(GENERAL, "hba config file '", path, "' failed to parse (line ",
               err->line, "): ", err->message, " -- keeping default");
+    return {};
   }
+  return text;
 }
 
 }  // namespace sdb::network::pg::hba

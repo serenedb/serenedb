@@ -21,10 +21,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <cstring>
 #include <optional>
 #include <ostream>
 #include <span>
+#include <string>
 #include <utility>
 
 template<typename T1, typename T2>
@@ -47,6 +49,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
+#include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -318,6 +321,33 @@ std::vector<irs::score_t> FilteredRanking(const irs::DirectoryReader& reader,
   }
   absl::c_sort(out, std::greater<>{});
   out.resize(std::min(out.size(), k));
+  return out;
+}
+
+struct DocRange {
+  irs::doc_id_t begin;
+  irs::doc_id_t end;
+};
+
+std::vector<irs::score_t> ScoresOverRanges(const irs::QueryBuilder& query,
+                                           const irs::Scorer& scorer,
+                                           std::span<const DocRange> ranges,
+                                           irs::doc_id_t end) {
+  irs::ColumnArgsFetcher fetcher;
+  auto plan = query.PlanScored({.scorer = scorer, .fetcher = fetcher});
+  constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
+  irs::SlackBuf<irs::doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
+  irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
+  std::vector<irs::score_t> out(end, -1);
+  for (const auto& range : ranges) {
+    for (auto min = range.begin; min < range.end; min += kBatch) {
+      const auto max = std::min<irs::doc_id_t>(min + kBatch, range.end);
+      const auto n = plan->Run(min, max, docs.data(), scores.data());
+      for (uint32_t i = 0; i != n; ++i) {
+        out[docs.data()[i]] = scores.data()[i];
+      }
+    }
+  }
   return out;
 }
 
@@ -989,6 +1019,82 @@ TEST_P(ScorePruneScoringTestCase, ShortListNonEssentialFromTheFirstWindow) {
   auto filter = ParseQuery("content:beta content:alpha");
   ASSERT_NE(nullptr, filter);
   ComparePrunedVsBaseline(reader, *filter, scorer, 10);
+}
+
+TEST_P(ScorePruneScoringTestCase, ScoredRunPastAGapMatchesAContiguousRun) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  irs::IndexWriterOptions opts;
+  opts.reader_options.scorer = &scorer;
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  constexpr std::string_view kTexts[] = {
+    "alpha beta gamma f",
+    "alpha beta f f",
+    "gamma delta f f f",
+    "delta f f f f",
+  };
+  std::vector<std::string> texts;
+  for (size_t i = 0; i != 3 * irs::detail::kWindowDocs; ++i) {
+    auto& text = texts.emplace_back(kTexts[i % std::size(kTexts)]);
+    if (i % 32 == 0) {
+      text += " s1 s2 s3";
+    } else if (i % 32 == 16) {
+      text += " s1 s2";
+    } else if (i % 64 == 8) {
+      text += " s4";
+    }
+  }
+  std::vector<ContentDocs> groups;
+  for (const auto& text : texts) {
+    groups.emplace_back(text, 1);
+  }
+  const auto json = ContentJson(groups);
+  tests::JsonDocGenerator gen(json.c_str(), &ScorePruneFieldFactory);
+  auto& index_ref = const_cast<tests::index_t&>(index());
+  index_ref.emplace_back();
+  write_segment(*writer, index_ref.back(), gen);
+  writer->RefreshCommit();
+  auto reader = writer->GetSnapshot();
+  ASSERT_EQ(1, reader.size());
+
+  constexpr auto kMin = irs::doc_limits::min();
+  const auto end = kMin + static_cast<irs::doc_id_t>(reader[0].docs_count());
+  const DocRange whole[] = {{kMin, end}};
+  const DocRange gapped[] = {{kMin, kMin + 100}, {kMin + 300, end}};
+  using Terms = std::array<std::string_view, 4>;
+  for (const auto& terms : {Terms{"alpha", "beta", "gamma", "delta"},
+                            Terms{"s1", "s2", "s3", "s4"}}) {
+    for (const uint32_t min_match : {1, 2, 3}) {
+      SCOPED_TRACE(testing::Message()
+                   << terms[0] << " min_match=" << min_match);
+      auto root = std::make_unique<irs::BooleanFilter>();
+      for (const auto term : terms) {
+        root->Add(
+          irs::TermClause{
+            .field = kContentId,
+            .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)},
+          },
+          irs::Occur::Should);
+      }
+      root->SetMinShouldMatch(min_match);
+      irs::Filter::ptr filter = std::move(root);
+      irs::Optimize(filter);
+
+      irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
+      const auto queries = PrepareScored(reader, *filter, scorer, stats);
+      ASSERT_NE(nullptr, queries[0]);
+      const auto expected = ScoresOverRanges(*queries[0], scorer, whole, end);
+      const auto actual = ScoresOverRanges(*queries[0], scorer, gapped, end);
+      size_t wrong = 0;
+      irs::doc_id_t first = 0;
+      for (auto doc = gapped[1].begin; doc != end; ++doc) {
+        if (expected[doc] != actual[doc] && wrong++ == 0) {
+          first = doc;
+        }
+      }
+      EXPECT_EQ(0, wrong) << "first at doc " << first << ": " << expected[first]
+                          << " expected, " << actual[first] << " returned";
+    }
+  }
 }
 
 // BM25 with small k=3, 4200 docs (~2100 matching "tech" = ~16 blocks)

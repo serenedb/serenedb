@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
@@ -58,8 +59,16 @@ struct NumericTuning {
   uint32_t gap = 1;
   uint32_t since = 0;
   double bytes_per_row = 0;
+  duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
 
   bool Due() noexcept { return !calibrated || ++since >= gap; }
+  bool Drifted(double bytes, double rows) const noexcept {
+    return bytes > bytes_per_row * rows * 1.25;
+  }
+  void Restart() noexcept {
+    gap = 1;
+    since = 0;
+  }
 };
 
 std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
@@ -75,10 +84,9 @@ class NumericSealer {
 
   virtual void Add(const duckdb::Vector& input) = 0;
 
-  virtual std::optional<NumericSegment> Seal(const ColCodecParams& params,
-                                             uint64_t rival_bytes,
-                                             NumericTuning& tuning,
-                                             bool due) = 0;
+  virtual std::optional<NumericSegment> Seal(
+    const ColCodecParams& params, std::optional<uint64_t> rival_bytes,
+    NumericTuning& tuning, bool due) = 0;
 };
 
 }  // namespace irs::codecs

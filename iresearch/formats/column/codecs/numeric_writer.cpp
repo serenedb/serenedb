@@ -228,7 +228,7 @@ class TypedSealer final : public NumericSealer {
   }
 
   std::optional<NumericSegment> Seal(const ColCodecParams& params,
-                                     uint64_t rival_bytes,
+                                     std::optional<uint64_t> rival_bytes,
                                      NumericTuning& tuning, bool due) final {
     if (std::is_floating_point_v<T>) {
       return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
@@ -240,7 +240,7 @@ class TypedSealer final : public NumericSealer {
   }
 
   std::optional<NumericSegment> SealWith(std::span<const LeafOption> plan,
-                                         uint64_t rival_bytes,
+                                         std::optional<uint64_t> rival_bytes,
                                          NumericTuning& tuning, bool due) {
     if (!_any_valid || _values.size() > std::numeric_limits<uint32_t>::max()) {
       return std::nullopt;
@@ -261,24 +261,29 @@ class TypedSealer final : public NumericSealer {
       if (c && option != plan.end()) {
         out = Emit(*c, *option);
         const auto bytes = out->bytes.size();
-        drift = static_cast<double>(bytes) > tuning.bytes_per_row * rows * 1.25;
-        if (option->Price(bytes) >= static_cast<double>(rival_bytes)) {
+        drift = tuning.Drifted(static_cast<double>(bytes), rows);
+        if (rival_bytes &&
+            option->Price(bytes) >= static_cast<double>(*rival_bytes)) {
           out.reset();
         }
+      }
+      if (!rival_bytes && (!out || drift)) {
+        tuning.Restart();
+        return std::nullopt;
       }
       if (!out) {
         return SealWith(plan, rival_bytes, tuning, true);
       }
       if (drift) {
-        tuning.gap = 1;
-        tuning.since = 0;
+        tuning.Restart();
       }
       return out;
     }
 
+    SDB_ASSERT(rival_bytes);
     BuildCandidates(std::nullopt);
-    double best_price = static_cast<double>(rival_bytes);
-    uint64_t best_bytes = rival_bytes;
+    double best_price = static_cast<double>(*rival_bytes);
+    uint64_t best_bytes = *rival_bytes;
     const Candidate* best = nullptr;
     LeafOption best_leaf{NumericLeaf::None, 0, 0};
     for (const auto& option : plan) {
@@ -303,10 +308,10 @@ class TypedSealer final : public NumericSealer {
     if (best) {
       out = Emit(*best, best_leaf);
       const auto bytes = out->bytes.size();
-      if (best_leaf.Price(bytes) >= static_cast<double>(rival_bytes)) {
+      if (best_leaf.Price(bytes) >= static_cast<double>(*rival_bytes)) {
         out.reset();
         best = nullptr;
-        best_bytes = rival_bytes;
+        best_bytes = *rival_bytes;
       } else {
         best_bytes = bytes;
       }

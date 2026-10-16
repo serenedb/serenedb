@@ -1100,25 +1100,51 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   if (ForcedMethod(db, forced) != duckdb::CompressionType::COMPRESSION_AUTO) {
     return CompressData(type, chunks, forced, meta);
   }
-  duckdb::unique_ptr<duckdb::AnalyzeState> state;
-  duckdb::idx_t score = 0;
-  auto fn = PickCodec(type, chunks, forced, state, &score);
   if (!meta.write_numeric_tuning) {
     meta.write_numeric_tuning = std::make_shared<codecs::NumericTuning>();
   }
   auto& tuning = *meta.write_numeric_tuning;
-  const bool due = tuning.Due();
-  std::optional<codecs::NumericSegment> segment;
-  if (due || tuning.pick) {
-    uint64_t rows = 0;
-    for (const auto& c : chunks) {
-      rows += c.count;
+  uint64_t rows = 0;
+  for (const auto& c : chunks) {
+    rows += c.count;
+  }
+  const auto row_count = static_cast<double>(std::max<uint64_t>(rows, 1));
+  duckdb::unique_ptr<duckdb::AnalyzeState> state;
+  duckdb::optional_ptr<const duckdb::CompressionFunction> fn;
+  duckdb::idx_t score = 0;
+  const auto measure = [&] {
+    fn = PickCodec(type, chunks, forced, state, &score);
+    tuning.rival = fn->type;
+  };
+  bool due = tuning.Due();
+  const bool flush = _codec_params.tier == WriteTier::Flush;
+  if (flush && !due && !tuning.pick) {
+    fn = PickCodec(type, chunks, tuning.rival, state, &score);
+    if (fn->type != tuning.rival) {
+      due = true;
+    } else if (tuning.Drifted(static_cast<double>(score), row_count)) {
+      tuning.Restart();
     }
+  }
+  if (due || !flush) {
+    measure();
+  }
+  std::optional<codecs::NumericSegment> segment;
+  const auto seal = [&](bool full) {
     auto sealer = codecs::NumericSealer::Make(type, rows);
     for (const auto& c : chunks) {
       sealer->Add(c.data);
     }
-    segment = sealer->Seal(_codec_params, score, tuning, due);
+    segment = sealer->Seal(_codec_params,
+                           fn ? std::optional<uint64_t>{score} : std::nullopt,
+                           tuning, full);
+  };
+  if (due || tuning.pick) {
+    seal(due);
+  }
+  if (!segment && !fn) {
+    measure();
+    seal(true);
   }
   if (!segment) {
     Compress(*fn, std::move(state), type, chunks, meta.data);

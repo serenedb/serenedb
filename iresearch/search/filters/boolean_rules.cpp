@@ -220,11 +220,21 @@ size_t DedupTerms(std::vector<TermClause>& terms, ScoreMergeType merge,
   const auto same = [scored](const TermClause& lhs, const TermClause& rhs) {
     return scored ? !TermClauseLess{}(lhs, rhs) : !TermPostingLess{}(lhs, rhs);
   };
+  const auto unscored = [](const TermClause& clause) {
+    return clause.scorer && IsUnscored(*clause.scorer);
+  };
   size_t kept = 0;
   for (size_t i = 1; i != terms.size(); ++i) {
     if (same(terms[kept], terms[i])) {
       if (scored) {
         MergeBoost(terms[kept].boost, terms[i].boost, merge);
+      }
+      continue;
+    }
+    if (!TermPostingLess{}(terms[kept], terms[i]) &&
+        (unscored(terms[kept]) || unscored(terms[i]))) {
+      if (unscored(terms[kept])) {
+        terms[kept] = std::move(terms[i]);
       }
       continue;
     }

@@ -200,6 +200,46 @@ TEST(optimizer_scorer_test, term_clauses_keep_differing_overrides) {
   ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
 }
 
+TEST(optimizer_scorer_test, term_clauses_drop_an_unscored_duplicate) {
+  irs::RawTF tf;
+  irs::Unscored unscored;
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Scored("fox", unscored), irs::Occur::Should);
+  root->Add(Term("fox"), irs::Occur::Should);
+  root->Add(Scored("dog", unscored), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
+
+  auto f = Optimized(std::move(root));
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(3u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, nullptr));
+  ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
+}
+
+TEST(optimizer_scorer_test, required_term_clauses_drop_an_unscored_duplicate) {
+  irs::RawTF tf;
+  irs::Unscored unscored;
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", unscored), irs::Occur::Must);
+  root->Add(Scored("fox", tf), irs::Occur::Must);
+  root->Add(Scored("dog", unscored), irs::Occur::Must);
+
+  auto f = Optimized(std::move(root));
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms =
+    irs::utils::downCast<irs::BooleanFilter>(*f).Terms(irs::Occur::Must);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
+}
+
 // A rule that replaces the node an override sits on must carry the scorer over
 // to the replacement, or the `::score` is silently lost.
 TEST(optimizer_scorer_test, rules_replacing_a_node_carry_the_scorer_over) {

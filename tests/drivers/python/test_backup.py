@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import shutil
 import threading
 import time
 from collections import Counter
@@ -456,3 +457,86 @@ def test_backup_under_load_restores_exactly_the_cut(tmp_path: Path) -> None:
         source.stop()
         if restored is not None:
             restored.stop()
+
+
+def _retained_backup(tmp_path: Path) -> tuple[Path, int, int]:
+    source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                     log_path=str(tmp_path / "source.log"))
+    try:
+        source.start()
+        with _connect(source) as conn:
+            conn.execute("CREATE DATABASE st")
+        with _connect(source, "st") as conn:
+            conn.execute("CREATE TABLE docs (id BIGINT, body TEXT) WITH "
+                         "(storage = 'search', refresh_interval = 0, compaction_interval = 0)")
+            conn.execute("INSERT INTO docs SELECT i, 'first' FROM range(0, 1000) r(i)")
+            conn.execute("VACUUM (REFRESH_TABLE) docs")
+            conn.execute("CHECKPOINT st")
+            conn.execute("DELETE FROM docs WHERE id < 100")
+            conn.execute("INSERT INTO docs SELECT i, 'second' FROM range(1000, 1100) r(i)")
+            conn.execute("CHECKPOINT st")
+            conn.execute("INSERT INTO docs SELECT i, 'third' FROM range(2000, 2100) r(i)")
+            conn.execute("CHECKPOINT st")
+            conn.execute("INSERT INTO docs SELECT i, 'fourth' FROM range(3000, 3010) r(i)")
+            (oid,) = conn.execute(
+                "SELECT database_oid FROM duckdb_databases() "
+                "WHERE database_name = 'st'").fetchone()
+
+        copy = tmp_path / "copy"
+        with _connect(source) as backup:
+            backup.execute("SELECT pg_backup_start('retained')")
+            with _connect(source, "st") as conn:
+                conn.execute("INSERT INTO docs SELECT i, 'after' FROM range(4000, 4010) r(i)")
+            shutil.copytree(source.datadir, copy, symlinks=True)
+            (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
+    finally:
+        source.stop()
+
+    (copy / "backup_label").write_text(label)
+    line = next(line for line in label.splitlines()
+                if line.startswith(f"SERENEDB DATABASE: {oid} "))
+    _, _, _, checkpoint, _, retained_from, _ = line.split()
+    wal = copy / "engine_v1" / str(oid) / "data.db.wal"
+    for generation in range(int(retained_from), int(checkpoint)):
+        assert Path(f"{wal}.retained.{generation}").is_file(), line
+    assert int(checkpoint) - int(retained_from) >= 2, line
+    return copy, int(retained_from), int(checkpoint)
+
+
+def _bodies(server: Serened) -> dict[str, int]:
+    with _connect(server, "st") as conn:
+        return dict(conn.execute(
+            "SELECT body, count(*) FROM docs GROUP BY body ORDER BY body").fetchall())
+
+
+def test_backup_restores_search_rows_held_only_in_retained_wals(tmp_path: Path) -> None:
+    copy, _, _ = _retained_backup(tmp_path)
+    restored = Serened(SERENED_BIN, datadir=str(copy),
+                       log_path=str(tmp_path / "restored.log"))
+    try:
+        restored.start()
+        expected = {"first": 900, "fourth": 10, "second": 100, "third": 100}
+        assert _bodies(restored) == expected
+        with _connect(restored, "st") as conn:
+            conn.execute("INSERT INTO docs VALUES (5000, 'restored')")
+        restored.restart()
+        assert _bodies(restored) == expected | {"restored": 1}
+    finally:
+        restored.stop()
+
+
+@pytest.mark.parametrize("missing", ["oldest", "newest"])
+def test_backup_without_a_retained_wal_refuses_to_boot(tmp_path: Path, missing: str) -> None:
+    copy, retained_from, checkpoint = _retained_backup(tmp_path)
+    generation = retained_from if missing == "oldest" else checkpoint - 1
+    removed = next(copy.glob(f"engine_v1/*/data.db.wal.retained.{generation}"))
+    removed.unlink()
+    restored = Serened(SERENED_BIN, datadir=str(copy),
+                       log_path=str(tmp_path / "restored.log"))
+    try:
+        with pytest.raises(RuntimeError, match=f"the backup needs the retained WALs "
+                                               f"{retained_from} to {checkpoint - 1}"):
+            restored.start()
+        assert (copy / "backup_label").is_file()
+    finally:
+        restored.stop()

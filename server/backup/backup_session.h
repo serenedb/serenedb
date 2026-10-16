@@ -45,6 +45,7 @@ struct DatabaseCut {
   duckdb::idx_t oid = 0;
   uint64_t checkpoint_iteration = 0;
   duckdb::idx_t wal_size = 0;
+  uint64_t retained_from = 0;
   bool with_failed_checkpoint = false;
 };
 

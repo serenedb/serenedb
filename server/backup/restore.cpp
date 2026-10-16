@@ -166,6 +166,17 @@ void Restore(const catalog::DataDirectory& layout,
   const auto& cut = label->cut;
   for (const auto& database : cut.databases) {
     RequireDirectory(layout.DatabaseDir(database.oid));
+    for (auto generation = database.retained_from;
+         generation < database.checkpoint_iteration; ++generation) {
+      const std::filesystem::path retained{absl::StrCat(
+        layout.DatabaseFile(database.oid), ".wal.retained.", generation)};
+      if (!Exists(retained)) {
+        Fail("the copy is incomplete:", retained,
+             absl::StrCat("the backup needs the retained WALs ",
+                          database.retained_from, " to ",
+                          database.checkpoint_iteration - 1));
+      }
+    }
   }
   for (const auto& store : cut.stores) {
     RequireDirectory(layout.StorageDir(store.database_oid, store.oid));

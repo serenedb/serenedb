@@ -69,6 +69,23 @@ bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
   return wal->GetPath() != storage.GetWALPath();
 }
 
+uint64_t RetainedRunStart(duckdb::StorageManager& storage, uint64_t end) {
+  auto start = end;
+  while (start > 0) {
+    const auto path = storage.GetRetainedWALPath(start - 1);
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+      utils::file_utils::ThrowFileError("check", path, ec);
+    }
+    if (!exists) {
+      break;
+    }
+    --start;
+  }
+  return start;
+}
+
 uint64_t GenerationOf(const irs::DirectoryReader& reader) {
   return reader ? reader.Meta().index_meta.gen : 0;
 }
@@ -110,6 +127,7 @@ std::optional<Cut> RecordCut(
     entry.wal_size = storage.GetWALSize();
     entry.checkpoint_iteration =
       storage.GetBlockManager().GetCheckpointIteration();
+    entry.retained_from = RetainedRunStart(storage, entry.checkpoint_iteration);
   }
   for (const auto& db : pins) {
     CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,

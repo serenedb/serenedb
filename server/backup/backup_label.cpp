@@ -97,7 +97,7 @@ std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
   for (const auto& database : cut.databases) {
     absl::StrAppend(
       &out, kDatabaseKey, database.oid, " ", database.checkpoint_iteration, " ",
-      database.wal_size, " ",
+      database.wal_size, " ", database.retained_from, " ",
       database.with_failed_checkpoint ? kFailedCheckpointMode : kCutMode, "\n");
   }
   for (const auto& store : cut.stores) {
@@ -175,7 +175,9 @@ absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text) {
       }
       database.with_failed_checkpoint = mode == kFailedCheckpointMode;
       if (!ParseFields(value.substr(0, mode_at), database.oid,
-                       database.checkpoint_iteration, database.wal_size) ||
+                       database.checkpoint_iteration, database.wal_size,
+                       database.retained_from) ||
+          database.retained_from > database.checkpoint_iteration ||
           !databases.insert(database.oid).second) {
         return Malformed(line);
       }

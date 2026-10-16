@@ -22,7 +22,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
-#include <absl/random/distributions.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
@@ -40,6 +39,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/shuffle.hpp>
 #include <memory>
 #include <optional>
 #include <pcg_random.hpp>
@@ -366,10 +366,7 @@ ConnInfo ParseConnInfo(std::string_view conninfo) {
 void ArrangeHosts(ConnInfo& conninfo, uint64_t seed, bool any_session) {
   if (conninfo.load_balance_hosts) {
     pcg32 rng{seed};
-    auto& hosts = conninfo.hosts;
-    for (size_t i = hosts.size(); i > 1; --i) {
-      std::swap(hosts[i - 1], hosts[absl::Uniform<size_t>(rng, 0, i)]);
-    }
+    irs::Shuffle<size_t>(conninfo.hosts, rng);
   }
   if (any_session &&
       conninfo.target_session_attrs == SessionAttrs::PreferStandby) {

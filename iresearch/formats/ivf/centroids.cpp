@@ -40,6 +40,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shuffle.hpp"
 
 namespace irs {
 namespace {
@@ -110,9 +111,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
     std::vector<size_t> order(n_seg);
     std::iota(order.begin(), order.end(), size_t{0});
     pcg32 seg_rng{seed};
-    for (size_t i = order.size(); i > 1; --i) {
-      std::swap(order[i - 1], order[absl::Uniform<size_t>(seg_rng, 0, i)]);
-    }
+    Shuffle<size_t>(order, seg_rng);
 
     ColumnReader::VectorScratch scratch{vector_column.Type()};
     auto scan = vector_column.InitScan(ctx);

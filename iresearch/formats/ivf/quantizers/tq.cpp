@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/random/distributions.h>
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
@@ -30,6 +29,7 @@
 #include <pcg_random.hpp>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/shuffle.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -146,10 +146,7 @@ class TurboQuantRotation {
     for (auto& round : _rounds) {
       round.perm.resize(rd);
       std::iota(round.perm.begin(), round.perm.end(), uint32_t{0});
-      for (uint32_t i = rd; i > 1; --i) {
-        std::swap(round.perm[i - 1],
-                  round.perm[absl::Uniform<uint32_t>(rng, 0, i)]);
-      }
+      Shuffle<uint32_t>(round.perm, rng);
       round.signs.resize(rd);
       for (auto& s : round.signs) {
         s = (rng() & 1U) != 0 ? 1.f : -1.f;

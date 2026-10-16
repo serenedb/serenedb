@@ -1773,7 +1773,6 @@ bool TsDictFacetPushdown::WhereOk() {
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
         getters;
-      (void)column_id;
       size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {

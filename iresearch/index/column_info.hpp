@@ -110,8 +110,6 @@ inline constexpr bool TQBitsValid(uint32_t bits) noexcept {
   return bits >= kTQMinBits && bits <= kTQMaxBits;
 }
 
-inline constexpr bool TQFullBits(uint32_t bits) noexcept { return bits == 5; }
-
 inline constexpr bool TQHalfBitValid(uint32_t bits) noexcept {
   return bits == 1;
 }

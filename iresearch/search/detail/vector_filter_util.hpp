@@ -58,14 +58,14 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
   std::span<const byte_type> stats;
   bstring owned;
-  if (stats_size == 0) {
-    stats = {};
-  } else if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
-    stats = {p, stats_size};
-  } else {
-    owned.resize(stats_size);
-    idx_in.ReadData(owned.data(), stats_size);
-    stats = owned;
+  if (stats_size != 0) {
+    if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
+      stats = {p, stats_size};
+    } else {
+      owned.resize(stats_size);
+      idx_in.ReadData(owned.data(), stats_size);
+      stats = owned;
+    }
   }
   auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
   if (!quant_stats) {

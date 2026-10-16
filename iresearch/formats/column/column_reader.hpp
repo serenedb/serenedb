@@ -27,6 +27,7 @@
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -150,7 +151,7 @@ struct ListDictionary {
   uint64_t elems_pos = 0;
   uint64_t missed_block = 0;
   uint64_t oversized_block = 0;
-  std::optional<duckdb::Vector> lists;
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
   std::vector<uint64_t> decoded;
   std::vector<uint32_t> ranks;
 };

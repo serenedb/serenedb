@@ -62,6 +62,10 @@ class ReadContext final : public BlockManager,
   bool RandomAccess() const noexcept { return _random_access; }
   bool ReadAhead() const noexcept { return _read_ahead; }
   void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
+  bool ReusableDictionaries() const noexcept { return _reusable_dictionaries; }
+  void SetReusableDictionaries(bool reusable) noexcept {
+    _reusable_dictionaries = reusable;
+  }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;
@@ -115,6 +119,7 @@ class ReadContext final : public BlockManager,
   std::vector<CacheSlot> _cache_slots;
   bool _random_access = false;
   bool _read_ahead = true;
+  bool _reusable_dictionaries = false;
   std::atomic<size_t> _live_handles{0};
 };
 

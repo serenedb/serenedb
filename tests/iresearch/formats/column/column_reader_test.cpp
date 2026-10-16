@@ -2135,6 +2135,53 @@ TEST_F(ColumnReaderTest, ListDictionariesKeepTheirValuesAcrossAppends) {
   }
 }
 
+TEST_F(ColumnReaderTest,
+       RewrittenListsKeepTheirValuesAcrossReaderDictionaries) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> source;
+  WriteViaSql(Db(), dir, "lsrc", 51, type,
+              "SELECT CASE WHEN i % 29 = 0 THEN NULL ELSE ['loc' || (i // 4), "
+              "'z'] END FROM range(40000) t(i)",
+              8192, source);
+  irs::ColReader src{dir, "lsrc", Db()};
+  const auto* col = src.Column(51);
+  ASSERT_NE(col, nullptr);
+  struct Arm {
+    bool reusable;
+    bool read_ahead;
+    std::string segment;
+  };
+  for (const auto& arm :
+       {Arm{false, true, "plain"}, Arm{true, true, "reusable"},
+        Arm{true, false, "reusable_exact"}}) {
+    SCOPED_TRACE(arm.segment);
+    {
+      irs::ColWriter w{dir, arm.segment, Db()};
+      auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
+      auto ctx = std::make_shared<irs::ReadContext>(src);
+      ctx->SetReusableDictionaries(arm.reusable);
+      ctx->SetReadAhead(arm.read_ahead);
+      auto state = col->InitScan(std::move(ctx));
+      uint64_t pos = 0;
+      while (pos < col->RowCount()) {
+        const auto take =
+          std::min<uint64_t>(col->RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, batch, take);
+        cw.Append(batch, take);
+        pos += take;
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, arm.segment, Db()};
+    const auto* out = r.Column(52);
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(out->RowCount(), source.size());
+    ExpectVariantValuesEqual(source, ScanValues(*out, r.Ctx()));
+  }
+}
+
 TEST_F(ColumnReaderTest, SparseListsInsideStructsPadNulls) {
   const auto type = duckdb::LogicalType::STRUCT(
     {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});

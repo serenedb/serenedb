@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -193,6 +194,16 @@ class ListColumnReader final : public ColumnReader {
       s.list_dict = std::make_unique<ListDictionary>();
     }
     return *s.list_dict;
+  }
+
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> NewLists(const ScanState& s,
+                                                       uint64_t count) const {
+    const auto n = static_cast<duckdb::idx_t>(count);
+    if (s.ctx->ReusableDictionaries()) {
+      return duckdb::DictionaryVector::CreateReusableDictionary(_type, n);
+    }
+    return duckdb::make_buffer<duckdb::DictionaryEntry>(
+      duckdb::Vector{_type, n});
   }
 
   void SeekChild(ScanState& s, size_t child, uint64_t& pos,
@@ -405,7 +416,8 @@ class ListColumnReader final : public ColumnReader {
       d.ranks[w] = static_cast<uint32_t>(total);
       total += static_cast<uint64_t>(std::popcount(bits[w]));
     }
-    duckdb::Vector lists{_type, static_cast<duckdb::idx_t>(total + 1)};
+    auto dictionary = NewLists(s, total + 1);
+    auto& lists = dictionary->data;
     auto* entries =
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(lists);
     duckdb::FlatVector::ValidityMutable(lists).SetInvalid(0);
@@ -419,7 +431,7 @@ class ListColumnReader final : public ColumnReader {
       index += to - from;
       from = NextBit(bits, to, true);
     }
-    d.lists.emplace(std::move(lists));
+    d.lists = std::move(dictionary);
     d.begin = lo;
     d.end = hi + 1;
     return d;
@@ -444,7 +456,8 @@ class ListColumnReader final : public ColumnReader {
       whole_block = WidenToBlock(d, lo, hi, first, last_list);
     }
     const uint64_t list_count = last_list - first + 1;
-    duckdb::Vector lists{_type, static_cast<duckdb::idx_t>(list_count + 1)};
+    auto dictionary = NewLists(s, list_count + 1);
+    auto& lists = dictionary->data;
     auto* entries =
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(lists);
     duckdb::FlatVector::ValidityMutable(lists).SetInvalid(0);
@@ -457,7 +470,7 @@ class ListColumnReader final : public ColumnReader {
       d.missed_block = 0;
       return Lists(s, lo, hi, rows);
     }
-    d.lists.emplace(std::move(lists));
+    d.lists = std::move(dictionary);
     d.begin = first;
     d.end = last_list + 1;
     return d;
@@ -512,11 +525,11 @@ class ListColumnReader final : public ColumnReader {
                            ? static_cast<duckdb::idx_t>(Index(d, codes[i]))
                            : 0);
       }
-      result.Slice(*d.lists, sel, scan_count);
+      result.Dictionary(d.lists, sel, scan_count);
       return scan_count;
     }
     const auto* lists =
-      duckdb::FlatVector::GetData<duckdb::list_entry_t>(*d.lists);
+      duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
     uint64_t total = 0;
     for (duckdb::idx_t i = 0; i < scan_count; ++i) {
       if (validity.RowIsValid(result_offset + i)) {
@@ -542,7 +555,7 @@ class ListColumnReader final : public ColumnReader {
     }
     if (total > 0) {
       duckdb::ImmutableStrings::Copy(
-        duckdb::ListVector::GetChild(*d.lists),
+        duckdb::ListVector::GetChild(d.lists->data),
         duckdb::ListVector::GetChildMutable(result), picked,
         static_cast<duckdb::idx_t>(total), 0,
         static_cast<duckdb::idx_t>(child_base));

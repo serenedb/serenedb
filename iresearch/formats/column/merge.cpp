@@ -308,12 +308,18 @@ std::vector<std::vector<uint32_t>> TextLeavesOf(
   return out;
 }
 
+std::shared_ptr<ReadContext> MergeContext(const ColReader& reader) {
+  auto ctx = std::make_shared<ReadContext>(reader);
+  ctx->SetReusableDictionaries(true);
+  return ctx;
+}
+
 std::vector<std::shared_ptr<ReadContext>> OpenContexts(
   std::span<const MergeSource> sources, field_id column) {
   std::vector<std::shared_ptr<ReadContext>> ctxs(sources.size());
   for (size_t si = 0; si < sources.size(); ++si) {
     if (sources[si].col_reader && sources[si].col_reader->Column(column)) {
-      ctxs[si] = std::make_shared<ReadContext>(*sources[si].col_reader);
+      ctxs[si] = MergeContext(*sources[si].col_reader);
     }
   }
   return ctxs;
@@ -405,7 +411,7 @@ struct ColumnMerger::State {
         continue;
       }
       const uint64_t skip = lo - source_begin;
-      auto state = col->InitScan(std::make_shared<ReadContext>(*s.col_reader));
+      auto state = col->InitScan(MergeContext(*s.col_reader));
       const uint64_t total = col->RowCount();
       if (!HasRemovals(s.reader->Meta())) {
         const uint64_t stop = std::min(skip + (hi - lo), total);
@@ -647,7 +653,7 @@ struct ColumnMerger::State {
     if (!in.col) {
       return;
     }
-    auto ctx = std::make_shared<ReadContext>(*s.col_reader);
+    auto ctx = MergeContext(*s.col_reader);
     ctx->SetReadAhead(false);
     in.state = in.col->InitScan(std::move(ctx));
     const uint64_t total = in.col->RowCount();

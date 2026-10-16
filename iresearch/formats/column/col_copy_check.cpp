@@ -139,7 +139,9 @@ ReencodeEstimate TrialReencode(
   if (dictionary) {
     writer.ShareDictionary(std::move(dictionary), 1);
   }
-  auto state = column.InitScan(std::make_shared<ReadContext>(reader));
+  auto ctx = std::make_shared<ReadContext>(reader);
+  ctx->SetReusableDictionaries(true);
+  auto state = column.InitScan(std::move(ctx));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;
   uint64_t position = 0;

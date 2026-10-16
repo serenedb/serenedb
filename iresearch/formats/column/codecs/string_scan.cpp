@@ -1338,6 +1338,7 @@ struct FetchCache final : duckdb::SegmentScanState {
   std::string fsst_heap;
   std::vector<uint32_t> fsst_ends;
   std::vector<EntryAt> order;
+  duckdb::shared_ptr<DecodedDictionary> decoded_dictionary;
 
   void DecodeAllFsst(const Header& h, const_data_ptr_t base) {
     const auto* frames = base + h.off_frames;
@@ -1461,6 +1462,12 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
     cache.walked = 0;
     cache.fsst_heap.clear();
     cache.fsst_ends.clear();
+    cache.decoded_dictionary.reset();
+    if (const auto& slot = CacheSlotOf(segment);
+        h.shape == static_cast<uint8_t>(Shape::Dedup) && !slot.key.empty()) {
+      cache.decoded_dictionary =
+        segment.GetDatabase().GetObjectCache().Get<DecodedDictionary>(slot.key);
+    }
   }
   return cache;
 }
@@ -1516,6 +1523,12 @@ void EmitEntry(duckdb::ColumnSegment& segment, FetchCache& cache,
              "col codec: corrupted row codes");
 
   auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  if (cache.decoded_dictionary) {
+    out[result_idx] = duckdb::StringVector::AddStringOrBlob(
+      result, duckdb::FlatVector::GetData<string_t>(
+                cache.decoded_dictionary->Dictionary()->data)[entry]);
+    return;
+  }
   if (!cache.fsst_ends.empty()) {
     const auto begin = cache.fsst_ends[entry];
     out[result_idx] = duckdb::StringVector::AddStringOrBlob(
@@ -1677,7 +1690,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
     }
   }
-  const bool batched = order.size() > 1;
+  const bool batched = order.size() > 1 && !cache.decoded_dictionary;
   if (batched && cache.header.shape == static_cast<uint8_t>(Shape::Dedup)) {
     absl::c_sort(
       order, [](const auto& l, const auto& r) { return l.entry > r.entry; });

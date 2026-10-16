@@ -938,6 +938,67 @@ TEST_F(ColCodecsTest, BatchedPointReadsKeepTheStringsOfEveryBlock) {
   }
 }
 
+TEST_F(ColCodecsTest, PointReadsUseTheCachedDictionary) {
+  constexpr uint64_t kRows = 20000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("dictionary-entry-", g % 97);
+  };
+  irs::MemoryDirectory dir;
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 8192,
+        value);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataBlocks().size(), 1u);
+  for (int pass = 0; pass < 2; ++pass) {
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, take);
+      out.Flatten(take);
+    }
+  }
+  auto& cache = Db().GetObjectCache();
+  for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
+    const auto cached =
+      cache.Get<irs::codecs::DecodedDictionary>(col->DictionaryCacheKey(b));
+    ASSERT_NE(cached, nullptr) << "block " << b;
+    auto& data = cached->Dictionary()->data;
+    auto* values = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(data);
+    for (duckdb::idx_t i = 1; i < data.size(); ++i) {
+      values[i] = duckdb::StringVector::AddString(
+        data, absl::StrCat("cached:", values[i].GetString()));
+    }
+  }
+  const Value cached = [&](uint64_t g) -> std::optional<std::string> {
+    if (const auto v = value(g)) {
+      return absl::StrCat("cached:", *v);
+    }
+    return std::nullopt;
+  };
+
+  irs::ColumnReader::PointReader cursor{r, *col};
+  std::vector<uint64_t> rows;
+  for (uint64_t g = 3; g < kRows; g += 29) {
+    rows.push_back(g);
+  }
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  cursor.FetchRows(rows, out, 0);
+  for (size_t k = 0; k < rows.size(); ++k) {
+    ExpectRow(out, k, rows[k], cached);
+  }
+  duckdb::Vector one{duckdb::LogicalType::VARCHAR, 1};
+  for (const auto g : {uint64_t{1}, kRows / 2 + 1, kRows - 1}) {
+    duckdb::FlatVector::ValidityMutable(one).Reset();
+    cursor.FetchRow(g, one, 0);
+    ExpectRow(one, 0, g, cached);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
   using duckdb::CompressionType;
   const CompressionType candidates[] = {

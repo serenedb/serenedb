@@ -158,9 +158,7 @@ struct DeferredColumn {
 struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
   std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
-  std::shared_ptr<
-    const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, DeferredColumn>>
-    columns;
+  std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
   // What the filter optimizer is told about the claimed fields.
   std::set<irs::field_id> analyzed_fields;
   std::map<irs::field_id, irs::field_id> null_markers;
@@ -281,12 +279,6 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
-// The session's HNSW filter mode and exact flag (sdb_hnsw_filter_mode,
-// sdb_ann_exact), read at execution by a scan whose plan was cached.
-irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context);
-irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context);
-bool ReadAnnExact(duckdb::ClientContext& context);
-
 // The share of a global top-k that one of `segments` segments is expected to
 // hold. Every segment is searched with its own beam and the results are
 // merged, so a segment never has to be able to answer the whole query alone --
@@ -300,6 +292,10 @@ double SegmentBeamShare(double k, size_t segments) noexcept;
 // -1, and the session's value otherwise; `chosen_here` reports which.
 double AnnOversample(duckdb::ClientContext& context,
                      const VectorScorerOptions& vs, bool& chosen_here);
+
+double OversamplePool(double factor, double count) noexcept;
+
+uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 
 // The search knobs a vector scan reads from the session at execution, rather
 // than from the session that planned it.

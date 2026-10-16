@@ -577,7 +577,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
     // codes.
     bool chosen_here = false;
     const auto factor = AnnOversample(context, *vs, chosen_here);
-    double pool = factor > 0.0 ? std::max(k, std::ceil(factor * k)) : 0.0;
+    double pool = OversamplePool(factor, k);
     if (g.has_lookup_filter) {
       constexpr double kLookupFilterOverfetch = 4.0;
       const double reachable =
@@ -586,13 +586,9 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
           : (chosen_here ? k * kLookupFilterOverfetch : 0.0);
       pool = std::max(pool, std::max(k, reachable));
     }
-    t.rerank_pool =
-      pool == 0
-        ? 0
-        : static_cast<uint32_t>(std::min(
-            {std::max(pool, k),
-             std::max(k, static_cast<double>(g.reader->live_docs_count())),
-             static_cast<double>(std::numeric_limits<uint32_t>::max())}));
+    t.rerank_pool = pool == 0 ? 0
+                              : ClampCandidates(std::max(pool, k), k,
+                                                g.reader->live_docs_count());
   }
   t.pool = t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
   if (vs && vs->exact && g.has_lookup_filter) {

@@ -253,49 +253,41 @@ double AnnOversample(duckdb::ClientContext& context,
   return chosen_here ? AutoOversample(vs) : factor;
 }
 
+double OversamplePool(double factor, double count) noexcept {
+  return factor > 0.0 ? std::max(count, std::ceil(factor * count)) : 0.0;
+}
+
+uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept {
+  return static_cast<uint32_t>(
+    std::min({pool, std::max(k, static_cast<double>(live)),
+              static_cast<double>(std::numeric_limits<uint32_t>::max())}));
+}
+
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context) {
   static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
   static constinit SettingRef gMinFanout{"sdb_ivf_min_search_fanout"};
   static constinit SettingRef gMaxFanout{"sdb_ivf_max_search_fanout"};
   static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  const auto nprobe = gNprobe.SignedInt(context);
-  vs.nprobe = nprobe < 0 ? 0 : static_cast<uint32_t>(nprobe);
-  const auto min_fanout = gMinFanout.SignedInt(context);
-  vs.min_search_fanout = min_fanout < 0 ? 0 : static_cast<uint32_t>(min_fanout);
-  const auto max_fanout = gMaxFanout.SignedInt(context);
-  vs.max_search_fanout = max_fanout < 0 ? 0 : static_cast<uint32_t>(max_fanout);
-  const auto ef = gEfSearch.SignedInt(context);
-  vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
-  vs.hnsw_filter_mode = ReadHnswFilterMode(context);
-  vs.hnsw_column_filter = ReadHnswColumnFilter(context);
-  vs.exact = ReadAnnExact(context);
-}
-
-irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
-  static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
   static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
-  const auto mode = gFilterMode.Enum(context, kModes);
-  if (mode >= kModes.size()) {
-    return irs::HnswFilterMode::Auto;
-  }
-  return static_cast<irs::HnswFilterMode>(mode);
-}
-
-irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context) {
-  static constexpr auto kModes =
-    magic_enum::enum_names<irs::HnswColumnFilter>();
   static constinit SettingRef gColumnFilter{"sdb_hnsw_column_filter"};
-  const auto mode = gColumnFilter.Enum(context, kModes);
-  if (mode >= kModes.size()) {
-    return irs::HnswColumnFilter::Auto;
-  }
-  return static_cast<irs::HnswColumnFilter>(mode);
-}
-
-bool ReadAnnExact(duckdb::ClientContext& context) {
   static constinit SettingRef gExact{"sdb_ann_force_exact"};
-  return gExact.Bool(context);
+  const auto count = [&](const SettingRef& setting) {
+    const auto n = setting.SignedInt(context);
+    return n < 0 ? 0 : static_cast<uint32_t>(n);
+  };
+  const auto mode = [&]<typename E>(const SettingRef& setting, E fallback) {
+    static constexpr auto kNames = magic_enum::enum_names<E>();
+    const auto i = setting.Enum(context, kNames);
+    return i < kNames.size() ? static_cast<E>(i) : fallback;
+  };
+  vs.nprobe = count(gNprobe);
+  vs.min_search_fanout = count(gMinFanout);
+  vs.max_search_fanout = count(gMaxFanout);
+  vs.ef_search = count(gEfSearch);
+  vs.hnsw_filter_mode = mode(gFilterMode, irs::HnswFilterMode::Auto);
+  vs.hnsw_column_filter = mode(gColumnFilter, irs::HnswColumnFilter::Auto);
+  vs.exact = gExact.Bool(context);
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
@@ -537,8 +529,7 @@ DeferredBuild BuildDeferredFilter(
   }
   const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
-    const auto it = claim.columns->find(
-      {ref.Binding().table_index.index, ref.Binding().column_index.GetIndex()});
+    const auto it = claim.columns->find(MakeBindingKey(ref.Binding()));
     if (it == claim.columns->end()) {
       return std::nullopt;
     }
@@ -564,9 +555,7 @@ DeferredBuild BuildDeferredFilter(
       duckdb::BoundColumnRefExpression>(
       *range, [&](const duckdb::BoundColumnRefExpression& r) { ref = &r; });
     SDB_ENSURE(ref, "a deferred range reads one column");
-    const auto it =
-      claim.columns->find({ref->Binding().table_index.index,
-                           ref->Binding().column_index.GetIndex()});
+    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
     SDB_ENSURE(it != claim.columns->end(),
                "a deferred range's column was resolved at plan time");
     auto& [type, parts] = wide[it->second.column];
@@ -600,13 +589,7 @@ DeferredBuild BuildDeferredFilter(
                                &probe_scorers, WideRanges::DeclineWide)
                 .ok();
     };
-  struct Interval {
-    std::optional<SearchColumnInfo> info;
-    double lo = 0;
-    double hi = 0;
-    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> ranges;
-  };
-  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, Interval> intervals;
+  ColumnIntervals<duckdb::unique_ptr<duckdb::Expression>> intervals;
   for (const auto& e : claim.ranges) {
     auto range = bound(e);
     const auto bounds = ColumnRangeOf(*range);
@@ -618,25 +601,11 @@ DeferredBuild BuildDeferredFilter(
       }
       continue;
     }
-    const auto& binding = bounds->column->Binding();
-    auto [it, inserted] = intervals.try_emplace(
-      {binding.table_index.index, binding.column_index.GetIndex()});
-    auto& interval = it->second;
-    if (inserted) {
-      interval.info = getter(*bounds->column);
-      interval.lo = bounds->lo;
-      interval.hi = bounds->hi;
-    } else {
-      interval.lo = std::max(interval.lo, bounds->lo);
-      interval.hi = std::min(interval.hi, bounds->hi);
-    }
-    interval.ranges.push_back(std::move(range));
+    AddColumnRange(intervals, *bounds, getter, std::move(range));
   }
   for (auto& [key, interval] : intervals) {
-    const auto fits =
-      interval.info ? RangeFitsIndex(*interval.info, interval.lo, interval.hi)
-                    : std::nullopt;
-    for (auto& range : interval.ranges) {
+    const auto fits = IntervalFitsIndex(interval);
+    for (auto& range : interval.members) {
       if (fits ? !*fits : probe_wide(range)) {
         to_column(std::move(range));
       } else {

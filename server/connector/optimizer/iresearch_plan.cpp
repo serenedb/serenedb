@@ -282,8 +282,7 @@ bool ColumnFilterCanTake(const duckdb::Expression& conjunct) {
 // resolved now and remembered, since the scan's binding is gone by then.
 struct DeferredClaimBuilder {
   connector::DeferredClaim claim;
-  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, connector::DeferredColumn>
-    columns;
+  std::map<connector::BindingKey, connector::DeferredColumn> columns;
   const BindingColumnId* column_id = nullptr;
   bool used_expr_getter = false;
   bool any_parameter = false;
@@ -295,8 +294,7 @@ struct DeferredClaimBuilder {
       auto info = getter(ref);
       if (info) {
         columns.insert_or_assign(
-          {ref.Binding().table_index.index,
-           ref.Binding().column_index.GetIndex()},
+          connector::MakeBindingKey(ref.Binding()),
           connector::DeferredColumn{.column = (*column_id)(ref),
                                     .column_stored = info->column_stored});
       }
@@ -339,20 +337,14 @@ bool ClaimDeferredRange(const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   if (!column || !one) {
     return false;
   }
-  auto node = std::make_unique<irs::BooleanFilter>();
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped, 1};
   connector::FilterScorers scorers;
-  const auto claimed = connector::MakeSearchFilter(
-    *node, single, column_getter, context, expression_getter, &scorers,
-    connector::WideRanges::Build);
-  const bool built = absl::c_any_of(
-    irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
-  if (!claimed.ok() || !built || deferred.used_expr_getter ||
-      !scorers.empty()) {
+  if (!connector::MakeConjunctFilter(shaped, column_getter, context,
+                                     expression_getter, &scorers,
+                                     connector::WideRanges::Build) ||
+      deferred.used_expr_getter || !scorers.empty()) {
     return false;
   }
-  const auto it = deferred.columns.find(
-    {column->table_index.index, column->column_index.GetIndex()});
+  const auto it = deferred.columns.find(connector::MakeBindingKey(*column));
   if (it == deferred.columns.end() || !it->second.column_stored) {
     return false;
   }
@@ -410,21 +402,14 @@ bool TryClaimIResearchConjunctImpl(
     try {
       auto shaped = NormalizeClaimShape(
         context, SubstituteParameters(conjunct->Copy(), /*with_values=*/false));
-      auto node = std::make_unique<irs::BooleanFilter>();
-      std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped,
-                                                                     1};
       connector::FilterScorers shaped_scorers;
       const auto column_getter = deferred->Recording(getter);
       const auto expression_getter = deferred->Recording(expr_getter);
-      const auto claimed = connector::MakeSearchFilter(
-        *node, single, column_getter, context, expression_getter,
-        &shaped_scorers,
-        ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
-                                     : connector::WideRanges::Build);
-      const bool built = absl::c_any_of(irs::kAllOccur, [&](irs::Occur occur) {
-        return node->Size(occur) != 0;
-      });
-      if (!claimed.ok() || !built || deferred->used_expr_getter) {
+      if (!connector::MakeConjunctFilter(
+            shaped, column_getter, context, expression_getter, &shaped_scorers,
+            ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
+                                         : connector::WideRanges::Build) ||
+          deferred->used_expr_getter) {
         if (ClaimDeferredRange(conjunct, shaped, column_getter,
                                expression_getter, context, *deferred)) {
           return true;
@@ -443,8 +428,6 @@ bool TryClaimIResearchConjunctImpl(
   // a term clause is sorted into its bucket rather than appended, so there
   // is no suffix of the root to cut back to. The flatten rule folds the node
   // away once the whole request is claimed.
-  auto node = std::make_unique<irs::BooleanFilter>();
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
   const connector::ColumnGetter* column_getter = &getter;
   const connector::ExpressionGetter* expression_getter = &expr_getter;
   connector::ColumnGetter recording_columns;
@@ -455,14 +438,12 @@ bool TryClaimIResearchConjunctImpl(
     column_getter = &recording_columns;
     expression_getter = &recording_expressions;
   }
-  const auto claimed = connector::MakeSearchFilter(
-    *node, single, *column_getter, context, *expression_getter, scorers,
+  auto node = connector::MakeConjunctFilter(
+    conjunct, *column_getter, context, *expression_getter, scorers,
     ColumnFilterCanTake(*conjunct)
       ? range_mode.value_or(connector::WideRanges::DeclineWide)
       : connector::WideRanges::Build);
-  const bool built = absl::c_any_of(
-    irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
-  if (!claimed.ok() || !built) {
+  if (!node) {
     return false;
   }
   // Nested, the wrapper hides the root's shape: one holding only negated
@@ -484,6 +465,27 @@ bool TryClaimIResearchConjunct(
   return TryClaimIResearchConjunctImpl(root, conjunct, getter, expr_getter,
                                        context, scorers, nullptr);
 }
+
+namespace {
+
+std::optional<connector::SearchColumnInfo> TermColumnInfo(
+  const connector::ScanBindData& scan, const catalog::IndexTokenizers& dicts,
+  connector::ColumnId col_id) {
+  auto type = scan.ColumnTypeById(col_id);
+  if (type.id() == duckdb::LogicalTypeId::INVALID) {
+    return std::nullopt;
+  }
+  const auto& config = *scan.relation.inverted_config;
+  const auto* info = config.FindColumnInfo(col_id);
+  if (!info || !info->IsTermDict()) {
+    return std::nullopt;
+  }
+  const auto field_id = config.TermField(col_id);
+  return MakeSearchColumnInfo(field_id, info, std::move(type),
+                              dicts.Acquire(field_id));
+}
+
+}  // namespace
 
 bool WithSearchGetters(duckdb::LogicalGet& get,
                        connector::ScanBindData& bind_data,
@@ -508,42 +510,34 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return it->second;
   };
 
-  const auto make_info =
-    [&](irs::field_id field_id, const catalog::InvertedIndexField* info,
-        duckdb::LogicalType type, std::optional<connector::ColumnId> column) {
-      auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
-                                              dicts.Acquire(field_id));
-      column_info.column_stored = bind_data.relation.IsSearchTable();
-      if (column && column_info.column_stored) {
-        column_info.stats = snapshot->reader.GetColumnStats(*column);
-      }
-      if (column && table_backed && column_not_null(*column)) {
-        column_info.null_field_id = irs::field_limits::invalid();
-      }
-      if (irs::field_limits::valid(column_info.null_field_id)) {
-        null_markers[column_info.null_field_id] = column_info.field_id;
-      }
-      if (column_info.tokenizer.analyzer->type() !=
-          irs::Type<irs::KeywordTokenizer>::id()) {
-        analyzed_fields.insert(field_id);
-      }
-      return column_info;
-    };
+  const auto finish_info = [&](connector::SearchColumnInfo& column_info,
+                               std::optional<connector::ColumnId> column) {
+    column_info.column_stored = bind_data.relation.IsSearchTable();
+    if (column && column_info.column_stored) {
+      column_info.stats = snapshot->reader.GetColumnStats(*column);
+    }
+    if (column && table_backed && column_not_null(*column)) {
+      column_info.null_field_id = irs::field_limits::invalid();
+    }
+    if (irs::field_limits::valid(column_info.null_field_id)) {
+      null_markers[column_info.null_field_id] = column_info.field_id;
+    }
+    if (column_info.tokenizer.analyzer->type() !=
+        irs::Type<irs::KeywordTokenizer>::id()) {
+      analyzed_fields.insert(column_info.field_id);
+    }
+  };
 
   const auto index_field = [&](connector::ColumnId col_id)
     -> std::optional<connector::SearchColumnInfo> {
     if (col_id == connector::kInvalidColumnId) {
       return std::nullopt;
     }
-    auto type = bind_data.ColumnTypeById(col_id);
-    if (type.id() == duckdb::LogicalTypeId::INVALID) {
-      return std::nullopt;
+    auto column_info = TermColumnInfo(bind_data, dicts, col_id);
+    if (column_info) {
+      finish_info(*column_info, col_id);
     }
-    const auto* info = config.FindColumnInfo(col_id);
-    if (!info || !info->IsTermDict()) {
-      return std::nullopt;
-    }
-    return make_info(config.TermField(col_id), info, std::move(type), col_id);
+    return column_info;
   };
 
   connector::FieldSetGetter field_set = [&](std::string_view name) {
@@ -575,8 +569,11 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (return_type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    return make_info(field_id, config.FindEntry(field_id),
-                     std::move(return_type), std::nullopt);
+    auto column_info =
+      MakeSearchColumnInfo(field_id, config.FindEntry(field_id),
+                           std::move(return_type), dicts.Acquire(field_id));
+    finish_info(column_info, std::nullopt);
+    return column_info;
   };
 
   const BindingColumnId column_id =
@@ -837,30 +834,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   return ref;
 }
 
-uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
-  static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
-  const auto n = gNprobe.SignedInt(context);
-  return n < 0 ? 0 : static_cast<uint32_t>(n);
-}
-
-uint32_t ReadMinSearchFanout(duckdb::ClientContext& context) {
-  static constinit SettingRef gFanout{"sdb_ivf_min_search_fanout"};
-  const auto n = gFanout.SignedInt(context);
-  return n < 0 ? 0 : static_cast<uint32_t>(n);
-}
-
-uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
-  static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
-  const auto n = gFanout.SignedInt(context);
-  return n < 0 ? 0 : static_cast<uint32_t>(n);
-}
-
-uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
-  static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  const auto n = gEfSearch.SignedInt(context);
-  return n < 0 ? 0 : static_cast<uint32_t>(n);
-}
-
 const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return expr;
@@ -962,16 +935,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .postings_id = ann_info->postings_id,
       .quant = ann_info->quant.kind,
       .kind = ann_info->kind,
-      .nprobe = ReadSearchNprobe(context),
-      .min_search_fanout = ReadMinSearchFanout(context),
-      .max_search_fanout = ReadMaxSearchFanout(context),
-      .ef_search = ReadHnswEfSearch(context),
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,
-      .hnsw_filter_mode = connector::ReadHnswFilterMode(context),
-      .hnsw_column_filter = connector::ReadHnswColumnFilter(context),
-      .exact = connector::ReadAnnExact(context),
     };
+    connector::RefreshVectorKnobs(*ss.score.vector, context);
     ss.score.order = info.order;
   } else {
     const auto& vs = *ss.score.vector;
@@ -1395,47 +1362,23 @@ bool TryClaimAnnRange(
 std::map<const duckdb::Expression*, connector::WideRanges> DecideColumnRanges(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   const connector::ColumnGetter& getter, duckdb::ClientContext& context) {
-  struct Interval {
-    std::optional<connector::SearchColumnInfo> info;
-    double lo = 0;
-    double hi = 0;
-    std::vector<const duckdb::Expression*> conjuncts;
-  };
-  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, Interval> intervals;
+  connector::ColumnIntervals<const duckdb::Expression*> intervals;
   for (const auto& filter : filters) {
     if (filter->HasParameter() || !ColumnFilterCanTake(*filter)) {
       continue;
     }
     const auto shaped = NormalizeClaimShape(context, filter->Copy());
-    const auto bounds = connector::ColumnRangeOf(*shaped);
-    if (!bounds) {
-      continue;
+    if (const auto bounds = connector::ColumnRangeOf(*shaped)) {
+      connector::AddColumnRange(intervals, *bounds, getter, filter.get());
     }
-    const auto& binding = bounds->column->Binding();
-    auto [it, inserted] = intervals.try_emplace(
-      {binding.table_index.index, binding.column_index.GetIndex()});
-    auto& interval = it->second;
-    if (inserted) {
-      interval.info = getter(*bounds->column);
-      interval.lo = bounds->lo;
-      interval.hi = bounds->hi;
-    } else {
-      interval.lo = std::max(interval.lo, bounds->lo);
-      interval.hi = std::min(interval.hi, bounds->hi);
-    }
-    interval.conjuncts.push_back(filter.get());
   }
   std::map<const duckdb::Expression*, connector::WideRanges> modes;
   for (const auto& [key, interval] : intervals) {
-    if (!interval.info) {
-      continue;
-    }
-    const auto fits =
-      connector::RangeFitsIndex(*interval.info, interval.lo, interval.hi);
+    const auto fits = connector::IntervalFitsIndex(interval);
     if (!fits) {
       continue;
     }
-    for (const auto* conjunct : interval.conjuncts) {
+    for (const auto* conjunct : interval.members) {
       modes.emplace(conjunct, *fits ? connector::WideRanges::Build
                                     : connector::WideRanges::DeclineAll);
     }
@@ -1491,10 +1434,9 @@ bool ClaimSearchConjuncts(
     for (auto& e : claimed_exprs) {
       deferred.claim.conjuncts.push_back(std::move(e));
     }
-    deferred.claim.columns =
-      std::make_shared<const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                                      connector::DeferredColumn>>(
-        std::move(deferred.columns));
+    deferred.claim.columns = std::make_shared<
+      const std::map<connector::BindingKey, connector::DeferredColumn>>(
+      std::move(deferred.columns));
     deferred.claim.analyzed_fields.insert(analyzed_fields.begin(),
                                           analyzed_fields.end());
     for (const auto& [marker, field] : null_markers) {
@@ -1615,16 +1557,12 @@ duckdb::vector<duckdb::ColumnBinding> DistinctColumns(
 std::shared_ptr<const irs::Filter> BuildIndexLeaf(
   const duckdb::Expression& expr, const SearchGetters& getters,
   duckdb::ClientContext& context) {
-  auto copy = expr.Copy();
-  auto node = std::make_unique<irs::BooleanFilter>();
-  std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&copy, 1};
+  const auto copy = expr.Copy();
   connector::FilterScorers scorers;
-  const auto claimed = connector::MakeSearchFilter(
-    *node, single, getters.getter, context, getters.expr_getter, &scorers,
-    connector::WideRanges::Build);
-  const bool built = absl::c_any_of(
-    irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
-  if (!claimed.ok() || !built || !scorers.empty()) {
+  auto node = connector::MakeConjunctFilter(copy, getters.getter, context,
+                                            getters.expr_getter, &scorers,
+                                            connector::WideRanges::Build);
+  if (!node || !scorers.empty()) {
     return nullptr;
   }
   irs::Filter::ptr root = std::move(node);
@@ -1993,23 +1931,15 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   duckdb::ClientContext& context, const connector::ScanBindData& scan,
   connector::ColumnId col_id, bool column_stored) {
-  auto type = scan.ColumnTypeById(col_id);
-  if (type.id() == duckdb::LogicalTypeId::INVALID) {
+  auto column_info =
+    TermColumnInfo(scan, scan.relation.ResolveTokenizers(context), col_id);
+  if (!column_info) {
     return std::nullopt;
   }
-  const auto& config = *scan.relation.inverted_config;
-  const auto* info = config.FindColumnInfo(col_id);
-  if (!info || !info->IsTermDict()) {
-    return std::nullopt;
-  }
-  const auto field_id = config.TermField(col_id);
-  const auto dicts = scan.relation.ResolveTokenizers(context);
-  auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
-                                          dicts.Acquire(field_id));
   if (!scan.IsViewBacked() && scan.IsColumnNotNull(col_id)) {
-    column_info.null_field_id = irs::field_limits::invalid();
+    column_info->null_field_id = irs::field_limits::invalid();
   }
-  column_info.column_stored = column_stored;
+  column_info->column_stored = column_stored;
   return column_info;
 }
 

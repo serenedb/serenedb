@@ -267,20 +267,27 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
   }
 }
 
+void BindExpressionFilter(ScanGlobalState::ColFilter& cf,
+                          const duckdb::TableFilter& filter,
+                          duckdb::LogicalType type) {
+  cf.filter = &filter;
+  cf.type = std::move(type);
+  cf.null_check =
+    DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
+                       filter, "BindExpressionFilter")
+                       .expr);
+  cf.not_null = MakeNotNullReplacement(filter, cf.type);
+}
+
 void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
   for (const auto& row : bind_data.search.row_filters) {
     auto& cf = state.col_filters.emplace_back();
-    cf.filter = row.filter.get();
     if (row.columns.size() == 1 && row.leaves.empty()) {
       cf.field = row.columns.front();
-      cf.type = row.types.front();
-      cf.null_check =
-        DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
-                           *row.filter, "BuildRowFilters")
-                           .expr);
-      cf.not_null = MakeNotNullReplacement(*row.filter, cf.type);
+      BindExpressionFilter(cf, *row.filter, row.types.front());
       continue;
     }
+    cf.filter = row.filter.get();
     cf.row_fields.assign(row.columns.begin(), row.columns.end());
     cf.row_types = row.types;
     cf.row_types.resize(row.types.size() + row.leaves.size(),
@@ -319,13 +326,7 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
                ? *existing
                : state.col_filters.emplace_back();
   cf.field = deferred.column;
-  cf.filter = owned.get();
-  cf.null_check =
-    DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
-                       *owned, "AddDeferredColumnFilter")
-                       .expr);
-  cf.type = std::move(deferred.type);
-  cf.not_null = MakeNotNullReplacement(*owned, cf.type);
+  BindExpressionFilter(cf, *owned, std::move(deferred.type));
 }
 
 }  // namespace

@@ -100,6 +100,42 @@ std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr);
 std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
                                    double hi);
 
+template<typename Member>
+struct ColumnInterval {
+  std::optional<SearchColumnInfo> info;
+  double lo = 0;
+  double hi = 0;
+  std::vector<Member> members;
+};
+
+template<typename Member>
+using ColumnIntervals = std::map<BindingKey, ColumnInterval<Member>>;
+
+template<typename Member>
+void AddColumnRange(ColumnIntervals<Member>& intervals,
+                    const ColumnRange& range, const ColumnGetter& getter,
+                    std::type_identity_t<Member> member) {
+  auto [it, inserted] =
+    intervals.try_emplace(MakeBindingKey(range.column->Binding()));
+  auto& interval = it->second;
+  if (inserted) {
+    interval.info = getter(*range.column);
+    interval.lo = range.lo;
+    interval.hi = range.hi;
+  } else {
+    interval.lo = std::max(interval.lo, range.lo);
+    interval.hi = std::min(interval.hi, range.hi);
+  }
+  interval.members.push_back(std::move(member));
+}
+
+template<typename Member>
+std::optional<bool> IntervalFitsIndex(const ColumnInterval<Member>& interval) {
+  return interval.info
+           ? RangeFitsIndex(*interval.info, interval.lo, interval.hi)
+           : std::nullopt;
+}
+
 // Builds iresearch filters into `root`'s `Must` bucket from an implicit-AND
 // list of DuckDB bound filter expressions (as found in a LogicalFilter). Each
 // expression either becomes a clause of `root` (on success) or causes
@@ -242,6 +278,12 @@ absl::Status MakeSearchFilter(
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges = WideRanges::Build);
+
+std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  const ColumnGetter& column_getter, duckdb::ClientContext& context,
+  const ExpressionGetter& expr_getter, FilterScorers* scorers,
+  WideRanges wide_ranges);
 
 inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
                                         duckdb::LogicalTypeId type_id) {

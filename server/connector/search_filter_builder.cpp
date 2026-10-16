@@ -2873,4 +2873,21 @@ absl::Status MakeSearchFilter(
   return absl::OkStatus();
 }
 
+std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
+  const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  const ColumnGetter& column_getter, duckdb::ClientContext& context,
+  const ExpressionGetter& expr_getter, FilterScorers* scorers,
+  WideRanges wide_ranges) {
+  auto node = std::make_unique<irs::BooleanFilter>();
+  const auto status =
+    MakeSearchFilter(*node, {&conjunct, 1}, column_getter, context, expr_getter,
+                     scorers, wide_ranges);
+  if (!status.ok() || absl::c_none_of(irs::kAllOccur, [&](irs::Occur occur) {
+        return node->Size(occur) != 0;
+      })) {
+    return nullptr;
+  }
+  return node;
+}
+
 }  // namespace sdb::connector

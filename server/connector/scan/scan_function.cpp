@@ -176,6 +176,59 @@ std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
   return std::vector<float>{data, data + vs.dims};
 }
 
+const VectorScorerOptions& PrepareVectorScorer(
+  ScanGlobalState& state, duckdb::ClientContext& context,
+  const VectorScorerOptions& planned) {
+  auto& vs = state.owned_vector_scorer.emplace(planned);
+  // The knobs are the executing session's, not the planning session's: a
+  // cached plan sees every SET made since it was prepared.
+  RefreshVectorKnobs(vs, context);
+  // A parameterized query vector is kept as an expression at plan time and
+  // read from this execution's parameters.
+  if (vs.query_expr) {
+    vs.query_vector = EvaluateQueryVector(context, vs);
+  }
+  SDB_ENSURE(!vs.query_vector.empty(),
+             "a vector search has a query vector to search for");
+  if (state.top_k) {
+    // The beam is the result ceiling, so it is at least k -- and at least
+    // the rescore pool, which is the same thing said of the pool: a search
+    // that returns a hundred cannot hand four hundred to the rescorer. This
+    // has to be decided here rather than next to the pool itself, because
+    // the filter below captures min_ef as it is built. Qdrant takes
+    // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
+    // reason; docs/hnsw-parity.md in vectorbench has the mapping.
+    //
+    // HNSW is the one kind whose search can return fewer candidates than
+    // asked for. An IVF probe returns whatever the collector keeps, so the
+    // pool is the candidate count outright and nothing needs widening.
+    if (vs.kind == irs::AnnKind::Hnsw) {
+      bool chosen_here = false;
+      const auto factor = AnnOversample(context, vs, chosen_here);
+      // The floor is what one segment must hold, not what the query returns.
+      // Asking each of eight segments for a thousand is eight thousand
+      // candidates produced to answer with one thousand. This is a floor and
+      // never a cap: a wider `ef_search` still wins, and a single-segment
+      // index still gets the whole k.
+      const auto k = static_cast<double>(*state.top_k);
+      const double share = SegmentBeamShare(k, state.total_segments);
+      const double seg_pool = OversamplePool(factor, share);
+      vs.min_ef = ClampCandidates(seg_pool > 0.0 ? seg_pool : share, k,
+                                  state.reader->live_docs_count());
+    }
+    vs.top_k = static_cast<uint32_t>(*state.top_k);
+  } else if (vs.radius == std::numeric_limits<float>::max()) {
+    vs.exact = true;
+  }
+  if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
+    vs.ef_search =
+      std::max(vs.ef_construction,
+               state.top_k ? static_cast<uint32_t>(*state.top_k) : uint32_t{1});
+  }
+  state.vector_scorer = &vs;
+  return vs;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
@@ -277,59 +330,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   const auto where = state->ClaimedWhere();
   if (ss.score.vector) {
-    state->owned_vector_scorer = *ss.score.vector;
-    auto& vs = *state->owned_vector_scorer;
-    // The knobs are the executing session's, not the planning session's: a
-    // cached plan sees every SET made since it was prepared.
-    RefreshVectorKnobs(vs, context);
-    // A parameterized query vector is kept as an expression at plan time and
-    // read from this execution's parameters.
-    if (vs.query_expr) {
-      vs.query_vector = EvaluateQueryVector(context, vs);
-    }
-    SDB_ENSURE(!vs.query_vector.empty(),
-               "a vector search has a query vector to search for");
-    if (state->top_k) {
-      // The beam is the result ceiling, so it is at least k -- and at least
-      // the rescore pool, which is the same thing said of the pool: a search
-      // that returns a hundred cannot hand four hundred to the rescorer. This
-      // has to be decided here rather than next to the pool itself, because
-      // the filter below captures min_ef as it is built. Qdrant takes
-      // ef = max(hnsw_ef, oversampling * k) at the same point and for the same
-      // reason; docs/hnsw-parity.md in vectorbench has the mapping.
-      //
-      // HNSW is the one kind whose search can return fewer candidates than
-      // asked for. An IVF probe returns whatever the collector keeps, so the
-      // pool is the candidate count outright and nothing needs widening.
-      if (vs.kind == irs::AnnKind::Hnsw) {
-        bool chosen_here = false;
-        const auto factor = AnnOversample(context, vs, chosen_here);
-        // The floor is what one segment must hold, not what the query returns.
-        // Asking each of eight segments for a thousand is eight thousand
-        // candidates produced to answer with one thousand. This is a floor and
-        // never a cap: a wider `ef_search` still wins, and a single-segment
-        // index still gets the whole k.
-        const auto k = static_cast<double>(*state->top_k);
-        const double share = SegmentBeamShare(k, state->total_segments);
-        const double seg_pool =
-          factor > 0.0 ? std::max(share, std::ceil(factor * share)) : 0.0;
-        vs.min_ef = static_cast<uint32_t>(std::min(
-          {seg_pool > 0.0 ? seg_pool : share,
-           std::max(k, static_cast<double>(state->reader->live_docs_count())),
-           static_cast<double>(std::numeric_limits<uint32_t>::max())}));
-      }
-    }
-    if (state->top_k) {
-      vs.top_k = static_cast<uint32_t>(*state->top_k);
-    } else if (vs.radius == std::numeric_limits<float>::max()) {
-      vs.exact = true;
-    }
-    if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
-      vs.ef_search = std::max(
-        vs.ef_construction,
-        state->top_k ? static_cast<uint32_t>(*state->top_k) : uint32_t{1});
-    }
-    state->vector_scorer = &vs;
+    const auto& vs = PrepareVectorScorer(*state, context, *ss.score.vector);
     state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {

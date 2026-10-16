@@ -179,23 +179,17 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
-// A predicate only the columnstore answers, asked one hop at a time.
-//
-// The set above is filled as a prefix, so the first hop that lands near the end
-// of the segment evaluates the predicate over everything below it: measured on
-// sift at a million rows that is a flat 1.6 ms, against about 1.0 ms of actual
-// search, and it does not move with the beam. The walk visits a few hundred
-// nodes, so it is a million column reads to answer a few hundred questions.
-//
-// This answers the questions instead. A hop's nodes are sorted and asked in one
-// call, because the column scans require rows to ascend; the next hop starts
-// anywhere, so the scans are rewound between hops. Every answer is remembered,
-// so a node revisited on a later hop costs nothing, and the walk asks about
-// each node at most once however often it is reached.
+struct WalkFilterScratch {
+  HnswVisited known;
+  HnswVisited pass;
+  std::vector<doc_id_t> ask;
+  std::vector<uint32_t> keep;
+};
+
 class WalkFilter {
  public:
   WalkFilter(detail::TableFilter& table, doc_id_t docs_count,
-             HnswWalkFilterScratch& s)
+             WalkFilterScratch& s)
     : _table{&table},
       _s{s},
       _docs_count{docs_count},
@@ -248,7 +242,7 @@ class WalkFilter {
 
  private:
   detail::TableFilter* _table;
-  HnswWalkFilterScratch& _s;
+  WalkFilterScratch& _s;
   doc_id_t _docs_count;
   bool _points;
 };
@@ -256,7 +250,7 @@ class WalkFilter {
 class InnerAndTableFilter {
  public:
   InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table,
-                      HnswWalkFilterScratch& s) noexcept
+                      WalkFilterScratch& s) noexcept
     : _inner{&inner}, _table{&table}, _s{s} {}
 
   void Prepare(std::span<const uint32_t> batch) const {
@@ -277,7 +271,7 @@ class InnerAndTableFilter {
  private:
   detail::LazyBitset* _inner;
   const WalkFilter* _table;
-  HnswWalkFilterScratch& _s;
+  WalkFilterScratch& _s;
 };
 
 static_assert(
@@ -420,6 +414,12 @@ HnswFilterPlan PlanHnswFilter(HnswFilterMode forced,
   return plan;
 }
 
+auto AdmitIn(detail::LazyBitset& set) {
+  return [&set](uint32_t node) {
+    return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
+  };
+}
+
 template<typename Dist>
 void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   auto& nearest = s.nearest;
@@ -518,9 +518,25 @@ HnswQuery::HnswQuery(const SubReader& segment,
 }
 
 template<typename Dist>
+void HnswQuery::RunRadius(Dist& dist, detail::TableFilter* table,
+                          HnswSearchScratch& scratch) const {
+  ResolveBool(_inclusive, [&]<bool Inclusive>() {
+    if (!_inner && !table) {
+      HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
+                                  scratch);
+      return;
+    }
+    auto set = detail::MakeDocSet(
+      _inner.get(), static_cast<doc_id_t>(_segment.docs_count()), table);
+    HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
+                                scratch, AdmitIn(set));
+  });
+}
+
+template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                             HnswSearchScratch& scratch) const {
-  SDB_ASSERT(_inner || table);
+  SDB_ASSERT(_ef != 0 && (_inner || table));
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   std::optional<detail::LazyBitset> probe;
@@ -535,37 +551,16 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     matches = _inner->EstimateMax();
   }
   const auto plan =
-    _ef == 0
-      ? HnswFilterPlan{}
-      : PlanHnswFilter(_filter_mode, _column_filter, graph,
-                       HnswCandidateBytes(_record_size, _d, _data->stats.get()),
-                       _ef, matches, table);
+    PlanHnswFilter(_filter_mode, _column_filter, graph,
+                   HnswCandidateBytes(_record_size, _d, _data->stats.get()),
+                   _ef, matches, table);
   if (plan.ask_per_hop) {
     probe.reset();
   }
   auto set = probe ? std::move(*probe)
                    : detail::MakeDocSet(_inner.get(), docs_count,
                                         plan.ask_per_hop ? nullptr : table);
-  const auto admit = [&](uint32_t node) {
-    return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
-  };
-  if (_ef == 0) {
-    ResolveBool(_inclusive, [&]<bool Inclusive>() {
-      HnswSearchRadius<Inclusive>(graph, dist, _threshold, _max_results,
-                                  scratch, admit);
-    });
-    return;
-  }
-  // A walk over a predicate only the columnstore answers asks about the nodes
-  // it reaches instead of folding the segment; anything with an inner query
-  // already has its docs from the postings, and a scan needs the whole set.
-  // The acceptor is passed through, not wrapped: a wrapper would hide the hop
-  // hook that makes a hop one question instead of thirty-two.
-  // Every walk is capped at what the scan would have cost and falls back to it,
-  // forced ones included: a mode is a preference, never a way to spend more
-  // than the exact answer costs. A walk that could not fill its beam although
-  // the predicate admits enough docs lost the admitted subgraph's connectivity:
-  // the scan answers exactly.
+  const auto admit = AdmitIn(set);
   uint64_t budget = matches;
   scratch.admit_share =
     std::min(1.0, static_cast<double>(matches) /
@@ -585,9 +580,10 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     return done;
   };
   if (plan.ask_per_hop) {
-    const WalkFilter walk_filter{*table, docs_count, scratch.walk_filter};
+    WalkFilterScratch walk_scratch;
+    const WalkFilter walk_filter{*table, docs_count, walk_scratch};
     const bool done =
-      _inner ? run(InnerAndTableFilter{set, walk_filter, scratch.walk_filter})
+      _inner ? run(InnerAndTableFilter{set, walk_filter, walk_scratch})
              : run(walk_filter);
     if (done) {
       return;
@@ -670,18 +666,13 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   PrepareDistance();
   WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
-                 if (_inner || table) {
+                 if (_ef == 0) {
+                   RunRadius(dist, table, scratch);
+                 } else if (_inner || table) {
                    RunFiltered(dist, table, scratch);
-                   return;
-                 }
-                 if (_ef != 0) {
+                 } else {
                    HnswSearchTopK(_data->graph, dist, _ef, scratch);
-                   return;
                  }
-                 ResolveBool(_inclusive, [&]<bool Inclusive>() {
-                   HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold,
-                                               _max_results, scratch);
-                 });
                });
   auto hits = CollectHits(scratch.nearest, _segment);
   if (_ef == 0 && _data->stats && _exact && !hits.empty()) {

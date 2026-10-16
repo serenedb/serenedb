@@ -55,6 +55,10 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
  private:
   template<typename Dist>
+  void RunRadius(Dist& dist, detail::TableFilter* table,
+                 HnswSearchScratch& scratch) const;
+
+  template<typename Dist>
   void RunFiltered(Dist& dist, detail::TableFilter* table,
                    HnswSearchScratch& scratch) const;
 

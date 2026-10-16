@@ -127,15 +127,7 @@ struct HnswFrontierOrder {
   }
 };
 
-struct HnswWalkFilterScratch {
-  HnswVisited known;
-  HnswVisited pass;
-  std::vector<doc_id_t> ask;
-  std::vector<uint32_t> keep;
-};
-
 struct HnswSearchScratch {
-  HnswWalkFilterScratch walk_filter;
   HnswVisited visited;
   HnswVisited visited_hop2;
   std::vector<HnswCandidate> nearest;
@@ -166,6 +158,12 @@ enum class HnswWalk : uint8_t {
 
 inline constexpr uint64_t kHnswAdaptiveProbe = 32;
 inline constexpr uint64_t kHnswAdaptiveScarcity = 2;
+
+inline bool HnswScarce(uint64_t admitted, uint64_t seen,
+                       double admit_share) noexcept {
+  return static_cast<double>(admitted * kHnswAdaptiveScarcity) <
+         static_cast<double>(seen) * admit_share;
+}
 
 template<HnswWalk Walk>
 inline constexpr bool kHnswHops =
@@ -645,8 +643,7 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
           s.admitted += accept(id) ? 1 : 0;
         }
         s.two_hop = s.scored >= kHnswAdaptiveProbe &&
-                    static_cast<double>(s.admitted * kHnswAdaptiveScarcity) <
-                      static_cast<double>(s.scored) * s.admit_share;
+                    HnswScarce(s.admitted, s.scored, s.admit_share);
       }
     }
 
@@ -1003,8 +1000,7 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
       ++seen;
       admitted += accept(id) ? 1 : 0;
     }
-    s.two_hop = static_cast<double>(admitted * kHnswAdaptiveScarcity) <
-                static_cast<double>(seen) * s.admit_share;
+    s.two_hop = HnswScarce(admitted, seen, s.admit_share);
   }
   return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
 }

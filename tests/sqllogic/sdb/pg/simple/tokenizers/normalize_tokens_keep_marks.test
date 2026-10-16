@@ -1,0 +1,71 @@
+query
+SELECT normalize_tokens('Йод Ёлка Café ắ', case := 'lower', accent := false) AS stripped,
+       normalize_tokens('Йод Ёлка Café ắ', case := 'lower', accent := false, keep_marks := ['U+0306']) AS kept;
+----
+stripped	kept
+{"иод елка cafe a"}	{"йод елка cafe ă"}
+
+query
+SELECT normalize_tokens('Йод', accent := false, keep_marks := [E'̆']) AS e_string,
+       normalize_tokens('Йод', accent := false, keep_marks := ['u+306', 'U+0306']) AS repeated,
+       normalize_tokens('Йод', accent := false, keep_marks := '"U+0306"') AS quoted;
+----
+e_string	repeated	quoted
+{Йод}	{Йод}	{Йод}
+
+query
+SELECT normalize_tokens('Йё', form := 'nfd', accent := false, keep_marks := ['U+0306']) = [E'Йе'] AS decomposed;
+----
+decomposed
+t
+
+query
+SELECT normalize_tokens('ЙОД', locale := 'tr_TR', case := 'lower', accent := false, keep_marks := ['U+0306']) AS icu_path;
+----
+icu_path
+{йод}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ru_strip AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false) | stem_words('ru_RU.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ru_keep AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false, keep_marks := ['U+0306']) | stem_words('ru_RU.UTF-8');
+
+query
+SELECT ts_lexize('ru_strip', 'Большой чайный край войны') AS stripped,
+       ts_lexize('ru_keep', 'Большой чайный край войны') AS kept;
+----
+stripped	kept
+{большо,чаины,кра,воин}	{больш,чайн,кра,войн}
+
+statement error "keep_marks" parameter requires "accent" to be false
+SELECT normalize_tokens('Йод', keep_marks := ['U+0306']);
+
+statement error "keep_marks" parameter requires "accent" to be false
+CREATE TEXT SEARCH DICTIONARY keep_without_strip AS normalize_tokens(accent := true, keep_marks := ['U+0306']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['a']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+0439']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+XYZ']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+0306U+0308']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := [E'̆̈']);
+
+statement error invalid value in "keep_marks" parameter
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+110000']);
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ru_strip;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ru_keep;

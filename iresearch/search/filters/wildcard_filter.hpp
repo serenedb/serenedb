@@ -57,15 +57,9 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
     case WildcardType::Term:
       return t(term);
     case WildcardType::PrefixEscaped:
-      term = Unescape(term, buf);
-      [[fallthrough]];
-    case WildcardType::Prefix: {
-      SDB_ASSERT(!term.empty());
-      const auto idx = term.find_first_of(WildcardMatch::kAnyStr);
-      SDB_ASSERT(idx != bytes_view::npos);
-      term = bytes_view{term.data(), idx};
-      return p(term);
-    }
+      return p(Unescape(ExtractWildcardPrefix(term), buf));
+    case WildcardType::Prefix:
+      return p(ExtractWildcardPrefix(term));
     case WildcardType::Wildcard:
       return w(term);
   }

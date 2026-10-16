@@ -74,6 +74,8 @@ enum class CopyTake : uint8_t {
   Blocked,
 };
 
+class CopyBatchLease;
+
 class CopyInBatches {
  public:
   explicit CopyInBatches(size_t capacity = kCopyBatchesInFlight);
@@ -94,9 +96,9 @@ class CopyInBatches {
   bool Aborted() const;
 
   CopyTake Take(duckdb::TableFunctionInput& input, size_t max,
-                std::vector<CopyBatch*>& out);
-  bool TryTake(size_t max, std::vector<CopyBatch*>& out);
-  CopyBatch* Next();
+                std::vector<CopyBatchLease>& out);
+  bool TryTake(size_t max, std::vector<CopyBatchLease>& out);
+  CopyBatchLease Next();
   void Done(uint64_t seq);
 
  private:
@@ -110,7 +112,7 @@ class CopyInBatches {
   static bool CanPark(const duckdb::TableFunctionInput& input);
 
   bool Full() const;
-  bool TakeReady(size_t max, std::vector<CopyBatch*>& out);
+  bool TakeReady(size_t max, std::vector<CopyBatchLease>& out);
   std::vector<duckdb::InterruptState> TakeOneWaiter()
     DUCKDB_REQUIRES(_waiters.lock);
   std::vector<duckdb::InterruptState> TakeWaitersIfQueued()
@@ -133,6 +135,39 @@ class CopyInBatches {
   bool _aborted = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
+};
+
+class CopyBatchLease {
+ public:
+  CopyBatchLease() = default;
+  explicit CopyBatchLease(CopyInBatches& queue, CopyBatch& batch) noexcept
+    : _queue{&queue}, _batch{&batch} {}
+  CopyBatchLease(CopyBatchLease&& other) noexcept
+    : _queue{std::exchange(other._queue, nullptr)},
+      _batch{std::exchange(other._batch, nullptr)} {}
+  CopyBatchLease& operator=(CopyBatchLease&& other) noexcept {
+    if (this != &other) {
+      Reset();
+      _queue = std::exchange(other._queue, nullptr);
+      _batch = std::exchange(other._batch, nullptr);
+    }
+    return *this;
+  }
+  ~CopyBatchLease() { Reset(); }
+
+  void Reset() noexcept {
+    if (_batch) {
+      std::exchange(_queue, nullptr)->Done(std::exchange(_batch, nullptr)->seq);
+    }
+  }
+
+  explicit operator bool() const noexcept { return _batch != nullptr; }
+  CopyBatch& operator*() const noexcept { return *_batch; }
+  CopyBatch* operator->() const noexcept { return _batch; }
+
+ private:
+  CopyInBatches* _queue = nullptr;
+  CopyBatch* _batch = nullptr;
 };
 
 }  // namespace sdb::pg

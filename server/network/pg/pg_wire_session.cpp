@@ -1817,7 +1817,11 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   const auto publish = [&]() -> yaclib::Task<> {
-    if (!builder.HasRows() || !feeding()) {
+    if (!feeding()) {
+      batches.Release(std::exchange(retained, {}));
+      co_return {};
+    }
+    if (!builder.HasRows()) {
       co_return {};
     }
     if (batches.NeedSpace()) {

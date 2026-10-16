@@ -119,15 +119,19 @@ uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept {
                   kHnswMaxLevel);
 }
 
-void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept {
-  const uint32_t levels = HnswPanoramaLevels(d);
+void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,
+                     float* out) noexcept {
   float sum = 0.f;
-  tails[levels] = 0.f;
-  for (uint32_t level = levels; level-- > 0;) {
-    const uint32_t b = level * kHnswPanoramaLevel;
-    sum += faiss::fvec_norm_L2sqr(q + b, std::min(kHnswPanoramaLevel, d - b));
-    tails[level] = std::sqrt(sum);
+  for (uint32_t level = (d + width - 1) / width; level-- > first;) {
+    const uint32_t b = level * width;
+    sum += faiss::fvec_norm_L2sqr(v + b, std::min(width, d - b));
+    out[level - first] = std::sqrt(sum);
   }
+}
+
+void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept {
+  tails[HnswPanoramaLevels(d)] = 0.f;
+  HnswSuffixNorms(q, d, kHnswPanoramaLevel, 0, tails);
 }
 
 }  // namespace irs

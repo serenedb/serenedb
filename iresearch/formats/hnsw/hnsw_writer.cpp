@@ -1184,14 +1184,8 @@ void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
            const size_t last = std::min(rows, first + kPanoramaApplyRows);
            for (size_t r = first; r < last; ++r) {
              reader->Decode(codes + r * record_size, row.data());
-             float* out = tails.data() + r * stride;
-             float sum = 0.f;
-             for (uint32_t k = stride; k > 0; --k) {
-               const uint32_t b = k * kHnswCodeLevel;
-               sum += faiss::fvec_norm_L2sqr(row.data() + b,
-                                             std::min(kHnswCodeLevel, d - b));
-               out[k - 1] = std::sqrt(sum);
-             }
+             HnswSuffixNorms(row.data(), d, kHnswCodeLevel, 1,
+                             tails.data() + r * stride);
            }
          });
 }

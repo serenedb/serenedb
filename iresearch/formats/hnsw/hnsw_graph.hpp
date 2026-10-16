@@ -345,6 +345,9 @@ inline uint32_t HnswCodeTails(uint32_t d) noexcept {
   return (d + kHnswCodeLevel - 1) / kHnswCodeLevel - 1;
 }
 
+void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,
+                     float* out) noexcept;
+
 void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept;
 
 template<VectorMetric M>

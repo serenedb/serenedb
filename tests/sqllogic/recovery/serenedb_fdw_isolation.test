@@ -21,6 +21,14 @@ CREATE SERVER sfi_dup FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DI
 
 connection pg database=postgres
 statement ok
+DROP SERVER sfi_dup;
+
+connection pg database=postgres
+statement ok
+CREATE SERVER sfi_dup FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_dup.duckdb', read_only 'true');
+
+connection pg database=postgres
+statement ok
 CREATE JOB sfi_tick EVERY 1 SECOND AS INSERT INTO ${__DATABASE__}.public.sfi_ticks SELECT current_database();
 
 connection pg database=postgres
@@ -46,6 +54,12 @@ SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfi_copy/**
 
 statement ok
 CREATE SERVER sfi_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_copy/5');
+
+query
+SELECT a FROM sfi_dup.main.t;
+----
+a
+42
 
 query
 SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'sfi_tick';

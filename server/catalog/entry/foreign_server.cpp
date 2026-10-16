@@ -27,6 +27,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -81,6 +82,9 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
 }
 
 void ForeignServerCatalogEntry::OnDrop() {
+  if (catalog.GetAttached().IsReadOnly()) {
+    return;
+  }
   duckdb::DatabaseManager::Get(catalog.GetDatabase()).DetachInternal(name);
 }
 

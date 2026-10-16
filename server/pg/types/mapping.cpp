@@ -94,7 +94,6 @@ constexpr PgTypeMapping kMappings[] = {
   {kRegclass, &REGCLASS, true},
   {kRegtype, &REGTYPE, true},
   {kAnyarray, &ANYARRAY, false},
-  {kVoid, &VOID, true},
   {kUuid, []() -> duckdb::LogicalType { return duckdb::LogicalType::UUID; }, false},
   {kPgLsn, &PG_LSN, true},
   {kMacaddr, &MACADDR, true},
@@ -419,17 +418,13 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       return Logical2Pg(duckdb::ListType::GetChildType(type), true, wire);
     case ARRAY:
       return Logical2Pg(duckdb::ArrayType::GetChildType(type), true, wire);
-    case SQLNULL:
-      if (IsVoid(type)) {
-        return make(kVoid);
-      }
-      return {kUnknown, -1, -1};
     case GEOMETRY:
       return make(kGeometry);
     case VARIANT:
       return make(kVariant);
     case UNION:
       return make(kUnion);
+    case SQLNULL:
     case INVALID:
     case UNKNOWN:
     case ANY:

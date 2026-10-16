@@ -420,14 +420,14 @@ FROM pg_proc p
 WHERE p.proname = 'rubick_prc_void';
 ----
 ret	result
-void	void
+unknown	unknown
 
 
 query
 SELECT pg_typeof(NULL::void)::text AS typ;
 ----
 typ
-void
+unknown
 
 
 statement ok

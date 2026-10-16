@@ -185,6 +185,7 @@ std::span<const duckdb::DefaultType> ExternalTypes() {
     result.emplace_back(
       "pg_statistic", SystemRowType(kPgStatisticSql).WithAlias("pg_statistic"),
       nullptr);
+    result.emplace_back("void", VOID(), nullptr);
     result.emplace_back("serial", SERIAL(), nullptr);
     result.emplace_back("bigserial", BIGSERIAL(), nullptr);
     result.emplace_back("smallserial", SMALLSERIAL(), nullptr);

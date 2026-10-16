@@ -49,17 +49,10 @@ inline score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
   return lo + hi;
 }
 
-inline bool ScoreDependsOnTerms(const Filter& node,
-                                const OptimizeContext& ctx) noexcept {
-  if (!ctx.scored) {
-    return false;
-  }
+inline const Scorer* ScorerOf(const Filter& node,
+                              const OptimizeContext& ctx) noexcept {
   const auto* const scorer = node.GetScorer();
-  if (scorer == nullptr) {
-    return true;
-  }
-  return !IsUnscored(*scorer) &&
-         scorer->type() != irs::Type<ConstantScore>::id();
+  return scorer ? scorer : ctx.scorer;
 }
 
 inline bool ScoreIsIgnored(const Filter& node,
@@ -67,7 +60,7 @@ inline bool ScoreIsIgnored(const Filter& node,
   if (!ctx.scored) {
     return true;
   }
-  const auto* const scorer = node.GetScorer();
+  const auto* const scorer = ScorerOf(node, ctx);
   return scorer != nullptr && IsUnscored(*scorer);
 }
 
@@ -76,7 +69,7 @@ inline bool ScoreIsConstant(const Filter& node,
   if (!ctx.scored) {
     return false;
   }
-  const auto* const scorer = node.GetScorer();
+  const auto* const scorer = ScorerOf(node, ctx);
   return scorer != nullptr && scorer->type() == irs::Type<ConstantScore>::id();
 }
 

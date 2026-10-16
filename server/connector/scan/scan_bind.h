@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/table_filter.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -56,8 +57,15 @@ enum class ScanEntryKind : uint8_t {
   SearchTableIndex,
 };
 
+struct DeferredCheck {
+  const irs::Filter* source;
+  irs::field_id column;
+  std::shared_ptr<const duckdb::TableFilter> check;
+};
+
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
+  std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   search::InvertedIndexSnapshotPtr snapshot;
 
@@ -160,6 +168,16 @@ struct RelationSpec {
   const catalog::InvertedIndexConfig& ScannedIndex() const noexcept {
     SDB_ASSERT(inverted_config);
     return *inverted_config;
+  }
+  bool Stores(ColumnId column) const noexcept {
+    if (IsSearchTable()) {
+      return true;
+    }
+    const auto* info = ScannedIndex().FindColumnInfo(column);
+    return info && info->IsStored();
+  }
+  bool StoresExpression(ColumnId field) const noexcept {
+    return inverted_config && inverted_config->StoresExpression(field);
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {

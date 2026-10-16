@@ -22,11 +22,14 @@
 
 #pragma once
 
+#include <functional>
+#include <memory>
 #include <set>
 #include <variant>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
@@ -44,6 +47,13 @@ struct TermSetOptions {
   bool operator==(const TermSetOptions& rhs) const = default;
 };
 
+struct ShingleOptions {
+  bstring term;
+  std::vector<bstring> words;
+
+  bool operator==(const ShingleOptions& rhs) const = default;
+};
+
 class ByPhrase;
 
 enum class SlotKind : uint8_t {
@@ -57,7 +67,8 @@ class ByPhraseOptions {
   using PhrasePart =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
                  ByRegexpOptions, ByEditDistanceOptions, TermSetOptions,
-                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions>;
+                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions,
+                 ShingleOptions>;
 
   struct PhrasePartInfo {
     PhrasePart part;
@@ -68,7 +79,8 @@ class ByPhraseOptions {
   };
 
   static SlotKind KindOf(const PhrasePart& part) noexcept {
-    if (std::holds_alternative<ByTermOptions>(part)) {
+    if (std::holds_alternative<ByTermOptions>(part) ||
+        std::holds_alternative<ShingleOptions>(part)) {
       return SlotKind::Term;
     }
     if (std::holds_alternative<TermSetOptions>(part)) {
@@ -77,7 +89,16 @@ class ByPhraseOptions {
     return SlotKind::Expansion;
   }
 
+  static bytes_view TermOf(const PhrasePart& part) noexcept {
+    if (const auto* shingle = std::get_if<ShingleOptions>(&part)) {
+      return shingle->term;
+    }
+    return std::get_if<ByTermOptions>(&part)->term;
+  }
+
   using FilterType = ByPhrase;
+  using TokenizerFactory =
+    std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
   template<typename PhrasePart>
   PhrasePart& push_back(PosAttr::value_t offs = 0) {
@@ -94,7 +115,10 @@ class ByPhraseOptions {
     return insert(std::forward<PhrasePart>(t), offs + 1, offs + 1);
   }
 
-  bool operator==(const ByPhraseOptions& rhs) const noexcept = default;
+  bool operator==(const ByPhraseOptions& rhs) const noexcept {
+    return _phrase == rhs._phrase && _slop == rhs._slop &&
+           _word_separator == rhs._word_separator && _text == rhs._text;
+  }
 
   bool LowerParts();
 
@@ -102,6 +126,9 @@ class ByPhraseOptions {
     _phrase.clear();
     _slop = 0;
     _word_separator.clear();
+    _text = field_limits::invalid();
+    _tokenizer = nullptr;
+    _explicit_pos = false;
   }
 
   bool simple() const noexcept {
@@ -127,6 +154,15 @@ class ByPhraseOptions {
   bytes_view word_separator() const noexcept { return _word_separator; }
   void set_word_separator(bytes_view value) { _word_separator = value; }
 
+  field_id text() const noexcept { return _text; }
+  const TokenizerFactory& tokenizer() const noexcept { return _tokenizer; }
+  bool explicit_pos() const noexcept { return _explicit_pos; }
+  void set_text(field_id text, TokenizerFactory tokenizer) {
+    _text = text;
+    _tokenizer = std::move(tokenizer);
+    _explicit_pos = _tokenizer && _tokenizer()->Traits().explicit_pos;
+  }
+
  private:
   template<typename PhrasePart>
   PhrasePart& insert(PhrasePart&& t, PosAttr::value_t offs_min,
@@ -146,6 +182,9 @@ class ByPhraseOptions {
   std::vector<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
   bstring _word_separator;
+  field_id _text{field_limits::invalid()};
+  TokenizerFactory _tokenizer;
+  bool _explicit_pos{false};
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {
@@ -157,5 +196,8 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
                                           StatsArena& stats,
                                           uint32_t threads) const final;
 };
+
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool constant);
 
 }  // namespace irs

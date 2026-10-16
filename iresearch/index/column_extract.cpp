@@ -300,6 +300,10 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
   duckdb::LogicalType leaf_type;
   if (!variant_out && variant_col.CachedUniformShreddedLeaf(
                         variant_state, remaining, leaf_type)) {
+    if (at == 0 && n != 0) {
+      variant_col.ReleaseLeavesBefore(variant_state,
+                                      static_cast<uint64_t>(rows[0]));
+    }
     const bool direct = leaf_type == scan_type;
     duckdb::idx_t i = 0;
     while (i < n) {

@@ -31,16 +31,12 @@
 #include <yaclib/async/future.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
 
-namespace sdb::catalog {
-
-struct InvertedIndexConfig;
-
-}  // namespace sdb::catalog
 namespace sdb::query {
 
 class Transaction : public Config {

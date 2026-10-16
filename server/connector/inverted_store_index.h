@@ -179,6 +179,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
+  std::vector<FeedColumn> _columns;
+  std::vector<ExpressionSlot> _expressions;
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;

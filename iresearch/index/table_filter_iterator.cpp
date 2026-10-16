@@ -34,6 +34,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -138,10 +139,7 @@ const irs::ColumnReader* ColFilterChain::WindowColumn() const noexcept {
 
 bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
   for (auto& c : _cols) {
-    // A children-backed column filters on a compact decode whose scan state
-    // ends past the window -- it cannot double as the slot's materialization;
-    // the caller scans it as a plain projected column instead.
-    if (c.field == field && !c.nested && c.extract_path.empty()) {
+    if (c.field == field && c.extract_path.empty()) {
       c.output_slots.push_back(slot);
       return true;
     }
@@ -150,14 +148,19 @@ bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
 }
 
 void ColFilterChain::FinishBind() {
-  // Filter-only columns (not projected, which includes every children-backed
-  // column -- see AttachOutputSlot) decode into a cache-owned scratch just to
-  // evaluate the predicate.
+  // Filter-only columns (not projected) decode into a cache-owned scratch just
+  // to evaluate the predicate.
   for (auto& c : _cols) {
     if (c.output_slots.empty()) {
       c.scratch = &_states->Scratch(
         *c.filter, c.extract ? *c.extract_type : c.reader->Type());
+    } else if (c.nested) {
+      c.gathered.Initialize(STANDARD_VECTOR_SIZE);
     }
+  }
+  if (!_cols.empty() && !_sel_data) {
+    _sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
   // Reordering must not evaluate a throwing expression on rows an earlier
   // filter would have excluded (duckdb's AdaptiveFilter applies the same
@@ -217,10 +220,6 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       continue;
     }
     if (f.nested) {
-      // Children-backed column (struct/list parent): GatherFilter's codec /
-      // segment machinery does not apply. Decode the current survivors through
-      // the virtual gather the materialization path uses, narrow on the
-      // compact vector, and map the surviving positions back to span offsets.
       auto gather_span = span;
       if (f.row_gather) {
         const auto rows = f.reader->RowCount();
@@ -233,21 +232,28 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
         }
         gather_span = sel.get_index(survivors - 1) + 1;
       }
-      auto& scratch = f.scratch->Reset();
+      const bool projected = !f.output_slots.empty();
+      if (projected) {
+        for (duckdb::idx_t k = 0; k < survivors; ++k) {
+          f.gathered.set_index(k, sel.get_index(k));
+        }
+        f.gathered_count = survivors;
+      }
+      const auto& rows = projected ? f.gathered : sel;
+      auto& values =
+        projected ? output->data[f.output_slots.front()] : f.scratch->Reset();
       if (f.list_like) {
-        duckdb::ListVector::SetListSize(scratch, 0);
+        duckdb::ListVector::SetListSize(values, 0);
       }
       if (f.extract) {
-        f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
-      } else if (gather_span <= STANDARD_VECTOR_SIZE) {
-        f.reader->GatherDense(f.scan, anchor, sel, survivors, gather_span,
-                              scratch);
+        f.extract->MaterializeSelected(anchor, rows, survivors, values);
       } else {
-        f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
+        column_internal::GatherSelected(*f.reader, f.scan, anchor, rows,
+                                        survivors, gather_span, values);
       }
       duckdb::SelectionVector compact;
       duckdb::idx_t approved = survivors;
-      duckdb::ColumnSegment::FilterSelection(compact, scratch, *f.state,
+      duckdb::ColumnSegment::FilterSelection(compact, values, *f.state,
                                              survivors, approved);
       for (duckdb::idx_t k = 0; k < approved; ++k) {
         sel.set_index(k, sel.get_index(compact.get_index(k)));
@@ -277,10 +283,6 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
                                          duckdb::idx_t n) {
   if (_cols.empty() || n == 0) {
     return n;
-  }
-  if (!_sel_data) {
-    _sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
   const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
@@ -320,10 +322,6 @@ duckdb::idx_t ColFilterChain::WalkMask(
   duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
   SDB_ASSERT(!_cols.empty());
   duckdb::idx_t total = 0;
-  if (!_sel_data) {
-    _sel_data =
-      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
-  }
   const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
   uint64_t word = 0;
@@ -475,13 +473,21 @@ void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,
       continue;
     }
     auto& first = output.data[f.output_slots.front()];
-    if (f.deferred) {
-      if (survivors != 0) {
-        if (span <= STANDARD_VECTOR_SIZE) {
-          f.reader->GatherDense(f.scan, anchor, sel, survivors, span, first);
-        } else {
-          f.reader->GatherScatter(f.scan, anchor, sel, survivors, first, 0);
+    if (f.nested) {
+      if (survivors != 0 && survivors != f.gathered_count) {
+        duckdb::SelectionVector map{survivors};
+        for (duckdb::idx_t k = 0, j = 0; k < survivors; ++k, ++j) {
+          while (f.gathered.get_index(j) != sel.get_index(k)) {
+            ++j;
+          }
+          map.set_index(k, j);
         }
+        first.Slice(map, survivors);
+      }
+    } else if (f.deferred) {
+      if (survivors != 0) {
+        column_internal::GatherSelected(*f.reader, f.scan, anchor, sel,
+                                        survivors, span, first);
       }
     } else if (survivors != span) {
       // survivors == span means every span row passed (offsets are strictly

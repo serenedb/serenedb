@@ -48,7 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
-#include "connector/scan/deferred_verify.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 
@@ -178,9 +178,6 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 
 void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const catalog::InvertedIndexConfig* index_meta =
-    bind_data.relation.IsInvertedIndex() ? &bind_data.relation.ScannedIndex()
-                                         : nullptr;
   const auto score_emit = bind_data.score.vector
                             ? bind_data.score.vector->score_emit
                             : ScoreEmit::Identity;
@@ -234,11 +231,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       push_score_filter(entry.Filter());
       continue;
     }
-    const auto* info =
-      index_meta ? index_meta->FindColumnInfo(col_id) : nullptr;
-    const bool index_stored =
-      bind_data.relation.IsSearchTable() || (info && info->IsStored());
-    if (!index_stored) {
+    if (!bind_data.relation.Stores(col_id)) {
       state.has_lookup_filter = true;
     } else {
       auto& cf = state.col_filters.emplace_back();
@@ -462,9 +455,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
   }
-  if (bind_data.search.filter) {
-    AddDeferredVerifyFilters(state, *bind_data.search.filter);
-  }
+  AddDeferredChecks(state, bind_data.search.deferred);
   if (bind_data.IsHnswScored()) {
     if (state.has_lookup_filter ||
         absl::c_any_of(state.col_filters,

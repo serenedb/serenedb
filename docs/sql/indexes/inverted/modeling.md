@@ -30,6 +30,10 @@ You can index an **expression** over one or more columns, not just a bare column
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_001" />
 
+To store an indexed expression's value in the index, list it a second time with `included()`, as in `(lower(s)) words, (lower(s)) included()`. A query from the index that returns, filters, groups or sorts on the same expression then reads the stored value instead of computing it, so the columns the expression reads don't have to be in the index, and [phrases without positions](./full-text-search.md#phrases-without-positions) work on it.
+
+An expression whose value depends on the session and not only on its row is always computed from its columns: functions and casts over `TIMESTAMPTZ`, `TIMETZ` and `VARIANT` values follow the `TimeZone` setting, and a cast of a `bytea` value to text follows `bytea_output`. A search on such an expression matches the value computed when the row was written.
+
 Indexed expressions must be deterministic and reference at least one column. Aggregates, subqueries and volatile functions are rejected at `CREATE INDEX`:
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_006" />

@@ -152,6 +152,8 @@ class ColFilterChain {
     std::span<const std::string_view> extract_path;
     const duckdb::LogicalType* extract_type = nullptr;
     std::unique_ptr<irs::ExtractBinding> extract;
+    duckdb::SelectionVector gathered;
+    duckdb::idx_t gathered_count = 0;
   };
 
   bool Empty() const noexcept { return _cols.empty(); }
@@ -180,7 +182,7 @@ class ColFilterChain {
   // sel[0..survivors) in place and returns the new survivor count. The span is
   // what gets decoded, so it -- and not just the survivor count -- is what a
   // caller must keep to one vector. Projected
-  // filter columns decode over the full span into their `output` slot (the
+  // filter columns decode into their `output` slot (the
   // caller Slices via FinishOutputs); null when nothing is projected. A
   // window that crosses a block boundary falls back to per-row evaluation
   // (the cached block verdict cannot cover it).
@@ -188,7 +190,7 @@ class ColFilterChain {
                              duckdb::SelectionVector& sel,
                              duckdb::idx_t survivors,
                              duckdb::DataChunk* output);
-  // Slice each projected filter column (decoded over the full span) down to
+  // Slice each projected filter column down to
   // the final survivors -- zero-copy dictionary view, like RowGroup::Scan's
   // Slice -- and Reference it into any further slots; a window-deferred
   // column (zonemap ALWAYS_TRUE) was not decoded by the filter pass and

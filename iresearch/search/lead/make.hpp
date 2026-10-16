@@ -42,6 +42,8 @@ Node::ptr Make(const VariadicPhraseQuery& query);
 Node::ptr Make(const NGramSimilarityQuery& query);
 Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
+Node::ptr Make(const ApproxQuery& query);
+Node::ptr Make(const TokenPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
@@ -58,6 +60,8 @@ Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx);
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx);
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx);
@@ -78,8 +82,6 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
 
 Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
-Node::ptr MakeAllScored(const SubReader& segment,
-                        const detail::ScoreArgs& args);
 
 Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,

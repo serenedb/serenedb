@@ -7,16 +7,34 @@ dexp	dexp	dexp	?column?	dexp	dexp	dexp	dexp
 1	2.718281828459045	0.36787944117144233	t	0	Infinity	NaN	NULL
 
 
+onlyif postgres
 statement error
 SELECT dexp(710);
 ----
 db error: ERROR: value out of range: overflow
 
 
+skipif postgres
+query
+SELECT dexp(710);
+----
+dexp
+Infinity
+
+
+onlyif postgres
 statement error
 SELECT dexp(-746);
 ----
 db error: ERROR: value out of range: underflow
+
+
+skipif postgres
+query
+SELECT dexp(-746);
+----
+dexp
+0
 
 
 # dlog1
@@ -28,16 +46,34 @@ dlog1	dlog1	dlog1	dlog1	dlog1	dlog1
 0	1	2.302585092994046	Infinity	NaN	NULL
 
 
+onlyif postgres
 statement error
 SELECT dlog1(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
+skipif postgres
+query
+SELECT dlog1(0);
+----
+dlog1
+-Infinity
+
+
+onlyif postgres
 statement error
 SELECT dlog1(-1);
 ----
 db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT dlog1(-1);
+----
+dlog1
+NaN
 
 
 # dlog10
@@ -49,16 +85,34 @@ dlog10	dlog10	dlog10	dlog10	dlog10	dlog10
 0	3	-3	0.3010299956639812	Infinity	NULL
 
 
+onlyif postgres
 statement error
 SELECT dlog10(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
+skipif postgres
+query
+SELECT dlog10(0);
+----
+dlog10
+-Infinity
+
+
+onlyif postgres
 statement error
 SELECT dlog10('-Infinity');
 ----
 db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT dlog10('-Infinity');
+----
+dlog10
+NaN
 
 
 # dround
@@ -120,22 +174,49 @@ numeric_exp	numeric_ln	numeric_log	numeric_log	numeric_sqrt	numeric_sqrt
 1	0	6	3	2	NULL
 
 
+onlyif postgres
 statement error
 SELECT numeric_sqrt(-1);
 ----
 db error: ERROR: cannot take square root of a negative number
 
 
+skipif postgres
+query
+SELECT numeric_sqrt(-1);
+----
+numeric_sqrt
+NaN
+
+
+onlyif postgres
 statement error
 SELECT numeric_ln(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
+skipif postgres
+query
+SELECT numeric_ln(0);
+----
+numeric_ln
+-Infinity
+
+
+onlyif postgres
 statement error
 SELECT numeric_ln(-2);
 ----
 db error: ERROR: cannot take logarithm of a negative number
+
+
+skipif postgres
+query
+SELECT numeric_ln(-2);
+----
+numeric_ln
+NaN
 
 
 statement error
@@ -150,8 +231,17 @@ SELECT numeric_log(0, 10);
 db error: ERROR: cannot take logarithm of zero
 
 
+onlyif postgres
 statement error (value overflows numeric format|value out of range: overflow)
 SELECT numeric_exp(100000);
+
+
+skipif postgres
+query
+SELECT numeric_exp(100000);
+----
+numeric_exp
+Infinity
 
 
 query
@@ -170,10 +260,35 @@ dsqrt	dsqrt	dsqrt	dsqrt
 1.4142135623730951	0	NaN	NULL
 
 
+onlyif postgres
 statement error
 SELECT dsqrt(-1);
 ----
 db error: ERROR: cannot take square root of a negative number
+
+
+skipif postgres
+query
+SELECT dsqrt(-1);
+----
+dsqrt
+NaN
+
+
+# dexp, dlog1, dlog10, dround and dtrunc
+
+query
+SELECT exp('Infinity'::float8), exp('-Infinity'::float8), exp('NaN'::float8), sqrt('NaN'::float8), ln('NaN'::float8);
+----
+exp	exp	exp	sqrt	ln
+Infinity	0	NaN	NaN	NaN
+
+
+query
+SELECT dexp(1), dlog1(1), dlog10(100), dround(2.5), dround(-2.5), dtrunc(-2.7);
+----
+dexp	dlog1	dlog10	dround	dround	dtrunc
+2.718281828459045	0	2	2	-2	-2
 
 
 # |/ and ||/

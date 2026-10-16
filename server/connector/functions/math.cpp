@@ -26,6 +26,7 @@
 #include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/common/enums/date_part_specifier.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/types/date.hpp>
@@ -64,8 +65,6 @@ namespace sdb::connector {
 namespace {
 
 using pg::ThrowDivisionByZero;
-using pg::ThrowFloatOverflow;
-using pg::ThrowFloatUnderflow;
 
 constexpr uint8_t kNumericWidth = 18;
 constexpr uint8_t kNumericScale = 3;
@@ -82,6 +81,13 @@ void ErfcFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   duckdb::UnaryExecutor::Execute<double, double>(
     args.data[0], result, args.size(),
     [](double x) -> double { return std::erfc(x); });
+}
+
+void DroundFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<double, double>(
+    args.data[0], result, args.size(),
+    [](double x) -> double { return std::rint(x); });
 }
 
 void RandomNormalFunction(duckdb::DataChunk& args,
@@ -504,58 +510,6 @@ void JustifyFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), Justify);
 }
 
-double PgExp(double x) {
-  if (std::isnan(x)) {
-    return x;
-  }
-  if (std::isinf(x)) {
-    return x > 0 ? x : 0;
-  }
-  const auto result = std::exp(x);
-  if (std::isinf(result)) {
-    ThrowFloatOverflow();
-  }
-  if (result == 0.0) {
-    ThrowFloatUnderflow();
-  }
-  return result;
-}
-
-template<double (*Log)(double)>
-double PgLog(double x) {
-  if (x == 0.0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
-                    ERR_MSG("cannot take logarithm of zero"));
-  }
-  if (x < 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_LOG),
-                    ERR_MSG("cannot take logarithm of a negative number"));
-  }
-  const auto result = Log(x);
-  if (std::isinf(result) && !std::isinf(x)) {
-    ThrowFloatOverflow();
-  }
-  if (result == 0.0 && x != 1.0) {
-    ThrowFloatUnderflow();
-  }
-  return result;
-}
-
-double PgSqrt(double x) {
-  if (x < 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ARGUMENT_FOR_POWER_FUNCTION),
-                    ERR_MSG("cannot take square root of a negative number"));
-  }
-  return std::sqrt(x);
-}
-
-template<double (*Function)(double)>
-void DoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                    duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<double, double>(args.data[0], result,
-                                                 args.size(), Function);
-}
-
 duckdb::LogicalType DecimalArgument(duckdb::BindScalarFunctionInput& input,
                                     duckdb::idx_t index) {
   uint8_t width = 0;
@@ -913,6 +867,28 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   RegisterScalarAlias(loader, "xor", "#");
   RegisterScalarAlias(loader, "sqrt", "|/");
   RegisterScalarAlias(loader, "cbrt", "||/");
+  RegisterScalarAlias(loader, "exp", "dexp");
+  RegisterScalarAlias(loader, "ln", "dlog1");
+  RegisterScalarAlias(loader, "log10", "dlog10");
+  RegisterScalarAlias(loader, "sqrt", "dsqrt");
+
+  {
+    duckdb::ScalarFunctionSet dtrunc{"dtrunc"};
+    for (const auto& function :
+         loader.GetFunction(duckdb::Identifier{"trunc"}).functions.functions) {
+      const auto& parameters = function->GetSignature().GetParameters();
+      if (parameters.size() == 1 &&
+          parameters[0].GetType() == duckdb::LogicalType::DOUBLE) {
+        dtrunc.AddFunction(function);
+      }
+    }
+    loader.RegisterFunction(dtrunc);
+  }
+
+  loader.RegisterFunction(duckdb::ScalarFunction{"dround",
+                                                 {duckdb::LogicalType::DOUBLE},
+                                                 duckdb::LogicalType::DOUBLE,
+                                                 DroundFunction});
 
   loader.RegisterFunction(duckdb::ScalarFunction{"erf",
                                                  {duckdb::LogicalType::DOUBLE},
@@ -1158,30 +1134,6 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       set.AddFunction(std::move(function));
     }
     loader.RegisterFunction(std::move(set));
-  }
-
-  struct DoubleScalar {
-    std::string_view name;
-    duckdb::scalar_function_t function;
-    duckdb::FunctionErrors errors;
-  };
-  using enum duckdb::FunctionErrors;
-  for (const auto& [name, function, errors] : {
-         DoubleScalar{"dexp", DoubleFunction<PgExp>, CAN_THROW_RUNTIME_ERROR},
-         DoubleScalar{"dlog1", DoubleFunction<PgLog<std::log>>,
-                      CAN_THROW_RUNTIME_ERROR},
-         DoubleScalar{"dlog10", DoubleFunction<PgLog<std::log10>>,
-                      CAN_THROW_RUNTIME_ERROR},
-         DoubleScalar{"dsqrt", DoubleFunction<PgSqrt>, CAN_THROW_RUNTIME_ERROR},
-         DoubleScalar{"dround", DoubleFunction<std::rint>, CANNOT_ERROR},
-         DoubleScalar{"dtrunc", DoubleFunction<std::trunc>, CANNOT_ERROR},
-       }) {
-    duckdb::ScalarFunction scalar{duckdb::Identifier{name},
-                                  {duckdb::LogicalType::DOUBLE},
-                                  duckdb::LogicalType::DOUBLE,
-                                  function};
-    scalar.SetErrorMode(errors);
-    loader.RegisterFunction(std::move(scalar));
   }
 
   {

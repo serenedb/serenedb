@@ -863,6 +863,12 @@ On an attached PostgreSQL, the same division by zero raises an error instead (op
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_006" />
 
+Mathematical functions follow IEEE 754 the same way: an argument outside a function's domain, or a result too large for `double precision`, gives `NaN` or `±Infinity` where PostgreSQL raises an error:
+
+<SqlLogicTest id="sql/dialect/postgresql_compatibility/example_017" />
+
+The two-argument `log(b, x)` raises an error for a zero or negative argument, as in PostgreSQL.
+
 ### Integer Division Operator (`//`)
 
 Integer division itself behaves exactly like PostgreSQL: when both operands are integers, `/` performs integer division, so both engines return `0` here:

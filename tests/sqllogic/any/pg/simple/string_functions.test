@@ -15,6 +15,14 @@ length	btrim
 
 
 query
+SELECT length(trim(chr(160) || ' x ' || chr(160))), length(ltrim(chr(160) || ' x')), length(rtrim('x ' || chr(160))),
+       length(trim('  x  ')), length(ltrim('  x')), length(rtrim('x  '));
+----
+length	length	length	length	length	length
+5	3	3	1	1	1
+
+
+query
 SELECT btrim(NULL), btrim('x', NULL), btrim(NULL::bytea, '\x00'::bytea);
 ----
 btrim	btrim	btrim

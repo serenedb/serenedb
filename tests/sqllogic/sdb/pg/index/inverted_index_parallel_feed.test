@@ -293,3 +293,39 @@ id
 
 statement ok
 DROP TABLE ipj;
+
+statement ok
+CREATE TABLE ipr_src AS SELECT g AS id, 'word' || (g % 1009) AS body FROM generate_series(1001, 1000000) g;
+
+statement ok
+CREATE TABLE ipr(id BIGINT, body TEXT);
+
+statement ok
+CREATE INDEX ipr_idx ON ipr USING inverted(id, body);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ipr SELECT g, 'head' || (g % 7) FROM generate_series(1, 1000) g;
+
+statement ok
+INSERT INTO ipr SELECT * FROM ipr_src;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) ipr;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 1009 <> 7) AS wrong FROM ipr_idx WHERE body @@ 'word7';
+----
+n	wrong
+991	0
+
+statement ok
+DROP TABLE ipr;
+
+statement ok
+DROP TABLE ipr_src;

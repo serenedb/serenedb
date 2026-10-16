@@ -66,3 +66,85 @@ count
 
 statement ok
 DROP TABLE list_dict;
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE list_dict_grouped (id BIGINT, tags VARCHAR[], skills VARCHAR[], info STRUCT(n VARCHAR, tags VARCHAR[]))
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO list_dict_grouped
+SELECT u, list('t' || (u % 37) ORDER BY k), list('s' || ((u * 7 + k * k) % 50000) ORDER BY k),
+  {'n': 'n' || (u % 5), 'tags': list('t' || (u % 37) ORDER BY k)}
+FROM range(40000) a(u), range(4) b(k)
+GROUP BY u
+HAVING (max(k) + u) % 3 <> 0;
+
+statement ok
+CREATE TABLE list_dict_joined (id BIGINT, skills VARCHAR[])
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO list_dict_joined
+SELECT u, s.skills FROM range(0, 60000, 2) r(u)
+LEFT JOIN (SELECT a.u AS user_id, list('k' || ((a.u * 13 + b.k * b.k * 7) % 5000) ORDER BY b.k) AS skills
+           FROM range(50000) a(u), range(16) b(k) GROUP BY a.u) s ON s.user_id = u;
+
+statement ok
+VACUUM (REFRESH_TABLE) list_dict_grouped;
+
+statement ok
+VACUUM (REFRESH_TABLE) list_dict_joined;
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+     tags IS DISTINCT FROM ['t' || (id % 37), 't' || (id % 37), 't' || (id % 37), 't' || (id % 37)]
+  OR skills IS DISTINCT FROM ['s' || ((id * 7) % 50000), 's' || ((id * 7 + 1) % 50000), 's' || ((id * 7 + 4) % 50000), 's' || ((id * 7 + 9) % 50000)]
+  OR info IS DISTINCT FROM {'n': 'n' || (id % 5), 'tags': ['t' || (id % 37), 't' || (id % 37), 't' || (id % 37), 't' || (id % 37)]}) AS wrong
+FROM list_dict_grouped;
+----
+total	wrong
+26666	0
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), k -> 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
+FROM list_dict_joined;
+----
+total	wrong
+30000	0
+
+statement ok
+VACUUM (COMPACT_TABLE) list_dict_grouped;
+
+statement ok
+VACUUM (COMPACT_TABLE) list_dict_joined;
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+     tags IS DISTINCT FROM ['t' || (id % 37), 't' || (id % 37), 't' || (id % 37), 't' || (id % 37)]
+  OR skills IS DISTINCT FROM ['s' || ((id * 7) % 50000), 's' || ((id * 7 + 1) % 50000), 's' || ((id * 7 + 4) % 50000), 's' || ((id * 7 + 9) % 50000)]
+  OR info IS DISTINCT FROM {'n': 'n' || (id % 5), 'tags': ['t' || (id % 37), 't' || (id % 37), 't' || (id % 37), 't' || (id % 37)]}) AS wrong
+FROM list_dict_grouped;
+----
+total	wrong
+26666	0
+
+query
+SELECT count(*) AS total, count(*) FILTER (WHERE
+  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), k -> 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
+FROM list_dict_joined;
+----
+total	wrong
+30000	0
+
+statement ok
+DROP TABLE list_dict_grouped;
+
+statement ok
+DROP TABLE list_dict_joined;
+
+statement ok
+RESET threads;

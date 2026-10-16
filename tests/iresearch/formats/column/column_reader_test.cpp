@@ -24,7 +24,9 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -2069,6 +2071,68 @@ TEST_F(ColumnReaderTest, RepeatedListsStayDeduplicatedAcrossSplitAppends) {
   ASSERT_EQ(col->RowCount(), expected.size());
   EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+}
+
+TEST_F(ColumnReaderTest, ListDictionariesKeepTheirValuesAcrossAppends) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  constexpr duckdb::idx_t kLists = 64;
+  constexpr duckdb::idx_t kRows = 1500;
+  const auto list_of = [](uint64_t generation, duckdb::idx_t i) {
+    return duckdb::Value::LIST(duckdb::LogicalType::VARCHAR,
+                               {duckdb::Value{"g" + std::to_string(generation) +
+                                              "-" + std::to_string(i % 8)},
+                                duckdb::Value{"x"}});
+  };
+  irs::MemoryDirectory dir{};
+  for (const bool reusable : {false, true}) {
+    SCOPED_TRACE(reusable ? "reusable dictionaries" : "refilled vector");
+    const std::string segment = reusable ? "reused" : "refilled";
+    std::vector<duckdb::Value> expected;
+    {
+      irs::ColWriter w{dir, segment, Db()};
+      auto& cw = w.OpenColumn(51, type, /*skip_validity=*/false, 8192);
+      const duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                                      type};
+      duckdb::Vector lists{cache};
+      duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
+      duckdb::SelectionVector sel{kRows};
+      for (uint64_t round = 0; round != 6; ++round) {
+        const uint64_t generation = reusable ? round / 2 : round;
+        if (!reusable) {
+          lists.ResetFromCache(cache);
+          for (duckdb::idx_t i = 0; i != kLists; ++i) {
+            lists.SetValue(i, list_of(generation, i));
+          }
+          duckdb::FlatVector::SetSize(lists, kLists);
+        } else if (round % 2 == 0) {
+          dictionary =
+            duckdb::DictionaryVector::CreateReusableDictionary(type, kLists);
+          for (duckdb::idx_t i = 0; i != kLists; ++i) {
+            dictionary->data.SetValue(i, list_of(generation, i));
+          }
+        }
+        for (duckdb::idx_t k = 0; k != kRows; ++k) {
+          const auto i = (k * 7 + round) % kLists;
+          sel.set_index(k, i);
+          expected.emplace_back(list_of(generation, i));
+        }
+        duckdb::Vector selected{type};
+        if (reusable) {
+          selected.Dictionary(dictionary, sel, kRows);
+        } else {
+          selected.Slice(lists, sel, kRows);
+        }
+        cw.Append(selected, kRows);
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, segment, Db()};
+    const auto* col = r.Column(51);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->RowCount(), expected.size());
+    EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+    ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  }
 }
 
 TEST_F(ColumnReaderTest, SparseListsInsideStructsPadNulls) {

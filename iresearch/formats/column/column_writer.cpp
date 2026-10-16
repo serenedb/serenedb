@@ -28,6 +28,7 @@
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -764,23 +765,16 @@ class ListIngest {
     if (vec.GetVectorType() != duckdb::VectorType::DICTIONARY_VECTOR) {
       return false;
     }
-    const auto* lists = &vec;
-    while (lists->GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR) {
-      lists = &duckdb::DictionaryVector::Child(*lists);
-    }
-    if (lists->GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-      return false;
-    }
-    const auto& buffer = lists->GetBufferRef();
-    if (buffer != _source) {
-      _source = buffer;
+    const auto& id = duckdb::DictionaryVector::DictionaryId(vec);
+    if (id.empty() || id != _source) {
+      _source = id;
       _source_codes.clear();
     }
     return true;
   }
 
   void Forget() {
-    _source.reset();
+    _source.clear();
     _source_codes.clear();
     _prev = kNoRep;
     _heads.clear();
@@ -889,7 +883,7 @@ class ListIngest {
   std::vector<ListRep> _reps;
   std::vector<Fresh> _fresh;
   std::vector<duckdb::sel_t> _picked;
-  duckdb::buffer_ptr<duckdb::VectorBuffer> _source;
+  std::string _source;
   std::vector<uint64_t> _source_codes;
 };
 

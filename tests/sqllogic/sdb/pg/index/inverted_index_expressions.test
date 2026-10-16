@@ -1943,6 +1943,61 @@ statement ok
 RESET TimeZone;
 
 statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_tz_ns(id INT PRIMARY KEY, ts TIMESTAMPTZ_NS);
+
+statement ok
+CREATE INDEX inc_e_tz_ns_idx ON inc_e_tz_ns USING inverted(id, (ts::VARCHAR) included(), (ts::DATE) included());
+
+statement ok
+INSERT INTO inc_e_tz_ns VALUES (1, '2026-01-01 23:30:00+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_tz_ns;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT ts::VARCHAR AS s, ts::DATE AS d FROM inc_e_tz_ns_idx;
+----
+s	d
+2026-01-02 08:30:00+09	2026-01-02
+
+query
+SELECT ts::DATE AS d, count(*) AS c FROM inc_e_tz_ns_idx GROUP BY ts::DATE;
+----
+d	c
+2026-01-02	1
+
+query
+SELECT id FROM inc_e_tz_ns_idx WHERE ts::DATE = DATE '2026-01-02';
+----
+id
+1
+
+query
+EXPLAIN SELECT ts::VARCHAR, ts::DATE FROM inc_e_tz_ns_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: CAST(ts AS VARCHAR), │
+│              CAST(ts AS DATE)     │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: inc_e_tz_ns_idx            │
+│ Lookup: table                     │
+│ Projections: ts                   │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+statement ok
+RESET TimeZone;
+
+statement ok
 CREATE TABLE inc_e_dict(id INT PRIMARY KEY, cat VARCHAR, title VARCHAR);
 
 statement ok

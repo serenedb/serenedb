@@ -43,8 +43,6 @@ class MergeSchedule {
 
   void Fail();
 
-  size_t Ready() const;
-
   size_t Running() const;
 
   void Finish(size_t unit, bool ok);

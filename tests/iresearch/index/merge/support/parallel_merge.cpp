@@ -38,18 +38,22 @@ namespace tests::merge {
 namespace {
 
 bool RunUnits(irs::MergePlan& plan, size_t threads,
-              const std::function<bool()>& claimable,
+              const std::function<bool()>& done,
               const std::function<std::optional<size_t>()>& claim,
               const std::function<void(size_t, bool)>& finish) {
   absl::Mutex mutex;
   std::exception_ptr error;
+  size_t finished = 0;
   auto work = [&] {
     while (true) {
       std::optional<size_t> unit;
       {
         absl::MutexLock lock{&mutex};
-        mutex.Await(absl::Condition{&claimable});
-        unit = claim();
+        for (unit = claim(); !unit && !done(); unit = claim()) {
+          const auto seen = finished;
+          const auto changed = [&] { return finished != seen; };
+          mutex.Await(absl::Condition{&changed});
+        }
       }
       if (!unit) {
         return;
@@ -65,6 +69,7 @@ bool RunUnits(irs::MergePlan& plan, size_t threads,
       }
       absl::MutexLock lock{&mutex};
       finish(*unit, ok);
+      ++finished;
     }
   };
   std::vector<std::thread> helpers;
@@ -140,7 +145,7 @@ bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
   }
   irs::MergeSchedule schedule{plan};
   RunUnits(
-    plan, _threads, [&] { return schedule.Done() || schedule.Ready() != 0; },
+    plan, _threads, [&] { return schedule.Done(); },
     [&] { return schedule.Claim(); },
     [&](size_t unit, bool ok) { schedule.Finish(unit, ok); });
   return schedule.Ok();
@@ -172,8 +177,7 @@ bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
   size_t running = 0;
   bool failed = false;
   RunUnits(
-    plan, _threads,
-    [&] { return failed ? running == 0 : left == 0 || !ready.empty(); },
+    plan, _threads, [&] { return failed ? running == 0 : left == 0; },
     [&]() -> std::optional<size_t> {
       if (failed || ready.empty()) {
         return std::nullopt;

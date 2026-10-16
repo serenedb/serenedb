@@ -94,11 +94,6 @@ void MergeSchedule::Fail() {
   _ready.clear();
 }
 
-size_t MergeSchedule::Ready() const {
-  std::lock_guard lock{_mutex};
-  return _failed ? 0 : _ready.size();
-}
-
 size_t MergeSchedule::Running() const {
   std::lock_guard lock{_mutex};
   return _running;

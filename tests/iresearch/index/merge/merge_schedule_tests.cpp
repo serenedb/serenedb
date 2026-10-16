@@ -145,11 +145,9 @@ TEST_F(MergeScheduleTest, NormsRunFirstThenColumnsBesidePostings) {
   ASSERT_GE(norms, 2);
   irs::MergeSchedule schedule{*plan};
   const auto postings = Find(*plan, MergeUnitKind::Postings);
-  EXPECT_EQ(2, schedule.Ready());
   auto first = ClaimAll(schedule);
   std::ranges::sort(first);
   EXPECT_EQ((std::vector<size_t>{0, postings}), first);
-  EXPECT_EQ(0, schedule.Ready());
   for (size_t unit = 0; unit + 1 < norms; ++unit) {
     schedule.Finish(unit, true);
     EXPECT_EQ(unit + 1, schedule.Claim());
@@ -287,7 +285,6 @@ TEST_F(MergeScheduleTest, FailedUnitStopsTheOthers) {
   ASSERT_TRUE(first && second);
   schedule.Finish(*first, false);
   EXPECT_FALSE(schedule.Ok());
-  EXPECT_EQ(0, schedule.Ready());
   EXPECT_EQ(std::nullopt, schedule.Claim());
   EXPECT_FALSE(schedule.Done());
   schedule.Finish(*second, true);
@@ -349,21 +346,24 @@ TEST_F(MergeScheduleTest, FailingTheScheduleStopsTheOthers) {
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, _plain);
   irs::MergeSchedule schedule{*plan};
+  const auto units = plan->Units();
   const auto postings = Find(*plan, MergeUnitKind::Postings);
   schedule.Hold(postings);
-  while (schedule.Ready() < 2) {
+  while (true) {
     const auto unit = schedule.Claim();
     ASSERT_TRUE(unit);
     schedule.Finish(*unit, true);
+    if (units[*unit + 1].kind != MergeUnitKind::Norms) {
+      break;
+    }
   }
   const auto running = schedule.Claim();
   ASSERT_TRUE(running);
   schedule.Fail();
   EXPECT_FALSE(schedule.Ok());
-  EXPECT_EQ(0, schedule.Ready());
   EXPECT_EQ(std::nullopt, schedule.Claim());
   schedule.Release(postings);
-  EXPECT_EQ(0, schedule.Ready());
+  EXPECT_EQ(std::nullopt, schedule.Claim());
   EXPECT_FALSE(schedule.Done());
   schedule.Finish(*running, true);
   EXPECT_TRUE(schedule.Done());

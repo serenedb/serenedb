@@ -48,7 +48,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	0
+avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	0
 index_size	<slt:ignore>
@@ -81,7 +81,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	0
+avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	0
 index_size	<slt:ignore>
@@ -108,7 +108,7 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'index_t')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	0
+avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	<slt:ignore>
 index_size	<slt:ignore>

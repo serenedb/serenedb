@@ -37,6 +37,7 @@
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
@@ -555,16 +556,16 @@ class FrameDecoder {
   uint64_t _end = 0;
   uint64_t _next = 0;
   const uint8_t* _view = nullptr;
-  std::vector<U> _rows;
-  std::vector<U> _run_values;
-  std::vector<uint32_t> _run_ends;
+  ScratchVector<U> _rows;
+  ScratchVector<U> _run_values;
+  ScratchVector<uint32_t> _run_ends;
   uint32_t _hint = 0;
-  std::vector<uint8_t> _raw;
-  std::vector<uint8_t> _shuffled;
-  std::vector<uint32_t> _codes;
+  ScratchVector<uint8_t> _raw;
+  ScratchVector<uint8_t> _shuffled;
+  ScratchVector<uint32_t> _codes;
   std::vector<uint32_t> _words32;
   std::vector<uint64_t> _words64;
-  std::vector<U> _block;
+  ScratchVector<U> _block;
   const uint8_t* _ffor_src = nullptr;
   uint32_t _ffor_frame = std::numeric_limits<uint32_t>::max();
   std::array<uint32_t, kFforFrameRows / numeric::kBlockValues> _ffor_offsets{};

@@ -274,6 +274,10 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                   ERR_DETAIL(detail));
 }
 
+constexpr std::string_view kObjectCacheSizeDetail =
+  "Only roles with the SUPERUSER attribute may change the size of the "
+  "server-wide object cache.";
+
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
 void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
                        duckdb::Value& value) {
@@ -1111,10 +1115,12 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Bytes the database's object cache may hold: decoded columnstore "
         "dictionaries, idle tokenizers and other reusable objects, evicted "
         "least recently used. 0 = an eighth of memory_limit, at least 256MB. "
-        "Default 0.",
+        "Default 0. Server-global; only a superuser may change it.",
         [] { return duckdb::Value::UBIGINT(0); },
         [](duckdb::ClientContext& context, duckdb::SetScope,
            duckdb::Value& value) {
+          RequireSuperuser(context, kObjectCacheSizeSetting,
+                           kObjectCacheSizeDetail);
           auto& cache =
             duckdb::DatabaseInstance::GetDatabase(context).GetObjectCache();
           const auto bytes = value.GetValue<uint64_t>();
@@ -1125,6 +1131,15 @@ constexpr std::pair<std::string_view, VariableDescription>
           cache.SetAutomaticMaxMemory(
             duckdb::DBConfig::GetConfig(context).options.maximum_memory);
         },
+        [](duckdb::ClientContext& context, duckdb::SetScope) {
+          RequireSuperuser(context, kObjectCacheSizeSetting,
+                           kObjectCacheSizeDetail);
+          duckdb::DatabaseInstance::GetDatabase(context)
+            .GetObjectCache()
+            .SetAutomaticMaxMemory(
+              duckdb::DBConfig::GetConfig(context).options.maximum_memory);
+        },
+        duckdb::SetScope::GLOBAL,
       },
     },
     {

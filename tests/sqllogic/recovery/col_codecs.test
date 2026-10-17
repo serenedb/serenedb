@@ -173,6 +173,44 @@ statement ok
 RESET GLOBAL sdb_object_cache_size;
 
 
+statement ok
+CREATE ROLE cc_cache_role LOGIN PASSWORD 'cc_pw';
+
+
+connection c_cache user=cc_cache_role password=cc_pw
+statement error
+SET sdb_object_cache_size = 1048576;
+----
+db error: ERROR: permission denied to set parameter "sdb_object_cache_size"<slt:ignore>
+
+
+connection c_cache user=cc_cache_role password=cc_pw
+statement error
+RESET sdb_object_cache_size;
+----
+db error: ERROR: permission denied to set parameter "sdb_object_cache_size"<slt:ignore>
+
+
+connection default
+statement error
+SET SESSION sdb_object_cache_size = 1048576;
+----
+db error: ERROR: parameter "sdb_object_cache_size" cannot be set locally
+
+
+connection default
+query
+SELECT current_setting('sdb_object_cache_size') AS bytes;
+----
+bytes
+0
+
+
+connection default
+statement ok
+DROP ROLE cc_cache_role;
+
+
 query
 SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('cc_forced') WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
 ----

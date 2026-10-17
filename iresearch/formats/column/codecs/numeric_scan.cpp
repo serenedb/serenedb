@@ -27,7 +27,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/zonemap_checker.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
@@ -78,6 +78,7 @@ struct ScanState final : duckdb::SegmentScanState {
   duckdb::BufferHandle handle;
   const_data_ptr_t base;
   FrameDecoder<T> frames;
+  duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
 };
 
 template<typename T>
@@ -119,22 +120,32 @@ void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state, idx_t,
 }
 
 template<typename T>
-bool MayMatch(const FrameDecoder<T>& frames, const duckdb::LogicalType& type,
-              uint64_t begin, uint64_t end,
-              const duckdb::ExpressionFilter& filter,
-              duckdb::TableFilterState& filter_state) {
-  auto stats = duckdb::BaseStatistics::CreateEmpty(type);
-  stats.SetHasNoNull();
-  const auto last = frames.FrameOf(end - 1);
-  for (auto f = frames.FrameOf(begin); f <= last; ++f) {
-    duckdb::NumericStats::SetMin<T>(stats, frames.FrameMin(f));
-    duckdb::NumericStats::SetMax<T>(stats, frames.FrameMax(f));
-    if (filter.CheckStatistics(stats, filter_state) !=
-        duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
-      return true;
+duckdb::FilterPropagateResult FramesVerdict(
+  ScanState<T>& scan, const duckdb::LogicalType& type, uint64_t begin,
+  uint64_t end, const duckdb::ZonemapChecker& checker) {
+  if (!scan.filter_stats) {
+    scan.filter_stats = duckdb::NumericStats::CreateEmpty(type).ToUnique();
+    scan.filter_stats->SetHasNoNullFast();
+  }
+  auto& stats = *scan.filter_stats;
+  auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+  bool first = true;
+  const auto last = scan.frames.FrameOf(end - 1);
+  for (auto f = scan.frames.FrameOf(begin); f <= last; ++f) {
+    duckdb::NumericStats::SetMin<T>(stats, scan.frames.FrameMin(f));
+    duckdb::NumericStats::SetMax<T>(stats, scan.frames.FrameMax(f));
+    const auto frame = checker.Check(stats, nullptr);
+    if (first) {
+      verdict = frame;
+      first = false;
+    } else if (frame != verdict) {
+      return duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+    }
+    if (verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE) {
+      break;
     }
   }
-  return false;
+  return verdict;
 }
 
 template<typename T>
@@ -145,16 +156,27 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
             duckdb::TableFilterState& filter_state) {
   auto& scan = state.scan_state->Cast<ScanState<T>>();
   const uint64_t start = state.GetPositionInSegment();
+  auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
   if constexpr (std::is_integral_v<T>) {
-    if (filter.filter_type == duckdb::TableFilterType::EXPRESSION_FILTER &&
-        !MayMatch(scan.frames, segment.GetType(), start, start + vector_count,
-                  filter.Cast<duckdb::ExpressionFilter>(), filter_state)) {
-      sel_count = 0;
-      return;
+    if (filter.filter_type == duckdb::TableFilterType::EXPRESSION_FILTER) {
+      const auto& checker =
+        *filter_state.Cast<duckdb::ExpressionFilterState>().zonemap_checker;
+      if (checker.IsFullyCompiled()) {
+        verdict = FramesVerdict(scan, segment.GetType(), start,
+                                start + vector_count, checker);
+      }
     }
+  }
+  if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+      verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+    sel_count = 0;
+    return;
   }
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   ScanPartial<T>(segment, state, vector_count, result, 0);
+  if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
+    return;
+  }
   duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
                                          vector_count, sel_count);
 }

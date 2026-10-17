@@ -22,6 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -41,6 +42,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -529,6 +531,36 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
   }
+}
+
+TEST_P(MergeWriterTestCase, FieldsPastFourBillionTermsOpen) {
+  if (!irs::AddFailurePointDebugging(
+        "irs::burst_trie::TotalTermFreqPast32Bits")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging(
+      "irs::burst_trie::TotalTermFreqPast32Bits");
+  };
+  tests::Document doc;
+  auto text = std::make_shared<tests::TextField<std::string_view>>(
+    "doc_text", "quick brown fox", true);
+  text->id = kDocTextId;
+  doc.indexed.push_back(std::move(text));
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_TRUE(Insert(*writer, doc.indexed.begin(), doc.indexed.end()));
+    writer->RefreshCommit();
+  }
+  std::move(remove).Invoke();
+  const auto reader =
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto* field = reader[0].field(kDocTextId);
+  ASSERT_NE(nullptr, field);
+  EXPECT_EQ((uint64_t{1} << 32) + 3, field->total_term_freq());
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {

@@ -59,6 +59,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/fst/fst_builder.hpp"
 #include "iresearch/utils/fst/fst_matcher.hpp"
 #include "iresearch/utils/fst/fst_string_ref_weight.hpp"
@@ -918,6 +919,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   meta.doc_count = doc_count;
   meta.total_doc_freq = total_doc_freq;
   meta.total_term_freq = total_term_freq;
+  SDB_IF_FAILURE("irs::burst_trie::TotalTermFreqPast32Bits") {
+    meta.total_term_freq += uint64_t{1} << 32;
+  }
   meta.has_score_bounds = has_score_bounds != 0;
   meta.body_offset = body_offset;
   meta.norm = props.norm;
@@ -945,6 +949,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   const FieldMeta& meta() const noexcept final { return _field; }
   size_t size() const noexcept final { return _terms_count; }
   uint64_t docs_count() const noexcept final { return _doc_count; }
+  uint64_t total_term_freq() const noexcept final { return _total_term_freq; }
   bytes_view min() const noexcept final { return _min_term; }
   bytes_view max() const noexcept final { return _max_term; }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
@@ -981,7 +986,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   const byte_type* _inline_region{};
   std::unique_ptr<byte_type[]> _inline_copy;
   bool _has_score_bounds{};
-  FreqAttr _freq;
+  uint64_t _total_term_freq{};
 };
 
 void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
@@ -994,23 +999,14 @@ void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
   _inline_size = in.ReadV64();
   _min_term = ReadString<bstring>(in);
   _max_term = ReadString<bstring>(in);
-  const auto total =
+  _total_term_freq =
     IndexFeatures::None != (meta.features & IndexFeatures::Freq)
       ? meta.total_term_freq
       : meta.total_doc_freq;
-  // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
-  SDB_ENSURE(total <= std::numeric_limits<uint32_t>::max(),
-             "TermReaderBase: total_term_freq ", total,
-             " exceeds uint32_t::max");
-  _freq.value = static_cast<uint32_t>(total);
   _has_score_bounds = meta.has_score_bounds;
 }
 
-Attribute* TermReaderBase::GetMutable(TypeInfo::type_id type) noexcept {
-  if (irs::Type<FreqAttr>::id() == type) {
-    return &_freq;
-  }
-
+Attribute* TermReaderBase::GetMutable(TypeInfo::type_id) noexcept {
   return nullptr;
 }
 

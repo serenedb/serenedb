@@ -55,6 +55,7 @@
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/sequence_codec.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/debugging.hpp"
@@ -429,15 +430,11 @@ class ListKeys {
   std::vector<Node> _chunks;
 };
 
-struct StagedPayloads final : duckdb::AuxiliaryDataHolder {
-  bool CertifiesImmutablePayloads() const override { return true; }
-};
-
 void CertifyStaged(duckdb::Vector& vector) {
   switch (vector.GetType().InternalType()) {
     case duckdb::PhysicalType::VARCHAR:
       duckdb::StringVector::AddAuxiliaryData(
-        vector, std::make_unique<StagedPayloads>());
+        vector, std::make_unique<ImmutablePayloads>());
       return;
     case duckdb::PhysicalType::STRUCT:
       for (auto& child : duckdb::StructVector::GetEntries(vector)) {

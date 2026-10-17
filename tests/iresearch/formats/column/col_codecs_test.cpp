@@ -29,7 +29,9 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
@@ -1230,6 +1232,53 @@ TEST_F(ColCodecsTest, TransactionalCodecsLeaveTextToTheColumnstore) {
       }
     }
   }
+}
+
+TEST_F(ColCodecsTest, CachedDictionaryKeepsNoScanContext) {
+  const auto& value = kLowCardinalityWithNulls;
+  constexpr uint32_t kRows = 10 * STANDARD_VECTOR_SIZE;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, kRows,
+        value);
+  auto& cache = Db().GetObjectCache();
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  std::vector<std::string> keys;
+  for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
+    keys.push_back(col->DictionaryCacheKey(b));
+    cache.Delete(keys.back());
+  }
+  const auto certified = [](const duckdb::Vector& out) {
+    const auto& payload =
+      out.GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR
+        ? duckdb::DictionaryVector::Child(out)
+        : out;
+    const auto& aux = payload.GetBufferRef()->GetAuxiliaryData();
+    return aux && duckdb::ImmutableStrings::Certified(*aux);
+  };
+  const auto scan_all = [&] {
+    auto ctx = std::make_shared<irs::ReadContext>(r);
+    std::weak_ptr<irs::ReadContext> scanned = ctx;
+    auto state = col->InitScan(std::move(ctx));
+    size_t dictionaries = 0;
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, take);
+      dictionaries +=
+        out.GetVectorType() == duckdb::VectorType::DICTIONARY_VECTOR;
+      EXPECT_TRUE(certified(out));
+    }
+    EXPECT_GT(dictionaries, 0u);
+    return scanned;
+  };
+  EXPECT_TRUE(scan_all().expired());
+  EXPECT_TRUE(scan_all().expired());
+  for (const auto& key : keys) {
+    EXPECT_NE(cache.Get<irs::codecs::DecodedDictionary>(key), nullptr) << key;
+  }
+  EXPECT_TRUE(scan_all().expired());
 }
 
 TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {

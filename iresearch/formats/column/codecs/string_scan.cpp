@@ -32,6 +32,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/main/database.hpp>
@@ -62,6 +63,7 @@
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -336,6 +338,8 @@ struct ScanState final : duckdb::SegmentScanState {
       std::max<idx_t>(header.raw_bytes, string_t::INLINE_LENGTH + 1);
     heap = duckdb::StringVector::EmptyString(dict_data, heap_bytes)
              .GetDataWriteable();
+    duckdb::StringVector::AddAuxiliaryData(
+      dict_data, duckdb::make_uniq<ImmutablePayloads>());
     LoadFrames();
     switch (static_cast<ByteCodec>(header.codec)) {
       case ByteCodec::Lz4:
@@ -377,6 +381,8 @@ struct ScanState final : duckdb::SegmentScanState {
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
+    duckdb::StringVector::AddAuxiliaryData(
+      view, duckdb::make_uniq<ImmutablePayloads>());
     dictionary = duckdb::make_buffer<duckdb::DictionaryEntry>(std::move(view));
     dictionary->id = owner->id;
     values = duckdb::FlatVector::GetDataMutable<string_t>(dictionary->data);
@@ -943,12 +949,18 @@ struct ScanState final : duckdb::SegmentScanState {
     warmed_bytes = bytes;
   }
 
+  void ReferenceHeap(duckdb::Vector& result) const {
+    duckdb::StringVector::AddAuxiliaryData(
+      result, duckdb::ImmutableStrings::Reference(
+                dictionary->data.GetBufferRef()->GetAuxiliaryData()));
+  }
+
   void WriteCodes(duckdb::Vector& result, idx_t result_offset,
                   const duckdb::SelectionVector& codes, idx_t count) {
     if (cold_entries) {
       WarmEntries();
     }
-    duckdb::StringVector::AddHeapReference(result, dictionary->data);
+    ReferenceHeap(result);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
     for (idx_t i = 0; i < count; ++i) {
@@ -965,7 +977,7 @@ struct ScanState final : duckdb::SegmentScanState {
                 idx_t count) {
     if (!Dedup()) {
       EnsureEach<false>(count, [&](idx_t i) { return start + i; });
-      duckdb::StringVector::AddHeapReference(result, dictionary->data);
+      ReferenceHeap(result);
       auto writer =
         duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
       for (idx_t i = 0; i < count; ++i) {
@@ -989,7 +1001,7 @@ struct ScanState final : duckdb::SegmentScanState {
                     const duckdb::SelectionVector& rows, idx_t row_count) {
     EnsureEach<true>(
       row_count, [&](idx_t i) { return codes.get_index(rows.get_index(i)); });
-    duckdb::StringVector::AddHeapReference(result, dictionary->data);
+    ReferenceHeap(result);
     auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
     idx_t next = 0;
     for (idx_t row = 0; row < count; ++row) {
@@ -1009,7 +1021,7 @@ struct ScanState final : duckdb::SegmentScanState {
     SDB_ASSERT(!Dedup());
     EnsureEach<false>(count,
                       [&](idx_t i) { return start + rows.get_index(i); });
-    duckdb::StringVector::AddHeapReference(result, dictionary->data);
+    ReferenceHeap(result);
     auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
     for (idx_t i = 0; i < count; ++i) {
       writer.WriteStringRef(values[start + rows.get_index(i)]);

@@ -555,7 +555,7 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
                  duckdb::BufferHandle pin) noexcept
     : ctx{std::move(ctx)}, pin{std::move(pin)} {}
 
-  bool CertifiesImmutablePayloads() const override { return true; }
+  bool CertifiesImmutablePayloads() const final { return true; }
 
   std::shared_ptr<ReadContext> ctx;
   duckdb::BufferHandle pin;
@@ -566,7 +566,9 @@ struct ScannedStrings final : duckdb::AuxiliaryDataHolder {
 void ColumnReader::CertifyStrings(ScanState& s, duckdb::ColumnSegment& segment,
                                   duckdb::Vector& result) const {
   if (s.ctx.use_count() == 0 ||
-      _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+      _type.InternalType() != duckdb::PhysicalType::VARCHAR ||
+      duckdb::IsSereneDBCompressionType(
+        segment.GetCompressionFunction().type)) {
     return;
   }
   auto& block = segment.GetBlockHandle();

@@ -56,6 +56,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
+#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/index/merge_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
@@ -226,18 +227,33 @@ class ThreadedExecutor final : public irs::MergeExecutor {
         return false;
       }
     }
+    if (plan.PostingsPending()) {
+      const auto begin = std::chrono::steady_clock::now();
+      const bool merged = RunPostings(plan);
+      _nanos[static_cast<size_t>(irs::MergeUnitKind::Postings)].fetch_add(
+        static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - begin)
+            .count()),
+        std::memory_order_relaxed);
+      if (!merged) {
+        return false;
+      }
+    }
     irs::MergeSchedule schedule{plan};
     absl::Mutex mutex;
-    const auto claimable = [&] {
-      return schedule.Done() || schedule.Ready() != 0;
-    };
+    size_t finished = 0;
     auto work = [&] {
       while (true) {
         std::optional<size_t> unit;
         {
           absl::MutexLock lock{&mutex};
-          mutex.Await(absl::Condition{&claimable});
-          unit = schedule.Claim();
+          for (unit = schedule.Claim(); !unit && !schedule.Done();
+               unit = schedule.Claim()) {
+            const auto seen = finished;
+            const auto changed = [&] { return finished != seen; };
+            mutex.Await(absl::Condition{&changed});
+          }
         }
         if (!unit) {
           return;
@@ -250,6 +266,7 @@ class ThreadedExecutor final : public irs::MergeExecutor {
           static_cast<uint64_t>(nanos.count()), std::memory_order_relaxed);
         absl::MutexLock lock{&mutex};
         schedule.Finish(*unit, ok);
+        ++finished;
       }
     };
     std::vector<std::thread> helpers;
@@ -264,6 +281,32 @@ class ThreadedExecutor final : public irs::MergeExecutor {
   }
 
  private:
+  bool RunPostings(irs::MergePlan& plan) {
+    for (const auto& range : plan.TermRanges()) {
+      std::atomic<size_t> next{0};
+      std::atomic<bool> ok{true};
+      auto work = [&] {
+        for (size_t part; (part = next++) < range->PartCount();) {
+          if (!range->MergePart(part)) {
+            ok = false;
+          }
+        }
+      };
+      std::vector<std::thread> helpers;
+      for (size_t i = 1; i < _threads; ++i) {
+        helpers.emplace_back(work);
+      }
+      work();
+      for (auto& helper : helpers) {
+        helper.join();
+      }
+      if (!ok) {
+        return false;
+      }
+    }
+    return plan.FinishPostings();
+  }
+
   size_t _threads;
   std::array<std::atomic<uint64_t>, kUnitNames.size()> _nanos{};
 };

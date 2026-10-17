@@ -33,6 +33,7 @@
 #include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -100,7 +101,8 @@ std::optional<uint32_t> ReadTargetSegments(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("sdb_compact target_segments must be positive"));
   }
-  return static_cast<uint32_t>(value);
+  return static_cast<uint32_t>(
+    std::min<int64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(

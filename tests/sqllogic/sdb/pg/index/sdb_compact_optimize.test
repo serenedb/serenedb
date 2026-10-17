@@ -132,6 +132,31 @@ SELECT merge, outcome FROM sdb_compact('opt', mode := 'optimize')
 merge	outcome
 
 
+query
+SELECT merge, outcome FROM sdb_compact('opt', mode := 'optimize', target_segments := 2000000000)
+----
+merge	outcome
+
+
+query
+SELECT merge, outcome FROM sdb_compact('opt', mode := 'optimize', target_segments := 4294967296)
+----
+merge	outcome
+
+
+query
+SELECT merge, outcome FROM sdb_compact('opt', mode := 'compact', target_segments := 4294967296)
+----
+merge	outcome
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('opt')
+----
+segments
+2
+
+
 statement ok
 DELETE FROM opt WHERE id <= 100
 

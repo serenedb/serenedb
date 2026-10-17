@@ -282,6 +282,8 @@ void PlanOptimize(const irs::IndexReader& reader,
       std::max<uint64_t>(1, kOptimizeRowGroups * request.row_group_size);
     target = static_cast<uint32_t>(std::clamp<uint64_t>(by_size, 1, target));
   }
+  target = static_cast<uint32_t>(
+    std::min<uint64_t>(target, std::max<size_t>(1, reader.size())));
   PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
                 request.inputs_max, request.copy_check, plan);
 }

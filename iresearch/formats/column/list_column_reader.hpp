@@ -514,7 +514,7 @@ class ListColumnReader final : public ColumnReader {
                                       static_cast<duckdb::idx_t>(child_base));
       return scan_count;
     }
-    auto& d = s.ctx->ReadAhead()
+    auto& d = s.ctx->ReadAhead() && hi - lo < 2 * kReadAheadLists
                 ? Lists(s, lo, hi, scan_count)
                 : ReferencedLists(s, codes, validity, result_offset, scan_count,
                                   lo, hi);

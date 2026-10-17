@@ -1912,6 +1912,25 @@ TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
                  true);
 }
 
+TEST_F(ColumnReaderTest, OneRepeatedListAmongUniqueListsScans) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 41, type,
+              "SELECT CASE WHEN i % 2 = 0 THEN [] ELSE ['value-' || i, 'tail-' "
+              "|| (i * 7)] END FROM range(40000) t(i)",
+              40000, expected);
+  irs::ColReader r{dir, "lseg", Db()};
+  const auto* col = r.Column(41);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  Rows sparse;
+  for (uint64_t g = 1; g < 40000; g += 61) {
+    sparse.v.push_back(g);
+  }
+  ExpectGathered(*col, r.Ctx(), expected, sparse, false);
+}
+
 TEST_F(ColumnReaderTest, RepeatedNestedLists) {
   const auto type = duckdb::LogicalType::LIST(
     duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT));

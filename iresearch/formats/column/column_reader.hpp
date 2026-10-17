@@ -343,7 +343,7 @@ class ColumnReader {
     using PointReader::PointReader;
 
     bytes_view FetchRow(uint64_t row) {
-      duckdb::FlatVector::ValidityMutable(_buf).Reset();
+      _buf.ResetFromCache(_buf_cache);
       if (!PointReader::FetchRow(row, _buf, 0)) {
         return {};
       }
@@ -355,7 +355,7 @@ class ColumnReader {
       return FetchRow(static_cast<uint64_t>(doc) - doc_limits::min());
     }
     bool IsNullRow(uint64_t row) {
-      duckdb::FlatVector::ValidityMutable(_buf).Reset();
+      _buf.ResetFromCache(_buf_cache);
       return !PointReader::FetchRow(row, _buf, 0);
     }
     bool IsNullDoc(doc_id_t doc) {
@@ -381,7 +381,9 @@ class ColumnReader {
     }
 
    private:
-    duckdb::Vector _buf{duckdb::LogicalType::BLOB, 1};
+    duckdb::VectorCache _buf_cache{duckdb::Allocator::DefaultAllocator(),
+                                   duckdb::LogicalType::BLOB, 1};
+    duckdb::Vector _buf{_buf_cache};
     duckdb::VectorCache _batch_cache{duckdb::Allocator::DefaultAllocator(),
                                      duckdb::LogicalType::BLOB};
     duckdb::Vector _batch{_batch_cache};

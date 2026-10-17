@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
 #include <array>
 #include <bit>
 #include <duckdb.hpp>
@@ -48,6 +50,10 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+
+#ifdef SERENEDB_HAVE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#endif
 
 namespace {
 
@@ -772,6 +778,59 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
         << g;
     }
   }
+}
+
+TEST_F(ColumnReaderTest, BlobPointReaderHoldsOnlyTheLastValue) {
+#ifndef SERENEDB_HAVE_JEMALLOC
+  GTEST_SKIP() << "needs jemalloc's per-thread counters";
+#else
+  constexpr uint64_t kRows = 20000;
+  constexpr irs::field_id kS = 1;
+  const auto value = [](uint64_t g) {
+    return absl::StrCat("value-", g, "-", std::string(300, 'x'));
+  };
+  const auto live_bytes = [] {
+    uint64_t epoch = 1;
+    size_t epoch_size = sizeof(epoch);
+    mallctl("epoch", &epoch, &epoch_size, &epoch, sizeof(epoch));
+    uint64_t allocated = 0;
+    uint64_t deallocated = 0;
+    size_t size = sizeof(uint64_t);
+    mallctl("thread.allocated", &allocated, &size, nullptr, 0);
+    mallctl("thread.deallocated", &deallocated, &size, nullptr, 0);
+    return static_cast<int64_t>(allocated - deallocated);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR, false, 4096);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ds[k] = duckdb::StringVector::AddString(vs, value(pos + k));
+      }
+      duckdb::FlatVector::SetSize(vs, take);
+      cw.Append(vs, take);
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db()};
+  irs::ColumnReader::BlobPointReader reader{r, *r.Column(kS)};
+  ASSERT_EQ(value(0).size(), reader.FetchRow(0).size());
+  const auto before = live_bytes();
+  for (uint64_t g = 0; g != kRows; ++g) {
+    const auto got = reader.FetchRow(g);
+    ASSERT_EQ(
+      value(g),
+      std::string_view(reinterpret_cast<const char*>(got.data()), got.size()));
+  }
+  EXPECT_LT(live_bytes() - before, static_cast<int64_t>(kRows * 30));
+#endif
 }
 
 // STRUCT{a: BIGINT, b: VARCHAR} with struct-level and field-level NULLs across

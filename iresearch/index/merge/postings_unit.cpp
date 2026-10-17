@@ -166,8 +166,8 @@ TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
   return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
 
-const TermRangeMerge* RangeOf(
-  std::span<const std::unique_ptr<TermRangeMerge>> ranges, field_id id) {
+TermRangeMerge* RangeOf(std::span<const std::unique_ptr<TermRangeMerge>> ranges,
+                        field_id id) {
   for (const auto& range : ranges) {
     if (range->Field() == id) {
       return range.get();
@@ -227,8 +227,9 @@ bool WriteFields(const irs::FlushState& flush_state,
       }
     }
 
-    if (const auto* range = RangeOf(ranges, fid)) {
+    if (auto* range = RangeOf(ranges, fid)) {
       field_writer->write(fid, props, range->Parts(), range->DocCount());
+      range->ReleaseParts();
       continue;
     }
 

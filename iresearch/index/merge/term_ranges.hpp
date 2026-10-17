@@ -95,6 +95,8 @@ class TermRangeMerge {
 
   std::vector<TermPart> Parts() const;
 
+  void ReleaseParts() noexcept;
+
   uint64_t DocCount() const noexcept;
 
   uint64_t Nanos() const noexcept { return _nanos.load(); }

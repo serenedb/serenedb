@@ -579,6 +579,30 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
 }
 
+TEST_F(PipelineMergeExecutorTest, RangePartsAreFreedOnceTheirFieldIsWritten) {
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_FALSE(plan.TermRanges().empty());
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  ASSERT_TRUE(executor.Run(plan));
+  for (const auto& range : plan.TermRanges()) {
+    for (const auto& part : range->Parts()) {
+      EXPECT_EQ(nullptr, part.doc);
+      EXPECT_EQ(nullptr, part.pos);
+      EXPECT_TRUE(part.terms.empty());
+    }
+    EXPECT_EQ(0, range->DocCount());
+  }
+}
+
 TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
   if (!irs::AddFailurePointDebugging("pause_postings_merge_finalize")) {
     GTEST_SKIP() << "built without fault injection";

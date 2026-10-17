@@ -365,6 +365,23 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
   return parts;
 }
 
+void TermRangeMerge::ReleaseParts() noexcept {
+  for (auto& part : _parts) {
+    part->doc.reset();
+    part->pos.reset();
+    part->pay.reset();
+    for (const auto ext : {PostingsWriter::kDocExt, PostingsWriter::kPosExt,
+                           PostingsWriter::kPayExt}) {
+      part->dir.remove(FileName(kPartName, ext));
+    }
+    part->terms.clear();
+    part->terms.shrink_to_fit();
+  }
+  std::lock_guard lock{_mutex};
+  _docs.clear();
+  _docs.shrink_to_fit();
+}
+
 uint64_t TermRangeMerge::DocCount() const noexcept {
   std::lock_guard lock{_mutex};
   uint64_t count = 0;

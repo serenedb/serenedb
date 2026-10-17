@@ -1,0 +1,164 @@
+# LANGUAGE sql functions with PostgreSQL semantics.
+#
+# A body that is a single plain SELECT expression is inlined. Any other body
+# runs per call: parameters are values, the function returns the first row of
+# the body, or NULL when it has none, and the body's own LIMIT and OFFSET
+# apply. RETURNS SETOF returns every row. prosrc is the source text.
+#
+# Every object is prefixed sqlfb_.
+
+statement ok
+CREATE FUNCTION sqlfb_offset() RETURNS bigint LANGUAGE sql AS 'SELECT i::bigint FROM generate_series(0, 9) AS t(i) ORDER BY i LIMIT 1 OFFSET 3';
+
+
+query
+SELECT sqlfb_offset() AS r;
+----
+r
+3
+
+
+statement ok
+CREATE FUNCTION sqlfb_limit0() RETURNS int LANGUAGE sql AS 'SELECT 1 LIMIT 0';
+
+
+query
+SELECT sqlfb_limit0() IS NULL AS r;
+----
+r
+t
+
+
+statement ok
+CREATE FUNCTION sqlfb_max(x int) RETURNS int LANGUAGE sql AS 'SELECT max(x)';
+
+
+query
+SELECT sqlfb_max(i::int) AS r FROM generate_series(0, 2) AS t(i) ORDER BY 1;
+----
+r
+0
+1
+2
+
+
+statement ok
+CREATE FUNCTION sqlfb_below(x int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM generate_series(0, 9) AS t(j) WHERE j < x';
+
+
+query
+SELECT sqlfb_below(i::int) AS r FROM generate_series(0, 2) AS t(i) ORDER BY 1;
+----
+r
+0
+1
+2
+
+
+statement ok
+CREATE FUNCTION sqlfb_first(x int) RETURNS bigint LANGUAGE sql AS 'SELECT j::bigint FROM generate_series(1, 9) AS t(j) WHERE j > x ORDER BY j DESC';
+
+
+query
+SELECT sqlfb_first(i::int) AS r FROM generate_series(0, 2) AS t(i) ORDER BY 1;
+----
+r
+9
+9
+9
+
+
+statement ok
+CREATE FUNCTION sqlfb_none(x int) RETURNS bigint LANGUAGE sql AS 'SELECT j::bigint FROM generate_series(1, 3) AS t(j) WHERE j > x + 10';
+
+
+query
+SELECT sqlfb_none(1) IS NULL AS r;
+----
+r
+t
+
+
+statement ok
+CREATE FUNCTION sqlfb_union(x int) RETURNS int LANGUAGE sql AS 'SELECT x UNION ALL SELECT x + 1 ORDER BY 1 DESC';
+
+
+query
+SELECT sqlfb_union(5) AS r;
+----
+r
+6
+
+
+statement ok
+CREATE FUNCTION sqlfb_star(x int) RETURNS int LANGUAGE sql AS 'SELECT * FROM (SELECT x + 1) AS s(v)';
+
+
+query
+SELECT sqlfb_star(1) AS r;
+----
+r
+2
+
+
+statement ok
+CREATE FUNCTION sqlfb_set(n int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT i::bigint FROM generate_series(1, n) AS t(i)';
+
+
+query
+SELECT * FROM sqlfb_set(3) AS s(v) ORDER BY 1;
+----
+v
+1
+2
+3
+
+
+statement ok
+CREATE FUNCTION sqlfb_rand() RETURNS double precision LANGUAGE sql AS 'SELECT random()';
+
+
+query
+SELECT count(DISTINCT sqlfb_rand()) > 1 AS r FROM generate_series(1, 100);
+----
+r
+t
+
+
+query
+SELECT proname, prosrc FROM pg_proc WHERE proname IN ('sqlfb_max', 'sqlfb_limit0') ORDER BY 1;
+----
+proname	prosrc
+sqlfb_limit0	SELECT 1 LIMIT 0
+sqlfb_max	SELECT max(x)
+
+
+statement ok
+DROP FUNCTION sqlfb_offset;
+
+statement ok
+DROP FUNCTION sqlfb_limit0;
+
+statement ok
+DROP FUNCTION sqlfb_max;
+
+statement ok
+DROP FUNCTION sqlfb_below;
+
+statement ok
+DROP FUNCTION sqlfb_first;
+
+statement ok
+DROP FUNCTION sqlfb_none;
+
+statement ok
+DROP FUNCTION sqlfb_union;
+
+statement ok
+DROP FUNCTION sqlfb_star;
+
+statement ok
+DROP FUNCTION sqlfb_set;
+
+statement ok
+DROP FUNCTION sqlfb_rand;

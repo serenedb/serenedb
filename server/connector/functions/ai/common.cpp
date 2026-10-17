@@ -30,6 +30,7 @@
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -402,7 +403,7 @@ struct FetchState {
       work{work},
       out{out},
       scheduler{duckdb::TaskScheduler::GetScheduler(exec.context)},
-      token{scheduler.CreateProducer()} {}
+      token{scheduler.CreateProducer(exec.context.GetSchedulerAccount())} {}
 
   bool Stop() const {
     return stop.load(std::memory_order_relaxed) || exec.context.IsInterrupted();
@@ -464,6 +465,7 @@ struct FetchState {
       if (helpers == 0) {
         return;
       }
+      duckdb::TaskScheduler::BlockingScope blocking;
       mutex.AwaitWithTimeout(absl::Condition(
                                +[](size_t* n) { return *n == 0; }, &helpers),
                              absl::Milliseconds(5));
@@ -761,13 +763,19 @@ Inputs CollectInputs(duckdb::Vector& input, duckdb::idx_t count, bool dedup,
 void SetOutputs(duckdb::Vector& result, const Inputs& inputs,
                 std::span<const duckdb::Value> outputs) {
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  const duckdb::Value null{result.GetType()};
-  for (size_t i = 0; i != inputs.slots.size(); ++i) {
-    const auto slot = inputs.slots[i];
-    result.SetValue(i, slot == Inputs::kNone || outputs[slot].IsNull()
-                         ? null
-                         : outputs[slot]);
+  duckdb::Vector distinct{result.GetType(), outputs.size() + 1};
+  for (const auto& output : outputs) {
+    distinct.Append(output, duckdb::VectorAppendMode::ALLOW_RESIZE);
   }
+  distinct.Append(duckdb::Value{result.GetType()},
+                  duckdb::VectorAppendMode::ALLOW_RESIZE);
+  const auto count = inputs.slots.size();
+  duckdb::SelectionVector sel{count};
+  for (size_t i = 0; i != count; ++i) {
+    const auto slot = inputs.slots[i];
+    sel.set_index(i, slot == Inputs::kNone ? outputs.size() : slot);
+  }
+  duckdb::VectorOperations::Copy(distinct, result, sel, count, 0, 0);
 }
 
 void Limiter::Reset(size_t permits) {

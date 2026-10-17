@@ -28,6 +28,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <ranges>
 #include <shared_mutex>
 #include <type_traits>
@@ -1243,7 +1244,10 @@ void IndexWriter::Clear(const SourcePosition& position) {
   auto ctx = SwitchFlushContext();
   // Ensure there are no active struct update operations
   ctx->pending.Done();
-  ctx->pending.Wait();
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    ctx->pending.Wait();
+  }
   ctx->pending.Reset(1);
   // TODO(mbkkt) Move some pending to the next flush ctx?
   //  It's not super trivial for spliting segments
@@ -1942,7 +1946,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
-  ctx->pending.Wait();
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    ctx->pending.Wait();
+  }
   ctx->pending.Reset(1);
   ctx->FlushPending();
 

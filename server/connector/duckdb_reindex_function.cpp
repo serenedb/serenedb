@@ -332,14 +332,16 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
     if (!chunk || chunk->size() == 0) {
       break;
     }
+    auto files = chunk->data[0].Values<uint64_t>();
+    auto row_numbers = chunk->data[1].Values<int64_t>();
     for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
-      const auto file = chunk->GetValue(0, row);
-      const auto row_number = chunk->GetValue(1, row);
-      if (file.IsNull() || row_number.IsNull()) {
+      const auto file = files[row];
+      const auto row_number = row_numbers[row];
+      if (!file.IsValid() || !row_number.IsValid()) {
         continue;
       }
-      auto pk = primary_key::PkFilePrefix(file.GetValue<uint64_t>());
-      primary_key::AppendSigned(pk, row_number.GetValue<int64_t>());
+      auto pk = primary_key::PkFilePrefix(file.GetValue());
+      primary_key::AppendSigned(pk, row_number.GetValue());
       pks.emplace_back(std::move(pk));
     }
   }

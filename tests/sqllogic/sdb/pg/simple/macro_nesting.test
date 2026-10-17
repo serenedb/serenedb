@@ -1,0 +1,151 @@
+hash-threshold 100
+
+statement ok
+CREATE MACRO mn_dbl(x) AS x + x
+
+statement ok
+CREATE MACRO mn_half(x) AS (x + x) // 2
+
+statement ok
+CREATE MACRO mn_abs(x) AS CASE WHEN x > 0 THEN x ELSE -x END
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(i)))))))))))))))))))))))) AS r FROM range(2) t(i) ORDER BY 1
+----
+r
+0
+16777216
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(1)))))))))))))))))))))))) AS r
+----
+r
+16777216
+
+query
+SELECT mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(i)))))))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+1
+2
+
+query
+SELECT mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(mn_abs(i - 1)))))))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+1
+1
+
+statement ok
+PREPARE mn_prepared AS SELECT mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(mn_half(i)))))))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+
+query
+EXECUTE mn_prepared
+----
+r
+0
+1
+2
+
+statement ok
+DEALLOCATE mn_prepared
+
+query
+SELECT a30 AS r FROM (SELECT 1 AS a0, a0 + a0 AS a1, a1 + a1 AS a2, a2 + a2 AS a3, a3 + a3 AS a4, a4 + a4 AS a5, a5 + a5 AS a6, a6 + a6 AS a7, a7 + a7 AS a8, a8 + a8 AS a9, a9 + a9 AS a10, a10 + a10 AS a11, a11 + a11 AS a12, a12 + a12 AS a13, a13 + a13 AS a14, a14 + a14 AS a15, a15 + a15 AS a16, a16 + a16 AS a17, a17 + a17 AS a18, a18 + a18 AS a19, a19 + a19 AS a20, a20 + a20 AS a21, a21 + a21 AS a22, a22 + a22 AS a23, a23 + a23 AS a24, a24 + a24 AS a25, a25 + a25 AS a26, a26 + a26 AS a27, a27 + a27 AS a28, a28 + a28 AS a29, a29 + a29 AS a30)
+----
+r
+1073741824
+
+query
+SELECT list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform(list_transform([1, 2], lambda x0: x0 + 1), lambda x1: x1 + 1), lambda x2: x2 + 1), lambda x3: x3 + 1), lambda x4: x4 + 1), lambda x5: x5 + 1), lambda x6: x6 + 1), lambda x7: x7 + 1), lambda x8: x8 + 1), lambda x9: x9 + 1), lambda x10: x10 + 1), lambda x11: x11 + 1), lambda x12: x12 + 1), lambda x13: x13 + 1), lambda x14: x14 + 1), lambda x15: x15 + 1) AS r
+----
+r
+{17,18}
+
+query
+SELECT list_reduce([1, 2], lambda a16, b16: a16 + list_reduce([1, 2], lambda a15, b15: a15 + list_reduce([1, 2], lambda a14, b14: a14 + list_reduce([1, 2], lambda a13, b13: a13 + list_reduce([1, 2], lambda a12, b12: a12 + list_reduce([1, 2], lambda a11, b11: a11 + list_reduce([1, 2], lambda a10, b10: a10 + list_reduce([1, 2], lambda a9, b9: a9 + list_reduce([1, 2], lambda a8, b8: a8 + list_reduce([1, 2], lambda a7, b7: a7 + list_reduce([1, 2], lambda a6, b6: a6 + list_reduce([1, 2], lambda a5, b5: a5 + list_reduce([1, 2], lambda a4, b4: a4 + list_reduce([1, 2], lambda a3, b3: a3 + list_reduce([1, 2], lambda a2, b2: a2 + list_reduce([1, 2], lambda a1, b1: a1 + b1)))))))))))))))) AS r
+----
+r
+18
+
+query
+SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((i + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) AS r, ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((i + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1) + 1 AS s FROM range(2) t(i) ORDER BY 1
+----
+r	s
+400	401
+401	402
+
+query
+SELECT sum(range) AS s, count(*) AS c FROM range(50000000)
+----
+s	c
+1249999975000000	50000000
+
+query
+SELECT string_agg(range::VARCHAR, ',' ORDER BY range) = (SELECT string_agg(g::VARCHAR, ',' ORDER BY g) FROM generate_series(0, 9999) t(g)) AS r FROM range(10000)
+----
+r
+t
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl((SELECT max(i) FROM range(3) s(i)))))))))))))))))))))))))) AS r
+----
+r
+33554432
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl((SELECT count(*) FROM range(5) s(j) WHERE j < t.i))))))))))))))))))))))))) AS r FROM range(3) t(i) ORDER BY 1
+----
+r
+0
+16777216
+33554432
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(sum(i))))))))))))))))))))))))) AS r FROM range(3) t(i)
+----
+r
+50331648
+
+query
+SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(row_number() OVER (ORDER BY i))))))))))))))))))))))))) AS r FROM range(2) t(i) ORDER BY 1
+----
+r
+16777216
+33554432
+
+statement ok
+PREPARE mn_param AS SELECT mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl(mn_dbl($1::int + 1)))))))))))))))))))))))) AS r
+
+query
+EXECUTE mn_param(1)
+----
+r
+33554432
+
+statement ok
+DEALLOCATE mn_param
+
+statement ok
+DROP MACRO mn_dbl
+
+statement ok
+DROP MACRO mn_half
+
+statement ok
+DROP MACRO mn_abs
+
+statement ok
+CREATE MACRO mn_row(m) AS m.turn % m.n = m.monkey AND m.turn > m.monkey
+
+query
+SELECT mn_row(t) AS r FROM (VALUES (5, 2, 1), (4, 2, 1)) t(turn, n, monkey) ORDER BY turn
+----
+r
+f
+t
+
+statement ok
+DROP MACRO mn_row

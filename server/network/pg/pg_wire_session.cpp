@@ -435,6 +435,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   const bool superuser = login.superuser;
 
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
+  _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
@@ -689,6 +690,9 @@ bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire) {
       auto chain = wire.PopChain();
       if (!chain) {
         break;
+      }
+      if (std::exchange(wire.copy_binary_header, false)) {
+        WriteCopyBinaryHeader(this->_send, *chain);
       }
       this->_send.SpliceCommitted(std::move(*chain), false);
     }
@@ -1470,12 +1474,6 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
 template<SocketKind Kind>
 yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
   duckdb::QueryResult& pending, WireSinkContext* wire, bool own_waiter) {
-  // Productive slices run back-to-back: a per-slice scheduler round-trip
-  // costs an enqueue + futex wake per query, and the common short query
-  // finishes on its second slice. The budget bounds worker hogging by long
-  // CPU-bound queries.
-  static constexpr int kInlineSliceBudget = 8;
-  int inline_slices = 0;
   // Wire drives splice/unblock on every wake; direct-mode backpressure unblocks
   // ride writer progress, so their parks must receive FlushDone wakes. When the
   // caller owns the waiter (DriveToResult, spanning the following
@@ -1509,15 +1507,12 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
       co_return status;
     }
     if (status == duckdb::QueryResultState::NOT_READY) {
-      if (++inline_slices < kInlineSliceBudget) {
-        continue;
+      if (duckdb::TaskScheduler::ShouldYield()) {
+        co_await this->_task->Yield();
       }
-      inline_slices = 0;
-      co_await this->_task->Yield();
     } else {
       // NO_TASKS / BLOCKED: the pool is executing the query (or it is
       // blocked); the executor's on_reschedule wake re-runs us.
-      inline_slices = 0;
       co_await this->_task->Park();
     }
   }
@@ -1643,11 +1638,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
 // COPY ... TO STDOUT (FORMAT binary|text): runs the COPY's inner query through
 // the SAME wire collector SELECT uses (parallel + zero-copy + SELECT ordering),
 // but with the collector framing rows as PGCOPY/PG-text CopyData instead of
-// DataRow. The session brackets the stream: CopyOutResponse (+ the PGCOPY
-// header for binary) before PendingQuery (arming hands the _send producer role
-// to the direct-mode sink, and workers may run it inside PendingQuery -- so the
-// header must already be committed), the trailer (binary only) + CopyDone + the
-// COPY-N tag after the drive.
+// DataRow. The session brackets the stream: CopyOutResponse before PendingQuery
+// (arming hands the _send producer role to the direct-mode sink, and workers
+// may run it inside PendingQuery -- so it must already be committed), the
+// trailer (binary only) + CopyDone + the COPY-N tag after the drive.
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
@@ -1664,13 +1658,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // staging in PendingQueryEnsured never sees this statement.
   StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
 
-  // CopyOutResponse, plus (binary only) the PGCOPY 19-byte header as a CopyData
-  // frame, both before arming/PendingQuery (see comment above).
+  // CopyOutResponse before arming/PendingQuery (see comment above).
   WriteCopyOutResponse(this->_send, binary,
                        static_cast<int16_t>(prepared->ColumnCount()));
-  if (binary) {
-    WriteCopyBinaryHeader(this->_send);
-  }
 
   static constexpr std::array<sdb::pg::VarFormat, 1> kAllBinary{
     sdb::pg::VarFormat::Binary};
@@ -1680,6 +1670,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     MakeWireContext(binary ? std::span<const sdb::pg::VarFormat>{kAllBinary}
                            : std::span<const sdb::pg::VarFormat>{kAllCopyText});
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
+  wire->copy_binary_header = binary;
   if (!binary) {
     // COPY text fields escape inline through the reused Text serializers
     // (SerializationContext::copy_text); backslash_count = 2 is the COPY
@@ -1710,7 +1701,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // stream, then the COPY N tag (postgres reports COPY, not SELECT, for COPY TO
   // STDOUT).
   if (binary) {
-    WriteCopyBinaryFooter(this->_send);
+    WriteCopyBinaryFooter(this->_send, wire->copy_binary_header);
   }
   WriteCopyDone(this->_send);
   WriteCommandComplete(

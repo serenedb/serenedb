@@ -48,10 +48,6 @@ class SearchEngine final {
       static_cast<uint32_t>(MaxConcurrentCompactions()), 1, 16);
   }
 
-  // Process-wide cap on concurrent compactions, the only hard ceiling on
-  // in-flight merges. Cores-derived (Lucene maxThreadCount): max(1, min(4,
-  // cores/2)). background_threads is auto-floored above this with headroom for
-  // refresh + cleanup + drop bursts (see background_scheduler.cpp).
   static int MaxConcurrentCompactions() noexcept;
 
   SearchEngine();

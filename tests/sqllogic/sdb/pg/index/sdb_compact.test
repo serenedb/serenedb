@@ -419,6 +419,49 @@ flush	NULL	NULL	NULL	100
 merge	sql	merged	200	200
 
 
+statement ok
+DELETE FROM sdbc_src WHERE id <= 20
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_src
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(deleted_docs) AS deleted FROM sdb_segments('sdbc_idx')
+----
+segments	docs	deleted
+1	200	20
+
+
+query
+SELECT merge, outcome FROM sdb_compact('sdbc_idx', mode := 'compact')
+----
+merge	outcome
+
+
+statement ok
+VACUUM (COMPACT_INDEX) sdbc_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(deleted_docs) AS deleted FROM sdb_segments('sdbc_idx')
+----
+segments	docs	deleted
+1	200	20
+
+
+statement ok
+VACUUM (OPTIMIZE_INDEX) sdbc_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(deleted_docs) AS deleted FROM sdb_segments('sdbc_idx')
+----
+segments	docs	deleted
+1	180	0
+
+
 # The planner keeps a group of one segment without deletes as it is, merges a
 # listed segment only when there is something to merge, and leaves a segment
 # out of a background round when the adjacent policy picks nothing.

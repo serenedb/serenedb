@@ -37,7 +37,6 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -279,13 +278,6 @@ IndexRound IndexMerges(Action action, search::InvertedIndexStorage& inverted,
   const auto snapshot = inverted.GetInvertedIndexSnapshot();
   const size_t inputs_max = inverted.GetTasksSettings().merge_inputs_max;
   IndexRound round{.segments = snapshot->reader.size()};
-  if (action == Action::Compact && round.segments <= inputs_max) {
-    round.merges.emplace_back(IndexMerge{
-      .policy = irs::index_utils::MakePolicy(
-        irs::index_utils::CompactionCount{inputs_max}),
-    });
-    return round;
-  }
   const search::CopyChecker checker{
     field_options, duckdb::TaskScheduler::GetScheduler(context)};
   const auto plan = search::PlanMergeRound(

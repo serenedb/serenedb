@@ -1011,11 +1011,14 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_compact_target_segments",
       {
         LogicalTypeId::UINTEGER,
-        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
-        "1 (default) merges every segment into one; a larger N splits the "
-        "segments into N disjoint groups, merges each group into one segment "
-        "and stops there, so no single merge holds the whole table. A table "
-        "with N segments or fewer is left as it is. Default 1.",
+        "How many segments VACUUM (COMPACT_*) and sdb_compact(mode := "
+        "'compact') leave in a search table. 0 or 1 (default) merges every "
+        "segment into one; a larger N splits the segments, in the order their "
+        "rows were written, into N runs of about as many live rows each and "
+        "merges each run into one segment, so no single merge holds the whole "
+        "table. A segment left alone in its run is kept as it is unless it has "
+        "deleted rows. A table with N segments or fewer is left as it is. "
+        "Default 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

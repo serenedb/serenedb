@@ -475,25 +475,49 @@ db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
 statement error
 VACUUM (REFRESH_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|OPTIMIZE_DATABASE) expects a single database name
+db error: ERROR: VACUUM (refresh_database) expects a single database name
 
 
 statement error
 VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|OPTIMIZE_DATABASE) expects a single database name
+db error: ERROR: VACUUM (compact_database) expects a single database name
+
+
+statement error
+VACUUM (CLEANUP_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (cleanup_database) expects a single database name
+
+
+statement error
+VACUUM (RECOMPUTE_STATS_DATABASE) ${__DATABASE__}.public;
+----
+db error: ERROR: VACUUM (recompute_stats_database) expects a single database name
 
 
 statement error
 VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (refresh_schema) expects [<database>.]<schema>
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (compact_schema) expects [<database>.]<schema>
+
+
+statement error
+VACUUM (CLEANUP_SCHEMA) ${__DATABASE__}.public.docs;
+----
+db error: ERROR: VACUUM (cleanup_schema) expects [<database>.]<schema>
+
+
+statement error
+VACUUM (RECOMPUTE_STATS_SCHEMA) ${__DATABASE__}.public.docs;
+----
+db error: ERROR: VACUUM (recompute_stats_schema) expects [<database>.]<schema>
 
 
 # Catalog lookup failures, one per scope.

@@ -184,10 +184,9 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|"
-                                "OPTIMIZE_DATABASE) expects a single database "
-                                "name"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("VACUUM (", bind.option, ") expects a single database name"));
       }
       out.database = bind.name;
     } break;
@@ -195,8 +194,7 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       if (!bind.catalog.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) "
-                  "expects [<database>.]<schema>"));
+          ERR_MSG("VACUUM (", bind.option, ") expects [<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;

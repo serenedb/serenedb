@@ -196,10 +196,10 @@ search::MergeScheduler::Lease MergeTarget::TakeOver() const {
 void MergeTarget::Publish() const {
   if (_table) {
     _table->Publish();
-    _table->CleanupUnsafe();
-    return;
+  } else {
+    search::ThrowIfRefreshFailed(_index->Refresh(), _name);
   }
-  search::ThrowIfRefreshFailed(_index->Refresh(), _name);
+  Cleanup();
 }
 
 bool MergeTarget::Sorted() const noexcept {

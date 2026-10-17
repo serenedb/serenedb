@@ -30,6 +30,7 @@
 #include <duckdb/main/query_profiler.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <string>
 #include <utility>
 #include <vector>
@@ -217,6 +218,9 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     if (executed.stats.inputs.empty()) {
       executed.stats.inputs = std::move(names);
     }
+    if (search::Produced(executed.outcome)) {
+      _job->target.Publish();
+    }
     ++state.next;
     AppendRow(chunk, state.next, executed);
     if (profiled) {
@@ -225,11 +229,9 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     }
     state.executed.emplace_back(std::move(executed));
     if (state.next < merges.size()) {
+      SDB_PARK_ONCE_ON_FAILURE("pause_segment_rewrite_between_merges");
       return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
     }
-  }
-  if (!state.executed.empty()) {
-    _job->target.Publish();
   }
   auto& profiler = context.thread.profiler;
   if (profiler.IsEnabled()) {

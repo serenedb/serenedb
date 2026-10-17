@@ -85,6 +85,20 @@ segments	docs
 
 
 query
+SELECT files > 0 AS removed, bytes > 0 AS freed FROM sdb_cleanup('src_idx')
+----
+removed	freed
+t	t
+
+
+query
+SELECT files, bytes FROM sdb_cleanup('src_idx')
+----
+files	bytes
+0	0
+
+
+query
 SELECT count(*) AS segments FROM sdb_segments('src_idx')
 ----
 segments
@@ -96,13 +110,6 @@ SELECT outcome FROM sdb_compact('src_idx', mode := 'compact')
 ----
 outcome
 merged
-
-
-query
-SELECT files > 0 AS removed, bytes > 0 AS freed FROM sdb_cleanup('src_idx')
-----
-removed	freed
-t	t
 
 
 query

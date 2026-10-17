@@ -1,0 +1,100 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE cpm (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO cpm SELECT i, 'fox' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpm;
+
+
+statement ok
+INSERT INTO cpm SELECT i, 'fox' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpm;
+
+
+statement ok
+INSERT INTO cpm SELECT i, 'fox' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpm;
+
+
+statement ok
+INSERT INTO cpm SELECT i, 'fox' FROM generate_series(301, 400) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpm;
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('cpm');
+----
+segments
+4
+
+
+statement ok
+SET sdb_faults = 'pause_segment_rewrite_between_merges';
+
+
+connection compactor
+statement async ok
+SELECT * FROM sdb_compact('cpm', mode := 'compact', target_segments := 2);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_segment_rewrite_between_merges:parked';
+
+
+connection default
+query
+SELECT count(*) AS segments FROM sdb_segments('cpm');
+----
+segments
+3
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_segment_rewrite_between_merges:release';
+
+
+wait
+
+
+connection default
+query
+SELECT count(*) AS segments FROM sdb_segments('cpm');
+----
+segments
+2
+
+
+connection default
+query
+SELECT count(*) AS n FROM cpm;
+----
+n
+400
+
+
+connection default
+statement ok
+DROP TABLE cpm;

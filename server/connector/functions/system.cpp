@@ -1953,6 +1953,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::VARCHAR,
       SetConfigFunction};
     func.SetStability(duckdb::FunctionStability::VOLATILE);
+    func.SetRequiresOrderedExecution(true);
     loader.RegisterFunction(func);
   }
 

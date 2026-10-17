@@ -49,7 +49,9 @@ LogicalMergeUnits::LogicalMergeUnits(
       [run = _run, left] {
         if (left->fetch_sub(1) == 1) {
           run->ReleasePostings(run->plan.FinishPostings());
+          return;
         }
+        run->Wake();
       }));
   }
 }

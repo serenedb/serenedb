@@ -52,6 +52,7 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -1347,35 +1348,21 @@ struct FetchCache final : duckdb::SegmentScanState {
   PackedReader lcps{nullptr, 0};
   idx_t run = 0;
   uint64_t walked = 0;
-  std::string fsst_heap;
-  std::vector<uint32_t> fsst_ends;
+  uint64_t decoded_total = 0;
   std::vector<EntryAt> order;
   duckdb::shared_ptr<DecodedDictionary> decoded_dictionary;
 
-  void DecodeAllFsst(const Header& h, const_data_ptr_t base) {
-    const auto* frames = base + h.off_frames;
-    const auto* in = reinterpret_cast<const char*>(base + h.off_data);
-    fsst_ends.assign(h.entry_count + 1, 0);
-    fsst_heap.clear();
-    fsst_heap.reserve(h.raw_bytes);
-    for (uint32_t i = 0; i < h.frame_count; ++i) {
-      const auto f = FrameMeta::Load(frames + i * kFrameMetaSize);
-      const auto end =
-        i + 1 < h.frame_count
-          ? FrameMeta::Load(frames + (i + 1) * kFrameMetaSize).first_entry
-          : h.entry_count;
-      SDB_ENSURE(f.first_entry < end && end <= h.entry_count,
-                 "col codec: corrupted frame table");
-      const auto before = fsst_heap.size();
-      WalkInPlace(*fsst, in, lengths, lcps, f.first_entry, end, f.comp_off,
-                  static_cast<uint64_t>(f.comp_off) + f.comp_len, chain,
-                  [&](uint32_t e, std::string_view v) {
-                    fsst_heap.append(v);
-                    fsst_ends[e + 1] = static_cast<uint32_t>(fsst_heap.size());
-                    return true;
-                  });
-      SDB_ENSURE(fsst_heap.size() - before == f.raw_len,
-                 "col codec: corrupted frame");
+  bool Whole() const noexcept {
+    return walked >= header.entry_count ||
+           (header.shape == static_cast<uint8_t>(Shape::Dedup) &&
+            decoded_total >= header.raw_bytes);
+  }
+
+  void PrefetchCode(const_data_ptr_t base, uint64_t row) const noexcept {
+    if (header.shape == static_cast<uint8_t>(Shape::Dedup) &&
+        header.codes_encoding == static_cast<uint8_t>(CodesEncoding::Bitpack) &&
+        row < header.row_count) {
+      __builtin_prefetch(base + header.off_codes + row * header.code_width / 8);
     }
   }
 
@@ -1420,6 +1407,7 @@ struct FetchCache final : duckdb::SegmentScanState {
                  "col codec: corrupted frame");
       dictionary_size = f0.raw_len;
       dictionary_ready = true;
+      decoded_total += f0.raw_len;
     }
     if (with_dictionary && dictionary_capacity < dictionary_size + f.raw_len) {
       dictionary_capacity = dictionary_size + f.raw_len;
@@ -1449,6 +1437,7 @@ struct FetchCache final : duckdb::SegmentScanState {
         : d.DecompressPrefix(src, f.comp_len, frame_data, want, f.raw_len);
     SDB_ENSURE(got >= want, "col codec: corrupted frame");
     decoded = std::min<size_t>(got, f.raw_len);
+    decoded_total += decoded;
   }
 };
 
@@ -1472,8 +1461,7 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
     cache.lcps = PackedReader{base + h.off_lcps, h.lcp_width};
     cache.run = 0;
     cache.walked = 0;
-    cache.fsst_heap.clear();
-    cache.fsst_ends.clear();
+    cache.decoded_total = 0;
     cache.decoded_dictionary.reset();
     if (const auto& slot = CacheSlotOf(segment);
         h.shape == static_cast<uint8_t>(Shape::Dedup) && !slot.key.empty()) {
@@ -1484,7 +1472,11 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
   return cache;
 }
 
-std::optional<uint32_t> EntryOf(FetchCache& cache, data_ptr_t base, idx_t row) {
+constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
+constexpr idx_t kFetchAhead = 16;
+
+std::optional<uint32_t> EntryOf(FetchCache& cache, data_ptr_t base, idx_t row,
+                                uint64_t previous, uint64_t next) {
   const auto& h = cache.header;
   SDB_ENSURE(row < h.row_count, "col codec: row out of range");
   uint32_t entry = static_cast<uint32_t>(row);
@@ -1493,8 +1485,14 @@ std::optional<uint32_t> EntryOf(FetchCache& cache, data_ptr_t base, idx_t row) {
       if (!cache.code_frames) {
         cache.code_frames.emplace(base + h.off_codes, CodesHeader(base, h));
       }
-      cache.code_frames->Seek(row);
-      entry = cache.code_frames->At(row);
+      auto& codes = *cache.code_frames;
+      if (codes.ReadsAlone() && !codes.Holds(row) &&
+          !codes.Near(row, previous) && !codes.Near(row, next)) {
+        entry = codes.ReadAlone(row);
+      } else {
+        codes.Seek(row);
+        entry = codes.At(row);
+      }
     } else if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
       auto& ends = cache.ends;
       idx_t lo = cache.run;
@@ -1523,6 +1521,7 @@ std::optional<uint32_t> EntryOf(FetchCache& cache, data_ptr_t base, idx_t row) {
     if (entry == 0) {
       return std::nullopt;
     }
+    SDB_ENSURE(entry < h.entry_count, "col codec: corrupted row codes");
   }
   return entry;
 }
@@ -1531,24 +1530,9 @@ void EmitEntry(duckdb::ColumnSegment& segment, FetchCache& cache,
                data_ptr_t base, uint32_t entry, duckdb::Vector& result,
                idx_t result_idx, bool batched) {
   const auto& h = cache.header;
-  SDB_ENSURE(entry < h.entry_count && h.frame_count != 0,
-             "col codec: corrupted row codes");
+  SDB_ENSURE(h.frame_count != 0, "col codec: corrupted row codes");
 
   auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
-  if (cache.decoded_dictionary) {
-    out[result_idx] = duckdb::StringVector::AddStringOrBlob(
-      result, duckdb::FlatVector::GetData<string_t>(
-                cache.decoded_dictionary->Dictionary()->data)[entry]);
-    return;
-  }
-  if (!cache.fsst_ends.empty()) {
-    const auto begin = cache.fsst_ends[entry];
-    out[result_idx] = duckdb::StringVector::AddStringOrBlob(
-      result, cache.fsst_heap.data() + begin,
-      cache.fsst_ends[entry + 1] - begin);
-    return;
-  }
-
   const auto* frames = base + h.off_frames;
   uint32_t lo = 0;
   uint32_t hi = h.frame_count;
@@ -1619,9 +1603,6 @@ void EmitEntry(duckdb::ColumnSegment& segment, FetchCache& cache,
     out[result_idx] =
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
     cache.walked += entry + 1 - restart;
-    if (cache.walked >= h.entry_count) {
-      cache.DecodeAllFsst(h, base);
-    }
     return;
   }
 
@@ -1686,6 +1667,61 @@ void EmitEntry(duckdb::ColumnSegment& segment, FetchCache& cache,
     result, cache.frame_data + offset, len);
 }
 
+uint64_t TouchedBytes(const Header& h, const_data_ptr_t base,
+                      std::span<const EntryAt> order) {
+  const auto* frames = base + h.off_frames;
+  const auto meta = [&](uint32_t f) {
+    return FrameMeta::Load(frames + f * kFrameMetaSize);
+  };
+  uint64_t bytes = 0;
+  uint32_t counted = h.frame_count;
+  for (const auto& [entry, at] : order) {
+    if (h.frame_count == 0 ||
+        (counted != h.frame_count && meta(counted).first_entry <= entry)) {
+      continue;
+    }
+    uint32_t lo = 0;
+    uint32_t hi = counted;
+    while (hi - lo > 1) {
+      const auto mid = lo + (hi - lo) / 2;
+      if (meta(mid).first_entry <= entry) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    bytes += meta(lo).raw_len;
+    counted = lo;
+  }
+  return bytes;
+}
+
+duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
+  duckdb::ColumnSegment& segment) {
+  auto& buffer_manager =
+    duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
+  ScanState scan{segment, buffer_manager.Pin(segment.GetBlockHandle())};
+  scan.EnsureDictionary();
+  return duckdb::make_shared_ptr<DecodedDictionary>(scan.dictionary,
+                                                    scan.CacheBytes());
+}
+
+void EmitDecoded(const DecodedDictionary& decoded,
+                 std::span<const EntryAt> order, duckdb::Vector& result) {
+  const auto& dictionary = decoded.Dictionary()->data;
+  duckdb::StringVector::AddAuxiliaryData(
+    result, duckdb::ImmutableStrings::Reference(
+              dictionary.GetBufferRef()->GetAuxiliaryData()));
+  const auto* values = duckdb::FlatVector::GetData<string_t>(dictionary);
+  auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  for (size_t i = 0; i < order.size(); ++i) {
+    if (i + kFetchAhead < order.size()) {
+      __builtin_prefetch(values + order[i + kFetchAhead].entry);
+    }
+    out[order[i].at] = values[order[i].entry];
+  }
+}
+
 void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
@@ -1695,22 +1731,47 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   auto& order = cache.order;
   order.clear();
   for (idx_t i = 0; i < count; ++i) {
+    if (i + kFetchAhead < count) {
+      cache.PrefetchCode(base, rows[i + kFetchAhead]);
+    }
     const auto at = result_offset + result_sel.get_index(i);
-    if (const auto entry = EntryOf(cache, base, rows[i])) {
+    const uint64_t previous = i == 0 ? kNoRow : rows[i - 1];
+    const uint64_t next = i + 1 == count ? kNoRow : rows[i + 1];
+    if (const auto entry = EntryOf(cache, base, rows[i], previous, next)) {
       order.push_back({.entry = *entry, .at = at});
     } else {
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
     }
   }
-  const bool batched = order.size() > 1 && !cache.decoded_dictionary;
+  if (!cache.decoded_dictionary && cache.Whole()) {
+    cache.decoded_dictionary = DecodeWhole(segment);
+  }
+  if (cache.decoded_dictionary) {
+    EmitDecoded(*cache.decoded_dictionary, order, result);
+    return;
+  }
+  const bool batched = order.size() > 1;
   if (batched && cache.header.shape == static_cast<uint8_t>(Shape::Dedup)) {
     absl::c_sort(
       order, [](const auto& l, const auto& r) { return l.entry > r.entry; });
+    if (2 * (cache.decoded_total + TouchedBytes(cache.header, base, order)) >=
+        cache.header.raw_bytes) {
+      cache.decoded_dictionary = DecodeWhole(segment);
+      EmitDecoded(*cache.decoded_dictionary, order, result);
+      return;
+    }
   } else if (batched) {
     absl::c_reverse(order);
   }
-  for (const auto& [entry, at] : order) {
-    EmitEntry(segment, cache, base, entry, result, at, batched);
+  for (size_t i = 0; i < order.size(); ++i) {
+    EmitEntry(segment, cache, base, order[i].entry, result, order[i].at,
+              batched);
+    if (cache.Whole()) {
+      cache.decoded_dictionary = DecodeWhole(segment);
+      EmitDecoded(*cache.decoded_dictionary,
+                  std::span<const EntryAt>{order}.subspan(i + 1), result);
+      return;
+    }
   }
 }
 

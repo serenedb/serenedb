@@ -173,7 +173,72 @@ class FrameDecoder {
     return Scaled(_run_values[r]);
   }
 
+  bool Holds(uint64_t row) const noexcept {
+    return row >= _begin && row < _end;
+  }
+
+  bool ReadsAlone() const noexcept {
+    return Blocked() || ((_h.transform == NumericTransform::For ||
+                          _h.transform == NumericTransform::Dict) &&
+                         _h.leaf == NumericLeaf::None && !_h.Shuffled());
+  }
+
+  bool Near(uint64_t row, uint64_t other) const noexcept {
+    const uint64_t unit = Blocked() ? numeric::kBlockValues : _per_frame;
+    return row / unit == other / unit &&
+           (row > other ? row - other : other - row) <= unit / kNearShare;
+  }
+
+  T ReadAlone(uint64_t row) {
+    if (Blocked()) {
+      if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
+          f != _ffor_frame) {
+        OpenFfor(f);
+      }
+      const auto in_frame = row % kFforFrameRows;
+      const auto block = in_frame / numeric::kBlockValues;
+      const auto* meta = _ffor_src + block * kFforBlockMetaBytes;
+      const auto* packed = _ffor_src + _ffor_offsets[block];
+      const unsigned bits = meta[sizeof(uint64_t)];
+      const auto index =
+        static_cast<uint32_t>(in_frame % numeric::kBlockValues);
+      const auto base = duckdb::Load<uint64_t>(meta);
+      if (_h.transform == NumericTransform::DictFfor) {
+        return Entry(numeric::UnpackValue<uint32_t>(
+          packed, bits, index, static_cast<uint32_t>(base)));
+      }
+      return Scaled(
+        numeric::UnpackValue<U>(packed, bits, index, static_cast<U>(base)));
+    }
+    const auto m = Meta(FrameOf(row));
+    const auto* src = Data(m) + (row - m.frame.first_entry) * _h.stored;
+    if (_h.transform == NumericTransform::Dict) {
+      uint32_t code;
+      numeric::Widen(src, 1, _h.stored, &code);
+      return Entry(code);
+    }
+    U v;
+    numeric::Widen(src, 1, _h.stored, &v);
+    return Scaled(static_cast<U>(v + static_cast<U>(_h.base)));
+  }
+
+  void Prefetch(uint64_t row) const noexcept {
+    if (Blocked() || row >= _h.row_count) {
+      return;
+    }
+    const auto m = MetaAt(FrameOf(row));
+    __builtin_prefetch(Data(m) + (row - m.frame.first_entry) * _h.stored);
+  }
+
  private:
+  static constexpr uint64_t kNearShare = 32;
+
+  T Entry(uint32_t code) const {
+    SDB_ENSURE(code < _h.dict_count, "numeric codec: corrupted codes");
+    return Scaled(
+      duckdb::Load<U>(_base + _h.off_dict + size_t{code} * sizeof(U)));
+  }
+
   bool Blocked() const noexcept {
     return _h.transform == NumericTransform::Ffor ||
            _h.transform == NumericTransform::DictFfor;

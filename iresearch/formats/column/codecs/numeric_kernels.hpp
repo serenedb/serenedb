@@ -344,6 +344,31 @@ void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
 }
 
 template<typename U>
+U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
+              U base) noexcept {
+  using Word = LaneWord<U>;
+  constexpr unsigned kWordBits = 8 * sizeof(Word);
+  if (bits == 0) {
+    return base;
+  }
+  const unsigned bit = index / kLanes<U> * bits;
+  const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +
+                             index % kLanes<U>)*sizeof(Word);
+  const unsigned shift = bit % kWordBits;
+  Word lo;
+  std::memcpy(&lo, at, sizeof(Word));
+  Word v = lo >> shift;
+  if (shift + bits > kWordBits) {
+    Word hi;
+    std::memcpy(&hi, at + kLanes<U> * sizeof(Word), sizeof(Word));
+    v |= hi << (kWordBits - shift);
+  }
+  const Word mask =
+    bits == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << bits) - 1);
+  return static_cast<U>(static_cast<U>(v & mask) + base);
+}
+
+template<typename U>
 using PackFn = void (*)(const U*, LaneWord<U>*) noexcept;
 
 template<typename U>

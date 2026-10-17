@@ -59,9 +59,11 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <random>
 #include <set>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1279,6 +1281,46 @@ TEST_F(ColCodecsTest, CachedDictionaryKeepsNoScanContext) {
     EXPECT_NE(cache.Get<irs::codecs::DecodedDictionary>(key), nullptr) << key;
   }
   EXPECT_TRUE(scan_all().expired());
+}
+
+TEST_F(ColCodecsTest, FetchedStringsOutliveTheReader) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    return Pseudo(g % 3001, 40 + g % 23);
+  };
+  constexpr uint32_t kRows = 30000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, kRows,
+        value);
+  std::vector<uint64_t> rows;
+  for (uint64_t g = 0; g < kRows; g += 3) {
+    rows.push_back(g);
+  }
+  std::vector<std::unique_ptr<duckdb::Vector>> outs;
+  {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    irs::ColumnReader::PointReader cursor{r, *col};
+    for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
+      outs.push_back(std::make_unique<duckdb::Vector>(
+        duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE));
+      cursor.FetchRows(std::span<const uint64_t>{&rows[i], take}, *outs.back(),
+                       0);
+    }
+    for (size_t b = 0; b < col->DataBlocks().size(); ++b) {
+      Db().GetObjectCache().Delete(col->DictionaryCacheKey(b));
+    }
+  }
+  for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
+    const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
+    for (size_t k = 0; k < take; ++k) {
+      ExpectRow(*outs[i / STANDARD_VECTOR_SIZE], k, rows[i + k], value);
+    }
+  }
 }
 
 TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {

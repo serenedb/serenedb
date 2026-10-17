@@ -49,6 +49,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -305,6 +306,25 @@ class ColNumericCodecTest : public TestBase {
       duckdb::FlatVector::ValidityMutable(out).Reset();
       cursor.FetchRow(rows - 1, out, 0);
       ExpectRow(out, 0, rows - 1, gen, type);
+    }
+    for (const uint64_t stride : {uint64_t{2}, uint64_t{41}, uint64_t{5003}}) {
+      irs::ColumnReader::PointReader cursor{r, *col};
+      std::vector<uint64_t> picked;
+      for (uint64_t g = stride / 2; g < rows; g += stride) {
+        picked.push_back(g);
+        if (g % 7 == 0 && g + 1 < rows) {
+          picked.push_back(g + 1);
+        }
+      }
+      for (size_t i = 0; i < picked.size(); i += STANDARD_VECTOR_SIZE) {
+        const auto take =
+          std::min<size_t>(picked.size() - i, STANDARD_VECTOR_SIZE);
+        duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+        cursor.FetchRows(std::span<const uint64_t>{&picked[i], take}, out, 0);
+        for (size_t k = 0; k < take; ++k) {
+          ExpectRow(out, k, picked[i + k], gen, type);
+        }
+      }
     }
     std::optional<duckdb::Value> lo;
     std::optional<duckdb::Value> hi;

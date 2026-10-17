@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_set.h>
 #include <benchmark/benchmark.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -56,6 +58,8 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
+#include <random>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -144,6 +148,18 @@ const Column& Data() {
 const std::vector<uint64_t>& ScatteredRows() {
   static const std::vector<uint64_t> rows = [] {
     std::vector<uint64_t> out;
+    if (const char* e = std::getenv("SDB_BENCH_RANDOM_ROWS")) {
+      const auto n =
+        std::min<uint64_t>(std::strtoull(e, nullptr, 10), Data().rows);
+      std::mt19937_64 rng{42};
+      absl::flat_hash_set<uint64_t> picked;
+      while (picked.size() < n) {
+        picked.insert(rng() % Data().rows);
+      }
+      out.assign(picked.begin(), picked.end());
+      absl::c_sort(out);
+      return out;
+    }
     uint64_t stride = 37;
     if (const char* e = std::getenv("SDB_BENCH_STRIDE")) {
       stride = std::max<uint64_t>(1, std::strtoull(e, nullptr, 10));
@@ -438,6 +454,24 @@ void Verify(const ColArm& arm, const ColSeg& seg) {
     const auto got = out.GetValue(0);
     if (!duckdb::Value::NotDistinctFrom(got, SourceAt(r))) {
       Mismatch(arm, "point", r, got);
+    }
+  }
+  {
+    const auto& rows = ScatteredRows();
+    irs::ColumnReader::PointReader fetch{*seg.reader, *seg.col};
+    duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(), data.type,
+                              STANDARD_VECTOR_SIZE};
+    duckdb::Vector batch{cache};
+    for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
+      batch.ResetFromCache(cache);
+      fetch.FetchRows(std::span<const uint64_t>{&rows[i], take}, batch, 0);
+      for (size_t k = 0; k < take; ++k) {
+        const auto got = batch.GetValue(k);
+        if (!duckdb::Value::NotDistinctFrom(got, SourceAt(rows[i + k]))) {
+          Mismatch(arm, "fetch", rows[i + k], got);
+        }
+      }
     }
   }
   const auto& stats = seg.col->MergedStatistics();
@@ -781,6 +815,28 @@ void ColPoint(benchmark::State& state, const ColArm* arm) {
   state.counters["lookups"] = static_cast<double>(rows.size());
 }
 
+void ColFetch(benchmark::State& state, const ColArm* arm) {
+  auto& seg = GetColSeg(arm);
+  const auto& rows = ScatteredRows();
+  for (auto _ : state) {
+    state.PauseTiming();
+    Evict(seg);
+    irs::ColumnReader::PointReader cursor{*seg.reader, *seg.col};
+    duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                              Data().type, STANDARD_VECTOR_SIZE};
+    duckdb::Vector out{cache};
+    state.ResumeTiming();
+    for (size_t i = 0; i < rows.size(); i += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<size_t>(rows.size() - i, STANDARD_VECTOR_SIZE);
+      out.ResetFromCache(cache);
+      cursor.FetchRows(std::span<const uint64_t>{&rows[i], take}, out, 0);
+      benchmark::DoNotOptimize(out);
+    }
+  }
+  Counters(state, seg);
+  state.counters["lookups"] = static_cast<double>(rows.size());
+}
+
 struct DuckArm {
   const char* name;
   const char* compression;
@@ -969,6 +1025,8 @@ void RegisterColArm(const std::string& suffix, const ColArm* arm,
   benchmark::RegisterBenchmark(("Gather" + suffix).c_str(), ColGather, arm)
     ->Unit(benchmark::kMillisecond);
   benchmark::RegisterBenchmark(("Point" + suffix).c_str(), ColPoint, arm)
+    ->Unit(benchmark::kMillisecond);
+  benchmark::RegisterBenchmark(("Fetch" + suffix).c_str(), ColFetch, arm)
     ->Unit(benchmark::kMillisecond);
   benchmark::RegisterBenchmark(("FilterEq" + suffix).c_str(), ColFilter, arm,
                                false)

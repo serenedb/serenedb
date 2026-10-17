@@ -36,6 +36,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -203,11 +204,23 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   }
   auto& frames = *cache.frames;
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
+  const bool alone = frames.ReadsAlone();
+  uint64_t previous = std::numeric_limits<uint64_t>::max();
   for (idx_t i = 0; i < count; ++i) {
     const auto row = static_cast<uint64_t>(rows[i]);
     SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    frames.Seek(row);
-    data[result_offset + result_sel.get_index(i)] = frames.At(row);
+    auto& value = data[result_offset + result_sel.get_index(i)];
+    if (alone && !frames.Holds(row) && !frames.Near(row, previous) &&
+        (i + 1 == count || !frames.Near(row, rows[i + 1]))) {
+      if (i + 1 < count) {
+        frames.Prefetch(rows[i + 1]);
+      }
+      value = frames.ReadAlone(row);
+    } else {
+      frames.Seek(row);
+      value = frames.At(row);
+    }
+    previous = row;
   }
 }
 

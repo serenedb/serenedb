@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
@@ -65,6 +66,7 @@ struct Written {
   uint64_t rows = 6 * kRowGroup;
   bool nulls = false;
   bool list = false;
+  bool constant_groups = false;
 };
 
 irs::FunctionFieldOptions AutoOptions(uint32_t row_group = kRowGroup) {
@@ -120,7 +122,9 @@ class ColCopyCheckTest : public ::testing::Test {
         } else {
           s[k] = duckdb::StringVector::AddString(strings, Text(row));
         }
-        n[k] = static_cast<int64_t>(row * row % 1000003);
+        n[k] = spec.constant_groups && row / kRowGroup % 2 == 0
+                 ? 7
+                 : static_cast<int64_t>(row * row % 1000003);
       }
       duckdb::FlatVector::SetSize(strings, take);
       duckdb::FlatVector::SetSize(numbers, take);
@@ -197,6 +201,28 @@ TEST_F(ColCopyCheckTest, ADeclaredCodecTheBlocksDoNotUseIsAChange) {
   const auto number = Estimate(kNumber, options);
   ASSERT_TRUE(number);
   EXPECT_FALSE(number->codec_changed);
+}
+
+TEST_F(ColCopyCheckTest, ConstantRowGroupsDoNotHideADeclaredCodecChange) {
+  Write({.constant_groups = true});
+  const auto& column = Column(kNumber);
+  ASSERT_TRUE(absl::c_any_of(column.DataBlocks(), [](const auto& block) {
+    return block.codec->type == duckdb::CompressionType::COMPRESSION_CONSTANT;
+  }));
+  ASSERT_TRUE(absl::c_none_of(column.DataBlocks(), [](const auto& block) {
+    return block.codec->type == duckdb::CompressionType::COMPRESSION_RLE;
+  }));
+  const irs::FunctionFieldOptions rle_numbers{
+    [](irs::field_id id) {
+      return id == kNumber
+               ? irs::ColumnOptions{.compression =
+                                      duckdb::CompressionType::COMPRESSION_RLE}
+               : irs::ColumnOptions{};
+    },
+    nullptr, kRowGroup};
+  const auto estimate = Estimate(kNumber, rle_numbers);
+  ASSERT_TRUE(estimate);
+  EXPECT_TRUE(estimate->codec_changed);
 }
 
 TEST_F(ColCopyCheckTest, ADeclaredCodecTheBlocksUseIsNoChange) {

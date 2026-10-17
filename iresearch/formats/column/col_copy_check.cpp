@@ -152,12 +152,19 @@ ReencodeEstimate TrialReencode(
   const auto& written = writer.Meta();
   estimate.reencoded_bytes =
     BlockBytes(written.data) + BlockBytes(written.validity);
+  const auto encoded = [](const ColumnBlockMeta& block) {
+    return block.codec->type != duckdb::CompressionType::COMPRESSION_CONSTANT &&
+           block.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
+  };
+  const auto stored = column.DataBlocks();
   estimate.codec_changed =
     column_options.compression != duckdb::CompressionType::COMPRESSION_AUTO &&
-    absl::c_none_of(column.DataBlocks(), [&](const ColumnBlockMeta& stored) {
-      return absl::c_any_of(written.data, [&](const ColumnBlockMeta& trial) {
-        return trial.codec->type == stored.codec->type;
-      });
+    absl::c_any_of(stored, encoded) &&
+    absl::c_none_of(stored, [&](const ColumnBlockMeta& block) {
+      return encoded(block) &&
+             absl::c_any_of(written.data, [&](const ColumnBlockMeta& trial) {
+               return trial.codec->type == block.codec->type;
+             });
     });
   return estimate;
 }

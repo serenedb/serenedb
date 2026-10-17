@@ -311,23 +311,28 @@ void MergeScheduler::Stop() {
   _mutex.Await(absl::Condition(this, &MergeScheduler::NoneRunning));
 }
 
-bool MergeScheduler::TryAcquireHelper() noexcept {
+size_t MergeScheduler::TryAcquireHelpers(size_t wanted) noexcept {
   absl::MutexLock lock{&_mutex};
   if (_stopping || _big >= BigThreads() || _threads >= _options.threads) {
-    return false;
+    return 0;
   }
-  ++_big;
-  ++_threads;
+  const auto granted =
+    std::min({wanted, BigThreads() - _big, _options.threads - _threads});
+  _big += granted;
+  _threads += granted;
   UpdateGauges();
-  return true;
+  return granted;
 }
 
-void MergeScheduler::ReleaseHelper() noexcept {
+void MergeScheduler::ReleaseHelpers(size_t count) noexcept {
+  if (count == 0) {
+    return;
+  }
   {
     absl::MutexLock lock{&_mutex};
-    SDB_ASSERT(_big != 0 && _threads != 0);
-    --_big;
-    --_threads;
+    SDB_ASSERT(_big >= count && _threads >= count);
+    _big -= count;
+    _threads -= count;
     UpdateGauges();
   }
   Pump();

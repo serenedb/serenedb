@@ -238,7 +238,7 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
   Enqueue(*scheduler, relations[0], "small", kMiB);
   EXPECT_TRUE(Started("small"));
   EXPECT_EQ(0, scheduler->FreeThreads());
-  EXPECT_FALSE(scheduler->TryAcquireHelper());
+  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
 
   Complete("big1", MergeOutcome::Merged);
   EXPECT_TRUE(Started("big3"));
@@ -419,17 +419,16 @@ TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
   auto first = Relation(1);
   auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
-  EXPECT_TRUE(scheduler->TryAcquireHelper());
-  EXPECT_TRUE(scheduler->TryAcquireHelper());
-  EXPECT_FALSE(scheduler->TryAcquireHelper());
+  EXPECT_EQ(2, scheduler->TryAcquireHelpers(3));
+  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
   Enqueue(*scheduler, second, "b", 512 * kMiB);
   EXPECT_FALSE(Started("b"));
   Enqueue(*scheduler, second, "small", kMiB);
   EXPECT_TRUE(Started("small"));
 
-  scheduler->ReleaseHelper();
+  scheduler->ReleaseHelpers(1);
   EXPECT_TRUE(Started("b"));
-  scheduler->ReleaseHelper();
+  scheduler->ReleaseHelpers(1);
   CompleteAll(MergeOutcome::Merged);
   EXPECT_EQ(4, scheduler->FreeThreads());
 }
@@ -457,7 +456,7 @@ TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
   EXPECT_TRUE(Destroyed("queued"));
 
   EXPECT_EQ(0, scheduler->Wanted(*relation));
-  EXPECT_FALSE(scheduler->TryAcquireHelper());
+  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
   Enqueue(*scheduler, relation, "late", 512 * kMiB);
   EXPECT_TRUE(Destroyed("late"));
   EXPECT_FALSE(Started("late"));
@@ -486,7 +485,7 @@ TEST_F(MergeSchedulerTest, SmallMergesFillingTheThreadsHoldBackBigOnes) {
   EXPECT_TRUE(Started("small2"));
   Enqueue(*scheduler, second, "big2", 512 * kMiB);
   EXPECT_FALSE(Started("big2"));
-  EXPECT_FALSE(scheduler->TryAcquireHelper());
+  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
 
   Complete("small1", MergeOutcome::Merged);
   EXPECT_TRUE(Started("big2"));

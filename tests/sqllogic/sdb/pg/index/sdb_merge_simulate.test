@@ -157,6 +157,18 @@ events	merges	last
 2447	447	2447
 
 
+query
+SELECT count(*) FILTER (WHERE type = 'merge') AS merges, max(threads) AS threads
+FROM sdb_merge_simulate((
+  SELECT TIMESTAMPTZ '2026-01-01 00:00:00+00' + i * INTERVAL '1 second' AS finished,
+         1000 AS output_docs, 104857600 AS output_bytes
+  FROM generate_series(1, 40) s(i)),
+  threads := 1000000000000)
+----
+merges	threads
+7	500000000001
+
+
 statement ok
 CREATE TABLE sdbms (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0)
 

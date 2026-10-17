@@ -60,11 +60,13 @@ void SearchEngine::RequestStop() noexcept {
   _merges->Interrupt();
 }
 
-bool SearchEngine::TryAcquireCompaction() noexcept {
-  return _merges->TryAcquireHelper();
+size_t SearchEngine::TryAcquireCompactions(size_t wanted) noexcept {
+  return _merges->TryAcquireHelpers(wanted);
 }
 
-void SearchEngine::ReleaseCompaction() noexcept { _merges->ReleaseHelper(); }
+void SearchEngine::ReleaseCompactions(size_t count) noexcept {
+  _merges->ReleaseHelpers(count);
+}
 
 size_t SearchEngine::MergeRoundSize() const noexcept {
   return _merges->RoundSize();

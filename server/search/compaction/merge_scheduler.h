@@ -136,8 +136,8 @@ class MergeScheduler {
 
   size_t RoundSize() const noexcept { return RelationCap() + 1; }
 
-  bool TryAcquireHelper() noexcept;
-  void ReleaseHelper() noexcept;
+  size_t TryAcquireHelpers(size_t wanted) noexcept;
+  void ReleaseHelpers(size_t count) noexcept;
 
  private:
   struct Entry;

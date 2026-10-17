@@ -169,14 +169,9 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeWriter::FlushProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    size_t granted = 0;
-    while (granted != helpers && GetSearchEngine().TryAcquireCompaction()) {
-      ++granted;
-    }
+    const auto granted = GetSearchEngine().TryAcquireCompactions(helpers);
     absl::Cleanup release = [granted] {
-      for (size_t i = 0; i != granted; ++i) {
-        GetSearchEngine().ReleaseCompaction();
-      }
+      GetSearchEngine().ReleaseCompactions(granted);
     };
     PipelineMergeExecutor executor{irs::DuckDBEngine::Instance().instance(),
                                    &GetSearchEngine().MergeTasks(),

@@ -209,18 +209,13 @@ bool SimulatedJob::Merges(std::string_view name) const noexcept {
 }
 
 void SimulatedJob::ReleaseHelpers() {
-  for (; _helpers != 0; --_helpers) {
-    _simulation.Scheduler().ReleaseHelper();
-  }
+  _simulation.Scheduler().ReleaseHelpers(std::exchange(_helpers, 0));
 }
 
 yaclib::Future<MergeOutcome> SimulatedJob::Run(uint64_t,
                                                const std::atomic_bool&,
                                                size_t helpers) {
-  auto& scheduler = _simulation.Scheduler();
-  while (_helpers != helpers && scheduler.TryAcquireHelper()) {
-    ++_helpers;
-  }
+  _helpers = _simulation.Scheduler().TryAcquireHelpers(helpers);
   _started = _simulation.Now();
   const auto threads = static_cast<double>(1 + _helpers);
   const auto seconds = static_cast<double>(_estimate.rewrite_bytes) /

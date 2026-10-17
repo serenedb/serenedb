@@ -80,8 +80,8 @@ class SearchEngine final {
   // Signal the loops to stop without joining.
   void RequestStop() noexcept;
 
-  bool TryAcquireCompaction() noexcept;
-  void ReleaseCompaction() noexcept;
+  size_t TryAcquireCompactions(size_t wanted) noexcept;
+  void ReleaseCompactions(size_t count) noexcept;
 
   uint32_t AcquireAnnWorkers(uint32_t want) noexcept {
     const uint32_t cap = MaxAnnBuildWorkers();

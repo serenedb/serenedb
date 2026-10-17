@@ -70,7 +70,8 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     ctx.Read(block.file_offset,
              reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
              block.byte_size);
-    if (!dictionaries.empty()) {
+    if (!dictionaries.empty() &&
+        duckdb::IsSereneDBCompressionType(block.codec->type)) {
       PatchDictionary(bytes, dictionaries);
     }
     const std::string_view view{bytes};

@@ -1179,6 +1179,60 @@ TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 
+TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedDictionariesCopyAgain) {
+  const auto status = [](size_t row) {
+    std::mt19937_64 rng{row};
+    return absl::StrCat("status-of-the-request-", rng() % 3);
+  };
+  const auto duckdb_blocks = [](const irs::SubReader& segment) {
+    return absl::c_count_if(BlocksOf(segment, kText), [](const Block& block) {
+      return std::get<2>(block) ==
+             duckdb::CompressionType::COMPRESSION_DICT_FSST;
+    });
+  };
+  irs::MemoryDirectory dir_trained;
+  const auto trained = TrainedSegment(dir_trained);
+  if (!irs::AddFailurePointDebugging("irs::ColumnWriter::DuckDBStrings")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("irs::ColumnWriter::DuckDBStrings");
+  };
+  AddSegment(40000, [&](auto& doc, size_t row) {
+    auto& cw = doc.GetColWriter()->OpenColumn(
+      kText, duckdb::LogicalType::VARCHAR, false, kTrainedRowGroup,
+      duckdb::CompressionType::COMPRESSION_DICT_FSST, false,
+      irs::ColCodecParams{.tier = irs::WriteTier::Flush});
+    duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+    v.SetValue(0, duckdb::Value{status(row)});
+    cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
+              1);
+  });
+  std::move(remove).Invoke();
+  const auto streamed = Fresh(1);
+  const auto streamed_blocks = duckdb_blocks(*streamed.front());
+  ASSERT_EQ(
+    streamed.front()->GetColReader()->Column(kText)->DataBlocks().size(),
+    streamed_blocks);
+  irs::MemoryDirectory dir_first;
+  const auto first = MergeSegments(dir_first, {streamed.front(), trained.get()},
+                                   kTrainedRowGroup);
+  ASSERT_NE(nullptr, first);
+  ASSERT_EQ(streamed_blocks, duckdb_blocks(*first));
+  ASSERT_TRUE(first->GetColReader()->Column(kText)->HasDictionaries());
+  AddSegment(40000, [&](auto& doc, size_t row) {
+    WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
+               duckdb::Value{status(row)});
+  });
+  auto inputs = Fresh(1);
+  inputs.insert(inputs.begin(), first.get());
+  irs::MemoryDirectory out;
+  const auto merged = MergeSegments(out, inputs, kTrainedRowGroup);
+  ASSERT_NE(nullptr, merged);
+  EXPECT_EQ(streamed_blocks, duckdb_blocks(*merged));
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
 TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {
   irs::MemoryDirectory dir_a;
   irs::MemoryDirectory dir_b;

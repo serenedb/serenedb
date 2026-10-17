@@ -405,20 +405,33 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   for (;;) {
     uint32_t best = std::numeric_limits<uint32_t>::max();
     uint32_t most = 0;
-    for (uint32_t w = 0; w != g.workers; ++w) {
-      const auto seg = g.joinable[w].load(std::memory_order_relaxed);
-      if (seg == std::numeric_limits<uint32_t>::max()) {
-        continue;
-      }
+    const auto consider = [&](uint32_t seg) {
       const auto& work = g.Segment(seg);
       const auto next = work.next_rg.load(std::memory_order_relaxed);
       if (next >= work.rg_count) {
-        continue;
+        return;
       }
       const auto left = work.LiveCount() - work.LiveBefore(next);
       if (best == std::numeric_limits<uint32_t>::max() || left > most) {
         most = left;
         best = seg;
+      }
+    };
+    for (uint32_t w = 0; w != g.workers; ++w) {
+      if (const auto seg = g.joinable[w].load(std::memory_order_relaxed);
+          seg != std::numeric_limits<uint32_t>::max()) {
+        consider(seg);
+      }
+    }
+    if (best == std::numeric_limits<uint32_t>::max()) {
+      const auto claimed = std::min(
+        g.next_segment.load(std::memory_order_relaxed), g.live_segments);
+      for (uint32_t i = 0; i != claimed; ++i) {
+        const auto seg = g.segment_order[i];
+        if (g.Segment(seg).claim.load(std::memory_order_relaxed) ==
+            SegmentWork::kSplit) {
+          consider(seg);
+        }
       }
     }
     if (best == std::numeric_limits<uint32_t>::max()) {

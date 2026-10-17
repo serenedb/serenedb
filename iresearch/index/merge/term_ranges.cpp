@@ -286,11 +286,11 @@ bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& base) {
   auto& writer = static_cast<RangeWriterBase&>(base);
   const bool ok = writer.Finish();
   auto& p = *_parts[part];
-  const auto& terms = writer.Terms();
-  p.terms.assign(terms.Terms());
+  auto& terms = writer.Terms();
   p.count = terms.Count();
   p.total_doc_freq = terms.TotalDocFreq();
   p.total_term_freq = terms.TotalTermFreq();
+  p.terms = std::move(terms).TakeTerms();
   const auto open = [&](std::string_view ext) -> IndexInput::ptr {
     const auto name = FileName(kPartName, ext);
     bool exists = false;

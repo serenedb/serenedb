@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -49,6 +50,7 @@ class TermPartWriter {
   void Add(bytes_view term, const PostingMeta& meta);
 
   bytes_view Terms() const noexcept { return _terms; }
+  bstring TakeTerms() && noexcept { return std::move(_terms); }
   uint64_t Count() const noexcept { return _count; }
   uint64_t TotalDocFreq() const noexcept { return _total_doc_freq; }
   uint64_t TotalTermFreq() const noexcept { return _total_term_freq; }

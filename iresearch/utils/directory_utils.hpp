@@ -92,7 +92,6 @@ struct TrackingDirectory final : public Directory {
   using FileSet = absl::flat_hash_set<std::string>;
 
   Directory& _impl;
-  absl::Mutex _mutex;
   uint64_t _files_size{};
   FileSet _files;
 };

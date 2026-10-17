@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -110,7 +111,8 @@ struct MergePlan::State {
         ScorerPtr scorer, duckdb::DatabaseInstance& db,
         const IndexFieldOptions* field_options, const MergeProgress& progress,
         const AnnBuildEnv* env, const SortSpec* sort)
-    : track_dir{dir},
+    : col_dir{dir},
+      idx_dir{dir},
       doc_map{doc_map},
       segment{segment},
       scorer{scorer},
@@ -440,7 +442,7 @@ struct MergePlan::State {
   bool BuildAnn(field_id column) {
     MergeStepClock clock{profile};
     if (!ann_reader) {
-      ann_reader = std::make_unique<ColReader>(track_dir, segment.name, db);
+      ann_reader = std::make_unique<ColReader>(col_dir, segment.name, db);
     }
     GetBlocking(col_writer->ComputeAnn(column, *ann_reader, env).ToFuture());
     clock.Lap(MergeStep::Ann);
@@ -451,7 +453,7 @@ struct MergePlan::State {
     MergeStepClock clock{profile};
     if (ivf && segment.docs_count != 0) {
       ann_writers = col_writer->TakeAnnWriters();
-      col_reader = std::make_unique<ColReader>(track_dir, segment.name, db);
+      col_reader = std::make_unique<ColReader>(col_dir, segment.name, db);
       cluster_readers =
         PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
       for (const auto* reader : cluster_readers) {
@@ -463,7 +465,7 @@ struct MergePlan::State {
       return false;
     }
     const FlushState state{
-      .dir = &track_dir,
+      .dir = &idx_dir,
       .norms = &*norms,
       .name = segment.name,
       .scorer = scorer,
@@ -493,7 +495,13 @@ struct MergePlan::State {
     if (!progress()) {
       return false;
     }
-    segment.files = track_dir.FlushTracked(segment.byte_size);
+    uint64_t col_bytes = 0;
+    segment.files = col_dir.FlushTracked(col_bytes);
+    auto idx_files = idx_dir.FlushTracked(segment.byte_size);
+    segment.files.insert(segment.files.end(),
+                         std::make_move_iterator(idx_files.begin()),
+                         std::make_move_iterator(idx_files.end()));
+    segment.byte_size += col_bytes;
     clock.Lap(MergeStep::Commit);
     if (segment.live_docs_count == 0) {
       return false;
@@ -502,7 +510,8 @@ struct MergePlan::State {
     return true;
   }
 
-  TrackingDirectory track_dir;
+  TrackingDirectory col_dir;
+  TrackingDirectory idx_dir;
   MergeDocMap& doc_map;
   SegmentMeta& segment;
   ScorerPtr scorer;
@@ -620,13 +629,13 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
       .remap = &input.remap,
     });
   }
-  s.col_writer = std::make_unique<ColWriter>(s.track_dir, s.segment.name, s.db,
+  s.col_writer = std::make_unique<ColWriter>(s.col_dir, s.segment.name, s.db,
                                              WriteTier::Merge);
   s.col_writer->SetFieldOptions(s.field_options);
   s.columns =
     std::make_unique<ColumnMerger>(s.sources, s.field_options, s.Order());
   s.norms.emplace(s.sources, s.doc_map.get_allocator().Manager(), s.Order());
-  s.idx = std::make_unique<IdxWriter>(s.track_dir, s.segment.name);
+  s.idx = std::make_unique<IdxWriter>(s.idx_dir, s.segment.name);
 
   std::vector<field_id> norm_fields;
   if (s.field_options) {

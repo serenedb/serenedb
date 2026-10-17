@@ -65,19 +65,13 @@ TrackingDirectory::TrackingDirectory(Directory& impl) noexcept
   : Directory{impl.ResourceManager()}, _impl{impl} {}
 
 IndexOutput::ptr TrackingDirectory::create(std::string_view name) {
-  {
-    std::lock_guard lock{_mutex};
-    _files.emplace(name);
-  }
+  _files.emplace(name);
   try {
     auto result = _impl.create(name);
-    result->SetOnClose({absl::FunctionValue{}, [&](uint64_t size) noexcept {
-                          std::lock_guard lock{_mutex};
-                          _files_size += size;
-                        }});
+    result->SetOnClose({absl::FunctionValue{},
+                        [&](uint64_t size) noexcept { _files_size += size; }});
     return result;
   } catch (...) {
-    std::lock_guard lock{_mutex};
     _files.erase(name);
     throw;
   }
@@ -87,7 +81,6 @@ bool TrackingDirectory::remove(std::string_view name) noexcept {
   if (!_impl.remove(name)) {
     return false;
   }
-  std::lock_guard lock{_mutex};
   _files.erase(name);
   return true;
 }
@@ -99,7 +92,6 @@ bool TrackingDirectory::rename(std::string_view src,
   }
 
   try {
-    std::lock_guard lock{_mutex};
     _files.emplace(dst);
     _files.erase(src);
 
@@ -112,13 +104,11 @@ bool TrackingDirectory::rename(std::string_view src,
 }
 
 void TrackingDirectory::ClearTracked() noexcept {
-  std::lock_guard lock{_mutex};
   _files_size = 0;
   _files.clear();
 }
 
 std::vector<std::string> TrackingDirectory::FlushTracked(uint64_t& files_size) {
-  std::lock_guard lock{_mutex};
   std::vector<std::string> files(_files.size());
   auto files_begin = files.begin();
   for (auto begin = _files.begin(), end = _files.end(); begin != end;

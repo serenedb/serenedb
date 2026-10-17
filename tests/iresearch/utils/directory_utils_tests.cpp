@@ -21,14 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_cat.h>
-
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/directory_utils.hpp>
-#include <thread>
 #include <unordered_set>
-#include <vector>
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -387,7 +383,7 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
   }
 }
 
-TEST_F(DirectoryUtilsTests, test_tracking_dir_failures_and_threads) {
+TEST_F(DirectoryUtilsTests, test_tracking_dir_failures) {
   struct FailingDirectory final : public irs::Directory {
     using Directory::Directory;
 
@@ -432,27 +428,9 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir_failures_and_threads) {
 
   irs::MemoryDirectory dir;
   irs::TrackingDirectory track_dir{dir};
-  std::vector<std::thread> threads;
-  for (size_t t = 0; t != 8; ++t) {
-    threads.emplace_back([&track_dir, t] {
-      for (size_t i = 0; i != 50; ++i) {
-        auto out = track_dir.create(absl::StrCat("f", t, "_", i));
-        EXPECT_NE(nullptr, out);
-        if (out) {
-          out->WriteByte(1);
-        }
-      }
-    });
-  }
-  for (auto& thread : threads) {
-    thread.join();
-  }
-  uint64_t byte_size{0};
-  EXPECT_EQ(400, track_dir.FlushTracked(byte_size).size());
-  EXPECT_EQ(400, byte_size);
-
   track_dir.create("g").reset();
   track_dir.ClearTracked();
+  uint64_t byte_size{1};
   EXPECT_TRUE(track_dir.FlushTracked(byte_size).empty());
   EXPECT_EQ(0, byte_size);
 }

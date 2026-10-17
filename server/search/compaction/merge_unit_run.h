@@ -31,6 +31,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -96,6 +97,11 @@ struct MergeUnitRun {
     waker = std::move(callback);
   }
 
+  void SetInterrupt(std::function<void()> callback) {
+    std::lock_guard lock{mutex};
+    interrupt = std::move(callback);
+  }
+
   void Run(size_t unit) {
     bool ok = false;
     std::exception_ptr failure;
@@ -104,11 +110,21 @@ struct MergeUnitRun {
     } catch (...) {
       failure = std::current_exception();
     }
-    std::lock_guard lock{mutex};
-    if (failure && !error) {
-      error = std::move(failure);
+    std::function<void()> stop;
+    {
+      std::lock_guard lock{mutex};
+      if (failure && !error) {
+        error = std::move(failure);
+      }
+      schedule.Finish(unit, ok);
+      if (!ok) {
+        stop = interrupt;
+      }
     }
-    schedule.Finish(unit, ok);
+    if (stop) {
+      stop();
+      SDB_PARK_ONCE_ON_FAILURE("pause_merge_unit_failed");
+    }
   }
 
   bool Finish() {
@@ -130,6 +146,7 @@ struct MergeUnitRun {
   std::optional<size_t> held;
   std::atomic<bool> postings{false};
   std::function<void()> waker;
+  std::function<void()> interrupt;
 };
 
 }  // namespace sdb::search

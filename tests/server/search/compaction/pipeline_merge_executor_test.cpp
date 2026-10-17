@@ -31,6 +31,7 @@
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/logical_plan_verifier.hpp>
+#include <exception>
 #include <initializer_list>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -608,6 +609,60 @@ TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
   irs::AddFailurePointDebugging("pause_postings_merge_finalize:release");
   merge.join();
   EXPECT_TRUE(ok);
+}
+
+TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
+  if (!irs::AddFailurePointDebugging("pause_merge_unit")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  irs::AddFailurePointDebugging("pause_postings_merge_sink");
+  const absl::Cleanup remove = [] {
+    for (const auto* point :
+         {"pause_merge_unit", "pause_postings_merge_sink",
+          "pause_postings_merge_sink:release", "pause_merge_unit_failed",
+          "pause_merge_unit_failed:release", "irs::MergeUnit"}) {
+      irs::RemoveFailurePointDebugging(point);
+    }
+  };
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_FALSE(plan.TermRanges().empty());
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  std::exception_ptr failure;
+  std::thread merge{[&] {
+    try {
+      executor.Run(plan);
+    } catch (...) {
+      failure = std::current_exception();
+    }
+  }};
+  const auto await = [](const char* parked) {
+    while (!irs::RemoveFailurePointDebugging(parked)) {
+      absl::SleepFor(absl::Milliseconds(1));
+    }
+  };
+  await("pause_postings_merge_sink:parked");
+  irs::AddFailurePointDebugging("irs::MergeUnit");
+  irs::AddFailurePointDebugging("pause_merge_unit_failed");
+  irs::RemoveFailurePointDebugging("pause_merge_unit");
+  await("pause_merge_unit_failed:parked");
+  irs::AddFailurePointDebugging("pause_postings_merge_sink:release");
+  irs::AddFailurePointDebugging("pause_merge_unit_failed:release");
+  merge.join();
+  EXPECT_TRUE(failure);
+  size_t left = 0;
+  for (const auto& range : plan.TermRanges()) {
+    left += range->PartsLeft();
+  }
+  EXPECT_LT(0, left);
 }
 
 TEST_F(PipelineMergeExecutorTest, MergeUnitsPlanPassesThePlanVerifier) {

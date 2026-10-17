@@ -88,7 +88,7 @@ class MergePlan {
 
   duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept;
 
-  void ExpandOrder(size_t partition,
+  bool ExpandOrder(size_t partition,
                    std::span<const duckdb::PresortedRun> runs);
 
   void FinishOrder();

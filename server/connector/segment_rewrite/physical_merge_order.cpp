@@ -22,6 +22,7 @@
 
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -47,7 +48,7 @@ PhysicalMergeOrder::GetLocalSinkState(duckdb::ExecutionContext&) const {
 }
 
 duckdb::SinkResultType PhysicalMergeOrder::Sink(
-  duckdb::ExecutionContext&, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& state = input.local_state.Cast<MergeOrderSinkState>();
   const auto* partitions = duckdb::FlatVector::GetData<uint64_t>(chunk.data[0]);
@@ -60,7 +61,9 @@ duckdb::SinkResultType PhysicalMergeOrder::Sink(
     state.runs.push_back(
       {.input = inputs[i], .begin = begins[i], .count = counts[i]});
   }
-  _plan.ExpandOrder(partitions[0], state.runs);
+  if (!_plan.ExpandOrder(partitions[0], state.runs)) {
+    context.client.Interrupt();
+  }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

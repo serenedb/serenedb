@@ -61,15 +61,20 @@ void TakeProfile(duckdb::ClientContext& context,
     });
 }
 
-void Execute(duckdb::Connection& connection,
+bool Execute(duckdb::Connection& connection,
              duckdb::unique_ptr<duckdb::LogicalOperator> root,
              PipelineMergeExecutor::Profiles* profiles) {
   root->ResolveOperatorTypes();
-  Check(*connection.Query(
-    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root))));
+  const auto result = connection.Query(
+    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
   if (profiles) {
     TakeProfile(*connection.context, *profiles);
   }
+  if (result->HasError() &&
+      result->GetErrorType() != duckdb::ExceptionType::INTERRUPT) {
+    result->ThrowError();
+  }
+  return !result->HasError();
 }
 
 }  // namespace
@@ -80,23 +85,29 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   auto& context = *connection.context;
   context.task_scheduler = _scheduler;
   context.config.threads = threads;
-  connection.Query("SET max_execution_time = 0");
+  Check(*connection.Query("SET SESSION max_execution_time = 0"));
   Check(*connection.Query("SET SESSION preserve_insertion_order = false"));
   if (_profiles) {
-    Check(*connection.Query("SET enable_profiling = 'no_output'"));
+    Check(*connection.Query("SET SESSION enable_profiling = 'no_output'"));
   }
   if (plan.OrderPending()) {
-    Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan),
-            _profiles);
+    if (!Execute(connection,
+                 duckdb::make_uniq<connector::LogicalMergeOrder>(plan),
+                 _profiles)) {
+      return false;
+    }
     plan.FinishOrder();
   }
   const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
                                                   plan.PostingsPending());
-  Execute(connection,
-          duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads,
-                                                          plan.TermRanges()),
-          _profiles);
-  return run->Finish();
+  run->SetInterrupt([&context] { context.Interrupt(); });
+  const bool completed =
+    Execute(connection,
+            duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads,
+                                                            plan.TermRanges()),
+            _profiles);
+  run->SetInterrupt(nullptr);
+  return run->Finish() && completed;
 }
 
 }  // namespace sdb::search

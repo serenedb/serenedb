@@ -23,6 +23,7 @@
 #include <atomic>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -89,7 +90,7 @@ PhysicalPostingsMerge::GetLocalSinkState(duckdb::ExecutionContext&) const {
 }
 
 duckdb::SinkResultType PhysicalPostingsMerge::Sink(
-  duckdb::ExecutionContext&, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   if (chunk.size() == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -112,7 +113,10 @@ duckdb::SinkResultType PhysicalPostingsMerge::Sink(
     state.runs.push_back(
       {.input = inputs[i], .begin = begins[i], .count = counts[i]});
   }
-  state.writer->Consume(state.runs);
+  if (!state.writer->Consume(state.runs)) {
+    context.client.Interrupt();
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_sink");
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

@@ -665,10 +665,11 @@ duckdb::shared_ptr<duckdb::PresortedMerge> MergePlan::KeyMerge()
   return OrderPending() ? _state->key_order->KeyMerge() : nullptr;
 }
 
-void MergePlan::ExpandOrder(size_t partition,
+bool MergePlan::ExpandOrder(size_t partition,
                             std::span<const duckdb::PresortedRun> runs) {
   SDB_ASSERT(OrderPending());
   _state->key_order->Expand(partition, runs);
+  return _state->progress();
 }
 
 void MergePlan::FinishOrder() {

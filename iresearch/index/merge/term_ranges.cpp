@@ -84,7 +84,7 @@ class RangeWriter final : public RangeWriterBase {
     _writer.BeginField(props);
   }
 
-  void Consume(std::span<const duckdb::PresortedRun> runs) final {
+  bool Consume(std::span<const duckdb::PresortedRun> runs) final {
     for (const auto& run : runs) {
       const auto i = static_cast<size_t>(run.input);
       SDB_ENSURE(i < _inputs.size(), "TermRangeWriter: run of input ", i,
@@ -95,6 +95,7 @@ class RangeWriter final : public RangeWriterBase {
       }
       _inputs[i].next = run.begin + run.count;
     }
+    return !_postings.Aborted();
   }
 
   bool Finish() final {
@@ -332,7 +333,9 @@ bool TermRangeMerge::MergePart(size_t part) {
       }
       return false;
     }
-    writer->Consume(runs);
+    if (!writer->Consume(runs)) {
+      break;
+    }
   }
   return FinishPart(part, *writer);
 }

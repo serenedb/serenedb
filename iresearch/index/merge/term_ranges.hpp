@@ -47,7 +47,7 @@ class TermRangeWriter {
  public:
   virtual ~TermRangeWriter() = default;
 
-  virtual void Consume(std::span<const duckdb::PresortedRun> runs) = 0;
+  virtual bool Consume(std::span<const duckdb::PresortedRun> runs) = 0;
 };
 
 class TermRangeMerge {

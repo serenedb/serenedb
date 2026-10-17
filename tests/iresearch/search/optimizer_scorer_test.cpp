@@ -21,8 +21,11 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/scorers/raw_tf.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
@@ -200,6 +203,46 @@ TEST(optimizer_scorer_test, term_clauses_keep_differing_overrides) {
   ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
 }
 
+TEST(optimizer_scorer_test, term_clauses_drop_an_unscored_duplicate) {
+  irs::RawTF tf;
+  irs::Unscored unscored;
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", tf), irs::Occur::Should);
+  root->Add(Scored("fox", unscored), irs::Occur::Should);
+  root->Add(Term("fox"), irs::Occur::Should);
+  root->Add(Scored("dog", unscored), irs::Occur::Should);
+  root->SetMinShouldMatch(1);
+
+  auto f = Optimized(std::move(root));
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms = OptionalTerms(*f);
+  ASSERT_EQ(3u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, nullptr));
+  ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
+}
+
+TEST(optimizer_scorer_test, required_term_clauses_drop_an_unscored_duplicate) {
+  irs::RawTF tf;
+  irs::Unscored unscored;
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(Scored("fox", unscored), irs::Occur::Must);
+  root->Add(Scored("fox", tf), irs::Occur::Must);
+  root->Add(Scored("dog", unscored), irs::Occur::Must);
+
+  auto f = Optimized(std::move(root));
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto terms =
+    irs::utils::downCast<irs::BooleanFilter>(*f).Terms(irs::Occur::Must);
+  ASSERT_EQ(2u, terms.size());
+  ASSERT_EQ(1u, CountScoredBy(terms, &tf));
+  ASSERT_EQ(1u, CountScoredBy(terms, &unscored));
+}
+
 // A rule that replaces the node an override sits on must carry the scorer over
 // to the replacement, or the `::score` is silently lost.
 TEST(optimizer_scorer_test, rules_replacing_a_node_carry_the_scorer_over) {
@@ -268,6 +311,61 @@ TEST(optimizer_scorer_test, a_replacement_keeps_its_own_scorer) {
 
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), f->type());
   ASSERT_EQ(&unscored, f->GetScorer());
+}
+
+TEST(optimizer_scorer_test, a_group_scorer_reaches_a_nested_phrase) {
+  irs::RawTF tf;
+  irs::ConstantScore constant{2};
+
+  auto phrase = std::make_unique<irs::ByPhrase>();
+  *phrase->mutable_field_id() = kBodyId;
+  phrase->mutable_options()->push_back<irs::ByPrefixOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fo"});
+
+  auto group = std::make_unique<irs::BooleanFilter>();
+  group->Add(std::move(phrase), irs::Occur::Must);
+  group->Add(Term("dog"), irs::Occur::Must);
+  group->SetMergeType(irs::ScoreMergeType::Max);
+  group->SetScorer(&constant);
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(std::move(group), irs::Occur::Must);
+  root->Add(Term("cat"), irs::Occur::Must);
+
+  irs::Filter::ptr f = std::move(root);
+  irs::Optimize(f, {.scored = true, .scorer = &tf});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto nested =
+    irs::utils::downCast<irs::BooleanFilter>(*f).Filters(irs::Occur::Must);
+  ASSERT_EQ(1u, nested.size());
+  const auto parts = irs::utils::downCast<irs::BooleanFilter>(*nested.front())
+                       .Filters(irs::Occur::Must);
+  ASSERT_EQ(1u, parts.size());
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), parts.front()->type());
+}
+
+TEST(optimizer_scorer_test, an_unscored_group_flattens_a_max_merged_child) {
+  irs::RawTF tf;
+  irs::Unscored unscored;
+
+  auto child = std::make_unique<irs::BooleanFilter>();
+  child->Add(Term("fox"), irs::Occur::Must);
+  child->Add(Term("dog"), irs::Occur::Must);
+  child->SetMergeType(irs::ScoreMergeType::Max);
+
+  auto root = std::make_unique<irs::BooleanFilter>();
+  root->Add(std::move(child), irs::Occur::Must);
+  root->Add(Term("cat"), irs::Occur::Must);
+  root->SetScorer(&unscored);
+
+  irs::Filter::ptr f = std::move(root);
+  irs::Optimize(f, {.scored = true, .scorer = &tf});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), f->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*f);
+  ASSERT_TRUE(node.Filters(irs::Occur::Must).empty());
+  ASSERT_EQ(3u, node.Terms(irs::Occur::Must).size());
 }
 
 }  // namespace

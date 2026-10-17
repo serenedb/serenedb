@@ -596,10 +596,10 @@ std::vector<std::string> Analyze(irs::analysis::Tokenizer& tokenizer,
 irs::Filter::ptr OptimizeScored(irs::Filter::ptr filter,
                                 std::span<const irs::field_id> fields) {
   if (filter) {
-    irs::OptimizeContext optimize_ctx;
-    optimize_ctx.scored = true;
-    optimize_ctx.analyzed_fields.insert(fields.begin(), fields.end());
-    irs::Optimize(filter, optimize_ctx);
+    irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
+    analyzed_fields.insert(fields.begin(), fields.end());
+    irs::Optimize(filter,
+                  {.scored = true, .analyzed_fields = &analyzed_fields});
   }
   return filter;
 }

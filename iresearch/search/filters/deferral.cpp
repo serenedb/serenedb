@@ -27,6 +27,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/compiled_phrase.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
@@ -59,10 +60,17 @@ Filter::ptr PartsConjunction(const ByPhrase& phrase,
   if (scorer && !constant && !IsUnscored(*scorer)) {
     return nullptr;
   }
+  const bool once = ScoreIsConstant(phrase, ctx);
   auto conjunction = std::make_unique<BooleanFilter>();
   for (const auto& info : phrase.options()) {
-    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
-                     Occur::Must);
+    auto part = PartFilter(phrase.field_id(), info.part, constant);
+    if (once) {
+      part->SetScorer(&Unscored::Instance());
+    }
+    conjunction->Add(std::move(part), Occur::Must);
+  }
+  if (once) {
+    conjunction->Add(std::make_unique<All>(), Occur::Must);
   }
   if (scorer) {
     conjunction->SetScorer(phrase.GetScorer());
@@ -94,7 +102,10 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (!index) {
     return false;
   }
-  TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
+  TraverseScoped(index, ctx,
+                 [](Filter::ptr& node, const OptimizeContext& scope) {
+                   RunRules(node, scope);
+                 });
   ctx.deferral->filters.emplace_back(DeferredKind::Phrase, &phrase, column,
                                      std::move(type),
                                      std::exchange(slot, std::move(index)));
@@ -164,10 +175,12 @@ void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
     Defer(root, ctx);
     return;
   }
+  auto scope = ctx;
+  scope.scorer = ScorerOf(*root, ctx);
   bool deferred = false;
   for (auto& child :
        downCast<BooleanFilter>(*root).Bucket(Occur::Must).filters) {
-    deferred |= Defer(child, ctx);
+    deferred |= Defer(child, scope);
   }
   if (deferred) {
     RunRules(root, ctx);

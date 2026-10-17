@@ -198,6 +198,6 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
 };
 
 Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
-                       bool constant);
+                       bool max_synonyms);
 
 }  // namespace irs

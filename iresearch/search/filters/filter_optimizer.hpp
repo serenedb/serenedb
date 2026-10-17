@@ -38,14 +38,14 @@ struct OptimizeContext {
   bool scored = false;
   bool fuse_seekable_acceptors = false;
   bool fuse_acceptor_intersections = false;
-  irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
+  const irs::containers::FlatHashSet<irs::field_id>* analyzed_fields = nullptr;
   const irs::containers::FlatHashMap<irs::field_id, irs::field_id>*
     null_markers = nullptr;
   const Scorer* scorer = nullptr;
   Deferral* deferral = nullptr;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
-    return analyzed_fields.contains(field);
+    return analyzed_fields && analyzed_fields->contains(field);
   }
 };
 
@@ -56,21 +56,22 @@ void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx);
 }  // namespace optimizer
 
 template<typename Visit>
-void TraverseFilter(Filter::ptr& root, Visit&& visit) {
+void TraverseFilter(Filter::ptr& root, const Scorer* inherited, Visit&& visit) {
   SDB_ASSERT(root);
   struct Frame {
     Filter::ptr* slot;
+    const Scorer* inherited;
     bool children_visited;
     bool negated;
   };
 
   absl::InlinedVector<Frame, 16> stack;
-  stack.emplace_back(&root, false, false);
+  stack.emplace_back(&root, inherited, false, false);
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
       const auto* scorer = (**frame.slot).GetScorer();
-      visit(*frame.slot, frame.negated);
+      visit(*frame.slot, frame.negated, frame.inherited);
       if (scorer != nullptr && *frame.slot) {
         const auto* lowered = (**frame.slot).GetScorer();
         if (lowered == nullptr || lowered == &DefaultConstScore()) {
@@ -82,12 +83,26 @@ void TraverseFilter(Filter::ptr& root, Visit&& visit) {
     }
     frame.children_visited = true;
     const bool negated = frame.negated;
+    const auto* resolved =
+      ResolveScorer((**frame.slot).GetScorer(), frame.inherited);
     (**frame.slot).VisitChildren([&](Filter::ptr& child, bool child_negated) {
       if (child) {
-        stack.emplace_back(&child, false, negated || child_negated);
+        stack.emplace_back(&child, resolved, false, negated || child_negated);
       }
     });
   }
+}
+
+template<typename Visit>
+void TraverseScoped(Filter::ptr& root, const OptimizeContext& ctx,
+                    Visit&& visit) {
+  TraverseFilter(root, ctx.scorer,
+                 [&](Filter::ptr& slot, bool negated, const Scorer* inherited) {
+                   auto scope = ctx;
+                   scope.scored = ctx.scored && !negated;
+                   scope.scorer = inherited;
+                   visit(slot, scope);
+                 });
 }
 
 struct RuleDesc {

@@ -132,9 +132,11 @@ bool IsNegation(const BooleanFilter& node) noexcept {
   return IsConjunction(node) && node.Size(Occur::Must) == 0;
 }
 
-bool ClauseScores(const Filter& child, Occur occur,
+bool ClauseScores(const Filter& child, const BooleanFilter& parent, Occur occur,
                   const OptimizeContext& ctx) noexcept {
-  return occur != Occur::MustNot && !ScoreIsIgnored(child, ctx);
+  auto scope = ctx;
+  scope.scorer = ScorerOf(parent, ctx);
+  return occur != Occur::MustNot && !ScoreIsIgnored(child, scope);
 }
 
 BooleanFilter* AsNested(Filter& child, const BooleanFilter& parent, Occur occur,
@@ -143,7 +145,7 @@ BooleanFilter* AsNested(Filter& child, const BooleanFilter& parent, Occur occur,
     return nullptr;
   }
   auto& node = irs::utils::downCast<BooleanFilter>(child);
-  if (!ClauseScores(child, occur, ctx)) {
+  if (!ClauseScores(child, parent, occur, ctx)) {
     return &node;
   }
   return node.MergeType() == parent.MergeType() ? &node : nullptr;
@@ -220,11 +222,21 @@ size_t DedupTerms(std::vector<TermClause>& terms, ScoreMergeType merge,
   const auto same = [scored](const TermClause& lhs, const TermClause& rhs) {
     return scored ? !TermClauseLess{}(lhs, rhs) : !TermPostingLess{}(lhs, rhs);
   };
+  const auto unscored = [](const TermClause& clause) {
+    return clause.scorer && IsUnscored(*clause.scorer);
+  };
   size_t kept = 0;
   for (size_t i = 1; i != terms.size(); ++i) {
     if (same(terms[kept], terms[i])) {
       if (scored) {
         MergeBoost(terms[kept].boost, terms[i].boost, merge);
+      }
+      continue;
+    }
+    if (!TermPostingLess{}(terms[kept], terms[i]) &&
+        (unscored(terms[kept]) || unscored(terms[i]))) {
+      if (unscored(terms[kept])) {
+        terms[kept] = std::move(terms[i]);
       }
       continue;
     }
@@ -337,7 +349,7 @@ bool BooleanAbsorbRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   {
     auto& required = node.Bucket(Occur::Must);
     const auto spare = [&](const Filter& child) {
-      return IsAllDocs(child) && !ClauseScores(child, Occur::Must, ctx);
+      return IsAllDocs(child) && !ClauseScores(child, node, Occur::Must, ctx);
     };
     const auto keeps =
       !required.terms.empty() ||
@@ -1159,13 +1171,12 @@ void FuseConjunctions(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root || !ctx.fuse_acceptor_intersections) {
     return;
   }
-  auto negated_ctx = ctx;
-  negated_ctx.scored = false;
-  TraverseFilter(root, [&](Filter::ptr& slot, bool negated) {
-    if (slot->type() == Type<BooleanFilter>::id()) {
-      AndAcceptorFusionRule::Apply(slot, negated ? negated_ctx : ctx);
-    }
-  });
+  TraverseScoped(root, ctx,
+                 [](Filter::ptr& slot, const OptimizeContext& scope) {
+                   if (slot->type() == Type<BooleanFilter>::id()) {
+                     AndAcceptorFusionRule::Apply(slot, scope);
+                   }
+                 });
 }
 
 void InitBooleanNormalizeTerms() { RegisterRule<BooleanNormalizeTermsRule>(); }

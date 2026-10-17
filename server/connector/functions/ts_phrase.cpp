@@ -37,6 +37,7 @@
 #include <iresearch/utils/string.hpp>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/ts_query_codec.h"
@@ -316,15 +317,25 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
     }
     auto term = PlanPhrase(shingle, *column_info, options, "to_tsquery",
                            "or search for single words", context);
-    if (!term) {
+    if (term) {
+      auto filter = std::make_unique<irs::ByTerm>();
+      *filter->mutable_field_id() = phrase.field_id();
+      filter->mutable_options()->term = std::move(*term);
+      filter->SetBoost(phrase.GetBoost());
+      filter->SetScorer(phrase.GetScorer());
+      child = std::move(filter);
       return;
     }
-    auto filter = std::make_unique<irs::ByTerm>();
-    *filter->mutable_field_id() = phrase.field_id();
-    filter->mutable_options()->term = std::move(*term);
-    filter->SetBoost(phrase.GetBoost());
-    filter->SetScorer(phrase.GetScorer());
-    child = std::move(filter);
+    if (options.size() != 1 || !options.word_separator().empty()) {
+      return;
+    }
+    auto lowered =
+      irs::PartFilter(phrase.field_id(), options.begin()->part, true);
+    lowered->SetBoost(phrase.GetBoost());
+    if (const auto* scorer = phrase.GetScorer()) {
+      lowered->SetScorer(scorer);
+    }
+    child = std::move(lowered);
   });
 }
 

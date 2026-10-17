@@ -3005,7 +3005,8 @@ TEST(AndRangeMerge_test, keeps_analyzed_fields) {
   }
 
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.analyzed_fields = {kFieldTestField}});
+  const irs::containers::FlatHashSet<irs::field_id> analyzed{kFieldTestField};
+  irs::Optimize(filter, {.analyzed_fields = &analyzed});
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
   EXPECT_EQ(2, CountChildren(*filter));
@@ -3025,7 +3026,8 @@ TEST(AndRangeMerge_test, keeps_scored) {
   }
 
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scored = true, .analyzed_fields = {kFieldTestField}});
+  const irs::containers::FlatHashSet<irs::field_id> analyzed{kFieldTestField};
+  irs::Optimize(filter, {.scored = true, .analyzed_fields = &analyzed});
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
   EXPECT_EQ(2, CountChildren(*filter));

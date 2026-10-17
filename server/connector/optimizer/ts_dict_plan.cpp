@@ -1742,7 +1742,7 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   connector::EnsureIncludeSides(*one);
   irs::Optimize(one, {.scored = false,
                       .fuse_seekable_acceptors = true,
-                      .analyzed_fields = analyzed_fields,
+                      .analyzed_fields = &analyzed_fields,
                       .null_markers = &null_markers});
   return one;
 }
@@ -1927,7 +1927,7 @@ class TsDictFilterClaim {
     irs::Optimize(f, {.scored = false,
                       .fuse_seekable_acceptors = true,
                       .fuse_acceptor_intersections = fuse_intersections,
-                      .analyzed_fields = _getters.analyzed_fields,
+                      .analyzed_fields = &_getters.analyzed_fields,
                       .null_markers = &_getters.null_markers});
   }
 

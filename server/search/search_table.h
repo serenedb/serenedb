@@ -206,7 +206,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                      irs::CompactionResult* outcome = nullptr,
                      irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
-  ResultWithTime CleanupUnsafe();
+  CleanupResult CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
     return _topk_options;

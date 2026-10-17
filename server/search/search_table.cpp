@@ -496,15 +496,18 @@ auto SearchTable::AwaitMerge(
   co_return ResultWithTime{std::move(result), time_ms};
 }
 
-ResultWithTime SearchTable::CleanupUnsafe() {
+CleanupResult SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto removed = _durability.Cleanup(*_dir);
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
-  _maintenance.RecordCleanup(result, time_ms);
-  return {std::move(result), time_ms};
+  _maintenance.RecordCleanup(removed.status(), time_ms);
+  if (!removed.ok()) {
+    return {.res = std::move(removed).status(), .time_ms = time_ms};
+  }
+  return {.time_ms = time_ms, .removed = *removed};
 }
 
 absl::Status SearchTable::VacuumRefresh() {

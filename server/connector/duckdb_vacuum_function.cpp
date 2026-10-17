@@ -75,6 +75,7 @@ enum class Action : uint8_t {
   Compact,
   Optimize,
   RecomputeStats,
+  Cleanup,
 };
 
 struct Verb {
@@ -99,6 +100,11 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"optimize_table", {Action::Optimize, Scope::Table}},
     {"optimize_index", {Action::Optimize, Scope::Index}},
     {"optimize_all", {Action::Optimize, Scope::All}},
+    {"cleanup_database", {Action::Cleanup, Scope::Database}},
+    {"cleanup_schema", {Action::Cleanup, Scope::Schema}},
+    {"cleanup_table", {Action::Cleanup, Scope::Table}},
+    {"cleanup_index", {Action::Cleanup, Scope::Index}},
+    {"cleanup_all", {Action::Cleanup, Scope::All}},
     {"recompute_stats_table", {Action::RecomputeStats, Scope::Table}},
     {"recompute_stats_schema", {Action::RecomputeStats, Scope::Schema}},
     {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
@@ -437,6 +443,7 @@ void DispatchInverted(duckdb::ClientContext& context,
 
   const std::string_view verb = action == Action::Refresh   ? "refresh"
                                 : action == Action::Compact ? "compact"
+                                : action == Action::Cleanup ? "clean up"
                                                             : "optimize";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
@@ -568,6 +575,12 @@ void DispatchInverted(duckdb::ClientContext& context,
           pg::ProgressMetrics::Set(progress->stage, 0);
         }
         search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
+      } else if (action == Action::Cleanup) {
+        if (const auto res = step.storage->CleanupUnsafe().res; !res.ok()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                          ERR_MSG("failed to clean up index '", step.name,
+                                  "': ", res.message()));
+        }
       } else {
         CompactInvertedStorage(action, *step.storage, *step.field_options,
                                step.name, context, progress, executor);
@@ -580,6 +593,8 @@ void DispatchInverted(duckdb::ClientContext& context,
       absl::Status status;
       if (action == Action::Refresh) {
         status = search->VacuumRefresh();
+      } else if (action == Action::Cleanup) {
+        status = search->CleanupUnsafe().res;
       } else {
         static constinit SettingRef gTargetSegments{
           "sdb_compact_target_segments"};
@@ -763,6 +778,7 @@ void VacuumExecute(duckdb::ClientContext& context,
     case Action::Refresh:
     case Action::Compact:
     case Action::Optimize:
+    case Action::Cleanup:
       DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
                        progress);
       break;

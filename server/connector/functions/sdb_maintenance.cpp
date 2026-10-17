@@ -18,11 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/functions/sdb_compact.h"
+#include "connector/functions/sdb_maintenance.h"
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -33,6 +36,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -169,13 +173,123 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
                                                   std::move(job));
 }
 
-}  // namespace
+struct MaintenanceBindData final : duckdb::TableFunctionData {
+  std::string relation;
+};
 
-void RegisterSdbCompactFunction(duckdb::DatabaseInstance& db) {
-  duckdb::TableFunction function{"sdb_compact",
-                                 duckdb::FunctionSignature().AddPositionalOnly(
-                                   "relation", duckdb::LogicalType::VARCHAR),
-                                 nullptr};
+struct MaintenanceState final : duckdb::GlobalTableFunctionState {
+  bool done = false;
+
+  static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
+    duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
+    return duckdb::make_uniq<MaintenanceState>();
+  }
+};
+
+duckdb::unique_ptr<duckdb::FunctionData> BindRelation(
+  duckdb::ClientContext& context, const duckdb::TableFunctionBindInput& input,
+  std::string_view function) {
+  SDB_ASSERT(!input.inputs.empty());
+  if (input.inputs[0].IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(function, " requires a relation name"));
+  }
+  auto data = duckdb::make_uniq<MaintenanceBindData>();
+  data->relation = input.inputs[0].GetValue<std::string>();
+  MergeTarget::Resolve(context, data->relation);
+  return data;
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> RefreshBind(
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::Identifier>& names) {
+  for (const auto* name : {"segments", "docs", "bytes", "total_ms"}) {
+    names.emplace_back(name);
+  }
+  return_types.insert(return_types.end(), 3, duckdb::LogicalType::BIGINT);
+  return_types.emplace_back(duckdb::LogicalType::DOUBLE);
+  return BindRelation(context, input, "sdb_refresh");
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> CleanupBind(
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::Identifier>& names) {
+  for (const auto* name : {"files", "bytes", "total_ms"}) {
+    names.emplace_back(name);
+  }
+  return_types.insert(return_types.end(), 2, duckdb::LogicalType::BIGINT);
+  return_types.emplace_back(duckdb::LogicalType::DOUBLE);
+  return BindRelation(context, input, "sdb_cleanup");
+}
+
+double MillisSince(std::chrono::steady_clock::time_point begin) {
+  return std::chrono::duration<double, std::milli>(
+           std::chrono::steady_clock::now() - begin)
+    .count();
+}
+
+duckdb::Value Bigint(uint64_t value) {
+  return duckdb::Value::BIGINT(static_cast<int64_t>(value));
+}
+
+void RefreshExecute(duckdb::ClientContext& context,
+                    duckdb::TableFunctionInput& input,
+                    duckdb::DataChunk& output) {
+  auto& state = input.global_state->Cast<MaintenanceState>();
+  if (std::exchange(state.done, true)) {
+    return;
+  }
+  const auto& data = input.bind_data->Cast<MaintenanceBindData>();
+  const auto target = MergeTarget::Resolve(context, data.relation);
+  const auto begin = std::chrono::steady_clock::now();
+  absl::flat_hash_set<std::string> published;
+  for (const auto& segment : target.Snapshot()) {
+    published.emplace(segment.Meta().name);
+  }
+  target.Refresh();
+  uint64_t segments = 0;
+  uint64_t docs = 0;
+  uint64_t bytes = 0;
+  for (const auto& segment : target.Snapshot()) {
+    if (published.contains(segment.Meta().name)) {
+      continue;
+    }
+    const auto described = search::DescribeSegment(segment);
+    ++segments;
+    docs += described.docs;
+    bytes += described.bytes;
+  }
+  output.data[0].Append(Bigint(segments));
+  output.data[1].Append(Bigint(docs));
+  output.data[2].Append(Bigint(bytes));
+  output.data[3].Append(duckdb::Value::DOUBLE(MillisSince(begin)));
+}
+
+void CleanupExecute(duckdb::ClientContext& context,
+                    duckdb::TableFunctionInput& input,
+                    duckdb::DataChunk& output) {
+  auto& state = input.global_state->Cast<MaintenanceState>();
+  if (std::exchange(state.done, true)) {
+    return;
+  }
+  const auto& data = input.bind_data->Cast<MaintenanceBindData>();
+  const auto target = MergeTarget::Resolve(context, data.relation);
+  const auto begin = std::chrono::steady_clock::now();
+  const auto removed = target.Cleanup();
+  output.data[0].Append(Bigint(removed.count));
+  output.data[1].Append(Bigint(removed.bytes));
+  output.data[2].Append(duckdb::Value::DOUBLE(MillisSince(begin)));
+}
+
+duckdb::FunctionSignature RelationSignature() {
+  return duckdb::FunctionSignature().AddPositionalOnly(
+    "relation", duckdb::LogicalType::VARCHAR);
+}
+
+duckdb::TableFunction CompactFunction() {
+  duckdb::TableFunction function{"sdb_compact", RelationSignature(), nullptr};
   function.bind_operator = CompactBindOperator;
   const auto segments_type =
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
@@ -186,8 +300,20 @@ void RegisterSdbCompactFunction(duckdb::DatabaseInstance& db) {
     .AddKeywordOnly("segments", segments_type, duckdb::Value{segments_type})
     .AddKeywordOnly("target_segments", duckdb::LogicalType::BIGINT,
                     duckdb::Value{duckdb::LogicalType::BIGINT});
+  return function;
+}
+
+}  // namespace
+
+void RegisterSdbMaintenanceFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  loader.RegisterFunction(std::move(function));
+  loader.RegisterFunction(CompactFunction());
+  loader.RegisterFunction(
+    duckdb::TableFunction{"sdb_refresh", RelationSignature(), RefreshExecute,
+                          RefreshBind, MaintenanceState::Init});
+  loader.RegisterFunction(
+    duckdb::TableFunction{"sdb_cleanup", RelationSignature(), CleanupExecute,
+                          CleanupBind, MaintenanceState::Init});
 }
 
 }  // namespace sdb::connector

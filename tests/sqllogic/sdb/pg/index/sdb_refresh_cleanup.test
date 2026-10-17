@@ -1,0 +1,174 @@
+statement ok
+CREATE TABLE src_t (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO src_t SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+query
+SELECT segments, docs, bytes > 0 AS sized, total_ms >= 0 AS timed FROM sdb_refresh('src_t')
+----
+segments	docs	sized	timed
+1	100	t	t
+
+
+query
+SELECT count(*) AS n FROM src_t
+----
+n
+100
+
+
+query
+SELECT segments, docs, bytes FROM sdb_refresh('src_t')
+----
+segments	docs	bytes
+0	0	0
+
+
+statement ok
+DELETE FROM src_t WHERE id <= 10
+
+
+query
+SELECT segments, docs FROM sdb_refresh('src_t')
+----
+segments	docs
+0	0
+
+
+query
+SELECT count(*) AS n FROM src_t
+----
+n
+90
+
+
+query
+SELECT sum(docs) AS docs, sum(live_docs) AS live FROM sdb_segments('src_t')
+----
+docs	live
+100	90
+
+
+query
+SELECT files, bytes FROM sdb_cleanup('src_t')
+----
+files	bytes
+0	0
+
+
+statement ok
+CREATE TABLE src_docs (id INT, body TEXT)
+
+
+statement ok
+INSERT INTO src_docs SELECT i, 'w' || (i % 7) FROM generate_series(1, 300) s(i)
+
+
+statement ok
+CREATE INDEX src_idx ON src_docs USING inverted (body)
+WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO src_docs SELECT i, 'w' || (i % 7) FROM generate_series(301, 400) s(i)
+
+
+query
+SELECT segments, docs FROM sdb_refresh('src_idx')
+----
+segments	docs
+1	100
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('src_idx')
+----
+segments
+2
+
+
+query
+SELECT outcome FROM sdb_compact('src_idx', mode := 'compact')
+----
+outcome
+merged
+
+
+query
+SELECT files > 0 AS removed, bytes > 0 AS freed FROM sdb_cleanup('src_idx')
+----
+removed	freed
+t	t
+
+
+query
+SELECT files, bytes FROM sdb_cleanup('src_idx')
+----
+files	bytes
+0	0
+
+
+query
+SELECT count(*) AS n FROM src_idx WHERE body @@ 'w3'
+----
+n
+57
+
+
+statement ok
+INSERT INTO src_docs SELECT i, 'w' || (i % 7) FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) src_idx
+
+
+statement ok
+VACUUM (COMPACT_INDEX) src_idx
+
+
+statement ok
+VACUUM (CLEANUP_INDEX) src_idx
+
+
+query
+SELECT files, bytes FROM sdb_cleanup('src_idx')
+----
+files	bytes
+0	0
+
+
+statement error
+SELECT * FROM sdb_refresh(NULL)
+----
+db error: ERROR: sdb_refresh requires a relation name
+
+
+statement error
+SELECT * FROM sdb_cleanup(NULL)
+----
+db error: ERROR: sdb_cleanup requires a relation name
+
+
+statement error
+SELECT * FROM sdb_refresh('src_missing')
+----
+db error: ERROR: relation "src_missing" does not exist
+
+
+statement error
+SELECT * FROM sdb_cleanup('src_docs')
+----
+db error: ERROR: "src_docs" is not a search table or an inverted index
+
+
+statement ok
+DROP TABLE src_docs CASCADE
+
+
+statement ok
+DROP TABLE src_t

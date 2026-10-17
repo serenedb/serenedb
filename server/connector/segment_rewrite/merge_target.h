@@ -78,6 +78,8 @@ class MergeTarget {
                    irs::LoneSegment lone = irs::LoneSegment::Skip) const;
   search::MergeScheduler::Lease TakeOver() const;
   void Publish() const;
+  void Refresh() const;
+  irs::RemovedFiles Cleanup() const;
 
  private:
   std::string _name;

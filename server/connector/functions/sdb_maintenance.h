@@ -27,6 +27,6 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace sdb::connector {
 
-void RegisterSdbCompactFunction(duckdb::DatabaseInstance& db);
+void RegisterSdbMaintenanceFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

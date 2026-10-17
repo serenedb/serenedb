@@ -203,7 +203,7 @@ class InvertedIndexStorage final
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
 
-  ResultWithTime CleanupUnsafe();
+  CleanupResult CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   [[nodiscard]] absl::Status Refresh(

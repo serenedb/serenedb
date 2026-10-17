@@ -288,7 +288,27 @@ statement ok
 VACUUM (OPTIMIZE_DATABASE) ${__DATABASE__};
 
 
-# Query results survive compaction at every scope.
+statement ok
+VACUUM (CLEANUP_INDEX) docs_idx;
+
+
+statement ok
+VACUUM (CLEANUP_TABLE) public.docs;
+
+
+statement ok
+VACUUM (CLEANUP_SCHEMA) public;
+
+
+statement ok
+VACUUM (CLEANUP_SCHEMA) ${__DATABASE__}.s2;
+
+
+statement ok
+VACUUM (CLEANUP_DATABASE) ${__DATABASE__};
+
+
+# Query results survive compaction and cleanup at every scope.
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
 ----
@@ -395,6 +415,12 @@ db error: ERROR: VACUUM (optimize_table) requires an object name
 
 
 statement error
+VACUUM (CLEANUP_INDEX);
+----
+db error: ERROR: VACUUM (cleanup_index) requires an object name
+
+
+statement error
 VACUUM (OPTIMIZE_TABLE, COMPACT_TABLE) docs;
 ----
 db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'optimize_table' and 'compact_table')
@@ -424,6 +450,12 @@ statement error
 VACUUM (COMPACT_ALL) docs;
 ----
 db error: ERROR: VACUUM (compact_all) does not take an argument
+
+
+statement error
+VACUUM (CLEANUP_ALL) docs;
+----
+db error: ERROR: VACUUM (cleanup_all) does not take an argument
 
 
 statement error

@@ -396,10 +396,11 @@ void IndexDurability::SyncDirectory() {
   _durable = std::max(_durable, published);
 }
 
-absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
+absl::StatusOr<irs::RemovedFiles> IndexDurability::Cleanup(
+  irs::Directory& dir) {
   try {
     SyncDirectory();
-    irs::directory_utils::RemoveAllUnreferenced(dir);
+    return irs::directory_utils::RemoveAllUnreferenced(dir);
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name, ": ",
@@ -408,7 +409,6 @@ absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name));
   }
-  return absl::OkStatus();
 }
 
 bool IndexDurability::CanPersist() const {

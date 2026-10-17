@@ -71,6 +71,10 @@ While `COMPACT_*` works on a table or an index, its background merges pause: tho
 
 Background merges pause and resume, and cancelling works, as for `COMPACT_*`. [`sdb_compact(mode := 'optimize')`](../../indexes/inverted/maintenance.md#sdb-compact) shows what an optimize would merge, or runs it with a given segment count.
 
+### Cleaning up -- `CLEANUP_*`
+
+`CLEANUP_*` deletes the files of inverted indexes and search tables that no snapshot uses anymore, such as the segments a merge replaced. Files that a running query still reads stay until a later cleanup. [`sdb_cleanup`](../../indexes/inverted/maintenance.md#sdb-refresh) does the same for one relation and reports how many files and bytes it deleted.
+
 ### Recomputing statistics -- `RECOMPUTE_STATS_*`
 
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
@@ -81,17 +85,17 @@ Background merges pause and resume, and cancelling works, as for `COMPACT_*`. [`
 
 Each option applies at the scope named by its suffix and takes the matching object name as its argument:
 
-| Scope | `REFRESH` | `COMPACT` | `OPTIMIZE` | `RECOMPUTE_STATS` | Argument |
-|---|---|---|---|---|---|
-| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | `OPTIMIZE_INDEX` | -- | index name |
-| Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `OPTIMIZE_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
-| Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `OPTIMIZE_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
-| Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `OPTIMIZE_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
-| Everything | `REFRESH_ALL` | `COMPACT_ALL` | `OPTIMIZE_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
+| Scope | `REFRESH` | `COMPACT` | `OPTIMIZE` | `CLEANUP` | `RECOMPUTE_STATS` | Argument |
+|---|---|---|---|---|---|---|
+| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | `OPTIMIZE_INDEX` | `CLEANUP_INDEX` | -- | index name |
+| Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `OPTIMIZE_TABLE` | `CLEANUP_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
+| Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `OPTIMIZE_SCHEMA` | `CLEANUP_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
+| Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `OPTIMIZE_DATABASE` | `CLEANUP_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
+| Everything | `REFRESH_ALL` | `COMPACT_ALL` | `OPTIMIZE_ALL` | `CLEANUP_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
 
 `RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`.
 
-An inverted index on a search table keeps its terms in the table's own storage, so `REFRESH_INDEX`, `COMPACT_INDEX` and `OPTIMIZE_INDEX` on such an index do what `REFRESH_TABLE`, `COMPACT_TABLE` and `OPTIMIZE_TABLE` do on the table.
+An inverted index on a search table keeps its terms in the table's own storage, so `REFRESH_INDEX`, `COMPACT_INDEX`, `OPTIMIZE_INDEX` and `CLEANUP_INDEX` on such an index do what `REFRESH_TABLE`, `COMPACT_TABLE`, `OPTIMIZE_TABLE` and `CLEANUP_TABLE` do on the table.
 
 Object names may be qualified, for example `VACUUM (REFRESH_TABLE) mydb.public.articles`. The `*_ALL` scopes are instance-wide and take no argument.
 
@@ -107,8 +111,8 @@ The `vacuum_rebuild_indexes` setting that governs index rebuilds is fixed at sta
 
 ## Reclaiming Space
 
-The `VACUUM` statement does not reclaim space.
-To reclaim space, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
+Apart from `CLEANUP_*`, which deletes unused files of inverted indexes and search tables, the `VACUUM` statement does not reclaim space.
+To reclaim space in the database file, use the `CHECKPOINT` statement or compact the database by creating a fresh copy with the [`COPY FROM DATABASE` statement](../copy/index.md#copy-from-database--to).
 
 ## Syntax
 

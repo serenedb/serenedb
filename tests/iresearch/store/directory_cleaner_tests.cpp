@@ -110,7 +110,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
 
   // test clean before initializing directory
   {
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir).count);
   }
 
   // add a more dummy files
@@ -164,7 +164,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
       files.emplace_back(std::move(name));
       return true;
     };
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir).count);
     ASSERT_TRUE(dir.visit(list_files));
 
     for (auto& file : files) {
@@ -190,7 +190,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
       return true;
     };
     ref2.reset();
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir, acceptor));
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir, acceptor).count);
     ASSERT_TRUE(dir.visit(list_files));
 
     for (auto& file : files) {
@@ -210,7 +210,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
       files.emplace_back(std::move(name));
       return true;
     };
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir).count);
     ASSERT_TRUE(dir.visit(list_files));
 
     for (auto& file : files) {
@@ -235,7 +235,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
       return true;
     };
     ref1.reset();
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir, acceptor));
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir, acceptor).count);
     ASSERT_TRUE(dir.visit(list_files));
 
     for (auto& file : files) {
@@ -401,4 +401,29 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_TRUE(files.empty());  // current segment should have been removed too
   }
+}
+
+TEST(directory_cleaner_tests, RemovedFilesCountTheirBytes) {
+  irs::MemoryDirectory dir;
+  auto& refs = dir.attributes().refs();
+  auto small = refs.add("small.file");
+  auto large = refs.add("large.file");
+  const auto kept = refs.add("kept.file");
+  const auto write = [&dir](std::string_view name, size_t size) {
+    auto out = dir.create(name);
+    ASSERT_TRUE(out);
+    const std::vector<irs::byte_type> data(size, irs::byte_type{1});
+    out->WriteData(data.data(), data.size());
+  };
+  write("small.file", 3);
+  write("large.file", 70000);
+  write("kept.file", 5);
+  small.reset();
+  large.reset();
+  const auto removed = irs::DirectoryCleaner::clean(dir);
+  EXPECT_EQ(2, removed.count);
+  EXPECT_EQ(70003, removed.bytes);
+  bool exists = false;
+  ASSERT_TRUE(dir.exists(exists, "kept.file"));
+  EXPECT_TRUE(exists);
 }

@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/store/directory_cleaner.hpp>
 #include <limits>
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
@@ -57,6 +58,12 @@ enum class RefreshResult {
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
+};
+
+struct CleanupResult {
+  absl::Status res;
+  uint64_t time_ms = 0;
+  irs::RemovedFiles removed;
 };
 
 }  // namespace sdb::search

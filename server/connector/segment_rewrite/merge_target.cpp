@@ -201,4 +201,27 @@ void MergeTarget::Publish() const {
   search::ThrowIfRefreshFailed(_index->Refresh(), _name);
 }
 
+void MergeTarget::Refresh() const {
+  if (!_table) {
+    search::ThrowIfRefreshFailed(_index->Refresh(), _name);
+    return;
+  }
+  if (const auto status = _table->VacuumRefresh(); !status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("failed to refresh search table '", _name,
+                            "': ", status.message()));
+  }
+}
+
+irs::RemovedFiles MergeTarget::Cleanup() const {
+  const auto result =
+    _table ? _table->CleanupUnsafe() : _index->CleanupUnsafe();
+  if (!result.res.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("failed to clean up '", _name, "': ", result.res.message()));
+  }
+  return result.removed;
+}
+
 }  // namespace sdb::connector

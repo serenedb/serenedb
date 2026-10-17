@@ -81,6 +81,7 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 | Refresh | `REFRESH_INDEX` · `REFRESH_TABLE` · `REFRESH_SCHEMA` · `REFRESH_DATABASE` · `REFRESH_ALL` | Publish pending writes to readers |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
 | Optimize | `OPTIMIZE_INDEX` · `OPTIMIZE_TABLE` · `OPTIMIZE_SCHEMA` · `OPTIMIZE_DATABASE` · `OPTIMIZE_ALL` | Merge segments into the shape that serves queries best: about one segment per query thread, contiguous, balanced and without deleted rows (see [VACUUM](../../statements/vacuum/index.md)) |
+| Clean up | `CLEANUP_INDEX` · `CLEANUP_TABLE` · `CLEANUP_SCHEMA` · `CLEANUP_DATABASE` · `CLEANUP_ALL` | Delete index files that no snapshot uses anymore, such as the segments a merge replaced |
 | Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_002" />
@@ -88,6 +89,23 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_003" />
 
 Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
+
+A refresh and a compaction of a search table delete the files they make unused when they finish. The files of an inverted index with storage of its own are deleted by the background task after every `cleanup_interval_step` automatic refreshes, by `CLEANUP_*`, or by [`sdb_cleanup`](#sdb-refresh). Files that a running query still reads stay until a later cleanup.
+
+## Refreshing and cleaning up on demand {#sdb-refresh}
+
+`CALL sdb_refresh(relation)` publishes the pending writes of a search table or an inverted index, as `VACUUM (REFRESH_TABLE)` or `VACUUM (REFRESH_INDEX)` does, and returns one row:
+
+| Column | Meaning |
+|---|---|
+| `segments` | Segments the refresh published |
+| `docs` | Documents in those segments |
+| `bytes` | Size of those segments |
+| `total_ms` | Wall-clock time of the call |
+
+Deletes publish no new segment, so a refresh that only applies deletes returns `0` segments.
+
+`CALL sdb_cleanup(relation)` deletes the files of a search table or an inverted index that no snapshot uses anymore, as `VACUUM (CLEANUP_TABLE)` or `VACUUM (CLEANUP_INDEX)` does, and returns one row: `files` and `bytes`, the files it deleted and their size, and `total_ms`.
 
 ## Merging on demand and explaining merges {#sdb-compact}
 

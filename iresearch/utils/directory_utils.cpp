@@ -48,7 +48,7 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
                                             : IndexFileRefs::ref_t{nullptr};
 }
 
-bool RemoveAllUnreferenced(Directory& dir) {
+RemovedFiles RemoveAllUnreferenced(Directory& dir) {
   auto& refs = dir.attributes().refs();
 
   dir.visit([&refs](std::string_view name) {
@@ -56,8 +56,7 @@ bool RemoveAllUnreferenced(Directory& dir) {
     return true;
   });
 
-  DirectoryCleaner::clean(dir);
-  return true;
+  return DirectoryCleaner::clean(dir);
 }
 
 }  // namespace directory_utils

@@ -101,7 +101,6 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
-    _codec_params{options.codec},
     _sort{std::move(sort)},
     _durability{db_id, absl::StrCat("search table ", table_id)} {
   if (!_sort.Empty()) {
@@ -118,13 +117,6 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
 
 void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
   SetTasksSettings(options);
-  {
-    std::unique_lock lock(_table_lock);
-    if (_codec_params != options.codec) {
-      _codec_params = options.codec;
-      RebuildConfig(_configs, _building_index);
-    }
-  }
   NudgeCompaction();
 }
 
@@ -330,7 +322,6 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
-  merged->codec_params = _codec_params;
   merged->declared_compression = std::move(declared_compression);
   return merged;
 }

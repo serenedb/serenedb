@@ -503,9 +503,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    if (!in.Resident(first.file_offset, first.byte_size)) {
-      in.Prefetch(first.file_offset, first.byte_size);
-    }
+    file_utils::Hint(in, first.file_offset, first.byte_size);
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;

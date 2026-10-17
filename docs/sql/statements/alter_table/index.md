@@ -232,7 +232,7 @@ The background maintenance options are `refresh_interval`, `compaction_interval`
 
 ## `ALTER COLUMN ... SET COMPRESSION`
 
-`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore-only codecs (`dict_lz4`, `dict_zstd`, `lz4`, `fsst`, `dict_zxc`, `zxc`) only on search tables, and a level only on codecs that take one.
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore-only codecs (`dict_lz4`, `dict_zstd`, `lz4`, `fsst`, `dict_zxc`, `zxc`) only on search tables, and a level only on codecs that take one. Generated columns take no codec.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 

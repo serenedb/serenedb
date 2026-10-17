@@ -547,10 +547,6 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
   duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info) {
   const auto index = GetColumnIndex(info.column_name);
-  if (index.index == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("cannot SET COMPRESSION for the rowid column"));
-  }
   auto create = GetInfo();
   auto& column =
     create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(index);

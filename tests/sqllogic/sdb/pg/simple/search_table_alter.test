@@ -226,6 +226,21 @@ db error: ERROR: Unknown compression option 'level', expected compression_level
 statement ok
 DROP TABLE alc;
 
+
+statement ok
+CREATE TABLE alg (id INT PRIMARY KEY, v TEXT, g TEXT GENERATED ALWAYS AS (upper(v)))
+WITH (storage = 'search');
+
+
+statement error
+ALTER TABLE alg ALTER COLUMN g SET COMPRESSION lz4;
+----
+db error: ERROR: cannot SET COMPRESSION for generated column "g"
+
+
+statement ok
+DROP TABLE alg;
+
 # On a transactional table the new codec applies at the next checkpoint, and
 # the columnstore codecs stay search-table only.
 statement ok

@@ -74,6 +74,7 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
           column.point =
             std::make_unique<ColumnReader::PointReader>(*_cs, *column.reader);
         }
+        column.value.ResetFromCache(column.value_cache);
         column.point->FetchRow(begin, column.value, 0);
         duckdb::FlatVector::SetSize(column.value, 1);
         out.Reference(column.value);
@@ -111,13 +112,17 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
  private:
   struct Column {
     explicit Column(const duckdb::LogicalType& type)
-      : type{type}, scratch{type}, value{type, 1} {}
+      : type{type},
+        scratch{type},
+        value_cache{duckdb::Allocator::DefaultAllocator(), type, 1},
+        value{value_cache} {}
 
     duckdb::LogicalType type;
     const ColumnReader* reader = nullptr;
     ColumnReader::ScanState state;
     ColumnReader::VectorScratch scratch;
     std::unique_ptr<ColumnReader::PointReader> point;
+    duckdb::VectorCache value_cache;
     duckdb::Vector value;
     uint64_t position = 0;
     bool scanning = false;

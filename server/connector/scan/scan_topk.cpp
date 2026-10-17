@@ -371,9 +371,9 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   if (ss.score.vector &&
       (ss.score.vector->quant != irs::VectorQuantization::None ||
        g.has_lookup_filter)) {
-    static constinit SettingRef gRerank{"sdb_rerank_factor"};
     const auto k = static_cast<double>(*ss.score.top_k);
-    const double pool = std::ceil(gRerank.Double(context) * k);
+    const double pool =
+      std::ceil(GetDoubleSetting(context, "sdb_rerank_factor") * k);
     t.rerank_pool = pool == 0 ? 0 : static_cast<uint32_t>(std::max(pool, k));
   }
   t.pool =

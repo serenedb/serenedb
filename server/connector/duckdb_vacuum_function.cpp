@@ -503,12 +503,10 @@ void DispatchInverted(duckdb::ClientContext& context,
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      static constinit SettingRef gTargetSegments{
-        "sdb_compact_target_segments"};
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(gTargetSegments.Int(context));
+      const auto status = action == Action::Refresh
+                            ? search->VacuumRefresh()
+                            : search->VacuumCompact(GetIntSetting(
+                                context, "sdb_compact_target_segments"));
       if (!status.ok()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),

@@ -117,8 +117,7 @@ constexpr std::array<std::string_view, 3> kOrderModes{"smallest_first",
                                                       "largest_first", "order"};
 
 std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
-  static constinit SettingRef gSplit{"sdb_scan_split"};
-  const auto i = gSplit.Enum(context, kSplitModes);
+  const auto i = GetEnumSetting(context, "sdb_scan_split", kSplitModes);
   if (i == kSplitModes.size()) {
     return std::nullopt;
   }
@@ -126,8 +125,7 @@ std::optional<SplitMode> ReadSplit(duckdb::ClientContext& context) {
 }
 
 OrderMode ReadOrder(duckdb::ClientContext& context, bool scan_ordered) {
-  static constinit SettingRef gOrder{"sdb_scan_order"};
-  const auto i = gOrder.Enum(context, kOrderModes);
+  const auto i = GetEnumSetting(context, "sdb_scan_order", kOrderModes);
   const auto mode =
     i == kOrderModes.size()
       ? (scan_ordered ? OrderMode::Order : OrderMode::LargestFirst)
@@ -442,8 +440,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
               ? SplitMode::Never
               : ReadSplit(context).value_or(scan_ordered ? SplitMode::Always
                                                          : SplitMode::Tail);
-  static constinit SettingRef gNoSplit{"sdb_scan_no_split_row_groups"};
-  g.no_split_rgs = g.split == SplitMode::Never ? 0 : gNoSplit.Int(context);
+  g.no_split_rgs = g.split == SplitMode::Never
+                     ? 0
+                     : GetIntSetting(context, "sdb_scan_no_split_row_groups");
 
   if (g.order == OrderMode::SmallestFirst ||
       g.order == OrderMode::LargestFirst) {

@@ -108,10 +108,11 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
   return static_cast<int64_t>(ms);
 }
 
-duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
+duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
+                               std::string_view name) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const auto index =
-    config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
+    config.TryGetSettingIndex(duckdb::Identifier{name}, option);
   SDB_ASSERT(index.IsValid());
   duckdb::Value value;
   if (config.user_settings.TryGetSetting(index.GetIndex(), value)) {
@@ -119,48 +120,39 @@ duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
   }
   duckdb::ExtensionOption extension;
   const auto found = config.user_settings.TryGetExtensionOption(
-    duckdb::Identifier{_name}, extension);
+    duckdb::Identifier{name}, extension);
   SDB_ASSERT(found);
   return extension.default_value;
 }
 
-duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
-  auto& config = duckdb::DBConfig::GetConfig(context);
-  auto slot = _slot.load(std::memory_order_relaxed);
-  if (slot.config != &config) [[unlikely]] {
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index =
-      config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
-    SDB_ASSERT(index.IsValid());
-    slot = {.config = &config, .index = index.GetIndex()};
-    _slot.store(slot, std::memory_order_relaxed);
-  }
+namespace {
+
+duckdb::Value GetSetting(duckdb::ClientContext& context,
+                         std::string_view name) {
   duckdb::Value value;
-  auto found = context.config.user_settings.TryGetSetting(config.user_settings,
-                                                          slot.index, value);
-  if (!found) [[unlikely]] {
-    auto res = context.TryGetCurrentSetting(duckdb::Identifier{_name}, value);
-    SDB_ASSERT(res);
-  }
+  auto found = context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
+  SDB_ASSERT(found);
   SDB_ASSERT(!value.IsNull());
   return value;
 }
 
-uint32_t SettingRef::Int(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<uint32_t>();
+}  // namespace
+
+uint32_t GetIntSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<uint32_t>();
 }
 
-double SettingRef::Double(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<double>();
+double GetDoubleSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<double>();
 }
 
-bool SettingRef::Bool(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<bool>();
+bool GetBoolSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<bool>();
 }
 
-uint32_t SettingRef::Enum(duckdb::ClientContext& context,
-                          std::span<const std::string_view> options) const {
-  const auto v = Read(context);
+uint32_t GetEnumSetting(duckdb::ClientContext& context, std::string_view name,
+                        std::span<const std::string_view> options) {
+  const auto v = GetSetting(context, name);
   const std::string_view value = duckdb::StringValue::Get(v);
   for (uint32_t i = 0; i != options.size(); ++i) {
     if (absl::EqualsIgnoreCase(value, options[i])) {

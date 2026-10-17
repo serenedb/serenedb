@@ -572,15 +572,13 @@ void ApplyIncludedOpclass(
 }
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
-  static constinit SettingRef gSampleFactor{"sdb_ivf_sample_factor"};
-  const auto f = gSampleFactor.Double(context);
+  const auto f = GetDoubleSetting(context, "sdb_ivf_sample_factor");
   SDB_ASSERT(f > 0.0 && f <= 1.0);
   return static_cast<float>(f);
 }
 
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
-  static constinit SettingRef gPostingSize{"sdb_ivf_posting_size"};
-  const auto n = gPostingSize.Int(context);
+  const auto n = GetIntSetting(context, "sdb_ivf_posting_size");
   SDB_ASSERT(n >= 1);
   return n;
 }

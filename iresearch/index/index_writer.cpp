@@ -1590,6 +1590,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   result.stats.output = compaction_segment.meta.name;
   result.stats.output_docs = compaction_segment.meta.docs_count;
   result.stats.output_bytes = compaction_segment.meta.byte_size;
+  SDB_PARK_ONCE_ON_FAILURE("pause_merge_before_publish");
 
   auto pending_reader =
     SegmentReaderImpl::Open(_dir, compaction_segment.meta, state.options);

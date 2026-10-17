@@ -359,7 +359,9 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                               "search table ",
                               target.table_id));
     }
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_pending");
     absl::SleepFor(kArmRetry);
+    shard.Publish();
   }
 
   // Groups by byte budget: peak disk is ~2x one group, and each publish is

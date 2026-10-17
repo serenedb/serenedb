@@ -122,7 +122,6 @@ class ColumnWriter final {
 
   template<typename Fill>
   void Stage(uint64_t count, Fill&& fill);
-  void AppendDense(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
   void CheckListDistinct(const WriteChunk& back);

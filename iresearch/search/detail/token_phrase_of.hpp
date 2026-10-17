@@ -104,7 +104,7 @@ class PhraseRows {
     auto& out = _out.Reset();
     const auto span = hits[n - 1] - hits[0] + 1;
     if ((n == 1 || n * column_internal::kPointDensity < span) &&
-        column_internal::PointReadable(_column->Type())) {
+        !_column->Type().IsNested()) {
       if (!_point) {
         _point =
           std::make_unique<ColumnReader::PointReader>(*_col_reader, *_column);

@@ -39,17 +39,6 @@
 namespace irs {
 namespace {
 
-bool IsNested(const duckdb::LogicalType& type) noexcept {
-  switch (type.InternalType()) {
-    case duckdb::PhysicalType::STRUCT:
-    case duckdb::PhysicalType::LIST:
-    case duckdb::PhysicalType::ARRAY:
-      return true;
-    default:
-      return false;
-  }
-}
-
 uint64_t BytesIn(const ColumnReader& column, uint64_t begin, uint64_t end) {
   absl::uint128 bytes = 0;
   const auto blocks = column.DataBlocks();
@@ -178,7 +167,7 @@ ReencodeEstimate TrialReencode(
 std::optional<ReencodeEstimate> EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options, size_t samples) {
-  if (samples == 0 || IsNested(column.Type())) {
+  if (samples == 0 || column.Type().IsNested()) {
     return std::nullopt;
   }
   SDB_ASSERT(column.RowCount() != 0);
@@ -205,7 +194,7 @@ ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  SDB_ASSERT(!IsNested(column.Type()) && column.RowCount() != 0);
+  SDB_ASSERT(!column.Type().IsNested() && column.RowCount() != 0);
   return TrialReencode(reader, column, options, kReencodeSampleRowGroups,
                        std::move(dictionary));
 }

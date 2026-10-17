@@ -353,7 +353,7 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   }
   const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
   if (!whole && hits * column_internal::kPointDensity < span &&
-      column_internal::PointReadable(c.out_type)) {
+      !c.out_type.IsNested()) {
     if (!c.point) {
       c.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
                                                                  *c.reader);

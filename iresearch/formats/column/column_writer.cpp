@@ -1572,7 +1572,7 @@ void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
   InitIngest();
   if (new2old.empty()) {
     for (duckdb::idx_t c = 0; c != chunks; ++c) {
-      AppendDense(staged[c].data, staged[c].count);
+      Append(staged[c].data, staged[c].count);
     }
     return;
   }
@@ -1596,7 +1596,7 @@ void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
     duckdb::ImmutableStrings::Copy(all, out, sel, n, 0, 0);
     CertifyStaged(out);
     duckdb::FlatVector::SetSize(out, n);
-    AppendDense(out, n);
+    Append(out, n);
   }
 }
 
@@ -1698,7 +1698,7 @@ void ColumnWriter::AppendStruct(const duckdb::Vector& vec,
   });
 }
 
-void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
+void ColumnWriter::Append(const duckdb::Vector& vec, duckdb::idx_t count) {
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
   if (_list_ingest) {
     AppendList(vec, count);
@@ -1715,14 +1715,10 @@ void ColumnWriter::AppendDense(const duckdb::Vector& vec, duckdb::idx_t count) {
   });
 }
 
-void ColumnWriter::Append(const duckdb::Vector& vec, duckdb::idx_t count) {
-  AppendDense(vec, count);
-}
-
 void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
                           duckdb::idx_t count) {
   PadNullsTo(start_row);
-  AppendDense(vec, count);
+  Append(vec, count);
 }
 
 void ColumnWriter::PadNestedNulls(uint64_t count) {
@@ -1768,7 +1764,7 @@ void ColumnWriter::PadNullsTo(uint64_t target_row) {
     const auto n =
       std::min<uint64_t>(target_row - current, STANDARD_VECTOR_SIZE);
     duckdb::FlatVector::SetSize(*_null_pad, static_cast<duckdb::idx_t>(n));
-    AppendDense(*_null_pad, static_cast<duckdb::idx_t>(n));
+    Append(*_null_pad, static_cast<duckdb::idx_t>(n));
     current += n;
   }
 }

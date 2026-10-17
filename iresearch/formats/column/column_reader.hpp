@@ -248,12 +248,6 @@ class ColumnReader {
     SDB_ASSERT(rg < _segments.size());
     return _segments[rg].statistics;
   }
-  bool IsValidityRgEmpty(size_t vrg) const noexcept {
-    SDB_ASSERT(_validity && vrg < _validity->_segments.size());
-    return _validity->_segments[vrg].codec->type ==
-           duckdb::CompressionType::COMPRESSION_EMPTY;
-  }
-
   BlockWindow Locate(uint64_t row, BlockWindow hint = {}) const noexcept;
 
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;

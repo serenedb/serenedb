@@ -182,10 +182,11 @@ uint64_t ColWriter::StagedBytes() const noexcept {
   return bytes;
 }
 
-ColumnWriter& ColWriter::OpenColumnInternal(
-  field_id id, duckdb::LogicalType type, bool skip_validity,
-  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog,
-  ColCodecParams codec_params) {
+ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
+                                    bool skip_validity, uint32_t row_group_size,
+                                    duckdb::CompressionType forced,
+                                    bool hyperloglog,
+                                    ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
   std::lock_guard lock{_mutex};
   SDB_ASSERT(!_parts.contains(id));
@@ -222,22 +223,12 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
     codec_params = _field_options->CodecParams(opts);
     codec_params.tier = _tier;
   }
-  auto& cw =
-    OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
-                       opts.compression, opts.hyperloglog, codec_params);
+  auto& cw = OpenColumn(id, std::move(type), opts.skip_validity, row_group_size,
+                        opts.compression, opts.hyperloglog, codec_params);
   if (opts.ann_info) {
     AttachAnn(id, *opts.ann_info);
   }
   return cw;
-}
-
-ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
-                                    bool skip_validity, uint32_t row_group_size,
-                                    duckdb::CompressionType compression,
-                                    bool hyperloglog,
-                                    ColCodecParams codec_params) {
-  return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
-                            compression, hyperloglog, codec_params);
 }
 
 ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,

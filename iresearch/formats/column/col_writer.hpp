@@ -147,11 +147,6 @@ class ColWriter final {
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
   bool Empty() const noexcept;
-  ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
-                                   bool skip_validity, uint32_t row_group_size,
-                                   duckdb::CompressionType forced,
-                                   bool hyperloglog,
-                                   ColCodecParams codec_params);
 
   Directory* _dir;
   std::string _segment_name;

@@ -1083,6 +1083,11 @@ void IndexWriter::SegmentContext::Flush() {
   auto& docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
+  if (docs_context.Runs().size() == 1 &&
+      (committed_buffered_docs == 0 ||
+       committed_buffered_docs == docs_context.size())) {
+    order = {};
+  }
 
   flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
                        std::move(docs_context), committed_buffered_docs,

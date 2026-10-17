@@ -27,6 +27,7 @@
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/common/query_context.hpp>
@@ -54,6 +55,7 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_reindex_function.h"
+#include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -703,6 +705,24 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   result =
     SearchTableEntry::ColumnSegmentRows(snapshot->reader, table, key_column);
   return true;
+}
+
+std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
+  duckdb::DuckCatalog& catalog) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (connector::IsInvertedIndex(
+              entry.Cast<duckdb::IndexCatalogEntry>())) {
+          indexes.emplace_back(entry.Cast<InvertedIndexEntry>());
+        }
+      });
+  }
+  return indexes;
 }
 
 }  // namespace sdb::catalog

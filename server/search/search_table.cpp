@@ -83,7 +83,7 @@ struct SearchTable::ReplaySession {
 };
 
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                         bool in_memory, duckdb::idx_t db_id,
+                         bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
@@ -100,13 +100,18 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  OpenWriter(in_memory);
+  if (read_only) {
+    OpenDirectory();
+  } else {
+    OpenWriter(in_memory);
+  }
   ApplyOptions(options);
 }
 
 SearchTable::~SearchTable() {
   _replay.reset();
   _writer.reset();
+  _reader = {};
   _dir.reset();
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
@@ -125,11 +130,8 @@ void SearchTable::OpenWriter(bool in_memory) {
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
-  writer_options.db = &irs::DuckDBEngine::Instance().instance();
-  writer_options.reader_options.db = writer_options.db;
-  if (_topk_scorer) {
-    writer_options.reader_options.scorer = _topk_scorer.get();
-  }
+  writer_options.reader_options = ReaderOptions();
+  writer_options.db = writer_options.reader_options.db;
 
   _writer = _durability
               .OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
@@ -155,7 +157,29 @@ void SearchTable::OpenWriter(bool in_memory) {
   }
 }
 
+void SearchTable::OpenDirectory() {
+  irs::ResourceManagementOptions resource_manager;
+  auto opened = OpenStorageDirectory(*_directory, GetTableId(), false, false,
+                                     resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
+}
+
+void SearchTable::OpenReader() {
+  _reader = IndexDurability::OpenReader(*_dir, ReaderOptions()).first;
+}
+
+irs::IndexReaderOptions SearchTable::ReaderOptions() const {
+  irs::IndexReaderOptions options;
+  options.db = &irs::DuckDBEngine::Instance().instance();
+  options.scorer = _topk_scorer.get();
+  return options;
+}
+
 void SearchTable::StartTasks() {
+  if (!_writer) {
+    return;
+  }
 #ifdef SDB_DEV
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
@@ -181,8 +205,8 @@ ResultWithTime SearchTable::RefreshUnsafe(
 }
 
 StoreStats SearchTable::GetStats() const {
-  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
-  stats.numBufferedDocs = _writer->BufferedDocs();
+  auto stats = StoreStats::FromReader(GetDirectoryReader());
+  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
 }
@@ -474,6 +498,9 @@ void SearchTable::Publish() {
 
 SearchTable::ReplaySession* SearchTable::BeginReplay(
   duckdb::AttachedDatabase& db) {
+  if (!_writer) {
+    return nullptr;
+  }
   auto& manager = duckdb::DuckTransactionManager::Get(db);
   const irs::SourcePosition position{manager.GetReplayGeneration(),
                                      manager.GetReplayCommitOffset()};

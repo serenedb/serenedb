@@ -101,7 +101,8 @@ irs::DirectoryReader PinnedSearchReader(
     return store->GetDirectoryReader();
   }
   return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
-    table.oid, [&] { return store->GetDirectoryReader(); })};
+    table.catalog.GetOid(), table.oid,
+    [&] { return store->GetDirectoryReader(); })};
 }
 
 duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(

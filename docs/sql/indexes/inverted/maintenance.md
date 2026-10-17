@@ -136,6 +136,7 @@ Each result row describes one merge:
 
 | Line | Meaning |
 |---|---|
+| `Table`, `Mode` | The relation and the mode of the call: `background`, `compact`, `optimize` or `segments` |
 | `Segments`, `Merges` | Segments of the relation and merges planned |
 | `Pipeline` | The operators each merge runs, in order: `MERGE_ORDER` (on a search table or an index with a sort key), then `MERGE_UNITS` |
 | `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |

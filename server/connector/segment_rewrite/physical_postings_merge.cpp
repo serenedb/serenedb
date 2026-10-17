@@ -20,16 +20,26 @@
 
 #include "connector/segment_rewrite/physical_postings_merge.h"
 
+#include <atomic>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <memory>
 #include <string>
 #include <utility>
 
 namespace sdb::connector {
 namespace {
+
+struct PostingsMergeGlobalState final : duckdb::GlobalSinkState {
+  explicit PostingsMergeGlobalState(size_t parts) noexcept
+    : parts{parts}, left{parts} {}
+
+  size_t parts;
+  std::atomic<size_t> left;
+};
 
 struct PostingsMergeSinkState final : duckdb::LocalSinkState {
   std::unique_ptr<irs::TermRangeWriter> writer;
@@ -50,16 +60,27 @@ PhysicalPostingsMerge::PhysicalPostingsMerge(
     _on_done{std::move(on_done)} {}
 
 void PhysicalPostingsMerge::FinishPartition(
-  duckdb::LocalSinkState& local) const {
+  duckdb::GlobalSinkState& global, duckdb::LocalSinkState& local) const {
   auto& state = local.Cast<PostingsMergeSinkState>();
   if (!state.writer) {
     return;
   }
   _merge.FinishPart(state.partition, *state.writer);
   state.writer.reset();
+  if (global.Cast<PostingsMergeGlobalState>().left.fetch_sub(1) == 1) {
+    if (_on_done) {
+      _on_done();
+    }
+    return;
+  }
   if (_on_part) {
     _on_part();
   }
+}
+
+duckdb::unique_ptr<duckdb::GlobalSinkState>
+PhysicalPostingsMerge::GetGlobalSinkState(duckdb::ClientContext&) const {
+  return duckdb::make_uniq<PostingsMergeGlobalState>(_merge.PartsLeft());
 }
 
 duckdb::unique_ptr<duckdb::LocalSinkState>
@@ -79,7 +100,7 @@ duckdb::SinkResultType PhysicalPostingsMerge::Sink(
   const auto* begins = duckdb::FlatVector::GetData<uint64_t>(chunk.data[2]);
   const auto* counts = duckdb::FlatVector::GetData<uint64_t>(chunk.data[3]);
   if (state.writer && state.partition != partitions[0]) {
-    FinishPartition(state);
+    FinishPartition(input.global_state, state);
   }
   if (!state.writer) {
     state.partition = partitions[0];
@@ -97,14 +118,16 @@ duckdb::SinkResultType PhysicalPostingsMerge::Sink(
 
 duckdb::SinkCombineResultType PhysicalPostingsMerge::Combine(
   duckdb::ExecutionContext&, duckdb::OperatorSinkCombineInput& input) const {
-  FinishPartition(input.local_state);
+  FinishPartition(input.global_state, input.local_state);
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
 duckdb::SinkFinalizeType PhysicalPostingsMerge::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
-  duckdb::OperatorSinkFinalizeInput&) const {
-  if (_on_done) {
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_finalize");
+  if (input.global_state.Cast<PostingsMergeGlobalState>().parts == 0 &&
+      _on_done) {
     _on_done();
   }
   return duckdb::SinkFinalizeType::READY;

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/time/clock.h>
 
 #include <algorithm>
 #include <array>
@@ -575,6 +576,38 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
   ASSERT_TRUE(executor.Run(plan));
   EXPECT_FALSE(plan.PostingsPending());
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
+}
+
+TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
+  if (!irs::AddFailurePointDebugging("pause_postings_merge_finalize")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  const absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("pause_postings_merge_finalize");
+    irs::RemoveFailurePointDebugging("pause_postings_merge_finalize:release");
+  };
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+                      TestDb(), nullptr, {},   nullptr};
+  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_FALSE(plan.TermRanges().empty());
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  bool ok = false;
+  std::thread merge{[&] { ok = executor.Run(plan); }};
+  while (
+    !irs::RemoveFailurePointDebugging("pause_postings_merge_finalize:parked")) {
+    absl::SleepFor(absl::Milliseconds(1));
+  }
+  EXPECT_FALSE(plan.PostingsPending());
+  irs::AddFailurePointDebugging("pause_postings_merge_finalize:release");
+  merge.join();
+  EXPECT_TRUE(ok);
 }
 
 TEST_F(PipelineMergeExecutorTest, MergeUnitsPlanPassesThePlanVerifier) {

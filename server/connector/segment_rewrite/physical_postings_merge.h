@@ -39,6 +39,8 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
+  duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
+    duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
     duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
@@ -62,7 +64,8 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
     const final;
 
  private:
-  void FinishPartition(duckdb::LocalSinkState& local) const;
+  void FinishPartition(duckdb::GlobalSinkState& global,
+                       duckdb::LocalSinkState& local) const;
 
   irs::TermRangeMerge& _merge;
   std::function<void()> _on_part;

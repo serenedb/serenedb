@@ -564,6 +564,9 @@ absl::Status SearchTable::VacuumCompact(
           !res.ok()) {
         return res;
       }
+      if (auto res = CleanupUnsafe().res; !res.ok()) {
+        return res;
+      }
     }
     more = more && _writer->GetSnapshot().size() < plan.segments;
   }

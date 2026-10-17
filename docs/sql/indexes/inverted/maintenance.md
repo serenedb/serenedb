@@ -90,7 +90,7 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 
 Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
 
-A refresh and a compaction of a search table delete the files they make unused when they finish. The files of an inverted index with storage of its own are deleted by the background task after every `cleanup_interval_step` automatic refreshes, by `CLEANUP_*`, or by [`sdb_cleanup`](#sdb-refresh). Files that a running query still reads stay until a later cleanup.
+A refresh and a compaction of a search table delete the files they make unused when they finish, and so does every merge of `COMPACT_*` and `OPTIMIZE_*`. Otherwise the files of an inverted index with storage of its own are deleted by the background task after every `cleanup_interval_step` automatic refreshes, by `CLEANUP_*`, or by [`sdb_cleanup`](#sdb-refresh). Files that a running query still reads stay until a later cleanup.
 
 ## Refreshing and cleaning up on demand {#sdb-refresh}
 

@@ -355,6 +355,11 @@ void CompactInvertedStorage(Action action,
           ERR_MSG("compact_index: compaction failed: ", res.message()));
       }
       search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
+      if (const auto cleaned = inverted.CleanupUnsafe(); !cleaned.res.ok()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("failed to clean up index '", index_name,
+                                "': ", cleaned.res.message()));
+      }
     }
     more = round.partial &&
            inverted.GetInvertedIndexSnapshot()->reader.size() < round.segments;

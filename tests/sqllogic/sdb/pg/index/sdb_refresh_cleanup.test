@@ -127,16 +127,45 @@ statement ok
 VACUUM (REFRESH_INDEX) src_idx
 
 
+query
+SELECT count(*) AS segments FROM sdb_segments('src_idx')
+----
+segments
+2
+
+
 statement ok
 VACUUM (COMPACT_INDEX) src_idx
 
 
+query
+SELECT files, bytes FROM sdb_cleanup('src_idx')
+----
+files	bytes
+0	0
+
+
 statement ok
-VACUUM (CLEANUP_INDEX) src_idx
+INSERT INTO src_t SELECT i, 'owl' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) src_t
 
 
 query
-SELECT files, bytes FROM sdb_cleanup('src_idx')
+SELECT count(*) AS segments FROM sdb_segments('src_t')
+----
+segments
+2
+
+
+statement ok
+VACUUM (COMPACT_TABLE) src_t
+
+
+query
+SELECT files, bytes FROM sdb_cleanup('src_t')
 ----
 files	bytes
 0	0

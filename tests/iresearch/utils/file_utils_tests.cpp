@@ -23,6 +23,15 @@
 
 #include <iresearch/utils/file_utils_ext.hpp>
 
+#ifndef _WIN32
+#include <absl/cleanup/cleanup.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <cstring>
+#include <vector>
+#endif
+
 #include "tests_shared.hpp"
 
 #ifdef _WIN32
@@ -393,3 +402,33 @@ TEST(file_utils_tests, residency_epoch) {
   irs::file_utils::InvalidateResidency();
   ASSERT_NE(epoch, irs::file_utils::ResidencyEpoch());
 }
+
+#ifndef _WIN32
+TEST(file_utils_tests, mapped_residency) {
+  const auto page = static_cast<size_t>(::sysconf(_SC_PAGESIZE));
+  const auto size = 1025 * page;
+  auto* memory = ::mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANON, -1, 0);
+  ASSERT_NE(memory, MAP_FAILED);
+  absl::Cleanup cleanup = [&] { ::munmap(memory, size); };
+  std::memset(memory, 1, size);
+
+  ASSERT_TRUE(irs::file_utils::IsResident(memory, 0));
+  ASSERT_TRUE(irs::file_utils::IsResident(memory, size));
+  ASSERT_TRUE(
+    irs::file_utils::IsResident(static_cast<char*>(memory) + 1, size - 2));
+
+  std::vector<unsigned char> pages(1025);
+  ASSERT_EQ(page, irs::file_utils::Residency(memory, size, pages));
+  for (const auto resident : pages) {
+    ASSERT_NE(resident & 1, 0);
+  }
+  ASSERT_EQ(
+    0, irs::file_utils::Residency(memory, size, std::span{pages}.first(1024)));
+  ASSERT_EQ(page,
+            irs::file_utils::Residency(static_cast<char*>(memory) + page - 1, 2,
+                                       std::span{pages}.first(2)));
+  ASSERT_EQ(0, irs::file_utils::Residency(static_cast<char*>(memory) + page - 1,
+                                          2, std::span{pages}.first(1)));
+}
+#endif

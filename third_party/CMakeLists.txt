@@ -610,6 +610,12 @@ sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "READM
 
 add_subdirectory(libxml2-cmake)
 
+sdb_update_module(${GIT_EXECUTABLE} "freetype" ${CMAKE_CURRENT_SOURCE_DIR} "README")
+add_subdirectory(freetype-cmake)
+
+sdb_update_module(${GIT_EXECUTABLE} "podofo" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(podofo-cmake)
+
 ################################################################################
 ## Azure SDK (monolithic build)
 ################################################################################

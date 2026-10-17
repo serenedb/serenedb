@@ -1,0 +1,201 @@
+control substitution on
+
+system ok
+python3 tests/sqllogic/fixtures/pdf/generate.py "$__TEST_DIR__/pdf"
+
+query
+SELECT page, text, width, height, has_text_layer
+FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf')
+ORDER BY page;
+----
+page	text	width	height	has_text_layer
+1	Hello PDF	612	792	t
+2	Second page	612	792	t
+
+query
+SELECT page, text
+FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := 2, last_page := 2);
+----
+page	text
+2	Second page
+
+query
+SELECT text FROM read_pdf('${__TEST_DIR__}/pdf/encrypted.pdf', password := 'secret');
+----
+text
+Hello PDF
+
+query
+SELECT page, block, text
+FROM read_pdf_blocks('${__TEST_DIR__}/pdf/encrypted.pdf', password := 'secret');
+----
+page	block	text
+1	1	Hello PDF
+
+query
+SELECT page, text
+FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := 2, last_page := 4294967295);
+----
+page	text
+2	Second page
+
+query
+SELECT text FROM read_pdf('${__TEST_DIR__}/pdf/unicode.pdf');
+----
+text
+П中
+
+query
+SELECT page, text, x, y, width > 0 AS has_width, height > 0 AS has_height
+FROM read_pdf_blocks('${__TEST_DIR__}/pdf/columns.pdf')
+ORDER BY x;
+----
+page	text	x	y	has_width	has_height
+1	Left column	72	720	t	t
+1	Right column	320	720	t	t
+
+query
+SELECT page, has_text_layer, length(text) AS characters
+FROM read_pdf('${__TEST_DIR__}/pdf/mixed.pdf')
+ORDER BY page;
+----
+page	has_text_layer	characters
+1	t	9
+2	f	0
+3	t	11
+
+query
+SELECT count(*) AS pages, min(page) AS first, max(page) AS last
+FROM read_pdf('${__TEST_DIR__}/pdf/many_pages.pdf');
+----
+pages	first	last
+2050	1	2050
+
+query
+SELECT count(*) AS blocks, min(block) AS first, max(block) AS last
+FROM read_pdf_blocks('${__TEST_DIR__}/pdf/many_blocks.pdf');
+----
+blocks	first	last
+2050	1	2050
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages
+FROM read_pdf('${__TEST_DIR__}/pdf/*text.pdf');
+----
+files	pages
+2	3
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/encrypted.pdf');
+----
+db error: ERROR: read_pdf: PDF is encrypted; supply the correct password
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/encrypted.pdf', password := 'wrong');
+----
+db error: ERROR: read_pdf: PDF is encrypted; supply the correct password
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/image.pdf');
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/pdf/image.pdf
+
+
+statement error
+SELECT * FROM read_pdf_blocks('${__TEST_DIR__}/pdf/blank.pdf');
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/pdf/blank.pdf
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/mixed.pdf', first_page := 2, last_page := 2);
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/pdf/mixed.pdf
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', last_page := 4294967296);
+----
+db error: ERROR: read_pdf: page numbers must be between 1 and 4294967295
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := 0);
+----
+db error: ERROR: read_pdf: page numbers must be between 1 and 4294967295
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := 2, last_page := 1);
+----
+db error: ERROR: read_pdf: first_page must not exceed last_page
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := 3);
+----
+db error: ERROR: read_pdf: first_page exceeds the PDF page count: <slt:ignore>/pdf/text.pdf
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', password := NULL);
+----
+db error: ERROR: read_pdf: options must not be NULL
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/empty.pdf');
+----
+db error: ERROR: read_pdf: expected a nonempty seekable file: <slt:ignore>/pdf/empty.pdf
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/invalid.pdf');
+----
+db error: ERROR: read_pdf: could not extract PDF text: PdfErrorCode::InvalidPDF
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/truncated.pdf');
+----
+db error: ERROR: read_pdf: could not extract PDF text: PdfErrorCode::InvalidEOFToken
+
+
+query
+SELECT text FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', last_page := 1);
+----
+text
+Hello PDF
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := -1);
+----
+db error: ERROR: read_pdf: page numbers must be between 1 and 4294967295
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', last_page := 0);
+----
+db error: ERROR: read_pdf: page numbers must be between 1 and 4294967295
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', first_page := NULL);
+----
+db error: ERROR: read_pdf: options must not be NULL
+
+
+statement error
+SELECT * FROM read_pdf_blocks('${__TEST_DIR__}/pdf/text.pdf', last_page := NULL);
+----
+db error: ERROR: read_pdf: options must not be NULL
+
+
+query
+SELECT page, text FROM read_pdf('${__TEST_DIR__}/pdf/text.pdf', password := '') ORDER BY page;
+----
+page	text
+1	Hello PDF
+2	Second page

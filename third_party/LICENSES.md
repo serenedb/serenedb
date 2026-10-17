@@ -68,6 +68,8 @@
 
 ### Other licenses
 
+* [PoDoFo](https://github.com/podofo/podofo), MPL-2.0 (alternative license: LGPL-2.0-or-later); bundled component notices are in `podofo/NOTICE` and the source headers.
+* [FreeType](https://github.com/freetype/freetype), FreeType License (`freetype/docs/FTL.TXT`; alternative license: GPL-2.0).
 * [ICU](https://icu.unicode.org), [Unicode License V3](https://github.com/unicode-org/icu/blob/main/LICENSE)
 * [glibc](https://www.gnu.org/software/libc), GNU LGPL
 * [jemalloc](https://github.com/jemalloc/jemalloc), free as-is license with the comment:

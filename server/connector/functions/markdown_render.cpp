@@ -386,8 +386,8 @@ std::string HighlightSql(const std::string& code, const Style& s) {
     if (i == 0 && start > 0) {
       out.append(code, 0, start);
     }
-    const auto end = i + 1 < tokens.size()
-                       ? std::min(tokens[i + 1].start, code.size())
+    const auto end = i + 1 < tokens.size() && tokens[i + 1].start < code.size()
+                       ? static_cast<size_t>(tokens[i + 1].start)
                        : code.size();
     if (end <= start) {
       continue;

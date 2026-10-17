@@ -1,0 +1,277 @@
+control substitution on
+
+system ok
+cp -R tests/sqllogic/fixtures/pdf/rendered "$__TEST_DIR__/rendered"
+
+query
+SELECT page, width, height, has_text_layer,
+       contains(text, 'Invoice 2026-010') AS invoice,
+       contains(text, 'LEFT-103') AND contains(text, 'RIGHT-204') AS columns,
+       contains(text, 'END-OF-REPORT') AS appendix
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf')
+ORDER BY page;
+----
+page	width	height	has_text_layer	invoice	columns	appendix
+1	612	792	t	t	f	f
+2	612	792	t	f	t	f
+3	612	792	f	f	f	f
+4	612	792	t	f	f	t
+
+query
+SELECT contains(text, 'Document review') AS item_one,
+       contains(text, 'Archive storage') AS item_two,
+       contains(text, '137.50') AS total,
+       contains(text, 'PDF-REAL-001') AS reference
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', last_page := 1);
+----
+item_one	item_two	total	reference
+t	t	t	t
+
+query
+SELECT sum(trim(text)::DECIMAL(10, 2)) AS line_item_total
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/business_report.pdf', last_page := 1)
+WHERE trim(text) IN ('100.00', '37.50');
+----
+line_item_total
+137.50
+
+query
+SELECT contains(text, 'Résumé: café, naïve, façade — €137.50; Ω') AS embedded_font_unicode
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 4);
+----
+embedded_font_unicode
+t
+
+query
+SELECT position('RIGHT COLUMN' IN text) < position('LEFT COLUMN' IN text) AS content_order
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 2, last_page := 2);
+----
+content_order
+t
+
+query
+SELECT trim(text) AS heading, x < 306 AS left_half, width > 0 AS has_width, height > 0 AS has_height
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 2, last_page := 2)
+WHERE trim(text) IN ('LEFT COLUMN', 'RIGHT COLUMN')
+ORDER BY heading;
+----
+heading	left_half	has_width	has_height
+LEFT COLUMN	t	t	t
+RIGHT COLUMN	f	t	t
+
+query
+SELECT page, min(block) AS first_block, max(block) = count(*) AS consecutive
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/business_report.pdf')
+GROUP BY page
+ORDER BY page;
+----
+page	first_block	consecutive
+1	1	t
+2	1	t
+4	1	t
+
+query
+WITH blocks AS (
+  SELECT page, string_agg(text, E'\n' ORDER BY block) AS text
+  FROM read_pdf_blocks('${__TEST_DIR__}/rendered/business_report.pdf')
+  GROUP BY page
+)
+SELECT p.page, p.text = coalesce(b.text, '') AS same_text
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf') p
+LEFT JOIN blocks b USING (page)
+ORDER BY p.page;
+----
+page	same_text
+1	t
+2	t
+3	t
+4	t
+
+query
+SELECT page, has_text_layer
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 3, last_page := 4)
+ORDER BY page;
+----
+page	has_text_layer
+3	f
+4	t
+
+query
+SELECT a.page, a.text = b.text AS same_text, a.has_text_layer = b.has_text_layer AS same_text_layer
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf') a
+JOIN read_pdf('${__TEST_DIR__}/rendered/compressed_report.pdf') b USING (page)
+ORDER BY a.page;
+----
+page	same_text	same_text_layer
+1	t	t
+2	t	t
+3	t	t
+4	t	t
+
+query
+SELECT count(DISTINCT filename) AS files, count(*) AS pages
+FROM read_pdf('${__TEST_DIR__}/rendered/*_report.pdf');
+----
+files	pages
+2	8
+
+query
+SELECT page, text, width, height
+FROM read_pdf('${__TEST_DIR__}/rendered/geometry.pdf')
+ORDER BY page;
+----
+page	text	width	height
+1	Rotation 0	612	792
+2	Rotation 90	792	612
+3	Rotation 180	612	792
+4	Rotation 270	792	612
+
+query
+SELECT page, round(x) AS x, round(y) AS y
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/geometry.pdf')
+ORDER BY page;
+----
+page	x	y
+1	72	700
+2	700	540
+3	540	92
+4	92	72
+
+query
+SELECT text, width, height
+FROM read_pdf('${__TEST_DIR__}/rendered/offset_page.pdf');
+----
+text	width	height
+Rotation 0	612	792
+
+query
+SELECT text, round(x) AS x, round(y) AS y
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/offset_page.pdf');
+----
+text	x	y
+Rotation 0	72	700
+
+query
+SELECT block, text, round(x) AS x, round(y) AS y
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/forms.pdf')
+ORDER BY block;
+----
+block	text	x	y
+1	Approved form stamp	72	620
+2	Approved form stamp	72	320
+
+query
+SELECT a.page, a.text = b.text AS same_text
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf') a
+JOIN read_pdf('${__TEST_DIR__}/rendered/protected_aes-128.pdf', password := 'reader-secret') b USING (page)
+ORDER BY a.page;
+----
+page	same_text
+1	t
+2	t
+3	t
+4	t
+
+query
+SELECT a.page, a.text = b.text AS same_text
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf') a
+JOIN read_pdf('${__TEST_DIR__}/rendered/protected_aes-256.pdf', password := 'reader-secret') b USING (page)
+ORDER BY a.page;
+----
+page	same_text
+1	t
+2	t
+3	t
+4	t
+
+query
+SELECT page, contains(text, 'Invoice 2026-010') AS invoice
+FROM read_pdf('${__TEST_DIR__}/rendered/protected_aes-256.pdf', password := 'owner-secret', last_page := 1);
+----
+page	invoice
+1	t
+
+query
+SELECT contains(text, 'Résumé: café, naïve, façade — €137.50; Ω') AS embedded_font_unicode
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/protected_aes-256.pdf', password := 'reader-secret', first_page := 4)
+WHERE contains(text, 'Résumé:');
+----
+embedded_font_unicode
+t
+
+query
+SELECT page, has_text_layer, length(text) = 0 AS empty_text
+FROM read_pdf('${__TEST_DIR__}/rendered/hybrid.pdf')
+ORDER BY page;
+----
+page	has_text_layer	empty_text
+1	t	f
+2	f	t
+3	t	f
+
+query
+SELECT DISTINCT page
+FROM read_pdf_blocks('${__TEST_DIR__}/rendered/hybrid.pdf')
+ORDER BY page;
+----
+page
+1
+3
+
+system ok
+cp "$__TEST_DIR__/rendered/business_report.pdf" "$__TEST_DIR__/Quarterly résumé 2026.pdf"
+
+query
+SELECT count(*) AS pages, bool_and(ends_with(filename, 'Quarterly résumé 2026.pdf')) AS filename_preserved
+FROM read_pdf('${__TEST_DIR__}/Quarterly résumé 2026.pdf');
+----
+pages	filename_preserved
+4	t
+
+statement ok
+CREATE TABLE pdf_pages AS SELECT page, text FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf');
+
+query
+SELECT page FROM pdf_pages WHERE contains(text, 'END-OF-REPORT') ORDER BY page;
+----
+page
+4
+
+statement ok
+DROP TABLE pdf_pages;
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/rendered/protected_aes-256.pdf');
+----
+db error: ERROR: read_pdf: PDF is encrypted; supply the correct password
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/rendered/protected_aes-128.pdf', password := 'wrong');
+----
+db error: ERROR: read_pdf: PDF is encrypted; supply the correct password
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/rendered/scan.pdf');
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/rendered/scan.pdf
+
+
+statement error
+SELECT * FROM read_pdf_blocks('${__TEST_DIR__}/rendered/scan.pdf');
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/rendered/scan.pdf
+
+
+statement error
+SELECT * FROM read_pdf('${__TEST_DIR__}/rendered/hybrid.pdf', first_page := 2, last_page := 2);
+----
+db error: ERROR: read_pdf: selected pages have no extractable text; OCR is not supported: <slt:ignore>/rendered/hybrid.pdf
+
+
+query
+SELECT count(*) AS pages FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf');
+----
+pages
+4

@@ -107,6 +107,8 @@ Deletes publish no new segment, so a refresh that only applies deletes returns `
 
 `CALL sdb_cleanup(relation)` deletes the files of a search table or an inverted index that no snapshot uses anymore, as `VACUUM (CLEANUP_TABLE)` or `VACUUM (CLEANUP_INDEX)` does, and returns one row: `files` and `bytes`, the files it deleted and their size, and `total_ms`.
 
+`sdb_refresh`, `sdb_cleanup`, `sdb_compact` and `sdb_segments` need the same privilege as `VACUUM` on the table (`MAINTAIN`); for an inverted index, on the table or view it indexes.
+
 ## Merging on demand and explaining merges {#sdb-compact}
 
 `CALL sdb_compact(relation [, mode := ...])` merges segments of a search table or an inverted index right away and returns one row per merge. `EXPLAIN CALL sdb_compact(...)` shows which merges it would run without running them, and `EXPLAIN ANALYZE CALL sdb_compact(...)` runs them and adds how long each merge step took.
@@ -178,7 +180,7 @@ Background compaction runs on the server's background threads (`--background_thr
 - **Failures.** A merge that fails leaves its segments out of the next merges for a while, and that while grows with each failure in a row.
 - **Drops.** Dropping a table, an index or a database discards its queued merges and stops its running ones within a moment, so its files are removed without waiting for those merges to finish.
 
-`sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain. Like `VACUUM (COMPACT_*)`, a call that merges anything pauses the relation's background merges until it ends: those in progress stop and show as `cancelled`. `EXPLAIN` runs nothing and pauses nothing.
+`sdb_compact`'s merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain. Like `VACUUM (COMPACT_*)`, a call that merges anything pauses the relation's background merges until it ends: those in progress stop and show as `cancelled`. `EXPLAIN` runs nothing and pauses nothing.
 
 `sdb_segments(relation)` lists the segments of a search table or an inverted index: `segment`, `docs`, `live_docs`, `deleted_docs`, `bytes`, and `rowid_min` / `rowid_max`, the range of row ids a segment holds.
 

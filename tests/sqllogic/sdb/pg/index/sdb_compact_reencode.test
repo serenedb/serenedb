@@ -138,6 +138,28 @@ verdict
 re-encode
 
 
+query
+EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────────────╮
+│ Table: public.reenc                             │
+│ Mode: optimize                                  │
+│ Segments: 1                                     │
+│ Merges: 1                                       │
+│ Pipeline: MERGE_UNITS                           │
+│ Merge 1:                                        │
+│ 1 segment -> 1, a declared column codec changed │
+│ Merge 1 Inputs: _2                              │
+│ Merge 1 Docs:                                   │
+│ 8192 (8192 live), rowid 1..8192                 │
+│ Merge 1 Bytes: <slt:ignore>│
+│ Merge 1 Columns:                                │
+│ 6, <slt:ignore>│
+│ Merge 1 Postings: 1 field                       │
+╰─────────────────────────────────────────────────╯
+
+
 statement ok
 VACUUM (OPTIMIZE_TABLE) reenc
 

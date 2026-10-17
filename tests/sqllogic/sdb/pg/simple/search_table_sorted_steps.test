@@ -17,6 +17,33 @@ SELECT count(*) AS segments, sum(docs) AS docs, min(docs) AS smallest FROM sdb_s
 segments	docs	smallest
 1172	2400000	1792
 
+query
+EXPLAIN CALL sdb_compact('sts_compact', mode := 'compact');
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: public.sts_compact                                                                                                                          │
+│ Mode: compact                                                                                                                                      │
+│ Segments: 1172                                                                                                                                     │
+│ Merges: 1                                                                                                                                          │
+│ Pipeline: MERGE_ORDER, MERGE_UNITS                                                                                                                 │
+│ Merge 1:                                                                                                                                           │
+│ 149 segments -> 1, compact to 1 segment, first step                                                                                                │
+│ Merge 1 Inputs:                                                                                                                                    │
+│ _1024, _1025, _1026, _1027, _1028, _1029, _1030, _1031, +141 more                                                                                  │
+│ Merge 1 Docs:                                                                                                                                      │
+│ 304896 (304896 live), rowid 2095105..2400000                                                                                                       │
+│ Merge 1 Bytes:                                                                                                                                     │
+│ <slt:ignore>│
+│ Merge 1 Columns:                                                                                                                                   │
+│ 3, <slt:ignore>│
+│ Merge 1 Postings: 0 fields                                                                                                                         │
+│ Not Merged:                                                                                                                                        │
+│ _1 (later step), _2 (later step), _3 (later step), _4 (later step), _5 (later step), _6 (later step), _7 (later step), _8 (later step), +1015 more │
+│ Notes:                                                                                                                                             │
+│ a merge in key order takes at most 1024 segments, so a larger group is merged in steps                                                             │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 statement ok
 VACUUM (COMPACT_TABLE) sts_compact;
 

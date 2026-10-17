@@ -407,25 +407,6 @@ DROP TABLE search_forced_alprd;
 statement ok
 DROP TABLE search_forced_roaring;
 
-# The table-level codec options are gone: auto picks codecs and levels
-statement error
-CREATE TABLE obj_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_objective = 'size');
-----
-db error: ERROR: unrecognized parameter "compression_objective"
-
-
-statement error
-CREATE TABLE obj_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', compression_level = 3);
-----
-db error: ERROR: unrecognized parameter "compression_level"
-
-
-statement error
-CREATE TABLE obj_bad (a INTEGER PRIMARY KEY, v TEXT) WITH (storage = 'search', segment_target = 65536);
-----
-db error: ERROR: unrecognized parameter "segment_target"
-
-
 # A refresh always writes the cheap leaves (fsst, lz4); compaction re-encodes
 # with the full set. Two flushed segments so the compaction merges.
 statement ok

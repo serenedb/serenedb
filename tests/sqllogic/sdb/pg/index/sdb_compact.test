@@ -146,6 +146,19 @@ merge	outcome
 
 
 query
+EXPLAIN CALL sdb_compact('sdbc', mode := 'compact', target_segments := 2)
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ─────────────────╮
+│ Table: public.sdbc                │
+│ Mode: compact                     │
+│ Segments: 2                       │
+│ Merges: 0                         │
+│ Notes: already at most 2 segments │
+╰───────────────────────────────────╯
+
+
+query
 SELECT segment FROM sdb_segments('sdbc') ORDER BY segment
 ----
 segment
@@ -159,6 +172,20 @@ FROM sdb_compact('sdbc', mode := 'segments', segments := ['_5', '_6'])
 ----
 outcome	input_docs	output_docs	output
 merged	400	400	_7
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc', mode := 'segments', segments := ['_7'])
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ─────────────────────────────────────╮
+│ Table: public.sdbc                                    │
+│ Mode: segments                                        │
+│ Segments: 1                                           │
+│ Merges: 0                                             │
+│ Notes:                                                │
+│ a single segment without deletes has nothing to merge │
+╰───────────────────────────────────────────────────────╯
 
 
 query

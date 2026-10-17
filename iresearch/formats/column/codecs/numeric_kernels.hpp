@@ -259,15 +259,6 @@ inline constexpr unsigned kLanes = 1024 / (8 * sizeof(LaneWord<U>));
 template<typename U>
 inline constexpr unsigned kMaxBits = 8 * sizeof(U);
 
-template<typename U>
-constexpr unsigned BitsFor(U range) noexcept {
-  unsigned bits = 0;
-  while (bits < kMaxBits<U> && (range >> bits) != 0) {
-    ++bits;
-  }
-  return bits;
-}
-
 constexpr size_t PackedBytes(unsigned bits) noexcept {
   return kBlockValues / 8 * bits;
 }

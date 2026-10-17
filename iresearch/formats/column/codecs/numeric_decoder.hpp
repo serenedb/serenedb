@@ -95,8 +95,6 @@ class FrameDecoder {
     return lo;
   }
 
-  uint64_t End() const noexcept { return _end; }
-
   T FrameMin(uint32_t f) const noexcept {
     return Scaled(static_cast<U>(MetaAt(f).min));
   }

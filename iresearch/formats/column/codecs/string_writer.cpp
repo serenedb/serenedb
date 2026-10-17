@@ -67,7 +67,7 @@ constexpr double kUntrainedGain = 0.02;
 constexpr double kFsstPreference = 0.05;
 constexpr size_t kPriceFrames = 8;
 
-constexpr uint8_t kLz4Fast[] = {1};
+constexpr uint8_t kLz4Fast = 1;
 constexpr uint8_t kRefreshLz4Levels[] = {1, 4};
 constexpr uint8_t kLz4Levels[] = {1, 4, 6};
 constexpr uint8_t kZxcLevels[] = {1, 3};
@@ -931,7 +931,7 @@ class SegmentWriter {
     const bool repeats =
       Repeats(_acc.entries.size(), _acc.row_count - _acc.null_count);
     return {{repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
-            kLz4Fast[0],
+            kLz4Fast,
             FrameLayout::Dictionary};
   }
 
@@ -946,7 +946,7 @@ class SegmentWriter {
                      bool drift) {
     _live.clear();
     _live.push_back(cut);
-    const auto base = kLz4Fast[0];
+    const auto base = kLz4Fast;
     const auto tuned = _tuning.layout[Index(ByteCodec::Lz4)];
     const auto layout = retune || tuned == FrameLayout::Dictionary
                           ? FrameLayout::FirstFrame

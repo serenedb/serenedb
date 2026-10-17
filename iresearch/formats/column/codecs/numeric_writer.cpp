@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -36,6 +37,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
+#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -139,8 +141,7 @@ class Blocks {
         }
       }
       _base[b] = lo;
-      _bits[b] =
-        static_cast<uint8_t>(numeric::BitsFor<V>(static_cast<V>(hi - lo)));
+      _bits[b] = static_cast<uint8_t>(std::bit_width(static_cast<V>(hi - lo)));
     }
   }
 
@@ -183,8 +184,6 @@ class Blocks {
   std::vector<uint8_t> _bits;
   std::vector<V> _scratch;
 };
-
-constexpr uint32_t Align8(uint32_t v) noexcept { return (v + 7) & ~7U; }
 
 template<typename T>
 class TypedSealer final : public NumericSealer {

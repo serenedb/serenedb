@@ -552,7 +552,7 @@ class IndexWriter : private util::Noncopyable {
   void RevokeTicketsLocked(bool clear) noexcept;
 
   struct CompactionContext : util::Noncopyable {
-    std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
+    std::vector<SegmentReader> inputs;
     Compaction candidates;
     std::optional<MergeDocMap> pending;
     std::optional<MergeDocMap> published;
@@ -561,30 +561,28 @@ class IndexWriter : private util::Noncopyable {
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
 
   struct IncomingSegment {
-    IncomingSegment(
-      IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-      Compaction&& compaction_candidates,
-      std::shared_ptr<const SegmentReaderImpl>&& reader,
-      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader,
-      MergeDocMap&& pending) noexcept
+    IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                    Compaction&& compaction_candidates,
+                    std::shared_ptr<const SegmentReaderImpl>&& reader,
+                    std::vector<SegmentReader>&& inputs,
+                    MergeDocMap&& pending) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+        compaction_ctx{.inputs = std::move(inputs),
                        .candidates = std::move(compaction_candidates),
                        .pending = std::move(pending)} {}
 
-    IncomingSegment(
-      IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-      Compaction&& compaction_candidates,
-      std::shared_ptr<const SegmentReaderImpl>&& reader,
-      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader) noexcept
+    IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                    Compaction&& compaction_candidates,
+                    std::shared_ptr<const SegmentReaderImpl>&& reader,
+                    std::vector<SegmentReader>&& inputs) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+        compaction_ctx{.inputs = std::move(inputs),
                        .candidates = std::move(compaction_candidates)} {}
 
     IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,

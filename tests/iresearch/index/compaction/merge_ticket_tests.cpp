@@ -29,6 +29,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <string>
 #include <thread>
 #include <utility>
@@ -259,6 +260,28 @@ TEST_F(MergeTicketTest, RunMergePublishesAndHandsTheReservationToTheCommit) {
   EXPECT_EQ(live, snapshot.live_docs_count());
   EXPECT_EQ(snapshot.docs_count(), snapshot.live_docs_count());
   EXPECT_TRUE(ReservedNames().empty());
+}
+
+TEST_F(MergeTicketTest, AWaitingTicketHoldsOnlyItsOwnSegments) {
+  AddSegments(4);
+  auto reservation = Reserve({{0, 1}, {2, 3}});
+  ASSERT_EQ(2, reservation.tickets.size());
+  const auto replaced = NamesOf(reservation.tickets[1]);
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation.tickets[1])).error);
+  ASSERT_TRUE(_writer->RefreshCommit());
+  irs::directory_utils::RemoveAllUnreferenced(_dir);
+  for (const auto& name : replaced) {
+    bool left = false;
+    _dir.visit([&](std::string_view file) {
+      left |= file.starts_with(absl::StrCat(name, "."));
+      return true;
+    });
+    EXPECT_FALSE(left) << name;
+  }
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation.tickets[0])).error);
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(2, _writer->GetSnapshot().size());
+  EXPECT_EQ(200, _writer->GetSnapshot().live_docs_count());
 }
 
 TEST_F(MergeTicketTest, RunMergeDuringACommitPublishesWithTheNextOne) {

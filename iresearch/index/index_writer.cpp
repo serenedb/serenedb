@@ -1457,7 +1457,13 @@ MergeReservation IndexWriter::ReserveMerges(MergePlanner planner,
 #endif
     auto state = std::make_unique<MergeTicket::State>();
     state->snapshot = snapshot;
-    state->candidates = std::move(group);
+    state->options = snapshot->Options();
+    state->inputs.reserve(group.size());
+    state->candidates.reserve(group.size());
+    for (const auto* candidate : group) {
+      state->candidates.emplace_back(&state->inputs.emplace_back(
+        static_cast<const SegmentReader&>(*candidate)));
+    }
     _compacting.segments.reserve(_compacting.segments.size() +
                                  state->candidates.size());
     _compacting.tickets.reserve(_compacting.tickets.size() + 1);
@@ -1527,7 +1533,6 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   SDB_ASSERT(owned._writer == this);
   auto& state = *owned._state;
   auto& candidates = state.candidates;
-  auto& committed_reader = state.snapshot;
   const bool registered = [&] {
     std::lock_guard lock{_compacting.lock};
     state.running = state.registered;
@@ -1586,9 +1591,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   result.stats.output_docs = compaction_segment.meta.docs_count;
   result.stats.output_bytes = compaction_segment.meta.byte_size;
 
-  auto opts = committed_reader->Options();
   auto pending_reader =
-    SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
+    SegmentReaderImpl::Open(_dir, compaction_segment.meta, state.options);
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1596,13 +1600,14 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   std::shared_lock lock{_commit_lock};
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
+  const bool committed = state.snapshot.lock() != current_committed_reader;
   const bool pending = _pending_state.Valid();
   // Guard against concurrent Commit/etc
   if (pending) {
     auto ctx = GetFlushContext();
     lock.unlock();
     // after some transaction was started:
-    if (committed_reader != current_committed_reader) {
+    if (committed) {
       // If some segment already not in current reader
       // and we're waiting commit -- abort
       auto begin = current_committed_reader->begin();
@@ -1613,10 +1618,11 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
               // FIXME(gnusi): compare pointers?
               return id == s.Meta().name;
             })) {
-          SDB_DEBUG(
-            IRESEARCH, "Failed to start compaction for index generation '",
-            committed_reader->Meta().index_meta.gen, "', not found segment ",
-            candidate->Meta().name, " in committed state");
+          SDB_DEBUG(IRESEARCH,
+                    "Failed to start compaction for index generation '",
+                    current_committed_reader->Meta().index_meta.gen,
+                    "', not found segment ", candidate->Meta().name,
+                    " in committed state");
           result.error = CompactionError::Busy;
           co_return result;
         }
@@ -1629,10 +1635,10 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     ctx->incoming.emplace_back(
       std::move(compaction_segment), writer_limits::kMaxTick,
       // skip removals, will accumulate removals from existing candidates
-      std::move(refs),              // do not forget to track refs
-      std::move(candidates),        // compaction context candidates
-      std::move(pending_reader),    // compacted reader
-      std::move(committed_reader),  // compaction context meta
+      std::move(refs),            // do not forget to track refs
+      std::move(candidates),      // compaction context candidates
+      std::move(pending_reader),  // compacted reader
+      std::move(state.inputs),    // what the candidates point to
       std::move(merger).TakeDocMap());
     SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
               "' successfully finished: pending");
@@ -1642,7 +1648,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   // before new transaction was started:
   CandidatesMapping mappings;
-  if (committed_reader != current_committed_reader) {
+  if (committed) {
     // there was a Commit(s) since compaction was started
     const auto [count, has_removals] =
       MapCandidates(mappings, candidates, *current_committed_reader);
@@ -1693,10 +1699,10 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   auto& pending_segment = ctx->incoming.emplace_back(
     std::move(compaction_segment), writer_limits::kMinTick,
     // removals must be applied to the compacted segment
-    std::move(refs),             // do not forget to track refs
-    std::move(candidates),       // compaction context candidates
-    std::move(pending_reader),   // compacted reader
-    std::move(committed_reader)  // compaction context meta
+    std::move(refs),            // do not forget to track refs
+    std::move(candidates),      // compaction context candidates
+    std::move(pending_reader),  // compacted reader
+    std::move(state.inputs)     // what the candidates point to
   );
   pending_segment.compaction_ctx.published.emplace(
     std::move(merger).TakeDocMap());
@@ -1841,10 +1847,8 @@ void IndexWriter::ReplaceSegments(
       ERR_MSG("cannot replace segments while a begun commit is not finished"));
   }
 
-  // Pin the committed state: the candidate names are masked as string_views
-  // into its metas, so it has to outlive the flush context that holds them --
-  // and holding it also keeps the cleaner off the files until the commit
-  // publishes them. Same reason Compact pins it.
+  // The replaced segments ride along with every replacement: holding them
+  // keeps the cleaner off their files until the commit publishes it.
   auto committed_reader = GetSnapshotImpl();
   Compaction candidates;
   candidates.reserve(replaced.size());
@@ -1874,6 +1878,14 @@ void IndexWriter::ReplaceSegments(
     return;
   }
 
+  std::vector<std::vector<SegmentReader>> pins(adopted.size());
+  for (auto& pinned : pins) {
+    pinned.reserve(candidates.size());
+    for (const auto* candidate : candidates) {
+      pinned.emplace_back(static_cast<const SegmentReader&>(*candidate));
+    }
+  }
+
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
 
@@ -1890,18 +1902,14 @@ void IndexWriter::ReplaceSegments(
 
   // Mutating tail
   // No merger: the replacements are already written, so PrepareFlush applies
-  // pending removals by tick rather than remapping them through a merge. The
-  // pinned reader rides along so the files it names survive until the commit
-  // publishes them.
-  for (auto& entry : adopted) {
-    // A copy per segment: the ctor takes the pin by rvalue, and every segment
-    // needs its own so the files stay referenced until the commit.
+  // pending removals by tick rather than remapping them through a merge.
+  for (size_t i = 0; i != adopted.size(); ++i) {
+    auto& entry = adopted[i];
     // MinTick used here as pending removes must reach replaced segments.
     flush->incoming
       .emplace_back(std::move(entry.segment), writer_limits::kMinTick,
                     std::move(entry.refs), Compaction{},
-                    std::move(entry.reader),
-                    decltype(committed_reader){committed_reader})
+                    std::move(entry.reader), std::move(pins[i]))
       .removal = removal;
   }
   for (const auto name : masked) {

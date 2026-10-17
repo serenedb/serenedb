@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # col_codecs_matrix.sh -- size and speed matrix of the search-table (.col) string
-# codecs on the ClickHouse hits columns.
+# codecs on the hits columns.
 #
-#   for each arm (a codec name, optionally :level) x segment_target:
-#     fresh serened + datadir, CREATE TABLE hits (id PK, <cols> USING COMPRESSION arm)
-#       WITH (storage = 'search', compression_level, segment_target),
+#   for each arm (a codec name, optionally :level):
+#     fresh serened + datadir,
+#       CREATE TABLE hits (id PK, <cols> USING COMPRESSION codec[(compression_level = level)])
+#       WITH (storage = 'search'),
 #     INSERT ... FROM read_parquet(hits.parquet) [LIMIT rows],
 #     VACUUM (REFRESH_TABLE) [+ VACUUM (COMPACT_TABLE)],
 #     bytes per column (pragma_storage_info byte_size), .col file bytes, datadir bytes, peak RSS,
@@ -17,13 +18,11 @@
 #       points          CM_POINTS lookups WHERE id = k, summed
 #
 # Env: CM_BIN (build_bench/bin/serened), CM_PARQUET (~/data/hits.parquet),
-#      CM_ROWS (0 = all), CM_ARMS, CM_TARGETS, CM_COLS, CM_PORT, CM_RES, CM_HOT,
+#      CM_ROWS (0 = all), CM_ARMS, CM_COLS, CM_PORT, CM_RES, CM_HOT,
 #      CM_POINTS, CM_COMPACT (1), CM_KEEP (keep datadirs), CM_THREADS,
-#      CM_OBJECTIVE (compression_objective of every table: balanced, size, speed),
 #      CM_CACHE (sdb_object_cache_size in bytes after every start; 1 = no dictionary cache),
 #      CM_PASSES (insert the parquet N times, ids = file_row_number + pass * CM_PASS_ROWS,
-#                 refreshing after every pass so the WAL is reclaimed between passes),
-#      CM_LEGACY (1 = a serened without the segment_target / compression_level options).
+#                 refreshing after every pass so the WAL is reclaimed between passes).
 # Output: TSV under CM_RES plus a rendered table on stdout.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
@@ -31,7 +30,7 @@ BIN="${CM_BIN:-${ROOT}/build_bench/bin/serened}"
 PARQUET="${CM_PARQUET:-${HOME}/data/hits.parquet}"
 ROWS="${CM_ROWS:-0}"
 ARMS="${CM_ARMS:-auto dict_fsst dict_lz4 dict_zstd:1 dict_zxc:3 lz4 zxc:3 fsst zstd uncompressed}"
-TARGETS="${CM_TARGETS:-262144}"
+TARGETS="default"
 COLS="${CM_COLS:-URL Title Referer SearchPhrase}"
 PORT="${CM_PORT:-6377}"
 RES="${CM_RES:-${ROOT}/scripts/perf/results/col_codecs}"
@@ -40,11 +39,9 @@ POINTS="${CM_POINTS:-200}"
 COMPACT="${CM_COMPACT:-1}"
 KEEP="${CM_KEEP:-0}"
 THREADS="${CM_THREADS:-}"
-OBJECTIVE="${CM_OBJECTIVE:-}"
 PASSES="${CM_PASSES:-1}"
 CACHE="${CM_CACHE:-}"
 PASS_ROWS="${CM_PASS_ROWS:-100000000}"
-LEGACY="${CM_LEGACY:-0}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "${RES}"
 OUT="${RES}/matrix-${STAMP}.tsv"
@@ -62,7 +59,10 @@ up() {
 			[[ -n "${CACHE}" ]] && psql "${CONN}" -X -c "SET GLOBAL sdb_object_cache_size = ${CACHE};" >/dev/null
 			return 0
 		fi
-		kill -0 "${SPID}" 2>/dev/null || { echo "serened exited" >&2; return 1; }
+		kill -0 "${SPID}" 2>/dev/null || {
+			echo "serened exited" >&2
+			return 1
+		}
 		sleep 0.5
 	done
 	echo "serened on :${PORT} never became ready" >&2
@@ -138,7 +138,7 @@ for TARGET in ${TARGETS}; do
 		ARM="${ARMSPEC%%:*}"
 		LEVEL=""
 		[[ "${ARMSPEC}" == *:* ]] && LEVEL="${ARMSPEC##*:}"
-		ARM="${ARMSPEC}${OBJECTIVE:+@${OBJECTIVE}}"
+		ARM="${ARMSPEC}"
 		codec="${ARMSPEC%%:*}"
 		datadir="${RES}/data_${ARMSPEC//:/_}_${TARGET}"
 		rm -rf "${datadir}"
@@ -148,7 +148,10 @@ for TARGET in ${TARGETS}; do
 		[[ -n "${THREADS}" ]] && psql "${CONN}" -X -c "SET GLOBAL threads = ${THREADS};" >/dev/null
 
 		using=""
-		[[ "${codec}" != auto ]] && using=" USING COMPRESSION ${codec}"
+		if [[ "${codec}" != auto ]]; then
+			using=" USING COMPRESSION ${codec}"
+			[[ -n "${LEVEL}" ]] && using+="(compression_level = ${LEVEL})"
+		fi
 		cols_ddl=""
 		sel=""
 		for c in ${COLS}; do
@@ -156,11 +159,6 @@ for TARGET in ${TARGETS}; do
 			sel+=", \"${c}\""
 		done
 		with="storage = 'search', refresh_interval = 0, compaction_interval = 0"
-		if [[ "${LEGACY}" != 1 ]]; then
-			with+=", segment_target = ${TARGET}"
-			[[ -n "${LEVEL}" ]] && with+=", compression_level = ${LEVEL}"
-			[[ -n "${OBJECTIVE}" ]] && with+=", compression_objective = '${OBJECTIVE}'"
-		fi
 		limit=""
 		[[ "${ROWS}" -gt 0 ]] && limit=" LIMIT ${ROWS}"
 		psql "${CONN}" -X -v ON_ERROR_STOP=1 -c "CREATE TABLE hits (id BIGINT PRIMARY KEY${cols_ddl}) WITH (${with});" >/dev/null || exit 1

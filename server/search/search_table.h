@@ -164,6 +164,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void SetDeclaredCompression(catalog::CompressionByColumn compression);
 
   const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+  bool Sorted() const noexcept { return !_sort.Empty(); }
 
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
   // once, after the table is open and recovery (if any) finalized.

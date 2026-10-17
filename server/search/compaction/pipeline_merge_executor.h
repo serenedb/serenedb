@@ -21,7 +21,9 @@
 #pragma once
 
 #include <cstddef>
+#include <duckdb/main/profiler/profiling_node.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
+#include <vector>
 
 namespace duckdb {
 
@@ -33,10 +35,12 @@ namespace sdb::search {
 
 class PipelineMergeExecutor final : public irs::MergeExecutor {
  public:
+  using Profiles = std::vector<duckdb::unique_ptr<duckdb::ProfilingNode>>;
+
   PipelineMergeExecutor(duckdb::DatabaseInstance& db,
-                        duckdb::TaskScheduler* scheduler,
-                        size_t threads) noexcept
-    : _db{db}, _scheduler{scheduler}, _threads{threads} {}
+                        duckdb::TaskScheduler* scheduler, size_t threads,
+                        Profiles* profiles = nullptr) noexcept
+    : _db{db}, _scheduler{scheduler}, _threads{threads}, _profiles{profiles} {}
 
   bool Run(irs::MergePlan& plan) final;
   size_t Threads() const noexcept final { return _threads; }
@@ -46,6 +50,7 @@ class PipelineMergeExecutor final : public irs::MergeExecutor {
   duckdb::DatabaseInstance& _db;
   duckdb::TaskScheduler* _scheduler;
   size_t _threads;
+  Profiles* _profiles;
 };
 
 }  // namespace sdb::search

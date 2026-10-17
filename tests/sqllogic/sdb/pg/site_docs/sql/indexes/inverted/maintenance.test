@@ -140,6 +140,7 @@ QUERY PLAN
 │ Mode: compact                         │
 │ Segments: 2                           │
 │ Merges: 1                             │
+│ Pipeline: MERGE_UNITS                 │
 │ Merge 1:                              │
 │ 2 segments -> 1, compact to 1 segment │
 │ Merge 1 Inputs: _1, _2                │

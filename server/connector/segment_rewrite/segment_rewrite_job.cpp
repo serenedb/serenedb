@@ -167,6 +167,10 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
   params["Mode"] = std::string{search::MergeModeName(plan.mode)};
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
+  if (!plan.merges.empty()) {
+    params["Pipeline"] =
+      job.target.Sorted() ? "MERGE_ORDER, MERGE_UNITS" : "MERGE_UNITS";
+  }
   for (size_t i = 0; i < plan.merges.size(); ++i) {
     DescribeMerge(i + 1, plan.merges[i], job.target, params);
   }

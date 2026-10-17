@@ -69,6 +69,7 @@ QUERY PLAN
 │ Mode: optimize                        │
 │ Segments: 1                           │
 │ Merges: 1                             │
+│ Pipeline: MERGE_UNITS                 │
 │ Merge 1:                              │
 │ 1 segment -> 1, re-encoding saves 95% │
 │ Merge 1 Inputs: _1                    │

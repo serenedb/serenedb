@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/query_profiler.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <memory>
@@ -40,11 +41,35 @@ void Check(const duckdb::QueryResult& result) {
   }
 }
 
+void TakeProfile(duckdb::ClientContext& context,
+                 PipelineMergeExecutor::Profiles& profiles) {
+  duckdb::QueryProfiler::Get(context).GetRootUnderLock(
+    [&](duckdb::optional_ptr<duckdb::ProfilingNode> node) {
+      while (node &&
+             node->GetOperatorMetrics().operator_type ==
+               duckdb::PhysicalOperatorType::RESULT_COLLECTOR &&
+             node->GetChildCount() == 1) {
+        node = node->GetChild(0);
+      }
+      if (!node) {
+        return;
+      }
+      auto& taken =
+        profiles.emplace_back(duckdb::make_uniq<duckdb::ProfilingNode>());
+      taken->GetOperatorMetrics() = node->GetOperatorMetrics();
+      taken->children = std::move(node->children);
+    });
+}
+
 void Execute(duckdb::Connection& connection,
-             duckdb::unique_ptr<duckdb::LogicalOperator> root) {
+             duckdb::unique_ptr<duckdb::LogicalOperator> root,
+             PipelineMergeExecutor::Profiles* profiles) {
   root->ResolveOperatorTypes();
   Check(*connection.Query(
     duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root))));
+  if (profiles) {
+    TakeProfile(*connection.context, *profiles);
+  }
 }
 
 }  // namespace
@@ -57,14 +82,20 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   context.config.threads = threads;
   connection.Query("SET max_execution_time = 0");
   Check(*connection.Query("SET SESSION preserve_insertion_order = false"));
+  if (_profiles) {
+    Check(*connection.Query("SET enable_profiling = 'no_output'"));
+  }
   if (plan.OrderPending()) {
-    Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan));
+    Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan),
+            _profiles);
     plan.FinishOrder();
   }
   const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
                                                   plan.PostingsPending());
-  Execute(connection, duckdb::make_uniq<connector::LogicalMergeUnits>(
-                        run, threads, plan.TermRanges()));
+  Execute(connection,
+          duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads,
+                                                          plan.TermRanges()),
+          _profiles);
   return run->Finish();
 }
 

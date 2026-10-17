@@ -262,6 +262,7 @@ class InvertedIndexStorage final
   }
 
   const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+  bool Sorted() const noexcept { return _sorted; }
 
   void StartTasks() { _search.StartTasks(shared_from_this()); }
 
@@ -286,6 +287,7 @@ class InvertedIndexStorage final
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _absent = false;
+  bool _sorted;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   IndexDurability _durability;

@@ -156,7 +156,8 @@ search::CompactionOptions MergeTarget::PinOptions() const {
 }
 
 std::string MergeTarget::ColumnName(irs::field_id id) const {
-  if (const auto it = _column_names.find(id); it != _column_names.end()) {
+  if (const auto it = _column_names.find(_options->ColumnOf(id));
+      it != _column_names.end()) {
     return it->second;
   }
   return absl::StrCat("#", id);
@@ -199,6 +200,10 @@ void MergeTarget::Publish() const {
     return;
   }
   search::ThrowIfRefreshFailed(_index->Refresh(), _name);
+}
+
+bool MergeTarget::Sorted() const noexcept {
+  return _table ? _table->Sorted() : _index->Sorted();
 }
 
 void MergeTarget::Refresh() const {

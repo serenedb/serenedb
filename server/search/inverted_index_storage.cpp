@@ -67,6 +67,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   : _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
+    _sorted{!sort.Empty()},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);

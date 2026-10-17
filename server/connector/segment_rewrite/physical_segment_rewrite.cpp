@@ -20,6 +20,9 @@
 
 #include "connector/segment_rewrite/physical_segment_rewrite.h"
 
+#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_config.hpp>
@@ -48,9 +51,64 @@ struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
   bool pinned = false;
   size_t next = 0;
   std::vector<ExecutedMerge> executed;
+  search::PipelineMergeExecutor::Profiles pipelines;
 };
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
+
+duckdb::unique_ptr<duckdb::ProfilingNode> MergeNode(
+  size_t number, const ExecutedMerge& merge,
+  search::PipelineMergeExecutor::Profiles queries) {
+  auto node = duckdb::make_uniq<duckdb::ProfilingNode>();
+  auto& metrics = node->GetOperatorMetrics();
+  metrics.name = absl::StrCat("MERGE ", number);
+  metrics.operator_type = duckdb::PhysicalOperatorType::EXTENSION;
+  metrics.time = static_cast<double>(merge.stats.profile.TotalNanos()) / 1e9;
+  metrics.AddExtraInfo("Outcome",
+                       std::string{search::MergeOutcomeName(merge.outcome)});
+  metrics.AddExtraInfo("Inputs", std::to_string(merge.stats.inputs.size()));
+  node->children = std::move(queries);
+  return node;
+}
+
+void Adopt(duckdb::ProfilingNode& node, duckdb::idx_t depth,
+           const MergeTarget& target) {
+  node.depth = depth;
+  auto& metrics = node.GetOperatorMetrics();
+  const auto& info = metrics.GetExtraInfo();
+  if (const auto field = info.find("Field");
+      field != info.end() && !field->second.IsStructured()) {
+    irs::field_id id = 0;
+    if (absl::SimpleAtoi(field->second.Scalar(), &id)) {
+      auto named = info;
+      named["Field"] = target.ColumnName(id);
+      metrics.SetExtraInfo(std::move(named));
+    }
+  }
+  for (auto& child : node.children) {
+    Adopt(*child, depth + 1, target);
+  }
+}
+
+void GraftPipelines(duckdb::ClientContext& context,
+                    const duckdb::PhysicalOperator& op,
+                    const MergeTarget& target,
+                    search::PipelineMergeExecutor::Profiles& merges) {
+  auto& profiler = duckdb::QueryProfiler::Get(context);
+  profiler.GetRootUnderLock([&](duckdb::optional_ptr<duckdb::ProfilingNode>) {
+    const auto& tree = profiler.GetTreeMap();
+    const auto entry = tree.find(op);
+    if (entry == tree.end()) {
+      return;
+    }
+    auto& node = entry->second.get();
+    for (auto& merge : merges) {
+      Adopt(*merge, node.depth + 1, target);
+      node.AddChild(std::move(merge));
+    }
+  });
+  merges.clear();
+}
 
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
                const ExecutedMerge& merge) {
@@ -140,8 +198,11 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     const irs::MergeWriter::FlushProgress progress = [&client] {
       return StatementRunning(client);
     };
+    const bool profiled = context.thread.profiler.IsEnabled();
+    search::PipelineMergeExecutor::Profiles queries;
     search::PipelineMergeExecutor executor{
-      *client.db, &duckdb::TaskScheduler::GetScheduler(client), state.threads};
+      *client.db, &duckdb::TaskScheduler::GetScheduler(client), state.threads,
+      profiled ? &queries : nullptr};
     auto run = _job->target.Compact(
       search::ExplicitPolicy(names), progress, state.options.field_options,
       search::MergeOrigin::Sql, &executor, planned.lone);
@@ -158,6 +219,10 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     }
     ++state.next;
     AppendRow(chunk, state.next, executed);
+    if (profiled) {
+      state.pipelines.emplace_back(
+        MergeNode(state.next, executed, std::move(queries)));
+    }
     state.executed.emplace_back(std::move(executed));
     if (state.next < merges.size()) {
       return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
@@ -176,6 +241,7 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
       info[key] = value;
     }
     profiler.GetOperatorMetrics(*this).SetExtraInfo(info);
+    GraftPipelines(client, *this, _job->target, state.pipelines);
   }
   return duckdb::SourceResultType::FINISHED;
 }

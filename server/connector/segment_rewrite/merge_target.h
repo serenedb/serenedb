@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/entry/inverted_index.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
@@ -60,6 +61,7 @@ class MergeTarget {
   const std::string& Name() const noexcept { return _name; }
   uint64_t RelationId() const noexcept { return _relation_id; }
   bool IsIndex() const noexcept { return _index != nullptr; }
+  bool Sorted() const noexcept;
   uint32_t RowGroupSize() const noexcept { return _options->row_group_size; }
   const irs::IndexFieldOptions& FieldOptions() const noexcept {
     return *_options;
@@ -84,7 +86,7 @@ class MergeTarget {
  private:
   std::string _name;
   uint64_t _relation_id = 0;
-  std::shared_ptr<const irs::IndexFieldOptions> _options;
+  std::shared_ptr<const catalog::InvertedIndexConfig> _options;
   std::shared_ptr<search::SearchTable> _table;
   std::shared_ptr<search::InvertedIndexStorage> _index;
   absl::flat_hash_map<irs::field_id, std::string> _column_names;

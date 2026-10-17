@@ -98,6 +98,7 @@ QUERY PLAN
 │ Mode: background                                            │
 │ Segments: 8                                                 │
 │ Merges: 1                                                   │
+│ Pipeline: MERGE_UNITS                                       │
 │ Merge 1:                                                    │
 │ 8 segments -> 1, adjacent policy                            │
 │ Merge 1 Inputs:                                             │

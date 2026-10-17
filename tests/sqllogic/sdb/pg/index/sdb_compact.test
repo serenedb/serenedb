@@ -58,6 +58,7 @@ QUERY PLAN
 │ Mode: compact                          │
 │ Segments: 4                            │
 │ Merges: 2                              │
+│ Pipeline: MERGE_UNITS                  │
 │ Merge 1:                               │
 │ 2 segments -> 1, compact to 2 segments │
 │ Merge 1 Inputs: _1, _2                 │
@@ -220,11 +221,12 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ EXTENSION ───────────────────────────╮
+╭─ SEGMENT_REWRITE ─────────────────────╮
 │ Table: public.sdbc                    │
 │ Mode: compact                         │
 │ Segments: 2                           │
 │ Merges: 1                             │
+│ Pipeline: MERGE_UNITS                 │
 │ Merge 1:                              │
 │ 2 segments -> 1, compact to 1 segment │
 │ Merge 1 Inputs: _9, _10               │
@@ -245,6 +247,14 @@ QUERY PLAN
 │ Actual Commit: 0.0 ms                 │
 │ Actual Total: 0.0 ms                  │
 │ 1 row                             0µs │
+╰───────────────────┬───────────────────╯
+╭─ MERGE 1 ─────────┴───────────────────╮
+│ Outcome: merged                       │
+│ Inputs: 2                             │
+│ 0 rows                            0µs │
+╰───────────────────┬───────────────────╯
+╭─ MERGE_UNITS ─────┴───────────────────╮
+│ 0 rows                            0µs │
 ╰───────────────────────────────────────╯
 
 
@@ -435,6 +445,7 @@ QUERY PLAN
 │ Mode: compact                           │
 │ Segments: 3                             │
 │ Merges: 1                               │
+│ Pipeline: MERGE_UNITS                   │
 │ Merge 1:                                │
 │ 2 segments -> 1, compact to 2 segments  │
 │ Merge 1 Inputs: _2, _3                  │
@@ -495,7 +506,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ EXTENSION ─────────────────────────────────────────────────╮
+╭─ SEGMENT_REWRITE ───────────────────────────────────────────╮
 │ Table: public.sdbc_plan                                     │
 │ Mode: background                                            │
 │ Segments: 1                                                 │
@@ -615,6 +626,7 @@ QUERY PLAN
 │ Mode: compact                           │
 │ Segments: 9                             │
 │ Merges: 1                               │
+│ Pipeline: MERGE_UNITS                   │
 │ Merge 1:                                │
 │ 9 segments -> 1, compact to 1 segment   │
 │ Merge 1 Inputs:                         │
@@ -686,6 +698,7 @@ QUERY PLAN
 │ Mode: compact                            │
 │ Segments: 3                              │
 │ Merges: 2                                │
+│ Pipeline: MERGE_UNITS                    │
 │ Merge 1:                                 │
 │ 1 segment -> 1, compact to 2 segments    │
 │ Merge 1 Inputs: _1                       │
@@ -816,6 +829,7 @@ QUERY PLAN
 │ Mode: compact                           │
 │ Segments: 4                             │
 │ Merges: 1                               │
+│ Pipeline: MERGE_UNITS                   │
 │ Merge 1:                                │
 │ 3 segments -> 1, compact to 2 segments  │
 │ Merge 1 Inputs: _3, _4, _6              │
@@ -1095,3 +1109,96 @@ RESET threads
 
 statement ok
 DROP TABLE sdbc_par
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+CREATE TABLE sdbc_pipeline_with_postings (id INT, body TEXT) SORTED BY (id)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX sdbc_pipeline_with_postings_idx ON sdbc_pipeline_with_postings USING inverted(body)
+
+
+statement ok
+INSERT INTO sdbc_pipeline_with_postings SELECT i, 'w' || i FROM generate_series(1, 5000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_pipeline_with_postings
+
+
+statement ok
+INSERT INTO sdbc_pipeline_with_postings SELECT i, 'w' || i FROM generate_series(5001, 10000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_pipeline_with_postings
+
+
+query
+EXPLAIN ANALYZE CALL sdb_compact('sdbc_pipeline_with_postings', mode := 'compact')
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ SEGMENT_REWRITE ─────────────────────────╮
+│ Table: public.sdbc_pipeline_with_postings │
+│ Mode: compact                             │
+│ Segments: 2                               │
+│ Merges: 1                                 │
+│ Pipeline: MERGE_ORDER, MERGE_UNITS        │
+│ Merge 1:                                  │
+│ 2 segments -> 1, compact to 1 segment     │
+│ Merge 1 Inputs: _1, _2                    │
+│ Merge 1 Docs:                             │
+│ 10000 (10000 live), rowid 1..10000        │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                          │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field                 │
+│ Actual Outcome: merged 1                  │
+│ Actual Written: <slt:ignore>│
+│ Actual Prepare: 0.0 ms                    │
+│ Actual Norms: 0.0 ms                      │
+│ Actual Columns: 0.0 ms                    │
+│ Actual Columns Commit: 0.0 ms             │
+│ Actual ANN: 0.0 ms                        │
+│ Actual Postings: 0.0 ms                   │
+│ Actual Commit: 0.0 ms                     │
+│ Actual Total: 0.0 ms                      │
+│ 1 row                                 0µs │
+╰─────────────────────┬─────────────────────╯
+╭─ MERGE 1 ───────────┴─────────────────────╮
+│ Outcome: merged                           │
+│ Inputs: 2                                 │
+│ 0 rows                                0µs │
+╰─────────────────────┬─────────────────────╯
+                      ├──────────────────────────────────╮
+╭─ MERGE_ORDER ───────┴─────────────────────╮  ╭─ UNION ─┴─────────╮
+│ 0 rows                                0µs │  │ 0 rows        0µs │
+╰─────────────────────┬─────────────────────╯  ╰─────────┬─────────╯
+╭─ PRESORTED_MERGE ───┴─────────────────────╮            ├────────────────────╮
+│ Inputs: 2                                 │  ╭─ POSTINGS_MERGE ──╮  ╭─ MERGE_UNITS ─╮
+│ Partitions: 1                             │  │ Field: body       │  │ 0 rows    0µs │
+│ 2 rows                                0µs │  │ Parts: 2          │  ╰───────────────╯
+╰───────────────────────────────────────────╯  │ 0 rows        0µs │
+                                               ╰─────────┒┎────────╯
+                                               ╭─ PRESORTED_MERGE ─╮
+                                               │ Inputs: 2         │
+                                               │ Partitions: 2     │
+                                               │ 1,003 rows    0µs │
+                                               ╰───────────────────╯
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE sdbc_pipeline_with_postings

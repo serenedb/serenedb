@@ -135,6 +135,7 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
+| `Pipeline` | The operators each merge runs, in order: `MERGE_ORDER` (on a search table or an index with a sort key), then `MERGE_UNITS` |
 | `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
@@ -147,7 +148,7 @@ Each result row describes one merge:
 
 On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it runs only the first of the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes: it merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and lists the rest as `later step`. Call it again for the next step.
 
-`EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
+`EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`. Below the `SEGMENT_REWRITE` box it draws one `MERGE N` box per merge, with its outcome, its number of inputs and its wall-clock time, and below it the operators the merge ran: `MERGE_ORDER` puts the rows of a sorted relation in key order, `MERGE_UNITS` runs the pieces of the merge described below, and beside it, in a `UNION`, one `POSTINGS_MERGE` per indexed field whose terms the merge splits into ranges merges those ranges. `MERGE_ORDER` and `POSTINGS_MERGE` read their inputs through a `PRESORTED_MERGE`. The time of an operator adds up the threads that ran it.
 
 A merge runs as separate pieces of work: the norms of each indexed field, one after another, then every column and the postings of all indexed fields side by side, then the column file's footer, the vector indexes one at a time, and finally the index files. The ranges of terms of each large indexed field (see below) are merged beside these pieces and come first: the other pieces run on one thread, and on every other thread that the unfinished ranges cannot use. The postings piece starts once the last range is done. `CALL sdb_compact` and `VACUUM (COMPACT_*)` run these pieces on as many threads as the session may use (the `threads` setting), so a merge of a wide table finishes sooner on more threads. With several threads the step times of a merge add up to more than its `total_ms`.
 

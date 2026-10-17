@@ -104,24 +104,36 @@ void SortedPostings::Settle(size_t i) {
   }
 }
 
+void SortedPostings::SiftDown(size_t pos) noexcept {
+  const auto size = _heap.size();
+  const auto moved = _heap[pos];
+  const auto head = _cursors[moved].head;
+  while (true) {
+    auto child = 2 * pos + 1;
+    if (child >= size) {
+      break;
+    }
+    if (child + 1 < size &&
+        _cursors[_heap[child + 1]].head < _cursors[_heap[child]].head) {
+      ++child;
+    }
+    if (head < _cursors[_heap[child]].head) {
+      break;
+    }
+    _heap[pos] = _heap[child];
+    pos = child;
+  }
+  _heap[pos] = moved;
+}
+
 uint32_t SortedPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
   uint32_t n = 0;
-  while (n != doc_limits::kBlockSize) {
-    size_t best = 0;
-    doc_id_t best_head = doc_limits::eof();
+  while (n != doc_limits::kBlockSize && !_heap.empty()) {
+    const auto best = _heap.front();
     doc_id_t rival_head = doc_limits::eof();
-    for (size_t i = 0; i != _cursors.size(); ++i) {
-      const auto head = _cursors[i].head;
-      if (head < best_head) {
-        rival_head = best_head;
-        best_head = head;
-        best = i;
-      } else if (head < rival_head) {
-        rival_head = head;
-      }
-    }
-    if (doc_limits::eof(best_head)) {
-      break;
+    for (size_t child = 1; child != std::min<size_t>(3, _heap.size());
+         ++child) {
+      rival_head = std::min(rival_head, _cursors[_heap[child]].head);
     }
     auto& c = _cursors[best];
     while (n != doc_limits::kBlockSize && c.head < rival_head) {
@@ -137,6 +149,14 @@ uint32_t SortedPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
       ++c.at;
       Settle(best);
     }
+    if (doc_limits::eof(c.head)) {
+      _heap.front() = _heap.back();
+      _heap.pop_back();
+      if (_heap.empty()) {
+        break;
+      }
+    }
+    SiftDown(0);
   }
   _recorded = n;
   _walked = 0;

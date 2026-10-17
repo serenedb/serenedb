@@ -100,12 +100,19 @@ class SortedPostings : public TermPostings {
     _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
     _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
     _cursors.resize(_iterators.size());
+    _heap.clear();
     for (size_t i = 0; i != _cursors.size(); ++i) {
       auto& c = _cursors[i];
       c.at = 0;
       c.size = 0;
       c.skip = 0;
       Settle(i);
+      if (!doc_limits::eof(c.head)) {
+        _heap.push_back(static_cast<uint32_t>(i));
+      }
+    }
+    for (size_t pos = _heap.size() / 2; pos-- != 0;) {
+      SiftDown(pos);
     }
     _recorded = 0;
     _walked = 0;
@@ -115,6 +122,7 @@ class SortedPostings : public TermPostings {
   void Clear() noexcept {
     _iterators.clear();
     _cursors.clear();
+    _heap.clear();
   }
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
@@ -135,9 +143,11 @@ class SortedPostings : public TermPostings {
   };
 
   void Settle(size_t i);
+  void SiftDown(size_t pos) noexcept;
 
   std::vector<PostingsT> _iterators;
   std::vector<Cursor> _cursors;
+  std::vector<uint32_t> _heap;
   ProgressTracker _progress;
   size_t _input[doc_limits::kBlockSize];
   uint32_t _freq[doc_limits::kBlockSize];

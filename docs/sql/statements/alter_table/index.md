@@ -232,11 +232,11 @@ The background maintenance options are `refresh_interval`, `compaction_interval`
 
 ## `ALTER COLUMN ... SET COMPRESSION`
 
-`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore codecs (`dict_lz4`, `dict_zstd`, `lz4`, `dict_fsst`, `fsst`, `zxc`, ...) only on search tables, and a level only on codecs that take one.
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore-only codecs (`dict_lz4`, `dict_zstd`, `lz4`, `fsst`, `dict_zxc`, `zxc`) only on search tables, and a level only on codecs that take one.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 
-The change applies to data written afterwards and is undone if its transaction rolls back. On a search table it applies to the segments written after it, and compaction rewrites the older ones; a codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. On a transactional table it applies from the next checkpoint. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
+The change applies to data written afterwards and is undone if its transaction rolls back. On a search table it applies to the segments written after it; an older segment keeps its codec until a merge includes it, and `VACUUM (OPTIMIZE_TABLE)` rewrites every segment written with another codec. A codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. On a transactional table it applies from the next checkpoint. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
 
 ## `ENABLE` / `DISABLE TRIGGER`
 

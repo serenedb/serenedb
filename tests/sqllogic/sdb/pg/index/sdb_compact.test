@@ -66,7 +66,7 @@ QUERY PLAN
 │ 200 (200 live), rowid 1..200           │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                       │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field              │
 │ Merge 2:                               │
 │ 2 segments -> 1, compact to 2 segments │
@@ -75,7 +75,7 @@ QUERY PLAN
 │ 200 (200 live), rowid 201..400         │
 │ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 2 Columns:                       │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 2 Postings: 1 field              │
 ╰────────────────────────────────────────╯
 
@@ -234,7 +234,7 @@ QUERY PLAN
 │ 450 (450 live), rowid 51..500         │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                      │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field             │
 │ Actual Outcome: merged 1              │
 │ Actual Written: <slt:ignore>│
@@ -453,7 +453,7 @@ QUERY PLAN
 │ 200 (200 live), rowid 101..300          │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                        │
-│ 4, <slt:ignore>, largest body <slt:ignore>│
+│ 4, <slt:ignore>│
 │ Merge 1 Postings: 1 field               │
 │ Merge 1 ANN: 1 column                   │
 │ Not Merged:                             │
@@ -634,7 +634,7 @@ QUERY PLAN
 │ Merge 1 Docs: 9 (9 live), rowid 1..9    │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                        │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field               │
 ╰─────────────────────────────────────────╯
 
@@ -706,7 +706,7 @@ QUERY PLAN
 │ Merge 1 Bytes:                           │
 │ <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                         │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field                │
 │ Merge 2:                                 │
 │ 2 segments -> 1, compact to 2 segments   │
@@ -714,7 +714,7 @@ QUERY PLAN
 │ Merge 2 Docs: 60 (50 live), rowid 31..90 │
 │ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 2 Columns:                         │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 2 Postings: 1 field                │
 ╰──────────────────────────────────────────╯
 
@@ -837,7 +837,7 @@ QUERY PLAN
 │ 300 (300 live), rowid 201..500          │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                        │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field               │
 │ Not Merged:                             │
 │ _5 (alone in its group without deletes) │
@@ -1160,7 +1160,7 @@ QUERY PLAN
 │ 10000 (10000 live), rowid 1..10000        │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                          │
-│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field                 │
 │ Actual Outcome: merged 1                  │
 │ Actual Written: <slt:ignore>│

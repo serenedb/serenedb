@@ -148,7 +148,7 @@ QUERY PLAN
 │ Merge 1 Bytes:                        │
 │ <slt:ignore> -> est <slt:ignore>│
 │ Merge 1 Columns:                      │
-│ 3, <slt:ignore>, largest msg <slt:ignore>│
+│ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field             │
 ╰───────────────────────────────────────╯
 

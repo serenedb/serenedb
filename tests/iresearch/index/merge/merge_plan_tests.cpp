@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -32,6 +33,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iterator>
 #include <numeric>
@@ -1117,6 +1119,42 @@ TEST_F(ColumnCopyTest, BlocksThatPointOutsideThemselvesAreReencoded) {
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kRowGroup, 1, &units);
+  ASSERT_NE(nullptr, merged);
+  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kText).empty());
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
+TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
+  if (!irs::AddFailurePointDebugging("irs::ColumnWriter::DuckDBStrings")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("irs::ColumnWriter::DuckDBStrings");
+  };
+  for (size_t s = 0; s != 2; ++s) {
+    AddSegment(kEligibleRows, [](auto& doc, size_t row) {
+      auto& cw = doc.GetColWriter()->OpenColumn(
+        kText, duckdb::LogicalType::VARCHAR, false, DEFAULT_ROW_GROUP_SIZE,
+        duckdb::CompressionType::COMPRESSION_ZSTD, false,
+        irs::ColCodecParams{.tier = irs::WriteTier::Flush});
+      duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+      v.SetValue(0, duckdb::Value{absl::StrCat("streamed-", row, "-",
+                                               std::string(row % 61, 'z'))});
+      cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
+                1);
+    });
+  }
+  std::move(remove).Invoke();
+  TakeSnapshot();
+  for (const auto* input : _inputs) {
+    for (const auto& block :
+         input->GetColReader()->Column(kText)->DataBlocks()) {
+      ASSERT_EQ(duckdb::CompressionType::COMPRESSION_ZSTD, block.codec->type);
+    }
+  }
+  irs::MemoryDirectory out;
+  std::span<const irs::MergeUnit> units;
+  const auto merged = MergeInputs(out, kRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kText).empty());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));

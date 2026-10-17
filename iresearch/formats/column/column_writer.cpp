@@ -57,6 +57,7 @@
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -1047,6 +1048,9 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
                               ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
   const auto forced_method = ForcedMethod(db, forced);
+  SDB_IF_FAILURE("irs::ColumnWriter::DuckDBStrings") {
+    return CompressData(type, chunks, forced_method, meta);
+  }
   if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
     return CompressData(type, chunks, forced_method, meta);
   }

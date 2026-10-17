@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/main/config.hpp>
 #include <span>
 #include <string>
@@ -95,9 +96,17 @@ bool BlocksRelocatable(const ColumnReader& column) {
   if (column.Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
     return true;
   }
-  return absl::c_none_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
-    return block.codec->type ==
-           duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  return absl::c_all_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
+    switch (const auto type = block.codec->type) {
+      case duckdb::CompressionType::COMPRESSION_CONSTANT:
+      case duckdb::CompressionType::COMPRESSION_EMPTY:
+      case duckdb::CompressionType::COMPRESSION_DICTIONARY:
+      case duckdb::CompressionType::COMPRESSION_FSST:
+      case duckdb::CompressionType::COMPRESSION_DICT_FSST:
+        return true;
+      default:
+        return duckdb::IsSereneDBCompressionType(type);
+    }
   });
 }
 

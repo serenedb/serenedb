@@ -40,8 +40,7 @@ namespace sdb::search {
 
 struct MergeUnitRun {
   MergeUnitRun(irs::MergePlan& plan,
-               std::chrono::steady_clock::time_point begin,
-               bool hold_postings = false)
+               std::chrono::steady_clock::time_point begin, bool hold_postings)
     : plan{plan}, schedule{plan}, begin{begin} {
     if (!hold_postings) {
       return;
@@ -85,6 +84,7 @@ struct MergeUnitRun {
     if (ok) {
       schedule.Release(unit);
     } else {
+      plan.Abort();
       schedule.Fail();
     }
     if (waker) {
@@ -109,6 +109,9 @@ struct MergeUnitRun {
       ok = plan.RunUnit(unit);
     } catch (...) {
       failure = std::current_exception();
+    }
+    if (!ok) {
+      plan.Abort();
     }
     std::function<void()> stop;
     {

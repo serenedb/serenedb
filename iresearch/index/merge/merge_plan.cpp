@@ -24,6 +24,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -115,7 +116,9 @@ struct MergePlan::State {
       scorer{scorer},
       db{db},
       field_options{field_options},
-      progress{progress ? progress : MergeProgress{[] { return true; }}},
+      progress{[this, outer = progress] {
+        return !aborted.load(std::memory_order_relaxed) && (!outer || outer());
+      }},
       env{env},
       sort{sort != nullptr && !sort->Empty() ? sort : nullptr},
       postings{doc_map.size(), this->progress, this->sort != nullptr} {}
@@ -505,6 +508,7 @@ struct MergePlan::State {
   ScorerPtr scorer;
   duckdb::DatabaseInstance& db;
   const IndexFieldOptions* field_options;
+  std::atomic_bool aborted{false};
   MergeProgress progress;
   const AnnBuildEnv* env;
   const SortSpec* sort;
@@ -737,6 +741,10 @@ std::span<const size_t> MergePlan::Dependencies(size_t unit) const noexcept {
 
 void MergePlan::SetWallNanos(uint64_t nanos) noexcept {
   _state->profile.SetWallNanos(nanos);
+}
+
+void MergePlan::Abort() noexcept {
+  _state->aborted.store(true, std::memory_order_relaxed);
 }
 
 bool MergePlan::RunUnit(size_t unit) {

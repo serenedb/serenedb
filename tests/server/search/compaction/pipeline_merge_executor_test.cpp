@@ -18,7 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/notification.h>
 #include <absl/time/clock.h>
 
 #include <algorithm>
@@ -531,7 +533,7 @@ TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
   ASSERT_TRUE(plan.Prepare(1));
   ASSERT_TRUE(plan.OrderPending());
   const auto run = std::make_shared<search::MergeUnitRun>(
-    plan, std::chrono::steady_clock::now());
+    plan, std::chrono::steady_clock::now(), plan.PostingsPending());
   const connector::LogicalMergeOrder order{plan};
   const connector::LogicalMergeUnits units{run, 1};
   EXPECT_EQ("MERGE_ORDER", order.GetName());
@@ -687,6 +689,64 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
     left += range->PartsLeft();
   }
   EXPECT_LT(0, left);
+}
+
+TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
+  if (!irs::AddFailurePointDebugging("irs::MergeUnit")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  irs::RemoveFailurePointDebugging("irs::MergeUnit");
+  const absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("irs::MergeUnit");
+  };
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  std::atomic<std::thread::id> watched;
+  size_t calls = 0;
+  absl::Notification inside;
+  absl::Notification failed;
+  const irs::MergeProgress progress = [&] {
+    if (std::this_thread::get_id() == watched.load() && ++calls == 2) {
+      inside.Notify();
+      failed.WaitForNotification();
+    }
+    return true;
+  };
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+                      TestDb(), nullptr, progress, nullptr};
+  ASSERT_TRUE(plan.Prepare());
+  search::MergeUnitRun run{plan, std::chrono::steady_clock::now(), false};
+  std::vector<size_t> ready;
+  while (const auto unit = run.schedule.Claim()) {
+    ready.push_back(*unit);
+  }
+  const auto units = plan.Units();
+  const auto column = absl::c_find_if(ready, [&](size_t unit) {
+    return units[unit].kind == irs::MergeUnitKind::Column ||
+           units[unit].kind == irs::MergeUnitKind::ColumnCopy;
+  });
+  ASSERT_NE(column, ready.end());
+  const auto running = *column;
+  ready.erase(column);
+  ASSERT_FALSE(ready.empty());
+  bool finished = true;
+  std::thread unit{[&] {
+    watched = std::this_thread::get_id();
+    finished = plan.RunUnit(running);
+  }};
+  inside.WaitForNotification();
+  irs::AddFailurePointDebugging("irs::MergeUnit");
+  run.Run(ready.front());
+  irs::RemoveFailurePointDebugging("irs::MergeUnit");
+  failed.Notify();
+  unit.join();
+  EXPECT_FALSE(finished);
+  EXPECT_FALSE(run.schedule.Ok());
 }
 
 TEST_F(PipelineMergeExecutorTest, MergeUnitsPlanPassesThePlanVerifier) {

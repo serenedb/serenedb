@@ -109,6 +109,8 @@ class MergePlan {
 
   bool RunUnit(size_t unit);
 
+  void Abort() noexcept;
+
   const MergeProfile& Profile() const noexcept;
 
   std::chrono::steady_clock::time_point Started() const noexcept;

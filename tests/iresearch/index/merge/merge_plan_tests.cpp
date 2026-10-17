@@ -1143,6 +1143,21 @@ TEST_F(ColumnCopyTest, ABlockCopyStopsWithTheMerge) {
   EXPECT_LT(1, calls);
 }
 
+TEST_F(ColumnCopyTest, AnAbortedPlanStopsItsUnits) {
+  irs::MemoryDirectory dir_a;
+  irs::MemoryDirectory dir_b;
+  const auto a = MergeWritten(dir_a);
+  const auto b = MergeWritten(dir_b);
+  _inputs = {a.get(), b.get()};
+  irs::MemoryDirectory out;
+  const auto units = PrepareInputs(out, kRowGroup, 1);
+  ASSERT_FALSE(units.empty());
+  _plan->Abort();
+  for (size_t unit = 0; unit != units.size(); ++unit) {
+    EXPECT_FALSE(_plan->RunUnit(unit)) << unit;
+  }
+}
+
 TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {
   if (!irs::AddFailurePointDebugging("irs::ColumnWriter::DuckDBStrings")) {
     GTEST_SKIP() << "built without fault injection";

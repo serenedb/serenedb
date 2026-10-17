@@ -266,21 +266,27 @@ ColWriter::ColumnPart& ColWriter::PartOf(field_id id, uint32_t part) {
   return parts[part];
 }
 
-void ColWriter::CopyColumnPart(field_id id, uint32_t part,
+bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                const ColReader& reader,
                                const ColumnReader& column, bool validity,
-                               std::span<const uint16_t> dictionaries) {
+                               std::span<const uint16_t> dictionaries,
+                               absl::FunctionRef<bool()> progress) {
   ColBlockSink* sink = nullptr;
   {
     std::lock_guard lock{_mutex};
     EnsureOut();
     sink = _blocks.get();
   }
-  auto copy = CopyColumnBlocks(reader, column, validity, dictionaries, *sink);
+  auto copy =
+    CopyColumnBlocks(reader, column, validity, dictionaries, *sink, progress);
+  if (!copy) {
+    return false;
+  }
   std::lock_guard lock{_mutex};
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
-  slot.copy = std::move(copy);
+  slot.copy = std::move(*copy);
+  return true;
 }
 
 uint16_t ColWriter::AppendDictionary(ColumnParts& parts,

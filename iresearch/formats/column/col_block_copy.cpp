@@ -50,11 +50,15 @@ void PatchDictionary(std::string& bytes,
   header.Write(data);
 }
 
-void CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
+bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
                 std::span<const uint16_t> dictionaries, ColBlockSink& sink,
-                std::vector<ColumnBlockMeta>& out) {
+                std::vector<ColumnBlockMeta>& out,
+                absl::FunctionRef<bool()> progress) {
   std::string bytes;
   for (const auto& block : blocks) {
+    if (!progress()) {
+      return false;
+    }
     auto& copy = out.emplace_back(ColumnBlockMeta{block.statistics.Copy()});
     copy.tuple_count = block.tuple_count;
     copy.byte_size = block.byte_size;
@@ -72,6 +76,7 @@ void CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     const std::string_view view{bytes};
     copy.file_offset = sink.AppendAligned({&view, 1});
   }
+  return true;
 }
 
 }  // namespace
@@ -110,20 +115,26 @@ bool BlocksRelocatable(const ColumnReader& column) {
   });
 }
 
-ColumnMeta CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
-                            bool validity,
-                            std::span<const uint16_t> dictionaries,
-                            ColBlockSink& sink) {
+std::optional<ColumnMeta> CopyColumnBlocks(
+  const ColReader& reader, const ColumnReader& column, bool validity,
+  std::span<const uint16_t> dictionaries, ColBlockSink& sink,
+  absl::FunctionRef<bool()> progress) {
   ColumnMeta meta;
   meta.id = column.Id();
   meta.type = column.Type();
   ReadContext ctx{reader};
-  CopyBlocks(ctx, column.DataBlocks(), dictionaries, sink, meta.data);
+  if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, sink, meta.data,
+                  progress)) {
+    return std::nullopt;
+  }
   if (!validity) {
     return meta;
   }
   if (const auto* stored = column.Validity()) {
-    CopyBlocks(ctx, stored->DataBlocks(), {}, sink, meta.validity);
+    if (!CopyBlocks(ctx, stored->DataBlocks(), {}, sink, meta.validity,
+                    progress)) {
+      return std::nullopt;
+    }
     return meta;
   }
   const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};

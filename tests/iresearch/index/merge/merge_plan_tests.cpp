@@ -475,7 +475,7 @@ class ColumnSplitTest : public ::testing::Test {
       _merge_columns, irs::tests::MakeNormColumnIdProvider(), row_group);
     _plan = std::make_unique<irs::MergePlan>(
       out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
-      _with_options ? _options.get() : nullptr, irs::MergeProgress{}, nullptr);
+      _with_options ? _options.get() : nullptr, _progress, nullptr);
     EXPECT_TRUE(_plan->Prepare(threads));
     return _plan->Units();
   }
@@ -547,6 +547,7 @@ class ColumnSplitTest : public ::testing::Test {
   std::unique_ptr<irs::FunctionFieldOptions> _options;
   std::unique_ptr<irs::MergePlan> _plan;
   irs::ColumnOptionsProvider _merge_columns = PlainColumns;
+  irs::MergeProgress _progress;
   bool _with_options = true;
   bool _serial = false;
 };
@@ -1122,6 +1123,24 @@ TEST_F(ColumnCopyTest, BlocksThatPointOutsideThemselvesAreReencoded) {
   ASSERT_NE(nullptr, merged);
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kText).empty());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
+TEST_F(ColumnCopyTest, ABlockCopyStopsWithTheMerge) {
+  irs::MemoryDirectory dir_a;
+  irs::MemoryDirectory dir_b;
+  const auto a = MergeWritten(dir_a);
+  const auto b = MergeWritten(dir_b);
+  bool stopping = false;
+  size_t calls = 0;
+  _progress = [&] { return !stopping || calls++ == 0; };
+  _inputs = {a.get(), b.get()};
+  irs::MemoryDirectory out;
+  const auto copies =
+    UnitsOf(PrepareInputs(out, kRowGroup, 1), MergeUnitKind::ColumnCopy, kReal);
+  ASSERT_FALSE(copies.empty());
+  stopping = true;
+  EXPECT_FALSE(_plan->RunUnit(copies.front()));
+  EXPECT_LT(1, calls);
 }
 
 TEST_F(ColumnCopyTest, StreamedDuckDBStringBlocksAreReencoded) {

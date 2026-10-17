@@ -1073,9 +1073,9 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
         column, ReadDictionaries(*source.col_reader, col), dictionaries)) {
     return MergeRange(column, part, begin, end, output, progress);
   }
-  output.CopyColumnPart(column, part, *source.col_reader, col,
-                        !shared.Options(column).skip_validity, dictionaries);
-  return true;
+  return output.CopyColumnPart(column, part, *source.col_reader, col,
+                               !shared.Options(column).skip_validity,
+                               dictionaries, progress);
 }
 
 bool ColumnMerger::Merge(field_id column, ColWriter& output,

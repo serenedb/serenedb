@@ -83,9 +83,10 @@ class ColWriter final {
                                duckdb::CompressionType compression,
                                ColCodecParams codec_params);
 
-  void CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
+  bool CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
                       const ColumnReader& column, bool validity,
-                      std::span<const uint16_t> dictionaries);
+                      std::span<const uint16_t> dictionaries,
+                      absl::FunctionRef<bool()> progress);
 
   uint16_t AddColumnDictionary(field_id id, std::string_view bytes);
 

@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -40,9 +43,9 @@ bool BlocksRelocatable(const ColumnReader& column);
 std::vector<std::string> ReadDictionaries(const ColReader& reader,
                                           const ColumnReader& column);
 
-ColumnMeta CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
-                            bool validity,
-                            std::span<const uint16_t> dictionaries,
-                            ColBlockSink& sink);
+std::optional<ColumnMeta> CopyColumnBlocks(
+  const ColReader& reader, const ColumnReader& column, bool validity,
+  std::span<const uint16_t> dictionaries, ColBlockSink& sink,
+  absl::FunctionRef<bool()> progress);
 
 }  // namespace irs

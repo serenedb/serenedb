@@ -216,6 +216,12 @@ db error: ERROR: SORTED BY takes column names, not "a COLLATE nocase"
 
 
 statement error
+CREATE TABLE srt_bad (a VARCHAR COLLATE nocase) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" with collation "nocase"
+
+
+statement error
 CREATE TABLE srt_bad (a INTEGER) SORTED BY (srt_bad.a) WITH (storage = 'search');
 ----
 db error: ERROR: SORTED BY takes column names, not "srt_bad.a"

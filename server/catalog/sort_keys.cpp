@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/enums/order_type.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -55,6 +56,16 @@ std::vector<SortKey> ResolveSortKeys(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("SORTED BY cannot use generated column \"",
                               name.GetIdentifierName(), "\""));
+    }
+    if (column.Type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      if (const auto collation =
+            duckdb::StringType::GetCollation(column.Type());
+          !collation.empty()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("SORTED BY cannot use column \"", name.GetIdentifierName(),
+                  "\" with collation \"", collation, "\""));
+      }
     }
     const auto index = column.Logical();
     if (absl::c_any_of(keys,

@@ -39,6 +39,20 @@ db error: ERROR: column "k" appears more than once in SORTED BY
 
 
 statement ok
+CREATE TABLE iis_collated (k VARCHAR COLLATE nocase, body VARCHAR);
+
+
+statement error
+CREATE INDEX iis_bad ON iis_collated USING inverted (body) SORTED BY (k);
+----
+db error: ERROR: SORTED BY cannot use column "k" with collation "nocase"
+
+
+statement ok
+DROP TABLE iis_collated;
+
+
+statement ok
 CREATE INDEX iis_art ON iis (k DESC NULLS FIRST);
 
 

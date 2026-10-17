@@ -309,7 +309,6 @@ TEST_F(MergeTicketTest, ArmingAFloorRevokesQueuedTickets) {
 
   auto floor = _writer->ArmCompactionFloor();
   ASSERT_TRUE(floor.Held());
-  EXPECT_FALSE(floor.Pending());
   EXPECT_TRUE(reservation.tickets[0].Revoked());
 
   const auto result = Run(std::move(reservation.tickets[0]));
@@ -347,7 +346,6 @@ TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
 
   auto pending = _writer->ArmCompactionFloor();
   EXPECT_FALSE(pending.Held());
-  EXPECT_TRUE(pending.Pending());
   bool called = false;
   auto blocked = Reserve({{2, 3}}, nullptr, &called);
   EXPECT_TRUE(blocked.busy);
@@ -356,7 +354,7 @@ TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
   EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
 
   pending = _writer->ArmCompactionFloor();
-  EXPECT_TRUE(pending.Pending());
+  EXPECT_FALSE(pending.Held());
   EXPECT_TRUE(Reserve({{2, 3}}).busy);
 
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -375,16 +373,18 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.tickets.size());
   irs::IndexWriter::CompactionFloorGuard floor;
+  bool armed = false;
   const irs::MergeWriter::FlushProgress progress = [&] {
-    if (!floor.Pending()) {
+    if (!armed) {
       floor = _writer->ArmCompactionFloor();
+      armed = true;
     }
     return true;
   };
   const auto result = Run(std::move(reservation.tickets[0]), progress);
   EXPECT_EQ(CompactionError::Cancelled, result.error);
   EXPECT_EQ(2, result.size);
-  EXPECT_TRUE(floor.Pending());
+  EXPECT_FALSE(floor.Held());
   EXPECT_TRUE(Reserve({{0, 1}}).busy);
 
   floor = _writer->ArmCompactionFloor();

@@ -34,7 +34,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>

@@ -163,19 +163,6 @@ class InvertedIndexStorage final
     return _delete_log_rowid_begin.load(std::memory_order_acquire);
   }
 
-  // `field_options` (nullable) is the per-merge per-column encoding config: the
-  // compaction task hands the info from its own DDL view so the
-  // merge encodes against that view, never the live catalog. It pins for the
-  // whole synchronous merge, so non-owning.
-  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options,
-                               MergeOrigin origin) {
-    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr, origin));
-  }
-
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,

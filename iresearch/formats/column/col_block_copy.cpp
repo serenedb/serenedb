@@ -66,15 +66,23 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     if (block.byte_size == 0) {
       continue;
     }
-    bytes.resize(block.byte_size);
-    ctx.Read(block.file_offset,
-             reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
-             block.byte_size);
-    if (!dictionaries.empty() &&
-        duckdb::IsSereneDBCompressionType(block.codec->type)) {
-      PatchDictionary(bytes, dictionaries);
+    const bool patch = !dictionaries.empty() &&
+                       duckdb::IsSereneDBCompressionType(block.codec->type);
+    std::string_view view;
+    if (const auto* stable =
+          patch ? nullptr
+                : ctx.TryReadStable(block.file_offset, block.byte_size)) {
+      view = {reinterpret_cast<const char*>(stable), block.byte_size};
+    } else {
+      bytes.resize(block.byte_size);
+      ctx.Read(block.file_offset,
+               reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
+               block.byte_size);
+      if (patch) {
+        PatchDictionary(bytes, dictionaries);
+      }
+      view = bytes;
     }
-    const std::string_view view{bytes};
     copy.file_offset = sink.AppendAligned({&view, 1});
   }
   return true;

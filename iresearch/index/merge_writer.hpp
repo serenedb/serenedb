@@ -31,6 +31,8 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_profile.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -43,38 +45,12 @@ class DatabaseInstance;
 
 namespace irs {
 
+class MergeExecutor;
 struct TrackingDirectory;
-
-struct DocRemap {
-  explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
-
-  DocumentMask::Iterator mask;
-  doc_id_t base_id = doc_limits::invalid();
-  ManagedVector<doc_id_t> id_map;
-
-  bool IsMasked(doc_id_t src) const noexcept { return mask.Contains(src); }
-
-  doc_id_t Remap(doc_id_t src) const noexcept {
-    if (!id_map.empty()) {
-      SDB_ASSERT(src < id_map.size());
-      return id_map[src];
-    }
-    return base_id + (src - doc_limits::min());
-  }
-};
 
 class MergeWriter : public util::Noncopyable {
  public:
   using FlushProgress = std::function<bool()>;
-
-  struct ReaderCtx {
-    ReaderCtx(const SubReader* reader, IResourceManager& rm) noexcept;
-    ReaderCtx(const SubReader& reader, IResourceManager& rm) noexcept
-      : ReaderCtx{&reader, rm} {}
-
-    const SubReader* reader;
-    DocRemap remap;
-  };
 
   explicit MergeWriter(Directory& dir,
                        const SegmentWriterOptions& options) noexcept
@@ -85,7 +61,8 @@ class MergeWriter : public util::Noncopyable {
         SDB_ASSERT(db);
         return *db;
       }()},
-      _field_options{options.field_options} {}
+      _field_options{options.field_options},
+      _sort{options.sort} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -99,20 +76,24 @@ class MergeWriter : public util::Noncopyable {
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
-             const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
+             const AnnBuildEnv* env = nullptr,
+             MergeExecutor* executor = nullptr) -> yaclib::Future<bool>;
 
-  const ReaderCtx& operator[](size_t i) const noexcept {
-    SDB_ASSERT(i < _readers.size());
-    return _readers[i];
-  }
+  const MergeDocMap& DocMap() const noexcept { return _readers; }
+
+  MergeDocMap TakeDocMap() && noexcept { return std::move(_readers); }
+
+  const MergeProfile& Profile() const noexcept { return _profile; }
 
  private:
   Directory& _dir;
-  ManagedVector<ReaderCtx> _readers;
+  MergeDocMap _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
+  const SortSpec* _sort = nullptr;
+  MergeProfile _profile;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

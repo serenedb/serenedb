@@ -281,8 +281,7 @@ absl::Status IndexDurability::Refresh(
 void IndexDurability::ReplaceSegments(
   irs::IndexWriter& writer, std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-    removal_provider) {
+  absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
   std::unique_lock lock{_refresh_mutex};
   AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
@@ -397,10 +396,11 @@ void IndexDurability::SyncDirectory() {
   _durable = std::max(_durable, published);
 }
 
-absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
+absl::StatusOr<irs::RemovedFiles> IndexDurability::Cleanup(
+  irs::Directory& dir) {
   try {
     SyncDirectory();
-    irs::directory_utils::RemoveAllUnreferenced(dir);
+    return irs::directory_utils::RemoveAllUnreferenced(dir);
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name, ": ",
@@ -409,7 +409,6 @@ absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name));
   }
-  return absl::OkStatus();
 }
 
 bool IndexDurability::CanPersist() const {

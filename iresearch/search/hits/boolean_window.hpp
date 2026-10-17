@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -73,15 +74,17 @@ class BooleanWindow : public Root {
       const auto skip = static_cast<uint32_t>(off / BitsRequired<uint64_t>());
       if (skip >= _words_end) {
         for (; _word != _words_end; ++_word) {
-          _mask[_word] = 0;
+          DropWord(_word);
         }
       } else {
         for (; _word < skip; ++_word) {
-          _mask[_word] = 0;
+          DropWord(_word);
         }
         if (_word == skip) {
           if (const auto bit = off % BitsRequired<uint64_t>(); bit != 0) {
-            _mask[skip] &= ~((uint64_t{1} << bit) - 1);
+            const auto bits = _mask[skip] & ((uint64_t{1} << bit) - 1);
+            _mask[skip] ^= bits;
+            ResetBits(skip, bits);
           }
         }
       }
@@ -171,6 +174,40 @@ class BooleanWindow : public Root {
   }
 
  private:
+  IRS_FORCE_INLINE void DropWord(uint32_t word) noexcept {
+    const auto bits = _mask[word];
+    if (bits == 0) {
+      return;
+    }
+    _mask[word] = 0;
+    if constexpr (kTally || kResets) {
+      if (std::popcount(bits) < irs::detail::kDenseWord) {
+        ResetBits(word, bits);
+        return;
+      }
+      const auto base = word * BitsRequired<uint64_t>();
+      std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+      if constexpr (kTally) {
+        std::memset(_optional.Counts() + base, 0,
+                    BitsRequired<uint64_t>() * sizeof(uint32_t));
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE void ResetBits(uint32_t word, uint64_t bits) noexcept {
+    if constexpr (kTally || kResets) {
+      const auto base = word * BitsRequired<uint64_t>();
+      for (; bits != 0; bits = PopBit(bits)) {
+        const auto offset =
+          base + static_cast<uint32_t>(std::countr_zero(bits));
+        _window[offset] = _constant;
+        if constexpr (kTally) {
+          _optional.Counts()[offset] = 0;
+        }
+      }
+    }
+  }
+
   IRS_FORCE_INLINE void Emit(doc_id_t* IRS_RESTRICT out,
                              score_t* IRS_RESTRICT scores, uint32_t& n,
                              const score_t* IRS_RESTRICT window, doc_id_t min,

@@ -485,7 +485,7 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
 }
 
 // -------------------------------------------------------------------------
-// Deletes before compaction: MergeNormColumnFromSources's mask filter
+// Deletes before compaction: the mask filter
 // must skip the per-row bytes of removed docs and produce a compacted
 // merged column. If the mask path mis-counts bytes, post-merge norms
 // shift by the wrong offset.

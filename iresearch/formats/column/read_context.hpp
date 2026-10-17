@@ -20,12 +20,17 @@
 
 #pragma once
 
+#include <atomic>
+#include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <string>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
 
@@ -56,6 +61,12 @@ class ReadContext final : public BlockManager,
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
   bool RandomAccess() const noexcept { return _random_access; }
+  bool ReadAhead() const noexcept { return _read_ahead; }
+  void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
+  bool ReusableDictionaries() const noexcept { return _reusable_dictionaries; }
+  void SetReusableDictionaries(bool reusable) noexcept {
+    _reusable_dictionaries = reusable;
+  }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;
@@ -65,8 +76,20 @@ class ReadContext final : public BlockManager,
   void Read(duckdb::idx_t position, duckdb::data_ptr_t target,
             duckdb::idx_t size) final;
 
+  struct CacheSlot {
+    std::string key;
+    std::atomic<bool>* touched = nullptr;
+    const codecs::TrainedDictionaries* dictionaries = nullptr;
+  };
+
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
-                                                           uint64_t size);
+                                                           uint64_t size,
+                                                           CacheSlot slot);
+  const CacheSlot& CacheSlotOf(duckdb::block_id_t block) const noexcept {
+    const auto id = static_cast<size_t>(block);
+    SDB_ASSERT(id < _cache_slots.size());
+    return _cache_slots[id];
+  }
 
   duckdb::unique_ptr<duckdb::Block> CreateBlock(
     duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) final;
@@ -94,8 +117,11 @@ class ReadContext final : public BlockManager,
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  std::deque<CacheSlot> _cache_slots;
   bool _random_access = false;
-  size_t _live_handles = 0;
+  bool _read_ahead = true;
+  bool _reusable_dictionaries = false;
+  std::atomic<size_t> _live_handles{0};
 };
 
 }  // namespace irs

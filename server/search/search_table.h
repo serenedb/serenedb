@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -53,19 +54,25 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
+#include "storage_engine/search_engine.h"
 
 namespace duckdb {
 
 class Catalog;
 class ClientContext;
 class DataChunk;
+class TaskScheduler;
 
 }  // namespace duckdb
 namespace sdb::search {
+
+enum class MergeMode : uint8_t;
 
 class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                           public MaintainedStore {
@@ -76,7 +83,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
               bool in_memory, duckdb::idx_t db_id, duckdb::idx_t table_id,
               bool is_new, const catalog::SearchTableOptions& options,
-              catalog::CompressionByColumn compression);
+              catalog::CompressionByColumn compression, irs::SortSpec sort);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -85,10 +92,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
     duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
-    catalog::CompressionByColumn compression) {
-    return std::make_shared<SearchTable>(std::move(directory), in_memory, db_id,
-                                         table_id, is_new, options,
-                                         std::move(compression));
+    catalog::CompressionByColumn compression, irs::SortSpec sort = {}) {
+    return std::make_shared<SearchTable>(
+      std::move(directory), in_memory, db_id, table_id, is_new, options,
+      std::move(compression), std::move(sort));
   }
 
   static catalog::CompressionByColumn DeclaredCompression(
@@ -108,6 +115,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
+  }
+  bool Retired() const noexcept { return Dropped() || _directory->Detached(); }
   std::filesystem::path Path() const {
     return _directory->StoragePath(GetTableId());
   }
@@ -149,9 +160,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   }
 
   duckdb::idx_t GetId() const noexcept { return _table_id; }
-  void ApplyOptions(const catalog::SearchTableOptions& options) {
-    SetTasksSettings(options);
-  }
+  void ApplyOptions(const catalog::SearchTableOptions& options);
+  void SetDeclaredCompression(catalog::CompressionByColumn compression);
+
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+  bool Sorted() const noexcept { return !_sort.Empty(); }
 
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
   // once, after the table is open and recovery (if any) finalized.
@@ -166,17 +179,35 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options) {
+                               const irs::IndexFieldOptions* field_options,
+                               MergeOrigin origin,
+                               irs::MergeExecutor* executor = nullptr,
+                               irs::LoneSegment lone = irs::LoneSegment::Skip) {
     return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr));
+                                            field_options, &AnnBuildEnv(),
+                                            origin, nullptr, executor, lone));
   }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env)
+                          const irs::AnnBuildEnv* env, MergeOrigin origin,
+                          irs::CompactionResult* outcome = nullptr,
+                          irs::MergeExecutor* executor = nullptr,
+                          irs::LoneSegment lone = irs::LoneSegment::Skip)
     -> yaclib::Future<ResultWithTime>;
-  ResultWithTime CleanupUnsafe();
+  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
+    return _writer->ReserveMerges(planner);
+  }
+  auto RunMergeAsync(irs::MergeTicket ticket,
+                     const irs::MergeWriter::FlushProgress& progress,
+                     bool& empty_compaction,
+                     const irs::IndexFieldOptions* field_options,
+                     const irs::AnnBuildEnv* env, uint64_t merge_id,
+                     irs::CompactionResult* outcome = nullptr,
+                     irs::MergeExecutor* executor = nullptr)
+    -> yaclib::Future<ResultWithTime>;
+  CleanupResult CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
     return _topk_options;
@@ -184,9 +215,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   StoreStats GetStats() const;
 
-  // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
+  [[nodiscard]] absl::Status VacuumCompact(
+    MergeMode mode, uint32_t target_segments, duckdb::TaskScheduler& scheduler,
+    const irs::MergeWriter::FlushProgress& progress,
+    irs::MergeExecutor* executor = nullptr);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();
@@ -263,8 +296,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-      removal_provider) {
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
     _durability.ReplaceSegments(*_writer, replaced, adopted_metas,
                                 removal_provider);
   }
@@ -286,6 +318,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
+  auto AwaitMerge(
+    MergeRecorder& recorder, bool& empty_compaction,
+    irs::CompactionResult* outcome,
+    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+    -> yaclib::Future<ResultWithTime>;
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
@@ -295,6 +332,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
+  irs::SortSpec _sort;
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;
@@ -322,6 +360,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // keeps waiting.
   static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
 
+  absl::once_flag _merge_relation_once;
+  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
   // spawn competing maintenance loops.

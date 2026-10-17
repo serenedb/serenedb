@@ -103,3 +103,123 @@ CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (row_group_siz
 ----
 db error: ERROR: row_group_size is a table option on a search-backed table
 HINT: Set it in CREATE TABLE ... WITH (storage = 'search', row_group_size = ...).
+
+
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TABLE my_metrics (id INTEGER PRIMARY KEY, msg VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO my_metrics VALUES (1, 'cpu high');
+
+statement ok
+VACUUM (REFRESH_TABLE) my_metrics;
+
+statement ok
+INSERT INTO my_metrics VALUES (2, 'disk low');
+
+statement ok
+VACUUM (REFRESH_TABLE) my_metrics;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('my_metrics');
+----
+segments	docs
+2	2
+
+query
+EXPLAIN CALL sdb_compact('my_metrics', mode := 'compact', target_segments := 1);
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ─────────────────────╮
+│ Table: public.my_metrics              │
+│ Mode: compact                         │
+│ Segments: 2                           │
+│ Merges: 1                             │
+│ Pipeline: MERGE_UNITS                 │
+│ Merge 1:                              │
+│ 2 segments -> 1, compact to 1 segment │
+│ Merge 1 Inputs: _1, _2                │
+│ Merge 1 Docs: 2 (2 live), rowid 1..2  │
+│ Merge 1 Bytes:                        │
+│ <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                      │
+│ 3, <slt:ignore>│
+│ Merge 1 Postings: 1 field             │
+╰───────────────────────────────────────╯
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('my_metrics', mode := 'compact', target_segments := 1);
+----
+outcome	input_docs	output_docs
+merged	2	2
+
+query
+SELECT type, origin, outcome, input_docs, output_docs
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'my_metrics')
+ORDER BY id;
+----
+type	origin	outcome	input_docs	output_docs
+flush	NULL	NULL	NULL	1
+flush	NULL	NULL	NULL	1
+merge	sql	merged	2	2
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE type = 'merge') AS merges,
+       round(sum(bytes) FILTER (WHERE type = 'merge')::DOUBLE
+             / sum(bytes) FILTER (WHERE type = 'flush'), 2) AS write_amplification,
+       max(segments) AS most_segments
+FROM sdb_merge_simulate(
+  (SELECT TIMESTAMPTZ '2026-01-01 00:00:00+00' + i * INTERVAL '1 second' AS finished,
+          100000 AS output_docs, 8388608 AS output_bytes
+   FROM generate_series(1, 100) s(i)),
+  threads := 2);
+----
+merges	write_amplification	most_segments
+15	1.3	34
+
+# DOCS_TEST: example_012
+
+statement ok
+CREATE TABLE my_journal (id INTEGER PRIMARY KEY, msg VARCHAR USING COMPRESSION uncompressed)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO my_journal SELECT i, 'event ' || (i % 10) FROM generate_series(1, 1000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) my_journal;
+
+statement ok
+ALTER TABLE my_journal ALTER COLUMN msg SET COMPRESSION DEFAULT;
+
+# DOCS_TEST_BODY
+
+query
+SELECT "column", codecs, verdict
+FROM sdb_segments('my_journal', columns := true)
+WHERE "column" = 'msg';
+----
+column	codecs	verdict
+msg	Uncompressed	re-encode
+
+statement ok
+VACUUM (OPTIMIZE_TABLE) my_journal;
+
+query
+SELECT "column", verdict
+FROM sdb_segments('my_journal', columns := true)
+WHERE "column" = 'msg';
+----
+column	verdict
+msg	copy

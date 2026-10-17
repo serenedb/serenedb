@@ -78,12 +78,7 @@ duckdb::Value CurrentThreads(duckdb::Connection& con) {
     .GetValue(0, 0);
 }
 
-TEST(DuckDBThreads, SessionValueCapsItsQueries) {
-  duckdb::DBConfig config;
-  config.options.maximum_threads = 8;
-  duckdb::DuckDB db{nullptr, &config};
-  duckdb::Connection con{db};
-  duckdb::Connection other{db};
+void CreateRecordedTable(duckdb::Connection& con) {
   duckdb::ScalarFunction record{"record_thread",
                                 {duckdb::LogicalType::BIGINT},
                                 duckdb::LogicalType::BOOLEAN,
@@ -94,6 +89,15 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   Exec(con, "CREATE SCHEMA s");
   Exec(con, "CREATE TABLE s.t AS SELECT range AS i FROM range(" +
               std::to_string(kRows) + ")");
+}
+
+TEST(DuckDBThreads, SessionValueCapsItsQueries) {
+  duckdb::DBConfig config;
+  config.options.maximum_threads = 8;
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::Connection con{db};
+  duckdb::Connection other{db};
+  CreateRecordedTable(con);
 
   Exec(con, "SET threads = 1");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(1));
@@ -125,6 +129,30 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   Exec(con, "RESET threads");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(4));
   EXPECT_EQ(db.NumberOfThreads(), 4U);
+}
+
+TEST(DuckDBThreads, ClientRunsOnTheSchedulerItIsGiven) {
+  duckdb::DBConfig config;
+  config.options.maximum_threads = 1;
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::Connection con{db};
+  CreateRecordedTable(con);
+  auto& shared = duckdb::TaskScheduler::GetScheduler(*db.instance);
+  EXPECT_EQ(&shared, &duckdb::TaskScheduler::GetScheduler(*con.context));
+  EXPECT_EQ(ThreadsSeen(con), 1U);
+
+  duckdb::TaskScheduler own{*db.instance};
+  own.SetThreads(4, 1);
+  own.RelaunchThreads();
+  con.context->task_scheduler = own;
+  EXPECT_EQ(&own, &duckdb::TaskScheduler::GetScheduler(*con.context));
+  EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 4U);
+  EXPECT_GT(ThreadsSeen(con), 1U);
+
+  con.context->task_scheduler = nullptr;
+  EXPECT_EQ(&shared, &duckdb::TaskScheduler::GetScheduler(*con.context));
+  EXPECT_EQ(ThreadsSeen(con), 1U);
+  own.Join();
 }
 
 class FunctionTask final : public duckdb::Task {

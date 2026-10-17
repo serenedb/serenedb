@@ -42,6 +42,11 @@
 #include "connector/view_fast_path.h"
 #include "search/inverted_index_storage.h"
 
+namespace duckdb {
+
+class PhysicalOperator;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class SearchTableEntry;
@@ -197,6 +202,7 @@ struct ScanBindData final : duckdb::FunctionData {
   TsDictSpec ts_dict;
   LookupSpec lookup;
   std::optional<ViewSpec> view;
+  bool share_payloads = false;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<ScanBindData>(*this);
@@ -238,6 +244,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.function.bind == &ScanBind;
 }
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input);
 
 duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,

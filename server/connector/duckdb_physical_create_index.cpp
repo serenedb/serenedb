@@ -270,7 +270,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
       index_entry.SetConfig(BindInvertedIndexConfig(
-        context, index_entry, _relation, _bound_expressions, pk_type));
+        context, index_entry, _relation, _bound_expressions, pk_type,
+        _info->sort_orders));
       if (const auto& store = index_entry.SearchStore()) {
         state->build_claim =
           store->BeginIndexBuild(index_entry.oid, index_entry.Config());

@@ -125,11 +125,6 @@ irs::doc_id_t SearchRemoveFilter::Next() {
     // remove arrived before insert) but that is not a problem. As if we reached
     // "tick" limit we anyway should not find anymore valid targets.
 
-    // 3. For segments with sorted field it should also work:
-    // E.G. if we have INSERT PK1 FIELD_SORTED_2 | DELETE PK1 | INSERT PK1
-    // FIELD_SORTED_1 Due to documents are sorted for storing after applying
-    // queries it will still see documents in insertion order.
-
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
       if (_segment_mask.Contains(found_doc) ||

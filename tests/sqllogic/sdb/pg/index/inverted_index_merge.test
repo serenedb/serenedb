@@ -1,6 +1,6 @@
 hash-threshold 100
 
-# Coverage for `MergeWriter::Flush` / `MergeInto` / `MergeNormColumnFromSources`
+# Coverage for `MergeWriter::Flush`
 # under all the shapes their code paths actually branch on:
 #
 #   - sources with no deletes (identity remap, all-ones in `DocRemap`),
@@ -125,9 +125,7 @@ VACUUM (REFRESH_TABLE) m
 
 # ---------------- Removals: force the mask-filter / id_map paths --------
 # Delete some rows from each of the existing segments so the compaction
-# pass sees sources with `live_docs_count < docs_count`. This exercises
-# `ComputeDocIds`, `DocRemap{mask, id_map}`, and the masked branch of
-# `MergeNormColumnFromSources`.
+# pass sees sources with `live_docs_count < docs_count`.
 statement ok
 DELETE FROM m WHERE pk = 2
 
@@ -186,8 +184,7 @@ count
 
 # NULL distribution checks: `tag` and `note` are INCLUDE-only (no
 # null-marker field), so IS NULL takes the residual FILTER path
-# (DuckDB-side). Combined with a posting-list filter so the rows
-# actually flow through MergeInto's cs path.
+# (DuckDB-side).
 query
 SELECT count(*) FROM m_idx
 WHERE body @@ ts_phrase('cat') AND tag IS NULL;
@@ -224,8 +221,7 @@ pk	body	tag	note
 
 
 # Norm-merge sanity: BM25 still positive across merged segments for a
-# text-indexed phrase. If `MergeNormColumnFromSources` lost or mis-aligned
-# any norms this would either crash or yield zeros.
+# text-indexed phrase.
 query
 SELECT count(*) FROM m_idx
 WHERE body @@ ts_phrase('cat') AND BM25(m_idx.tableoid) > 0;
@@ -235,7 +231,7 @@ count
 
 
 # Drive compaction to a fixpoint. After this every source above
-# becomes one merged segment via MergeInto + MergeNormColumnFromSources.
+# becomes one merged segment.
 statement ok
 VACUUM (COMPACT_TABLE) m;
 

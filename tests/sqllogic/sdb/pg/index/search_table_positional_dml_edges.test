@@ -1,0 +1,349 @@
+statement ok
+CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(10000, 19999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) = count(DISTINCT sdb_row_position$) AS unique_positions, count(sdb_row_position$) AS n FROM pe;
+----
+unique_positions	n
+t	20000
+
+query
+SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+----
+segments
+2
+
+statement ok
+VACUUM (COMPACT_TABLE) pe;
+
+query
+SELECT count(*) = count(DISTINCT sdb_row_position$) AS unique_positions, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+----
+unique_positions	segments
+t	1
+
+query
+SELECT min(sdb_row_position$ & 4294967295) AS first_doc, max(sdb_row_position$ & 4294967295) AS last_doc FROM pe;
+----
+first_doc	last_doc
+1	20000
+
+query
+DELETE FROM pe WHERE id = 5 RETURNING id, v;
+----
+id	v
+5	v5
+
+query
+DELETE FROM pe WHERE id = 15005 RETURNING id, v;
+----
+id	v
+15005	v15005
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE id IN (5, 15005);
+----
+n
+0
+
+query
+UPDATE pe SET v = 'changed' WHERE id = 6 RETURNING id, grp, v;
+----
+id	grp	v
+6	6	changed
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT id, v FROM pe WHERE id = 6;
+----
+id	v
+6	changed
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM pe WHERE grp = 3;
+
+statement ok
+ROLLBACK;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE grp = 3;
+----
+n
+2000
+
+statement ok
+BEGIN;
+
+statement count 2000
+DELETE FROM pe WHERE grp = 3;
+
+statement count 2000
+DELETE FROM pe WHERE grp = 3;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE grp = 3) AS g3 FROM pe;
+----
+n	g3
+17998	0
+
+statement ok
+CREATE TABLE pe_keys (id BIGINT);
+
+statement ok
+INSERT INTO pe_keys SELECT i FROM generate_series(100, 199) g(i);
+
+statement ok
+DELETE FROM pe USING pe_keys WHERE pe.id = pe_keys.id;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE id BETWEEN 100 AND 199;
+----
+n
+0
+
+statement ok
+DELETE FROM pe WHERE id IN (SELECT id + 1000 FROM pe_keys);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE id BETWEEN 1100 AND 1199;
+----
+n
+0
+
+statement ok
+WITH doomed AS (SELECT id FROM pe WHERE id % 1000 = 999) DELETE FROM pe WHERE id IN (SELECT id FROM doomed);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE id % 1000 = 999;
+----
+n
+0
+
+statement ok
+DELETE FROM pe WHERE v LIKE 'v1%' AND id >= 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe WHERE id >= 10000 AND v LIKE 'v1%';
+----
+n
+0
+
+statement ok
+DELETE FROM pe;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n FROM pe;
+----
+n
+0
+
+statement ok
+INSERT INTO pe SELECT i, i % 10, 'w' || i FROM generate_series(0, 99) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+DELETE FROM pe WHERE id < 50;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n, min(id) AS lo FROM pe;
+----
+n	lo
+50	50
+
+statement ok
+DROP TABLE pe;
+
+statement ok
+DROP TABLE pe_keys;
+
+statement ok
+CREATE TABLE pk (id BIGINT PRIMARY KEY, r TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX pk_r ON pk USING inverted (r);
+
+statement ok
+INSERT INTO pk SELECT i, 'r' || (i % 7) FROM generate_series(1, 7000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pk;
+
+statement ok
+DELETE FROM pk WHERE r = 'r3';
+
+statement ok
+DELETE FROM pk WHERE id = 7000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pk;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE r = 'r3') AS r3, count(*) FILTER (WHERE id = 7000) AS last FROM pk;
+----
+n	r3	last
+5999	0	0
+
+query
+SELECT count(*) AS n FROM pk_r WHERE r = 'r3';
+----
+n
+0
+
+statement ok
+UPDATE pk SET r = 'moved' WHERE r = 'r4';
+
+statement ok
+VACUUM (REFRESH_TABLE) pk;
+
+query
+SELECT count(*) AS moved, (SELECT count(*) FROM pk_r WHERE r = 'r4') AS r4 FROM pk_r WHERE r = 'moved';
+----
+moved	r4
+1000	0
+
+statement ok
+DROP TABLE pk;
+
+statement ok
+CREATE TABLE pc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pc SELECT i, 'a' FROM generate_series(0, 4999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+statement ok
+INSERT INTO pc SELECT i, 'b' FROM generate_series(5000, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+connection first
+statement ok
+BEGIN;
+
+connection first
+statement count 100
+DELETE FROM pc WHERE id % 100 = 1;
+
+connection second
+statement ok
+BEGIN;
+
+connection second
+statement count 100
+DELETE FROM pc WHERE id % 100 = 1;
+
+connection second
+statement count 50
+DELETE FROM pc WHERE id % 200 = 2;
+
+connection first
+statement ok
+COMMIT;
+
+connection second
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+query
+SELECT count(*) AS n FROM pc;
+----
+n
+9850
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection reader
+query
+SELECT count(*) AS n FROM pc;
+----
+n
+9850
+
+statement ok
+VACUUM (COMPACT_TABLE) pc;
+
+connection reader
+statement count 50
+DELETE FROM pc WHERE id % 200 = 3;
+
+statement ok
+INSERT INTO pc SELECT i, 'c' FROM generate_series(10000, 10999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+statement ok
+VACUUM (COMPACT_TABLE) pc;
+
+connection reader
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 200 = 3 AND v <> 'c') AS gone, count(*) FILTER (WHERE id % 200 = 3 AND v = 'c') AS newer, count(*) FILTER (WHERE v = 'c') AS fresh FROM pc;
+----
+n	gone	newer	fresh
+10800	0	5	1000
+
+statement ok
+DROP TABLE pc;

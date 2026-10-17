@@ -61,6 +61,17 @@ target_sources(
         duckdb_physical_search_truncate.cpp
         highlight/highlight_options.cpp
         highlight/memory_index.cpp
+        segment_rewrite/logical_merge_order.cpp
+        segment_rewrite/logical_merge_units.cpp
+        segment_rewrite/logical_postings_merge.cpp
+        segment_rewrite/logical_presorted_merge.cpp
+        segment_rewrite/logical_segment_rewrite.cpp
+        segment_rewrite/merge_target.cpp
+        segment_rewrite/physical_merge_order.cpp
+        segment_rewrite/physical_merge_units.cpp
+        segment_rewrite/physical_postings_merge.cpp
+        segment_rewrite/physical_segment_rewrite.cpp
+        segment_rewrite/segment_rewrite_job.cpp
 )
 
 target_link_libraries(sereneserver PRIVATE simdjson)

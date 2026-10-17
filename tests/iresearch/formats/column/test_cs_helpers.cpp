@@ -91,40 +91,28 @@ void AppendNullBlob(ColumnWriter& cw, doc_id_t doc) {
 bool VisitBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                      const std::function<bool(doc_id_t, bytes_view)>& visitor) {
   duckdb::Vector batch{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
-  BlockWindow window{};
   ReadContext ctx{cs_reader};
+  auto state = column.InitScan(ctx);
   for (uint64_t row_pos = 0; row_pos < column.RowCount();) {
-    window = column.Locate(row_pos, window);
-    auto seg = column.OpenSegment(window.block, ctx);
-    const auto rg_count = static_cast<duckdb::idx_t>(window.end - window.begin);
-    duckdb::ColumnScanState state{nullptr};
-    seg->InitializeScan(state);
-    duckdb::idx_t scanned = 0;
-    while (scanned < rg_count) {
-      const auto take =
-        std::min<duckdb::idx_t>(rg_count - scanned, STANDARD_VECTOR_SIZE);
-      seg->Scan(state, take, batch, 0,
-                duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
-      state.offset_in_column += take;
-      const auto* slots = duckdb::FlatVector::GetData<duckdb::string_t>(batch);
-      const auto& validity = duckdb::FlatVector::Validity(batch);
-      for (duckdb::idx_t k = 0; k < take; ++k) {
-        const auto doc =
-          static_cast<doc_id_t>(window.begin + scanned + k + doc_limits::min());
-        if (!validity.RowIsValid(k)) {
-          continue;
-        }
-        const auto& s = slots[k];
-        const bytes_view payload{
-          reinterpret_cast<const byte_type*>(s.GetData()),
-          static_cast<size_t>(s.GetSize())};
-        if (!visitor(doc, payload)) {
-          return false;
-        }
+    const auto take = std::min<duckdb::idx_t>(column.RowCount() - row_pos,
+                                              STANDARD_VECTOR_SIZE);
+    duckdb::FlatVector::ValidityMutable(batch).Reset(STANDARD_VECTOR_SIZE);
+    column.ScanCount(state, batch, take, 0);
+    const auto* slots = duckdb::FlatVector::GetData<duckdb::string_t>(batch);
+    const auto& validity = duckdb::FlatVector::Validity(batch);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      if (!validity.RowIsValid(k)) {
+        continue;
       }
-      scanned += take;
+      const auto doc = static_cast<doc_id_t>(row_pos + k + doc_limits::min());
+      const auto& s = slots[k];
+      const bytes_view payload{reinterpret_cast<const byte_type*>(s.GetData()),
+                               static_cast<size_t>(s.GetSize())};
+      if (!visitor(doc, payload)) {
+        return false;
+      }
     }
-    row_pos = window.end;
+    row_pos += take;
   }
   return true;
 }

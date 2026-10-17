@@ -24,6 +24,7 @@
 
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/lead/verified_batch.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::lead {
@@ -39,15 +40,18 @@ class WildcardNGramSlotsDocs {
     : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
       _pattern{recipe.Make()} {}
 
-  doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
+  doc_id_t Seek(doc_id_t target) {
+    return _batch.Seek(_ngrams, _pattern, target);
+  }
 
-  doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
+  doc_id_t Next(doc_id_t) { return _batch.Next(_ngrams, _pattern); }
 
-  bool Match(doc_id_t doc) { return _pattern.Check(doc); }
+  bool Match(doc_id_t doc) const { return _batch.Match(doc); }
 
  private:
   NGrams _ngrams;
   WildcardNGramVerifier _pattern;
+  VerifiedBatch<WildcardNGramVerifier> _batch;
 };
 
 }  // namespace irs::lead

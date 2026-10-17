@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+CREATE TABLE sis_a (i BIGINT, s TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement count 20000
+INSERT INTO sis_a
+SELECT i,
+       CASE WHEN i % 13 = 0 THEN NULL
+            WHEN i % 11 = 0 THEN ''
+            WHEN i % 3 = 0 THEN 'k' || (i % 50)::VARCHAR
+            ELSE 'row-' || i::VARCHAR || '-' || repeat(chr((97 + i % 26)::INTEGER), (20 + i % 40)::INTEGER) END,
+       CASE WHEN i % 19 = 0 THEN NULL
+            WHEN i % 5 = 0 THEN []::VARCHAR[]
+            ELSE ['a' || i::VARCHAR, repeat('b', (13 + i % 7)::INTEGER), CASE WHEN i % 4 = 0 THEN NULL ELSE 'c' END] END
+FROM generate_series(1, 20000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sis_a;
+
+statement ok
+CREATE TABLE sis_b (i BIGINT, s TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement count 20000
+INSERT INTO sis_b SELECT i, s, l FROM sis_a;
+
+statement ok
+VACUUM (REFRESH_TABLE) sis_b;
+
+query
+SELECT count(*) AS n FROM sis_b;
+----
+n
+20000
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, l FROM sis_b EXCEPT ALL SELECT i, s, l FROM sis_a);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, l FROM sis_a EXCEPT ALL SELECT i, s, l FROM sis_b);
+----
+n
+0
+
+statement ok
+CREATE TABLE sis_c (i BIGINT, s TEXT, l TEXT[]) WITH (storage = 'search');
+
+statement count 5000
+INSERT INTO sis_c SELECT i, s, l FROM sis_a WHERE i > 15000;
+
+statement ok
+VACUUM (REFRESH_TABLE) sis_c;
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, l FROM sis_c EXCEPT ALL SELECT i, s, l FROM sis_a WHERE i > 15000);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, l FROM sis_a WHERE i > 15000 EXCEPT ALL SELECT i, s, l FROM sis_c);
+----
+n
+0
+
+statement count 20000
+INSERT INTO sis_b SELECT i, s, l FROM sis_a;
+
+statement ok
+VACUUM (REFRESH_TABLE) sis_b;
+
+query
+SELECT count(*) AS n FROM (SELECT i, s, l FROM sis_b EXCEPT ALL (SELECT i, s, l FROM sis_a UNION ALL SELECT i, s, l FROM sis_a));
+----
+n
+0

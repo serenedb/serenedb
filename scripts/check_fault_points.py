@@ -91,9 +91,6 @@ KNOWN_MISSING_SOURCE_FAULTS = {
 # gap rather than a silent skip; remove an entry once a test covers it.
 KNOWN_UNTESTED_SOURCE_FAULTS = {
     "Search::CrashAfterCommit",
-    # Search compaction task fault points; no recovery test drives compaction yet.
-    "SearchCompactionTask::compactUnsafe",
-    "SearchCompactionTask::lockInvertedIndexStorage",
     # Search refresh task fault points; cleanup/lock paths untested.
     "SearchRefreshTask::cleanupUnsafe",
     "SearchRefreshTask::lockInvertedIndexStorage",

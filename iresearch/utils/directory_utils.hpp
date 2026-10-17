@@ -36,8 +36,7 @@ namespace directory_utils {
 IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 
 // Remove all (tracked and non-tracked) files if they are unreferenced
-// return success
-bool RemoveAllUnreferenced(Directory& dir);
+RemovedFiles RemoveAllUnreferenced(Directory& dir);
 
 }  // namespace directory_utils
 
@@ -93,6 +92,7 @@ struct TrackingDirectory final : public Directory {
   using FileSet = absl::flat_hash_set<std::string>;
 
   Directory& _impl;
+  absl::Mutex _mutex;
   uint64_t _files_size{};
   FileSet _files;
 };

@@ -90,8 +90,10 @@ inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
   UINT64_C(9223372036854775812);
 inline constexpr duckdb::column_t kColumnIdentifierPkRowNumber =
   UINT64_C(9223372036854775813);
-inline constexpr duckdb::column_t kColumnIdentifierPrimaryKeyBase =
+inline constexpr duckdb::column_t kColumnIdentifierRowPosition =
   UINT64_C(9223372036854775814);
+inline constexpr duckdb::column_t kColumnIdentifierPrimaryKeyBase =
+  UINT64_C(9223372036854775815);
 
 // Offsets come back as one flat list of start/end pairs per row, which is the
 // return type ts_offsets is registered with.

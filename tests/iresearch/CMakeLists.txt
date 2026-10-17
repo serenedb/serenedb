@@ -58,6 +58,10 @@ set(iresearch-tests_sources
     ./analysis/sql_tokenizer_tests.cpp
     ./analysis/sql_tokenizer_fuzz_tests.cpp
     ./analysis/wildcard_tokenizer_tests.cpp
+    ./formats/column/col_block_sink_test.cpp
+    ./formats/column/col_codecs_test.cpp
+    ./formats/column/col_copy_check_test.cpp
+    ./formats/column/col_numeric_codec_test.cpp
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
@@ -71,6 +75,7 @@ set(iresearch-tests_sources
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
+    ./store/memory_directory_tests.cpp
     ./store/store_utils_tests.cpp
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
@@ -86,6 +91,21 @@ set(iresearch-tests_sources
     ./index/field_meta_test.cpp
     ./index/inverter_oracle_test.cpp
     ./index/inverter_tests.cpp
+    ./index/compaction/adjacent_run_policy_tests.cpp
+    ./index/compaction/flushed_segments_tests.cpp
+    ./index/compaction/merge_ticket_tests.cpp
+    ./index/merge/input_norms_tests.cpp
+    ./index/merge/merge_ann_tests.cpp
+    ./index/merge/merge_characterization_tests.cpp
+    ./index/merge/merge_oracle_tests.cpp
+    ./index/merge/merge_plan_tests.cpp
+    ./index/merge/merge_schedule_tests.cpp
+    ./index/merge/sorted_merge_tests.cpp
+    ./index/merge/term_keys_tests.cpp
+    ./index/merge/term_ranges_tests.cpp
+    ./index/merge/support/parallel_merge.cpp
+    ./index/merge/support/segment_dump.cpp
+    ./index/merge/support/segment_gen.cpp
     ./index/merge_writer_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp
@@ -96,6 +116,7 @@ set(iresearch-tests_sources
     ./search/granular_range_filter_tests.cpp
     ./search/wildcard_filter_test.cpp
     ./search/wildcard_ngram_filter_test.cpp
+    ./search/verified_batch_test.cpp
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
@@ -154,6 +175,7 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
+    ./utils/serializer_tests.cpp
     ./duckdb/validity_mask_tests.cpp
     ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
@@ -230,6 +252,8 @@ target_include_directories(
     PRIVATE
         ${Boost_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and

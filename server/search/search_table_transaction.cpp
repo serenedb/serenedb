@@ -208,7 +208,8 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
-      connector::RemoveGeneratedRows(trx, op.delete_rows);
+      trx.Remove(
+        connector::MakeRowRemoval(op.delete_rows, op.delete_positions));
     });
   entry.applied_ops = entry.ops.size();
 }
@@ -247,9 +248,10 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
+  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows,
+  std::span<const uint64_t> positions) {
   EnsureShardWrites(shard);
-  _changes[shard->GetTableId()].AppendDeletes(rows);
+  _changes[shard->GetTableId()].AppendDeletes(rows, positions);
 }
 
 void SearchTableTransaction::AddSearchTruncate(

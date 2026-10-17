@@ -1,0 +1,118 @@
+statement ok
+CREATE TABLE sof (k INTEGER, v VARCHAR) SORTED BY (k) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sof SELECT (i * 7) % 13, 'a' || i FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sof;
+
+statement ok
+INSERT INTO sof SELECT (i * 5) % 11, 'b' || i FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sof;
+
+statement ok
+SET sdb_faults = 'irs::KeyOrder::Finish';
+
+query
+SELECT outcome FROM sdb_compact('sof', mode := 'compact');
+----
+outcome
+failed
+
+statement ok
+SET sdb_faults = '-irs::KeyOrder::Finish';
+
+query
+SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+----
+n	segments
+200	2
+
+query
+SELECT outcome FROM sdb_compact('sof', mode := 'compact');
+----
+outcome
+merged
+
+query
+SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+----
+n	segments
+200	1
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+         row_number() OVER (ORDER BY k, sdb_row_position$) AS logical
+  FROM sof) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE sof;
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE sof_steps (k INTEGER, n INTEGER) SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1);
+
+statement ok
+INSERT INTO sof_steps SELECT (i * 7919) % 1009, i FROM range(2400000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sof_steps;
+
+statement ok
+SET sdb_faults = 'irs::KeyOrder::Finish';
+
+statement error
+VACUUM (COMPACT_TABLE) sof_steps;
+----
+db error: ERROR: failed to compact search table 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 149 segments does not hold every live document once
+
+
+statement ok
+SET sdb_faults = '-irs::KeyOrder::Finish';
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sof_steps');
+----
+segments	docs
+1172	2400000
+
+query
+SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sof_steps') AND type = 'merge'
+ORDER BY id;
+----
+outcome	inputs
+failed	149
+
+statement ok
+VACUUM (COMPACT_TABLE) sof_steps;
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sof_steps');
+----
+segments	docs
+1	2400000
+
+query
+SELECT count(*) AS out_of_order FROM (
+  SELECT k, lag(k) OVER (ORDER BY sdb_row_position$) AS previous FROM sof_steps)
+WHERE previous > k;
+----
+out_of_order
+0
+
+statement ok
+DROP TABLE sof_steps;
+
+statement ok
+RESET threads;

@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
@@ -85,6 +86,7 @@ struct InvertedIndexData {
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
+  irs::SortSpec sort;
 };
 
 }  // namespace sdb::catalog::persistence

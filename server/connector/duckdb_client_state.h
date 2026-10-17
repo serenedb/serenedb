@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <duckdb.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <memory>
@@ -142,6 +144,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
+
+void RunAtCommit(duckdb::ClientContext& context,
+                 absl::AnyInvocable<void()> action);
 
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database);

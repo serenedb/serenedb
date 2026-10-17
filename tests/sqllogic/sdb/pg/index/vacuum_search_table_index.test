@@ -1,0 +1,97 @@
+statement ok
+CREATE TABLE vsi (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+CREATE INDEX vsi_idx ON vsi USING inverted (body)
+
+
+statement ok
+INSERT INTO vsi SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) vsi_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('vsi')
+----
+segments	docs
+1	4096
+
+
+statement ok
+INSERT INTO vsi SELECT i, 'dog' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) public.vsi_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('vsi')
+----
+segments	docs
+2	8192
+
+
+statement ok
+VACUUM (COMPACT_INDEX) vsi_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('vsi')
+----
+segments	docs
+1	8192
+
+
+statement ok
+DELETE FROM vsi WHERE id <= 100
+
+
+statement ok
+VACUUM (OPTIMIZE_INDEX) vsi_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(deleted_docs) AS deleted FROM sdb_segments('vsi')
+----
+segments	docs	deleted
+1	8092	0
+
+
+query
+SELECT origin, count(*) AS merges FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'vsi') AND type = 'merge'
+GROUP BY origin
+----
+origin	merges
+vacuum	2
+
+
+query
+SELECT count(*) AS n FROM vsi
+----
+n
+8092
+
+
+statement ok
+CREATE TABLE vsi_plain (id INT PRIMARY KEY, body TEXT)
+
+
+statement error
+VACUUM (REFRESH_INDEX) vsi_plain_pkey
+----
+db error: ERROR: relation "vsi_plain_pkey" does not exist<slt:ignore>
+
+
+statement ok
+DROP TABLE vsi_plain
+
+
+statement ok
+DROP TABLE vsi

@@ -54,9 +54,17 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
     _dropped.store(true, std::memory_order_release);
   }
 
+  void MarkDetached() noexcept {
+    _detached.store(true, std::memory_order_release);
+  }
+  bool Detached() const noexcept {
+    return _detached.load(std::memory_order_acquire);
+  }
+
  private:
   std::filesystem::path _path;
   std::atomic_bool _dropped{false};
+  std::atomic_bool _detached{false};
 };
 
 }  // namespace sdb::catalog

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
@@ -45,6 +46,8 @@
 #include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
@@ -85,8 +88,7 @@ StorageDirectory OpenStorageDirectory(
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
-// iresearch writer/reader and all mutable index state; lives in the
-// SearchEngine registry keyed by index_id, not in the catalog snapshot.
+// iresearch writer/reader and all mutable index state.
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage>,
     public MaintainedStore {
@@ -96,7 +98,7 @@ class InvertedIndexStorage final
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
-                       bool is_new);
+                       const irs::SortSpec& sort, bool is_new);
   ~InvertedIndexStorage();
 
   // A drop commits while readers may still hold this storage; the destructor
@@ -105,6 +107,10 @@ class InvertedIndexStorage final
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
+  }
+  bool Retired() const noexcept { return Dropped() || _directory->Detached(); }
   std::filesystem::path Path() const {
     return _directory->StoragePath(_index_id);
   }
@@ -117,10 +123,11 @@ class InvertedIndexStorage final
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
     duckdb::idx_t db_id, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
-    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
+    const std::optional<irs::ScorerOptions>& top_k_scorer,
+    const irs::SortSpec& sort, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
       std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
-      is_new);
+      sort, is_new);
   }
 
   auto GetTransaction() {
@@ -156,30 +163,34 @@ class InvertedIndexStorage final
     return _delete_log_rowid_begin.load(std::memory_order_acquire);
   }
 
-  // `field_options` (nullable) is the per-merge per-column encoding config: the
-  // compaction task hands the info from its own DDL view so the
-  // merge encodes against that view, never the live catalog. It pins for the
-  // whole synchronous merge, so non-owning.
-  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options) {
-    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr));
-  }
-
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env)
+                          const irs::AnnBuildEnv* env, MergeOrigin origin,
+                          irs::CompactionResult* outcome = nullptr,
+                          irs::MergeExecutor* executor = nullptr,
+                          irs::LoneSegment lone = irs::LoneSegment::Skip)
+    -> yaclib::Future<ResultWithTime>;
+
+  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
+    return _writer->ReserveMerges(planner);
+  }
+
+  auto RunMergeAsync(irs::MergeTicket ticket,
+                     const irs::MergeWriter::FlushProgress& progress,
+                     bool& empty_compaction,
+                     const irs::IndexFieldOptions* field_options,
+                     const irs::AnnBuildEnv* env, uint64_t merge_id,
+                     irs::CompactionResult* outcome = nullptr,
+                     irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
 
-  ResultWithTime CleanupUnsafe();
+  CleanupResult CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   [[nodiscard]] absl::Status Refresh(
@@ -237,6 +248,9 @@ class InvertedIndexStorage final
     std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+  bool Sorted() const noexcept { return _sorted; }
+
   void StartTasks() { _search.StartTasks(shared_from_this()); }
 
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
@@ -249,18 +263,18 @@ class InvertedIndexStorage final
   bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
-  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
-                         const irs::MergeWriter::FlushProgress& progress,
-                         bool& empty_compaction,
-                         const irs::IndexFieldOptions* field_options,
-                         const irs::AnnBuildEnv* env)
-    -> yaclib::Future<absl::Status>;
+  auto AwaitMerge(
+    MergeRecorder& recorder, bool& empty_compaction,
+    irs::CompactionResult* outcome,
+    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+    -> yaclib::Future<ResultWithTime>;
   void PublishSnapshot();
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _absent = false;
+  bool _sorted;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   IndexDurability _durability;
@@ -282,6 +296,8 @@ class InvertedIndexStorage final
     std::numeric_limits<int64_t>::max()};
   std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
+  absl::once_flag _merge_relation_once;
+  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

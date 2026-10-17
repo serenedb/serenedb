@@ -44,14 +44,14 @@ class SearchTable;
 template<typename Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
 template<typename Storage>
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak);
+yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage);
 
 extern template yaclib::Future<> RefreshLoop(
   std::weak_ptr<InvertedIndexStorage>);
 extern template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage>);
+  std::shared_ptr<InvertedIndexStorage>);
 extern template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 extern template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<SearchTable>);
+  std::shared_ptr<SearchTable>);
 
 }  // namespace sdb::search

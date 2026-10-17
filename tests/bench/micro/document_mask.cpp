@@ -1325,4 +1325,59 @@ void BmScanTailAsBitsIterator(benchmark::State& state) {
 
 BENCHMARK(BmScanTailAsBitsIterator);
 
+struct RemovalsDuringMerge {
+  irs::DocumentMask before;
+  irs::DocumentMask after;
+};
+
+RemovalsDuringMerge MakeRemovalsDuringMerge(doc_id_t docs) {
+  std::mt19937 rng{42};
+  std::uniform_int_distribution<doc_id_t> pick{kBegin, kBegin + docs - 1};
+  RemovalsDuringMerge removals;
+  for (doc_id_t i = 0; i < docs / 100; ++i) {
+    removals.before.Add(pick(rng));
+  }
+  removals.after = removals.before;
+  for (size_t i = 0; i < 1000; ++i) {
+    removals.after.Add(pick(rng));
+  }
+  removals.before.Trim();
+  removals.after.Trim();
+  return removals;
+}
+
+void BmNewRemovalsByDoc(benchmark::State& state) {
+  const auto docs = static_cast<doc_id_t>(state.range(0));
+  const auto removals = MakeRemovalsDuringMerge(docs);
+  for (auto _ : state) {
+    size_t added = 0;
+    for (auto doc = kBegin; doc < kBegin + docs; ++doc) {
+      added += static_cast<size_t>(!removals.before.Contains(doc) &&
+                                   removals.after.Contains(doc));
+    }
+    benchmark::DoNotOptimize(added);
+  }
+}
+
+BENCHMARK(BmNewRemovalsByDoc)
+  ->Name("NewRemovals/by_doc")
+  ->Arg(1 << 20)
+  ->Arg(1 << 26);
+
+void BmNewRemovalsByWord(benchmark::State& state) {
+  const auto docs = static_cast<doc_id_t>(state.range(0));
+  const auto removals = MakeRemovalsDuringMerge(docs);
+  for (auto _ : state) {
+    size_t added = 0;
+    removals.after.ForEachAddedSince(removals.before,
+                                     [&](doc_id_t) { ++added; });
+    benchmark::DoNotOptimize(added);
+  }
+}
+
+BENCHMARK(BmNewRemovalsByWord)
+  ->Name("NewRemovals/by_word")
+  ->Arg(1 << 20)
+  ->Arg(1 << 26);
+
 }  // namespace

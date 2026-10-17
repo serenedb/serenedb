@@ -1,0 +1,47 @@
+# An index over a view of several files keys its rows by file and row number,
+# not by a row id: describing and compacting its segments works on that key.
+
+control substitution on
+
+statement ok
+COPY (SELECT i::int4 AS id, 'word ' || (i % 7) AS body FROM range(2000) t(i))
+  TO '${__TEST_DIR__}/vis_a.parquet' (FORMAT parquet)
+
+
+statement ok
+COPY (SELECT i::int4 AS id, 'word ' || (i % 5) AS body FROM range(2000, 3000) t(i))
+  TO '${__TEST_DIR__}/vis_b.parquet' (FORMAT parquet)
+
+
+statement ok
+CREATE VIEW vis_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/vis_*.parquet')
+
+
+statement ok
+CREATE INDEX vis_idx ON vis_v USING inverted (id, body) WITH (compaction_interval = 0)
+
+
+query
+SELECT count(*) > 0 AS described, sum(docs) AS docs FROM sdb_segments('vis_idx')
+----
+described	docs
+t	3000
+
+
+statement ok
+VACUUM (COMPACT_INDEX) vis_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('vis_idx')
+----
+segments	docs
+1	3000
+
+
+query
+SELECT count(*) AS rows, min(id) AS lo, max(id) AS hi FROM vis_idx
+----
+rows	lo	hi
+3000	0	2999

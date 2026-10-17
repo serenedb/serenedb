@@ -34,6 +34,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
@@ -260,7 +261,8 @@ struct PackedColumn {
 
   void Build(const std::vector<uint32_t>& values) {
     irs::MemoryIndexOutput out{file};
-    irs::NormColumnWriter writer{1, kRgRows, out};
+    irs::ColBlockSink blocks{out};
+    irs::NormColumnWriter writer{1, kRgRows, blocks};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }

@@ -29,6 +29,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -82,7 +83,8 @@ inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
 class PhraseRows {
  public:
   PhraseRows(const TokenPhraseQuery& query, bool count)
-    : _ctx{*query.Segment().GetColReader()},
+    : _col_reader{query.Segment().GetColReader()},
+      _ctx{*_col_reader},
       _column{&query.Column()},
       _state{_column->InitScan(_ctx)},
       _out{_column->Type()},
@@ -100,8 +102,22 @@ class PhraseRows {
       return 0;
     }
     auto& out = _out.Reset();
-    column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
-                                0);
+    const auto span = hits[n - 1] - hits[0] + 1;
+    if ((n == 1 || n * column_internal::kPointDensity < span) &&
+        !_column->Type().IsNested()) {
+      if (!_point) {
+        _point =
+          std::make_unique<ColumnReader::PointReader>(*_col_reader, *_column);
+      }
+      _rows.clear();
+      for (const auto doc : hits.first(n)) {
+        _rows.push_back(doc - doc_limits::min());
+      }
+      _point->FetchRows(_rows, out, 0);
+    } else {
+      column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
+                                  0);
+    }
     _check.Bind(out, n);
     return n;
   }
@@ -111,11 +127,14 @@ class PhraseRows {
   }
 
  private:
+  const ColReader* _col_reader;
   ReadContext _ctx;
   const ColumnReader* _column;
   ColumnReader::ScanState _state;
   ColumnReader::VectorScratch _out;
   PhraseCheck _check;
+  std::unique_ptr<ColumnReader::PointReader> _point;
+  std::vector<uint64_t> _rows;
 };
 
 template<typename Approx, bool Sloppy>

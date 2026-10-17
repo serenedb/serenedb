@@ -139,6 +139,10 @@ class StorageMergeJob final : public MergeJob {
     return _ticket.Candidates();
   }
 
+  bool Stale() const noexcept final {
+    return _storage->Retired() || _ticket.Revoked();
+  }
+
   yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
                                    size_t helpers) final {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {

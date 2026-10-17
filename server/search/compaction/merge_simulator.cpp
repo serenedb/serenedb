@@ -110,6 +110,8 @@ class SimulatedJob final : public MergeJob {
 
   irs::CompactionView Candidates() const noexcept final { return _view; }
 
+  bool Stale() const noexcept final { return false; }
+
   yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
                                    size_t helpers) final;
 

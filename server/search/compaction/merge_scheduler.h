@@ -53,6 +53,8 @@ class MergeJob {
 
   virtual irs::CompactionView Candidates() const noexcept = 0;
 
+  virtual bool Stale() const noexcept = 0;
+
   virtual yaclib::Future<MergeOutcome> Run(uint64_t id,
                                            const std::atomic_bool& stop,
                                            size_t helpers) = 0;

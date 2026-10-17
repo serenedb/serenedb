@@ -335,12 +335,22 @@ void MergeScheduler::ReleaseHelper() noexcept {
 
 void MergeScheduler::Pump() {
   std::vector<Entry*> started;
+  Queue stale;
   {
     absl::MutexLock lock{&_mutex};
     if (_stopping) {
       return;
     }
     SDB_IF_FAILURE("hold_merge_dispatch") { return; }
+    for (auto it = _queue.begin(); it != _queue.end();) {
+      if (!(*it)->job->Stale()) {
+        ++it;
+        continue;
+      }
+      stale.emplace_back(std::move(*it));
+      it = _queue.erase(it);
+    }
+    Drop(stale);
     const auto now = Now();
     const auto aging = absl::ToDoubleSeconds(_options.aging);
     for (;;) {
@@ -382,6 +392,11 @@ void MergeScheduler::Pump() {
       started.emplace_back(raw);
     }
     UpdateGauges();
+  }
+  for (const auto& entry : stale) {
+    if (entry->relation->_nudge) {
+      entry->relation->_nudge();
+    }
   }
   for (auto* entry : started) {
     yaclib::Submit(_executor, Start{*this, *entry});

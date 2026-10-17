@@ -28,6 +28,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -79,6 +80,7 @@ struct Board {
   std::map<std::string, uint64_t> ids;
   absl::Mutex destroyed_mutex;
   std::vector<std::string> destroyed;
+  std::set<std::string> stale;
   bool throw_on_run = false;
   bool throw_int_on_run = false;
 };
@@ -100,6 +102,8 @@ class FakeJob final : public MergeJob {
   }
 
   irs::CompactionView Candidates() const noexcept final { return _candidates; }
+
+  bool Stale() const noexcept final { return _board.stale.contains(_name); }
 
   yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
                                    size_t helpers) final {
@@ -329,6 +333,25 @@ TEST_F(MergeSchedulerTest, CancelQueuedDropsOnlyThatRelation) {
   Complete("blocker", MergeOutcome::Merged);
   EXPECT_FALSE(Started("a"));
   EXPECT_TRUE(Started("b"));
+  CompleteAll(MergeOutcome::Merged);
+}
+
+TEST_F(MergeSchedulerTest, StaleQueuedMergesLeaveWithoutAThread) {
+  auto scheduler = Make(1);
+  const auto busy = Relation(1);
+  const auto dead = Relation(2);
+  Enqueue(*scheduler, busy, "busy", kMiB);
+  ASSERT_TRUE(Started("busy"));
+  const auto round = scheduler->Wanted(*dead);
+  Enqueue(*scheduler, dead, "dead", kMiB);
+  ASSERT_FALSE(Started("dead"));
+  EXPECT_EQ(round - 1, scheduler->Wanted(*dead));
+  _board.stale.insert("dead");
+  Enqueue(*scheduler, busy, "next", kMiB);
+  EXPECT_TRUE(Destroyed("dead"));
+  EXPECT_FALSE(Started("dead"));
+  EXPECT_EQ(round, scheduler->Wanted(*dead));
+  EXPECT_EQ(1, _nudges[2]);
   CompleteAll(MergeOutcome::Merged);
 }
 

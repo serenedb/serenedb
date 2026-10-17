@@ -21,6 +21,7 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <string>
@@ -116,7 +117,7 @@ class ReadContext final : public BlockManager,
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
-  std::vector<CacheSlot> _cache_slots;
+  std::deque<CacheSlot> _cache_slots;
   bool _random_access = false;
   bool _read_ahead = true;
   bool _reusable_dictionaries = false;

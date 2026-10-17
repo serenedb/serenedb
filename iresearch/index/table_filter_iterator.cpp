@@ -99,16 +99,11 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
         reader = column;
       }
     }
-    const auto type_id =
-      extract ? spec.extract_type->id() : reader->Type().id();
-    const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
-                           type_id == duckdb::LogicalTypeId::MAP;
-    const bool nested = spec.row_gather || extract != nullptr || list_like ||
-                        type_id == duckdb::LogicalTypeId::ARRAY ||
-                        type_id == duckdb::LogicalTypeId::STRUCT ||
-                        type_id == duckdb::LogicalTypeId::TUPLE ||
-                        type_id == duckdb::LogicalTypeId::UNION ||
-                        type_id == duckdb::LogicalTypeId::VARIANT;
+    const auto& type = extract ? *spec.extract_type : reader->Type();
+    const bool list_like = type.id() == duckdb::LogicalTypeId::LIST ||
+                           type.id() == duckdb::LogicalTypeId::MAP;
+    const bool nested =
+      spec.row_gather || extract != nullptr || type.IsNested();
     _cols.push_back(Col{
       .reader = reader,
       .field = spec.field,
@@ -462,6 +457,61 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
     }
   }
   return dead_end;
+}
+
+void LiveRowGroups(const ColReader& col_reader,
+                   std::span<const ColFilterSpec> specs,
+                   duckdb::ClientContext& context, ColFilterStateCache& states,
+                   uint64_t rows, uint64_t rg_size,
+                   std::vector<uint32_t>& live) {
+  struct Zonemap {
+    const ColumnReader* reader = nullptr;
+    const duckdb::ExpressionFilter* expr = nullptr;
+    duckdb::TableFilterState* state = nullptr;
+    mutable BlockWindow window;
+  };
+  std::vector<Zonemap> zonemaps;
+  for (const auto& spec : specs) {
+    if (spec.is_score || spec.row_gather) {
+      continue;
+    }
+    const auto* reader = col_reader.Column(spec.field);
+    if (reader && !spec.extract_path.empty()) {
+      reader =
+        DirectExtractLeaf(*reader, spec.extract_path, *spec.extract_type);
+    }
+    if (!reader || reader->Type().IsNested()) {
+      continue;
+    }
+    zonemaps.push_back({
+      .reader = reader,
+      .expr = &spec.filter->Cast<duckdb::ExpressionFilter>(),
+      .state = &states.State(context, *spec.filter),
+    });
+  }
+  const auto dead = [](const Zonemap& z, uint64_t begin, uint64_t end) {
+    if (end > z.reader->RowCount()) {
+      return false;
+    }
+    for (auto row = begin; row < end; row = z.window.end) {
+      z.window = z.reader->Locate(row, z.window);
+      const auto verdict = z.expr->CheckStatistics(
+        z.reader->RowGroupStatistics(z.window.block), *z.state);
+      if (verdict != duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE &&
+          verdict != duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+        return false;
+      }
+    }
+    return true;
+  };
+  live.clear();
+  for (uint64_t begin = 0; begin < rows; begin += rg_size) {
+    const auto end = std::min(rows, begin + rg_size);
+    if (absl::c_none_of(
+          zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
+      live.push_back(static_cast<uint32_t>(begin / rg_size));
+    }
+  }
 }
 
 void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,

@@ -297,8 +297,13 @@ bool IsResident(const void* addr, size_t size) noexcept {
     return true;
   }
   constexpr size_t kMaxPages = 1024;
+  const auto kPage = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  char resident[kMaxPages];
+#else
   unsigned char resident[kMaxPages];
+#endif
   for (size_t done = 0; done < total; done += kMaxPages * kPage) {
     const auto len = std::min(total - done, kMaxPages * kPage);
     if (::mincore(reinterpret_cast<void*>(aligned + done), len, resident) !=

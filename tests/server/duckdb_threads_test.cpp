@@ -39,8 +39,6 @@
 #include <functional>
 #include <limits>
 #include <map>
-#include <mutex>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,29 +47,30 @@ namespace {
 
 constexpr int64_t kRows = 10'000'000;
 
-std::mutex gSeenLock;
-std::set<std::thread::id> gSeen;
+std::atomic<size_t> gRunning{0};
+std::atomic<size_t> gPeak{0};
 
 void RecordThread(duckdb::DataChunk&, duckdb::ExpressionState&,
                   duckdb::Vector& result) {
-  {
-    std::lock_guard guard{gSeenLock};
-    gSeen.insert(std::this_thread::get_id());
+  const auto running = ++gRunning;
+  for (auto peak = gPeak.load();
+       running > peak && !gPeak.compare_exchange_weak(peak, running);) {
   }
+  const auto until =
+    std::chrono::steady_clock::now() + std::chrono::microseconds(20);
+  while (std::chrono::steady_clock::now() < until) {
+  }
+  --gRunning;
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::GetData<bool>(result)[0] = true;
 }
 
-size_t ThreadsSeen(duckdb::Connection& con) {
-  {
-    std::lock_guard guard{gSeenLock};
-    gSeen.clear();
-  }
+size_t PeakThreads(duckdb::Connection& con) {
+  gPeak = 0;
   auto result = con.Query("SELECT count(*) FROM s.t WHERE record_thread(i)");
   EXPECT_FALSE(result->HasError()) << result->GetError();
   EXPECT_EQ(result->Collection().GetValue(0, 0), duckdb::Value::BIGINT(kRows));
-  std::lock_guard guard{gSeenLock};
-  return gSeen.size();
+  return gPeak;
 }
 
 void Exec(duckdb::Connection& con, const std::string& sql) {
@@ -108,12 +107,12 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   EXPECT_EQ(db.NumberOfThreads(), 8U);
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 1U);
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*other.context), 8U);
-  EXPECT_EQ(ThreadsSeen(con), 1U);
-  EXPECT_GT(ThreadsSeen(other), 1U);
+  EXPECT_EQ(PeakThreads(con), 1U);
+  EXPECT_GT(PeakThreads(other), 1U);
 
   Exec(con, "SET SESSION threads = 3");
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 3U);
-  EXPECT_LE(ThreadsSeen(con), 3U);
+  EXPECT_LE(PeakThreads(con), 3U);
 
   Exec(con, "SET threads = 100");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(100));
@@ -127,7 +126,7 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(100));
   EXPECT_EQ(CurrentThreads(other), duckdb::Value::BIGINT(4));
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 4U);
-  EXPECT_LE(ThreadsSeen(other), 4U);
+  EXPECT_LE(PeakThreads(other), 4U);
 
   Exec(con, "RESET threads");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(4));

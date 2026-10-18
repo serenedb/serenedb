@@ -608,3 +608,27 @@ statement error
 CREATE TABLE plain_nested_dict_fsst (a INTEGER, tags TEXT[] USING COMPRESSION dict_fsst);
 ----
 db error: ERROR: Can't compress column "tags" with type 'VARCHAR[]' (physical: LIST) using compression type 'DICT_FSST'
+
+
+statement error
+CREATE TABLE search_internal_codec (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION compression_col_numeric) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: Enum value: unrecognized value "compression_col_numeric" for enum "CompressionType"<slt:ignore>
+
+
+statement ok
+CREATE TABLE search_internal_include (a INTEGER PRIMARY KEY, body TEXT, p TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement error
+CREATE INDEX search_internal_include_idx ON search_internal_include USING inverted(body) INCLUDE (p included (compression = 'compression_col_numeric'));
+----
+db error: ERROR: Enum value: unrecognized value "compression_col_numeric" for enum "CompressionType"<slt:ignore>
+
+
+statement ok
+DROP TABLE search_internal_include;
+
+statement error
+SET GLOBAL force_compression = 'compression_col_sequence';
+----
+db error: ERROR: Enum value: unrecognized value "compression_col_sequence" for enum "CompressionType"<slt:ignore>

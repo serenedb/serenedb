@@ -67,6 +67,7 @@ set(iresearch-tests_sources
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp
     ./formats/posting/block_codec_test.cpp
+    ./formats/posting/growing_hint_test.cpp
     ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp

@@ -60,6 +60,7 @@
 #include "iresearch/utils/containers/monotonic_buffer.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/debugging.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/fst/fst_builder.hpp"
 #include "iresearch/utils/fst/fst_matcher.hpp"
 #include "iresearch/utils/fst/fst_string_ref_weight.hpp"
@@ -1759,7 +1760,7 @@ class TermIteratorBase {
   std::vector<Arc> _sstate;
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
-  GrowingHint _hint;
+  TreeWalkHint _hint;
   bool _hinted = false;
 };
 
@@ -2905,11 +2906,8 @@ class FieldReader::Impl {
         return;
       }
       const auto& in = *_owner->_terms_in;
-      for (uint64_t i = 0; i != kBlocksProbes; ++i) {
-        if (!in.Resident(_blocks_begin + size * i / kBlocksProbes, 1)) {
-          in.Prefetch(_blocks_begin, size);
-          return;
-        }
+      if (!file_utils::SampledResident(in, _blocks_begin, size)) {
+        in.Prefetch(_blocks_begin, size);
       }
     }
 
@@ -2941,7 +2939,6 @@ class FieldReader::Impl {
 
    private:
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
-    static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
 
     FieldReader::Impl* _owner;

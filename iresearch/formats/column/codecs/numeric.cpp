@@ -119,22 +119,18 @@ class Leaves {
       _lz4.SetLevel(level);
       return _lz4.Compress(in, size, _out.data(), _out.size());
     }
-    _zstd.SetLevel(level);
-    return _zstd.Compress(in, size, _out.data(), _out.size());
+    auto& zstd = _zstd ? *_zstd : _zstd.emplace();
+    zstd.SetLevel(level);
+    return zstd.Compress(in, size, _out.data(), _out.size());
   }
 
   const char* Out() const noexcept { return _out.data(); }
 
  private:
   Lz4::Compressor _lz4;
-  Zstd::Compressor _zstd;
+  std::optional<Zstd::Compressor> _zstd;
   std::vector<char> _out;
 };
-
-Leaves& ThreadLeaves() {
-  thread_local Leaves leaves;
-  return leaves;
-}
 
 template<typename V>
 class Blocks {
@@ -724,7 +720,6 @@ class TypedSealer final : public NumericSealer {
     if (option.leaf == NumericLeaf::None) {
       return overhead + total;
     }
-    auto& leaves = ThreadLeaves();
     uint64_t raw = 0;
     uint64_t comp = 0;
     const auto samples = std::min<uint32_t>(frames, kSampleFrames);
@@ -732,7 +727,7 @@ class TypedSealer final : public NumericSealer {
       const auto f = static_cast<uint32_t>(uint64_t{k} * frames / samples);
       const auto bytes = FrameRaw(c, f, log2);
       const auto n =
-        leaves.Compress(option.leaf, option.level, bytes.data(), bytes.size());
+        _leaves.Compress(option.leaf, option.level, bytes.data(), bytes.size());
       raw += bytes.size();
       comp += std::min<uint64_t>(n, bytes.size());
     }
@@ -770,7 +765,6 @@ class TypedSealer final : public NumericSealer {
     if (!c.dict.empty()) {
       std::memcpy(out.data() + h.off_dict, c.dict.data(), c.dict.size());
     }
-    auto& leaves = ThreadLeaves();
     std::vector<NumericFrameMeta> metas(frames);
     for (uint32_t f = 0; f < frames; ++f) {
       const auto begin = f * per;
@@ -787,10 +781,10 @@ class TypedSealer final : public NumericSealer {
       m.frame.comp_off = static_cast<uint32_t>(out.size() - h.off_data);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
-        const auto n = leaves.Compress(option.leaf, option.level, bytes.data(),
-                                       bytes.size());
+        const auto n = _leaves.Compress(option.leaf, option.level, bytes.data(),
+                                        bytes.size());
         if (n < bytes.size()) {
-          out.append(leaves.Out(), n);
+          out.append(_leaves.Out(), n);
           m.frame.comp_len = static_cast<uint32_t>(n);
           continue;
         }
@@ -846,6 +840,7 @@ class TypedSealer final : public NumericSealer {
   uint32_t _dict_count = 0;
   containers::FlatHashMap<U, uint32_t> _dict_map;
   std::vector<uint8_t> _frame;
+  Leaves _leaves;
   Blocks<U> _ffor;
   Blocks<U> _run_blocks;
   Blocks<uint32_t> _length_blocks;

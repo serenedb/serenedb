@@ -710,6 +710,9 @@ set(DUCKDB_EXTENSION_CONFIGS
     FORCE
 )
 
+set(PDF_USE_PODOFO ON CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_pdf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_azure" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")

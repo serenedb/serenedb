@@ -52,6 +52,10 @@
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet)
 * [brotli](https://github.com/google/brotli)
 
+### [GPL-2.0-or-later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+
+* [duckdb-pdf](https://github.com/asubbarao/duckdb-pdf), with the SereneDB PoDoFo backend; upstream license and bundled notices are preserved in `duckdb_pdf`.
+
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
 * [lz4](https://github.com/lz4/lz4)

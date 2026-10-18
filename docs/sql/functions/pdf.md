@@ -9,7 +9,7 @@ The PDF readers are available in SereneDB SQL and in `serened shell`, with no se
 
 ## Read page text
 
-`read_pdf(path, password := '', first_page := 1, last_page := ...)` returns one row per selected PDF page. The path can name a file or contain a glob pattern. Local paths are relative to the server's working directory and refer to files accessible to the server.
+`read_pdf(path, password := '', first_page := 1, last_page := ..., layout := 'auto')` returns one row per selected PDF page. The path can name a file or contain a glob pattern. Local paths are relative to the server's working directory and refer to files accessible to the server.
 
 <SqlLogicTest id="pdf/read_pages" />
 
@@ -17,16 +17,16 @@ The PDF readers are available in SereneDB SQL and in `serened shell`, with no se
 | --- | --- | --- |
 | `filename` | `VARCHAR` | Source path. |
 | `page` | `BIGINT` | Page number, starting at 1. |
-| `text` | `VARCHAR` | Extracted text, with a newline between text fragments. |
+| `text` | `VARCHAR` | Extracted text, with a newline between lines. |
 | `width` | `DOUBLE` | Page width in PDF points. |
 | `height` | `DOUBLE` | Page height in PDF points. |
 | `has_text_layer` | `BOOLEAN` | Whether the page yielded nonblank text. |
 
-Text fragments follow the document's content order. That order can differ from visual reading order, particularly in multi-column documents. Use `read_pdf_blocks` when positions are needed to interpret the layout. Extraction depends on the PDF's character mappings; documents with missing or incorrect mappings can produce incomplete or incorrect text.
+The default `layout := 'auto'` groups text into lines and detects reading columns from their positions. Columns read left to right, with lines top to bottom within each column; line-ending hyphens are removed when a word continues onto the next line. Complex layouts may need manual interpretation using `read_pdf_blocks`. Use `layout := 'raw'` for the document's content order, with a newline between text fragments. Extraction depends on the PDF's character mappings; documents with missing or incorrect mappings can produce incomplete or incorrect text.
 
 ## Read positioned text
 
-`read_pdf_blocks` accepts the same arguments and returns one row per nonblank text fragment. A fragment is not necessarily a paragraph, line, word, or table cell.
+`read_pdf_blocks` accepts `path`, `password`, `first_page`, and `last_page` and returns one row per nonblank text fragment in the document's content order. A fragment is not necessarily a paragraph, line, word, or table cell.
 
 <SqlLogicTest id="pdf/read_blocks" />
 

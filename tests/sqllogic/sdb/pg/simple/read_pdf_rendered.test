@@ -43,8 +43,15 @@ embedded_font_unicode
 t
 
 query
-SELECT position('RIGHT COLUMN' IN text) < position('LEFT COLUMN' IN text) AS content_order
+SELECT position('LEFT COLUMN' IN text) < position('RIGHT COLUMN' IN text) AS reading_order
 FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 2, last_page := 2);
+----
+reading_order
+t
+
+query
+SELECT position('RIGHT COLUMN' IN text) < position('LEFT COLUMN' IN text) AS content_order
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', first_page := 2, last_page := 2, layout := 'raw');
 ----
 content_order
 t
@@ -77,7 +84,7 @@ WITH blocks AS (
   GROUP BY page
 )
 SELECT p.page, p.text = coalesce(b.text, '') AS same_text
-FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf') p
+FROM read_pdf('${__TEST_DIR__}/rendered/business_report.pdf', layout := 'raw') p
 LEFT JOIN blocks b USING (page)
 ORDER BY p.page;
 ----

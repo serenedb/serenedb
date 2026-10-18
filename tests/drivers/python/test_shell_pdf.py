@@ -21,11 +21,12 @@ def pdf():
 def test_pdf_extension_in_shell(pdf, function):
     result = subprocess.run(
         [SERENED, "shell", ":memory:", "-csv", "-noheader", "-c",
-         "SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'pdf'; "
+         "SELECT extension_name, loaded, extension_version <> '' "
+         "FROM duckdb_extensions() WHERE extension_name = 'pdf'; "
          f"SELECT page, text FROM {function}('{pdf}') ORDER BY page;"],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert list(csv.reader(io.StringIO(result.stdout))) == [
-        ["pdf", "true"], ["1", "Hello PDF"], ["2", "Second page"],
+        ["pdf", "true", "true"], ["1", "Hello PDF"], ["2", "Second page"],
     ]

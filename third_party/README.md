@@ -12,8 +12,8 @@ it tracks its upstream remote and carries no serenedb branches.
 
 **2. DuckDB extensions are separate submodules.** The `duckdb_*` directories sit
 alongside `duckdb` rather than inside it, and are wired in through
-`BUILD_EXTENSIONS` and `DUCKDB_EXTENSION_CONFIGS`. `duckdb_clickhouse` and
-`duckdb_pdf` are our own code, here to sit with the extensions.
+`BUILD_EXTENSIONS` and `DUCKDB_EXTENSION_CONFIGS`. `duckdb_clickhouse` is the
+reverse case: our own code, here only to sit with the extensions.
 
 **3. Awkward upstream builds get a `<name>-cmake` directory.** When upstream's
 build system is unusable for us, the submodule stays pristine and our CMakeLists
@@ -27,7 +27,7 @@ fork introduces, on our version branch.
 
 # Layout
 
-51 submodules; PoDoFo and FreeType currently point to contributor forks pending
+52 submodules; duckdb-pdf, PoDoFo and FreeType currently point to contributor forks pending
 their import into the serenedb org. `yaclib` tracks upstream.
 
 8 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
@@ -35,9 +35,9 @@ their import into the serenedb org. `yaclib` tracks upstream.
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.
 
-6 directories in-tree rather than submodules -- mostly historical, to be fixed:
+5 directories in-tree rather than submodules -- mostly historical, to be fixed:
 `fastText`, `llhttp`, `magic_enum`, `sse2neon`, plus our own
-`duckdb_clickhouse` and `duckdb_pdf`.
+`duckdb_clickhouse`.
 
 Anything non-obvious about a specific library is commented where it happens in
 `CMakeLists.txt` -- the OpenSSL pre-seeding and its drift guard, the header-only

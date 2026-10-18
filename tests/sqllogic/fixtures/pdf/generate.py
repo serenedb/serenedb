@@ -122,6 +122,15 @@ def generate(directory):
         b"BT /F1 12 Tf 320 720 Td (Right column) Tj ET\n"
         b"BT /F1 12 Tf 72 720 Td (Left column) Tj ET"
     ])
+    write_pdf(directory / "layout.pdf", [
+        b"\n".join(
+            f"BT /F1 10 Tf {x} {720 - i * 20} Td ({side}-{i} column reading order) Tj ET".encode()
+            for side, x in (("RIGHT", 330), ("LEFT", 48)) for i in range(8)
+        ),
+        b"BT /F1 12 Tf 72 720 Td (A hyphen-) Tj ET\n"
+        b"BT /F1 12 Tf 72 700 Td (ated word) Tj ET\n"
+        b"BT /F1 12 Tf 72 680 Td (Last line-) Tj ET",
+    ])
     write_pdf(directory / "unicode.pdf", [
         b"BT /F1 12 Tf 72 720 Td <4142> Tj ET"
     ], unicode_map=True)

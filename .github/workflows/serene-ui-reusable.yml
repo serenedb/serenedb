@@ -130,6 +130,15 @@ jobs:
             IMAGE: serene-ui
             DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
+            - name: Reap containers left on this runner
+              working-directory: ${{ github.workspace }}
+              run: |
+                  echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+                  filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+                  docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+                  docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+                  docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+
             - name: Resolve branch
               working-directory: ${{ github.workspace }}
               run: echo "BRANCH=$GITHUB_REF_NAME" >> $GITHUB_ENV
@@ -162,7 +171,7 @@ jobs:
 
             - name: Setup QEMU for multi-arch
               if: inputs.BUILD_IMAGE
-              run: docker run --rm --privileged tonistiigi/binfmt --install all
+              run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
 
             - name: Build Docker image
               if: inputs.BUILD_IMAGE
@@ -170,6 +179,11 @@ jobs:
                   DOCKER_USERNAME: "serenedb"
                   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
               run: ./scripts/build_docker.sh
+
+            - name: Reap containers of this job
+              if: always()
+              working-directory: ${{ github.workspace }}
+              run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
 
     build-linux-app:
         name: Build Linux App

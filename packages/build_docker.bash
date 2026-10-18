@@ -114,7 +114,7 @@ done
 # --- Smoke test (native arch only) ---
 log "=== Smoke test ==="
 SMOKE_ARCH="${AVAILABLE_ARCHES[0]}"
-if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}-${SMOKE_ARCH}" --version 2>/dev/null; then
+if docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "${FULL_IMAGE_NAME}:${VERSION}-${SMOKE_ARCH}" --version 2>/dev/null; then
 	log "  Version check passed (${SMOKE_ARCH})"
 else
 	if [ "$SMOKE_ARCH" != "$HOST_ARCH" ]; then

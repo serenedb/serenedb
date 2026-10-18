@@ -1,6 +1,10 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   serenedb:
     image: ${BUILD_IMAGE}
+    labels: *owner
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
@@ -19,6 +23,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     depends_on:
       - serenedb
@@ -43,3 +48,4 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+    labels: *owner

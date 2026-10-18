@@ -1,9 +1,13 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   # Make the root:root 0755 named volume world-writable before the non-root
   # services use /test-tmp (the release image's serenedb user can't create dirs
   # in a fresh root-owned volume).
   test-tmp-init:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "0:0"
     volumes:
       - "sdb-test-tmp:/test-tmp"
@@ -11,6 +15,7 @@ services:
 
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
+    labels: *owner
     depends_on:
       test-tmp-init:
         condition: service_completed_successfully
@@ -30,6 +35,7 @@ services:
   # container -- it cannot use the networked `serenedb` service.
   network-tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
       - "${WORKSPACE}:/workspace:ro"
@@ -39,6 +45,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     depends_on:
       - serenedb
@@ -80,9 +87,13 @@ services:
       '
 
 networks:
+  default:
+    labels: *owner
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+    labels: *owner
 
 volumes:
   sdb-test-tmp:
+    labels: *owner

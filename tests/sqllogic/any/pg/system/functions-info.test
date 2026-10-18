@@ -155,6 +155,14 @@ SELECT pg_listening_channels();
 db error: ERROR: Function is not supported in SereneDB
 
 
+skipif serenedb
+query
+SELECT pg_numa_available();
+----
+pg_numa_available
+t
+
+
 query
 SELECT pg_typeof(pg_numa_available());
 ----

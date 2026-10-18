@@ -1003,6 +1003,14 @@ void PgRegexpFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       columns[column])[columns[column].sel->get_index(row)];
   };
 
+  const auto constant = [&](int column) {
+    return column >= arity ||
+           (args.data[column].GetVectorType() ==
+              duckdb::VectorType::CONSTANT_VECTOR &&
+            !duckdb::ConstantVector::IsNull(args.data[column]));
+  };
+  const bool constant_pattern = constant(1) && constant(flags_arg);
+  const re2::RE2* constant_re = nullptr;
   auto writer = duckdb::FlatVector::Writer<Result>(result, args.size());
   std::string replaced;
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -1022,8 +1030,14 @@ void PgRegexpFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                            endoption == 0 || endoption == 1);
     const auto subexpr = int_at(subexpr_arg, row, 0);
     CheckPgRegexpParameter("subexpr", subexpr, subexpr >= 0);
-    const auto& re = cache.Compile(
-      text_at(1, row), flags_arg < arity ? text_at(flags_arg, row) : "");
+    const auto& re =
+      constant_re
+        ? *constant_re
+        : cache.Compile(text_at(1, row),
+                        flags_arg < arity ? text_at(flags_arg, row) : "");
+    if (constant_pattern) {
+      constant_re = &re;
+    }
     if constexpr (Kind != PgRegexpKind::Replace) {
       if (cache.flags.global) {
         THROW_SQL_ERROR(
@@ -1108,6 +1122,14 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
   if (args.ColumnCount() > 2) {
     flags.emplace(args.data[2]);
   }
+  const auto constant = [&](duckdb::idx_t column) {
+    return column >= args.ColumnCount() ||
+           (args.data[column].GetVectorType() ==
+              duckdb::VectorType::CONSTANT_VECTOR &&
+            !duckdb::ConstantVector::IsNull(args.data[column]));
+  };
+  const bool constant_pattern = constant(1) && constant(2);
+  const re2::RE2* constant_re = nullptr;
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto text_value = texts[row];
@@ -1119,9 +1141,14 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
     }
     const auto& text = text_value.GetValue();
     const auto& pattern = pattern_value.GetValue();
-    const auto& re =
-      cache.Compile(AsView(pattern), flags ? AsView((*flags)[row].GetValue())
-                                           : std::string_view{});
+    const auto& re = constant_re
+                       ? *constant_re
+                       : cache.Compile(AsView(pattern),
+                                       flags ? AsView((*flags)[row].GetValue())
+                                             : std::string_view{});
+    if (constant_pattern) {
+      constant_re = &re;
+    }
     if (cache.flags.global) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

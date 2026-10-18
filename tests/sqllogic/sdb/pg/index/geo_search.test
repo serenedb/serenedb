@@ -1078,7 +1078,15 @@ QUERY PLAN
 │ │ Field: body(string) │  │ Field: geo(string) │ │
 │ │ Values: 'cafe'      │  │ Op: Intersects     │ │
 │ ╰─────────────────────╯  │ Shape: S2Polygon   │ │
+│                          │ Verify: false      │ │
 │                          ╰────────────────────╯ │
+│ Table Filter:                                   │
+│ ╭─ Geo ────────────────╮                        │
+│ │ Field: geo(string)   │                        │
+│ │ Op: Intersects       │                        │
+│ │ Shape: S2Polygon     │                        │
+│ │ Verify: table filter │                        │
+│ ╰──────────────────────╯                        │
 │ Score: bm25(k1=1.2, b=0.75)                     │
 │ Projections: id, sdb_inverted_index_score       │
 │ ~1 row                                          │
@@ -1112,9 +1120,15 @@ QUERY PLAN
 │ ╭─ Or ──────────┴──────────────╮  ╭─ Geo Distance ─────╮ │
 │ ╰───────────────┬──────────────╯  │ Field: geo(string) │ │
 │ ╭─ Terms ───────┴──────────────╮  │ Range: *, <500     │ │
-│ │ Field: body(string)          │  ╰────────────────────╯ │
-│ │ Values: 'blue' (1000), 'red' │                         │
+│ │ Field: body(string)          │  │ Verify: false      │ │
+│ │ Values: 'blue' (1000), 'red' │  ╰────────────────────╯ │
 │ ╰──────────────────────────────╯                         │
+│ Table Filter:                                            │
+│ ╭─ Geo Distance ───────╮                                 │
+│ │ Field: geo(string)   │                                 │
+│ │ Range: *, <500       │                                 │
+│ │ Verify: table filter │                                 │
+│ ╰──────────────────────╯                                 │
 │ Score: bm25(k1=1.2, b=0.75)                              │
 │ Projections: id, sdb_inverted_index_score                │
 │ ~1 row                                                   │
@@ -1512,3 +1526,144 @@ f64	3
 s2point	3
 source	3
 u32	3
+
+query
+SELECT id FROM places_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}') AND body @@ 'blue'
+ORDER BY id
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM places_idx
+WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}') OR id < 0) AND body @@ 'blue'
+ORDER BY id
+----
+id
+1
+3
+4
+
+query
+EXPLAIN SELECT id FROM places_idx
+WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}') OR id < 0) AND body @@ 'blue'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────╮
+│ Index: places_idx                                                       │
+│ Lookup: table                                                           │
+│ Index Filter:                                                           │
+│ ╭─ And ───────────────╮                                                 │
+│ ╰──────────┬──────────╯                                                 │
+│            ├────────────────────────╮                                   │
+│ ╭─ Terms ──┴──────────╮  ╭─ Or ─────┴─────────╮                         │
+│ │ Field: body(string) │  ╰──────────┬─────────╯                         │
+│ │ Values: 'blue'      │             ├───────────────────────╮           │
+│ ╰─────────────────────╯  ╭─ Geo ────┴─────────╮  ╭─ Granular Range ───╮ │
+│                          │ Field: geo(string) │  │ Field: id(numeric) │ │
+│                          │ Op: Intersects     │  │ Range: <0          │ │
+│                          │ Shape: S2Polygon   │  ╰────────────────────╯ │
+│                          │ Verify: inline     │                         │
+│                          ╰────────────────────╯                         │
+│ Projections: id                                                         │
+│ ~1 row                                                                  │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM places_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 300.0 AND body @@ 'cafe'
+ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM places_idx
+WHERE (ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 300.0 OR id < 0) AND body @@ 'cafe'
+ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id, round(BM25(places_idx.tableoid)::numeric, 4) AS score
+FROM places_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}') AND body @@ 'blue'
+ORDER BY id
+----
+id	score
+1	1.251
+3	1.251
+4	1.293
+
+query
+SELECT id, round(BM25(places_idx.tableoid)::numeric, 4) AS score
+FROM places_idx
+WHERE (ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}') OR id < 0) AND body @@ 'blue'
+ORDER BY id
+----
+id	score
+1	1.251
+3	1.251
+4	1.293
+
+statement ok
+CREATE TABLE geo_pt_s2 (id INTEGER PRIMARY KEY, geo JSON)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_point_s2point AS
+    encode_geojson(type := 'point', coding := 's2point')
+
+statement ok
+CREATE INDEX geo_pt_s2_idx ON geo_pt_s2 USING inverted(id, geo geojson_point_s2point)
+
+statement ok
+INSERT INTO geo_pt_s2 VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}'), (2, '{"type":"Point","coordinates":[37.616297,55.704831]}'), (3, '{"type":"Point","coordinates":[37.617053,55.704610]}'), (4, '{"type":"Point","coordinates":[37.559509,55.715895]}'), (5, '{"type":"Point","coordinates":[37.701645,55.832144]}')
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_pt_s2
+
+query
+SELECT id FROM geo_pt_s2_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM geo_pt_s2_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 300.0 OR id < 0
+ORDER BY id
+----
+id
+1
+2
+3
+
+statement ok
+CREATE TABLE geo_none (id INTEGER PRIMARY KEY, geo JSON)
+
+statement ok
+CREATE INDEX geo_none_idx ON geo_none USING inverted(id, geo geojson_shape)
+
+query
+SELECT id FROM geo_none_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 0.0
+ORDER BY id
+----
+id

@@ -137,6 +137,7 @@ IRS_FORCE_INLINE inline uint32_t CountValid(const uint64_t* valid,
 
 struct TokenConsumer {
   virtual void Consume(TokenBatch& batch, DocRuns runs) = 0;
+  virtual bool OnProgress(TokenBatch&) { return true; }
 
  protected:
   ~TokenConsumer() = default;

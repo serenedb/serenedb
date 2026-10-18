@@ -1,0 +1,98 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY iuc_kw AS keyword() WITH (frequency)
+
+
+statement ok
+CREATE TABLE iuc_items (id INTEGER PRIMARY KEY, n INTEGER, title VARCHAR)
+
+
+statement ok
+INSERT INTO iuc_items VALUES (1, 5, 'Hello'), (2, 7, 'World')
+
+
+statement ok
+CREATE INDEX iuc_items_idx ON iuc_items USING inverted (id, n, (lower(title)) iuc_kw, (lower(title)) included())
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iuc_items
+
+
+query
+SELECT id, CASE WHEN n > 1000 THEN CAST(300 AS TINYINT) ELSE 0 END AS v FROM iuc_items ORDER BY id
+----
+id	v
+1	0
+2	0
+
+query
+SELECT id, CASE WHEN n > 1000 THEN CAST(300 AS TINYINT) ELSE 0 END AS v FROM iuc_items_idx ORDER BY id
+----
+id	v
+1	0
+2	0
+
+query
+SELECT id FROM iuc_items_idx WHERE CASE WHEN n > 1000 THEN CAST(300 AS TINYINT) ELSE 0 END = 0 ORDER BY id
+----
+id
+1
+2
+
+statement ok
+CREATE TABLE iuc_keys (id INTEGER PRIMARY KEY, n INTEGER)
+
+
+statement error
+CREATE INDEX iuc_keys_bad_idx ON iuc_keys USING inverted (id, (CASE WHEN n > 1000 THEN CAST(300 AS TINYINT) ELSE 0 END) included())
+----
+db error: ERROR: Type INT32 with value 300 can't be cast because the value is out of range for the destination type INT8
+
+
+statement error
+CREATE INDEX iuc_keys_nested_idx ON iuc_keys USING inverted (id, (CASE WHEN n > 1000 THEN CAST(CAST(300 AS BIGINT) AS TINYINT) ELSE 0 END) included())
+----
+db error: ERROR: Type INT64 with value 300 can't be cast because the value is out of range for the destination type INT8
+
+
+statement error
+CREATE INDEX iuc_keys_chr_idx ON iuc_keys USING inverted (id, (CASE WHEN n > 1000 THEN chr(-1) ELSE 'a' END) included())
+----
+db error: ERROR: Invalid UTF8 Codepoint -1
+
+
+statement ok
+INSERT INTO iuc_keys VALUES (1, 5), (2, 7)
+
+
+statement ok
+CREATE INDEX iuc_keys_idx ON iuc_keys USING inverted (id, (CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END) included())
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iuc_keys
+
+
+query
+SELECT id, CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END AS v FROM iuc_keys_idx ORDER BY id
+----
+id	v
+1	0
+2	0
+
+query
+EXPLAIN SELECT id, CASE WHEN n > 1000 THEN CAST(30 AS TINYINT) ELSE 0 END AS v FROM iuc_keys_idx ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────────────────────────────────╮
+│ Order By: id ASC                                                   │
+│ ~2 rows                                                            │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────┴─────────────────────────────────╮
+│ Index: iuc_keys_idx                                                │
+│ Lookup: table                                                      │
+│ Projections:                                                       │
+│ id (l),                                                            │
+│ CASE  WHEN ((n > 1000)) THEN (CAST(30 AS tinyint)) ELSE 0 END (i)  │
+│ ~2 rows                                                            │
+╰────────────────────────────────────────────────────────────────────╯

@@ -29,6 +29,7 @@
 #include <string_view>
 #include <utility>
 
+#include "iresearch/search/filters/deferral.hpp"
 #include "iresearch/search/filters/filter.hpp"
 
 namespace irs {
@@ -40,11 +41,19 @@ struct OptimizeContext {
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
   const irs::containers::FlatHashMap<irs::field_id, irs::field_id>*
     null_markers = nullptr;
+  const Scorer* scorer = nullptr;
+  Deferral* deferral = nullptr;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
     return analyzed_fields.contains(field);
   }
 };
+
+namespace optimizer {
+
+void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx);
+
+}  // namespace optimizer
 
 template<typename Visit>
 void TraverseFilter(Filter::ptr& root, Visit&& visit) {
@@ -108,6 +117,8 @@ void RegisterRule() {
 }
 
 void InitOptimizeRules();
+
+void RunRules(Filter::ptr& slot, const OptimizeContext& ctx);
 
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {});
 

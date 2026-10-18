@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <atomic>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -43,6 +44,7 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -56,6 +58,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -130,6 +133,8 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   // of every per-field answer the build needs.
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
 
+  std::vector<ExpressionSlot> expression_slots;
+
   std::optional<SearchBackfillTarget> search_backfill;
   search::SearchTable::BuildClaim build_claim;
 
@@ -146,7 +151,6 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::vector<std::string> row_keys;
   std::vector<duckdb::string_t> key_views;
   std::vector<FeedColumn> columns;
-  std::vector<ExpressionValue> expression_values;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
@@ -379,6 +383,24 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto& index_entry = created->Cast<catalog::InvertedIndexEntry>();
   state->tokenizers = index_entry.ResolveTokenizers(context);
   state->config = index_entry.Config();
+  // The pipeline's projection computed the indexed expressions into the slots
+  // after the scanned columns (see SereneDBCreateIndexPlan).
+  if (HasProjectedExpressions()) {
+    const auto& config = *state->config;
+    auto slot = _expression_slot_base.GetIndex();
+    for (size_t k = 0; k < config.keys.size(); ++k) {
+      const auto& expr = *_bound_expressions[k];
+      if (expr.GetExpressionClass() ==
+          duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        continue;
+      }
+      const auto& key = config.keys[k];
+      if (config.WritesField(key)) {
+        state->expression_slots.emplace_back(key.field_id, slot);
+      }
+      ++slot;
+    }
+  }
   return state;
 }
 
@@ -547,33 +569,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  // The pipeline's projection computed the indexed expressions into the slots
-  // after the scanned columns (see SereneDBCreateIndexPlan).
-  auto& expression_values = lstate->expression_values;
-  expression_values.clear();
-  if (HasProjectedExpressions()) {
-    const auto& config = *gstate.config;
-    const auto keys = std::span{config.keys};
-    const auto& unbound = _bound_expressions;
-    expression_values.reserve(keys.size());
-    auto slot = _expression_slot_base.GetIndex();
-    for (size_t k = 0; k < keys.size(); ++k) {
-      if (k < unbound.size() && unbound[k]->GetExpressionClass() ==
-                                  duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-        continue;
-      }
-      SDB_ASSERT(slot < chunk.ColumnCount());
-      const auto* entry = config.FindEntry(keys[k].field_id);
-      if (!entry || entry->IsTokenized()) {
-        RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
-      }
-      expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
-      ++slot;
-    }
-  }
-
   irs::CommitOnFlush commit_on_flush;
-  FeedChunk(*writer, num_rows, pk, chunk, columns, expression_values,
+  FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots,
             &commit_on_flush);
 
   if (commit_on_flush.committed &&
@@ -723,14 +720,28 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     op.table.ParentSchema(input.context).Cast<duckdb::DuckSchemaEntry>();
   auto database_id = table_catalog.Cast<catalog::SereneDBCatalog>().GetOid();
 
+  const auto column_ids = KeyColumnIds(op.table, op.info->column_ids);
+  irs::containers::FlatHashSet<std::string> projected;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
-    if (op.info->parsed_expressions[i]->GetExpressionType() ==
-        duckdb::ExpressionType::COLUMN_REF) {
+    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
+    SDB_ASSERT(i < op.unbound_expressions.size());
+    const auto& unbound = *op.unbound_expressions[i];
+    if (unbound.GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       continue;
     }
-    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
-    projected_exprs.push_back(op.expressions[i]->Copy());
+    const auto& expr = *op.expressions[i];
+    if (projected
+          .emplace(NormalizedExpression(unbound, op.table.oid, column_ids,
+                                        input.context))
+          .second) {
+      projected_exprs.emplace_back(expr.Copy());
+    } else {
+      projected_exprs.emplace_back(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{expr.GetReturnType()}));
+    }
   }
   const auto scan_column_count = input.table_scan.types.size();
 

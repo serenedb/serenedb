@@ -258,7 +258,7 @@ std::string_view ConfigFilePath();
 // live ruleset. Called once at startup, after SetHbaConfig. A readable
 // file overrides the built-in default; a missing file keeps the default. A file
 // that exists but fails to read or parse is logged and the default is kept.
-void LoadPersistedHba();
+std::string LoadPersistedHba();
 
 // A view-ready projection of one live rule, shaped for pg_hba_file_rules: the
 // conn-type / address / netmask rendered back to text, the database/role token

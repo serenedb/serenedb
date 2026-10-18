@@ -300,3 +300,55 @@ SELECT id FROM jc_seq_t ORDER BY id;
 ----
 id
 1
+
+
+connection jc_seq_after
+statement ok
+CREATE TABLE jc_bare_t (id INTEGER PRIMARY KEY, content JSON);
+
+connection jc_seq_after
+statement ok
+CREATE INDEX jc_bare_idx ON jc_bare_t USING inverted(id, content);
+
+connection jc_seq_after
+statement ok
+INSERT INTO jc_bare_t VALUES (1, '{"host":"seed"}'::json);
+
+connection jc_seq_after
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection jc_seq_after
+statement error connection closed
+INSERT INTO jc_bare_t VALUES (2, '{"host":"replayed"}'::json);
+
+connection jc_bare_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_bare_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_bare_t;
+
+connection jc_bare_after
+query
+SELECT id FROM jc_bare_t ORDER BY id;
+----
+id
+1
+2
+
+connection jc_bare_after
+query
+SELECT id FROM jc_bare_idx WHERE content @@ '{"host":"replayed"}';
+----
+id
+2
+
+connection jc_bare_after
+query
+SELECT id FROM jc_bare_idx ORDER BY id;
+----
+id
+1
+2

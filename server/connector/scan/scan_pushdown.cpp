@@ -42,6 +42,9 @@ duckdb::TableFilterPushdown HandleScoreFilter(ScanBindData& bind,
                                               duckdb::TableFilter& filter) {
   auto& expr_filter =
     duckdb::ExpressionFilter::GetExpressionFilter(filter, "HandleScoreFilter");
+  if (!bind.search.deferred.empty() && expr_filter.expr->CanThrow()) {
+    return duckdb::TableFilterPushdown::Reject;
+  }
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
   if (expr_filter.expr->GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_CONJUNCTION &&
@@ -120,22 +123,18 @@ duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
     return HandleScoreFilter(bind, filter);
   }
   if (col_id > kMaxRealColumnIdValue) {
-    return duckdb::TableFilterPushdown::Reject;
+    return bind.relation.StoresExpression(col_id)
+             ? duckdb::TableFilterPushdown::BeforeLimit
+             : duckdb::TableFilterPushdown::Reject;
   }
-  if (bind.relation.IsSearchTable()) {
+  if (bind.relation.Stores(col_id)) {
     return duckdb::TableFilterPushdown::BeforeLimit;
   }
-  if (bind.relation.IsInvertedIndex()) {
-    const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-    if (info && info->IsStored()) {
-      return duckdb::TableFilterPushdown::BeforeLimit;
-    }
-    if (bind.lookup.supports_filters) {
-      return bind.score.vector ? duckdb::TableFilterPushdown::BeforeLimit
-                               : duckdb::TableFilterPushdown::AfterLimit;
-    }
+  if (!bind.lookup.supports_filters) {
+    return duckdb::TableFilterPushdown::Reject;
   }
-  return duckdb::TableFilterPushdown::Reject;
+  return bind.score.vector ? duckdb::TableFilterPushdown::BeforeLimit
+                           : duckdb::TableFilterPushdown::AfterLimit;
 }
 
 bool IResearchPushdownExpression(duckdb::ClientContext&,
@@ -160,13 +159,9 @@ bool IResearchPushdownExpression(duckdb::ClientContext&,
     return true;
   }
   if (col_id > kMaxRealColumnIdValue) {
-    return false;
+    return bind.relation.StoresExpression(col_id);
   }
-  if (bind.relation.IsSearchTable()) {
-    return true;
-  }
-  const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-  return info && info->IsStored();
+  return bind.relation.Stores(col_id);
 }
 
 }  // namespace sdb::connector

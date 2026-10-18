@@ -153,7 +153,7 @@ COMMIT;
 # Reconnect: only the baseline row must be visible -- the aborted txn's
 # cs segment must have been rolled back by recovery.
 connection pre_after
-query ok retry 20 backoff 500ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT pk, body, label, tag FROM doc_pre ORDER BY pk
 ----
 pk	body	label	tag
@@ -263,7 +263,7 @@ COMMIT;
 
 # Reconnect: pk=2 MUST be present (the commit was durable before the crash).
 connection post_after
-query ok retry 20 backoff 500ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT pk, body, label, tag FROM doc_post ORDER BY pk
 ----
 pk	body	label	tag

@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -49,7 +50,6 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "iresearch/formats/column/array_column_reader.hpp"
@@ -106,6 +106,61 @@ void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                   SerializeColumnBlockMeta(obj, blocks[i]);
                 });
               });
+}
+
+struct GatherBands {
+  uint32_t flat;
+  uint32_t native;
+};
+
+GatherBands BandsFor(duckdb::CompressionType codec,
+                     const duckdb::LogicalType& type) noexcept {
+  switch (codec) {
+    case duckdb::CompressionType::COMPRESSION_CONSTANT:
+      return {0, 1000};
+    case duckdb::CompressionType::COMPRESSION_RLE:
+      return {2, 70};
+    default:
+      return type.InternalType() == duckdb::PhysicalType::VARCHAR
+               ? GatherBands{10, 1000}
+               : GatherBands{10, 0};
+  }
+}
+
+bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+               uint64_t limit) noexcept {
+  if (hits < limit) {
+    return true;
+  }
+  uint64_t runs = 1;
+  for (duckdb::idx_t i = 1; i < hits; ++i) {
+    runs += sel.get_index(i) != sel.get_index(i - 1) + 1;
+    if (runs >= limit) {
+      return false;
+    }
+  }
+  return runs < limit;
+}
+
+bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                 duckdb::idx_t span) noexcept {
+  if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
+    return true;
+  }
+  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  switch (block.codec->type) {
+    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
+    case duckdb::CompressionType::COMPRESSION_FSST:
+      return FewerRuns(sel, hits, (650 * span - 1) / block.tuple_count + 1);
+    case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
+    case duckdb::CompressionType::COMPRESSION_ZSTD:
+      return FewerRuns(sel, hits, (120 * (span - hits) + 999) / 1000);
+    default:
+      return false;
+  }
 }
 
 }  // namespace
@@ -501,6 +556,9 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                  const duckdb::SelectionVector& sel,
                                  duckdb::idx_t hits, duckdb::Vector& out,
                                  duckdb::idx_t at) const {
+  if (at == 0) {
+    NewOutputVector(s);
+  }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
 
@@ -519,16 +577,17 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     ColumnReader::Scan(s, out, span);
     return;
   }
-  BeginScanVector(s);
-  if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
-    const auto codec = _segments[s.window.block].codec->type;
-    const auto bands = column_internal::BandsFor(codec, _type);
-    const auto permille = hits * 1000;
-    if (permille <= bands.flat * span) {
+  if (anchor < _row_count) {
+    const auto& block = _segments[Locate(anchor, s.window).block];
+    if (ScatterWins(block, _type, sel, hits, span)) {
       column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
       return;
     }
-    if (permille <= bands.native * span &&
+  }
+  BeginScanVector(s);
+  if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
+    const auto bands = BandsFor(_segments[s.window.block].codec->type, _type);
+    if (hits * 1000 <= bands.native * span &&
         _segments[s.window.block].codec->select != nullptr) {
       const bool self_valid = _segments[s.window.block].codec->validity ==
                               duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;

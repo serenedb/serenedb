@@ -3039,6 +3039,16 @@ QUERY PLAN
 │ │ Has Pos: false                           │ │
 │ │ Query:                                   │ │
 │ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
+│ │ Verify: false                            │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Table Filter:                                │
+│ ╭─ Wildcard NGram ─────────────────────────╮ │
+│ │ Field: v(string)                         │ │
+│ │ Pattern: foo.*ba[rz]                     │ │
+│ │ Syntax: perl                             │ │
+│ │ Has Pos: false                           │ │
+│ │ Query:                                   │ │
+│ │ And("\\x1ffoo", Or("bar\\x1f", "baz\\x1f")) │ │
 │ │ Verify: table filter                     │ │
 │ ╰──────────────────────────────────────────╯ │
 │ Projections: id                              │

@@ -89,11 +89,12 @@ bool Transaction::IsStableSnapshot() const {
   return _had_dml;
 }
 
-bool Transaction::TryDropSearchReader(duckdb::idx_t shard_id) {
+bool Transaction::TryDropSearchReader(duckdb::idx_t database_id,
+                                      duckdb::idx_t shard_id) {
   if (IsStableSnapshot() || !_search_txn) {
     return false;
   }
-  _search_txn->ResetReader(shard_id);
+  _search_txn->ResetReader(database_id, shard_id);
   return true;
 }
 
@@ -252,14 +253,14 @@ void Transaction::Rollback() {
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   duckdb::idx_t index_id,
   const std::shared_ptr<search::InvertedIndexStorage>& storage) {
-  auto it = _search_snapshots.find(index_id);
-  if (it == _search_snapshots.end()) {
-    SDB_ASSERT(storage);
-    it =
-      _search_snapshots.emplace(index_id, storage->GetInvertedIndexSnapshot())
-        .first;
+  SDB_ASSERT(storage);
+  auto& snapshot =
+    _search_snapshots.try_emplace(std::pair{storage->GetDatabaseId(), index_id})
+      .first->second;
+  if (!snapshot) {
+    snapshot = storage->GetInvertedIndexSnapshot();
   }
-  return it->second;
+  return snapshot;
 }
 
 const duckdb::Vector& Transaction::FeedColumn(

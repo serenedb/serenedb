@@ -99,3 +99,113 @@ SELECT id FROM j_idx WHERE doc->>'name' = 'bob' ORDER BY id;
 ----
 id
 2
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ste_words AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TABLE split (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX split_terms ON split USING inverted ((upper(body)) ste_words);
+
+statement ok
+CREATE INDEX split_stored ON split USING inverted ((upper(body)) included());
+
+statement ok
+INSERT INTO split VALUES (1, 'quick brown'), (2, 'lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) split;
+
+query
+SELECT id FROM (SELECT id, upper(body) AS u FROM split) s WHERE u @@ 'quick' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM (SELECT id, upper(body) AS u FROM split) s WHERE u = 'LAZY DOG' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id, upper(body) AS u FROM split WHERE upper(body) @@ 'quick' ORDER BY id;
+----
+id	u
+1	QUICK BROWN
+
+statement ok
+CREATE TABLE jmeta (id BIGINT PRIMARY KEY, doc JSON)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX jmeta_idx ON jmeta USING inverted ((doc->'meta') included());
+
+statement ok
+INSERT INTO jmeta VALUES
+    (1, '{"meta":{"a":1}}'), (2, '{"meta":[1,2]}'), (3, '{"meta":"x"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jmeta;
+
+query
+SELECT id, (doc->'meta') AS m FROM jmeta_idx ORDER BY id;
+----
+id	m
+1	{"a":1}
+2	[1,2]
+3	"x"
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ste_shape AS encode_geojson();
+
+statement ok
+CREATE TABLE jgeo (id BIGINT PRIMARY KEY, doc JSON)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX jgeo_idx ON jgeo USING inverted ((doc->'geo') ste_shape);
+
+statement ok
+INSERT INTO jgeo VALUES
+    (1, '{"geo":{"type":"Point","coordinates":[37.6,55.7]}}'),
+    (2, '{"geo":{"type":"Point","coordinates":[-3.5,-6.9]}}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jgeo;
+
+query
+SELECT id FROM jgeo_idx
+WHERE ST_Intersects((doc->'geo'), '{"type":"Polygon","coordinates":[[[37,55],[38,55],[38,56],[37,56],[37,55]]]}')
+ORDER BY id;
+----
+id
+1
+
+statement ok
+CREATE TABLE jtok (id BIGINT PRIMARY KEY, doc JSON)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX jtok_idx ON jtok USING inverted ((doc->'meta') ste_words);
+
+statement ok
+INSERT INTO jtok VALUES (1, '{"meta":"quick fox"}');
+
+statement error
+INSERT INTO jtok VALUES (2, '{"meta":{"a":1}}');
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+VACUUM (REFRESH_TABLE) jtok;
+
+query
+SELECT id FROM jtok_idx WHERE (doc->'meta') @@ 'fox' ORDER BY id;
+----
+id
+1

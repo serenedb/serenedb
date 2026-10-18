@@ -1,0 +1,200 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE sfi_ticks(db VARCHAR);
+
+statement ok
+ATTACH '${__TEST_DIR__}/sfi_dup.duckdb' AS sfi_dup_src;
+
+statement ok
+CREATE OR REPLACE TABLE sfi_dup_src.main.t(a INTEGER);
+
+statement ok
+INSERT INTO sfi_dup_src.main.t VALUES (42);
+
+statement ok
+DETACH sfi_dup_src;
+
+connection pg database=postgres
+statement ok
+CREATE SERVER sfi_dup FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_dup.duckdb', read_only 'true');
+
+connection pg database=postgres
+statement ok
+DROP SERVER sfi_dup;
+
+connection pg database=postgres
+statement ok
+CREATE SERVER sfi_dup FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_dup.duckdb', read_only 'true');
+
+connection pg database=postgres
+statement ok
+CREATE JOB sfi_tick EVERY 1 SECOND AS INSERT INTO ${__DATABASE__}.public.sfi_ticks SELECT current_database();
+
+connection pg database=postgres
+statement ok
+CREATE TABLE sfi_big AS SELECT i AS a FROM range(0, 300000) t(i);
+
+connection pg database=postgres
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) > 0 AS ticked FROM ${__DATABASE__}.public.sfi_ticks;
+----
+ticked
+t
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfi_copy && mkdir $__TEST_DIR__/sfi_copy && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfi_copy/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfi_copy/catalog.wal
+
+statement ok
+CREATE TABLE sfi_files AS
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfi_copy/**');
+
+statement ok
+CREATE SERVER sfi_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfi_copy/5');
+
+query
+SELECT a FROM sfi_dup.main.t;
+----
+a
+42
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'sfi_tick';
+----
+jobs
+1
+
+statement ok
+CHECKPOINT;
+
+statement ok
+FORCE CHECKPOINT sfi_copy;
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+statement ok
+ANALYZE sfi_copy.public.sfi_big;
+
+system ok
+echo 7 > $__TEST_DIR__/sfi_rows.csv
+
+statement error
+COPY sfi_copy.public.sfi_big FROM '${__TEST_DIR__}/sfi_rows.csv';
+----
+db error: ERROR: Cannot execute statement of type "COPY" on database "sfi_copy" which is attached in read-only mode!
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(DISTINCT db) AS dbs, count(*) FILTER (WHERE db = 'postgres') > 3 AS live_ticks FROM sfi_ticks;
+----
+dbs	live_ticks
+1	t
+
+
+connection ctas
+statement ok
+SET sdb_faults = 'pause_ctas_mid_ingest';
+
+connection ctas
+statement async ok
+CREATE TABLE sfi_during AS SELECT a FROM sfi_copy.public.sfi_big;
+
+connection watcher
+query ok retry 40 backoff 250ms
+SELECT count(*) AS paused FROM sdb_progress WHERE command = 'CREATE TABLE AS' AND tuples_processed > 0;
+----
+paused
+1
+
+connection pg database=postgres
+statement ok
+INSERT INTO sfi_big SELECT i FROM range(300000, 300100) t(i);
+
+connection pg database=postgres
+statement ok
+CHECKPOINT postgres;
+
+connection watcher
+statement ok
+SET sdb_faults = '-pause_ctas_mid_ingest';
+
+wait
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM sfi_during;
+----
+n	s
+300000	44999850000
+
+query
+SELECT (SELECT count(*) FROM postgres.public.sfi_big) AS live, (SELECT count(*) FROM sfi_copy.public.sfi_big) AS copy;
+----
+live	copy
+300100	300000
+
+
+connection ctas
+statement ok
+SET sdb_faults = 'pause_ctas_mid_ingest';
+
+connection ctas
+statement async ok
+CREATE TABLE sfi_read AS SELECT a FROM sfi_copy.public.sfi_big;
+
+connection watcher
+query ok retry 40 backoff 250ms
+SELECT count(*) AS paused FROM sdb_progress WHERE command = 'CREATE TABLE AS' AND tuples_processed > 0;
+----
+paused
+1
+
+connection dropper
+statement async ok
+DROP SERVER sfi_copy;
+
+connection watcher
+statement ok
+SET sdb_faults = '-pause_ctas_mid_ingest';
+
+wait
+
+query
+SELECT count(*) AS n, sum(a) AS s FROM sfi_read;
+----
+n	s
+300000	44999850000
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfi_copy';
+----
+n
+0
+
+query
+SELECT a FROM sfi_dup.main.t;
+----
+a
+42
+
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfi_copy/**')
+   EXCEPT SELECT * FROM sfi_files)
+  UNION ALL
+  (SELECT * FROM sfi_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfi_copy/**')));
+----
+changed
+0
+
+connection pg database=postgres
+statement ok
+DROP JOB sfi_tick;
+
+connection pg database=postgres
+statement ok
+DROP SERVER sfi_dup;

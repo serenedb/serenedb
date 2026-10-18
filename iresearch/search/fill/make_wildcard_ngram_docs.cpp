@@ -26,10 +26,7 @@ namespace irs::fill {
 
 Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  if (!query.HasMatcher()) {
-    return query.NGrams().PlanFill({}, ScoreMergeType::Sum);
-  }
-  return detail::MakeWildcardNGram<ByWalkDocs, Node::ptr, false>(query, 0);
+  return detail::MakeWildcardNGram<ByWalkDocs, Node::ptr>(query, 0);
 }
 
 }  // namespace irs::fill

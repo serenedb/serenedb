@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
@@ -33,6 +34,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -167,27 +169,23 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
 }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
-  const auto record = query.Stats(ctx);
-  return MakeAllScored(
-    query.Segment(),
-    detail::AllDocsScore(query.Segment(),
-                         detail::ScoreArgs{.scorer = record.scorer,
-                                           .stats = record.stats,
-                                           .fetcher = ctx.fetcher,
-                                           .boost = query.Boost()}));
+  return MakeAllScored(query.Segment(), detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  const auto record = query.Stats(ctx);
-  return MakeWildcardNGramScored(
-    query,
-    detail::AllDocsScore(query.Segment(),
-                         detail::ScoreArgs{.scorer = record.scorer,
-                                           .stats = record.stats,
-                                           .fetcher = ctx.fetcher,
-                                           .boost = query.Boost()}),
-    interrogations);
+  return MakeWildcardNGramScored(query, detail::AllDocsScoreOf(query, ctx),
+                                 interrogations);
+}
+
+Node::ptr Make(const ApproxQuery& query, uint64_t interrogations) {
+  return query.Approx().PlanProbe({}, interrogations);
+}
+
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
+    query, interrogations, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::probe

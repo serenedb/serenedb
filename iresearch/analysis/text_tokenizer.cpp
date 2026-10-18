@@ -57,18 +57,29 @@ class UnicodeAnalyzerImpl final : public TypedTokenizer<UnicodeAnalyzerImpl<S>>,
       .offsets = true, .stable = _convert == Case::None, .keeps_ascii = true};
   }
 
-  template<TokenLayout Layout, Case C, Options::Accept A, bool KnownAscii>
-  bool DoFill(duckdb::string_t raw, TokenSink& sink) {
+  bool Scan(const duckdb::string_t& value, ScanSink& sink,
+            BlockTraits known) final {
+    if constexpr (S == Options::Separate::Word ||
+                  S == Options::Separate::Grapheme) {
+      return this->ScanWithProgress(value, sink, known);
+    } else {
+      return Tokenizer::Scan(value, sink, known);
+    }
+  }
+
+  template<TokenLayout Layout, Case C, Options::Accept A, bool KnownAscii,
+           typename Progress = classify::NoProgress>
+  bool DoFill(duckdb::string_t raw, TokenSink& sink, Progress progress = {}) {
     if constexpr (S == Options::Separate::Sentence) {
       segment::SentenceFillValue<Layout, C, A, KnownAscii>(sink, raw);
     } else if constexpr (S == Options::Separate::Grapheme) {
-      segment::GraphemeFillValue<Layout, C, A, KnownAscii>(sink, raw);
+      segment::GraphemeFillValue<Layout, C, A, KnownAscii>(sink, raw, progress);
     } else if constexpr (S == Options::Separate::Line ||
                          S == Options::Separate::Paragraph) {
       segment::LineFillValue<Layout, C, A, S == Options::Separate::Paragraph,
                              KnownAscii>(sink, raw);
     } else if constexpr (S == Options::Separate::Word) {
-      segment::WordFillValue<Layout, C, A, KnownAscii>(sink, raw);
+      segment::WordFillValue<Layout, C, A, KnownAscii>(sink, raw, progress);
     } else {
       segment::WholeFillValue<Layout, C, A, KnownAscii>(sink, raw);
     }

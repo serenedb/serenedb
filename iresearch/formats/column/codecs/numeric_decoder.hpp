@@ -635,8 +635,8 @@ class FrameDecoder {
   const uint8_t* _ffor_src = nullptr;
   uint32_t _ffor_frame = std::numeric_limits<uint32_t>::max();
   std::array<uint32_t, kFforFrameRows / numeric::kBlockValues> _ffor_offsets{};
-  std::optional<LeafDecompressor<ByteCodec::Lz4>> _lz4;
-  std::optional<LeafDecompressor<ByteCodec::Zstd>> _zstd;
+  std::optional<Lz4::Decompressor> _lz4;
+  std::optional<Zstd::Decompressor> _zstd;
 };
 
 }  // namespace irs::codecs

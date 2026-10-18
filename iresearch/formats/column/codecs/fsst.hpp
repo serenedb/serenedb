@@ -29,6 +29,8 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/byte_codec.hpp"
+
 namespace irs::codecs {
 
 class FsstEncoder {
@@ -72,6 +74,11 @@ class FsstDecoder {
 
  private:
   duckdb_fsst_decoder_t _decoder{};
+};
+
+struct Fsst {
+  static constexpr ByteCodec kCodec = ByteCodec::Fsst;
+  using Compressor = FsstEncoder;
 };
 
 }  // namespace irs::codecs

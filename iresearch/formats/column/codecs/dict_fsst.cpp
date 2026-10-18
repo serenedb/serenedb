@@ -19,15 +19,16 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/formats/column/codecs/compression.hpp"
-#include "iresearch/formats/column/codecs/string_scan.hpp"
+#include "iresearch/formats/column/codecs/dictionary_scan.tpp"
+#include "iresearch/formats/column/codecs/fsst_leaf.tpp"
 
 namespace irs::codecs {
 
 const duckdb::CompressionFunction* DictFsstFunction(
   duckdb::PhysicalType physical) {
   static const auto kFunction =
-    StringFunction(duckdb::CompressionType::COMPRESSION_COL_DICT_FSST,
-                   duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
+    text::StringFunction<text::DictionaryScan<text::FsstLeaf>>(
+      duckdb::CompressionType::COMPRESSION_COL_DICT_FSST);
   return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
 }
 

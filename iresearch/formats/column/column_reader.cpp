@@ -128,7 +128,8 @@ void SwitchFetchSegment(duckdb::ColumnFetchState& state,
                         duckdb::ColumnSegment* from,
                         duckdb::ColumnSegment& to) {
   duckdb::unique_ptr<duckdb::SegmentScanState> cache;
-  if (from && KeepsFetchCache(*from) && KeepsFetchCache(to)) {
+  if (from && KeepsFetchCache(*from) &&
+      from->GetCompressionFunction().type == to.GetCompressionFunction().type) {
     if (auto it = state.segment_states.find(*from);
         it != state.segment_states.end()) {
       cache = std::move(it->second);

@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
@@ -31,59 +32,59 @@ struct zxc_dctx_s;
 
 namespace irs::codecs {
 
-template<>
-struct Leaf<ByteCodec::Zxc> {
+struct Zxc {
+  static constexpr ByteCodec kCodec = ByteCodec::Zxc;
   static constexpr uint8_t kDefaultLevel = 3;
   static constexpr uint8_t kMaxLevel = 7;
+  static constexpr uint32_t kFirstWindowed =
+    std::numeric_limits<uint32_t>::max();
 
   static size_t Bound(size_t raw_size) noexcept;
-};
 
-template<>
-class LeafCompressor<ByteCodec::Zxc> {
- public:
-  LeafCompressor();
-  ~LeafCompressor();
+  class Compressor {
+   public:
+    Compressor();
+    ~Compressor();
 
-  LeafCompressor(const LeafCompressor&) = delete;
-  LeafCompressor& operator=(const LeafCompressor&) = delete;
+    Compressor(const Compressor&) = delete;
+    Compressor& operator=(const Compressor&) = delete;
 
-  void SetLevel(uint8_t level) noexcept {
-    _level = EffectiveLevel<ByteCodec::Zxc>(level);
-    _dictionary = {};
-  }
+    void SetLevel(uint8_t level) noexcept {
+      _level = EffectiveLevel<Zxc>(level);
+      _dictionary = {};
+    }
 
-  void LoadDictionary(std::string_view dictionary);
+    void LoadDictionary(std::string_view dictionary);
 
-  size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
- private:
-  uint8_t _level = Leaf<ByteCodec::Zxc>::kDefaultLevel;
-  zxc_cctx_s* _ctx;
-  zxc_cctx_s* _block_ctx = nullptr;
-  std::string_view _dictionary;
-};
+   private:
+    uint8_t _level = kDefaultLevel;
+    zxc_cctx_s* _ctx;
+    zxc_cctx_s* _block_ctx = nullptr;
+    std::string_view _dictionary;
+  };
 
-template<>
-class LeafDecompressor<ByteCodec::Zxc> {
- public:
-  LeafDecompressor();
-  ~LeafDecompressor();
+  class Decompressor {
+   public:
+    Decompressor();
+    ~Decompressor();
 
-  LeafDecompressor(const LeafDecompressor&) = delete;
-  LeafDecompressor& operator=(const LeafDecompressor&) = delete;
+    Decompressor(const Decompressor&) = delete;
+    Decompressor& operator=(const Decompressor&) = delete;
 
-  void SetDictionary(std::string_view dictionary) noexcept;
+    void SetDictionary(std::string_view dictionary) noexcept;
 
-  bool Decompress(const char* src, size_t size, char* dst,
-                  size_t raw_size) noexcept;
-  size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t want,
-                          size_t raw_size) noexcept;
+    bool Decompress(const char* src, size_t size, char* dst,
+                    size_t raw_size) noexcept;
+    size_t DecompressPrefix(const char* src, size_t size, char* dst,
+                            size_t want, size_t raw_size) noexcept;
 
- private:
-  zxc_dctx_s* _ctx;
-  zxc_dctx_s* _block_ctx = nullptr;
-  std::string_view _dictionary;
+   private:
+    zxc_dctx_s* _ctx;
+    zxc_dctx_s* _block_ctx = nullptr;
+    std::string_view _dictionary;
+  };
 };
 
 }  // namespace irs::codecs

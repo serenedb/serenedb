@@ -244,11 +244,11 @@ double Jitter(uint64_t seed, uint64_t stratum) noexcept {
   return static_cast<double>(z >> 11) * 0x1.0p-53;
 }
 
-template<ByteCodec C>
+template<typename Codec>
 class Encoder {
  public:
-  static constexpr bool kFsst = C == ByteCodec::Fsst;
-  static constexpr bool kTrainable = Trainable(C);
+  static constexpr bool kFsst = Codec::kCodec == ByteCodec::Fsst;
+  static constexpr bool kTrainable = Trainable(Codec::kCodec);
 
   Encoder(const StringAccumulator& acc, const duckdb::LogicalType& type,
           StringTuning& tuning, DedupScratch& dedup, uint32_t target)
@@ -256,7 +256,7 @@ class Encoder {
       _stats{type},
       _type{type},
       _tuning{tuning},
-      _history{tuning.history[static_cast<size_t>(C)]},
+      _history{tuning.history[static_cast<size_t>(Codec::kCodec)]},
       _dedup{dedup},
       _target{target} {}
 
@@ -387,7 +387,7 @@ class Encoder {
 
     Header h;
     h.shape = static_cast<uint8_t>(_shape);
-    h.codec = static_cast<uint8_t>(C);
+    h.codec = static_cast<uint8_t>(Codec::kCodec);
     h.level = _level;
     h.length_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(_max_enc);
     h.lcp_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(_max_lcp);
@@ -477,7 +477,7 @@ class Encoder {
 
     auto stats = duckdb::BaseStatistics::CreateEmpty(_type);
     _stats.Merge(stats);
-    out.choice = StringChoice{_shape, C};
+    out.choice = StringChoice{_shape, Codec::kCodec};
     out.level = _level;
     out.layout = _frame_layout;
     out.begin = _next - _rows;
@@ -522,7 +522,7 @@ class Encoder {
     if (layout == FrameLayout::Wide) {
       return {kFrameRawBytes, 0};
     }
-    return ShapeOf<C>();
+    return ShapeOf<Codec::kCodec>();
   }
 
   uint32_t FirstEntry() const noexcept {
@@ -604,7 +604,7 @@ class Encoder {
   }
 
   void CloseFrame() {
-    const auto bound = Leaf<C>::Bound(_frame.size());
+    const auto bound = Codec::Bound(_frame.size());
     const auto comp_off = _data.size();
     size_t n = 0;
     _data.resize_and_overwrite(comp_off + bound, [&](char* buf, size_t) {
@@ -666,7 +666,7 @@ class Encoder {
   }
 
   uint64_t CompressFrame(const std::string& frame) {
-    const auto bound = Leaf<C>::Bound(frame.size());
+    const auto bound = Codec::Bound(frame.size());
     size_t n = 0;
     _price_out.resize_and_overwrite(bound, [&](char* buf, size_t) {
       n = _codec.Compress(frame.data(), frame.size(), buf, bound);
@@ -786,8 +786,7 @@ class Encoder {
   Shape _shape = Shape::Dedup;
   uint8_t _level = 0;
   uint64_t _next = 0;
-  using Codec = std::conditional_t<kFsst, FsstEncoder, LeafCompressor<C>>;
-  Codec _codec;
+  typename Codec::Compressor _codec;
   duckdb::StatsWriter<string_t> _stats;
   duckdb::LogicalType _type;
   const StringTuning& _tuning;
@@ -861,8 +860,7 @@ class SegmentWriter {
           !scheduled && Drifted(*seg, first || end < _acc.row_count);
         const bool retune = drift && !first;
         if (retune) {
-          if (auto& fsst =
-                std::get<std::optional<Encoder<ByteCodec::Fsst>>>(_encoders)) {
+          if (auto& fsst = std::get<std::optional<Encoder<Fsst>>>(_encoders)) {
             fsst->Retrain();
           }
         }
@@ -1016,8 +1014,7 @@ class SegmentWriter {
 
   static bool Cheap(ByteCodec leaf, uint8_t level) noexcept {
     return leaf == ByteCodec::Fsst ||
-           (leaf == ByteCodec::Lz4 &&
-            EffectiveLevel<ByteCodec::Lz4>(level) <= 1);
+           (leaf == ByteCodec::Lz4 && EffectiveLevel<Lz4>(level) <= 1);
   }
 
   Candidate Tune(Shape shape, const LeafPlan& plan, uint64_t begin,
@@ -1238,24 +1235,23 @@ class SegmentWriter {
   }
 
   template<typename F>
-  std::invoke_result_t<F&, Encoder<ByteCodec::Lz4>&> With(ByteCodec leaf,
-                                                          F&& f) {
+  std::invoke_result_t<F&, Encoder<Lz4>&> With(ByteCodec leaf, F&& f) {
     switch (leaf) {
       case ByteCodec::Lz4:
-        return f(Get<ByteCodec::Lz4>());
+        return f(Get<Lz4>());
       case ByteCodec::Zstd:
-        return f(Get<ByteCodec::Zstd>());
+        return f(Get<Zstd>());
       case ByteCodec::Zxc:
-        return f(Get<ByteCodec::Zxc>());
+        return f(Get<Zxc>());
       case ByteCodec::Fsst:
-        return f(Get<ByteCodec::Fsst>());
+        return f(Get<Fsst>());
     }
     SDB_UNREACHABLE();
   }
 
-  template<ByteCodec C>
-  Encoder<C>& Get() {
-    auto& slot = std::get<std::optional<Encoder<C>>>(_encoders);
+  template<typename Codec>
+  Encoder<Codec>& Get() {
+    auto& slot = std::get<std::optional<Encoder<Codec>>>(_encoders);
     if (!slot) {
       slot.emplace(_acc, _type, _tuning, _dedup, _params.segment_target);
     }
@@ -1279,10 +1275,8 @@ class SegmentWriter {
   const duckdb::LogicalType& _type;
   StringTuning& _tuning;
   DedupScratch _dedup;
-  std::tuple<std::optional<Encoder<ByteCodec::Lz4>>,
-             std::optional<Encoder<ByteCodec::Zstd>>,
-             std::optional<Encoder<ByteCodec::Zxc>>,
-             std::optional<Encoder<ByteCodec::Fsst>>>
+  std::tuple<std::optional<Encoder<Lz4>>, std::optional<Encoder<Zstd>>,
+             std::optional<Encoder<Zxc>>, std::optional<Encoder<Fsst>>>
     _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

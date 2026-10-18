@@ -109,9 +109,8 @@ class Leaves {
  public:
   size_t Compress(NumericLeaf leaf, uint8_t level, const uint8_t* src,
                   size_t size) {
-    const auto bound = leaf == NumericLeaf::Lz4
-                         ? Leaf<ByteCodec::Lz4>::Bound(size)
-                         : Leaf<ByteCodec::Zstd>::Bound(size);
+    const auto bound =
+      leaf == NumericLeaf::Lz4 ? Lz4::Bound(size) : Zstd::Bound(size);
     if (_out.size() < bound) {
       _out.resize(bound);
     }
@@ -127,8 +126,8 @@ class Leaves {
   const char* Out() const noexcept { return _out.data(); }
 
  private:
-  LeafCompressor<ByteCodec::Lz4> _lz4;
-  LeafCompressor<ByteCodec::Zstd> _zstd;
+  Lz4::Compressor _lz4;
+  Zstd::Compressor _zstd;
   std::vector<char> _out;
 };
 

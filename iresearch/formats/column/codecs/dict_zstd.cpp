@@ -18,16 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/compression.hpp"
-#include "iresearch/formats/column/codecs/string_scan.hpp"
+#include "iresearch/formats/column/codecs/dictionary_scan.tpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
 
 namespace irs::codecs {
 
 const duckdb::CompressionFunction* DictZstdFunction(
   duckdb::PhysicalType physical) {
   static const auto kFunction =
-    StringFunction(duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
-                   duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
+    text::StringFunction<text::DictionaryScan<text::BlobLeaf<Zstd>>>(
+      duckdb::CompressionType::COMPRESSION_DICT_ZSTD);
   return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
 }
 

@@ -37,21 +37,12 @@ constexpr bool Trainable(ByteCodec leaf) noexcept {
   return leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd;
 }
 
-template<ByteCodec C>
-struct Leaf;
-
-template<ByteCodec C>
+template<typename Codec>
 constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   if (level == 0) {
-    return Leaf<C>::kDefaultLevel;
+    return Codec::kDefaultLevel;
   }
-  return level < Leaf<C>::kMaxLevel ? level : Leaf<C>::kMaxLevel;
+  return level < Codec::kMaxLevel ? level : Codec::kMaxLevel;
 }
-
-template<ByteCodec C>
-class LeafCompressor;
-
-template<ByteCodec C>
-class LeafDecompressor;
 
 }  // namespace irs::codecs

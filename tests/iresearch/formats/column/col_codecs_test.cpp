@@ -49,6 +49,7 @@
 #include <iresearch/formats/column/codecs/fsst.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
+#include <iresearch/formats/column/codecs/string_scan.hpp>
 #include <iresearch/formats/column/codecs/string_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -490,6 +491,34 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
     ASSERT_EQ(views[i], std::string_view(decoded.data(), size));
   }
   EXPECT_EQ(batch.size(), offset);
+}
+
+TEST(PackedReaderTest, SingleValuesMatchUnpackedGroups) {
+  constexpr size_t kValues = 5 * irs::codecs::kGroup;
+  std::mt19937_64 rng{7};
+  for (uint8_t width = 0; width <= 32; ++width) {
+    const uint64_t mask = (uint64_t{1} << width) - 1;
+    std::vector<uint32_t> values(kValues);
+    for (auto& v : values) {
+      v = static_cast<uint32_t>(rng() & mask);
+    }
+    if (width != 0) {
+      values[3] = static_cast<uint32_t>(mask);
+    }
+    std::vector<duckdb::data_t> packed(
+      duckdb::BitpackingPrimitives::GetRequiredSize(kValues, width));
+    duckdb::BitpackingPrimitives::PackBuffer<uint32_t, true>(
+      packed.data(), values.data(), kValues, width);
+    irs::codecs::text::PackedReader reader{packed.data(), width};
+    for (size_t i = kValues; i-- > 0;) {
+      ASSERT_EQ(values[i], reader.Single(i))
+        << "width " << int{width} << ", value " << i;
+    }
+    for (size_t i = 0; i < kValues; ++i) {
+      ASSERT_EQ(values[i], reader.At(i))
+        << "width " << int{width} << ", value " << i;
+    }
+  }
 }
 
 TEST_F(ColCodecsTest, RunLengthCodes) {

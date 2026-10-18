@@ -32,72 +32,71 @@
 
 namespace irs::codecs {
 
-template<>
-struct Leaf<ByteCodec::Zstd> {
-  static constexpr uint8_t kDefaultLevel = 1;
-  static constexpr uint8_t kMaxLevel = 22;
-
-  static size_t Bound(size_t raw_size) noexcept;
-};
-
 struct ZstdFree {
   void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
   void operator()(ZSTD_DCtx* ctx) const noexcept { ZSTD_freeDCtx(ctx); }
 };
 
-template<>
-class LeafCompressor<ByteCodec::Zstd> {
- public:
-  LeafCompressor() : _ctx{ZSTD_createCCtx()} {}
-  ~LeafCompressor();
+struct Zstd {
+  static constexpr ByteCodec kCodec = ByteCodec::Zstd;
+  static constexpr uint8_t kDefaultLevel = 1;
+  static constexpr uint8_t kMaxLevel = 22;
+  static constexpr uint32_t kFirstWindowed = 1;
 
-  LeafCompressor(const LeafCompressor&) = delete;
-  LeafCompressor& operator=(const LeafCompressor&) = delete;
+  static size_t Bound(size_t raw_size) noexcept;
 
-  void SetLevel(uint8_t level) noexcept {
-    _level = EffectiveLevel<ByteCodec::Zstd>(level);
-    _active = nullptr;
-  }
+  class Compressor {
+   public:
+    Compressor() : _ctx{ZSTD_createCCtx()} {}
+    ~Compressor();
 
-  void LoadDictionary(std::string_view dictionary);
-  void LoadTrained(const TrainedDictionary& dictionary);
+    Compressor(const Compressor&) = delete;
+    Compressor& operator=(const Compressor&) = delete;
 
-  size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+    void SetLevel(uint8_t level) noexcept {
+      _level = EffectiveLevel<Zstd>(level);
+      _active = nullptr;
+    }
 
- private:
-  uint8_t _level = Leaf<ByteCodec::Zstd>::kDefaultLevel;
-  std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
-  ZSTD_CDict* _cdict = nullptr;
-  ZSTD_CDict* _trained_cdict = nullptr;
-  const ZSTD_CDict* _active = nullptr;
-  uint64_t _trained = 0;
-  uint8_t _trained_level = 0;
-};
+    void LoadDictionary(std::string_view dictionary);
+    void LoadTrained(const TrainedDictionary& dictionary);
 
-template<>
-class LeafDecompressor<ByteCodec::Zstd> {
- public:
-  LeafDecompressor() : _ctx{ZSTD_createDCtx()} {}
-  ~LeafDecompressor();
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
-  LeafDecompressor(const LeafDecompressor&) = delete;
-  LeafDecompressor& operator=(const LeafDecompressor&) = delete;
+   private:
+    uint8_t _level = kDefaultLevel;
+    std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
+    ZSTD_CDict* _cdict = nullptr;
+    ZSTD_CDict* _trained_cdict = nullptr;
+    const ZSTD_CDict* _active = nullptr;
+    uint64_t _trained = 0;
+    uint8_t _trained_level = 0;
+  };
 
-  void SetDictionary(std::string_view dictionary);
-  void SetTrained(const TrainedDictionary& dictionary) noexcept {
-    _active = dictionary.ZstdDictionary();
-  }
+  class Decompressor {
+   public:
+    Decompressor() : _ctx{ZSTD_createDCtx()} {}
+    ~Decompressor();
 
-  bool Decompress(const char* src, size_t size, char* dst,
-                  size_t raw_size) noexcept;
-  size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t want,
-                          size_t raw_size) noexcept;
+    Decompressor(const Decompressor&) = delete;
+    Decompressor& operator=(const Decompressor&) = delete;
 
- private:
-  std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
-  ZSTD_DDict* _ddict = nullptr;
-  const ZSTD_DDict* _active = nullptr;
-  std::string_view _loaded;
+    void SetDictionary(std::string_view dictionary);
+    void SetTrained(const TrainedDictionary& dictionary) noexcept {
+      _active = dictionary.ZstdDictionary();
+    }
+
+    bool Decompress(const char* src, size_t size, char* dst,
+                    size_t raw_size) noexcept;
+    size_t DecompressPrefix(const char* src, size_t size, char* dst,
+                            size_t want, size_t raw_size) noexcept;
+
+   private:
+    std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
+    ZSTD_DDict* _ddict = nullptr;
+    const ZSTD_DDict* _active = nullptr;
+    std::string_view _loaded;
+  };
 };
 
 }  // namespace irs::codecs

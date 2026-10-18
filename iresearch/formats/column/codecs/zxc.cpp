@@ -23,8 +23,9 @@
 #include <zxc_buffer.h>
 #include <zxc_constants.h>
 
+#include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/compression.hpp"
-#include "iresearch/formats/column/codecs/string_scan.hpp"
+#include "iresearch/formats/column/codecs/plain_scan.tpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
@@ -40,32 +41,30 @@ std::string_view ZxcDictionary(std::string_view dictionary) noexcept {
 
 const duckdb::CompressionFunction* ZxcFunction(duckdb::PhysicalType physical) {
   static const auto kFunction =
-    StringFunction(duckdb::CompressionType::COMPRESSION_ZXC,
-                   duckdb::CompressionValidity::REQUIRES_VALIDITY);
+    text::StringFunction<text::PlainScan<text::BlobLeaf<Zxc>>>(
+      duckdb::CompressionType::COMPRESSION_ZXC);
   return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
 }
 
-size_t Leaf<ByteCodec::Zxc>::Bound(size_t raw_size) noexcept {
+size_t Zxc::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(zxc_compress_bound(raw_size));
 }
 
-LeafCompressor<ByteCodec::Zxc>::LeafCompressor()
-  : _ctx{zxc_create_cctx(nullptr)} {
+Zxc::Compressor::Compressor() : _ctx{zxc_create_cctx(nullptr)} {
   SDB_ENSURE(_ctx, "zxc: cannot create a compression context");
 }
 
-LeafCompressor<ByteCodec::Zxc>::~LeafCompressor() {
+Zxc::Compressor::~Compressor() {
   zxc_free_cctx(_ctx);
   zxc_free_cctx(_block_ctx);
 }
 
-void LeafCompressor<ByteCodec::Zxc>::LoadDictionary(
-  std::string_view dictionary) {
+void Zxc::Compressor::LoadDictionary(std::string_view dictionary) {
   _dictionary = ZxcDictionary(dictionary);
 }
 
-size_t LeafCompressor<ByteCodec::Zxc>::Compress(const char* src, size_t size,
-                                                char* dst, size_t capacity) {
+size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
+                                 size_t capacity) {
   zxc_compress_opts_t opts{};
   opts.level = _level;
   if (_dictionary.empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
@@ -85,23 +84,21 @@ size_t LeafCompressor<ByteCodec::Zxc>::Compress(const char* src, size_t size,
   return static_cast<size_t>(n);
 }
 
-LeafDecompressor<ByteCodec::Zxc>::LeafDecompressor() : _ctx{zxc_create_dctx()} {
+Zxc::Decompressor::Decompressor() : _ctx{zxc_create_dctx()} {
   SDB_ENSURE(_ctx, "zxc: cannot create a decompression context");
 }
 
-LeafDecompressor<ByteCodec::Zxc>::~LeafDecompressor() {
+Zxc::Decompressor::~Decompressor() {
   zxc_free_dctx(_ctx);
   zxc_free_dctx(_block_ctx);
 }
 
-void LeafDecompressor<ByteCodec::Zxc>::SetDictionary(
-  std::string_view dictionary) noexcept {
+void Zxc::Decompressor::SetDictionary(std::string_view dictionary) noexcept {
   _dictionary = ZxcDictionary(dictionary);
 }
 
-bool LeafDecompressor<ByteCodec::Zxc>::Decompress(const char* src, size_t size,
-                                                  char* dst,
-                                                  size_t raw_size) noexcept {
+bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
+                                   size_t raw_size) noexcept {
   if (_dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
     const auto n = zxc_decompress_dctx(_ctx, src, size, dst, raw_size, nullptr);
     return n >= 0 && static_cast<size_t>(n) == raw_size;
@@ -120,8 +117,9 @@ bool LeafDecompressor<ByteCodec::Zxc>::Decompress(const char* src, size_t size,
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 
-size_t LeafDecompressor<ByteCodec::Zxc>::DecompressPrefix(
-  const char* src, size_t size, char* dst, size_t, size_t raw_size) noexcept {
+size_t Zxc::Decompressor::DecompressPrefix(const char* src, size_t size,
+                                           char* dst, size_t,
+                                           size_t raw_size) noexcept {
   return Decompress(src, size, dst, raw_size) ? raw_size : 0;
 }
 

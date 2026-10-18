@@ -128,11 +128,11 @@ uint8_t MaxLevel(duckdb::CompressionType type) {
   }
   switch (choice->leaf) {
     case ByteCodec::Lz4:
-      return Leaf<ByteCodec::Lz4>::kMaxLevel;
+      return Lz4::kMaxLevel;
     case ByteCodec::Zstd:
-      return Leaf<ByteCodec::Zstd>::kMaxLevel;
+      return Zstd::kMaxLevel;
     case ByteCodec::Zxc:
-      return Leaf<ByteCodec::Zxc>::kMaxLevel;
+      return Zxc::kMaxLevel;
     case ByteCodec::Fsst:
       return 0;
   }

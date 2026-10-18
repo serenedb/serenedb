@@ -36,6 +36,10 @@ if ! "$WORKSPACE/scripts/ensure_iceberg_fixture.sh"; then
 	echo "Error: iceberg fixture generation failed" >&2
 	exit 1
 fi
+if ! "$WORKSPACE/scripts/ensure_pdf_fixture.sh"; then
+	echo "Error: PDF fixture generation failed" >&2
+	exit 1
+fi
 
 if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"

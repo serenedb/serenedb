@@ -693,7 +693,7 @@ set(BUILD_EXTENSIONS
     FORCE
 )
 set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;pdf"
     CACHE STRING
     ""
     FORCE
@@ -704,6 +704,7 @@ set(STATICALLY_LINK_EXTENSIONS
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_pdf/extension_config.cmake"
     CACHE STRING
     ""
     FORCE

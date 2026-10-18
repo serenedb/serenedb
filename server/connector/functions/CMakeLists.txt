@@ -12,7 +12,6 @@ target_sources(
         markdown_render.cpp
         math.cpp
         otel.cpp
-        read_pdf.cpp
         string.cpp
         system.cpp
         minhash.cpp
@@ -47,5 +46,5 @@ target_sources(
 
 target_link_libraries(
     sereneserver
-    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static podofo
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
 )

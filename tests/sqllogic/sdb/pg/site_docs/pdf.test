@@ -1,7 +1,7 @@
 control substitution on
 
 system ok
-python3 tests/sqllogic/fixtures/pdf/generate.py "$__TEST_DIR__/pdf_docs"
+ln -sfn ${RESOURCES}/tests/pdf/basic "$__TEST_DIR__/pdf_docs"
 
 # DOCS_TEST: read_pages
 # DOCS_TEST_BODY

@@ -20,10 +20,15 @@
 
 #pragma once
 
-#include <duckdb/main/database.hpp>
+#include <duckdb/main/extension.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
 
-namespace sdb::connector {
+namespace duckdb {
 
-void RegisterPdfFunctions(duckdb::DatabaseInstance& db);
+class PdfExtension final : public Extension {
+public:
+	void Load(ExtensionLoader &loader) final;
+	std::string Name() final;
+};
 
-}
+} // namespace duckdb

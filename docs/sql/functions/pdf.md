@@ -5,6 +5,8 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
+The PDF readers are available in SereneDB SQL and in `serened shell`, with no separate installation or `LOAD` statement. In the shell, file paths refer to the local machine.
+
 ## Read page text
 
 `read_pdf(path, password := '', first_page := 1, last_page := ...)` returns one row per selected PDF page. The path can name a file or contain a glob pattern. Local paths are relative to the server's working directory and refer to files accessible to the server.

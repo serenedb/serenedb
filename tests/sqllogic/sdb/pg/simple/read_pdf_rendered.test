@@ -1,7 +1,7 @@
 control substitution on
 
 system ok
-cp -R tests/sqllogic/fixtures/pdf/rendered "$__TEST_DIR__/rendered"
+ln -sfn ${RESOURCES}/tests/pdf/rendered "$__TEST_DIR__/rendered"
 
 query
 SELECT page, width, height, has_text_layer,

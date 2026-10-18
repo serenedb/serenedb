@@ -1,7 +1,13 @@
 control substitution on
 
 system ok
-python3 tests/sqllogic/fixtures/pdf/generate.py "$__TEST_DIR__/pdf"
+ln -sfn ${RESOURCES}/tests/pdf/basic "$__TEST_DIR__/pdf"
+
+query
+SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'pdf';
+----
+extension_name	loaded
+pdf	t
 
 query
 SELECT page, text, width, height, has_text_layer

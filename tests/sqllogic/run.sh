@@ -984,7 +984,7 @@ launch_external() {
 	shopt -s globstar
 	local pattern test_files f
 	local needs_s3=false needs_iceberg=false needs_ollama=false needs_kev=false needs_postgres=false needs_clickhouse=false needs_azure=false
-	local needs_iceberg_fixture=false
+	local needs_iceberg_fixture=false needs_pdf_fixture=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
@@ -1004,6 +1004,9 @@ launch_external() {
 			# it on the host before the containers start.
 			if grep -qF '${RESOURCES}/tests/iceberg' "$f" 2>/dev/null; then
 				needs_iceberg_fixture=true
+			fi
+			if grep -qF '${RESOURCES}/tests/pdf' "$f" 2>/dev/null; then
+				needs_pdf_fixture=true
 			fi
 			case "$f" in
 			# A test that boots a docker-backed service (MinIO, iceberg-rest,
@@ -1082,6 +1085,10 @@ launch_external() {
 	if [[ "$needs_iceberg_fixture" == "true" && -z "${COMPOSE_NETWORK:-}" &&
 		-S /var/run/docker.sock ]]; then
 		"${SCRIPT_DIR}/../../scripts/ensure_iceberg_fixture.sh"
+	fi
+	if [[ "$needs_pdf_fixture" == "true" && -z "${COMPOSE_NETWORK:-}" &&
+		"$RESOURCES" == "$(realpath "$SCRIPT_DIR/../../resources")" ]]; then
+		"${SCRIPT_DIR}/../../scripts/ensure_pdf_fixture.sh" || exit 1
 	fi
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3

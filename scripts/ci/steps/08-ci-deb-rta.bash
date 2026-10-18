@@ -21,6 +21,7 @@ mkdir -p "${WORKSPACE}/out/logs"
 # host-owned docker socket) -- generate it here and serve it through the
 # serenedb container's /workspace mount (see RESOURCES in the compose).
 "${WORKSPACE}/scripts/ensure_iceberg_fixture.sh"
+"${WORKSPACE}/scripts/ensure_pdf_fixture.sh"
 
 # Export all env vars ONCE so compose sees consistent config across all calls
 export DEB_PACKAGE="$(basename "$DEB_PACKAGE")"

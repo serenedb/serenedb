@@ -49,7 +49,6 @@
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
 #include "connector/functions/otel.h"
-#include "connector/functions/read_pdf.h"
 #include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
@@ -334,8 +333,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterCatalogIntrospectFunctions(db);
 
   connector::RegisterMarkdownRenderFunctions(db);
-
-  connector::RegisterPdfFunctions(db);
 
   docs::RegisterDocsFunctions(db);
 

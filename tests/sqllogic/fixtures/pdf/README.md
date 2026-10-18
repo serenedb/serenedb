@@ -1,6 +1,8 @@
 # PDF fixtures
 
-`generate.py` supplies small structural fixtures for boundary and error tests. `rendered/` contains nine generated documents (26 pages) for `read_pdf_rendered.test`. Keep those PDFs in the repository so ordinary SQL test runs need only the server and test runner.
+PDFs are generated under the ignored `resources/tests/pdf/` directory. Do not commit them. The SQL test runner prepares them on demand; container runners prepare them on the host before starting containers, like the Iceberg fixtures.
+
+`basic/` covers structural boundaries and errors. `rendered/` contains nine realistic documents (26 pages) for `read_pdf_rendered.test`:
 
 | PDF | Pages | Expected coverage |
 | --- | ---: | --- |
@@ -20,22 +22,24 @@ The embedded Bitstream Vera font is distributed with ReportLab; its notice is in
 
 ## Regenerate and inspect
 
-Run from the repository root. The packages below are fixture-generation tools, not server or SQL-test dependencies.
+Run from the repository root. CI build images include the required packages. For a local Python environment:
 
 ```sh
 python3 -m venv /tmp/serenedb-pdf-fixtures-venv
-/tmp/serenedb-pdf-fixtures-venv/bin/pip install -r tests/sqllogic/fixtures/pdf/requirements-rendered.txt
-/tmp/serenedb-pdf-fixtures-venv/bin/python tests/sqllogic/fixtures/pdf/generate_rendered.py \
-  tests/sqllogic/fixtures/pdf/rendered --previews /tmp/serenedb-pdf-previews
+/tmp/serenedb-pdf-fixtures-venv/bin/pip install -r scripts/ci/pdf-fixture-requirements.txt
+export PDF_FIXTURE_PYTHON=/tmp/serenedb-pdf-fixtures-venv/bin/python
+./scripts/ensure_pdf_fixture.sh
 ```
 
-ReportLab supplies the layouts, pypdf supplies the encrypted and page-box variants, and PyMuPDF checks the expected text and page structure independently of SereneDB. Encryption uses fresh randomness, so regenerated encrypted files need not be byte-identical. Review the report previews and run the SQL tests after regeneration.
+Without local packages, generation uses `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`) through Docker. Unchanged fixtures are reused; changing a generator or dependency manifest, or removing a generated PDF, triggers regeneration. Concurrent runners share a generation lock.
+
+PyMuPDF independently checks expected text and page structure before the fixtures are ready. Encryption uses fresh randomness, so regenerated encrypted files need not be byte-identical. To produce optional page previews, run `generate_rendered.py` with `--previews /tmp/serenedb-pdf-previews` and a separate output directory.
 
 To validate existing files without replacing them:
 
 ```sh
 /tmp/serenedb-pdf-fixtures-venv/bin/python tests/sqllogic/fixtures/pdf/generate_rendered.py \
-  tests/sqllogic/fixtures/pdf/rendered --check-only
+  resources/tests/pdf/rendered --check-only
 ```
 
 ## Run the SQL tests
@@ -50,3 +54,5 @@ CARGO_TARGET_DIR="$PWD/build_pdf/sqllogic" SDB_SKIP_SQLLOGIC_BUILD=1 \
 ```
 
 Expect six `[OK]` results: three files in each PostgreSQL wire mode. The rendered-document suite covers both page and block extraction, geometry, passwords, blank and scanned pages, Unicode paths, globbing, and storing extracted text in a table.
+
+Check generation caching and failure cleanup with `python3 -m unittest discover -s tests/sqllogic/fixtures/pdf -p 'test_*.py'` (Python 3.11 or newer).

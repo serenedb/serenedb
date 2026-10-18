@@ -567,6 +567,81 @@ def test_parse_param_oid_unknown_reads_as_text(conn, query, expected):
     assert first_field(m) == expected
 
 
+def numeric_send(text):
+    sign = 0x4000 if text.startswith("-") else 0
+    whole, _, fraction = text.lstrip("-").partition(".")
+    whole = whole.lstrip("0")
+    whole = "0" * (-len(whole) % 4) + whole
+    padded = fraction + "0" * (-len(fraction) % 4)
+    groups = [int(whole[i : i + 4]) for i in range(0, len(whole), 4)]
+    groups += [int(padded[i : i + 4]) for i in range(0, len(padded), 4)]
+    weight = len(whole) // 4 - 1
+    while groups and groups[0] == 0:
+        groups.pop(0)
+        weight -= 1
+    while groups and groups[-1] == 0:
+        groups.pop()
+    return struct.pack(
+        f"!hhHH{len(groups)}h", len(groups), weight, sign, len(fraction), *groups
+    )
+
+
+@pytest.mark.parametrize(
+    "query, param, fmt, expected",
+    [
+        ("select $1 = 1.23456", b"1.23456", 0, b"t"),
+        ("select $1 > 1", b"1.0001", 0, b"t"),
+        ("select round($1, 2)", b"1.23456", 0, b"1.23"),
+        ("select $1::text", b"1.23456", 0, b"1.23456"),
+        (
+            "select $1::text",
+            b"123456789012345678901234.5",
+            0,
+            b"123456789012345678901234.5",
+        ),
+        ("select $1 = 1.23456", numeric_send("1.23456"), 1, b"t"),
+        ("select $1::text", numeric_send("-0.000123"), 1, b"-0.000123"),
+    ],
+)
+def test_parse_param_oid_numeric_keeps_its_digits(conn, query, param, fmt, expected):
+    conn.parse("", query, oids=(1700,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected, first_field(m)
+
+
+@pytest.mark.parametrize(
+    "oid, param",
+    [(3802, b'\x01{"a": 1}'), (114, b'{"a": 1}')],
+)
+def test_binary_json_param(conn, oid, param):
+    conn.parse("", "select $1::text, $1->>'a'", oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b'{"a": 1}', b"1"], all_fields(m)
+
+
+def test_numeric_param_rounds_only_into_its_column(conn):
+    conn.run_ok("drop table if exists raw_numeric_param")
+    conn.run_ok("create table raw_numeric_param (n numeric(10,4))")
+    conn.parse("", "insert into raw_numeric_param values ($1)", oids=(1700,))
+    conn.bind("", "", params=(b"1.23456",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(conn.run_ok("select n::text from raw_numeric_param")) == (
+        b"1.2346"
+    )
+    conn.run_ok("drop table raw_numeric_param")
+
+
 def parameter_types(msgs):
     for t, p in msgs:
         if t == "t":

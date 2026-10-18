@@ -51,7 +51,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | macaddr8                     | 🟢            |         |
 | money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet and JSON files hold an amount as a decimal number of dollars, such as `12.34`. |
 | name                         | 🟢            |         |
-| numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
+| numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits; a value bound as a parameter keeps its digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | numrange                     | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits: `numrange(1.25, 2.5)` is `[1.250,2.500)`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
 | oid                          | 🟢            |         |

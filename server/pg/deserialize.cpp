@@ -23,10 +23,12 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/numeric/int128.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/operator/cast_operators.hpp>
@@ -48,8 +50,10 @@
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -126,6 +130,17 @@ struct VarcharBin {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     sink.Varchar(data);
     return true;
+  }
+};
+
+struct JsonBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& context, std::string_view data,
+                     Sink& sink) {
+    if (data.starts_with('\x01')) {
+      data.remove_prefix(1);
+    }
+    return VarcharBin::Decode(context, data, sink);
   }
 };
 
@@ -396,6 +411,84 @@ bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
   }
   magnitude = acc;
   return true;
+}
+
+struct NumericDigits {
+  int32_t integer;
+  int32_t fraction;
+};
+
+std::optional<NumericDigits> TextNumericDigits(std::string_view text) {
+  text = absl::StripAsciiWhitespace(text);
+  if (!text.empty() && (text.front() == '+' || text.front() == '-')) {
+    text.remove_prefix(1);
+  }
+  int32_t integer = 0;
+  int32_t fraction = 0;
+  bool point = false;
+  bool digits = false;
+  size_t i = 0;
+  for (; i < text.size(); ++i) {
+    if (text[i] == '.' && !point) {
+      point = true;
+      continue;
+    }
+    if (!absl::ascii_isdigit(text[i])) {
+      break;
+    }
+    digits = true;
+    if (point) {
+      ++fraction;
+    } else if (integer > 0 || text[i] != '0') {
+      ++integer;
+    }
+  }
+  if (!digits) {
+    return std::nullopt;
+  }
+  int32_t exponent = 0;
+  if (i < text.size()) {
+    if (text[i] != 'e' && text[i] != 'E') {
+      return std::nullopt;
+    }
+    auto power = text.substr(i + 1);
+    if (!power.empty() && power.front() == '+') {
+      power.remove_prefix(1);
+    }
+    const auto end = power.data() + power.size();
+    const auto [ptr, ec] = fast_float::from_chars(power.data(), end, exponent);
+    if (ec != std::errc{} || ptr != end || exponent > 1000 ||
+        exponent < -1000) {
+      return std::nullopt;
+    }
+  }
+  return NumericDigits{std::max(0, integer + exponent),
+                       std::max(0, fraction - exponent)};
+}
+
+std::optional<NumericDigits> BinaryNumericDigits(std::string_view data) {
+  if (data.size() < 8) {
+    return std::nullopt;
+  }
+  const auto ndigits =
+    static_cast<int16_t>(absl::big_endian::Load16(data.data()));
+  const auto weight =
+    static_cast<int16_t>(absl::big_endian::Load16(data.data() + 2));
+  const uint16_t sign = absl::big_endian::Load16(data.data() + 4);
+  const uint16_t dscale = absl::big_endian::Load16(data.data() + 6);
+  if ((sign != 0 && sign != 0x4000) || ndigits < 0 ||
+      data.size() < static_cast<size_t>(8 + ndigits * 2)) {
+    return std::nullopt;
+  }
+  int32_t integer = 0;
+  if (ndigits > 0 && weight >= 0) {
+    const uint16_t first = absl::big_endian::Load16(data.data() + 8);
+    integer = 4 * weight + (first >= 1000  ? 4
+                            : first >= 100 ? 3
+                            : first >= 10  ? 2
+                                           : 1);
+  }
+  return NumericDigits{integer, dscale};
 }
 
 // Two's-complement 128-bit pattern, range-checked: a positive magnitude must
@@ -676,6 +769,25 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   }
   it->second = MakeCalendar(tz_name);
   return it->second.get();
+}
+
+duckdb::LogicalType ExactDecimalType(const duckdb::LogicalType& type,
+                                     std::string_view data, VarFormat format) {
+  if (type.id() != duckdb::LogicalTypeId::DECIMAL) {
+    return type;
+  }
+  const auto digits = format == VarFormat::Binary ? BinaryNumericDigits(data)
+                                                  : TextNumericDigits(data);
+  const auto width = duckdb::DecimalType::GetWidth(type);
+  const auto scale = duckdb::DecimalType::GetScale(type);
+  if (!digits || digits->integer > duckdb::Decimal::MAX_WIDTH_DECIMAL ||
+      (digits->fraction <= scale && digits->integer <= width - scale)) {
+    return type;
+  }
+  return duckdb::LogicalType::DECIMAL(
+    duckdb::Decimal::MAX_WIDTH_DECIMAL,
+    std::min(digits->fraction,
+             duckdb::Decimal::MAX_WIDTH_DECIMAL - digits->integer));
 }
 
 void FillDeserializeContext(duckdb::ClientContext& client,
@@ -2205,6 +2317,9 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       if (IsXml(type)) {
         return SelectDecoder<XmlIn, XmlIn, Sink>(binary);
+      }
+      if (type.IsJSONType()) {
+        return SelectDecoder<JsonBin, VarcharText, Sink>(binary);
       }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:

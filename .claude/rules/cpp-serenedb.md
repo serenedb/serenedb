@@ -79,5 +79,6 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - **A serened flag:** `python3 tests/drivers/python/cli_help.py override --bin <build>/bin/serened` regenerates the CLI reference the docs render.
 - **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`, then run `python3 scripts/generate_pg_catalog.py`.
 - **A type mapping in `server/pg/types/mapping.cpp`:** update `docs/compatibility/data-type-compatibility.md`, then run `python3 scripts/generate_pg_catalog.py`.
-- **Generated tables:** the unicode tables come from `scripts/generate_unicode_tables.py`; the system catalogs and the OIDs of built-in objects from `scripts/generate_pg_catalog.py` ([CONTRIBUTING.md](../../CONTRIBUTING.md), "PostgreSQL catalog code").
+- **Generated tables:** the unicode tables come from `scripts/generate_unicode_tables.py`; `server/pg/catalog/generated/` from `scripts/generate_pg_catalog.py`, which reads PostgreSQL's catalog sources in the `third_party/postgres` submodule.
+- **A builtin function or collation (added, removed or re-signed):** `python3 scripts/generate_pg_catalog.py --serened <build>/bin/serened` freezes its OID; `system_oids.test` fails until then.
 - **Anything written to disk:** [storage.md](storage.md).

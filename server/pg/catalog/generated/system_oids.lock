@@ -1,4 +1,4 @@
-# Kept by scripts/generate_pg_catalog.py, see CONTRIBUTING.md. Do not edit.
+# Kept by scripts/generate_pg_catalog.py. Do not edit.
 namespace	13293	information_schema
 relation	12000	pg_catalog.pg_roles
 relation	12005	pg_catalog.pg_shadow

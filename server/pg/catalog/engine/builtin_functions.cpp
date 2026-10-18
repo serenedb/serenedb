@@ -55,7 +55,7 @@ ABSL_FLAG(std::string, dump_builtin_oids, "",
           "Write the identity of every builtin function and collation to "
           "this file and exit, without starting a listener. "
           "scripts/generate_pg_catalog.py --serened reads it to freeze their "
-          "OIDs; see CONTRIBUTING.md.");
+          "OIDs.");
 
 namespace sdb::pg {
 namespace {

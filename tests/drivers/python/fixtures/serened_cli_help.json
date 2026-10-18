@@ -378,7 +378,7 @@
           "flag": "--dump_builtin_oids",
           "type": "",
           "defaultValue": "",
-          "description": "Write the identity of every builtin function and collation to this file and exit, without starting a listener. scripts/generate_pg_catalog.py --serened reads it to freeze their OIDs; see CONTRIBUTING.md.",
+          "description": "Write the identity of every builtin function and collation to this file and exit, without starting a listener. scripts/generate_pg_catalog.py --serened reads it to freeze their OIDs.",
           "source": "server/pg/catalog/engine/builtin_functions.cpp",
           "category": "server/pg/catalog/engine/builtin_functions.cpp",
           "categoryLabel": "server/pg/catalog/engine/builtin_functions.cpp"

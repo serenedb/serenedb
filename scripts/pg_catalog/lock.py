@@ -10,8 +10,7 @@ KINDS = ('namespace', 'relation', 'domain', 'collation', 'function')
 INITDB_KINDS = ('namespace', 'relation', 'domain')
 RETIRED = 'retired'
 
-HEADER = ('# Kept by scripts/generate_pg_catalog.py, see CONTRIBUTING.md. '
-          'Do not edit.\n')
+HEADER = '# Kept by scripts/generate_pg_catalog.py. Do not edit.\n'
 
 
 def system_oids():

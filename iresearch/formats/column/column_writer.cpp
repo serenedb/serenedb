@@ -955,6 +955,13 @@ duckdb::CompressionType ForcedMethod(duckdb::DatabaseInstance& db,
     duckdb::DBConfig::GetConfig(db));
 }
 
+bool Applies(duckdb::DatabaseInstance& db, duckdb::CompressionType method,
+             duckdb::PhysicalType physical) {
+  return method != duckdb::CompressionType::COMPRESSION_AUTO &&
+         duckdb::DBConfig::GetConfig(db).TryGetCompressionFunction(method,
+                                                                   physical);
+}
+
 }  // namespace
 
 duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
@@ -1092,7 +1099,7 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
                                duckdb::CompressionType forced,
                                ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
-  if (ForcedMethod(db, forced) != duckdb::CompressionType::COMPRESSION_AUTO) {
+  if (Applies(db, ForcedMethod(db, forced), type.InternalType())) {
     return CompressData(type, chunks, forced, meta);
   }
   if (!meta.write_numeric_tuning) {
@@ -1354,12 +1361,15 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
 
 const duckdb::CompressionFunction* ColumnWriter::PlainCodec(
   const duckdb::LogicalType& type, duckdb::CompressionType codec) const {
-  const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
-  if (duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config) !=
-      duckdb::CompressionType::COMPRESSION_AUTO) {
+  auto& db = WriteCtx().Database();
+  const auto physical = type.InternalType();
+  if (Applies(db, ForcedMethod(db, duckdb::CompressionType::COMPRESSION_AUTO),
+              physical)) {
     return nullptr;
   }
-  return config.TryGetCompressionFunction(codec, type.InternalType()).get();
+  return duckdb::DBConfig::GetConfig(db)
+    .TryGetCompressionFunction(codec, physical)
+    .get();
 }
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,

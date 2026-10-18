@@ -259,6 +259,55 @@ SELECT DISTINCT compression FROM pragma_storage_info('search_forced_zstd') WHERE
 compression
 BitPacking
 
+statement ok
+CREATE TABLE search_auto_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h UBIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_auto_numeric SELECT a, ((a * 7919) % 5000) * 1000000, (a % 7) * 1000000007 + 123456789012, hash(a % 100) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_auto_numeric;
+
+statement ok
+SET GLOBAL force_compression = 'zstd';
+
+statement ok
+CREATE TABLE search_forced_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h UBIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_numeric SELECT * FROM search_auto_numeric;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_numeric;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT column_name, forced.compression AS forced, auto.compression AS auto
+FROM (SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression FROM pragma_storage_info('search_forced_numeric') WHERE column_name IN ('g', 'd', 'h') AND segment_type <> 'VALIDITY' GROUP BY column_name) forced
+JOIN (SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression FROM pragma_storage_info('search_auto_numeric') WHERE column_name IN ('g', 'd', 'h') AND segment_type <> 'VALIDITY' GROUP BY column_name) auto USING (column_name)
+ORDER BY column_name;
+----
+column_name	forced	auto
+d	Numeric	Numeric
+g	Numeric	Numeric
+h	Numeric	Numeric
+
+query
+SELECT count(*) FROM search_forced_numeric f JOIN search_auto_numeric a USING (a) WHERE f.g IS DISTINCT FROM a.g OR f.d IS DISTINCT FROM a.d OR f.h IS DISTINCT FROM a.h;
+----
+count
+0
+
+statement ok
+DROP TABLE search_forced_numeric;
+
+statement ok
+DROP TABLE search_auto_numeric;
+
 statement error
 CREATE TABLE search_roaring_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION roaring) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 ----

@@ -18,13 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include <duckdb/function/compression_function.hpp>
+#include "iresearch/formats/column/codecs/compression.hpp"
+#include "iresearch/formats/column/codecs/string_scan.hpp"
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction* SequenceFunction(
-  duckdb::PhysicalType physical);
+const duckdb::CompressionFunction* DictFsstFunction(
+  duckdb::PhysicalType physical) {
+  static const auto kFunction =
+    StringFunction(duckdb::CompressionType::COMPRESSION_COL_DICT_FSST,
+                   duckdb::CompressionValidity::NO_VALIDITY_REQUIRED);
+  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+}
 
 }  // namespace irs::codecs

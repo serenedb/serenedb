@@ -27,7 +27,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <filesystem>
-#include <iresearch/formats/column/codecs/fsst_codec.hpp>
+#include <iresearch/formats/column/codecs/fsst.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>

@@ -51,9 +51,9 @@
 #include <string_view>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/numeric_writer.hpp"
+#include "iresearch/formats/column/codecs/compression.hpp"
+#include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/sequence_codec.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"

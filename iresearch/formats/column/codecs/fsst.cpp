@@ -18,11 +18,20 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/fsst.hpp"
 
+#include "iresearch/formats/column/codecs/compression.hpp"
+#include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
+
+const duckdb::CompressionFunction* FsstFunction(duckdb::PhysicalType physical) {
+  static const auto kFunction =
+    StringFunction(duckdb::CompressionType::COMPRESSION_COL_FSST,
+                   duckdb::CompressionValidity::REQUIRES_VALIDITY);
+  return physical == duckdb::PhysicalType::VARCHAR ? &kFunction : nullptr;
+}
 
 FsstEncoder::~FsstEncoder() { Reset(); }
 

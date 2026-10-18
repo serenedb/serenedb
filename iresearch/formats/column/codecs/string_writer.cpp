@@ -36,9 +36,12 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/fsst_codec.hpp"
-#include "iresearch/formats/column/codecs/numeric_writer.hpp"
+#include "iresearch/formats/column/codecs/fsst.hpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
+#include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
+#include "iresearch/formats/column/codecs/zxc.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

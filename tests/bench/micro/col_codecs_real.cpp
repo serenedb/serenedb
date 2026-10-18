@@ -366,6 +366,24 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(parts[7]),
                  static_cast<unsigned long long>(dictionaries));
   }
+  if (std::getenv("SDB_BENCH_HASH")) {
+    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::NORMAL);
+    std::vector<uint8_t> file(in->Length());
+    in->ReadData(file.data(), file.size());
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    const auto mix = [&](const auto& blocks) {
+      for (const auto& block : blocks) {
+        for (uint64_t i = 0; i < block.byte_size; ++i) {
+          hash = (hash ^ file[block.file_offset + i]) * 0x100000001b3ULL;
+        }
+      }
+    };
+    mix(cw.Meta().data);
+    mix(cw.Meta().validity);
+    mix(cw.Meta().dictionaries);
+    std::fprintf(stderr, "hash %s %016llx\n", arm.name,
+                 static_cast<unsigned long long>(hash));
+  }
   Built built;
   for (const auto& block : cw.Meta().data) {
     built.bytes += block.byte_size;

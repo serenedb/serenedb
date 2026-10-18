@@ -58,12 +58,14 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/fsst_codec.hpp"
+#include "iresearch/formats/column/codecs/fsst.hpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
+#include "iresearch/formats/column/codecs/zxc.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -1810,7 +1812,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   return info;
 }
 
-duckdb::CompressionFunction MakeScanFunction(
+}  // namespace
+
+duckdb::CompressionFunction StringFunction(
   duckdb::CompressionType type, duckdb::CompressionValidity validity) {
   duckdb::CompressionFunction f{
     type,
@@ -1832,31 +1836,6 @@ duckdb::CompressionFunction MakeScanFunction(
   f.get_segment_info = SegmentInfo;
   f.validity = validity;
   return f;
-}
-
-}  // namespace
-
-const duckdb::CompressionFunction& StringScanFunction(
-  duckdb::CompressionType type) {
-  constexpr auto kFirst =
-    static_cast<size_t>(duckdb::CompressionType::COMPRESSION_DICT_LZ4);
-  constexpr auto kLast =
-    static_cast<size_t>(duckdb::CompressionType::COMPRESSION_COL_ZSTD);
-  static const auto functions = [] {
-    std::vector<duckdb::CompressionFunction> out;
-    out.reserve(kLast - kFirst + 1);
-    for (auto t = kFirst; t <= kLast; ++t) {
-      const auto string_type = static_cast<duckdb::CompressionType>(t);
-      out.emplace_back(MakeScanFunction(
-        string_type, ChoiceOf(string_type)->shape == Shape::Dedup
-                       ? duckdb::CompressionValidity::NO_VALIDITY_REQUIRED
-                       : duckdb::CompressionValidity::REQUIRES_VALIDITY));
-    }
-    return out;
-  }();
-  const auto index = static_cast<size_t>(type) - kFirst;
-  SDB_ASSERT(index < functions.size());
-  return functions[index];
 }
 
 }  // namespace irs::codecs

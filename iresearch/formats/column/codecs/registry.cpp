@@ -22,11 +22,39 @@
 
 #include <duckdb/main/config.hpp>
 
-#include "iresearch/formats/column/codecs/numeric_scan.hpp"
-#include "iresearch/formats/column/codecs/sequence_codec.hpp"
-#include "iresearch/formats/column/codecs/string_scan.hpp"
+#include "iresearch/formats/column/codecs/compression.hpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
+#include "iresearch/formats/column/codecs/zxc.hpp"
 
 namespace irs::codecs {
+namespace {
+
+const duckdb::CompressionFunction* TextFunction(duckdb::CompressionType type,
+                                                duckdb::PhysicalType physical) {
+  switch (type) {
+    case duckdb::CompressionType::COMPRESSION_DICT_LZ4:
+      return DictLz4Function(physical);
+    case duckdb::CompressionType::COMPRESSION_LZ4:
+      return Lz4Function(physical);
+    case duckdb::CompressionType::COMPRESSION_DICT_ZSTD:
+      return DictZstdFunction(physical);
+    case duckdb::CompressionType::COMPRESSION_COL_ZSTD:
+      return ZstdFunction(physical);
+    case duckdb::CompressionType::COMPRESSION_DICT_ZXC:
+      return DictZxcFunction(physical);
+    case duckdb::CompressionType::COMPRESSION_ZXC:
+      return ZxcFunction(physical);
+    case duckdb::CompressionType::COMPRESSION_COL_DICT_FSST:
+      return DictFsstFunction(physical);
+    case duckdb::CompressionType::COMPRESSION_COL_FSST:
+      return FsstFunction(physical);
+    default:
+      return nullptr;
+  }
+}
+
+}  // namespace
 
 const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             duckdb::CompressionType type,
@@ -35,11 +63,10 @@ const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
     return SequenceFunction(physical);
   }
   if (type == duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
-    return NumericScanFunction(physical);
+    return NumericFunction(physical);
   }
-  if (physical == duckdb::PhysicalType::VARCHAR &&
-      duckdb::IsSereneDBCompressionType(type)) {
-    return &StringScanFunction(type);
+  if (const auto* text = TextFunction(type, physical)) {
+    return text;
   }
   return duckdb::DBConfig::GetConfig(db)
     .TryGetCompressionFunction(type, physical)

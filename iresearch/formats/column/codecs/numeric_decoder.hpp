@@ -32,10 +32,11 @@
 #include <type_traits>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"

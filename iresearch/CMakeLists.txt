@@ -63,15 +63,20 @@ set(IResearch_core_sources
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
-    ./formats/column/codecs/byte_codec.cpp
-    ./formats/column/codecs/fsst_codec.cpp
-    ./formats/column/codecs/numeric_scan.cpp
-    ./formats/column/codecs/numeric_writer.cpp
+    ./formats/column/codecs/dict_fsst.cpp
+    ./formats/column/codecs/dict_lz4.cpp
+    ./formats/column/codecs/dict_zstd.cpp
+    ./formats/column/codecs/dict_zxc.cpp
+    ./formats/column/codecs/fsst.cpp
+    ./formats/column/codecs/lz4.cpp
+    ./formats/column/codecs/numeric.cpp
     ./formats/column/codecs/registry.cpp
-    ./formats/column/codecs/sequence_codec.cpp
+    ./formats/column/codecs/sequence.cpp
     ./formats/column/codecs/string_scan.cpp
     ./formats/column/codecs/string_writer.cpp
     ./formats/column/codecs/trained_dictionary.cpp
+    ./formats/column/codecs/zstd.cpp
+    ./formats/column/codecs/zxc.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
     ./formats/posting/block_codec.cpp

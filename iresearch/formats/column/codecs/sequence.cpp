@@ -18,13 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/sequence_codec.hpp"
-
 #include <duckdb/common/helper.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+
+#include "iresearch/formats/column/codecs/compression.hpp"
 
 namespace irs::codecs {
 namespace {

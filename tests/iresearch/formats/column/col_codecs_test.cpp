@@ -46,7 +46,7 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
-#include <iresearch/formats/column/codecs/fsst_codec.hpp>
+#include <iresearch/formats/column/codecs/fsst.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_writer.hpp>

@@ -25,7 +25,7 @@
 
 namespace irs::codecs {
 
-const duckdb::CompressionFunction& StringScanFunction(
-  duckdb::CompressionType type);
+duckdb::CompressionFunction StringFunction(
+  duckdb::CompressionType type, duckdb::CompressionValidity validity);
 
 }  // namespace irs::codecs

@@ -300,7 +300,7 @@ bool PgOidToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
       dst_validity.SetInvalid(i);
       continue;
     }
-    auto name = out_fn(static_cast<uint64_t>(value.GetValue()));
+    auto name = out_fn(pg::OidFromSql(value.GetValue()));
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
       duckdb::StringVector::AddString(result, name);
   }
@@ -308,14 +308,20 @@ bool PgOidToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
 }
 
 bool PgRegtypeToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                            duckdb::idx_t count, duckdb::CastParameters&) {
-  return PgOidToVarcharCast(source, result, count, pg::RegtypeOut);
+                            duckdb::idx_t count,
+                            duckdb::CastParameters& params) {
+  auto* context = params.cast_data->Cast<RegCastData>().ctx;
+  return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
+    return pg::RegtypeOut(context, oid);
+  });
 }
 
-duckdb::BoundCastInfo PgRegtypeToVarcharBind(duckdb::BindCastInput&,
+duckdb::BoundCastInfo PgRegtypeToVarcharBind(duckdb::BindCastInput& input,
                                              const duckdb::LogicalType&,
                                              const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(PgRegtypeToVarcharCast);
+  return duckdb::BoundCastInfo(
+    PgRegtypeToVarcharCast,
+    duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
 bool PgRegclassToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,

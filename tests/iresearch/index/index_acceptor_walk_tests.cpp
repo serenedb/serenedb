@@ -196,6 +196,8 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     add_segment(gen);
   }
 
+  void AssertRe2Perl(size_t part, size_t parts);
+
   static size_t RestrictedDamerau(std::span<const uint32_t> lhs,
                                   std::span<const uint32_t> rhs) {
     const size_t width = rhs.size() + 1;
@@ -911,69 +913,109 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
   }
 }
 
-TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
-  constexpr std::string_view kTerms[]{
-    "burden",
-    "b\xC3\xBCrden",
-    "bxrden",
-    "b\xE4\xB8\xADrden",
-    "b\xF0\x9F\x98\x80rden",
-    "b\xE0\x80\x80rden",
-    "b\xED\xA0\x80rden",
-    "b\xF4\x90\x80\x80rden",
-    "b\xFFrden",
-    "b\x80rden",
-    "b\xC3rden",
-    "BURDEN",
-    "Burden",
-    "atlas",
-    "atlantic",
-    "Atlas",
-    "gray",
-    "grey",
-    "gr\xC3\xA9y",
-    "a\nb",
-    "axb",
-    "x",
-    "zz",
-    "abab",
-    "tion",
-    "Tion",
-    "nation",
-    "a1b2",
-    "\xC3\xA9t\xC3\xA9",
-    "den%x",
-    "%x",
-    "the siemens financial services",
-    "siemens",
-    "siemensland",
-    "the siemens ag",
-    "The Siemens AG",
-    "access point",
-    "accessories inc",
-    "the access group",
-    "senior data engineer",
-    "bigdata engineer",
-    "data engineering",
-    "Data Engineer, GCP",
-    "foobar",
-    "foo bar",
-    "a\nb",
-    "ab",
-    "abb",
-    "ac",
-    "abac",
-    "ABab",
-    "access",
-    "accessory",
-    "f0e1d2c3b4a5968778695a4b3c2d1e0f-abcd-0001",
-    "f0e1d2c3b4a5968778695a4b3c2d1e0f-abce-0002",
-    "abcd000000000000000000000000000000000000",
-    "0000000000000000000000000000000000000abcd",
-    "0000000000000000000000000000000000000abc",
-  };
+constexpr std::string_view kRe2Terms[]{
+  "burden",
+  "b\xC3\xBCrden",
+  "bxrden",
+  "b\xE4\xB8\xADrden",
+  "b\xF0\x9F\x98\x80rden",
+  "b\xE0\x80\x80rden",
+  "b\xED\xA0\x80rden",
+  "b\xF4\x90\x80\x80rden",
+  "b\xFFrden",
+  "b\x80rden",
+  "b\xC3rden",
+  "BURDEN",
+  "Burden",
+  "atlas",
+  "atlantic",
+  "Atlas",
+  "gray",
+  "grey",
+  "gr\xC3\xA9y",
+  "a\nb",
+  "axb",
+  "x",
+  "zz",
+  "abab",
+  "tion",
+  "Tion",
+  "nation",
+  "a1b2",
+  "\xC3\xA9t\xC3\xA9",
+  "den%x",
+  "%x",
+  "the siemens financial services",
+  "siemens",
+  "siemensland",
+  "the siemens ag",
+  "The Siemens AG",
+  "access point",
+  "accessories inc",
+  "the access group",
+  "senior data engineer",
+  "bigdata engineer",
+  "data engineering",
+  "Data Engineer, GCP",
+  "foobar",
+  "foo bar",
+  "a\nb",
+  "ab",
+  "abb",
+  "ac",
+  "abac",
+  "ABab",
+  "access",
+  "accessory",
+  "f0e1d2c3b4a5968778695a4b3c2d1e0f-abcd-0001",
+  "f0e1d2c3b4a5968778695a4b3c2d1e0f-abce-0002",
+  "abcd000000000000000000000000000000000000",
+  "0000000000000000000000000000000000000abcd",
+  "0000000000000000000000000000000000000abc",
+};
 
-  AddTerms(kTerms);
+constexpr std::string_view kRe2Perl[]{
+  "bur.*",
+  ".*tion",
+  "b.rden",
+  "atl(as|antic)",
+  "a.{4}s",
+  "(?i)bur.*",
+  "(?i:t)ion",
+  "b[^a-z]rden",
+  "\\pL+",
+  "x|y|zz",
+  "(ab)*",
+  "",
+  "b\\w+n",
+  "gr[ae]y",
+  "gr.y",
+  "a.b",
+  "(?s)a.b",
+  "(?i)^(the\\s+)?siemens\\b.*",
+  "^(the\\s+)?access\\b.*|^(the\\s+)?siemens financial services\\b.*",
+  ".*\\bdata engineer\\b.*",
+  "(?i).*\\bdata engineer\\b.*|.*\\bgcp\\b.*",
+  "foo\\Bbar",
+  "foo\\B.*",
+  "a$b",
+  "(?m)a$\\n^b",
+  "\\bbur\\w*",
+  "(?:ab){2}|ac",
+  "(?i:ab)ab|abac",
+  "(?:a|x)b|(?:a|x)x",
+  "(?i)^(the\\s+)?siemens\\b.*|^(the\\s+)?access.?\\b.*|^(the\\s+)?"
+  "accessories\\b.*|^(the\\s+)?siemens financial services\\b.*",
+  ".*\\bdata\\b.*|.*\\bgcp\\b.*|.*\\bgroup",
+  ".*abcd.*",
+  ".*5a4b3c.*",
+  ".*ent.*",
+  ".*the.*",
+  ".*tion.*",
+};
+
+void AcceptorWalkIndexTestCase::AssertRe2Perl(size_t part, size_t parts) {
+  AddTerms(kRe2Terms);
   AddEuroparl();
 
   auto reader = open_reader();
@@ -981,46 +1023,8 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
 
   RE2::Options perl;
   perl.set_log_errors(false);
-  constexpr std::string_view kPerl[]{
-    "bur.*",
-    ".*tion",
-    "b.rden",
-    "atl(as|antic)",
-    "a.{4}s",
-    "(?i)bur.*",
-    "(?i:t)ion",
-    "b[^a-z]rden",
-    "\\pL+",
-    "x|y|zz",
-    "(ab)*",
-    "",
-    "b\\w+n",
-    "gr[ae]y",
-    "gr.y",
-    "a.b",
-    "(?s)a.b",
-    "(?i)^(the\\s+)?siemens\\b.*",
-    "^(the\\s+)?access\\b.*|^(the\\s+)?siemens financial services\\b.*",
-    ".*\\bdata engineer\\b.*",
-    "(?i).*\\bdata engineer\\b.*|.*\\bgcp\\b.*",
-    "foo\\Bbar",
-    "foo\\B.*",
-    "a$b",
-    "(?m)a$\\n^b",
-    "\\bbur\\w*",
-    "(?:ab){2}|ac",
-    "(?i:ab)ab|abac",
-    "(?:a|x)b|(?:a|x)x",
-    "(?i)^(the\\s+)?siemens\\b.*|^(the\\s+)?access.?\\b.*|^(the\\s+)?"
-    "accessories\\b.*|^(the\\s+)?siemens financial services\\b.*",
-    ".*\\bdata\\b.*|.*\\bgcp\\b.*|.*\\bgroup",
-    ".*abcd.*",
-    ".*5a4b3c.*",
-    ".*ent.*",
-    ".*the.*",
-    ".*tion.*",
-  };
-  for (const auto pattern : kPerl) {
+  for (size_t i = part; i < std::size(kRe2Perl); i += parts) {
+    const auto pattern = kRe2Perl[i];
     SCOPED_TRACE(testing::Message("Regexp: '") << pattern << "'");
     const irs::RegexpAcceptor acceptor{irs::ViewCast<irs::byte_type>(pattern)};
     ASSERT_TRUE(acceptor.ok());
@@ -1035,6 +1039,30 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     ASSERT_NE(nullptr, source);
     AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
   }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl0) {
+  AssertRe2Perl(0, 4);
+}
+
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl1) {
+  AssertRe2Perl(1, 4);
+}
+
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl2) {
+  AssertRe2Perl(2, 4);
+}
+
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl3) {
+  AssertRe2Perl(3, 4);
+}
+
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
+  AddTerms(kRe2Terms);
+  AddEuroparl();
+
+  auto reader = open_reader();
+  ASSERT_NE(nullptr, reader);
 
   RE2::Options posix;
   posix.set_log_errors(false);

@@ -349,7 +349,7 @@ ndb_pre_total=$((NATIVE_SIZE_PRE_MAIN + NATIVE_SIZE_PRE_WAL))
 		"$(human "${ndb}")" "$(human "${ndb_wal}")"
 	printf "serened data dir:         %12d bytes (%s)\n" "${total}" "$(human "${total}")"
 	# Every file in the data dir falls into exactly one of these buckets:
-	#   iresearch per-segment files (in engine_search/.../<seg>.<ext>):
+	#   iresearch per-segment files (in engine_v1/<db>/<oid>/<seg>.<ext>):
 	#     .doc  postings doc-id stream
 	#     .pos  positions stream      (0 bytes with split_text_csv dict; populated with split_text)
 	#     .pay  payload stream        (0 bytes without frequency/payload features)

@@ -67,7 +67,7 @@ class Emit {
     const uint64_t avail = end > _base ? end - _base : 0;
     const auto limit = static_cast<uint32_t>(
       std::min<uint64_t>(_words_end, avail / detail::kWindowBits));
-    [[clang::code_align(64)]] for (; _word != limit; ++_word) {
+    for (; _word != limit; ++_word) {
       const auto word = _words[_word];
       if (word == 0) {
         continue;

@@ -8,11 +8,19 @@ CONFIG="${CONFIG:?CONFIG is required}"
 STEPS="${WORKSPACE}/scripts/ci/steps"
 
 rc=0
+SUITES_TSV="${WORKSPACE}/out/logs/suites.tsv"
+mkdir -p "$(dirname "$SUITES_TSV")"
+: >"$SUITES_TSV"
+record() {
+	printf '%s\t%s\n' "$(sed 's#[^ ]*/##g' <<<"$2")" "$1" >>"$SUITES_TSV"
+}
+
 run() {
 	echo "::group::$*"
 	"$@"
 	local r=$?
 	echo "::endgroup::"
+	record "$r" "$*"
 	[[ $r -ne 0 ]] && {
 		echo "FAILED ($r): $*" >&2
 		rc=$r
@@ -28,6 +36,7 @@ run_soft() {
 	"$@"
 	local r=$?
 	echo "::endgroup::"
+	record "$r (soft)" "$*"
 	[[ $r -ne 0 ]] && echo "SOFT-FAILED ($r): $*" >&2
 	return 0
 }
@@ -42,7 +51,10 @@ run_bg() {
 wait_bg() {
 	local i
 	for i in "${!BG_PIDS[@]}"; do
-		if ! wait "${BG_PIDS[$i]}"; then
+		wait "${BG_PIDS[$i]}"
+		local r=$?
+		record "$r" "${BG_NAMES[$i]}"
+		if [[ $r -ne 0 ]]; then
 			echo "FAILED: ${BG_NAMES[$i]}" >&2
 			rc=1
 		fi
@@ -64,6 +76,7 @@ start_iresearch_load_bg() {
 	if ! corpus="$(bash "${STEPS}/iresearch-load-fetch-corpus.bash")"; then
 		echo "FAILED: iresearch-load-fetch-corpus.bash" >&2
 		echo "::endgroup::"
+		record 1 iresearch-load-fetch-corpus.bash
 		rc=1
 		return
 	fi

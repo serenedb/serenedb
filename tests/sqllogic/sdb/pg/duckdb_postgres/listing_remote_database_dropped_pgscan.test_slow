@@ -1,0 +1,95 @@
+control substitution on
+
+# The PostgreSQL database behind an attached catalog is dropped while a
+# transaction holds that catalog's connection. The catalog still lists its
+# schemas and tables from its cache, and a table's storage details need no
+# connection. The database's size does, so pragma_database_size leaves that
+# database out and lists the rest. The transaction then rolls back cleanly:
+# its remote transaction never began.
+# exclusive
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS lrda_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('lrda_${__DATABASE__}', 'CREATE DATABASE lrddb_${__DATABASE__}', use_transaction := false);
+
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=lrddb_${__DATABASE__} user=${PGUSER}' AS lrd_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE TABLE lrd_${__DATABASE__}.public.t (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE lrd_local (id INTEGER);
+
+
+query
+SELECT table_name, index_count FROM duckdb_tables()
+WHERE database_name IN (current_database(), 'lrd_${__DATABASE__}') AND schema_name = 'public'
+  AND table_name IN ('t', 'lrd_local')
+ORDER BY table_name;
+----
+table_name	index_count
+lrd_local	0
+t	1
+
+
+query
+SELECT count(*) AS n FROM pragma_database_size() WHERE database_name = 'lrd_${__DATABASE__}';
+----
+n
+1
+
+
+statement ok
+BEGIN;
+
+
+query
+SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = 'lrd_${__DATABASE__}' AND schema_name = 'public';
+----
+n
+1
+
+
+statement ok
+CALL postgres_execute('lrda_${__DATABASE__}', 'DROP DATABASE lrddb_${__DATABASE__} WITH (FORCE)', use_transaction := false);
+
+
+query
+SELECT table_name, index_count FROM duckdb_tables()
+WHERE database_name IN (current_database(), 'lrd_${__DATABASE__}') AND schema_name = 'public'
+  AND table_name IN ('t', 'lrd_local')
+ORDER BY table_name;
+----
+table_name	index_count
+lrd_local	0
+t	1
+
+
+query
+SELECT count(*) AS n FROM pragma_database_size() WHERE database_name IN (current_database(), 'lrd_${__DATABASE__}');
+----
+n
+1
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP TABLE lrd_local;
+
+
+statement ok
+DETACH lrd_${__DATABASE__};
+
+
+statement ok
+DETACH lrda_${__DATABASE__};

@@ -104,6 +104,7 @@ class Probe {
                                          Result& out);
 
   const Spec* _spec;
+  duckdb::Connection _conn;
   irs::analysis::Tokenizer::ptr _primary;
   irs::analysis::Tokenizer::ptr _shadow;
   irs::analysis::Tokenizer::ptr _blocked;
@@ -138,6 +139,8 @@ size_t Drain(irs::analysis::Tokenizer& tokenizer,
 uint64_t Seed();
 
 std::vector<const Spec*> SelectedSpecs();
+
+std::string_view Family(const Spec& spec);
 
 std::vector<const Spec*> SelectedFamilies();
 

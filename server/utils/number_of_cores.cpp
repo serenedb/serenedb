@@ -20,6 +20,7 @@
 
 #include "server/utils/number_of_cores.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <absl/strings/string_view.h>
 #include <fast_float/fast_float.h>
@@ -86,8 +87,8 @@ int64_t CfsQuotaCores() {
   for (const char* dir : {"/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct"}) {
     int64_t quota = -1;
     int64_t period = 0;
-    std::ifstream qf(std::string{dir} + "/cpu.cfs_quota_us");
-    std::ifstream pf(std::string{dir} + "/cpu.cfs_period_us");
+    std::ifstream qf(absl::StrCat(dir, "/cpu.cfs_quota_us"));
+    std::ifstream pf(absl::StrCat(dir, "/cpu.cfs_period_us"));
     if (qf >> quota && pf >> period && quota > 0 && period > 0) {
       return static_cast<int64_t>(
         std::ceil(static_cast<double>(quota) / static_cast<double>(period)));

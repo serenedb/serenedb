@@ -152,6 +152,9 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   // the two patterns.
   mutable irs::SeekTermIterator::ptr _terms;
   mutable irs::TermPostings::ptr _postings;
+  mutable std::array<irs::doc_id_t, irs::doc_limits::kBlockSize> _docs;
+  mutable uint32_t _docs_at{0};
+  mutable uint32_t _docs_size{0};
   mutable size_t _pos{0};
   mutable int64_t _resume_row{0};
   mutable std::string _key_scratch;

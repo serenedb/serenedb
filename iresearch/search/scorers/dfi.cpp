@@ -26,7 +26,6 @@
 #include <string_view>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -229,8 +228,8 @@ bool DFI::equals(const Scorer& other) const noexcept {
   return p._measure == _measure;
 }
 
-ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter(size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
+ScoreBoundWriter::ptr DFI::PrepareScoreBoundWriter() const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
 ScoreBoundSource::ptr DFI::PrepareScoreBoundSource() const {

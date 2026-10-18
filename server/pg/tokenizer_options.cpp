@@ -68,6 +68,11 @@ void CheckForm(std::string_view option, std::string_view value) {
   CheckEnumValue<irs::analysis::NormForm>(option, value, kForm);
 }
 
+void CheckInputType(std::string_view option, std::string_view value) {
+  CheckEnumValue<irs::analysis::NGramTokenizer::InputType>(option, value,
+                                                           kInputType);
+}
+
 void CheckMode(std::string_view option, std::string_view value) {
   CheckEnumValue<irs::analysis::NGramTokenizer::NGramMode>(option, value,
                                                            kMode);

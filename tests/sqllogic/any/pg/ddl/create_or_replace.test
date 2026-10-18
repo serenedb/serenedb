@@ -1,0 +1,3241 @@
+# CREATE OR REPLACE VIEW / FUNCTION / PROCEDURE with PostgreSQL semantics.
+#
+# A replace changes the definition of the existing object in place: the oid,
+# owner, grants and comment stay, dependents keep working and read the new
+# body. A view may only append columns at the end; renaming, dropping,
+# reordering or retyping an existing column is refused and leaves the view
+# as it was. A replace is transactional: ROLLBACK restores the old definition
+# and other sessions see the new one only after COMMIT.
+#
+# PostgreSQL locks a view that is being replaced until the replacing
+# transaction ends, so while a replace is open the other session only reads
+# pg_class / pg_proc or calls functions; reading the view itself from the
+# other session is serenedb-only (MVCC catalog, no lock).
+#
+# Every object is prefixed corpg_.
+
+statement ok
+CREATE TABLE corpg_t (a INT, b TEXT, c INT);
+
+
+statement count 3
+INSERT INTO corpg_t VALUES (1, 'x', 10), (2, 'y', 20), (3, 'z', 30);
+
+
+# ── OR REPLACE VIEW: create, replace the body, append columns ──
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b FROM corpg_t WHERE a = 1;
+
+
+query
+SELECT a, b FROM corpg_v;
+----
+a	b
+1	x
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b FROM corpg_t WHERE a >= 2;
+
+
+query
+SELECT a, b FROM corpg_v ORDER BY a;
+----
+a	b
+2	y
+3	z
+
+
+# The replace kept one relation under the name.
+query
+SELECT relkind, count(*) AS n FROM pg_class WHERE relname = 'corpg_v' GROUP BY relkind;
+----
+relkind	n
+v	1
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c FROM corpg_t WHERE a >= 2;
+
+
+query
+SELECT * FROM corpg_v ORDER BY a;
+----
+a	b	c
+2	y	20
+3	z	30
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s, 'k' AS k FROM corpg_t WHERE a >= 2;
+
+
+query
+SELECT * FROM corpg_v WHERE false;
+----
+a	b	c	s	k
+
+
+query
+SELECT pg_typeof(a) AS ta, pg_typeof(b) AS tb, pg_typeof(s) AS ts FROM corpg_v LIMIT 1;
+----
+ta	tb	ts
+integer	text	integer
+
+
+# ── Refused view replaces: the column list may only grow at the end ──
+
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s FROM corpg_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a FROM corpg_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b AS bb, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "b" to "bb"
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b AS bb, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "b" to "bb"
+HINT: Use ALTER VIEW ... RENAME COLUMN ... to change name of view column instead.
+
+
+# Reordering is a rename of the first column that moved.
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT b, a, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "a" to "b"
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT b, a, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "a" to "b"
+HINT: Use ALTER VIEW ... RENAME COLUMN ... to change name of view column instead.
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, c AS b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change data type of view column "b" from VARCHAR to INTEGER
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, c AS b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change data type of view column "b" from text to integer
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a::BIGINT AS a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change data type of view column "a" from INTEGER to BIGINT
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_v AS SELECT a::BIGINT AS a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: cannot change data type of view column "a" from integer to bigint
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_v (a, b, c, s, k, extra) AS SELECT a, b, c, a + c, 'k' FROM corpg_t;
+----
+db error: ERROR: More VIEW aliases than columns in query result
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_v (a, b, c, s, k, extra) AS SELECT a, b, c, a + c, 'k' FROM corpg_t;
+----
+db error: ERROR: CREATE VIEW specifies more column names than columns
+
+
+# A new body that does not bind or does not parse is refused.
+statement error (?i)corpg_missing.* does not exist
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s, 'k' AS k, x FROM corpg_missing;
+
+
+statement error syntax error at or near "SELEC"
+CREATE OR REPLACE VIEW corpg_v AS SELEC a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+
+
+statement error (?i)schema.*corpg_nosuch.* does not exist
+CREATE OR REPLACE VIEW corpg_nosuch.corpg_v AS SELECT 1 AS n;
+
+
+# OR REPLACE and IF NOT EXISTS do not combine.
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW IF NOT EXISTS corpg_v AS SELECT a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW IF NOT EXISTS corpg_v AS SELECT a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+----
+db error: ERROR: syntax error at or near "NOT"
+
+
+# A refused replace leaves the view as it was.
+query
+SELECT * FROM corpg_v ORDER BY a;
+----
+a	b	c	s	k
+2	y	20	22	k
+3	z	30	33	k
+
+
+# ── OR REPLACE VIEW over a relation that is not a view ──
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_t AS SELECT 1 AS a;
+----
+db error: ERROR: Existing object "corpg_t" is of type Table, trying to replace with type View
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_t AS SELECT 1 AS a;
+----
+db error: ERROR: "corpg_t" is not a view
+
+
+query
+SELECT c.relkind, (SELECT count(*) FROM corpg_t) AS n FROM pg_class c WHERE c.relname = 'corpg_t';
+----
+relkind	n
+r	3
+
+
+statement ok
+CREATE SEQUENCE corpg_seq;
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_seq AS SELECT 1 AS one;
+----
+db error: ERROR: Existing object "corpg_seq" is of type Sequence, trying to replace with type View
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_seq AS SELECT 1 AS one;
+----
+db error: ERROR: "corpg_seq" is not a view
+
+
+query
+SELECT nextval('corpg_seq') AS n;
+----
+n
+1
+
+
+statement ok
+DROP SEQUENCE corpg_seq;
+
+
+statement ok
+CREATE INDEX corpg_t_a_idx ON corpg_t (a);
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_t_a_idx AS SELECT 1 AS one;
+----
+db error: ERROR: Existing object "corpg_t_a_idx" is of type Index, trying to replace with type View
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_t_a_idx AS SELECT 1 AS one;
+----
+db error: ERROR: "corpg_t_a_idx" is not a view
+
+
+query
+SELECT relkind FROM pg_class WHERE relname = 'corpg_t_a_idx';
+----
+relkind
+i
+
+
+statement ok
+DROP INDEX corpg_t_a_idx;
+
+
+# ── Column lists, typmods, recursive views ──
+
+statement ok
+CREATE VIEW corpg_cl (x, y) AS SELECT a, b FROM corpg_t;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_cl (x, y) AS SELECT a * 10, upper(b) FROM corpg_t;
+
+
+query
+SELECT * FROM corpg_cl ORDER BY x;
+----
+x	y
+10	X
+20	Y
+30	Z
+
+
+# Aliases in the query instead of a column list name the same columns.
+statement ok
+CREATE OR REPLACE VIEW corpg_cl AS SELECT a AS x, b AS y, c AS z FROM corpg_t;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_cl (x, y, z, w) AS SELECT a, b, c, c * 2 FROM corpg_t;
+
+
+query
+SELECT * FROM corpg_cl ORDER BY x;
+----
+x	y	z	w
+1	x	10	20
+2	y	20	40
+3	z	30	60
+
+
+# A short column list leaves the remaining columns named by the query.
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_cl (x) AS SELECT a, b, c, c * 2 FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "y" to "b"
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_cl (x) AS SELECT a, b, c, c * 2 FROM corpg_t;
+----
+db error: ERROR: cannot change name of view column "y" to "b"
+HINT: Use ALTER VIEW ... RENAME COLUMN ... to change name of view column instead.
+
+
+statement ok
+CREATE VIEW corpg_num AS SELECT 1.5::NUMERIC(4,1) AS n;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_num AS SELECT 2.5::NUMERIC(4,1) AS n;
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE VIEW corpg_num AS SELECT 2.5::NUMERIC(5,1) AS n;
+----
+db error: ERROR: cannot change data type of view column "n" from DECIMAL(4,1) to DECIMAL(5,1)
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE VIEW corpg_num AS SELECT 2.5::NUMERIC(5,1) AS n;
+----
+db error: ERROR: cannot change data type of view column "n" from numeric(4,1) to numeric(5,1)
+
+
+query
+SELECT n FROM corpg_num;
+----
+n
+2.5
+
+
+statement ok
+CREATE OR REPLACE RECURSIVE VIEW corpg_rec (n) AS SELECT 1 UNION ALL SELECT n + 1 FROM corpg_rec WHERE n < 3;
+
+
+query
+SELECT n FROM corpg_rec ORDER BY n;
+----
+n
+1
+2
+3
+
+
+statement ok
+CREATE OR REPLACE RECURSIVE VIEW corpg_rec (n) AS SELECT 10 UNION ALL SELECT n + 1 FROM corpg_rec WHERE n < 12;
+
+
+query
+SELECT n FROM corpg_rec ORDER BY n;
+----
+n
+10
+11
+12
+
+
+# ── The replaced view keeps its oid, comment, grants and owner ──
+
+statement ok
+CREATE TABLE corpg_ids AS SELECT 'view' AS kind, oid FROM pg_class WHERE relname = 'corpg_v';
+
+
+statement ok
+COMMENT ON VIEW corpg_v IS 'corpg view comment';
+
+
+statement ok
+COMMENT ON COLUMN corpg_v.b IS 'corpg column comment';
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s, 'k' AS k FROM corpg_t;
+
+
+query
+SELECT c.oid = i.oid AS same_oid, obj_description(c.oid, 'pg_class') AS cmt, col_description(c.oid, 2) AS col_cmt
+FROM pg_class c JOIN corpg_ids i ON i.kind = 'view'
+WHERE c.relname = 'corpg_v';
+----
+same_oid	cmt	col_cmt
+t	corpg view comment	corpg column comment
+
+
+statement ok
+DROP ROLE IF EXISTS corpg_member;
+
+
+statement ok
+DROP ROLE IF EXISTS corpg_reader;
+
+
+statement ok
+CREATE ROLE corpg_reader LOGIN PASSWORD 'corpg_reader_pw';
+
+
+statement ok
+GRANT SELECT ON corpg_v TO corpg_reader;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s, 'k2' AS k FROM corpg_t;
+
+
+query
+SELECT has_table_privilege('corpg_reader', 'corpg_v', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+# The reader holds no privilege on corpg_t: the definer view reads it as the
+# view owner.
+connection reader user=corpg_reader password=corpg_reader_pw
+query
+SELECT a, k FROM corpg_v ORDER BY a;
+----
+a	k
+1	k2
+2	k2
+3	k2
+
+
+# View options come from the replacing statement: security_invoker switches
+# the base-table check to the reader, a replace without it switches it back.
+statement ok
+CREATE OR REPLACE VIEW corpg_v WITH (security_invoker = true) AS SELECT a, b, c, a + c AS s, 'k3' AS k FROM corpg_t;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement error
+SELECT a, k FROM corpg_v;
+----
+db error: ERROR: permission denied for table corpg_t
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v AS SELECT a, b, c, a + c AS s, 'k4' AS k FROM corpg_t;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+query
+SELECT count(*) AS n, max(k) AS k FROM corpg_v;
+----
+n	k
+3	k4
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v WITH (security_invoker = true) AS SELECT a, b, c, a + c AS s, 'k5' AS k FROM corpg_t;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_v WITH (security_invoker = false) AS SELECT a, b, c, a + c AS s, 'k6' AS k FROM corpg_t;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+query
+SELECT count(*) AS n, max(k) AS k FROM corpg_v;
+----
+n	k
+3	k6
+
+
+# ── Quoted mixed-case names are separate objects ──
+
+statement ok
+CREATE OR REPLACE VIEW "CorPg_Mixed" AS SELECT 'quoted' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mixed AS SELECT 'plain' AS src;
+
+
+query
+SELECT (SELECT src FROM "CorPg_Mixed") AS q, (SELECT src FROM corpg_mixed) AS p;
+----
+q	p
+quoted	plain
+
+
+statement ok
+CREATE OR REPLACE VIEW "CorPg_Mixed" AS SELECT 'quoted2' AS src;
+
+
+# An unquoted name folds to lower case and replaces corpg_mixed.
+statement ok
+CREATE OR REPLACE VIEW CORPG_MIXED AS SELECT 'plain2' AS src;
+
+
+query
+SELECT (SELECT src FROM "CorPg_Mixed") AS q, (SELECT src FROM corpg_mixed) AS p;
+----
+q	p
+quoted2	plain2
+
+
+query
+SELECT relname FROM pg_class WHERE lower(relname) = 'corpg_mixed' ORDER BY relname = 'corpg_mixed';
+----
+relname
+CorPg_Mixed
+corpg_mixed
+
+
+statement ok
+CREATE OR REPLACE VIEW "CorPg_Mixed" AS SELECT 'quoted3' AS src, 1 AS "Extra";
+
+
+query
+SELECT src, "Extra" FROM "CorPg_Mixed";
+----
+src	Extra
+quoted3	1
+
+
+# ── A renamed view is replaced under its new name ──
+
+statement ok
+CREATE VIEW corpg_rn AS SELECT 1 AS n;
+
+
+statement ok
+INSERT INTO corpg_ids SELECT 'renamed', oid FROM pg_class WHERE relname = 'corpg_rn';
+
+
+statement ok
+ALTER VIEW corpg_rn RENAME TO corpg_rn2;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_rn2 AS SELECT 2 AS n;
+
+
+# The old name is free again, so OR REPLACE creates a new view there.
+statement ok
+CREATE OR REPLACE VIEW corpg_rn AS SELECT 'fresh' AS s;
+
+
+query
+SELECT c.relname, c.oid = i.oid AS same_oid
+FROM pg_class c JOIN corpg_ids i ON i.kind = 'renamed'
+WHERE c.relname IN ('corpg_rn', 'corpg_rn2')
+ORDER BY c.relname;
+----
+relname	same_oid
+corpg_rn	f
+corpg_rn2	t
+
+
+query
+SELECT (SELECT n FROM corpg_rn2) AS n, (SELECT s FROM corpg_rn) AS s;
+----
+n	s
+2	fresh
+
+
+# ── A replace that reads the view itself ──
+
+# The name in the new body binds to the existing view, so the stored
+# definition refers to itself and reading it fails.
+statement ok
+CREATE VIEW corpg_self AS SELECT 1 AS n;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_self AS SELECT n + 1 AS n FROM corpg_self;
+
+
+statement error infinite recursion detected
+SELECT * FROM corpg_self;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_self AS SELECT 3 AS n;
+
+
+query
+SELECT n FROM corpg_self;
+----
+n
+3
+
+
+# ── Schema-qualified names and the search path ──
+
+statement ok
+CREATE SCHEMA corpg_s;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_sv AS SELECT 'schema' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_sv AS SELECT 'public' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_sv AS SELECT 'schema2' AS src;
+
+
+query
+SELECT (SELECT src FROM public.corpg_sv) AS p, (SELECT src FROM corpg_s.corpg_sv) AS s;
+----
+p	s
+public	schema2
+
+
+statement ok
+CREATE VIEW corpg_pubonly AS SELECT 'pub' AS src;
+
+
+statement ok
+SET search_path = corpg_s, public;
+
+
+# An unqualified replace targets the first schema of the path: it replaces
+# corpg_s.corpg_sv and creates corpg_s.corpg_pubonly next to the public one.
+statement ok
+CREATE OR REPLACE VIEW corpg_sv AS SELECT 'via_path' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_pubonly AS SELECT 'new' AS src;
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT (SELECT src FROM public.corpg_sv) AS p, (SELECT src FROM corpg_s.corpg_sv) AS s;
+----
+p	s
+public	via_path
+
+
+query
+SELECT n.nspname, (SELECT src FROM public.corpg_pubonly) AS p, (SELECT src FROM corpg_s.corpg_pubonly) AS s
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'corpg_pubonly'
+ORDER BY n.nspname;
+----
+nspname	p	s
+corpg_s	pub	new
+public	pub	new
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_s."CorPg_SQ" AS SELECT 1 AS n;
+
+
+statement ok
+CREATE OR REPLACE VIEW "corpg_s"."CorPg_SQ" AS SELECT 2 AS n;
+
+
+query
+SELECT n FROM corpg_s."CorPg_SQ";
+----
+n
+2
+
+
+# ── Only the owner may replace ──
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA corpg_s TO corpg_reader;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement error
+CREATE OR REPLACE VIEW corpg_s.corpg_sv AS SELECT 'intruder' AS src;
+----
+db error: ERROR: must be owner of view corpg_sv
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_mine AS SELECT 'mine' AS src;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_mine AS SELECT 'mine2' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_mine AS SELECT 'by_superuser' AS src;
+
+
+query
+SELECT c.relname, pg_get_userbyid(c.relowner) AS owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'corpg_s' AND c.relname IN ('corpg_sv', 'corpg_mine')
+ORDER BY c.relname;
+----
+relname	owner
+corpg_mine	corpg_reader
+corpg_sv	postgres
+
+
+query
+SELECT (SELECT src FROM corpg_s.corpg_sv) AS sv, (SELECT src FROM corpg_s.corpg_mine) AS mine;
+----
+sv	mine
+via_path	by_superuser
+
+
+# A member of the owning role may replace, and the owner stays the same.
+statement ok
+CREATE ROLE corpg_member LOGIN PASSWORD 'corpg_member_pw';
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA corpg_s TO corpg_member;
+
+
+connection member user=corpg_member password=corpg_member_pw
+statement error
+CREATE OR REPLACE VIEW corpg_s.corpg_mine AS SELECT 'member_before' AS src;
+----
+db error: ERROR: must be owner of view corpg_mine
+
+
+statement ok
+GRANT corpg_reader TO corpg_member;
+
+
+connection member user=corpg_member password=corpg_member_pw
+statement ok
+CREATE OR REPLACE VIEW corpg_s.corpg_mine AS SELECT 'member' AS src;
+
+
+query
+SELECT pg_get_userbyid(c.relowner) AS owner, (SELECT src FROM corpg_s.corpg_mine) AS src
+FROM pg_class c
+WHERE c.relname = 'corpg_mine';
+----
+owner	src
+corpg_reader	member
+
+
+# ── Dependent views read the new body ──
+
+statement ok
+CREATE VIEW corpg_dep1 AS SELECT a, b FROM corpg_t;
+
+
+statement ok
+CREATE VIEW corpg_dep2 AS SELECT a, b FROM corpg_dep1 WHERE a > 1;
+
+
+statement ok
+CREATE VIEW corpg_dep3 AS SELECT count(*) AS n, max(b) AS mb FROM corpg_dep2;
+
+
+query
+SELECT n, mb FROM corpg_dep3;
+----
+n	mb
+2	z
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dep1 AS SELECT a * 10 AS a, upper(b) AS b FROM corpg_t;
+
+
+query
+SELECT a, b FROM corpg_dep2 ORDER BY a;
+----
+a	b
+10	X
+20	Y
+30	Z
+
+
+query
+SELECT n, mb FROM corpg_dep3;
+----
+n	mb
+3	Z
+
+
+# A column appended to the base view does not change the dependent's columns.
+statement ok
+CREATE OR REPLACE VIEW corpg_dep1 AS SELECT a, b, c FROM corpg_t;
+
+
+query
+SELECT * FROM corpg_dep2 WHERE false;
+----
+a	b
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dep2 AS SELECT a, b, c FROM corpg_dep1 WHERE a > 1;
+
+
+query
+SELECT * FROM corpg_dep2 ORDER BY a;
+----
+a	b	c
+2	y	20
+3	z	30
+
+
+query
+SELECT n, mb FROM corpg_dep3;
+----
+n	mb
+2	z
+
+
+statement error
+CREATE OR REPLACE VIEW corpg_dep1 AS SELECT a, b FROM corpg_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+# The replaced views are still dependencies of their dependents.
+skipif postgres
+statement error
+DROP VIEW corpg_dep2;
+----
+db error: ERROR: Cannot drop entry "corpg_dep2" because there are entries that depend on it.
+view "corpg_dep3" depends on view "corpg_dep2".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP VIEW corpg_dep2;
+----
+db error: ERROR: cannot drop view corpg_dep2 because other objects depend on it
+DETAIL: view corpg_dep3 depends on view corpg_dep2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+# Inside a transaction the dependents read the new body; ROLLBACK restores
+# the old one for them too.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dep1 AS SELECT a, b, c FROM corpg_t WHERE a = 3;
+
+
+query
+SELECT n, mb FROM corpg_dep3;
+----
+n	mb
+1	z
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT n, mb FROM corpg_dep3;
+----
+n	mb
+2	z
+
+
+# ── Dependency edges follow the current body ──
+
+statement ok
+CREATE TABLE corpg_e1 (a INT);
+
+
+statement ok
+CREATE TABLE corpg_e2 (a INT);
+
+
+statement ok
+INSERT INTO corpg_e1 VALUES (1);
+
+
+statement ok
+INSERT INTO corpg_e2 VALUES (2);
+
+
+statement ok
+CREATE VIEW corpg_ev AS SELECT a FROM corpg_e1;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_ev AS SELECT a FROM corpg_e2;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a FROM corpg_ev;
+----
+a
+1
+
+
+# After the rollback the view still depends on corpg_e1.
+skipif postgres
+statement error
+DROP TABLE corpg_e1;
+----
+db error: ERROR: Cannot drop entry "corpg_e1" because there are entries that depend on it.
+view "corpg_ev" depends on table "corpg_e1".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP TABLE corpg_e1;
+----
+db error: ERROR: cannot drop table corpg_e1 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e1
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_ev AS SELECT a FROM corpg_e2;
+
+
+statement ok
+DROP TABLE corpg_e1;
+
+
+skipif postgres
+statement error
+DROP TABLE corpg_e2;
+----
+db error: ERROR: Cannot drop entry "corpg_e2" because there are entries that depend on it.
+view "corpg_ev" depends on table "corpg_e2".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP TABLE corpg_e2;
+----
+db error: ERROR: cannot drop table corpg_e2 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+query
+SELECT a FROM corpg_ev;
+----
+a
+2
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_ev AS SELECT 42 AS a;
+
+
+statement ok
+DROP TABLE corpg_e2;
+
+
+query
+SELECT a FROM corpg_ev;
+----
+a
+42
+
+
+# A replace that reads a table created in the same transaction: ROLLBACK
+# removes both, COMMIT keeps the view depending on the new table.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE corpg_e3 (a INT);
+
+
+statement ok
+INSERT INTO corpg_e3 VALUES (3);
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_ev AS SELECT a FROM corpg_e3;
+
+
+query
+SELECT a FROM corpg_ev;
+----
+a
+3
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a, (SELECT count(*) FROM pg_class WHERE relname = 'corpg_e3') AS e3 FROM corpg_ev;
+----
+a	e3
+42	0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE corpg_e3 (a INT);
+
+
+statement ok
+INSERT INTO corpg_e3 VALUES (3);
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_ev AS SELECT a FROM corpg_e3;
+
+
+statement ok
+COMMIT;
+
+
+skipif postgres
+statement error
+DROP TABLE corpg_e3;
+----
+db error: ERROR: Cannot drop entry "corpg_e3" because there are entries that depend on it.
+view "corpg_ev" depends on table "corpg_e3".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP TABLE corpg_e3;
+----
+db error: ERROR: cannot drop table corpg_e3 because other objects depend on it
+DETAIL: view corpg_ev depends on table corpg_e3
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+query
+SELECT a FROM corpg_ev;
+----
+a
+3
+
+
+# ── OR REPLACE FUNCTION (LANGUAGE sql) ──
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT x + 1 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_f(1) AS r;
+----
+r
+2
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT x + 100 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_f(1) AS r;
+----
+r
+101
+
+
+statement ok
+INSERT INTO corpg_ids SELECT 'func', oid FROM pg_proc WHERE proname = 'corpg_f';
+
+
+statement ok
+COMMENT ON FUNCTION corpg_f IS 'corpg function comment';
+
+
+# A BEGIN ATOMIC body replaces a string body.
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT LANGUAGE sql BEGIN ATOMIC SELECT x + 1000; END;
+
+
+query
+SELECT corpg_f(1) AS r;
+----
+r
+1001
+
+
+query
+SELECT p.oid = i.oid AS same_oid, obj_description(p.oid, 'pg_proc') AS cmt, count(*) OVER () AS definitions
+FROM pg_proc p JOIN corpg_ids i ON i.kind = 'func'
+WHERE p.proname = 'corpg_f';
+----
+same_oid	cmt	definitions
+t	corpg function comment	1
+
+
+# Overloads by argument types are separate functions.
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x TEXT) RETURNS TEXT AS $$ SELECT 'text:' || x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT, y INT) RETURNS INT AS $$ SELECT x * y $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT x - 1 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_f(5) AS i, corpg_f('b') AS t, corpg_f(3, 4) AS ii;
+----
+i	t	ii
+4	text:b	12
+
+
+query
+SELECT pronargs, count(*) AS n FROM pg_proc WHERE proname = 'corpg_f' GROUP BY pronargs ORDER BY pronargs;
+----
+pronargs	n
+1	2
+2	1
+
+
+statement ok
+DROP FUNCTION corpg_f(TEXT);
+
+
+query
+SELECT corpg_f(5) AS i, count(*) AS n FROM pg_proc WHERE proname = 'corpg_f';
+----
+i	n
+4	2
+
+
+# A new body that does not bind or does not parse is refused and the old
+# body stays.
+statement error (?i)corpg_missing.* does not exist
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT count(*)::INT FROM corpg_missing $$ LANGUAGE sql;
+
+
+statement error (?i)corpg_missing.* does not exist
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT LANGUAGE sql BEGIN ATOMIC SELECT count(*)::INT FROM corpg_missing; END;
+
+
+statement error syntax error at or near
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELEC x $$ LANGUAGE sql;
+
+
+statement error (?i)schema.*corpg_nosuch.* does not exist
+CREATE OR REPLACE FUNCTION corpg_nosuch.corpg_f(x INT) RETURNS INT AS $$ SELECT x $$ LANGUAGE sql;
+
+
+skipif postgres
+statement error
+CREATE OR REPLACE FUNCTION IF NOT EXISTS corpg_f(x INT) RETURNS INT AS $$ SELECT x $$ LANGUAGE sql;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+skipif serenedb
+statement error
+CREATE OR REPLACE FUNCTION IF NOT EXISTS corpg_f(x INT) RETURNS INT AS $$ SELECT x $$ LANGUAGE sql;
+----
+db error: ERROR: syntax error at or near "NOT"
+
+
+query
+SELECT corpg_f(5) AS i, count(*) AS n FROM pg_proc WHERE proname = 'corpg_f';
+----
+i	n
+4	2
+
+
+# Names may be given to formerly unnamed parameters.
+statement ok
+CREATE FUNCTION corpg_an(INT) RETURNS INT AS $$ SELECT $1 + 1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_an(x INT) RETURNS INT AS $$ SELECT x + 2 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_an(1) AS pos, corpg_an(x => 1) AS named, (SELECT count(*) FROM pg_proc WHERE proname = 'corpg_an') AS n;
+----
+pos	named	n
+3	3	1
+
+
+# Type aliases and type modifiers do not make a new signature.
+statement ok
+CREATE FUNCTION corpg_al(x INTEGER, s VARCHAR(10)) RETURNS INTEGER AS $$ SELECT x + 1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_al(x INT4, s VARCHAR(20)) RETURNS INT4 AS $$ SELECT x + 2 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_al(x int, s varchar) RETURNS int AS $$ SELECT x + 3 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_al(1, 'a') AS r, (SELECT count(*) FROM pg_proc WHERE proname = 'corpg_al') AS n;
+----
+r	n
+4	1
+
+
+# Views and functions do not share a namespace.
+statement ok
+CREATE FUNCTION corpg_same() RETURNS TEXT AS $$ SELECT 'fn' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_same AS SELECT 'view' AS src;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_same() RETURNS TEXT AS $$ SELECT 'fn2' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_same AS SELECT 'view2' AS src;
+
+
+query
+SELECT corpg_same() AS f, (SELECT src FROM corpg_same) AS v;
+----
+f	v
+fn2	view2
+
+
+# The replaced function keeps its privileges.
+statement ok
+CREATE FUNCTION corpg_acl() RETURNS TEXT AS $$ SELECT 'acl0' $$ LANGUAGE sql;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION corpg_acl() FROM PUBLIC;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_acl() RETURNS TEXT AS $$ SELECT 'acl1' $$ LANGUAGE sql;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement error
+SELECT corpg_acl();
+----
+db error: ERROR: permission denied for function corpg_acl
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION corpg_acl() TO corpg_reader;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_acl() RETURNS TEXT AS $$ SELECT 'acl2' $$ LANGUAGE sql;
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+query
+SELECT corpg_acl() AS r, has_function_privilege('corpg_reader', 'corpg_acl()', 'EXECUTE') AS can_exec;
+----
+r	can_exec
+acl2	t
+
+
+statement ok
+CREATE FUNCTION corpg_tf() RETURNS TABLE(n INT, s TEXT) AS $$ SELECT 1, 'one' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_tf() RETURNS TABLE(n INT, s TEXT) AS $$ VALUES (2, 'two'), (3, 'three') $$ LANGUAGE sql;
+
+
+query
+SELECT n, s FROM corpg_tf() ORDER BY n;
+----
+n	s
+2	two
+3	three
+
+
+# Views and functions that call a replaced function run the new body.
+statement ok
+CREATE VIEW corpg_fv AS SELECT corpg_f(a) AS r FROM corpg_t;
+
+
+statement ok
+CREATE FUNCTION corpg_outer(x INT) RETURNS INT AS $$ SELECT corpg_f(x) * 10 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT x * 2 $$ LANGUAGE sql;
+
+
+query
+SELECT r FROM corpg_fv ORDER BY r;
+----
+r
+2
+4
+6
+
+
+query
+SELECT corpg_outer(5) AS r;
+----
+r
+100
+
+
+# A BEGIN ATOMIC caller depends on the function it calls and runs its
+# current body after each replace.
+statement ok
+CREATE FUNCTION corpg_callee(x INT) RETURNS INT AS $$ SELECT x + 1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE FUNCTION corpg_caller(x INT) RETURNS INT LANGUAGE sql BEGIN ATOMIC SELECT corpg_callee(x) * 10; END;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_callee(x INT) RETURNS INT AS $$ SELECT x + 2 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_caller(1) AS r;
+----
+r
+30
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_callee(x INT) RETURNS INT LANGUAGE sql BEGIN ATOMIC SELECT x + 3; END;
+
+
+query
+SELECT corpg_caller(1) AS r;
+----
+r
+40
+
+
+skipif postgres
+statement error
+DROP FUNCTION corpg_callee(INT);
+----
+db error: ERROR: Cannot drop entry "corpg_callee" because there are entries that depend on it.
+macro function "corpg_caller" depends on macro function "corpg_callee".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP FUNCTION corpg_callee(INT);
+----
+db error: ERROR: cannot drop function corpg_callee(integer) because other objects depend on it
+DETAIL: function corpg_caller(integer) depends on function corpg_callee(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+# A function that reads a replaced view reads the new body.
+statement ok
+CREATE FUNCTION corpg_reads() RETURNS BIGINT AS $$ SELECT count(*) FROM corpg_dep1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dep1 AS SELECT a, b, c FROM corpg_t WHERE a = 3;
+
+
+query
+SELECT corpg_reads() AS n, (SELECT count(*) FROM corpg_dep2) AS dep2;
+----
+n	dep2
+1	1
+
+
+# A BEGIN ATOMIC body depends on what it reads: the view can be replaced but
+# not dropped, and the edge follows the function's current body.
+statement ok
+CREATE VIEW corpg_atv AS SELECT a FROM corpg_t;
+
+
+statement ok
+CREATE FUNCTION corpg_atf() RETURNS BIGINT LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM corpg_atv; END;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_atv AS SELECT a FROM corpg_t WHERE a = 1;
+
+
+query
+SELECT corpg_atf() AS n;
+----
+n
+1
+
+
+skipif postgres
+statement error
+DROP VIEW corpg_atv;
+----
+db error: ERROR: Cannot drop entry "corpg_atv" because there are entries that depend on it.
+macro function "corpg_atf" depends on view "corpg_atv".
+Use DROP...CASCADE to drop all dependents.
+
+
+skipif serenedb
+statement error
+DROP VIEW corpg_atv;
+----
+db error: ERROR: cannot drop view corpg_atv because other objects depend on it
+DETAIL: function corpg_atf() depends on view corpg_atv
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_atf() RETURNS BIGINT LANGUAGE sql BEGIN ATOMIC SELECT 7::BIGINT; END;
+
+
+statement ok
+DROP VIEW corpg_atv;
+
+
+query
+SELECT corpg_atf() AS n;
+----
+n
+7
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT corpg_atf() AS n, (SELECT count(*) FROM pg_class WHERE relname = 'corpg_atv') AS views;
+----
+n	views
+1	1
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_atf() RETURNS BIGINT LANGUAGE sql BEGIN ATOMIC SELECT 7::BIGINT; END;
+
+
+statement ok
+DROP VIEW corpg_atv;
+
+
+query
+SELECT corpg_atf() AS n;
+----
+n
+7
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_s.corpg_sf() RETURNS TEXT AS $$ SELECT 's1' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_sf() RETURNS TEXT AS $$ SELECT 'p1' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_s.corpg_sf() RETURNS TEXT AS $$ SELECT 's2' $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_s.corpg_sf() AS s, public.corpg_sf() AS p, corpg_sf() AS unqualified;
+----
+s	p	unqualified
+s2	p1	p1
+
+
+statement ok
+SET search_path = corpg_s, public;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_sf() RETURNS TEXT AS $$ SELECT 's3' $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_sf() AS unqualified;
+----
+unqualified
+s3
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT corpg_s.corpg_sf() AS s, public.corpg_sf() AS p;
+----
+s	p
+s3	p1
+
+
+connection reader user=corpg_reader password=corpg_reader_pw
+statement error
+CREATE OR REPLACE FUNCTION corpg_s.corpg_sf() RETURNS TEXT AS $$ SELECT 'intruder' $$ LANGUAGE sql;
+----
+db error: ERROR: must be owner of function corpg_sf
+
+
+query
+SELECT corpg_s.corpg_sf() AS s;
+----
+s
+s3
+
+
+# A replace by the superuser or by a member of the owning role keeps the owner.
+connection reader user=corpg_reader password=corpg_reader_pw
+statement ok
+CREATE OR REPLACE FUNCTION corpg_s.corpg_rf() RETURNS TEXT AS $$ SELECT 'r0' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_s.corpg_rf() RETURNS TEXT AS $$ SELECT 'su' $$ LANGUAGE sql;
+
+
+query
+SELECT pg_get_userbyid(p.proowner) AS owner, corpg_s.corpg_rf() AS r FROM pg_proc p WHERE p.proname = 'corpg_rf';
+----
+owner	r
+corpg_reader	su
+
+
+connection member user=corpg_member password=corpg_member_pw
+statement ok
+CREATE OR REPLACE FUNCTION corpg_s.corpg_rf() RETURNS TEXT AS $$ SELECT 'member' $$ LANGUAGE sql;
+
+
+query
+SELECT pg_get_userbyid(p.proowner) AS owner, corpg_s.corpg_rf() AS r FROM pg_proc p WHERE p.proname = 'corpg_rf';
+----
+owner	r
+corpg_reader	member
+
+
+# ── OR REPLACE PROCEDURE (LANGUAGE sql) ──
+
+statement ok
+CREATE TABLE corpg_log (v TEXT);
+
+
+statement ok
+CREATE OR REPLACE PROCEDURE corpg_p(x INT) AS $$ INSERT INTO corpg_log VALUES ('one:' || x) $$ LANGUAGE sql;
+
+
+statement ok
+INSERT INTO corpg_ids SELECT 'proc', oid FROM pg_proc WHERE proname = 'corpg_p';
+
+
+statement ok
+CALL corpg_p(1);
+
+
+statement ok
+CREATE OR REPLACE PROCEDURE corpg_p(x INT) AS $$ INSERT INTO corpg_log VALUES ('two:' || x) $$ LANGUAGE sql;
+
+
+query
+SELECT p.oid = i.oid AS same_oid, p.prokind
+FROM pg_proc p JOIN corpg_ids i ON i.kind = 'proc'
+WHERE p.proname = 'corpg_p';
+----
+same_oid	prokind
+t	p
+
+
+statement ok
+CALL corpg_p(2);
+
+
+statement ok
+CREATE OR REPLACE PROCEDURE corpg_p(x TEXT) AS $$ INSERT INTO corpg_log VALUES ('text:' || x) $$ LANGUAGE sql;
+
+
+statement ok
+CALL corpg_p('a');
+
+
+statement ok
+CALL corpg_p(3);
+
+
+query
+SELECT v FROM corpg_log ORDER BY v;
+----
+v
+one:1
+text:a
+two:2
+two:3
+
+
+query
+SELECT prokind, count(*) AS n FROM pg_proc WHERE proname = 'corpg_p' GROUP BY prokind;
+----
+prokind	n
+p	2
+
+
+# A rolled back replace restores the old body; the rows its CALL wrote go too.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE PROCEDURE corpg_p(x TEXT) AS $$ INSERT INTO corpg_log VALUES ('rolled:' || x) $$ LANGUAGE sql;
+
+
+statement ok
+CALL corpg_p('b');
+
+
+query
+SELECT v FROM corpg_log WHERE v LIKE 'rolled:%';
+----
+v
+rolled:b
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+CALL corpg_p('c');
+
+
+query
+SELECT v FROM corpg_log WHERE v NOT LIKE 'two:%' AND v NOT LIKE 'one:%' ORDER BY v;
+----
+v
+text:a
+text:c
+
+
+# ── Transactions: one session ──
+
+statement ok
+CREATE VIEW corpg_tx_v AS SELECT a, 'v0' AS tag FROM corpg_t WHERE a = 1;
+
+
+statement ok
+INSERT INTO corpg_ids SELECT 'txview', oid FROM pg_class WHERE relname = 'corpg_tx_v';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a, 'v1' AS tag FROM corpg_t WHERE a = 2;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag
+2	v1
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a, 'v2' AS tag, c FROM corpg_t WHERE a = 3;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag	c
+3	v2	30
+
+
+query
+SELECT count(*) AS n, bool_and(c.oid = i.oid) AS same_oid
+FROM pg_class c JOIN corpg_ids i ON i.kind = 'txview'
+WHERE c.relname = 'corpg_tx_v';
+----
+n	same_oid
+1	t
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag
+1	v0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a, 'v1' AS tag FROM corpg_t WHERE a = 2;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a, 'v2' AS tag, c FROM corpg_t WHERE a = 3;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag	c
+3	v2	30
+
+
+query
+SELECT count(*) AS n, bool_and(c.oid = i.oid) AS same_oid
+FROM pg_class c JOIN corpg_ids i ON i.kind = 'txview'
+WHERE c.relname = 'corpg_tx_v';
+----
+n	same_oid
+1	t
+
+
+# A refused replace aborts the transaction; a replace before it goes too.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a, 'v3' AS tag, c FROM corpg_t WHERE a = 1;
+
+
+statement error
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT a FROM corpg_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+statement error
+SELECT * FROM corpg_tx_v;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag	c
+3	v2	30
+
+
+# DROP then OR REPLACE in one transaction may change the shape freely.
+statement ok
+BEGIN;
+
+
+statement ok
+DROP VIEW corpg_tx_v;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT 'x' AS only_col;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+only_col
+x
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+a	tag	c
+3	v2	30
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP VIEW corpg_tx_v;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT 'y' AS only_col;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+only_col
+y
+
+
+# DROP then create is a new object with a new oid.
+query
+SELECT count(*) AS n, bool_and(c.oid = i.oid) AS same_oid
+FROM pg_class c JOIN corpg_ids i ON i.kind = 'txview'
+WHERE c.relname = 'corpg_tx_v';
+----
+n	same_oid
+1	f
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_new AS SELECT 1 AS n;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_new AS SELECT 2 AS n;
+
+
+query
+SELECT n FROM corpg_tx_new;
+----
+n
+2
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'corpg_tx_new';
+----
+n
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tx_v AS SELECT 'z' AS only_col;
+
+
+statement ok
+DROP VIEW corpg_tx_v;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM corpg_tx_v;
+----
+only_col
+y
+
+
+statement ok
+CREATE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v0:' || x $$ LANGUAGE sql;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v1:' || x $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_txf(1) AS r;
+----
+r
+v1:1
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v2:' || x $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_txf(2) AS r;
+----
+r
+v2:2
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT corpg_txf(3) AS r;
+----
+r
+v0:3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v1:' || x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v2:' || x $$ LANGUAGE sql;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT corpg_txf(4) AS r;
+----
+r
+v2:4
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x TEXT) RETURNS TEXT AS $$ SELECT 'text:' || x $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_txf('a') AS t, corpg_txf(5) AS i;
+----
+t	i
+text:a	v2:5
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'corpg_txf';
+----
+n
+1
+
+
+# DROP then OR REPLACE in one transaction may change the return type.
+statement ok
+BEGIN;
+
+
+statement ok
+DROP FUNCTION corpg_txf(INT);
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS INT AS $$ SELECT x * 1000 $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_txf(1) AS r;
+----
+r
+1000
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT corpg_txf(6) AS r;
+----
+r
+v2:6
+
+
+# A refused function replace aborts the transaction; the replace before it
+# goes too.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v9:' || x $$ LANGUAGE sql;
+
+
+statement error (?i)corpg_missing.* does not exist
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT max(s) FROM corpg_missing $$ LANGUAGE sql;
+
+
+statement error
+SELECT corpg_txf(1);
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT corpg_txf(8) AS r;
+----
+r
+v2:8
+
+
+# A view created over the replaced function in the same transaction goes
+# with it at ROLLBACK.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_txf(x INT) RETURNS TEXT AS $$ SELECT 'v3:' || x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE VIEW corpg_txfv AS SELECT corpg_txf(7) AS r;
+
+
+query
+SELECT r FROM corpg_txfv;
+----
+r
+v3:7
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT corpg_txf(7) AS r, (SELECT count(*) FROM pg_class WHERE relname = 'corpg_txfv') AS views;
+----
+r	views
+v2:7	0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_f(x INT) RETURNS INT AS $$ SELECT x * 3 $$ LANGUAGE sql;
+
+
+query
+SELECT r FROM corpg_fv ORDER BY r;
+----
+r
+3
+6
+9
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT r FROM corpg_fv ORDER BY r;
+----
+r
+2
+4
+6
+
+
+# ── Transactions: two sessions ──
+
+# An object created by OR REPLACE is invisible to others until COMMIT.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mc_new AS SELECT 'c1' AS who;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'corpg_mc_new';
+----
+n
+0
+
+
+connection c2
+statement error (?i)corpg_mc_new.* does not exist
+SELECT * FROM corpg_mc_new;
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT who, (SELECT count(*) FROM pg_class WHERE relname = 'corpg_mc_new') AS n FROM corpg_mc_new;
+----
+who	n
+c1	1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mc_gone AS SELECT 1 AS n;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'corpg_mc_gone';
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'corpg_mc_gone';
+----
+n
+0
+
+
+# A replace of an existing view is published at COMMIT.
+statement ok
+CREATE VIEW corpg_mc_v AS SELECT a, 'old' AS tag FROM corpg_t WHERE a = 1;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mc_v AS SELECT a, 'new' AS tag, c FROM corpg_t WHERE a = 2;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'corpg_mc_v';
+----
+n
+1
+
+
+onlyif serenedb
+connection c2
+query
+SELECT * FROM corpg_mc_v;
+----
+a	tag
+1	old
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT * FROM corpg_mc_v;
+----
+a	tag	c
+2	new	20
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mc_v AS SELECT a, 'rolled' AS tag, c, 0 AS d FROM corpg_t;
+
+
+onlyif serenedb
+connection c2
+query
+SELECT * FROM corpg_mc_v;
+----
+a	tag	c
+2	new	20
+
+
+statement ok
+ROLLBACK;
+
+
+connection c2
+query
+SELECT * FROM corpg_mc_v;
+----
+a	tag	c
+2	new	20
+
+
+# A REPEATABLE READ transaction takes its snapshot at its first statement,
+# not at BEGIN: a replace committed in between is visible to it.
+statement ok
+CREATE VIEW corpg_mc_rr AS SELECT 'old' AS tag;
+
+
+connection c2
+statement ok
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_mc_rr AS SELECT 'new' AS tag;
+
+
+connection c2
+query
+SELECT tag FROM corpg_mc_rr;
+----
+tag
+new
+
+
+connection c2
+statement ok
+COMMIT;
+
+
+# Functions: the other session keeps calling the committed body.
+statement ok
+CREATE FUNCTION corpg_mc_f() RETURNS TEXT AS $$ SELECT 'f0' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE VIEW corpg_mc_fv AS SELECT corpg_mc_f() AS r;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_mc_f() RETURNS TEXT AS $$ SELECT 'f1' $$ LANGUAGE sql;
+
+
+query
+SELECT corpg_mc_f() AS r;
+----
+r
+f1
+
+
+connection c2
+query
+SELECT corpg_mc_f() AS r, (SELECT r FROM corpg_mc_fv) AS via_view;
+----
+r	via_view
+f0	f0
+
+
+connection c2
+query
+SELECT prosrc LIKE '%f1%' AS sees_new, count(*) OVER () AS definitions FROM pg_proc WHERE proname = 'corpg_mc_f';
+----
+sees_new	definitions
+f	1
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT corpg_mc_f() AS r, (SELECT r FROM corpg_mc_fv) AS via_view;
+----
+r	via_view
+f1	f1
+
+
+connection c2
+query
+SELECT prosrc LIKE '%f1%' AS sees_new FROM pg_proc WHERE proname = 'corpg_mc_f';
+----
+sees_new
+t
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_mc_f() RETURNS TEXT AS $$ SELECT 'f2' $$ LANGUAGE sql;
+
+
+connection c2
+query
+SELECT corpg_mc_f() AS r;
+----
+r
+f1
+
+
+statement ok
+ROLLBACK;
+
+
+connection c2
+query
+SELECT corpg_mc_f() AS r;
+----
+r
+f1
+
+
+query
+SELECT corpg_mc_f() AS r;
+----
+r
+f1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_mc_f(x TEXT) RETURNS TEXT AS $$ SELECT 'ovl:' || x $$ LANGUAGE sql;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'corpg_mc_f';
+----
+n
+1
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT corpg_mc_f('z') AS r, (SELECT count(*) FROM pg_proc WHERE proname = 'corpg_mc_f') AS n;
+----
+r	n
+ovl:z	2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_mc_new() RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+connection c2
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'corpg_mc_new';
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'corpg_mc_new';
+----
+n
+0
+
+
+# Procedures: a CALL from the other session runs the committed body.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE PROCEDURE corpg_p(x INT) AS $$ INSERT INTO corpg_log VALUES ('three:' || x) $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+CALL corpg_p(4);
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+statement ok
+CALL corpg_p(5);
+
+
+query
+SELECT v FROM corpg_log WHERE v LIKE '%:4' OR v LIKE '%:5' ORDER BY v;
+----
+v
+three:5
+two:4
+
+
+# Two sessions replacing or creating different objects at the same time both
+# commit, including views over the same table.
+statement ok
+CREATE TABLE corpg_cx_t (a INT);
+
+
+statement ok
+INSERT INTO corpg_cx_t VALUES (1), (2);
+
+
+statement ok
+CREATE VIEW corpg_cx_a AS SELECT a, 'a0' AS tag FROM corpg_cx_t;
+
+
+statement ok
+CREATE VIEW corpg_cx_b AS SELECT a, 'b0' AS tag FROM corpg_cx_t;
+
+
+statement ok
+CREATE FUNCTION corpg_cx_f() RETURNS TEXT AS $$ SELECT 'f0' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE FUNCTION corpg_cx_g() RETURNS TEXT AS $$ SELECT 'g0' $$ LANGUAGE sql;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_a AS SELECT a, 'a1' AS tag FROM corpg_cx_t WHERE a = 1;
+
+
+connection c2
+statement ok
+BEGIN;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_b AS SELECT a, 'b1' AS tag FROM corpg_cx_t WHERE a = 2;
+
+
+connection c2
+statement ok
+COMMIT;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT * FROM corpg_cx_a UNION ALL SELECT * FROM corpg_cx_b ORDER BY a;
+----
+a	tag
+1	a1
+2	b1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_n1 AS SELECT a FROM corpg_cx_t;
+
+
+connection c2
+statement ok
+BEGIN;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_n2 AS SELECT a FROM corpg_cx_t;
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+statement ok
+COMMIT;
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'corpg_cx_n%' ORDER BY relname;
+----
+relname
+corpg_cx_n1
+corpg_cx_n2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_cx_f() RETURNS TEXT AS $$ SELECT 'f1' $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+BEGIN;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE FUNCTION corpg_cx_g() RETURNS TEXT AS $$ SELECT 'g1' $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+COMMIT;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT corpg_cx_f() AS f, corpg_cx_g() AS g;
+----
+f	g
+f1	g1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_a AS SELECT a, 'a2' AS tag FROM corpg_cx_t;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE FUNCTION corpg_cx_g() RETURNS TEXT AS $$ SELECT 'g2' $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE VIEW corpg_cx_b AS SELECT a, 'b2' AS tag FROM corpg_cx_t;
+
+
+connection c2
+statement ok
+INSERT INTO corpg_cx_t VALUES (3);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT tag, count(*) AS n FROM (SELECT tag FROM corpg_cx_a UNION ALL SELECT tag FROM corpg_cx_b) AS u GROUP BY tag ORDER BY tag;
+----
+tag	n
+a2	3
+b2	3
+
+
+# A view created by the other session over a function being replaced calls
+# the committed body until the replace commits.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_cx_f() RETURNS TEXT AS $$ SELECT 'f3' $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+CREATE VIEW corpg_cx_fv AS SELECT corpg_cx_f() AS r;
+
+
+connection c2
+query
+SELECT r FROM corpg_cx_fv;
+----
+r
+f1
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT r, corpg_cx_g() AS g FROM corpg_cx_fv;
+----
+r	g
+f3	g2
+
+
+# The other session replaces a view to call a function whose replace is
+# still open: the view runs the committed body until that replace commits.
+statement ok
+CREATE FUNCTION corpg_vf() RETURNS TEXT AS $$ SELECT 'vf0' $$ LANGUAGE sql;
+
+
+statement ok
+CREATE VIEW corpg_vfv AS SELECT 'v0' AS tag;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION corpg_vf() RETURNS TEXT AS $$ SELECT 'vf1' $$ LANGUAGE sql;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE VIEW corpg_vfv AS SELECT corpg_vf() AS tag;
+
+
+connection c2
+query
+SELECT tag FROM corpg_vfv;
+----
+tag
+vf0
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT tag FROM corpg_vfv;
+----
+tag
+vf1
+
+
+connection c2
+query
+SELECT tag FROM corpg_vfv;
+----
+tag
+vf1
+
+
+# A replace of a base view reaches the other session's dependents at COMMIT.
+statement ok
+CREATE VIEW corpg_dc1 AS SELECT a FROM corpg_cx_t;
+
+
+statement ok
+CREATE VIEW corpg_dc2 AS SELECT count(*) AS n FROM corpg_dc1;
+
+
+connection c2
+query
+SELECT n FROM corpg_dc2;
+----
+n
+3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dc1 AS SELECT a FROM corpg_cx_t WHERE a > 1;
+
+
+query
+SELECT n FROM corpg_dc2;
+----
+n
+2
+
+
+statement ok
+COMMIT;
+
+
+connection c2
+query
+SELECT n FROM corpg_dc2;
+----
+n
+2
+
+
+# Replaces from the two sessions in turn build on each other's committed
+# definition and keep one object.
+connection c2
+statement ok
+CREATE OR REPLACE VIEW corpg_dc1 AS SELECT a, 'c2' AS who FROM corpg_cx_t WHERE a > 1;
+
+
+query
+SELECT count(*) AS n, max(who) AS who FROM corpg_dc1;
+----
+n	who
+2	c2
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_dc1 AS SELECT a, 'c1' AS who, 0 AS z FROM corpg_cx_t;
+
+
+connection c2
+query
+SELECT count(*) AS n, max(who) AS who, sum(z) AS z, (SELECT n FROM corpg_dc2) AS dep FROM corpg_dc1;
+----
+n	who	z	dep
+3	c1	0	3
+
+
+connection c2
+statement error
+CREATE OR REPLACE VIEW corpg_dc1 AS SELECT a, 'c2' AS who FROM corpg_cx_t;
+----
+db error: ERROR: cannot drop columns from view
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname = 'corpg_dc1') AS n, (SELECT max(who) FROM corpg_dc1) AS who;
+----
+n	who
+1	c1
+
+
+# ── Temporary views are per session ──
+
+statement ok
+CREATE OR REPLACE TEMP VIEW corpg_tmp AS SELECT 'c1' AS who;
+
+
+statement ok
+CREATE OR REPLACE TEMPORARY VIEW corpg_tmp AS SELECT 'c1b' AS who;
+
+
+connection c2
+statement error (?i)corpg_tmp.* does not exist
+SELECT * FROM corpg_tmp;
+
+
+connection c2
+statement ok
+CREATE OR REPLACE TEMP VIEW corpg_tmp AS SELECT 'c2' AS who, 2 AS n;
+
+
+query
+SELECT * FROM corpg_tmp;
+----
+who
+c1b
+
+
+connection c2
+query
+SELECT * FROM corpg_tmp;
+----
+who	n
+c2	2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TEMP VIEW corpg_tmp AS SELECT 'rolled' AS who;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM corpg_tmp;
+----
+who
+c1b
+
+
+# A temporary view shadows a persistent one; a replace without TEMP targets
+# the persistent view.
+statement ok
+CREATE VIEW corpg_shadow AS SELECT 'persistent' AS src;
+
+
+statement ok
+CREATE OR REPLACE TEMP VIEW corpg_shadow AS SELECT 'temp' AS src;
+
+
+query
+SELECT (SELECT src FROM corpg_shadow) AS unqualified, (SELECT src FROM public.corpg_shadow) AS persistent;
+----
+unqualified	persistent
+temp	persistent
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_shadow AS SELECT 'persistent2' AS src;
+
+
+query
+SELECT (SELECT src FROM corpg_shadow) AS unqualified, (SELECT src FROM public.corpg_shadow) AS persistent;
+----
+unqualified	persistent
+temp	persistent2
+
+
+connection c2
+query
+SELECT src FROM corpg_shadow;
+----
+src
+persistent2
+
+
+statement ok
+DROP VIEW corpg_shadow;
+
+
+query
+SELECT src FROM corpg_shadow;
+----
+src
+persistent2
+
+
+# With only a temporary view under the name, a replace without TEMP creates
+# a persistent view next to it.
+statement ok
+CREATE TEMP VIEW corpg_tonly AS SELECT 'temp' AS src;
+
+
+statement ok
+CREATE OR REPLACE VIEW corpg_tonly AS SELECT 'persistent' AS src;
+
+
+query
+SELECT (SELECT src FROM corpg_tonly) AS unqualified, (SELECT src FROM public.corpg_tonly) AS persistent;
+----
+unqualified	persistent
+temp	persistent
+
+
+connection c2
+query
+SELECT src FROM corpg_tonly;
+----
+src
+persistent
+
+
+statement ok
+DROP VIEW corpg_tonly;
+
+
+query
+SELECT src FROM corpg_tonly;
+----
+src
+persistent
+
+
+# ── Cleanup ──
+
+statement ok
+DROP VIEW corpg_tonly;
+
+
+statement ok
+DROP VIEW corpg_dc2;
+
+
+statement ok
+DROP VIEW corpg_dc1;
+
+
+statement ok
+DROP VIEW corpg_vfv;
+
+
+statement ok
+DROP FUNCTION corpg_vf();
+
+
+statement ok
+DROP VIEW corpg_cx_fv;
+
+
+statement ok
+DROP VIEW corpg_cx_a;
+
+
+statement ok
+DROP VIEW corpg_cx_b;
+
+
+statement ok
+DROP VIEW corpg_cx_n1;
+
+
+statement ok
+DROP VIEW corpg_cx_n2;
+
+
+statement ok
+DROP FUNCTION corpg_cx_f();
+
+
+statement ok
+DROP FUNCTION corpg_cx_g();
+
+
+statement ok
+DROP TABLE corpg_cx_t;
+
+
+statement ok
+DROP VIEW corpg_shadow;
+
+
+statement ok
+DROP VIEW corpg_tmp;
+
+
+connection c2
+statement ok
+DROP VIEW corpg_tmp;
+
+
+statement ok
+DROP PROCEDURE corpg_p(INT);
+
+
+statement ok
+DROP PROCEDURE corpg_p(TEXT);
+
+
+statement ok
+DROP VIEW corpg_mc_fv;
+
+
+statement ok
+DROP FUNCTION corpg_mc_f();
+
+
+statement ok
+DROP FUNCTION corpg_mc_f(TEXT);
+
+
+statement ok
+DROP VIEW corpg_mc_v;
+
+
+statement ok
+DROP VIEW corpg_mc_rr;
+
+
+statement ok
+DROP VIEW corpg_mc_new;
+
+
+statement ok
+DROP FUNCTION corpg_txf(INT);
+
+
+statement ok
+DROP VIEW corpg_tx_v;
+
+
+statement ok
+DROP FUNCTION corpg_sf();
+
+
+statement ok
+DROP FUNCTION corpg_reads();
+
+
+statement ok
+DROP FUNCTION corpg_atf();
+
+
+statement ok
+DROP FUNCTION corpg_acl();
+
+
+statement ok
+DROP VIEW corpg_same;
+
+
+statement ok
+DROP FUNCTION corpg_same();
+
+
+statement ok
+DROP FUNCTION corpg_al(INT, VARCHAR);
+
+
+statement ok
+DROP FUNCTION corpg_an(INT);
+
+
+statement ok
+DROP FUNCTION corpg_outer(INT);
+
+
+statement ok
+DROP FUNCTION corpg_caller(INT);
+
+
+statement ok
+DROP FUNCTION corpg_callee(INT);
+
+
+statement ok
+DROP VIEW corpg_fv;
+
+
+statement ok
+DROP FUNCTION corpg_tf();
+
+
+statement ok
+DROP FUNCTION corpg_f(INT);
+
+
+statement ok
+DROP FUNCTION corpg_f(INT, INT);
+
+
+statement ok
+DROP VIEW corpg_ev;
+
+
+statement ok
+DROP TABLE corpg_e3;
+
+
+statement ok
+DROP VIEW corpg_dep3;
+
+
+statement ok
+DROP VIEW corpg_dep2;
+
+
+statement ok
+DROP VIEW corpg_dep1;
+
+
+statement ok
+DROP SCHEMA corpg_s CASCADE;
+
+
+statement ok
+DROP VIEW corpg_pubonly;
+
+
+statement ok
+DROP VIEW corpg_sv;
+
+
+statement ok
+DROP VIEW "CorPg_Mixed";
+
+
+statement ok
+DROP VIEW corpg_mixed;
+
+
+statement ok
+DROP VIEW corpg_rec;
+
+
+statement ok
+DROP VIEW corpg_self;
+
+
+statement ok
+DROP VIEW corpg_rn;
+
+
+statement ok
+DROP VIEW corpg_rn2;
+
+
+statement ok
+DROP VIEW corpg_num;
+
+
+statement ok
+DROP VIEW corpg_cl;
+
+
+statement ok
+DROP VIEW corpg_v;
+
+
+statement ok
+DROP ROLE corpg_member;
+
+
+statement ok
+DROP ROLE corpg_reader;
+
+
+statement ok
+DROP TABLE corpg_log;
+
+
+statement ok
+DROP TABLE corpg_ids;
+
+
+statement ok
+DROP TABLE corpg_t;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE lower(relname) LIKE 'corpg%';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname LIKE 'corpg%';
+----
+n
+0

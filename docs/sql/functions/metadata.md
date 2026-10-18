@@ -43,6 +43,8 @@ The `sdb_views` _view_ returns views that are not marked as internal:
 
 <SqlLogicTest id="sql/functions/metadata/example_004" />
 
+The functions list every database the session can see, including [attached](../../sql/statements/attach/index.md) PostgreSQL, ClickHouse and Iceberg catalogs. A listing leaves out what it cannot read, at the smallest part it can: an attached catalog whose server is unreachable, a schema whose objects cannot be listed, or an object whose details cannot be read. Everything else is still listed, so a server that is down never fails a listing of the other databases. A filter on `database_name`, such as `WHERE database_name = current_database()`, makes a listing read only the databases it names.
+
 
 The following metadata functions are available:
 
@@ -56,6 +58,8 @@ The following metadata functions are available:
 | [`sdb_extensions()`](#sdb_extensions) | Capability modules compiled into the instance |
 | [`sdb_functions()`](#sdb_functions) | Functions and macros |
 | [`sdb_indexes()`](#sdb_indexes) | Secondary indexes |
+| [`sdb_job_runs()`](../statements/create_job/index.md#monitoring) | Most recent runs of scheduled jobs |
+| [`sdb_jobs()`](../statements/create_job/index.md#monitoring) | Scheduled jobs and their run state |
 | [`sdb_keywords()`](#sdb_keywords) | Keywords and reserved words |
 | [`sdb_log_contexts()`](#sdb_log_contexts) | Contexts of log entries |
 | [`sdb_logs()`](#sdb_logs) | Log entries |
@@ -127,6 +131,7 @@ The `sdb_constraints()` function provides metadata about the constraints availab
 | `constraint_name`           | The name of the constraint.                                                                                                    | `VARCHAR`   |
 | `referenced_table`          | The table referenced by the constraint.                                                                                        | `VARCHAR`   |
 | `referenced_column_names`   | The column names referenced by the constraint.                                                                                 | `VARCHAR[]` |
+| `constraint_check_mode`     | When a `PRIMARY KEY` or `UNIQUE` constraint is checked: `DEFERRED` or `IMMEDIATE` if it was declared with that keyword (see [Deferred Checking](../../sql/constraints/index.md#deferred-checking)), otherwise `DEFAULT`, which is checked like `IMMEDIATE`. Always `DEFAULT` for the other constraint types. | `VARCHAR`   |
 
 The [`information_schema.referential_constraints`](../../sql/information_schema.md#referential_constraints-referential-constraints) and [`information_schema.table_constraints`](../../sql/information_schema.md#table_constraints-table-constraints) system views provide a more standardized way to obtain metadata about constraints, but the `sdb_constraints` function also returns metadata about SereneDB internal objects. (In fact, `information_schema.referential_constraints` and `information_schema.table_constraints` are implemented as a query on top of `sdb_constraints()`)
 

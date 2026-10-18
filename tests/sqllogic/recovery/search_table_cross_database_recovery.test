@@ -1,0 +1,75 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE DATABASE xs_other;
+
+statement ok
+CREATE TABLE xs_local (id BIGINT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE xs_other.public.xs_remote (id BIGINT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO xs_local VALUES (1, 'both');
+
+statement ok
+INSERT INTO xs_other.public.xs_remote VALUES (1, 'both');
+
+statement ok
+COMMIT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM xs_local) AS l, (SELECT count(*) FROM xs_other.public.xs_remote) AS r;
+----
+l	r
+1	1
+
+connection after_commit
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_commit
+statement ok
+BEGIN;
+
+connection after_commit
+statement ok
+INSERT INTO xs_local VALUES (2, 'decided');
+
+connection after_commit
+statement ok
+INSERT INTO xs_other.public.xs_remote VALUES (2, 'decided');
+
+connection after_commit
+statement error connection closed
+COMMIT;
+
+connection after_decided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM xs_local) AS l, (SELECT count(*) FROM xs_other.public.xs_remote) AS r;
+----
+l	r
+2	2
+
+connection after_decided
+query
+SELECT id, body FROM xs_other.public.xs_remote ORDER BY id;
+----
+id	body
+1	both
+2	decided

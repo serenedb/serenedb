@@ -1,0 +1,127 @@
+control substitution on
+
+statement ok
+CREATE TABLE stri_a (id SERIAL PRIMARY KEY, v INT);
+
+
+statement ok
+CREATE TABLE stri_b (id SERIAL PRIMARY KEY, v INT);
+
+
+statement count 10
+INSERT INTO stri_a (v) SELECT i FROM generate_series(1, 10) AS s(i);
+
+
+statement count 4
+INSERT INTO stri_b (v) SELECT i FROM generate_series(1, 4) AS s(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE stri_a, stri_b RESTART IDENTITY;
+
+
+statement count 3
+INSERT INTO stri_a (v) VALUES (1), (2), (3);
+
+
+statement count 2
+INSERT INTO stri_b (v) VALUES (1), (2);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT (SELECT max(id) FROM stri_a) AS a, (SELECT max(id) FROM stri_b) AS b;
+----
+a	b
+3	2
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM stri_a) AS a, (SELECT count(*) FROM stri_b) AS b;
+----
+a	b
+3	2
+
+
+connection after_crash
+statement count 5
+INSERT INTO stri_a (v) SELECT i FROM generate_series(1, 5) AS s(i);
+
+
+connection after_crash
+statement count 5
+INSERT INTO stri_b (v) SELECT i FROM generate_series(1, 5) AS s(i);
+
+
+connection after_crash
+query
+SELECT (SELECT count(DISTINCT id) FROM stri_a) AS a, (SELECT count(DISTINCT id) FROM stri_b) AS b;
+----
+a	b
+8	7
+
+
+connection after_crash
+statement ok
+TRUNCATE stri_a RESTART IDENTITY;
+
+
+connection after_crash
+statement count 2
+INSERT INTO stri_a (v) VALUES (1), (2);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM stri_a;
+----
+n
+2
+
+
+connection after_crash2
+statement count 3
+INSERT INTO stri_a (v) VALUES (3), (4), (5);
+
+
+connection after_crash2
+query
+SELECT count(DISTINCT id) AS n FROM stri_a;
+----
+n
+5

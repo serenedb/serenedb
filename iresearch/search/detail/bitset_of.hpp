@@ -43,6 +43,7 @@ namespace irs::detail {
 
 inline constexpr bool kFoldOnlyWhenSmaller = false;
 
+inline constexpr double kCostBlock = 512.0;
 inline constexpr double kSparseProbeCost = 0.3;
 inline constexpr double kLeafProbeCost = 1.0;
 inline constexpr double kErasedProbeCost = 1.2;
@@ -144,11 +145,8 @@ inline ClauseCost TermClauseCost(uint64_t docs, doc_id_t docs_count) noexcept {
 inline ClauseCost MaskClauseCost(const SubReader& segment,
                                  doc_id_t docs_count) noexcept {
   const auto* mask = segment.docs_mask();
-  const auto visible_end = segment.Meta().visible_end;
-  const auto live_end = LiveEnd(segment);
-  const double tail = visible_end < live_end ? live_end - visible_end : 0;
-  double fill = tail / kWindowBits * kFoldWordCost;
-  double spans = tail != 0 ? 1 : 0;
+  double fill = 0;
+  double spans = 0;
   bool words = false;
   uint64_t masked = 0;
   if (mask != nullptr && !mask->Empty()) {

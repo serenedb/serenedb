@@ -88,7 +88,7 @@ Result<Api> MakeNodeDisjunction(std::span<const PostingClause> terms,
                                         absorbed);
 }
 
-template<typename Api, template<typename, bool> class Group, typename Set,
+template<typename Api, template<typename, bool> typename Group, typename Set,
          typename... Args>
 Result<Api> MakeNodeThresholdWindow(Scored score, uint32_t min_match,
                                     Args&&... args) {

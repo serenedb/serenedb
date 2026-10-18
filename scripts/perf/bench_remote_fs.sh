@@ -21,7 +21,7 @@ Scenarios (BRFS_SCENARIOS): read_large read_glob read_pruned write_large write_m
 Modes (BRFS_MODES): warm (one session, .timer, first rep discarded) | cold (one fresh process, /usr/bin/time -v).
 
 Requires: docker, python3, curl, GNU /usr/bin/time; network on first run (duckdb CLI zip,
-duckdb extensions, container images, pip wheels for the upload/iceberg prep container).
+duckdb extensions, container images).
 
 Output: aligned table in BRFS_RESULTS (default scripts/perf/results/bench_remote_fs_<ts>.txt)
 and on stdout; per-cell engine output under BRFS_DATA/logs. Columns: engine client backend
@@ -80,7 +80,7 @@ EOF
 : "${BRFS_AZURITE_IMAGE:=mcr.microsoft.com/azure-storage/azurite}"
 : "${BRFS_TOXIPROXY_IMAGE:=ghcr.io/shopify/toxiproxy}"
 : "${BRFS_NETSHOOT_IMAGE:=nicolaka/netshoot}"
-: "${BRFS_PYTHON_IMAGE:=python:3.12-slim}"
+: "${BRFS_PYTHON_IMAGE:=${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}}"
 
 MINIO_NAME="${BRFS_PREFIX}-minio"
 AZURITE_NAME="${BRFS_PREFIX}-azurite"
@@ -585,9 +585,7 @@ prep_remote() {
 		-e BRFS_AZ_CONN="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=${AZ_KEY};BlobEndpoint=http://127.0.0.1:${AZURITE_PORT}/devstoreaccount1;" \
 		-e BRFS_BUCKET="$BRFS_BUCKET" -e BRFS_CONTAINER="$BRFS_CONTAINER" \
 		-e BRFS_ROWS_ICEBERG="$BRFS_ROWS_ICEBERG" \
-		-e PIP_CACHE_DIR=/bench/.pipcache \
-		-v "$BRFS_DATA:/bench" "$BRFS_PYTHON_IMAGE" bash -c \
-		"pip install -q --target /tmp/deps boto3 azure-storage-blob 'pyiceberg[sql-sqlite]==0.11.1' pyarrow==25.0.1 && PYTHONPATH=/tmp/deps python /bench/prep_remote.py" >&2
+		-v "$BRFS_DATA:/bench" "$BRFS_PYTHON_IMAGE" python3 /bench/prep_remote.py >&2
 }
 
 main() {

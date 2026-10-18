@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -250,8 +251,6 @@ class Loader {
         database, database_id, nullptr, 0, nullptr)},
       _docs{docs} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
@@ -330,10 +329,10 @@ class Loader {
       duckdb::vector<duckdb::Value> values;
       values.reserve(batch.size() * kInsertColumns);
       for (const auto& doc : batch) {
-        values.emplace_back(std::string{doc.path});
-        values.emplace_back(std::string{doc.title});
-        values.emplace_back(std::string{doc.breadcrumb});
-        values.emplace_back(std::string{doc.content});
+        values.emplace_back(doc.path);
+        values.emplace_back(doc.title);
+        values.emplace_back(doc.breadcrumb);
+        values.emplace_back(doc.content);
       }
       auto& statement = tail ? *tail : *full;
       auto result = statement.Execute(values);
@@ -351,17 +350,21 @@ class Loader {
 };
 
 std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
-  const auto database =
-    catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
-  if (!database) {
+  std::string name;
+  duckdb::idx_t oid = 0;
+  if (!catalog::ReadDatabase(
+        irs::StaticStrings::kDefaultDatabase,
+        [&](const catalog::DatabaseCatalogEntry& database) {
+          name = database.name.GetIdentifierName();
+          oid = database.oid;
+        })) {
     SDB_ERROR(STARTUP,
               "cannot build the docs index: default database not found");
     return {};
   }
-  const std::string_view name = database->name.GetIdentifierName();
   const auto begin = std::chrono::steady_clock::now();
   try {
-    Loader loader{name, database->oid, docs};
+    Loader loader{name, oid, docs};
     auto image = loader.Build();
     if (!image.empty()) {
       SDB_INFO(STARTUP, "embedded docs indexed in database \"", name, "\" in ",
@@ -371,7 +374,7 @@ std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
     return image;
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot build the docs index in database \"", name,
-              "\": ", e.what());
+              "\": ", duckdb::ErrorData{e}.RawMessage());
     return {};
   }
 }
@@ -416,9 +419,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                 table_name, " is not a search table in the catalog");
       return;
     }
-    const auto store = search::SearchTable::GetPath(
-      table->ParentCatalog().GetAttached().oid,
-      table->ParentSchema(context).oid, table->oid);
+    const auto store = table->Storage()->Path();
     for (const auto& file : std::filesystem::directory_iterator{store}) {
       if (file.is_regular_file()) {
         image.push_back(

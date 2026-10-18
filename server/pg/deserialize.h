@@ -139,7 +139,7 @@ struct ValueSink {
     out = duckdb::Value::CreateValue(v);
   }
 
-  void Varchar(std::string_view s) { out = duckdb::Value(std::string{s}); }
+  void Varchar(std::string_view s) { out = duckdb::Value(s); }
 
   void Blob(duckdb::string_t v) {
     out = duckdb::Value::BLOB(duckdb::const_data_ptr_cast(v.GetData()),

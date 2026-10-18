@@ -37,6 +37,16 @@ namespace {
 
 constexpr int32_t kDefaultMaxTokens = 1024;
 
+std::string StrictJsonSchemaOf(std::string_view name,
+                               std::string_view properties,
+                               const auto& required) {
+  return absl::StrCat(
+    R"({"type":"json_schema","json_schema":{"name":)", ToJson(name),
+    R"(,"strict":true,"schema":{"type":"object","properties":)", properties,
+    R"(,"required":)", JsonArray(required),
+    R"(,"additionalProperties":false}}})");
+}
+
 }  // namespace
 
 void AddChatOptions(duckdb::FunctionSignature& signature) {
@@ -79,18 +89,14 @@ ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
 
 std::string StrictJsonSchema(std::string_view name, std::string_view properties,
                              std::span<const std::string> required) {
-  return absl::StrCat(
-    R"({"type":"json_schema","json_schema":{"name":)", ToJson(name),
-    R"(,"strict":true,"schema":{"type":"object","properties":)", properties,
-    R"(,"required":)", JsonArray(required),
-    R"(,"additionalProperties":false}}})");
+  return StrictJsonSchemaOf(name, properties, required);
 }
 
 std::string StrictJsonSchema(std::string_view name, std::string_view key,
                              std::string_view type) {
-  const std::string required[] = {std::string{key}};
-  return StrictJsonSchema(name, absl::StrCat("{", ToJson(key), ":", type, "}"),
-                          required);
+  const std::string_view required[] = {key};
+  return StrictJsonSchemaOf(
+    name, absl::StrCat("{", ToJson(key), ":", type, "}"), required);
 }
 
 ChatTemplate MakeChatTemplate(std::string_view model, const ChatConfig& cfg,

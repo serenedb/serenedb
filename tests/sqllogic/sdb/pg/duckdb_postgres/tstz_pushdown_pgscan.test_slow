@@ -7,6 +7,7 @@ control substitution on
 # pushed equality lost rows and pushed ranges matched extras. The CI postgres
 # runs UTC, so this test creates its OWN remote database pinned to Asia/Tokyo
 # (database-level GUC, applies to new connections) and attaches to that.
+# exclusive
 
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgtza_${__DATABASE__} (TYPE postgres);

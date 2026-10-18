@@ -36,10 +36,7 @@ namespace {
 bool FewRuns(const detail::PostingClause& term,
              const SubReader& segment) noexcept {
   const auto* mask = segment.docs_mask();
-  uint64_t runs = mask != nullptr ? mask->RunsBound() : 0;
-  if (segment.Meta().visible_end < LiveEnd(segment)) {
-    ++runs;
-  }
+  const uint64_t runs = mask != nullptr ? mask->RunsBound() : 0;
   return runs * doc_limits::kBlockSize <
          uint64_t{kDenseRuns} * detail::CookieOf(term).docs_count;
 }

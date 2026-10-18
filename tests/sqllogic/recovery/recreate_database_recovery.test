@@ -1,0 +1,51 @@
+control substitution on
+
+statement ok
+CREATE DATABASE dcst_db;
+
+
+statement ok
+CREATE TABLE dcst_db.public.t (a INT);
+
+
+statement ok
+INSERT INTO dcst_db.public.t VALUES (1);
+
+
+query
+SELECT a FROM dcst_db.public.t;
+----
+a
+1
+
+
+statement ok
+DROP DATABASE dcst_db;
+
+
+statement ok
+CREATE DATABASE dcst_db;
+
+
+statement ok
+CREATE TABLE dcst_db.public.t (b INT);
+
+
+statement ok
+INSERT INTO dcst_db.public.t VALUES (2);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT b FROM dcst_db.public.t;
+----
+b
+2

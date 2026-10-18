@@ -25,7 +25,6 @@
 #include <cstdlib>
 #include <memory>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -199,12 +198,11 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
   }
 }
 
-inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, int64_t begin,
+inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, uint64_t begin,
                                      const uint64_t* IRS_RESTRICT src,
                                      uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
-  SDB_ASSERT(begin >= -1);
   dst += begin >> BitsetStorage::kWordShift;
   const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
   if (shift == 0) {
@@ -223,12 +221,11 @@ inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, int64_t begin,
 }
 
 inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
-                                        int64_t begin,
+                                        uint64_t begin,
                                         const uint64_t* IRS_RESTRICT src,
                                         uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
-  SDB_ASSERT(begin >= -1);
   dst += begin >> BitsetStorage::kWordShift;
   const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
   if (shift == 0) {
@@ -247,12 +244,11 @@ inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
 }
 
 inline IRS_FORCE_INLINE uint64_t CountBlock(const uint64_t* IRS_RESTRICT dst,
-                                            int64_t begin,
+                                            uint64_t begin,
                                             const uint64_t* IRS_RESTRICT src,
                                             uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
-  SDB_ASSERT(begin >= -1);
   dst += begin >> BitsetStorage::kWordShift;
   const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
   uint64_t total = 0;
@@ -273,23 +269,21 @@ inline IRS_FORCE_INLINE uint64_t CountBlock(const uint64_t* IRS_RESTRICT dst,
 }
 
 inline IRS_FORCE_INLINE void RetainBlock(uint64_t* IRS_RESTRICT dst,
-                                         int64_t begin,
+                                         uint64_t begin,
                                          const uint64_t* IRS_RESTRICT src,
                                          uint32_t words,
                                          uint64_t last) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
-  SDB_ASSERT(begin >= -1);
-  SDB_ASSERT(static_cast<int64_t>(last) > begin);
+  SDB_ASSERT(last >= begin);
   const auto shift = static_cast<uint32_t>(begin & (kBits - 1));
   auto* const base = dst + (begin >> BitsetStorage::kWordShift);
-  const auto stop = static_cast<uint32_t>(
-    (static_cast<int64_t>(last) >> BitsetStorage::kWordShift) -
-    (begin >> BitsetStorage::kWordShift));
+  const auto stop = static_cast<uint32_t>((last >> BitsetStorage::kWordShift) -
+                                          (begin >> BitsetStorage::kWordShift));
   const auto top = last & (kBits - 1);
   const uint64_t above =
     top == kBits - 1 ? uint64_t{0} : (~uint64_t{0} << (top + 1));
-  uint64_t keep = (uint64_t{2} << shift) - 1;
+  uint64_t keep = (uint64_t{1} << shift) - 1;
   uint64_t carry = 0;
   for (uint32_t i = 0; i <= stop; ++i) {
     const auto word = i < words ? src[i] : uint64_t{0};

@@ -49,7 +49,7 @@ ShingleTokenizer::ShingleTokenizer(Tokenizer::ptr base, Options&& options)
   }
   _producer = _analyzer->Traits();
   for (const auto& word : options.frequent_words) {
-    _frequent.Insert(std::string{ViewCast<char>(bytes_view{word})});
+    _frequent.Insert(ViewCast<char>(bytes_view{word}));
   }
   if (HasFrequentWords()) {
     _output_unigrams = true;

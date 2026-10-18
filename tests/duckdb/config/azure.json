@@ -1,0 +1,11 @@
+{
+  "description": "SereneDB test-config for the vendored duckdb_azure test suite. Entries are known SereneDB divergences -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "There is no runtime extension loader: SereneDB builds with ENABLE_EXTENSION_LOAD off and links its extension set statically, so every `INSTALL 'az://...'` and `INSTALL 'abfss://...'` in this file reports that instead of the Azure error it asserts. The whole file is about installing an extension through the Azure file systems. Same reason as the core-suite LOAD and INSTALL paths, tracked in issue #887.",
+      "paths": [
+        "test/sql/azure_vfs_ops.test"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_refresh;
+
+
+statement ok
+CREATE TABLE ckpt_refresh.public.docs (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_refresh.public.docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ckpt_refresh.public.docs SELECT i, 'base' FROM range(0, 1000) r(i);
+
+
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) ckpt_refresh.public.docs;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT ckpt_refresh;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT ckpt_refresh%';
+----
+n
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+
+connection refresher
+wait
+
+
+connection checkpointer
+wait
+
+
+connection default
+query
+SELECT count(*) AS n FROM ckpt_refresh.public.docs_idx WHERE body @@ 'base';
+----
+n
+1000

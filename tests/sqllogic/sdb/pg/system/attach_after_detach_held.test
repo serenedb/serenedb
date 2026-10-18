@@ -1,19 +1,19 @@
 control substitution on
 
 statement ok
-DETACH IF EXISTS aad;
+DETACH IF EXISTS aad_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS aad_ro;
+DETACH IF EXISTS aad_ro_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_${__DATABASE__};
 
 statement ok
-CREATE OR REPLACE TABLE aad.main.docs(id INTEGER);
+CREATE OR REPLACE TABLE aad_${__DATABASE__}.main.docs(id INTEGER);
 
 statement ok
-INSERT INTO aad.main.docs VALUES (1), (2);
+INSERT INTO aad_${__DATABASE__}.main.docs VALUES (1), (2);
 
 
 connection holder
@@ -23,7 +23,7 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables();
+SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aad_${__DATABASE__}';
 ----
 listed
 t
@@ -31,17 +31,25 @@ t
 
 connection default
 statement ok
-DETACH aad;
+DETACH aad_${__DATABASE__};
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aad_${__DATABASE__}';
+----
+listed
+f
 
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_${__DATABASE__};
 
 
 connection default
 query
-SELECT count(*) AS n FROM aad.main.docs;
+SELECT count(*) AS n FROM aad_${__DATABASE__}.main.docs;
 ----
 n
 2
@@ -49,17 +57,17 @@ n
 
 connection default
 statement ok
-DETACH aad;
+DETACH aad_${__DATABASE__};
 
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad (READ_ONLY);
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_${__DATABASE__} (READ_ONLY);
 
 
 connection default
 query
-SELECT count(*) AS n FROM aad.main.docs;
+SELECT count(*) AS n FROM aad_${__DATABASE__}.main.docs;
 ----
 n
 2
@@ -67,27 +75,27 @@ n
 
 connection default
 statement error read-only
-INSERT INTO aad.main.docs VALUES (3);
+INSERT INTO aad_${__DATABASE__}.main.docs VALUES (3);
 
 
 connection default
 statement ok
-DETACH aad;
+DETACH aad_${__DATABASE__};
 
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad;
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_${__DATABASE__};
 
 
 connection default
 statement ok
-INSERT INTO aad.main.docs VALUES (3);
+INSERT INTO aad_${__DATABASE__}.main.docs VALUES (3);
 
 
 connection default
 statement ok
-DETACH aad;
+DETACH aad_${__DATABASE__};
 
 
 connection holder
@@ -97,12 +105,12 @@ COMMIT;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro (READ_ONLY);
+ATTACH '${__TEST_DIR__}/aad.db' AS aad_ro_${__DATABASE__} (READ_ONLY);
 
 
 connection default
 query
-SELECT count(*) AS n FROM aad_ro.main.docs;
+SELECT count(*) AS n FROM aad_ro_${__DATABASE__}.main.docs;
 ----
 n
 3
@@ -110,4 +118,4 @@ n
 
 connection default
 statement ok
-DETACH aad_ro;
+DETACH aad_ro_${__DATABASE__};

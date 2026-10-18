@@ -1,0 +1,106 @@
+control substitution on
+
+statement ok
+CREATE TABLE goshandr (id INT, stream TEXT);
+
+
+statement ok
+CREATE INDEX goshandr_chat ON goshandr USING inverted (stream);
+
+
+statement ok
+INSERT INTO goshandr VALUES (1, 'kringe'), (2, 'baza');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr;
+
+
+connection vjling
+statement ok
+BEGIN;
+
+
+connection vjling
+statement ok
+ALTER TABLE goshandr RENAME COLUMN stream TO donate;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE melstroi_casino (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection vjling
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE melstroi_casino_again (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM goshandr;
+----
+n
+2
+
+
+connection after_crash
+query
+SELECT attname FROM pg_attribute WHERE attrelid = 'goshandr'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname
+id
+stream
+
+
+connection after_crash
+statement ok
+INSERT INTO goshandr VALUES (3, 'kringe');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) goshandr;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM goshandr_chat WHERE stream @@ 'kringe') AS kringe, (SELECT count(*) FROM goshandr_chat WHERE stream @@ 'baza') AS baza;
+----
+kringe	baza
+2	1

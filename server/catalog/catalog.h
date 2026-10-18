@@ -26,9 +26,13 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <memory>
 #include <string>
+#include <utility>
 
+#include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
+#include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
 
 namespace duckdb {
@@ -38,6 +42,7 @@ class PhysicalOperator;
 class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
+struct CreateJobInfo;
 struct DropInfo;
 
 }  // namespace duckdb
@@ -52,8 +57,13 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
-  explicit SereneDBCatalog(duckdb::AttachedDatabase& db)
-    : duckdb::DuckCatalog{db, true} {}
+  SereneDBCatalog(duckdb::AttachedDatabase& db,
+                  std::shared_ptr<DatabaseDirectory> directory)
+    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+
+  const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
+    return _directory;
+  }
 
   std::string GetCatalogType() final { return kStorageType; }
 
@@ -66,8 +76,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return _detached.load(std::memory_order_acquire);
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
-  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
-                             duckdb::idx_t offset) final;
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -83,7 +91,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
              duckdb::AlterInfo& info) final;
 
   duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
-    return duckdb::Identifier{std::string{irs::StaticStrings::kPublic}};
+    return duckdb::Identifier{irs::StaticStrings::kPublic};
   }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
@@ -103,10 +111,18 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
   }
 
-  duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
-    duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) final {
-    return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
+  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeSubscriptionEntry(
+    duckdb::CreateSubscriptionInfo& info) final {
+    return duckdb::make_uniq<SubscriptionCatalogEntry>(*this, info);
   }
+
+  duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateTokenizerInfo& info) final;
+
+  duckdb::unique_ptr<duckdb::StandardEntry> MakeJobEntry(
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateJobInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
     duckdb::ClientContext& context, duckdb::idx_t id);
@@ -171,18 +187,22 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
-    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info);
-
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateForeignServerInfo& info);
+    duckdb::CreateForeignServerInfo& info) final;
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
-                         duckdb::DropInfo& info);
+                         duckdb::DropInfo& info) final;
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateSubscriptionInfo& info);
+
+  void DropSubscription(duckdb::CatalogTransaction transaction,
+                        duckdb::DropInfo& info);
 
  private:
+  std::shared_ptr<DatabaseDirectory> _directory;
   std::atomic_bool _detached{false};
 };
 

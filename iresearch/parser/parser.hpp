@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -207,7 +208,7 @@ struct ParserContext {
       return _list.field;
     }
     const auto groups = _open | std::views::reverse;
-    const auto group = std::ranges::find_if(groups, [](const OpenGroup& open) {
+    const auto group = absl::c_find_if(groups, [](const OpenGroup& open) {
       return irs::field_limits::valid(open.outer.field.id);
     });
     return group == groups.end() ? Field{} : group->outer.field;

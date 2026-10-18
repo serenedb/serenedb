@@ -1,0 +1,202 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE dtt_audit (k TEXT);
+
+
+statement ok
+CREATE TABLE dtt_s1 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s1_trg AFTER INSERT ON dtt_s1 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s1');
+
+
+statement ok
+CREATE TABLE dtt_s2 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s2_trg AFTER INSERT ON dtt_s2 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s2');
+
+
+statement ok
+CREATE TABLE dtt_s3 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s3_trg AFTER INSERT ON dtt_s3 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s3');
+
+
+statement ok
+CREATE TABLE dtt_s4 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s4_trg AFTER INSERT ON dtt_s4 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s4');
+
+
+statement ok
+CREATE TABLE dtt_s5 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s5_trg AFTER INSERT ON dtt_s5 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s5');
+
+
+statement ok
+CREATE TABLE dtt_s6 (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_s6_trg AFTER INSERT ON dtt_s6 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('s6');
+
+
+statement ok
+CREATE TABLE dtt_p1 (a INT);
+
+
+statement ok
+CREATE TRIGGER dtt_p1_trg AFTER INSERT ON dtt_p1 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('p1');
+
+
+statement ok
+CREATE TABLE dtt_p2 (a INT);
+
+
+statement ok
+CREATE TRIGGER dtt_p2_trg AFTER INSERT ON dtt_p2 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('p2');
+
+
+statement ok
+CREATE SCHEMA dtt_sch;
+
+
+statement ok
+CREATE TABLE dtt_sch.t (a INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TRIGGER dtt_sch_trg AFTER INSERT ON dtt_sch.t FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('sch');
+
+
+statement ok
+INSERT INTO dtt_s1 VALUES (1);
+
+
+statement ok
+INSERT INTO dtt_p1 VALUES (1);
+
+
+statement ok
+DROP TABLE dtt_s1;
+
+
+statement ok
+DROP TABLE dtt_s2;
+
+
+statement ok
+DROP TABLE dtt_s3;
+
+
+statement ok
+DROP TABLE dtt_s4;
+
+
+statement ok
+DROP TABLE dtt_s5;
+
+
+statement ok
+DROP TABLE dtt_s6;
+
+
+statement ok
+DROP TABLE dtt_p1;
+
+
+statement ok
+DROP TABLE dtt_p2;
+
+
+statement ok
+DROP SCHEMA dtt_sch CASCADE;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT k FROM dtt_audit ORDER BY k;
+----
+k
+p1
+s1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'dtt\_%' ESCAPE '\' AND relname <> 'dtt_audit';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'dtt\_%' ESCAPE '\';
+----
+n
+0
+
+
+connection after_crash
+statement ok
+CREATE TABLE dtt_s1 (a INT) WITH (storage = 'search');
+
+
+connection after_crash
+statement ok
+CREATE TRIGGER dtt_s1_trg AFTER INSERT ON dtt_s1 FOR EACH STATEMENT INSERT INTO dtt_audit VALUES ('again');
+
+
+connection after_crash
+statement ok
+INSERT INTO dtt_s1 VALUES (2);
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM dtt_audit WHERE k = 'again';
+----
+n
+1
+
+
+connection after_crash
+statement ok
+DROP TABLE dtt_s1;
+
+
+connection after_crash
+statement ok
+DROP TABLE dtt_audit;

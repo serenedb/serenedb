@@ -131,15 +131,16 @@ du_mb_native() {
 	w=$(du_mb "$1.wal")
 	echo $((${m:-0} + ${w:-0}))
 }
-# cs index footprint = engine_search (the .col columnstore + .idx), which is what
-# serves reads -- comparable to native's table. Excludes the engine_duckdb base
-# table copy (only present when the source is a real TABLE, not a parquet VIEW).
+# cs index footprint = the iresearch storages (the .col columnstore + .idx),
+# which is what serves reads -- comparable to native's table. Excludes the
+# data.db base table copy (only present when the source is a real TABLE, not a
+# parquet VIEW).
 # Sums only LIVE segments (those named in the newest segments_N meta): an
 # in-flight merge output or a not-yet-GC'd pre-merge segment would otherwise
 # inflate the number (observed: an orphan 2.4GB _146.col written by a merge
 # that was still in flight when the engine stopped).
 du_mb_index() {
-	local d="$1/engine_search" sdir smeta live seg f bytes=0
+	local d="$1/engine_v1" sdir smeta live seg f bytes=0
 	[[ -d "$d" ]] || d="$1"
 	while IFS= read -r sdir; do
 		smeta=$(ls -v "$sdir"/segments_* 2>/dev/null | tail -1)

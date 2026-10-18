@@ -28,15 +28,19 @@ docker.env
 .venv/
 __pycache__/
 .pytest_cache/
-node_modules/
+node_modules
 target/
-vendor/
+vendor
 bin/
 obj/
 go.sum
 Cargo.lock
 composer.lock
 package-lock.json
+!tests/drivers/go/go.sum
+!tests/drivers/rust/Cargo.lock
+!tests/drivers/php/composer.lock
+!tests/drivers/js/package-lock.json
 .phpunit.result.cache
 
 # Driver-test outputs
@@ -59,6 +63,8 @@ tests/drivers/c/harness
 # Matches the stuff that's gonna replace developers
 /.claude/*
 !/.claude/skills/
+!/.claude/rules/
+/CLAUDE.local.md
 
 # Local act secrets (fakes for local CI runs)
 .secrets

@@ -91,6 +91,8 @@
 #include "pg/pg_catalog/pg_shdepend.h"
 #include "pg/pg_catalog/pg_shdescription.h"
 #include "pg/pg_catalog/pg_shseclabel.h"
+#include "pg/pg_catalog/pg_stat_subscription.h"
+#include "pg/pg_catalog/pg_stat_subscription_stats.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/pg_catalog/pg_statistic_ext.h"
 #include "pg/pg_catalog/pg_statistic_ext_data.h"
@@ -204,6 +206,8 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgStatisticExtData>>(),
   MakeTable<SystemTable<PgSubscription>>(),
   MakeTable<SystemTable<PgSubscriptionRel>>(),
+  MakeTable<SystemTable<PgStatSubscription>>(),
+  MakeTable<SystemTable<PgStatSubscriptionStats>>(),
   MakeTable<SystemTable<PgTablespace>>(),
   MakeTable<SystemTable<PgTransform>>(),
   MakeTable<SystemTable<PgTrigger>>(),
@@ -316,10 +320,11 @@ void VisitSystemFunctions(
   }
 }
 
-StaticView GetSystemView(std::string_view schema, std::string_view name) {
+const StaticView* GetSystemView(std::string_view schema,
+                                std::string_view name) {
   const auto& views = ViewsOf(schema);
   const auto it = views.find(name);
-  return it == views.end() ? StaticView{} : it->second;
+  return it == views.end() ? nullptr : &it->second;
 }
 
 StaticFunction GetSystemFunction(std::string_view schema,
@@ -377,7 +382,8 @@ void InitSystemViews(duckdb::Parser& parser) {
     map[view.name] = StaticView{
       .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
       .permissions = ViewPermissions(view.name),
-      .oid = next_oid++};
+      .oid = next_oid++,
+      .binding = std::make_shared<ViewBinding>()};
   }
 }
 

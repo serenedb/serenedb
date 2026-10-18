@@ -10,11 +10,11 @@ cd "$SCRIPT_DIR"
 
 if ! command -v cc >/dev/null 2>&1; then
 	echo "[c] no C compiler" >&2
-	exit 0
+	exit 1
 fi
 if ! pkg-config --exists libpq 2>/dev/null; then
-	echo "[c] libpq-dev not installed; skipping" >&2
-	exit 0
+	echo "[c] libpq-dev not installed" >&2
+	exit 1
 fi
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"

@@ -324,7 +324,8 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
     ParseLineImpl<Validation>(line, vertices);
     if constexpr (Validation) {
       if (encoder != nullptr) {
-        encoder->put_varint64(n * multiplier);
+        encoder->Ensure(Varint::kMax64);
+        encoder->put_varint64(vertices.size() * multiplier);
         multiplier = 1;
         EncodeVertices(*encoder, vertices, options);
       } else if (options == coding::Options::S2LatLngU32) {
@@ -413,22 +414,20 @@ void ParseLoopImpl(ondemand::array loop,
   // InitNested. This is, why we proceed like this:
   if (first == nullptr) {
     first = &last;
-  } else if (first->Contains(last)) [[likely]] {
-    return;
-  } else {
+  } else if (!first->Contains(last)) [[unlikely]] {
     // TODO(mbkkt) Maybe we want more strict rules about CCW?
     // We don't need to make Contains check in parsing stage in such case
     last.Invert();
     if (Validation && encoder != nullptr) {
       std::reverse(vertices.begin(), vertices.end());
     }
-  }
-  if constexpr (Validation) {
-    if (first != &last && !first->Contains(last)) [[unlikely]] {
+    if (Validation && !first->Contains(last)) [[unlikely]] {
       THROW_SQL_ERROR(ERR_MSG("Subsequent loop is not a hole in a polygon."));
     }
+  }
+  if constexpr (Validation) {
     if (encoder != nullptr) {
-      SDB_ASSERT(encoder->avail() >= Varint::kMax64);
+      encoder->Ensure(Varint::kMax64);
       encoder->put_varint64(vertices.size() * multiplier);
       EncodeVertices(*encoder, vertices, options);
     }
@@ -534,10 +533,30 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
     THROW_SQL_ERROR(
       ERR_MSG("MultiPolygon should contains at least one Polygon."));
   }
+  size_t loop_count = n;
+  if (Validation && encoder != nullptr) {
+    loop_count = 0;
+    for (auto polygon_element : array) {
+      ondemand::array polygon;
+      if (polygon_element.get_array().get(polygon) != simdjson::SUCCESS) {
+        THROW_SQL_ERROR(
+          ERR_MSG("Polygon should contains at least one coordinates array."));
+      }
+      size_t m = 0;
+      if (polygon.count_elements().get(m) != simdjson::SUCCESS || m == 0) {
+        THROW_SQL_ERROR(ERR_MSG("Polygon should contains at least one Loop."));
+      }
+      loop_count += m;
+    }
+    if (array.reset().error() != simdjson::SUCCESS) {
+      THROW_SQL_ERROR(
+        ERR_MSG("MultiPolygon should contains at least one Polygon."));
+    }
+  }
   std::vector<std::unique_ptr<S2Loop>> loops;
-  loops.reserve(n);
-  auto multiplier =
-    EncodeCount<Validation>(n, coding::Type::Polygon, options, encoder);
+  loops.reserve(loop_count);
+  auto multiplier = EncodeCount<Validation>(loop_count, coding::Type::Polygon,
+                                            options, encoder);
   S2Loop* first = nullptr;
   for (auto polygon_element : array) {
     ondemand::array polygon;

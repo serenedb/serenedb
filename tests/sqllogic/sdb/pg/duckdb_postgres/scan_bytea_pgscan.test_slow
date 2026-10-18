@@ -1,0 +1,45 @@
+control substitution on
+
+# Scan of a bytea column from an attached postgres table -- the scan-side
+# counterpart to lookup_bytea_key_pgscan.
+#
+# The attach alias and remote schema carry ${__DATABASE__}: the remote postgres
+# is shared and the runner replays this file once per wire engine.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgbs_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pgbs_${__DATABASE__}.s${__DATABASE__}_bs;
+
+
+statement ok
+CREATE TABLE pgbs_${__DATABASE__}.s${__DATABASE__}_bs.docs (ref bytea, code text);
+
+
+statement ok
+INSERT INTO pgbs_${__DATABASE__}.s${__DATABASE__}_bs.docs
+  SELECT decode(lpad(to_hex(g), 8, '0'), 'hex'), 'code-' || lpad(g::text, 4, '0')
+  FROM generate_series(1, 5) t(g);
+
+
+query
+SELECT hex(ref) AS ref_hex, code FROM pgbs_${__DATABASE__}.s${__DATABASE__}_bs.docs ORDER BY code;
+----
+ref_hex	code
+00000001	code-0001
+00000002	code-0002
+00000003	code-0003
+00000004	code-0004
+00000005	code-0005
+
+
+statement ok
+DROP TABLE pgbs_${__DATABASE__}.s${__DATABASE__}_bs.docs;
+
+statement ok
+DROP SCHEMA pgbs_${__DATABASE__}.s${__DATABASE__}_bs;
+
+statement ok
+DETACH pgbs_${__DATABASE__};

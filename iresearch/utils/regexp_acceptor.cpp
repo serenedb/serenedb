@@ -872,7 +872,10 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
   return re2::Regexp::Concat(parts, count, kWildcardFlags);
 }
 
-re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax) {
+constexpr std::string_view kTooComplex = "regular expression is too complex";
+
+re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax,
+                        std::string& error) {
   const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
                              pattern.size()};
   // The two dialects a term regexp is offered: Perl and POSIX ERE.
@@ -883,12 +886,13 @@ re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax) {
   re2::RegexpStatus status;
   re2::Regexp* parsed = re2::Regexp::Parse(sv, flags, &status);
   if (!parsed) {
-    SDB_ERROR(IRESEARCH, "RE2 regexp parse error: ", status.Text());
+    error = status.Text();
     return nullptr;
   }
   re2::Regexp* simple = parsed->Simplify();
   parsed->Decref();
   if (!simple) {
+    error = kTooComplex;
     return nullptr;
   }
 
@@ -896,9 +900,11 @@ re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax) {
   re2::Regexp* re = rewriter.Walk(simple, nullptr);
   simple->Decref();
   if (re && (rewriter.HasError() || rewriter.stopped_early())) {
-    SDB_ERROR(IRESEARCH, "RE2 regexp too deep to rewrite");
     re->Decref();
-    return nullptr;
+    re = nullptr;
+  }
+  if (!re) {
+    error = kTooComplex;
   }
   return re;
 }
@@ -948,7 +954,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
   kBuilds.fetch_add(1, std::memory_order_relaxed);
 #endif
   re2::Regexp* re =
-    wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax);
+    wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax, _error);
   if (re) {
     _suffixes = SuffixesOf(re);
     NormalizeSuffixes(_suffixes);
@@ -966,8 +972,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {
-      SDB_ERROR(IRESEARCH, "RE2 regexp did not compile within ", max_mem,
-                " bytes");
+      _error = kTooComplex;
     }
   }
   Setup();
@@ -995,10 +1000,10 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
         re = WildcardTree(part.pattern);
         break;
       case PartKind::Perl:
-        re = RegexpTree(part.pattern, RegexpSyntax::Perl);
+        re = RegexpTree(part.pattern, RegexpSyntax::Perl, _error);
         break;
       case PartKind::PosixEre:
-        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre);
+        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, _error);
         break;
     }
     if (!re) {
@@ -1077,8 +1082,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     }
   }
   if (!compiled) {
-    SDB_ERROR(IRESEARCH, "RE2 regexp did not compile within ", max_mem,
-              " bytes");
+    _error = kTooComplex;
   } else if (progs[0] && progs[1]) {
     _prog = std::move(progs[0]);
     _bytes_prog = std::move(progs[1]);

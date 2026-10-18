@@ -115,7 +115,7 @@ std::string_view Buffer::Front() noexcept {
   // chunks hold readable bytes.
   while (_consumed && _head != _consumed.chunk &&
          _head->GetBegin() == ReadableEndOf(_head, _consumed)) {
-    delete std::exchange(_head, _head->Next());
+    Release(std::exchange(_head, _head->Next()));
   }
   const auto data = _head->Data(ReadableEndOf(_head, _consumed));
   return {reinterpret_cast<const char*>(data.data()), data.size()};
@@ -176,8 +176,17 @@ void Buffer::Consume(size_t size) {
       _head->SetBegin(_consumed.in_chunk);
       return;
     }
-    delete std::exchange(_head, _head->Next());
+    Release(std::exchange(_head, _head->Next()));
   }
+}
+
+void Buffer::Release(Chunk* chunk) {
+  if (_retained == nullptr) {
+    delete chunk;
+    return;
+  }
+  chunk->DetachNext();
+  _retained->Append(Chain{chunk, chunk, 0});
 }
 
 // Single-owner operation: not safe while a concurrent producer or consumer

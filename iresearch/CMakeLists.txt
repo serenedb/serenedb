@@ -4,7 +4,6 @@ if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -52,7 +51,6 @@ set(IResearch_core_sources
     ./analysis/wildcard_tokenizer.cpp
     ./analysis/html_strip_tokenizer.cpp
     ./analysis/filter_tokens_tokenizer.cpp
-    ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp
@@ -64,11 +62,11 @@ set(IResearch_core_sources
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
+    ./formats/posting/block_codec.cpp
     ./formats/index_meta_reader.cpp
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp
     ./formats/segment_meta_writer.cpp
-    ./formats/posting/skip_list.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
@@ -345,6 +343,7 @@ set(IResearch_core_sources
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
+    ./search/top/make_pruned_req_opt.cpp
     ./search/queries/multiterm_query.cpp
     ./search/queries/term_query.cpp
     ./search/filters/boolean_filter.cpp
@@ -412,9 +411,7 @@ set(IResearch_core_sources
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
-    ./utils/static_strings.cpp
     ./utils/string_utils.cpp
-    ./utils/zstd_context.cpp
 )
 
 find_package(FLEX)
@@ -536,12 +533,11 @@ target_link_libraries(
     PUBLIC simdjson
     PRIVATE simdutf
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
-    PUBLIC ${SIMD_LIBRARY_STATIC}
+    PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2
-    PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE stemmer-static

@@ -36,7 +36,7 @@ using TwoPhaseFor =
 template<typename Slots>
 struct DeducedNode {};
 
-template<template<typename> class Wrap, typename Result, typename Slots>
+template<template<typename> typename Wrap, typename Result, typename Slots>
 using NodeOf =
   std::conditional_t<std::is_same_v<Wrap<Slots>, DeducedNode<Slots>>,
                      TwoPhaseFor<Result, Slots>, Wrap<Slots>>;

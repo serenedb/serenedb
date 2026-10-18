@@ -1,0 +1,99 @@
+control substitution on
+
+statement ok
+CREATE SEQUENCE ssov_s;
+
+
+statement ok
+CREATE TABLE ssov_owner (id INTEGER);
+
+
+query
+SELECT nextval('ssov_s') AS a, nextval('ssov_s') AS b, nextval('ssov_s') AS c;
+----
+a	b	c
+1	2	3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON SEQUENCE ssov_s IS 'moved';
+
+
+query
+SELECT setval('ssov_s', 1000) AS v;
+----
+v
+1000
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT nextval('ssov_s') AS n;
+----
+n
+1001
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE ssov_s OWNED BY ssov_owner.id;
+
+
+query
+SELECT setval('ssov_s', 5000) AS v;
+----
+v
+5000
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('ssov_s') > 5000 AS above;
+----
+above
+t
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('ssov_s') > 5001 AS above;
+----
+above
+t

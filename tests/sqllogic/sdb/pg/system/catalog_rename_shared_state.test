@@ -45,7 +45,8 @@ COMMIT;
 
 connection s2
 query
-SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name, sql FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
 t2	CREATE INDEX crs_t_v ON crs.t2(v);
@@ -70,7 +71,8 @@ statement ok
 ALTER TABLE crs.t2 RENAME TO t9;
 
 query
-SELECT table_name FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name
 t9
@@ -79,7 +81,8 @@ statement ok
 ROLLBACK;
 
 query
-SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name, sql FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
 t2	CREATE INDEX crs_t_v ON crs.t2(v);

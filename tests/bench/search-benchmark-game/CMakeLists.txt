@@ -1,6 +1,12 @@
 add_compile_options(-Wno-error)
 
-add_library(search-benchmark-common OBJECT executor.cpp index_builder.cpp)
+add_library(
+    search-benchmark-common
+    OBJECT
+    executor.cpp
+    index_builder.cpp
+    line_source.cpp
+)
 target_link_libraries(search-benchmark-common iresearch-static simdjson)
 target_include_directories(
     search-benchmark-common

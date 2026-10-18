@@ -33,7 +33,7 @@ services:
       - "${WORKSPACE}/out/logs:/logs"
       - "${WORKSPACE}/out/drivers-tests:/out"
     environment:
-      - HOME=/tmp/home
+      - HOME=/tmp
       - LOG_DIR=/logs
     networks:
       - rta-network

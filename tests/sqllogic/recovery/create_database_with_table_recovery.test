@@ -1,0 +1,36 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE cdw_db;
+
+
+statement ok
+CREATE TABLE cdw_db.public.cdw_t (a INTEGER);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+INSERT INTO cdw_db.public.cdw_t VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM cdw_db.public.cdw_t;
+----
+n
+1

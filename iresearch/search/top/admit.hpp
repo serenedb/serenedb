@@ -83,8 +83,18 @@ class Admit {
 
   IRS_FORCE_INLINE void Window(LoserScoreCollector& collector, score_t* scores,
                                uint64_t* mask, doc_id_t min, size_t words) {
-    _table.Window(min, mask, scores, static_cast<uint32_t>(words));
-    collector.ConsumeWindow(scores, mask, min, words);
+    if constexpr (kTable) {
+      std::array<uint64_t, irs::detail::kWindowWords> keep;
+      SDB_ASSERT(words <= keep.size());
+      if (_staged != 0) {
+        Drain(collector);
+      }
+      _table.Window(min, mask, keep.data(), scores,
+                    static_cast<uint32_t>(words));
+      collector.ConsumeWindow<true>(scores, mask, min, words, keep.data());
+    } else {
+      collector.ConsumeWindow(scores, mask, min, words, {});
+    }
   }
 
   IRS_FORCE_INLINE void Flush(LoserScoreCollector& collector) {
@@ -108,6 +118,27 @@ class Admit {
   [[no_unique_address]] utils::Need<kTable, std::array<score_t, kRun>> _scores;
   [[no_unique_address]] utils::Need<kTable, uint32_t> _staged{};
   [[no_unique_address]] irs::detail::Narrowing<Table> _table;
+};
+
+struct ScoreBatch {
+  template<typename Lead, typename Others, typename Score, typename Table>
+  IRS_FORCE_INLINE void Flush(Lead& lead, Others& others, Score&& score,
+                              Admit<Table>& admit,
+                              LoserScoreCollector& collector) {
+    const auto n = std::exchange(size, 0);
+    if (n == 0) {
+      return;
+    }
+    others.Fetch(docs, n);
+    lead.ScoreFreqs(freqs, scores, n);
+    score(scores, n);
+    admit.AddDocs(collector, docs, n, scores);
+  }
+
+  ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
+  uint32_t size = 0;
 };
 
 }  // namespace irs::top

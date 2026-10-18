@@ -1,0 +1,40 @@
+statement ok
+CREATE TABLE iivg_t (a INT, g INT GENERATED ALWAYS AS (a * 10) VIRTUAL, b TEXT);
+
+
+statement ok
+CREATE INDEX iivg_inv ON iivg_t USING inverted (b);
+
+
+statement ok
+INSERT INTO iivg_t (a, b) VALUES (1, 'red'), (2, 'blue'), (3, 'red');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iivg_t;
+
+
+query
+SELECT count(*) AS n FROM iivg_inv WHERE b @@ 'red';
+----
+n
+2
+
+
+statement ok
+ALTER TABLE iivg_t DROP COLUMN g;
+
+
+statement ok
+INSERT INTO iivg_t (a, b) VALUES (4, 'red');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iivg_t;
+
+
+query
+SELECT count(*) AS n FROM iivg_inv WHERE b @@ 'red';
+----
+n
+3

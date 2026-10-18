@@ -52,8 +52,7 @@ class Server final {
   // Two-phase start: bring the io worker pool up first (StartIoPool) so the
   // background scheduler's Delay() has a timer host, then -- after the rest of
   // the engine (search indexes) is ready -- begin accepting connections
-  // (StartListeners). Splitting them keeps the search maintenance loops from
-  // busy-spinning on an instant Delay() during startup.
+  // (StartListeners).
   void StartIoPool();
   void StartListeners();
   // Two-phase stop, mirroring SearchEngine. RequestStop() is the signal:

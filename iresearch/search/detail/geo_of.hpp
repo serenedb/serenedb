@@ -33,7 +33,7 @@
 
 namespace irs::detail {
 
-template<template<typename> class Impl, typename Result, typename Parser,
+template<template<typename> typename Impl, typename Result, typename Parser,
          typename Acceptor, typename... Prefix>
 Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
                Prefix&&... prefix) {

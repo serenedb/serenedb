@@ -21,7 +21,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <bit>
 #include <cstdint>
 #include <type_traits>
@@ -40,22 +39,21 @@
 namespace irs {
 
 template<typename Make>
-decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
-                               Make&& make, bool single = true);
+decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
+                               bool single = true);
 
 inline DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
-  const DocumentMask* mask, doc_id_t visible_end) noexcept;
+  const DocumentMask* mask) noexcept;
 
 template<MaskKind K>
 class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
   using Base = docs_mask::Chunked<DocsMask<K>, K>;
 
   template<typename Make>
-  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
-                                        doc_id_t visible_end, Make&& make,
+  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                         bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
-    const DocumentMask* mask, doc_id_t visible_end) noexcept;
+    const DocumentMask* mask) noexcept;
 
  public:
   static constexpr MaskKind kKind = K;
@@ -103,18 +101,12 @@ class DocsMask final : public docs_mask::Chunked<DocsMask<K>, K> {
   }
 
  private:
-  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
-    : Base{mask, visible_end} {}
+  explicit DocsMask(const DocumentMask* mask) noexcept : Base{mask} {}
 };
 
 namespace docs_mask {
 
 alignas(64) inline constexpr uint64_t kNoWords[kChunkWords] = {};
-alignas(64) inline constexpr auto kAllWords = [] {
-  std::array<uint64_t, kChunkWords> words{};
-  words.fill(~uint64_t{0});
-  return words;
-}();
 
 }  // namespace docs_mask
 
@@ -122,15 +114,13 @@ template<MaskKind K>
   requires(docs_mask::Plural(K) == MaskKind::Bitsets)
 class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
   using Base = docs_mask::Chunked<DocsMask<K>, K>;
-  using Base::_end;
   using Base::_layout;
 
   template<typename Make>
-  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask,
-                                        doc_id_t visible_end, Make&& make,
+  friend decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
                                         bool single);
   friend DocsMask<MaskKind::Mixed> MakeGenericDocsMask(
-    const DocumentMask* mask, doc_id_t visible_end) noexcept;
+    const DocumentMask* mask) noexcept;
 
  public:
   static constexpr MaskKind kKind = K;
@@ -198,27 +188,24 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t doc) const noexcept {
-    if (doc >= _end) [[unlikely]] {
-      return doc;
-    }
     const auto begin = _layout.Begin();
     const doc_id_t offset = doc - begin;
     const auto chunk = offset >> docs_mask::kChunkShift;
     if (chunk >= _layout.Count()) [[unlikely]] {
-      return doc < begin ? std::min(begin, _end) : _end;
+      return doc < begin ? begin : doc_limits::eof();
     }
     const auto low = offset & docs_mask::kChunkLow;
     const auto rest =
       _layout.At(chunk).Words()[low / 64] & (~uint64_t{0} << (low % 64));
     const auto found =
       uint64_t{doc} - low % 64 + static_cast<uint64_t>(std::countr_zero(rest));
-    return static_cast<doc_id_t>(std::min<uint64_t>(found, _end));
+    return static_cast<doc_id_t>(std::min<uint64_t>(found, doc_limits::eof()));
   }
 
   IRS_FORCE_INLINE doc_id_t NextLive(doc_id_t doc) const noexcept {
     const auto begin = _layout.Begin();
     uint64_t at = doc;
-    while (at < _end) {
+    while (at < doc_limits::eof()) {
       const auto offset = at - begin;
       if (at < begin || (offset >> docs_mask::kChunkShift) >= _layout.Count()) {
         return static_cast<doc_id_t>(at);
@@ -229,7 +216,8 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
           .NextUnset(low);
       at += live - low;
       if (live != docs_mask::kChunkDocs) {
-        return at < _end ? static_cast<doc_id_t>(at) : doc_limits::eof();
+        return at < doc_limits::eof() ? static_cast<doc_id_t>(at)
+                                      : doc_limits::eof();
       }
     }
     return doc_limits::eof();
@@ -241,8 +229,7 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
   }
 
  private:
-  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
-    : Base{mask, visible_end} {
+  explicit DocsMask(const DocumentMask* mask) noexcept : Base{mask} {
     Rebase(doc_limits::min());
   }
 
@@ -259,15 +246,8 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
   }
 
   IRS_NO_INLINE void Rebase(doc_id_t doc) noexcept {
-    if (doc >= _end) {
-      _base = doc;
-      _limit = static_cast<doc_id_t>(docs_mask::kChunkDocs);
-      _words = docs_mask::kAllWords.data();
-      return;
-    }
     _base = doc & ~docs_mask::kChunkLow;
-    _limit =
-      std::min(static_cast<doc_id_t>(docs_mask::kChunkDocs), _end - _base);
+    _limit = static_cast<doc_id_t>(docs_mask::kChunkDocs);
     const auto begin = _layout.Begin();
     const doc_id_t offset = doc - begin;
     const auto chunk = offset >> docs_mask::kChunkShift;
@@ -283,43 +263,41 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
 using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
 template<typename Make>
-decltype(auto) ResolveDocsMask(const DocumentMask* mask, doc_id_t visible_end,
-                               Make&& make, bool single) {
+decltype(auto) ResolveDocsMask(const DocumentMask* mask, Make&& make,
+                               bool single) {
   if (mask == nullptr || mask->Empty()) {
-    return make(DocsMask<MaskKind::Runs>{nullptr, visible_end});
+    return make(DocsMask<MaskKind::Runs>{nullptr});
   }
   switch (single ? mask->Kind() : docs_mask::Plural(mask->Kind())) {
     case MaskKind::Bitsets:
-      return make(DocsMask<MaskKind::Bitsets>{mask, visible_end});
+      return make(DocsMask<MaskKind::Bitsets>{mask});
     case MaskKind::Arrays:
-      return make(DocsMask<MaskKind::Arrays>{mask, visible_end});
+      return make(DocsMask<MaskKind::Arrays>{mask});
     case MaskKind::Runs:
-      return make(DocsMask<MaskKind::Runs>{mask, visible_end});
+      return make(DocsMask<MaskKind::Runs>{mask});
     case MaskKind::Bitset:
-      return make(DocsMask<MaskKind::Bitset>{mask, visible_end});
+      return make(DocsMask<MaskKind::Bitset>{mask});
     case MaskKind::Array:
-      return make(DocsMask<MaskKind::Array>{mask, visible_end});
+      return make(DocsMask<MaskKind::Array>{mask});
     case MaskKind::Run:
-      return make(DocsMask<MaskKind::Run>{mask, visible_end});
+      return make(DocsMask<MaskKind::Run>{mask});
     case MaskKind::Mixed:
       break;
   }
-  return make(DocsMask<MaskKind::Mixed>{mask, visible_end});
+  return make(DocsMask<MaskKind::Mixed>{mask});
 }
 
 template<typename Make>
 decltype(auto) ResolveDocsMask(const SubReader& segment, Make&& make) {
-  return ResolveDocsMask(segment.docs_mask(), segment.Meta().visible_end,
-                         std::forward<Make>(make));
+  return ResolveDocsMask(segment.docs_mask(), std::forward<Make>(make));
 }
 
-inline GenericDocsMask MakeGenericDocsMask(const DocumentMask* mask,
-                                           doc_id_t visible_end) noexcept {
-  return GenericDocsMask{mask, visible_end};
+inline GenericDocsMask MakeGenericDocsMask(const DocumentMask* mask) noexcept {
+  return GenericDocsMask{mask};
 }
 
 inline GenericDocsMask MakeGenericDocsMask(const SubReader& segment) noexcept {
-  return MakeGenericDocsMask(segment.docs_mask(), segment.Meta().visible_end);
+  return MakeGenericDocsMask(segment.docs_mask());
 }
 
 inline doc_id_t LiveEnd(const SubReader& segment) noexcept {
@@ -327,9 +305,9 @@ inline doc_id_t LiveEnd(const SubReader& segment) noexcept {
 }
 
 template<typename Fn>
-void VisitLiveRanges(const DocumentMask* mask, doc_id_t visible_end,
-                     doc_id_t begin, doc_id_t end, Fn&& fn) {
-  ResolveDocsMask(mask, visible_end, [&]<DocsMaskType Mask>(Mask docs_mask) {
+void VisitLiveRanges(const DocumentMask* mask, doc_id_t begin, doc_id_t end,
+                     Fn&& fn) {
+  ResolveDocsMask(mask, [&]<DocsMaskType Mask>(Mask docs_mask) {
     docs_mask.VisitLiveRanges(begin, end, fn);
   });
 }

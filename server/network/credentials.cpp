@@ -20,6 +20,7 @@
 
 #include "network/credentials.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
@@ -29,10 +30,8 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
-#include <algorithm>
 #include <charconv>
 #include <cstring>
-#include <ranges>
 
 // SCRAM-SHA-256 crypto (RFC 5802) over OpenSSL -- the same primitives libpq's
 // scram-common wraps. SASLprep (RFC 4013) is not applied: ASCII passwords are
@@ -220,9 +219,38 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
   return signature;
 }
 
+std::optional<ScramClientProof> ScramClientProofFromPassword(
+  std::string_view password, std::span<const uint8_t> salt, int iterations,
+  std::string_view auth_message) {
+  const std::string prepared = SaslPrep(password);
+  uint8_t salted[kScramKeyLen];
+  if (PKCS5_PBKDF2_HMAC(prepared.data(), static_cast<int>(prepared.size()),
+                        salt.data(), static_cast<int>(salt.size()), iterations,
+                        EVP_sha256(), kScramKeyLen, salted) != 1) {
+    return std::nullopt;
+  }
+  uint8_t client_key[kScramKeyLen];
+  Hmac256({salted, kScramKeyLen}, "Client Key", client_key);
+  uint8_t stored_key[kScramKeyLen];
+  SHA256(client_key, kScramKeyLen, stored_key);
+  uint8_t client_signature[kScramKeyLen];
+  Hmac256({stored_key, kScramKeyLen}, auth_message, client_signature);
+
+  ScramClientProof out;
+  for (int i = 0; i < kScramKeyLen; ++i) {
+    out.client_proof[i] =
+      static_cast<uint8_t>(client_key[i] ^ client_signature[i]);
+  }
+  uint8_t server_key[kScramKeyLen];
+  Hmac256({salted, kScramKeyLen}, "Server Key", server_key);
+  Hmac256({server_key, kScramKeyLen}, auth_message,
+          out.server_signature.data());
+  return out;
+}
+
 bool IsMd5Verifier(std::string_view s) {
   return s.size() == 35 && s.starts_with("md5") &&
-         std::ranges::all_of(s.substr(3), [](unsigned char c) {
+         absl::c_all_of(s.substr(3), [](unsigned char c) {
            return absl::ascii_isxdigit(c);
          });
 }

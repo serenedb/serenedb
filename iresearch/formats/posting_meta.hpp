@@ -25,33 +25,36 @@
 #include <cstdint>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 struct PostingMeta {
+  static constexpr uint32_t kInlineBytes = 32;
+
   void clear() noexcept {
     docs_count = freq = 0;
     doc_start = pos_start = pay_start = 0;
-    pos_offset = 0;
+    inline_data = nullptr;
     doc_delta = 0;
+    pos_extent = pay_extent = 0;
+    pos_offset = 0;
+    inline_size = 0;
   }
+
+  bytes_view Inline() const noexcept { return {inline_data, inline_size}; }
 
   uint32_t docs_count = 0;  // How many documents a particular term contains
   uint32_t freq = 0;  // How many times a particular term occur in documents
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
-  // Slot of the term's first position inside the block at `pos_start`, so it
-  // is bounded by the position block size.
-  uint32_t pos_offset = 0;
-  // A delta whose base `docs_count` decides, and the only field of this record
-  // that means two things. A single-document term has no `.doc` data, so it
-  // carries its document as a delta from `doc_limits::min()`; a term long
-  // enough to carry skip data carries where that data starts as a delta from
-  // `doc_start`, which bounds it by the term's own `.doc` footprint rather than
-  // by the file -- `EndTerm` refuses a term that does not fit. For the lengths
-  // in between it is neither written nor read.
+  const byte_type* inline_data = nullptr;
   uint32_t doc_delta = 0;
+  uint32_t pos_extent = 0;
+  uint32_t pay_extent = 0;
+  uint16_t pos_offset = 0;
+  uint8_t inline_size = 0;
 };
 
 // What a query over a term this segment does not have stands on.

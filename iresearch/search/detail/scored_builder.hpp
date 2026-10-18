@@ -69,7 +69,7 @@ Result<Api> MakeScoredNegation(
     });
 }
 
-template<typename Api, template<typename> class Group, typename Set,
+template<typename Api, template<typename> typename Group, typename Set,
          typename... Args>
 Result<Api> MakeScoredThresholdWindow(const Context<Api>& ctx,
                                       ScoreMergeType merge, uint32_t min_match,
@@ -448,11 +448,21 @@ Result<Api> MakeScored(const BooleanQuery& query, const Context<Api>& ctx) {
                                     ctx, merge, min_match, absorbed);
   }
   if constexpr (Api::kPrunes) {
-    if (!optional && Api::Prunes(ctx, merge, absorbed)) {
-      if (auto pruned = Api::MakePrunedConjunction(
-            must, must_filters, query.Uniformity(Occur::Must), {}, {}, segment,
-            ctx, merge)) {
-        return pruned;
+    if (Api::Prunes(ctx, merge, absorbed)) {
+      if (!optional) {
+        if (auto pruned = Api::MakePrunedConjunction(
+              must, must_filters, query.Uniformity(Occur::Must), {}, {},
+              segment, ctx, merge)) {
+          return pruned;
+        }
+      } else if (only_scores && must.size() == 1 && must_filters.empty() &&
+                 should_filters.empty() &&
+                 query.Uniformity(Occur::Must) == Terms::Bounded &&
+                 query.Uniformity(Occur::Should) == Terms::Bounded) {
+        if (auto pruned = Api::MakePrunedReqOpt(must.front(), should, segment,
+                                                ctx, merge)) {
+          return pruned;
+        }
       }
     }
   }

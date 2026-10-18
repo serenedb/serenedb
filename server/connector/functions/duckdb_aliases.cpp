@@ -155,8 +155,7 @@ void AliasScalarFunctions(duckdb::ExtensionLoader& loader) {
   }
 }
 
-void AliasTableMacros(duckdb::ExtensionLoader& loader,
-                      duckdb::ParserOptions options) {
+void AliasTableMacros(duckdb::ExtensionLoader& loader) {
   for (const auto& macro : kTableMacros) {
     const std::string name = AliasNameFor(macro.source);
     const std::string parameter{macro.parameter};
@@ -169,14 +168,15 @@ void AliasTableMacros(duckdb::ExtensionLoader& loader,
       definition.parameters[0] = parameter.c_str();
     }
 
-    auto info = duckdb::DefaultTableFunctionGenerator::CreateTableMacroInfo(
-      definition, options);
+    auto info =
+      duckdb::DefaultTableFunctionGenerator::CreateTableMacroInfo(definition);
     info->on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
     loader.RegisterFunction(*info);
   }
 }
 
-void AliasViews(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
+void AliasViews(duckdb::DatabaseInstance& db) {
+  auto parser = duckdb::Parser::GetBuiltinParser();
   auto& system_catalog = duckdb::Catalog::GetSystemCatalog(db);
   auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
   for (const auto name : kViews) {
@@ -208,10 +208,8 @@ void RegisterDuckDBAliases(duckdb::DatabaseInstance& db) {
   AliasTableFunctions(loader);
   AliasScalarFunctions(loader);
 
-  duckdb::ParserOptions parser_options;
-  duckdb::Parser parser{parser_options};
-  AliasTableMacros(loader, parser_options);
-  AliasViews(db, parser);
+  AliasTableMacros(loader);
+  AliasViews(db);
 }
 
 }  // namespace sdb::connector

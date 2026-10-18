@@ -39,10 +39,18 @@ GRANT SELECT ON dr_kostya TO dr_vedernikoff;
 
 # DROP ROLE is refused while the grant exists (PG: 2BP01, "cannot be dropped
 # because some objects depend on it"). DETAIL differs across engines -> ignore.
+skipif serenedb
 statement error
 DROP ROLE dr_vedernikoff;
 ----
 db error: ERROR: role "dr_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dr_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dr_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Remove the dependency by revoking; now the drop succeeds.

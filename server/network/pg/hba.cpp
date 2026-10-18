@@ -20,13 +20,14 @@
 
 #include "network/pg/hba.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <arpa/inet.h>
+#include <fast_float/fast_float.h>
 #include <sys/socket.h>
 
 #include <algorithm>
 #include <atomic>
-#include <charconv>
 #include <exception>
 #include <filesystem>
 #include <iresearch/utils/log.hpp>
@@ -249,19 +250,18 @@ std::shared_ptr<const re2::RE2> CompileRegex(std::string_view pattern,
 // Address parsing (hba.c:1509-1666).
 // ---------------------------------------------------------------------------
 
-bool PtonAny(const std::string& s, int& family, std::array<uint8_t, 16>& out) {
-  if (s.find(':') != std::string::npos) {
-    if (inet_pton(AF_INET6, s.c_str(), out.data()) == 1) {
-      family = AF_INET6;
-      return true;
-    }
+bool PtonAny(std::string_view s, int& family, std::array<uint8_t, 16>& out) {
+  std::array<char, INET6_ADDRSTRLEN> buf;
+  if (s.size() >= buf.size()) {
     return false;
   }
-  if (inet_pton(AF_INET, s.c_str(), out.data()) == 1) {
-    family = AF_INET;
-    return true;
+  buf[s.copy(buf.data(), s.size())] = '\0';
+  const int af = s.find(':') == std::string_view::npos ? AF_INET : AF_INET6;
+  if (inet_pton(af, buf.data(), out.data()) != 1) {
+    return false;
   }
-  return false;
+  family = af;
+  return true;
 }
 
 int FamilyWidth(int family) { return family == AF_INET6 ? 128 : 32; }
@@ -397,8 +397,8 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
       rule.address.kind = AddrMatcher::Kind::SameNet;
     } else {
       const auto slash = addr_tok.find('/');
-      const std::string left{addr_tok.substr(
-        0, slash == std::string_view::npos ? addr_tok.size() : slash)};
+      const auto left = addr_tok.substr(
+        0, slash == std::string_view::npos ? addr_tok.size() : slash);
       int fam = 0;
       std::array<uint8_t, 16> raw{};
       const bool numeric = PtonAny(left, fam, raw);
@@ -410,13 +410,13 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
           return fail("specifying both host name and CIDR mask is invalid");
         }
         rule.address.kind = AddrMatcher::Kind::Hostname;
-        rule.address.hostname = left;
+        rule.address.hostname.assign(left);
       } else if (slash != std::string_view::npos) {
         // CIDR.
         const std::string_view pfx = addr_tok.substr(slash + 1);
         unsigned prefix = 0;
         const auto [p, ec] =
-          std::from_chars(pfx.data(), pfx.data() + pfx.size(), prefix);
+          fast_float::from_chars(pfx.data(), pfx.data() + pfx.size(), prefix);
         if (ec != std::errc{} || p != pfx.data() + pfx.size() ||
             prefix > static_cast<unsigned>(FamilyWidth(fam))) {
           return fail("invalid CIDR mask in address");
@@ -437,7 +437,7 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
         ++idx;
         int mfam = 0;
         std::array<uint8_t, 16> mraw{};
-        if (!PtonAny(std::string{mask_tok}, mfam, mraw) || mfam != fam) {
+        if (!PtonAny(mask_tok, mfam, mraw) || mfam != fam) {
           return fail("IP address and mask do not match");
         }
         rule.address.kind = AddrMatcher::Kind::Mask;
@@ -806,7 +806,7 @@ std::optional<Ruleset> Parse(std::string_view text, ParseError& error) {
     }
     // Verbatim line for the view (strip a trailing comment for readability).
     std::string_view raw = logical.text;
-    rule->raw = std::string{raw};
+    rule->raw.assign(raw);
     ruleset.rules.push_back(std::move(*rule));
     ++seq;
   }
@@ -895,13 +895,13 @@ std::optional<ParseError> SetHbaFromText(std::string_view text) {
   // we don't duplicate them.
   const bool already_safe =
     parsed->rules.size() >= combined.rules.size() &&
-    std::ranges::equal(combined.rules,
-                       parsed->rules | std::views::take(combined.rules.size()),
-                       {}, &Rule::raw, &Rule::raw);
+    absl::c_equal(
+      combined.rules, parsed->rules | std::views::take(combined.rules.size()),
+      [](const Rule& lhs, const Rule& rhs) { return lhs.raw == rhs.raw; });
   if (already_safe) {
     combined = std::move(*parsed);
   } else {
-    std::ranges::move(parsed->rules, std::back_inserter(combined.rules));
+    absl::c_move(parsed->rules, std::back_inserter(combined.rules));
   }
   Renumber(combined);
   SetHbaRuleset(std::make_shared<const Ruleset>(std::move(combined)));
@@ -1053,12 +1053,13 @@ std::vector<RenderedRule> RenderHbaRules() {
     r.rule_number = rule.seq + 1;  // 1-based, like PG
     r.file_name = file;
     r.type = ConnTypeName(rule.conntype);
-    std::ranges::transform(rule.database.tokens,
-                           std::back_inserter(r.databases), &AuthToken::value);
-    std::ranges::transform(rule.role.tokens, std::back_inserter(r.roles),
-                           &AuthToken::value);
+    const auto token_value = [](const AuthToken& token) { return token.value; };
+    absl::c_transform(rule.database.tokens, std::back_inserter(r.databases),
+                      token_value);
+    absl::c_transform(rule.role.tokens, std::back_inserter(r.roles),
+                      token_value);
     r.auth_method = MethodName(rule.method);
-    std::ranges::transform(
+    absl::c_transform(
       rule.options, std::back_inserter(r.options),
       [](const MethodOption& o) { return absl::StrCat(o.name, "=", o.value); });
     switch (rule.address.kind) {
@@ -1100,7 +1101,11 @@ void LoadPersistedHba() {
     return;  // no data directory configured -> keep the built-in default
   }
   std::error_code ec;
-  if (!fs::exists(fs::path{path}, ec) || ec) {
+  if (!fs::exists(fs::path{path}, ec)) {
+    if (ec) {
+      SDB_ERROR(GENERAL, "hba config file '", path,
+                "' could not be read: ", ec.message(), " -- keeping default");
+    }
     return;  // no config file -> keep the built-in default
   }
   std::string text;

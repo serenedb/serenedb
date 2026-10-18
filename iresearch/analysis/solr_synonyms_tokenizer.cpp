@@ -135,9 +135,10 @@ Tokenizer::ptr SolrSynonymsTokenizer::Make(Options opts,
   digest.Add(opts.synonyms_text);
   char hex[duckdb::MD5Context::MD5_HASH_LENGTH_TEXT];
   digest.FinishHex(hex);
-  auto state = cache.GetOrBuild<State>(std::string_view{hex, sizeof(hex)}, [&] {
-    return MakeState(std::move(opts.synonyms_text));
-  });
+  const auto key =
+    absl::StrCat(State::ObjectType(), ":", std::string_view{hex, sizeof(hex)});
+  auto state = cache.GetOrBuild<State>(
+    key, [&] { return MakeState(std::move(opts.synonyms_text)); });
   return std::make_unique<SolrSynonymsTokenizer>(std::move(state));
 }
 

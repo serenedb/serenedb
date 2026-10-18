@@ -1,0 +1,54 @@
+control substitution on
+
+statement ok
+CREATE TABLE rocd_t (a INTEGER);
+
+
+statement ok
+INSERT INTO rocd_t VALUES (1);
+
+
+connection open_txn
+statement ok
+BEGIN;
+
+
+connection open_txn
+statement ok
+CREATE DATABASE rocd_db;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE rocd_trigger (x INTEGER);
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rocd_t;
+----
+n
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'rocd_db';
+----
+n
+0

@@ -8,18 +8,11 @@ cd "$SCRIPT_DIR"
 
 if ! command -v ruby >/dev/null 2>&1; then
 	echo "[ruby] ruby not found" >&2
-	exit 0
+	exit 1
 fi
-if ! command -v gem >/dev/null 2>&1; then
-	echo "[ruby] gem not found" >&2
-	exit 0
-fi
-
-# Install pg gem on first run. The gem is small but compiles a libpq
-# extension; libpq-dev is in the build image.
-if ! ruby -e 'require "pg"' 2>/dev/null; then
-	gem install --no-document --user-install pg yaml >/dev/null 2>&1 ||
-		gem install --no-document --user-install pg yaml >&2
+if ! ruby -e 'require "pg"; require "yaml"' 2>/dev/null; then
+	echo "[ruby] the pg gem is missing; gem install pg" >&2
+	exit 1
 fi
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"

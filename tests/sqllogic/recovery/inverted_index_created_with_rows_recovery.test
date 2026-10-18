@@ -1,0 +1,45 @@
+control substitution on
+
+statement ok
+CREATE TABLE icwr_t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO icwr_t VALUES (1, 'pre');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX icwr_idx ON icwr_t USING inverted (body);
+
+
+statement ok
+INSERT INTO icwr_t VALUES (2, 'post'), (3, 'post');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) icwr_t;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM icwr_t) AS t, (SELECT count(*) FROM icwr_idx) AS i, (SELECT count(*) FROM icwr_idx WHERE body @@ 'post') AS p;
+----
+t	i	p
+3	3	2

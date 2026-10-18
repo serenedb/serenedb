@@ -111,8 +111,12 @@ void S2MultiPolylineRegion::Encode(Encoder& encoder, Options options) const {
       EncodeVertices(encoder, vertices);
     } break;
     default: {
+      size_t num_vertices = 0;
+      for (const auto& polyline : _impl) {
+        num_vertices += static_cast<size_t>(polyline.num_vertices());
+      }
       encoder.Ensure((1 + num_polylines) * Varint::kMax64 +
-                     2 * ToSize(options));
+                     num_vertices * ToSize(options));
       encoder.put_varint64(num_polylines * 2 + 1);
       for (size_t i = 0; i != num_polylines; ++i) {
         const auto vertices = _impl[i].vertices_span();

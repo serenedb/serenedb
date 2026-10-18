@@ -20,7 +20,8 @@
 
 #include "pg/pg_catalog/builtin_functions.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp>
@@ -129,8 +130,8 @@ void VisitBuiltinFunctions(
     visit_schema(current_catalog, schema_name);
   }
 
-  std::ranges::sort(entries, [](const duckdb::CatalogEntry& lhs,
-                                const duckdb::CatalogEntry& rhs) {
+  absl::c_sort(entries, [](const duckdb::CatalogEntry& lhs,
+                           const duckdb::CatalogEntry& rhs) {
     const auto left_schema = lhs.ParentSchemaName().GetIdentifierName();
     const auto right_schema = rhs.ParentSchemaName().GetIdentifierName();
     if (left_schema != right_schema) {
@@ -188,16 +189,17 @@ bool TypeIsComplete(const duckdb::LogicalType& type) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case DECIMAL:
+    case TUPLE:
     case STRUCT:
     case MAP:
     case UNION:
     case ENUM:
-      return type.AuxInfo();
+      return type.HasParameters();
     case LIST:
-      return type.AuxInfo() &&
+      return type.HasParameters() &&
              TypeIsComplete(duckdb::ListType::GetChildType(type));
     case ARRAY:
-      return type.AuxInfo() &&
+      return type.HasParameters() &&
              TypeIsComplete(duckdb::ArrayType::GetChildType(type));
     default:
       return true;

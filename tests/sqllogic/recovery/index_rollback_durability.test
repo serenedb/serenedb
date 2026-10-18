@@ -11,8 +11,8 @@ control substitution on
 # the relation that is not MVCC state, and its rolled-back versions are
 # compensated by two different mechanisms -- the backfill's
 # transaction_abort_cleanup and duckdb's DuckIndexEntry::Rollback. A
-# rolled-back CREATE INDEX therefore has three ways to leave something
-# behind: the record, the physical half, and the artifacts.
+# rolled-back CREATE INDEX therefore has two ways to leave something
+# behind: the record and the physical half.
 #
 # Everything here is asserted twice, once in memory and once against a
 # serened that read the catalog log back, because only the second answers

@@ -38,6 +38,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
 
   using Base::_doc;
   using Base::_docs;
+  using Base::_hint;
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
@@ -67,7 +68,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       _leaf = {.bitset = nullptr,
                .words = 0,
                .max = _last,
-               .kind = FormatTraits128::FillLeaf::Kind::Docs};
+               .kind = block_io::FillLeaf::Kind::Docs};
       _leaf_base = _last - 1;
       _leaf_len = 1;
       return;
@@ -132,30 +133,35 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       }
     }
 
+    [[maybe_unused]] const byte_type* at = nullptr;
+    if constexpr (InputType::kVolatileAlways) {
+      if (_left_in_list != 0) {
+        at = In().Current();
+      }
+    }
+
     for (;;) {
       if (_left_in_list == 0) {
         return _doc = doc_limits::eof();
       }
 
-      auto& in = In();
       const auto len = std::min(_left_in_list, kBlock);
       const auto base = _last;
-      const auto leaf =
-        FormatTraits128::ReadTailForFill(len, in, Enc(), _docs, base);
+      const auto leaf = ReadFill(at, len, base);
       _left_in_list -= len;
       _last = leaf.max;
 
       if (leaf.max < min) {
-        SkipFreqs(len);
+        SkipFreqsAfterFill(len);
         continue;
       }
 
       if (leaf.Maskable()) {
         if constexpr (!Scored) {
           if (base >= min) [[likely]] {
-            const auto live = FormatTraits128::MaskLeaf<Clear>(
+            const auto live = block_io::MaskLeaf<Clear>(
               leaf, base, len, min, max, mask, std::end(_docs));
-            SkipFreqs(len);
+            SkipFreqsAfterFill(len);
             if (live == 0) {
               continue;
             }
@@ -166,7 +172,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
         Materialize(leaf, base, len);
       }
 
-      SkipFreqs(len);
+      SkipFreqsAfterFill(len);
 
       const auto* const begin = Behind(end - len, end, min);
       if (leaf.max < max) {
@@ -223,16 +229,37 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
   }
 
  private:
+  IRS_FORCE_INLINE block_io::FillLeaf ReadFill(const byte_type*& at,
+                                               uint32_t len, doc_id_t base) {
+    _hint.Advance(In(), In().Position());
+    if constexpr (InputType::kVolatileAlways) {
+      return block_io::FillView(In(), at, len, this->Holes(), _docs, base,
+                                len == this->_freq_len.value);
+    } else {
+      return block_io::ReadTailForFill(len, In(), Enc(), this->Holes(), _docs,
+                                       base);
+    }
+  }
+
+  IRS_FORCE_INLINE void SkipFreqsAfterFill(uint32_t len) {
+    if constexpr (!InputType::kVolatileAlways) {
+      SkipFreqs(len);
+    }
+  }
+
   void ReadLeaf() {
     const auto len = std::min(_left_in_list, kBlock);
     _leaf_base = _last;
-    _leaf =
-      FormatTraits128::ReadTailForFill(len, In(), Enc(), _docs, _leaf_base);
+    [[maybe_unused]] const byte_type* at = nullptr;
+    if constexpr (InputType::kVolatileAlways) {
+      at = In().Current();
+    }
+    _leaf = ReadFill(at, len, _leaf_base);
     _leaf.bitset = StableBitset(_leaf);
     _leaf_len = len;
     _left_in_list -= len;
     _last = _leaf.max;
-    SkipFreqs(len);
+    SkipFreqsAfterFill(len);
   }
 
   IRS_FORCE_INLINE bool Span(doc_id_t min, doc_id_t max, uint64_t& lo,
@@ -258,9 +285,10 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       return std::max<doc_id_t>(max, _leaf_base + 1);
     }
     if (_leaf.IsBitset()) {
-      cursor.And(lo, hi,
-                 static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base),
-                 _leaf.bitset, _leaf.words);
+      cursor.And(
+        lo, hi,
+        static_cast<int64_t>(min) - static_cast<int64_t>(_leaf_base) - 1,
+        _leaf.bitset, _leaf.words);
       return InLeafFrom(max);
     }
     const auto* const end = std::cend(_docs);
@@ -276,12 +304,12 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     }
     if (_leaf.IsBitset()) {
       const auto total = uint32_t{_leaf.words} * kBits;
-      auto bit = target > _leaf_base ? target - _leaf_base : uint32_t{1};
+      auto bit = target > _leaf_base ? target - _leaf_base - 1 : uint32_t{0};
       while (bit < total) {
         const auto word = bit / kBits;
         const auto bits = _leaf.bitset[word] & (~uint64_t{0} << (bit % kBits));
         if (bits != 0) {
-          return static_cast<doc_id_t>(_leaf_base + word * kBits +
+          return static_cast<doc_id_t>(_leaf_base + 1 + word * kBits +
                                        std::countr_zero(bits));
         }
         bit = (word + 1) * kBits;
@@ -297,16 +325,16 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
     return _last;
   }
 
-  void Materialize(const FormatTraits128::FillLeaf& leaf, doc_id_t base,
+  void Materialize(const block_io::FillLeaf& leaf, doc_id_t base,
                    uint32_t len) noexcept {
     auto* const out = std::end(_docs) - len;
     if (leaf.IsRun()) {
-      FormatTraits128::FillSameDelta(out, len, base, 1);
+      block_codec::FillProgression(out, len, base, 1);
       return;
     }
     SDB_ASSERT(leaf.IsBitset());
-    FormatTraits128::MaterializeBitsetFrom(base, leaf.bitset, 0, leaf.bitset[0],
-                                           leaf.words, out);
+    block_io::MaterializeBitsetFrom(base, leaf.bitset, 0, leaf.bitset[0],
+                                    leaf.words, out);
   }
 
   template<bool Clear>
@@ -360,7 +388,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
       });
   }
 
-  FormatTraits128::FillLeaf _leaf{};
+  block_io::FillLeaf _leaf{};
   doc_id_t _leaf_base = 0;
   uint32_t _leaf_len = 0;
 };

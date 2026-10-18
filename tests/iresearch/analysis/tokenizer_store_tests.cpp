@@ -181,7 +181,8 @@ TEST(TokenizerStore, WildcardBlobDecodesToTheBaseTerms) {
       continue;
     }
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     ASSERT_TRUE(tokenizer->Traits().store);
     ASSERT_TRUE(spec->model_children)
@@ -223,7 +224,8 @@ TEST(TokenizerStore, ShingleStoresNothing) {
       continue;
     }
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     ASSERT_FALSE(tokenizer->Traits().store);
 
@@ -247,7 +249,8 @@ TEST(TokenizerStore, GeoBlobCarriesTheDeclaredCoding) {
       continue;
     }
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     const auto* geo = dynamic_cast<const GeoJsonTokenizer*>(tokenizer.get());
     ASSERT_NE(nullptr, geo);
@@ -296,7 +299,8 @@ TEST(TokenizerStore, FillRowMatchesPerValueFills) {
       continue;
     }
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     const auto traits = tokenizer->Traits();
 

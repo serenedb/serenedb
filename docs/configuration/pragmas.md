@@ -58,7 +58,7 @@ Get the file and memory size of each database:
 
 <SqlLogicTest id="configuration/pragmas/example_008" />
 
-`database_size` returns information about the file and memory size of each database. The column types of the returned results are given below:
+`database_size` returns information about the file and memory size of each database. A database whose size cannot be read, such as an attached PostgreSQL database whose server is unreachable, is left out, and the other databases are still listed. The column types of the returned results are given below:
 
 <SqlLogicTest id="configuration/pragmas/example_009" hideResult />
 
@@ -303,16 +303,6 @@ Disable query logging:
 
 <SqlLogicTest id="configuration/pragmas/example_049" />
 
-## Object Cache
-
-Enable caching of objects for e.g., Parquet metadata:
-
-<SqlLogicTest id="configuration/pragmas/example_054" />
-
-Disable caching of objects:
-
-<SqlLogicTest id="configuration/pragmas/example_055" />
-
 ## Checkpointing
 
 #### Compression
@@ -385,14 +375,6 @@ In this case, floating point division by zero (e.g., `1.0 / 0.0`, `0.0 / 0.0` an
 ## Query Verification (for Development)
 
 The following `PRAGMA`s are mostly used for development and internal testing.
-
-Enable query verification:
-
-<SqlLogicTest id="configuration/pragmas/example_065" />
-
-Disable query verification:
-
-<SqlLogicTest id="configuration/pragmas/example_066" />
 
 Enable force parallel query processing:
 

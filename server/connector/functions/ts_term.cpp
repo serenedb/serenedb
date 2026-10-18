@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/status/status.h>
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -114,8 +115,8 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
   std::sort(groups.begin(), groups.end());
   groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
   min_match = std::min(min_match, groups.size());
-  const bool stacked = std::ranges::any_of(
-    groups, [](const auto& group) { return group.size() > 1; });
+  const bool stacked =
+    absl::c_any_of(groups, [](const auto& group) { return group.size() > 1; });
   if (!stacked) {
     if (groups.size() == 1) {
       AddTerm(parent, field, groups.front().front(), boost, scorer);
@@ -155,7 +156,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
-    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }
   const uint32_t value_min_match = require_all ? 0 : TakeMinMatch(ctx);

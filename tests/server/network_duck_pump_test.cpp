@@ -71,7 +71,42 @@ yaclib::Future<> HostedBody(network::CpuResumer& task,
   co_return {};
 }
 
+yaclib::Future<> StoppableBody(network::CpuResumer& task,
+                               std::atomic<bool>& stopping,
+                               std::atomic<int>& runs) {
+  co_await task.Park();
+  for (;;) {
+    runs.fetch_add(1, std::memory_order_relaxed);
+    if (stopping.load(std::memory_order_acquire)) {
+      break;
+    }
+    co_await task.Park();
+  }
+  task.Finish();
+  co_return {};
+}
+
 }  // namespace
+
+TEST(NetworkCpuResumer, WakeBeforeTheCoroutineExistsIsDeliveredByStart) {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  network::IoThreadPool pool{1};
+  pool.Start();
+  auto task =
+    duckdb::make_shared_ptr<network::CpuResumer>(scheduler, pool.Next());
+
+  std::atomic<bool> stopping{true};
+  std::atomic<int> runs{0};
+  task->RequestRun();
+  task->RequestRun();
+  auto future = StoppableBody(*task, stopping, runs);
+  EXPECT_EQ(runs.load(std::memory_order_relaxed), 0);
+  task->Start();
+  [[maybe_unused]] const auto done = std::move(future).Get();
+  EXPECT_EQ(runs.load(std::memory_order_relaxed), 1);
+  pool.Stop();
+}
 
 TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();
@@ -93,8 +128,7 @@ TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
 
   std::atomic<int> phase{0};
   auto future = HostedBody(*task, *pending, phase, std::this_thread::get_id());
-  // First Park sets the resume job; one bootstrap kick schedules it.
-  task->RequestRun();
+  task->Start();
 
   while (phase.load(std::memory_order_acquire) != 1) {
     std::this_thread::yield();

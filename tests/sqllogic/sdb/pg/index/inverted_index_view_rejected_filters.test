@@ -1,0 +1,89 @@
+control substitution on
+
+statement count 2000
+COPY (SELECT i AS id, i % 7 AS a, 'doc ' || i AS body FROM range(1, 2001) r(i))
+TO '${__TEST_DIR__}/view_rejected.csv' HEADER;
+
+statement ok
+CREATE VIEW view_rejected_v AS SELECT * FROM read_csv('${__TEST_DIR__}/view_rejected.csv');
+
+statement ok
+CREATE INDEX view_rejected_idx ON view_rejected_v USING inverted(id);
+
+statement ok
+CREATE TABLE view_rejected_u(id INTEGER PRIMARY KEY, w INTEGER);
+
+statement ok
+INSERT INTO view_rejected_u SELECT i, i * 10 FROM range(1, 20001) r(i);
+
+query
+SELECT count(*) FROM view_rejected_idx c WHERE c.a = 3;
+----
+count
+286
+
+query
+SELECT count(*), sum(u.w) FROM view_rejected_u u JOIN view_rejected_idx c ON c.id = u.id WHERE c.a = 3;
+----
+count	sum
+286	2861430
+
+query
+SELECT count(*) FROM (SELECT * FROM view_rejected_u ORDER BY id LIMIT 10) u JOIN view_rejected_idx c ON c.id = u.id WHERE c.a = 3;
+----
+count
+2
+
+query
+SELECT count(c.id) FROM view_rejected_u u LEFT JOIN (SELECT * FROM view_rejected_idx c WHERE c.a = 3) c ON c.id = u.id;
+----
+count
+286
+
+query
+SELECT max(r) FROM (SELECT row_number() OVER (ORDER BY c.id) AS r FROM view_rejected_idx c WHERE c.a = 3) x;
+----
+max
+286
+
+query
+SELECT max(r), sum(id) FROM (SELECT c.id, row_number() OVER () AS r FROM view_rejected_idx c WHERE c.a = 3) x;
+----
+max	sum
+286	286143
+
+query
+SELECT count(*) FROM view_rejected_u u JOIN view_rejected_idx c ON c.id = u.id WHERE c.body = 'doc 3';
+----
+count
+1
+
+query
+SELECT count(*) FROM view_rejected_u u JOIN view_rejected_idx c ON c.id = u.id WHERE c.a = 3 AND c.body = 'doc 3';
+----
+count
+1
+
+query
+SELECT max(r) FROM (SELECT row_number() OVER (ORDER BY c.id) AS r FROM view_rejected_idx c WHERE c.a = 3 AND c.body <> 'doc 3') x;
+----
+max
+285
+
+query
+SELECT count(*) FROM view_rejected_u u JOIN view_rejected_idx c ON c.id = u.id WHERE c.a = 3 AND c.tableoid = 'view_rejected_v'::regclass;
+----
+count
+286
+
+query
+SELECT c.a, count(*) FROM view_rejected_u u JOIN view_rejected_idx c ON c.id = u.id WHERE c.a = 3 GROUP BY c.a;
+----
+a	count
+3	286
+
+query
+SELECT max(r), min(a) FROM (SELECT c.a, row_number() OVER (ORDER BY c.id) AS r FROM view_rejected_idx c WHERE c.a = 3) x;
+----
+max	min
+286	3

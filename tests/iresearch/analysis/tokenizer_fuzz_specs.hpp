@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
 #include <functional>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
@@ -41,11 +43,15 @@ struct Spec {
   std::function<std::vector<irs::analysis::Tokenizer::ptr>()> model_children;
   bool utf8_only = false;
   uint32_t cost = 1;
+  uint32_t load_parts = 1;
 };
 
 const std::vector<Spec>& AllSpecs();
 
-irs::analysis::Tokenizer::ptr Make(const Spec& spec);
+duckdb::Connection Connect();
+
+irs::analysis::Tokenizer::ptr Make(const Spec& spec,
+                                   duckdb::ClientContext& ctx);
 
 bool ModelsAvailable();
 

@@ -46,6 +46,7 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
       return NeedsClientCast(duckdb::ListType::GetChildType(type));
     case duckdb::LogicalTypeId::ARRAY:
       return NeedsClientCast(duckdb::ArrayType::GetChildType(type));
+    case duckdb::LogicalTypeId::TUPLE:
     case duckdb::LogicalTypeId::STRUCT:
       for (const auto& [_, field] : duckdb::StructType::GetChildTypes(type)) {
         if (NeedsClientCast(field)) {
@@ -76,11 +77,15 @@ duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
       return duckdb::LogicalType::ARRAY(
         ClientCastTarget(duckdb::ArrayType::GetChildType(type)),
         duckdb::ArrayType::GetSize(type));
+    case duckdb::LogicalTypeId::TUPLE:
     case duckdb::LogicalTypeId::STRUCT: {
       duckdb::child_list_t<duckdb::LogicalType> children;
       for (const auto& [name, field] :
            duckdb::StructType::GetChildTypes(type)) {
         children.emplace_back(name, ClientCastTarget(field));
+      }
+      if (type.id() == duckdb::LogicalTypeId::TUPLE) {
+        return duckdb::LogicalType::TUPLE(std::move(children));
       }
       return duckdb::LogicalType::STRUCT(std::move(children));
     }

@@ -227,6 +227,22 @@ target_include_directories(
 )
 
 ################################################################################
+### geographiclib-c library -- geodesic computations, used by duckdb_spatial
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "geographiclib-c" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_library(
+    geographiclib
+    STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src/geodesic.c"
+)
+target_include_directories(
+    geographiclib
+    SYSTEM
+    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src"
+)
+
+################################################################################
 ### re2 library
 ################################################################################
 
@@ -264,14 +280,7 @@ set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
 
 ################################################################################
-### streamvbyte library
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "streamvbyte" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-add_subdirectory(streamvbyte)
-
-################################################################################
-### sse2neon library -- need this after abseil and highway, but before simdcomp
+### sse2neon library -- need this after abseil and highway
 ################################################################################
 
 add_library(sse2neon INTERFACE)
@@ -282,13 +291,6 @@ if(ARCH_AARCH64)
         INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/sse2neon"
     )
 endif()
-
-################################################################################
-### SIMDCOMP library
-################################################################################
-
-# TODO(mbkkt) make it submodule
-add_subdirectory(simdcomp)
 
 ################################################################################
 ### fastText library
@@ -313,26 +315,40 @@ set(NO_LAPACK 1 CACHE BOOL "" FORCE)
 set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
 set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
-set(DYNAMIC_ARCH ON CACHE BOOL "" FORCE)
-if(ARCH_AARCH64)
-    set(TARGET ARMV8 CACHE STRING "" FORCE)
-    set(DYNAMIC_LIST
-        "NEOVERSEN1;NEOVERSEV1;NEOVERSEN2;ARMV8SVE"
-        CACHE STRING
-        ""
-        FORCE
+if(SDB_SANITIZE MATCHES "^Memory")
+    message(
+        STATUS
+        "OpenBLAS: MSan build, building the generic C kernels instead of the assembly"
     )
-elseif(ARCH_AMD64)
-    set(TARGET HASWELL CACHE STRING "" FORCE)
-    set(DYNAMIC_LIST
-        "HASWELL;ZEN;SKYLAKEX;COOPERLAKE;SAPPHIRERAPIDS"
-        CACHE STRING
-        ""
-        FORCE
-    )
+    set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
+    set(TARGET GENERIC CACHE STRING "" FORCE)
+else()
+    set(DYNAMIC_ARCH ON CACHE BOOL "" FORCE)
+    if(ARCH_AARCH64)
+        set(TARGET ARMV8 CACHE STRING "" FORCE)
+        set(DYNAMIC_LIST
+            "NEOVERSEN1;NEOVERSEV1;NEOVERSEN2;ARMV8SVE"
+            CACHE STRING
+            ""
+            FORCE
+        )
+    elseif(ARCH_AMD64)
+        set(TARGET HASWELL CACHE STRING "" FORCE)
+        set(DYNAMIC_LIST
+            "HASWELL;ZEN;SKYLAKEX;COOPERLAKE;SAPPHIRERAPIDS"
+            CACHE STRING
+            ""
+            FORCE
+        )
+    endif()
 endif()
 add_subdirectory(OpenBLAS)
 target_link_libraries(sdb_blas INTERFACE openblas)
+if(ARCH_AMD64 AND DYNAMIC_ARCH)
+    foreach(_core SKYLAKEX COOPERLAKE SAPPHIRERAPIDS)
+        target_compile_options(kernel_${_core} PRIVATE $<$<CONFIG:Debug>:-O2>)
+    endforeach()
+endif()
 
 ################################################################################
 ### faiss library
@@ -649,9 +665,6 @@ option(
 set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
-# Keep builtin extensions (core_functions, parquet, json, etc.)
-set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
-set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
 set(ENABLE_EXTENSION_LOAD FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_CAPABILITIES "none" CACHE STRING "" FORCE)
@@ -725,6 +738,11 @@ target_include_directories(
     duckdb_static
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+)
+
+target_link_libraries(
+    iceberg_catalog_rest_storage_authorization
+    PRIVATE OpenSSL::Crypto
 )
 
 # Link extension objects that aren't automatically included in duckdb_static

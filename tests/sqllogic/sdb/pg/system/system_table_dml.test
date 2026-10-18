@@ -1,0 +1,47 @@
+statement error
+INSERT INTO information_schema.sql_sizing VALUES (1, 'x', 1, 'c');
+----
+db error: ERROR: permission denied: "sql_sizing" is a system catalog
+
+
+statement error
+INSERT INTO pg_catalog.pg_class (relname) VALUES ('x');
+----
+db error: ERROR: permission denied: "pg_class" is a system catalog
+
+
+statement error
+COPY information_schema.sql_implementation_info FROM '/dev/null';
+----
+db error: ERROR: permission denied: "sql_implementation_info" is a system catalog
+
+
+statement error
+UPDATE pg_catalog.pg_class SET relname = 'x' WHERE false;
+----
+db error: ERROR: permission denied: "pg_class" is a system catalog
+
+
+statement error
+DELETE FROM information_schema.sql_parts;
+----
+db error: ERROR: permission denied: "sql_parts" is a system catalog
+
+
+statement error
+TRUNCATE pg_catalog.pg_description;
+----
+db error: ERROR: permission denied: "pg_description" is a system catalog
+
+
+statement error
+MERGE INTO information_schema.sql_sizing t USING (SELECT 1 AS id) s ON t.sizing_id = s.id WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: permission denied: "sql_sizing" is a system catalog
+
+
+query
+SELECT count(*) > 0 AS listed FROM information_schema.sql_sizing;
+----
+listed
+t

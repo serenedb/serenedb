@@ -23,97 +23,127 @@
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 class IndexInput;
 
-class NormColumnReader final {
- public:
-  // Per-RG view bundling the four fields the hot path (BM25/TFIDF
-  // multi-RG `RefreshRowGroup`) reads back-to-back. One bound check
-  // instead of four.
-  struct RgInfo {
-    std::span<const byte_type> bytes;
-    uint64_t first_row;
-    uint64_t row_count;
-    size_t rg;
-    uint8_t byte_size;
-  };
+inline constexpr uint32_t kNormWindowShift = 16;
 
-  NormColumnReader(field_id id, NormColumnMeta meta, IndexInput& in);
+struct NormRegion {
+  const byte_type* base = nullptr;
+  const byte_type* bases = nullptr;
+  const byte_type* overflow_rows = nullptr;
+  const byte_type* overflow_values = nullptr;
+  const byte_type* values = nullptr;
+  doc_id_t first_doc = 0;
+  doc_id_t end_doc = 0;
+  uint32_t bits = 0;
+  uint32_t value = 0;
+  uint32_t first_code = 0;
+  uint32_t shift = 0;
+  uint32_t direct = 0;
+  uint32_t overflow = 0;
+  uint32_t exception_bytes = 0;
+  bool exceptions = false;
+  size_t window = 0;
+  size_t windows = 0;
+  size_t page = 0;
+  uintptr_t first_page = 0;
 
-  field_id Id() const noexcept { return _id; }
-  size_t RowGroupCount() const noexcept { return _pointers.size(); }
-  uint64_t RowCount() const noexcept { return _total_row_count; }
-
-  uint64_t Sum() const noexcept { return _total_sum; }
-  uint64_t NonZeroCount() const noexcept { return _total_non_zero; }
-
-  RgInfo Rg(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return {_spans[rg], rg * _rg_rows, RowGroupRowCount(rg), rg,
-            _pointers[rg].byte_size};
+  IRS_FORCE_INLINE uint32_t Slot(doc_id_t doc) const noexcept {
+    switch (bits) {
+      case 0:
+        return value;
+      case 8:
+        return base[doc];
+      case 16:
+        return absl::little_endian::Load16(base + size_t{doc} * 2);
+      default:
+        return absl::little_endian::Load32(base + size_t{doc} * 4);
+    }
   }
 
-  size_t Stream(size_t rg, const byte_type* from,
-                size_t advised) const noexcept;
-
-  uint8_t ByteSize(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return _pointers[rg].byte_size;
-  }
-  bool UniformByteSize() const noexcept { return _uniform_byte_size; }
-  // Groups are uniform, so only the last one is short.
-  uint64_t RowGroupRowCount(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return rg + 1 == _pointers.size() ? _total_row_count - rg * _rg_rows
-                                      : _rg_rows;
-  }
-  uint64_t RowGroupFirstRow(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return rg * _rg_rows;
-  }
-  std::span<const byte_type> RowGroupBytes(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _spans.size());
-    return _spans[rg];
+  IRS_FORCE_INLINE uint32_t Exception(doc_id_t doc, uint32_t code) const {
+    SDB_ASSERT(exceptions && code >= first_code);
+    const uint32_t row = doc - first_doc;
+    if (code != first_code + kNormDirect) [[likely]] {
+      const uint32_t at =
+        absl::little_endian::Load32(bases + size_t{row >> shift} * 4) +
+        (code - first_code);
+      if (at >= direct) [[unlikely]] {
+        Corrupt(doc);
+      }
+      return exception_bytes == 2
+               ? absl::little_endian::Load16(values + size_t{at} * 2)
+               : absl::little_endian::Load32(values + size_t{at} * 4);
+    }
+    return Overflow(row);
   }
 
-  RgInfo Locate(uint64_t row_pos) const noexcept {
-    SDB_ASSERT(row_pos < _total_row_count);
-    return Rg(static_cast<size_t>(row_pos / _rg_rows));
-  }
+  uint32_t Overflow(uint32_t row) const;
 
-  uint32_t Get(uint64_t row_pos) const noexcept;
-
- private:
-  field_id _id;
-  std::vector<NormRowGroupMeta> _pointers;
-  std::vector<std::span<const byte_type>> _spans;
-  std::vector<byte_type> _owned;
-  uint64_t _rg_rows = 1;
-  uint64_t _total_row_count = 0;
-  uint64_t _total_sum = 0;
-  uint64_t _total_non_zero = 0;
-  bool _uniform_byte_size = true;
+  [[noreturn]] void Corrupt(doc_id_t doc) const;
 };
 
-// Decode one stored value from a row-group's raw bytes.
-inline uint32_t ReadNormValue(const byte_type* bytes,
-                              uint8_t byte_size) noexcept {
-  if (byte_size == 1) {
-    return *bytes;
+class NormColumnReader final {
+ public:
+  NormColumnReader(field_id id, const NormColumnMeta& meta, IndexInput& in);
+
+  field_id Id() const noexcept { return _id; }
+  uint64_t RowCount() const noexcept { return _row_count; }
+  uint64_t Sum() const noexcept { return _sum; }
+  uint64_t NonZeroCount() const noexcept { return _non_zero; }
+  size_t RegionCount() const noexcept { return _regions.size(); }
+  size_t WindowCount() const noexcept { return _windows.size(); }
+  size_t PageCount() const noexcept { return _pages; }
+
+  const NormRegion& Region(size_t i) const noexcept {
+    SDB_ASSERT(i < _regions.size());
+    return _regions[i];
   }
-  if (byte_size == 2) {
-    return absl::little_endian::Load16(bytes);
+
+  const NormStats& Stats(size_t i) const noexcept {
+    SDB_ASSERT(i < _stats.size());
+    return _stats[i];
   }
-  return absl::little_endian::Load32(bytes);
-}
+
+  const NormRegion& Locate(doc_id_t doc) const noexcept;
+
+  std::span<const byte_type> Window(size_t i) const noexcept {
+    SDB_ASSERT(i < _windows.size());
+    return _windows[i];
+  }
+
+  const file_utils::ResidencyMap& Residency() const noexcept {
+    return _residency;
+  }
+
+  void Decode(doc_id_t first, size_t n, uint32_t* values) const;
+
+ private:
+  const byte_type* Map(IndexInput& in, uint64_t offset, uint64_t size);
+
+  field_id _id;
+  std::vector<NormRegion> _regions;
+  std::vector<NormStats> _stats;
+  std::vector<std::span<const byte_type>> _windows;
+  file_utils::ResidencyMap _residency;
+  std::vector<std::unique_ptr<byte_type[]>> _owned;
+  uint64_t _row_count = 0;
+  uint64_t _sum = 0;
+  uint64_t _non_zero = 0;
+  size_t _pages = 0;
+};
 
 }  // namespace irs

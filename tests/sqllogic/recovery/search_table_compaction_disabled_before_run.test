@@ -1,0 +1,69 @@
+control substitution on
+
+# A background compaction queued while compaction was enabled does nothing once
+# compaction_interval is 0. The coordinator reads the interval, then waits for
+# its trigger, hops onto the executor and queues its runs; a run used to merge
+# with the "enabled" read before all of that, so under load a run that started
+# after the interval went to 0 merged segments, and VACUUM (COMPACT_TABLE)
+# found them held and left the table above its target
+# (search_table_compaction.test:184).
+#
+# pause_compaction_run holds a queued run just before it merges; the interval
+# goes back to 0 while it waits.
+
+statement ok
+CREATE TABLE cq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cq;
+
+statement ok
+INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cq;
+
+statement ok
+INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cq;
+
+statement ok
+INSERT INTO cq SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cq;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('cq') WHERE column_name = 'id';
+----
+segments
+4
+
+statement ok
+SET sdb_faults = 'pause_compaction_run';
+
+statement ok
+ALTER TABLE cq SET (compaction_interval = 100);
+
+statement ok
+SELECT pg_sleep(4);
+
+statement ok
+ALTER TABLE cq SET (compaction_interval = 0);
+
+statement ok
+SET sdb_faults = '-pause_compaction_run';
+
+statement ok
+SELECT pg_sleep(3);
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('cq') WHERE column_name = 'id';
+----
+segments
+4

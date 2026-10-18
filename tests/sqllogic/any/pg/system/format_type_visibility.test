@@ -1,0 +1,52 @@
+statement ok
+DROP SCHEMA IF EXISTS ftv_s CASCADE;
+
+
+statement ok
+CREATE SCHEMA ftv_s;
+
+
+statement ok
+CREATE TYPE ftv_s.mood AS ENUM ('calm', 'angry');
+
+
+statement ok
+CREATE TYPE ftv_s."Mixed" AS ENUM ('x');
+
+
+query
+SELECT t.typname AS name, format_type(t.oid, NULL) AS formatted
+FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'ftv_s'
+ORDER BY t.typname;
+----
+name	formatted
+Mixed	ftv_s."Mixed"
+_Mixed	ftv_s."Mixed"[]
+_mood	ftv_s.mood[]
+mood	ftv_s.mood
+
+
+statement ok
+SET search_path TO ftv_s, public;
+
+
+query
+SELECT t.typname AS name, format_type(t.oid, NULL) AS formatted
+FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE n.nspname = 'ftv_s'
+ORDER BY t.typname;
+----
+name	formatted
+Mixed	"Mixed"
+_Mixed	"Mixed"[]
+_mood	mood[]
+mood	mood
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA ftv_s CASCADE;

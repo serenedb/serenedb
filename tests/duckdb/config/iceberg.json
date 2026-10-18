@@ -1,0 +1,11 @@
+{
+  "description": "SereneDB test-config for duckdb_iceberg's own tests outside the catalog directories. Every entry is a known reason the test cannot run here -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "Reads data/iceberg/generated_0_01 and its expected_results, which nothing in the extension generates any more: upstream's scripts/upload_iceberg_to_s3_test_server.sh syncs a data/generated/iceberg/generated_0_01 that no generator writes (its own FIXME says so), and upstream CI never sets S3_TEST_SERVER_AVAILABLE for this extension.",
+      "paths": [
+        "test/sql/local/iceberg_scan_generated_data_0_01_remote.test_slow"
+      ]
+    }
+  ]
+}

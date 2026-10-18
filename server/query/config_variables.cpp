@@ -18,19 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 
-#include <algorithm>
+#include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -41,18 +45,84 @@
 #include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
+#include <ranges>
 #include <string>
 #include <string_view>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "scheduler/job_scheduler.h"
 
 namespace sdb {
+namespace {
+
+constexpr std::pair<std::string_view, double> kTimeUnits[] = {
+  {"us", 0.001},  {"ms", 1},      {"s", 1000},
+  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
+};
+
+}  // namespace
+
+int64_t ParseDurationMillis(std::string_view name, std::string_view text,
+                            double unitless_ms) {
+  const auto invalid = [&] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+      ERR_HINT("Valid units for this parameter are \"us\", "
+               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
+  };
+  const auto trimmed = absl::StripAsciiWhitespace(text);
+  double number = 0;
+  const auto [ptr, ec] = fast_float::from_chars(
+    trimmed.data(), trimmed.data() + trimmed.size(), number);
+  if (ec != std::errc{}) {
+    invalid();
+  }
+  const auto unit = absl::StripLeadingAsciiWhitespace(
+    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
+  double scale = unitless_ms;
+  if (!unit.empty()) {
+    const auto it = absl::c_find_if(
+      kTimeUnits, [&](const std::pair<std::string_view, double>& time_unit) {
+        return time_unit.first == unit;
+      });
+    if (it == std::end(kTimeUnits)) {
+      invalid();
+    }
+    scale = it->second;
+  }
+  const auto ms = std::round(number * scale);
+  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(absl::StrFormat("%g", ms),
+                            " ms is outside the valid range for parameter \"",
+                            name, "\" (0 ms .. 2147483647 ms)"));
+  }
+  return static_cast<int64_t>(ms);
+}
+
+duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  const auto index =
+    config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
+  SDB_ASSERT(index.IsValid());
+  duckdb::Value value;
+  if (config.user_settings.TryGetSetting(index.GetIndex(), value)) {
+    return value;
+  }
+  duckdb::ExtensionOption extension;
+  const auto found = config.user_settings.TryGetExtensionOption(
+    duckdb::Identifier{_name}, extension);
+  SDB_ASSERT(found);
+  return extension.default_value;
+}
 
 duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto& config = duckdb::DBConfig::GetConfig(context);
@@ -150,6 +220,40 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
+int64_t ParseStatementTimeout(std::string_view text) {
+  return ParseDurationMillis("statement_timeout", text, 1);
+}
+
+std::string FormatDuration(int64_t ms) {
+  if (ms == 0) {
+    return "0";
+  }
+  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
+    const auto factor = static_cast<int64_t>(scale);
+    if (factor != 0 && ms % factor == 0) {
+      return absl::StrCat(ms / factor, unit);
+    }
+  }
+  return absl::StrCat(ms, "ms");
+}
+
+void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                         duckdb::Value& value) {
+  const auto ms = value.IsNull() ? 0 : ParseStatementTimeout(value.ToString());
+  value = duckdb::Value{FormatDuration(ms)};
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(ms));
+}
+
+void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(0));
+}
+
 // PG's rule for a GUC whose effect reaches past the session that set it is
 // PGC_SUSET: still readable by everyone, settable only by a superuser, 42501
 // otherwise. Every developer knob that can damage or kill the backend is in
@@ -168,6 +272,45 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                   ERR_DETAIL(detail));
 }
 
+template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
+void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
+                       duckdb::Value& value) {
+  constexpr std::string_view kName{Name};
+  RequireSuperuser(ctx, kName,
+                   "Only roles with the SUPERUSER attribute may change "
+                   "server-wide replication settings.");
+  value = duckdb::Value{FormatDuration(ParseDurationMillis(
+    kName, value.ToString(), static_cast<double>(UnitlessMs)))};
+}
+
+template<irs::utils::detail::FixedString Name>
+void SetServerCount(duckdb::ClientContext& ctx, duckdb::SetScope,
+                    duckdb::Value&) {
+  RequireSuperuser(ctx, std::string_view{Name},
+                   "Only roles with the SUPERUSER attribute may change "
+                   "server-wide replication settings.");
+}
+
+void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
+                        duckdb::Value& value) {
+  auto* conn = connector::GetSereneDBContextPtr(ctx);
+  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG(
+        "permission denied to set parameter \"session_replication_role\""));
+  }
+  const auto role = absl::AsciiStrToLower(value.ToString());
+  if (role != "origin" && role != "replica" && role != "local") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"session_replication_role\": \"",
+                            value.ToString(), "\""),
+                    ERR_HINT("Available values: origin, replica, local."));
+  }
+  value = duckdb::Value{role};
+}
+
 void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
   RequireSuperuser(ctx, "hba",
                    "Only roles with the SUPERUSER attribute may change the "
@@ -183,27 +326,72 @@ void RequireFaultSuperuser(duckdb::ClientContext& ctx) {
 }
 #endif
 
-// The `role` / `session_authorization` GUCs are thin shims over the identity
-// switches in pg/commands/rbac (which own the catalog/authz logic, next to
-// CREATE/ALTER ROLE); they only bridge the DuckDB Value <-> the string API.
-void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
-                     duckdb::Value& value) {
-  value = duckdb::Value{
-    pg::SetRole(connector::GetSereneDBContext(ctx), value.ToString())};
+const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
+                                           std::string_view name) {
+  auto& cluster = catalog::ClusterOf(ctx);
+  auto entry =
+    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name});
+  if (!entry) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("role \"", name, "\" does not exist"));
+  }
+  return entry->Cast<catalog::RoleCatalogEntry>();
+}
+
+void RefreshSuperuser(ConnectionContext& conn) {
+  const bool superuser =
+    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
+  conn.SetSetting("is_superuser", superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  pg::ResetRole(connector::GetSereneDBContext(ctx));
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.SetEffectiveRole(conn.GetSessionRoleId());
+  RefreshSuperuser(conn);
+}
+
+void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                     duckdb::Value& value) {
+  const auto name = value.ToString();
+  if (name.empty() || absl::EqualsIgnoreCase(name, "none")) {
+    ResetRoleCallback(ctx, scope);
+    value = duckdb::Value{"none"};
+    return;
+  }
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const auto& role = RoleNamed(ctx, name);
+  const auto session_role = conn.GetSessionRoleId();
+  const auto session =
+    auth::ComputeRoleClosure(*auth::RolesOf(&ctx), session_role);
+  if (role.oid != session_role && !session.is_superuser &&
+      !session.CanSet(role.oid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied to set role \"", name, "\""));
+  }
+  conn.SetEffectiveRole(role.oid);
+  RefreshSuperuser(conn);
 }
 
 void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                             duckdb::Value& value) {
-  value = duckdb::Value{pg::SetSessionAuthorization(
-    connector::GetSereneDBContext(ctx), value.ToString())};
+  const auto name = value.ToString();
+  auto& conn = connector::GetSereneDBContext(ctx);
+  const auto& role = RoleNamed(ctx, name);
+  const auto login = conn.GetLoginRoleId();
+  if (role.oid != login && !auth::ClosureFor(&ctx, login)->is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to set session authorization \"", name, "\""));
+  }
+  conn.SetSessionRole(role.oid);
+  RefreshSuperuser(conn);
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
-  pg::ResetSessionAuthorization(connector::GetSereneDBContext(ctx));
+  auto& conn = connector::GetSereneDBContext(ctx);
+  conn.ResetIdentity();
+  RefreshSuperuser(conn);
 }
 
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
@@ -245,10 +433,9 @@ void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
     const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
     static constexpr std::string_view kKnown[] = {
       "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
-    const bool ok = absl::StartsWith(token, "EURO") ||
-                    absl::StartsWith(token, "NONEURO") ||
-                    std::ranges::any_of(
-                      kKnown, [&](std::string_view k) { return k == token; });
+    const bool ok =
+      absl::StartsWith(token, "EURO") || absl::StartsWith(token, "NONEURO") ||
+      absl::c_any_of(kKnown, [&](std::string_view k) { return k == token; });
     if (!ok) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -704,6 +891,34 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_job_history_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Number of recent job runs, across all jobs, that sdb_job_runs() "
+        "returns; the oldest run is dropped first. 0 keeps none. Default "
+        "1024. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize);
+        },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "sdb_job_max_depth",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of job runs in one chain of EXECUTE JOB calls, where "
+        "a job's body executes another job; a run that would go deeper fails. "
+        "Default 16. Server-global.",
+        [] { return duckdb::Value::UINTEGER(16); },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       "sdb_disable_top_k_optimization",
       {
         LogicalTypeId::BOOLEAN,
@@ -835,10 +1050,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Periodic reindex interval (ms) for newly created VIEW-backed "
-        "inverted indexes: every tick runs the ordinary REINDEX road "
-        "(up_to_date / delta / rebuild) as the index owner. Per-index "
+        "inverted indexes: a non-zero value creates a job named after the "
+        "index that runs the ordinary REINDEX road (up_to_date / delta / "
+        "rebuild) as the index owner, AFTER the interval. Per-index "
         "WITH (reindex_interval = ...) overrides; ALTER INDEX SET "
-        "retunes a live loop. 0 disables the task. Hint-less iceberg "
+        "retunes, creates or drops the job. 0 disables it. Hint-less iceberg "
         "sources refresh from the background only when the GLOBAL "
         "unsafe_enable_version_guessing is set. Default: 0.",
         [] { return duckdb::Value::UINTEGER(0); },
@@ -1095,10 +1311,71 @@ constexpr std::pair<std::string_view, VariableDescription>
       "statement_timeout",
       {
         LogicalTypeId::VARCHAR,
-        "Aborts any statement that takes more than the specified number of "
-        "milliseconds. Accepted for compatibility but not currently enforced.",
+        "Aborts any statement that takes more than the specified amount of "
+        "time (milliseconds without a unit). 0 disables the timeout.",
         [] { return duckdb::Value{"0"}; },
-        NoOverwrite<"statement_timeout">,
+        SetStatementTimeout,
+        ResetStatementTimeout,
+      },
+    },
+    {
+      kWalReceiverTimeoutSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "Terminates a logical replication worker whose publisher sent "
+        "nothing for this long (milliseconds without a unit); 0 disables the "
+        "timeout. Server-wide, superuser only.",
+        [] { return duckdb::Value{"1min"}; },
+        SetServerDuration<"wal_receiver_timeout", 1>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kWalReceiverStatusIntervalSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "How often a logical replication worker reports its position to the "
+        "publisher (seconds without a unit); 0 disables the periodic "
+        "reports. Server-wide, superuser only.",
+        [] { return duckdb::Value{"10s"}; },
+        SetServerDuration<"wal_receiver_status_interval", 1000>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kWalRetrieveRetryIntervalSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "How long a failed logical replication worker waits before it "
+        "reconnects (milliseconds without a unit). Server-wide, superuser "
+        "only.",
+        [] { return duckdb::Value{"5s"}; },
+        SetServerDuration<"wal_retrieve_retry_interval", 1>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kMaxSyncWorkersPerSubscriptionSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "How many tables one subscription copies at the same time during "
+        "its initial synchronization. Server-wide, superuser only.",
+        [] { return duckdb::Value::UINTEGER(2); },
+        SetServerCount<"max_sync_workers_per_subscription">,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "session_replication_role",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the session's behavior for triggers and rewrite rules.",
+        [] { return duckdb::Value{"origin"}; },
+        SetReplicationRole,
       },
     },
     {
@@ -1106,9 +1383,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] {
-          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
-        },
+        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },

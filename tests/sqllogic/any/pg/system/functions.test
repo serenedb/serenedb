@@ -542,3 +542,27 @@ t
 skipif postgres
 statement ok
 DROP SCHEMA some_user_schema;
+
+
+# The text form of a list drops the whitespace around an entry and keeps the whitespace inside its quotes.
+statement ok
+CREATE SCHEMA "sp a ";
+
+
+statement ok
+SELECT set_config('search_path', '  "sp a "  ,  public  ', false);
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{"sp a ",public}
+
+
+statement ok
+SET search_path TO public;
+
+
+statement ok
+DROP SCHEMA "sp a ";

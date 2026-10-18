@@ -1,61 +1,52 @@
 # Notes for AI agents
 
-## Rules
+Build and launch: `CONTRIBUTING.md`. Topic rules: `.claude/rules/`, each page loads with the files it covers; `pull-requests.md` loads always.
 
-- You don't allowed to write any comments until you explictly asked to write them.
-If you noticed outdated comment or make some comment outdated, just remove it until explicitly asked to keep it.
+## Working with the user
 
-- Don't use python/sed for normal code editing/reading, only for real scripting changes
+- Be straightforward and laconic, in replies and in everything you write: short, but complete.
+- A requested plan or design ends the turn with the plan and a question; implement it only after an explicit yes.
+- An explicit ask is never parked as a follow-up.
+- A clear improvement found on the way (a bug, a speedup, duplicated code, a cleaner structure) is just done. What goes to the user is a decision: a trade-off, new scope (a dependency, a subsystem, compatibility code), a workaround instead of the real fix.
 
-- Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
-C++ style. This file only flags traps that aren't in there.
+## Evidence
 
-- A user-visible feature is not finished until `docs/` describes it. Write the
-page in the same change, following the **Documentation** section of
-`CONTRIBUTING.md`, and say in your summary which page you added or updated.
+- Code is the evidence: PR descriptions, comments, docs and memory are claims. Read the implementation and its callers before relying on them.
+- An estimate is said to be one; only a measurement is presented as a result.
+- A bug gets a reproducer first, preferably end to end (sqllogic, recovery, driver): a unit test can drive an API in ways no caller does. It fails for the reason the fix claims, then passes.
+- Understand the mechanism before fixing it, and fix the root cause in the design: a quick fix that silences the symptom (catch-all error skipping, a guard, a new lock around a race) only hides the bug.
+- A bug is a pattern: look for the same mistake in the other callers, siblings and files, and fix every instance or file the ones outside the change.
+- A failure found while working gets fixed, whoever caused it, never set aside as pre-existing. Ask instead when an issue or PR already covers it, or when the fix needs a decision.
+- Before filing an issue or writing a fix, search issues and PRs, closed ones too (`gh issue list --state all --search ...`, `gh pr list --state all --search ...`): add to an existing issue, link an existing fix.
 
-## Formatting
+## Done
 
-serenedb's own code and the duckdb submodules are never formatted by hand: run
-the tools below and commit what they produce. Other submodules have no
-formatter set up; there, match the surrounding code by hand, and never run a
-formatter over their files.
+- A change is done when the same PR has its tests ([testing.md](.claude/rules/testing.md)) and, for anything users can see, its `docs/` page ([docs.md](.claude/rules/docs.md)).
 
-- serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
-- The DuckDB fork, from `third_party/duckdb`, in this order:
-  1. `./scripts/parser/build_grammar.sh` -- the PEG grammar and transformer;
-     `make generate-files` does not regenerate the parser, so this goes first.
-  2. `make generate-files` -- settings, serialization, enum_util, functions,
-     metrics and storage info, then formats the tree.
+## Running things
 
-  Commit regenerated artifacts separately from the change that caused them
-  (`regen: ...`), as upstream does.
-- Then, from the repo root, `./scripts/format_duckdb.sh` -- clang-format 11.0.1
-  (in docker) over the changed files of every duckdb submodule and
-  `duckdb_clickhouse`, each with its own `.clang-format`.
+- Build and run only what the task needs: the touched targets and the tests that cover the change. Full suites, sanitizer builds and benchmarks only when asked.
+- Run the smallest thing that answers the question, once, with the full output in a log, and answer from the log. A noisy or flaky result is a question to answer, not a reason to rerun or run longer.
+- Wrap a test run in a timeout of 2-3 times its usual duration, so a hang ends itself.
+- Before saying done: `pre-commit run --files <changed files>`, with `SKIP=check-submodule-pointers` while a fork PR is unmerged (it fails by design until then). Never as a git hook: it stashes unstaged changes, breaking a checkout someone else edits.
 
-## Before writing tests
+## Text
 
-- Sqllogic: read a sibling `.test` first. Control directives, retry patterns,
-  connection naming, and the right subtree (`any/sdb/pg/recovery`) are set by
-  example, not docs.
-- gtest / microbench: mirror an existing one in the same `tests/<area>/` subtree.
+- No code comments unless asked; the license block and `# DOCS_TEST:` markers are not comments. Remove a comment your change makes outdated.
+- No text describes the implementation: comments, rules, docs and memory hold motivation, rules, desired behaviour and processes. How the code works is read from the code.
+- Use the tools you have for what they are for: read and edit files with the read and edit tools, never through python, sed or cat; scripts for real scripting.
+- Knowledge every contributor needs goes into the repo, into the page under `.claude/rules/` it belongs to; instructions only for Claude go here. One rule lives in one place: point to it, never copy it.
 
 ## Local smoke server
 
-Pick a free `<port>`. You own it for the session -- when you're done, kill the
-process so the next contributor / agent doesn't inherit a stale serened.
+Start serened on a free port (`ss -ltnH "sport = :<port>"` prints nothing) with a fresh data dir (`mktemp -d`); stop it by its pid and remove the data dir when done.
 
 ```bash
-# Backgrounded server logs land in the file you redirect to (>/tmp/sdb.log
-# 2>&1 &). DuckDB's LogManager writes to in-memory storage by default; query
-# `SELECT * FROM duckdb_logs()` or the `sdb_log` catalog view from psql.
-./build/bin/serened ./build_data --listen='postgres://0.0.0.0:<port>'
-
-# Default database is `postgres` (serenedb has no separate default).
-psql -h 127.0.0.1 -p <port> -U postgres -d postgres
-
-# when finished:
-kill -9 $(lsof -t -i:<port>) 2>/dev/null
-rm -rf build_data    # only if you don't need the datadir afterwards
+./build/bin/serened <datadir> --listen='postgres://127.0.0.1:<port>' \
+  >/tmp/$USER-serened-<port>.log 2>&1 & echo $!
+kill -0 <pid> && psql -h 127.0.0.1 -p <port> -U postgres -d postgres -c '<sql>'
+kill <pid>
+rm -rf <datadir>
 ```
+
+psql is refused until the server is up: retry while `kill -0 <pid>` succeeds; once it fails, the log says why serened exited.

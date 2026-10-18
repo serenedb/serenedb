@@ -42,12 +42,6 @@ using namespace irs::analysis;
 using Cfg = irs::analysis::TokenizerConfig;
 using Ptr = irs::analysis::Tokenizer::ptr;
 
-duckdb::ClientContext& Context() {
-  static thread_local auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
-
 irs::bstring Bytes(std::string_view s) {
   return irs::bstring{reinterpret_cast<const irs::byte_type*>(s.data()),
                       s.size()};
@@ -1045,7 +1039,8 @@ void AddModels(std::vector<Spec>& out) {
                   .model_location = ModelLocation(), .top_k = 2}};
               },
             .dict = WordDict(),
-            .cost = 16});
+            .cost = 16,
+            .load_parts = 4});
 }
 
 void AddGeo(std::vector<Spec>& out) {
@@ -1464,13 +1459,18 @@ void AddSql(std::vector<Spec>& out) {
 
 bool ModelsAvailable() { return HasModel(); }
 
-irs::analysis::Tokenizer::ptr Make(const Spec& spec) {
+duckdb::Connection Connect() {
+  return duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
+}
+
+irs::analysis::Tokenizer::ptr Make(const Spec& spec,
+                                   duckdb::ClientContext& ctx) {
   auto tokenizer =
     irs::analysis::CreateTokenizer(spec.config(), ::tests::Cache());
   if (!tokenizer) {
     return tokenizer;
   }
-  tokenizer->Bind(Context());
+  tokenizer->Bind(ctx);
   if (spec.setup) {
     spec.setup(*tokenizer);
   }

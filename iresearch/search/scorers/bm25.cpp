@@ -273,24 +273,24 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
-ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
+ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {
   if (IsBM1()) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::None);
     return {};
   }
   if (IsBM15()) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MaxFreq);
-    return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>();
   }
   if (IsBM11()) {
     SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::DivNorm);
-    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>();
   }
   SDB_ASSERT(BoundTypeOf(GetOptions()) == ScoreBoundType::MinNorm);
   if (_approximate) {
-    return std::make_unique<FreqNormWriter<kScoreBoundAvgDL>>(max_levels, _b);
+    return std::make_unique<FreqNormWriter<kScoreBoundAvgDL>>(_b);
   }
-  return std::make_unique<FreqNormWriter<kScoreBoundBM25>>(max_levels, _b);
+  return std::make_unique<FreqNormWriter<kScoreBoundBM25>>(_b);
 }
 
 ScoreBoundSource::ptr BM25::PrepareScoreBoundSource() const {

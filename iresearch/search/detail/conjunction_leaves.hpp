@@ -101,9 +101,9 @@ class ConjunctionLeaves {
     return ProbeRest(target);
   }
 
- private:
   Leaf& Lead() noexcept { return _slots.front().leaf; }
 
+ private:
   doc_id_t Agree(doc_id_t doc) {
     while (!doc_limits::eof(doc)) {
       const auto probe = ProbeRest(doc);

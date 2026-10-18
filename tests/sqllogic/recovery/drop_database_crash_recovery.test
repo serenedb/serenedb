@@ -1,0 +1,96 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ddtr_keep;
+
+
+statement ok
+CREATE TABLE ddtr_keep.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddtr_keep.public.t VALUES (1), (2);
+
+
+statement ok
+CREATE DATABASE ddtr_gone;
+
+
+statement ok
+CREATE TABLE ddtr_gone.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddtr_gone.public.t VALUES (5);
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DROP DATABASE ddtr_keep;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP DATABASE ddtr_gone;
+
+
+statement ok
+INSERT INTO ddtr_keep.public.t VALUES (3);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ddtr_keep.public.t;
+----
+n
+3
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddtr_gone';
+----
+n
+0
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ddtr_keep.public.t;
+----
+n
+3
+
+
+connection after_shutdown
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddtr_gone';
+----
+n
+0

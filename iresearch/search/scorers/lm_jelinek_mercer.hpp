@@ -60,7 +60,7 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
-  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 
   ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 

@@ -1,0 +1,216 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE st_retained;
+
+
+statement ok
+CREATE TABLE st_retained.public.docs (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE st_retained.public.counts (id INTEGER);
+
+
+statement ok
+INSERT INTO st_retained.public.docs SELECT i, 'first' FROM range(0, 1000) r(i);
+
+
+statement ok
+INSERT INTO st_retained.public.counts VALUES (1);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st_retained.public.docs;
+
+
+statement ok
+CHECKPOINT st_retained;
+
+
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+statement ok
+DELETE FROM st_retained.public.docs WHERE id < 100;
+
+
+statement ok
+INSERT INTO st_retained.public.docs SELECT i, 'second' FROM range(1000, 1100) r(i);
+
+
+statement ok
+INSERT INTO st_retained.public.counts VALUES (2);
+
+
+statement ok
+CHECKPOINT st_retained;
+
+
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'first') AS first, count(*) FILTER (WHERE body = 'second') AS second FROM st_retained.public.docs;
+----
+n	first	second
+1000	900	100
+
+
+connection after_crash
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_retained.public.counts;
+----
+ids
+1,2
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+connection after_crash
+statement ok
+INSERT INTO st_retained.public.docs SELECT i, 'third' FROM range(2000, 2010) r(i);
+
+
+connection after_crash
+statement ok
+CHECKPOINT st_retained;
+
+
+connection after_crash
+statement ok
+TRUNCATE st_retained.public.docs;
+
+
+connection after_crash
+statement ok
+INSERT INTO st_retained.public.docs SELECT i, 'fourth' FROM range(3000, 3005) r(i);
+
+
+connection after_crash
+statement ok
+INSERT INTO st_retained.public.counts VALUES (3);
+
+
+connection after_crash
+statement ok
+CHECKPOINT st_retained;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+2
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids, count(*) FILTER (WHERE body = 'fourth') AS fourth FROM st_retained.public.docs;
+----
+ids	fourth
+3000,3001,3002,3003,3004	5
+
+
+connection after_second_crash
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_retained.public.counts;
+----
+ids
+1,2,3
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+connection after_second_crash
+statement ok
+INSERT INTO st_retained.public.docs VALUES (4000, 'fifth');
+
+
+connection after_second_crash
+statement ok
+CHECKPOINT st_retained;
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+1
+
+
+connection after_second_crash
+statement ok
+VACUUM (REFRESH_TABLE) st_retained.public.docs;
+
+
+connection after_second_crash
+statement ok
+CHECKPOINT st_retained;
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n FROM st_retained.public.docs;
+----
+n
+6
+
+
+connection after_second_crash
+statement ok
+DROP DATABASE st_retained;

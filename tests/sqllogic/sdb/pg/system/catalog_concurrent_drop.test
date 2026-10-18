@@ -661,3 +661,93 @@ DROP TABLE ccd_control_x;
 
 statement ok
 DROP ROLE ccd_grantee;
+
+
+statement ok
+CREATE ROLE ccd_role_race;
+
+
+statement ok
+CREATE TABLE ccd_role_t(a INTEGER);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccd_role_t TO ccd_role_race;
+
+
+connection s2
+statement ok
+DROP ROLE ccd_role_race;
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_role_race" has been deleted
+
+
+connection s1
+statement ok
+CREATE ROLE ccd_role_race;
+
+
+connection s1
+statement ok
+DROP ROLE ccd_role_race;
+
+
+connection s1
+statement ok
+CREATE ROLE ccd_role_race;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+DROP ROLE ccd_role_race;
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccd_role_t TO ccd_role_race;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "ccd_role_race" because a dependency was created after the transaction started
+
+
+connection s1
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'ccd_role_race';
+----
+n
+1
+
+
+connection s1
+statement ok
+REVOKE SELECT ON ccd_role_t FROM ccd_role_race;
+
+
+connection s1
+statement ok
+DROP ROLE ccd_role_race;
+
+
+connection s1
+statement ok
+DROP TABLE ccd_role_t;

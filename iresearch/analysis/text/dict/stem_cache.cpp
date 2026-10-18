@@ -65,7 +65,7 @@ const duckdb::string_t& StemCache::Insert(const duckdb::string_t& word,
     Compact();
   }
   const auto size = static_cast<uint32_t>(stem.size());
-  auto& entry = _stems[std::string{word.GetData(), word.GetSize()}];
+  auto& entry = _stems[word];
   entry = size <= duckdb::string_t::INLINE_LENGTH
             ? duckdb::string_t{stem.data(), size}
             : duckdb::string_t{Store(_arena, stem), size};

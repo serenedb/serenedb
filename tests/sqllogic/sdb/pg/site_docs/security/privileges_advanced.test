@@ -77,4 +77,7 @@ statement ok
 DROP TABLE doc_pa_docs;
 
 statement ok
-DROP ROLE doc_pa_editor, doc_pa_viewer;
+DROP ROLE doc_pa_editor;
+
+statement ok
+DROP ROLE doc_pa_viewer;

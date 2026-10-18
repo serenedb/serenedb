@@ -94,7 +94,7 @@ std::unique_ptr<duckdb::ParsedExpression> ParseInputExpression(
   std::string_view owner, std::string_view text) {
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
   try {
-    exprs = duckdb::Parser::ParseExpressionList(std::string{text});
+    exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(text);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(ERR_MSG(owner, ": ", e.what()));
   }

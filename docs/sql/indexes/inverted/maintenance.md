@@ -37,6 +37,10 @@ Three `WITH` options control the background lifecycle of an inverted index (set 
 
 View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data — see [Refreshing the index](./views.md#refreshing-the-index).
 
+An inverted index on a search table has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it. Set them on the table, in `CREATE TABLE … WITH` or with [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX … WITH` and `ALTER INDEX … SET` reject them for an index on a search table. They also reject the options that only `CREATE TABLE … WITH` sets on a search table: `row_group_size`, [`segment_memory_max`](#write-memory) and `optimize_top_k`. `segment_docs_max` doesn't apply to such an index and is rejected too.
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
+
 ## Background compaction
 
 Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
@@ -102,7 +106,7 @@ Memory held while writing to a search table is bounded by `segment_memory_max`, 
 
 | Write | Peak memory |
 | :--- | :--- |
-| Serial `INSERT` / `UPDATE` | ≈ 1.5 × `segment_memory_max` |
+| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
 | Parallel `INSERT` | ≈ `segment_memory_max` × threads |
 
 Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
@@ -117,6 +121,12 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 `DELETE` sits outside this bound, but costs little: only a rowid per removed row is held until the transaction commits, so even a million-row `DELETE` is a handful of megabytes.
 
 </DocCallout>
+
+## Durability {#durability}
+
+A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that no refresh has saved, and a later checkpoint deletes the kept logs no table needs anymore. After a crash, the server replays the kept logs and the current one into the tables that need them.
+
+With automatic refresh disabled (`refresh_interval = 0`), kept logs pile up until `VACUUM (REFRESH_TABLE)` saves the table or the server restarts.
 
 ## Session settings {#session-settings}
 

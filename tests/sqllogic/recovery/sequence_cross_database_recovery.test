@@ -1,0 +1,72 @@
+control substitution on
+
+statement ok
+CREATE DATABASE vjling_db;
+
+
+statement ok
+CREATE SEQUENCE vjling_db.public.ticket;
+
+
+statement ok
+CREATE TABLE pudge_tickets (id BIGINT PRIMARY KEY);
+
+
+statement ok
+INSERT INTO pudge_tickets SELECT nextval('vjling_db.public.ticket') FROM range(0, 5000);
+
+
+connection goshandr
+statement ok
+INSERT INTO pudge_tickets VALUES (nextval('vjling_db.public.ticket'));
+
+
+connection goshandr
+statement ok
+BEGIN;
+
+
+connection goshandr
+statement ok
+INSERT INTO pudge_tickets VALUES (nextval('vjling_db.public.ticket')), (nextval('vjling_db.public.ticket'));
+
+
+connection goshandr
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pudge_tickets;
+----
+n
+5003
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge_tickets SELECT nextval('vjling_db.public.ticket') FROM range(0, 5000);
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge_tickets VALUES (nextval('vjling_db.public.ticket'));
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids FROM pudge_tickets;
+----
+n	ids
+10004	10004

@@ -25,3 +25,10 @@ CREATE TYPE one_thing AS UNION(number INTEGER, string VARCHAR);
 
 statement ok
 CREATE TYPE x_index AS INTEGER;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE point_pair AS TUPLE(INTEGER, INTEGER);

@@ -101,3 +101,10 @@ export CXX=/usr/local/bin/clang++
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
 ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/out/logs/make_${LOG_SUFFIX}.log || exit 1
 ccache -s | tee -a /serenedb/out/logs/ccache_${LOG_SUFFIX}.log
+
+print_banner "SYSTEM DEPENDENCY CHECK" "${TARGETS[*]}"
+if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
+	/serenedb/scripts/ci/check-system-deps.sh "$PWD" None "$STATIC_EXECUTABLES" || exit 1
+else
+	/serenedb/scripts/ci/check-system-deps.sh "$PWD" "$SANITIZERS" Off || exit 1
+fi

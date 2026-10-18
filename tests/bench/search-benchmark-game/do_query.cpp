@@ -20,9 +20,9 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_format.h>
+#include <unistd.h>
 
 #include <cstdio>
-#include <iostream>  // std::cin
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
@@ -30,6 +30,7 @@
 #include <string>
 
 #include "executor.h"
+#include "line_source.h"
 
 namespace {
 
@@ -84,10 +85,10 @@ static int Main(int argc, const char* argv[]) {
 
     bench::Executor executor{argv[1]};
 
-    std::string data;
-    while (std::getline(std::cin, data)) {
+    bench::LineSource input{STDIN_FILENO};
+    std::string_view line;
+    while (input.Next(line)) {
       size_t count = 0;
-      const std::string_view line{data};
       const auto tab = line.find('\t');
       const auto cmd =
         tab == std::string_view::npos

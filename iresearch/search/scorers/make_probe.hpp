@@ -31,7 +31,7 @@ namespace irs::detail {
 
 ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
                              std::vector<ScoreFunction>&& probed,
-                             uint32_t* held, score_t constant = 0);
+                             ScoreMask* held, score_t constant = 0);
 
 template<typename Leaves, typename Held>
 ScoreFunction MakeProbeOf(ScoreMergeType inner, Leaves& leaves, Held& held,

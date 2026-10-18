@@ -58,8 +58,10 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
   void Write(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
              duckdb::idx_t location) final;
 
-  bool FileExists(const std::string& filename,
-                  duckdb::optional_ptr<duckdb::FileOpener> opener) final;
+  duckdb::FileExistence TryFileExists(
+    const std::string& filename,
+    duckdb::optional_ptr<duckdb::FileOpener> opener,
+    duckdb::optional_ptr<duckdb::ErrorData> error) final;
   duckdb::vector<duckdb::OpenFileInfo> Glob(const std::string& path,
                                             duckdb::FileOpener* opener) final;
 
@@ -78,5 +80,7 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
   duckdb::idx_t SeekPosition(duckdb::FileHandle& handle) final;
   duckdb::FileType GetFileType(duckdb::FileHandle& handle) final;
 };
+
+void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle);
 
 }  // namespace sdb::connector

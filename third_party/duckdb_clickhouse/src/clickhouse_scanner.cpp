@@ -294,12 +294,11 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &describe_sql,
+void ClickHouseDiscoverColumns(ClientContext &context, ClickHouseConnection &connection, const string &describe_sql,
                                vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
                                vector<bool> &stringified, vector<string> &clickhouse_types) {
+	connection.BeginSelect(context, describe_sql);
 	auto &client = connection.GetClient();
-	ClickHouseConnection::LogQuery(describe_sql);
-	client.BeginSelect(describe_sql);
 	while (auto block = client.NextBlock()) {
 		idx_t name_idx = block->GetColumnCount();
 		idx_t type_idx = block->GetColumnCount();
@@ -363,7 +362,7 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	    context.TryGetCurrentSetting("ch_binary_as_blob", binary_setting) && BooleanValue::Get(binary_setting);
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
-		ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
+		ClickHouseDiscoverColumns(context, connection, describe_sql, return_types, column_names, binary_as_blob,
 		                          bind_data->stringified, bind_data->clickhouse_types);
 		// Cardinality estimate for the optimizer, mirroring the catalog path
 		// (clickhouse_table_entry): without it an ad-hoc clickhouse_scan reports ~1
@@ -373,8 +372,7 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 			    "SELECT ifNull(total_rows, 0), total_rows IS NOT NULL FROM system.tables WHERE database = " +
 			    ClickHouseStringLiteral(bind_data->database) +
 			    " AND name = " + ClickHouseStringLiteral(bind_data->table);
-			ClickHouseConnection::LogQuery(count_sql);
-			connection.GetClient().Select(count_sql, [&](const clickhouse::Block &block) {
+			connection.Select(context, count_sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
 					return;
 				}
@@ -519,8 +517,7 @@ ClickHouseInitGlobalStateInternal(ClientContext &context, TableFunctionInitInput
 		if (bind_data.lookup) {
 			result->done = true;
 		} else {
-			ClickHouseConnection::LogQuery(sql);
-			result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
+			result->Conn().BeginSelect(context, ClickHouseConnection::MakeQuery(context, sql));
 		}
 	} catch (const clickhouse::Error &e) {
 		if (result->borrowed_tx) {
@@ -567,9 +564,8 @@ OperatorResultType ClickHouseLookupScan(ExecutionContext &context, TableFunction
 			}
 			clickhouse::ExternalTables external_tables;
 			external_tables.push_back({"lookup", block});
-			ClickHouseConnection::LogQuery(gstate.remote_sql);
-			gstate.Conn().GetClient().BeginSelectWithExternalData(
-			    ClickHouseConnection::MakeQuery(context.client, gstate.remote_sql), external_tables);
+			gstate.Conn().BeginSelectWithExternalData(
+			    context.client, ClickHouseConnection::MakeQuery(context.client, gstate.remote_sql), external_tables);
 			gstate.done = false;
 			gstate.current_block.reset();
 			gstate.block_offset = 0;

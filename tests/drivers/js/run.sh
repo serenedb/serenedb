@@ -7,29 +7,29 @@ set -u
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 if ! command -v node >/dev/null 2>&1; then
-	echo "[js] node not found; skipping" >&2
-	exit 0
-fi
-if ! command -v npm >/dev/null 2>&1; then
-	echo "[js] npm not found; skipping" >&2
-	exit 0
+	echo "[js] node not found" >&2
+	exit 1
 fi
 
 cd "$SCRIPT_DIR"
 
-if [[ ! -d node_modules ]]; then
-	npm install --silent --no-fund --no-audit
+if [[ ! -e node_modules && -n "${SDB_DRIVERS_DEPS:-}" ]]; then
+	ln -s "$SDB_DRIVERS_DEPS/js/node_modules" node_modules
+fi
+if [[ ! -x node_modules/.bin/vitest ]]; then
+	echo "[js] node_modules is missing; run npm ci in $SCRIPT_DIR" >&2
+	exit 1
 fi
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"
 
-JUNIT_DIR="$JUNIT" npx vitest run --reporter=junit \
+JUNIT_DIR="$JUNIT" node_modules/.bin/vitest run --reporter=junit \
 	--outputFile="$JUNIT/tests-drivers-js-junit.xml" || exit 1
 
 # postgres.js suite (D3): runs only when the test file is present.
 if [[ -f test/postgres-js.test.js ]]; then
-	JUNIT_DIR="$JUNIT" npx vitest run --reporter=junit \
+	JUNIT_DIR="$JUNIT" node_modules/.bin/vitest run --reporter=junit \
 		--outputFile="$JUNIT/tests-drivers-js-postgres-js-junit.xml" \
 		test/postgres-js.test.js || exit 1
 fi

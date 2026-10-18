@@ -32,20 +32,22 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <utility>
 #include <vector>
 
+#include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
-#include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::query {
@@ -72,33 +74,26 @@ struct InvertedIndexSnapshot {
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
-// Durable WAL cursor: generation = checkpoint iteration, offset = byte offset
-// within it; bounds recovery replay to the index's un-durable tail.
-struct WalCursor {
-  uint64_t generation = 0;
-  uint64_t offset = 0;
+struct StorageDirectory {
+  std::unique_ptr<irs::Directory> directory;
+  bool on_disk = false;
+  bool absent = false;
 };
 
-// Removes a dropped storage's directory tree, then up to `parent_levels`
-// ancestors that emptied out with it -- a still-populated ancestor stops the
-// walk. A failed removal is only logged, because a dropped object's ids are
-// never reissued.
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels);
-
-inline std::filesystem::path DroppedStoragePath(std::filesystem::path path) {
-  path += ".dropped";
-  return path;
-}
+StorageDirectory OpenStorageDirectory(
+  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
+  bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
 class InvertedIndexStorage final
-  : public std::enable_shared_from_this<InvertedIndexStorage> {
+  : public std::enable_shared_from_this<InvertedIndexStorage>,
+    public MaintainedStore {
  public:
-  InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-                       duckdb::idx_t table_id, duckdb::idx_t index_id,
+  InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
+                       bool in_memory, duckdb::idx_t db_id,
+                       duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
                        bool is_new);
@@ -110,22 +105,22 @@ class InvertedIndexStorage final
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
-  const std::filesystem::path& Path() const noexcept { return _path; }
-
-  static std::filesystem::path GetPath(duckdb::idx_t db_id,
-                                       duckdb::idx_t schema_id,
-                                       duckdb::idx_t table_id,
-                                       duckdb::idx_t index_id);
+  std::filesystem::path Path() const {
+    return _directory->StoragePath(_index_id);
+  }
+  bool Absent() const noexcept { return _absent; }
 
   // `db_id` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+    duckdb::idx_t db_id, duckdb::idx_t index_id,
+    const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
+      std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
+      is_new);
   }
 
   auto GetTransaction() {
@@ -182,18 +177,20 @@ class InvertedIndexStorage final
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
-                               RefreshResult& code,
-                               bool for_checkpoint = false);
+                               RefreshResult& code);
 
   ResultWithTime CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void Refresh(const irs::ProgressReportCallback& progress = nullptr);
-  // Refresh driven by the checkpoint barrier: the store WAL is about to be
-  // truncated and its iteration bumped, so the stamped durable cursor must
-  // carry the NEXT generation (offset 0), not the live one (see
-  // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
-  void CheckpointRefresh();
+  [[nodiscard]] absl::Status Refresh(
+    const irs::ProgressReportCallback& progress = nullptr);
+
+  void PrepareCheckpoint(uint64_t iteration);
+  void FinishCheckpoint();
+
+  uint64_t NextTick(uint64_t queries) noexcept {
+    return _writer->NextTick(queries);
+  }
 
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
@@ -240,83 +237,16 @@ class InvertedIndexStorage final
     std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
-  auto& GetTasksSettings() { return _tasks_settings; }
-
-  // Wake the compaction coordinator: a refresh that produced new segments bumps
-  // this generation so the coordinator re-evaluates without waiting for its
-  // timer. The coordinator polls CompactionGeneration() during its backoff
-  // wait.
-  void NudgeCompaction() noexcept {
-    _compaction_gen.fetch_add(1, std::memory_order_release);
-  }
-  uint64_t CompactionGeneration() const noexcept {
-    return _compaction_gen.load(std::memory_order_acquire);
-  }
-
-  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
-  // it raises stale pressure. The refresh loop runs cleanup once the pressure
-  // crosses a small threshold (or on its periodic step), clearing it.
-  void BumpStalePressure() noexcept {
-    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
-  }
-  uint32_t StalePressure() const noexcept {
-    return _stale_pressure.load(std::memory_order_relaxed);
-  }
-  void ClearStalePressure() noexcept {
-    _stale_pressure.store(0, std::memory_order_relaxed);
-  }
-
   void StartTasks() { _search.StartTasks(shared_from_this()); }
-
-  void FinishCreation();
 
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
-  Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
-
-  // Durable WAL cursor (store-table WAL generation + byte offset) read back
-  // from the segment meta at open. Recovery replays only operations at or past
-  // it (operations strictly below are already durable in the segments). The
-  // refresh stamps the exact WAL end offset of the highest batch it flushed
-  // (see RefreshUnsafeImpl).
-  WalCursor GetRecoveryWalCursor() const noexcept {
-    return _recovery_wal_cursor;
+  const irs::SourcePosition& PersistedPosition() const noexcept {
+    return _durability.Position();
   }
 
-  // Per-index map from a search commit tick to the store-WAL cursor that the
-  // commit's WAL bytes end at. CommitSearch records one entry per settled batch
-  // BEFORE the batch becomes flushable (before IndexWriter::Transaction::Commit
-  // emplaces it), and after the store WAL is durable, so the recorded offset is
-  // that commit's exact WAL end offset; commits serialize, so ticks and WAL
-  // offsets arrive in the same order.
-  void RecordFlushCursor(Tick tick, WalCursor cursor) noexcept;
-  // Cursor of the highest recorded tick <= `tick`, or {0, 0} if none. Prunes
-  // entries strictly below the returned one for THIS index (they can never be
-  // selected again here), which is safe because the table is per-index.
-  WalCursor CursorAtOrBelow(Tick tick) noexcept;
-
-  // The index lost a committed transaction's rows (an iresearch tick commit
-  // failed after the store transaction was already durable). The storage keeps
-  // serving, but the clean-shutdown checkpoint is suppressed so the next
-  // boot rebuilds it from the store table.
-  void MarkOutOfSync() noexcept {
-    _out_of_sync.store(true, std::memory_order_relaxed);
-  }
-  bool IsOutOfSync() const noexcept {
-    return _out_of_sync.load(std::memory_order_relaxed);
-  }
-
-  enum class Phase : uint8_t {
-    Creating,
-    Recovering,
-    Active,
-  };
-
-  void StartRecovery() noexcept {
-    std::lock_guard lock{_refresh_mutex};
-    SDB_ASSERT(_phase == Phase::Creating);
-    _phase = Phase::Recovering;
-  }
+  void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
+  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
@@ -325,18 +255,15 @@ class InvertedIndexStorage final
                          const irs::IndexFieldOptions* field_options,
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
-  absl::Status RefreshUnsafeImpl(bool wait,
-                                 const irs::ProgressReportCallback& progress,
-                                 RefreshResult& code, bool for_checkpoint);
-  absl::Status CleanupUnsafeImpl();
+  void PublishSnapshot();
 
   duckdb::idx_t _index_id;
-  // The database whose duckdb file backs the indexed table: the refresh reads
-  // its checkpoint iteration to stamp the recovery cursor.
   duckdb::idx_t _db_id;
-  std::filesystem::path _path;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
+  IndexDurability _durability;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
@@ -348,44 +275,21 @@ class InvertedIndexStorage final
   absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
   uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
-  TasksSettings _tasks_settings;
-  absl::Mutex _refresh_mutex;
 
-  Tick _recovery_tick{0};
-  Tick _last_durable_tick{0};
-  // Durable store-WAL cursor (generation + byte offset). Captured from the
-  // store WAL at refresh -> _pending_wal_cursor -> stamped into the segment
-  // meta. _recovery_wal_cursor is read back from the meta at open (the recovery
-  // skip bound).
-  WalCursor _pending_wal_cursor;
-  WalCursor _recovery_wal_cursor;
-  // When true, the meta payload provider stamps _pending_wal_cursor from
-  // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
-  // that same call. When false (checkpoint refresh), _pending_wal_cursor was
-  // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
-  // as-is.
-  bool _stamp_cursor_from_flush{false};
-  // Per-index commit-tick -> store-WAL cursor table. Recorded by
-  // CommitSearch/FinishReplay before a batch becomes flushable; consumed by
-  // the meta payload provider via CursorAtOrBelow(_last_durable_tick).
-  duckdb::mutex _flush_cursors_mutex;
-  std::map<Tick, WalCursor> _flush_cursors;
-  std::atomic<bool> _out_of_sync{false};
   duckdb::mutex _delete_log_mutex;
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
   std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
-  std::atomic<uint64_t> _compaction_gen{0};
-  std::atomic<uint32_t> _stale_pressure{0};
-  MaintenanceCounters _maintenance;
-  Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 };
+
+void ThrowIfRefreshFailed(const absl::Status& status,
+                          std::string_view index_name);
 
 }  // namespace sdb::search

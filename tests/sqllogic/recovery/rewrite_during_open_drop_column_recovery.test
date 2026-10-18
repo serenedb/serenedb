@@ -1,0 +1,97 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge (hook INT, meat TEXT, rot TEXT);
+
+
+statement ok
+CREATE INDEX pudge_rot ON pudge USING inverted (rot);
+
+
+statement ok
+INSERT INTO pudge VALUES (1, 'fresh', 'stinky'), (2, 'fresh', 'stinky'), (3, 'old', 'clean');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pudge;
+
+
+connection donsimon
+statement ok
+BEGIN;
+
+
+connection donsimon
+statement ok
+ALTER TABLE pudge DROP COLUMN hook;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE papich (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection donsimon
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE papich_again (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pudge;
+----
+n
+3
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge VALUES (4, 'stinky', 'clean'), (5, 'old', 'stinky');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) pudge;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM pudge_rot WHERE rot @@ 'stinky') AS stinky, (SELECT count(*) FROM pudge_rot WHERE rot @@ 'clean') AS clean, (SELECT count(*) FROM pudge_rot WHERE rot @@ 'fresh') AS fresh;
+----
+stinky	clean	fresh
+3	2	0

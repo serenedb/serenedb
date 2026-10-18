@@ -171,7 +171,7 @@ def _psql_command() -> list[str]:
     """The psql invocation as an argv list.
 
     Defaults to ["psql"] (uses whatever's on PATH). Override with
-    SDB_DRV_PSQL -- e.g. `docker run --rm --network=host postgres:18.3 psql`
+    SDB_DRV_PSQL -- e.g. `docker run --rm --network=host postgres:18.6 psql`
     to pin a specific server-matched client version.
     """
     raw = os.environ.get("SDB_DRV_PSQL", "psql")

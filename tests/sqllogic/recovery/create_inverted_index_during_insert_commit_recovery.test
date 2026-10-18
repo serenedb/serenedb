@@ -1,0 +1,97 @@
+control substitution on
+
+statement ok
+CREATE TABLE goshandr_chat (id INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO goshandr_chat SELECT i, 'w' || (i % 5) FROM range(0, 1000) r(i);
+
+
+connection papich
+statement ok
+BEGIN;
+
+
+connection papich
+statement ok
+INSERT INTO goshandr_chat SELECT i, 'w' || (i % 5) FROM range(1000, 4000) r(i);
+
+
+connection default
+statement ok
+SET debug_local_file_system_delay_ms = 500;
+
+
+connection papich
+statement async ok
+COMMIT;
+
+
+connection default
+query ok retry 40 backoff 100ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'COMMIT%';
+----
+n
+1
+
+
+sleep 300ms
+
+
+connection donsimon
+statement ok
+CREATE INDEX goshandr_chat_b ON goshandr_chat USING inverted (b);
+
+
+connection papich
+wait
+
+
+connection default
+statement ok
+SET debug_local_file_system_delay_ms = 0;
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_chat;
+
+
+connection default
+query
+SELECT (SELECT count(*) FROM goshandr_chat) AS n, (SELECT count(*) FROM goshandr_chat_b) AS docs, (SELECT count(*) FROM goshandr_chat_b WHERE b @@ 'w3') AS three;
+----
+n	docs	three
+4000	4000	800
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM goshandr_chat;
+----
+n
+4000
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_chat;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM goshandr_chat_b) AS docs, (SELECT count(*) FROM goshandr_chat_b WHERE b @@ 'w3') AS three;
+----
+docs	three
+4000	800

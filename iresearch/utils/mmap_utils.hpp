@@ -63,7 +63,7 @@ class MMapHandle : private util::Noncopyable {
 
   ~MMapHandle() noexcept { close(); }
 
-  bool open(const path_char_t* file) noexcept;
+  void open(const path_char_t* file);
   void close() noexcept;
 
   explicit operator bool() const noexcept { return _fd >= 0; }
@@ -76,6 +76,10 @@ class MMapHandle : private util::Noncopyable {
     return 0 == ::madvise(_addr, _size, advice);
   }
 
+  const file_utils::ResidencyMap& residency() const noexcept {
+    return _residency;
+  }
+
   void dontneed(bool value) noexcept { _dontneed = value; }
 
  private:
@@ -86,6 +90,7 @@ class MMapHandle : private util::Noncopyable {
   ptrdiff_t _fd;   // file descriptor
   bool _dontneed;  // request to free pages on close
   IResourceManager& _rm;
+  file_utils::ResidencyMap _residency;
 };
 
 }  // namespace irs::mmap_utils

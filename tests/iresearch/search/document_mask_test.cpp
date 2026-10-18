@@ -53,7 +53,6 @@ static_assert(
 struct Case {
   std::string name;
   std::vector<doc_id_t> docs;
-  doc_id_t visible_end;
   MaskKind kind;
   bool null = false;
   uint32_t bitset_from = irs::DocumentMaskBuilder::kBitsetFrom;
@@ -61,11 +60,10 @@ struct Case {
 
 class Reference {
  public:
-  Reference(const std::vector<doc_id_t>& docs, doc_id_t visible_end)
+  explicit Reference(const std::vector<doc_id_t>& docs)
     : _masked(kLimit + 1, false),
       _next(kLimit + 2, kEof),
-      _live(kLimit + 2, kEof),
-      _visible_end{visible_end} {
+      _live(kLimit + 2, kEof) {
     for (const auto doc : docs) {
       _masked[doc] = true;
     }
@@ -78,32 +76,15 @@ class Reference {
   }
 
   bool Masked(doc_id_t doc) const noexcept {
-    return doc >= _visible_end || (doc <= kLimit && _masked[doc]);
-  }
-
-  bool InMask(doc_id_t doc) const noexcept {
     return doc <= kLimit && _masked[doc];
   }
 
   doc_id_t NextMasked(doc_id_t doc) const noexcept {
-    if (doc >= _visible_end) {
-      return doc;
-    }
-    if (doc > kLimit) {
-      return _visible_end;
-    }
-    return _next[doc];
+    return doc > kLimit ? kEof : _next[doc];
   }
 
   doc_id_t NextLive(doc_id_t doc) const noexcept {
-    if (doc >= _visible_end) {
-      return kEof;
-    }
-    if (doc > kLimit) {
-      return doc;
-    }
-    const auto live = _live[doc];
-    return live < _visible_end ? live : kEof;
+    return doc > kLimit ? doc : _live[doc];
   }
 
   uint64_t CountMasked(doc_id_t first, doc_id_t last) const noexcept {
@@ -118,7 +99,6 @@ class Reference {
   std::vector<bool> _masked;
   std::vector<doc_id_t> _next;
   std::vector<doc_id_t> _live;
-  doc_id_t _visible_end;
 };
 
 irs::DocumentMaskBuilder Builder(const std::vector<doc_id_t>& docs) {
@@ -172,47 +152,39 @@ std::vector<doc_id_t> Random(doc_id_t first, doc_id_t last, double share,
 
 std::vector<Case> Cases() {
   return {
-    {"null", {}, kEof, MaskKind::Runs, true},
-    {"tail_only", {}, 70000, MaskKind::Runs, true},
-    {"empty_mask", {}, 90000, MaskKind::Runs},
-    {"single_bitset", Every(1, 65536, 3), kEof, MaskKind::Bitset},
-    {"single_bitset_tail", Every(1, 65536, 3), 40001, MaskKind::Bitset},
-    {"offset_bitset", Every(131072, 196608, 3), kEof, MaskKind::Bitset},
-    {"single_array", Random(65536, 131072, 0.002, 1), kEof, MaskKind::Array,
-     false, kArrays},
-    {"single_array_tail", Random(65536, 131072, 0.002, 1), 100001,
-     MaskKind::Array, false, kArrays},
-    {"sparse_arrays", Every(5, kLimit, 9973), kEof, MaskKind::Arrays},
-    {"single_run", Every(70000, 90000, 1), kEof, MaskKind::Run},
-    {"single_run_tail", Join({Every(70000, 70100, 1), Every(80000, 90000, 1)}),
-     85001, MaskKind::Run},
-    {"dense_bitsets", Every(1, 196608, 3), kEof, MaskKind::Bitsets},
-    {"dense_bitsets_tail", Every(1, 196608, 3), 150001, MaskKind::Bitsets},
-    {"offset_bitsets", Every(65536, 196608, 3), kEof, MaskKind::Bitsets},
-    {"offset_bitsets_tail", Every(65536, 196608, 3), 250001, MaskKind::Bitsets},
-    {"dense_arrays", Every(5, kLimit, 997), kEof, MaskKind::Arrays, false,
+    {"null", {}, MaskKind::Runs, true},
+    {"empty_mask", {}, MaskKind::Runs},
+    {"single_bitset", Every(1, 65536, 3), MaskKind::Bitset},
+    {"offset_bitset", Every(131072, 196608, 3), MaskKind::Bitset},
+    {"single_array", Random(65536, 131072, 0.002, 1), MaskKind::Array, false,
      kArrays},
-    {"dense_arrays_random", Random(1, kLimit, 0.002, 7), 290000,
-     MaskKind::Arrays, false, kArrays},
-    {"densified_arrays", Random(1, kLimit, 0.01, 8), 290000, MaskKind::Bitsets},
-    {"dense_runs", Join({Every(10, 200000, 1), Every(250000, 250010, 1)}), kEof,
+    {"sparse_arrays", Every(5, kLimit, 9973), MaskKind::Arrays},
+    {"single_run", Every(70000, 90000, 1), MaskKind::Run},
+    {"split_run", Join({Every(70000, 70100, 1), Every(80000, 90000, 1)}),
+     MaskKind::Run},
+    {"dense_bitsets", Every(1, 196608, 3), MaskKind::Bitsets},
+    {"offset_bitsets", Every(65536, 196608, 3), MaskKind::Bitsets},
+    {"dense_arrays", Every(5, kLimit, 997), MaskKind::Arrays, false, kArrays},
+    {"dense_arrays_random", Random(1, kLimit, 0.002, 7), MaskKind::Arrays,
+     false, kArrays},
+    {"densified_arrays", Random(1, kLimit, 0.01, 8), MaskKind::Bitsets},
+    {"dense_runs", Join({Every(10, 200000, 1), Every(250000, 250010, 1)}),
      MaskKind::Runs},
     {"dense_runs_clustered",
      Join({Every(1000, 1512, 1), Every(70000, 70512, 1),
            Every(99999, 100001, 1), Every(131071, 131080, 1)}),
-     kEof, MaskKind::Runs},
+     MaskKind::Runs},
     {"gapped_bitsets", Join({Every(1, 65536, 3), Every(131072, 196608, 5)}),
-     kEof, MaskKind::Mixed},
+     MaskKind::Mixed},
     {"gapped_arrays",
      Join({Random(1, 65536, 0.002, 11), Random(196608, 262144, 0.002, 12)}),
-     kEof, MaskKind::Arrays, false, kArrays},
-    {"gapped_runs_at_tail",
-     Join({Every(65530, 65545, 1), Every(200000, 210000, 1)}), 210000,
+     MaskKind::Arrays, false, kArrays},
+    {"gapped_runs", Join({Every(65530, 65545, 1), Every(200000, 210000, 1)}),
      MaskKind::Runs},
     {"mixed",
      Join({Every(1, 65536, 3), Random(65536, 131072, 0.003, 3),
            Every(140000, 160000, 1)}),
-     kEof, MaskKind::Mixed, false, kArrays},
+     MaskKind::Mixed, false, kArrays},
   };
 }
 
@@ -264,16 +236,14 @@ class DocumentMaskTest : public ::testing::TestWithParam<Case> {
     const auto& c = GetParam();
     _mask = Build(c.docs, c.bitset_from);
     _ptr = c.null ? nullptr : &_mask;
-    _ref.emplace(c.docs, c.visible_end);
+    _ref.emplace(c.docs);
   }
-
-  doc_id_t VisibleEnd() const noexcept { return GetParam().visible_end; }
 
   template<typename Fn>
   void ForEachMask(Fn&& fn) {
-    irs::ResolveDocsMask(_ptr, VisibleEnd(),
+    irs::ResolveDocsMask(_ptr,
                          [&]<irs::DocsMaskType Mask>(Mask mask) { fn(mask); });
-    auto generic = irs::MakeGenericDocsMask(_ptr, VisibleEnd());
+    auto generic = irs::MakeGenericDocsMask(_ptr);
     fn(generic);
   }
 
@@ -289,14 +259,13 @@ TEST_P(DocumentMaskTest, resolves_its_kind) {
   }
   std::optional<MaskKind> resolved;
   irs::ResolveDocsMask(
-    _ptr, VisibleEnd(),
-    [&]<irs::DocsMaskType Mask>(const Mask&) { resolved = Mask::kKind; });
+    _ptr, [&]<irs::DocsMaskType Mask>(const Mask&) { resolved = Mask::kKind; });
   ASSERT_EQ(GetParam().kind, resolved);
 }
 
 TEST_P(DocumentMaskTest, contains_and_count) {
   for (doc_id_t doc = 1; doc <= kLimit; ++doc) {
-    ASSERT_EQ(_ref->InMask(doc), _mask.Contains(doc)) << doc;
+    ASSERT_EQ(_ref->Masked(doc), _mask.Contains(doc)) << doc;
   }
   ForEachMask([&](auto& mask) {
     for (const auto [first, last] : {std::pair<doc_id_t, doc_id_t>{1, kLimit},
@@ -519,22 +488,21 @@ TEST_P(DocumentMaskTest, visit_live_ranges_and_iterator) {
                                   {131000, 210500}}) {
     std::vector<bool> seen(end - begin, false);
     doc_id_t last = 0;
-    irs::VisitLiveRanges(_ptr, VisibleEnd(), begin, end,
-                         [&](doc_id_t first, doc_id_t stop) {
-                           ASSERT_LE(last, first);
-                           ASSERT_LT(first, stop);
-                           ASSERT_LE(stop, end);
-                           for (auto doc = first; doc < stop; ++doc) {
-                             seen[doc - begin] = true;
-                           }
-                           last = stop;
-                         });
+    irs::VisitLiveRanges(_ptr, begin, end, [&](doc_id_t first, doc_id_t stop) {
+      ASSERT_LE(last, first);
+      ASSERT_LT(first, stop);
+      ASSERT_LE(stop, end);
+      for (auto doc = first; doc < stop; ++doc) {
+        seen[doc - begin] = true;
+      }
+      last = stop;
+    });
     for (auto doc = begin; doc < end; ++doc) {
       ASSERT_EQ(!_ref->Masked(doc), seen[doc - begin]) << doc;
     }
   }
 
-  const irs::DocumentMask::Iterator it{_ptr, VisibleEnd()};
+  const irs::DocumentMask::Iterator it{_ptr};
   for (const auto target : Targets(false)) {
     ASSERT_EQ(_ref->Masked(target), it.Contains(target)) << target;
   }
@@ -565,12 +533,6 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
 
   mask.Merge(Builder({200000}));
   ASSERT_EQ(MaskKind::Mixed, KindOf(mask));
-
-  mask.Truncate(131072);
-  ASSERT_EQ(MaskKind::Bitsets, KindOf(mask));
-
-  mask.Truncate(65536);
-  ASSERT_EQ(MaskKind::Bitset, KindOf(mask));
 
   irs::DocumentMaskBuilder runs;
   runs.AddRange(10, 2000);
@@ -625,8 +587,6 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   ASSERT_EQ(MaskKind::Run, KindOf(arrays));
   arrays.Add(300000);
   ASSERT_EQ(MaskKind::Mixed, KindOf(arrays, kDense));
-  arrays.Truncate(200000);
-  ASSERT_EQ(MaskKind::Run, KindOf(arrays, kDense));
 
   mask.Clear();
   ASSERT_EQ(MaskKind::Runs, KindOf(mask));
@@ -643,7 +603,7 @@ TEST(document_mask_test, builder_copies_a_published_mask) {
   ASSERT_FALSE(published.Contains(2));
   ASSERT_FALSE(published.Contains(200000));
   const auto mask = std::move(builder).Finish();
-  irs::ResolveDocsMask(&mask, kEof, [&]<irs::DocsMaskType Mask>(Mask docs) {
+  irs::ResolveDocsMask(&mask, [&]<irs::DocsMaskType Mask>(Mask docs) {
     ASSERT_EQ(MaskKind::Mixed, Mask::kKind);
     ASSERT_EQ(1, docs.Probe(1));
     ASSERT_EQ(200000, docs.Probe(65536));

@@ -43,6 +43,24 @@ As an alternative to reconnecting, switch to the new database within the current
 
 The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
 
+A database created inside a transaction is visible to other sessions only once that transaction commits. Until then, creating a database of the same name from another session fails.
+
+## Dropping a database
+
+`DROP DATABASE [IF EXISTS] name [CASCADE | RESTRICT]` removes a database together with its tables, indexes and files. With `IF EXISTS`, dropping a missing database is not an error. As in PostgreSQL, it cannot run inside a transaction block and cannot be rolled back:
+
+<SqlLogicTest id="sql/statements/create_database/index/example_005" />
+
+Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped: as in PostgreSQL, `DROP DATABASE` gives them five seconds to disconnect and fails if any is still connected then. Neither can the database the session itself is connected to or has switched to with `USE` be dropped:
+
+<SqlLogicTest id="sql/statements/create_database/index/example_006" />
+
+`DROP DATABASE` is rejected while objects of other databases depend on objects of this one, unless `CASCADE` is given, which drops those dependents too; see [Dependencies across Databases](../drop/index.md#dependencies-across-databases). A database created with `CREATE DATABASE` cannot be removed with `DETACH`.
+
+A transaction that wrote to a database dropped by another session fails at commit.
+
+A database that has [subscriptions](../create_subscription/index.md) cannot be dropped; drop its subscriptions first.
+
 ## See also
 
 - [ATTACH / DETACH](../attach/index.md) — attach an existing database file

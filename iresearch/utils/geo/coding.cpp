@@ -27,8 +27,6 @@
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 
-#include <ranges>
-
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/geo/geo_json.hpp"
@@ -319,7 +317,7 @@ void EncodePolygon(Encoder& enc, const S2Polygon& polygon, Options opts) {
         (static_cast<size_t>(polygon.num_vertices()) * ToSize(opts));
       enc.Ensure(reserve);
       enc.put_varint64((loop_cnt << 1) + 1);
-      for (int i : std::views::iota(static_cast<int>(loop_cnt))) {
+      for (int i = 0; i != static_cast<int>(loop_cnt); ++i) {
         auto verts = polygon.loop(i)->vertices_span();
         enc.put_varint64(verts.size());
         EncodeVertices(enc, verts);

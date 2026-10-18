@@ -1,0 +1,59 @@
+statement ok
+CREATE TYPE uta_mood AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TYPE uta_pair AS (a INT, b TEXT);
+
+
+statement ok
+CREATE TABLE uta_t (m uta_mood, ms uta_mood[], ps uta_pair[]);
+
+
+query
+SELECT attname, atttypid > 0 AS positive, format_type(atttypid, atttypmod) AS type FROM pg_attribute WHERE attrelid = 'uta_t'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	positive	type
+m	t	uta_mood
+ms	t	uta_mood[]
+ps	t	uta_pair[]
+
+
+query
+SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_name = 'uta_t' ORDER BY ordinal_position;
+----
+column_name	data_type	udt_name
+m	USER-DEFINED	uta_mood
+ms	ARRAY	_uta_mood
+ps	ARRAY	_uta_pair
+
+
+query
+SELECT t.typname, e.typname AS elem FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid JOIN pg_type e ON e.oid = t.typelem WHERE a.attrelid = 'uta_t'::regclass AND a.attnum > 1 ORDER BY a.attnum;
+----
+typname	elem
+_uta_mood	uta_mood
+_uta_pair	uta_pair
+
+
+statement ok
+INSERT INTO uta_t VALUES (NULL, NULL, NULL);
+
+
+query
+SELECT pg_typeof(m)::text AS m, pg_typeof(ms)::text AS ms, pg_typeof(ps)::text AS ps FROM uta_t;
+----
+m	ms	ps
+uta_mood	uta_mood[]	uta_pair[]
+
+
+statement ok
+DROP TABLE uta_t;
+
+
+statement ok
+DROP TYPE uta_pair;
+
+
+statement ok
+DROP TYPE uta_mood;

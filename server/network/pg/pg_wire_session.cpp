@@ -20,6 +20,7 @@
 
 #include "network/pg/pg_wire_session.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
 
@@ -27,11 +28,14 @@
 #include <array>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "auth/role_closure.h"
@@ -42,6 +46,7 @@
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
+#include "pg/copy_batch_builder.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -59,13 +64,18 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 inline constexpr uint32_t kMaxSaslMessage = 1024;
 
 inline duckdb::LogicalType ResolveExpectedType(
-  const duckdb::PreparedStatement& prepared, uint16_t id) {
+  const duckdb::PreparedStatement& prepared,
+  const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
+  uint16_t id) {
+  const auto key = absl::StrCat(id + 1);
   duckdb::LogicalType type;
-  if (prepared.TryGetParameterType(duckdb::Identifier{absl::StrCat(id + 1)},
-                                   type) &&
+  if (prepared.TryGetParameterType(duckdb::Identifier{key}, type) &&
       type.id() != duckdb::LogicalTypeId::UNKNOWN &&
       type.id() != duckdb::LogicalTypeId::INVALID) {
     return type;
+  }
+  if (const auto hint = hints.find(key); hint != hints.end()) {
+    return hint->second;
   }
   return duckdb::LogicalTypeId::VARCHAR;
 }
@@ -203,12 +213,19 @@ inline duckdb::idx_t ResolveCopyTableId(ConnectionContext& conn,
   return table ? table->oid : 0;
 }
 
-// Stage pg_stat_progress_copy classification for the statement about to run.
 // Staged (not written to the metrics) because QueryBegin resets the metrics
 // before applying it.
 inline void StagePendingCopyProgress(connector::SereneDBClientState& state,
                                      ConnectionContext& conn,
                                      const duckdb::SQLStatement& statement) {
+  if (statement.type == duckdb::StatementType::CREATE_STATEMENT) {
+    const auto& info = *statement.Cast<duckdb::CreateStatement>().info;
+    if (info.type == duckdb::CatalogType::TABLE_ENTRY &&
+        info.Cast<duckdb::CreateTableInfo>().query) {
+      state.pending_copy_command = sdb::pg::ProgressCommand::CreateTableAs;
+    }
+    return;
+  }
   if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
     return;
   }
@@ -394,22 +411,22 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_IF_FAILURE("setup_connection_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  auto& cluster = catalog::ClusterOf();
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{DatabaseName()});
-  if (!database) {
+  duckdb::idx_t database_id = 0;
+  duckdb::Permissions permissions;
+  if (!catalog::ReadDatabase(
+        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
+          database_id = database.oid;
+          permissions = database.permissions;
+        })) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
                                       ERR_MSG("database \"", DatabaseName(),
                                               "\" is not accessible")));
     return false;
   }
-  const auto database_id = database->oid;
 
   const std::string_view user = UserName();
-  auto login =
-    sdb::pg::RequireLoginRole(user, DatabaseName(), database->permissions);
+  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
@@ -441,8 +458,11 @@ bool PgWireSession<Kind>::SetupConnection() {
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_copy_from_mid_stream") {
-        if (command == sdb::pg::ProgressCommand::CopyFrom) {
+        static constinit std::atomic_bool gPausing{false};
+        if (command == sdb::pg::ProgressCommand::CopyFrom &&
+            !gPausing.exchange(true)) {
           SDB_WAIT_ON_FAILURE("pause_copy_from_mid_stream");
+          gPausing.store(false);
         }
       }
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {
@@ -450,9 +470,13 @@ bool PgWireSession<Kind>::SetupConnection() {
           SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
         }
       }
+      SDB_IF_FAILURE("pause_ctas_mid_ingest") {
+        if (command == sdb::pg::ProgressCommand::CreateTableAs) {
+          SDB_WAIT_ON_FAILURE("pause_ctas_mid_ingest");
+        }
+      }
     };
 
-  _conn->context->session_user = std::string{UserName()};
   connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
@@ -539,7 +563,8 @@ duckdb::unique_ptr<duckdb::QueryResult>
 PgWireSession<Kind>::PendingQueryEnsured(
   duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
   std::shared_ptr<WireSinkContext> wire) {
-  if (prepared.GetStatementType() == duckdb::StatementType::COPY_STATEMENT) {
+  if (prepared.GetStatementType() == duckdb::StatementType::COPY_STATEMENT ||
+      prepared.GetStatementType() == duckdb::StatementType::CREATE_STATEMENT) {
     if (const auto* unbound = sdb::pg::UnboundStatement(prepared)) {
       StagePendingCopyProgress(*_client_state, *_connection_ctx, *unbound);
     }
@@ -839,7 +864,7 @@ void PgWireSession<Kind>::WriteCommandTag(
 // is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind == SocketKind::Unix) {
+  if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
     return;  // no IP; the gate treats a unix peer as local via is_local
   } else {
     asio_ns::error_code ec;
@@ -883,18 +908,21 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   // for every connection, regardless of whether a stored credential exists.
   const hba::MembershipFn is_member = [](std::string_view user,
                                          std::string_view group) {
-    auto& cluster = catalog::ClusterOf();
-    const auto transaction = cluster.LoginTransaction();
-    auto& roles = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-    auto user_role = roles.GetEntry(transaction, duckdb::Identifier{user});
-    auto group_role = roles.GetEntry(transaction, duckdb::Identifier{group});
-    if (!user_role || !group_role) {
+    duckdb::idx_t user_oid = 0;
+    duckdb::idx_t group_oid = 0;
+    if (!catalog::ReadRole(user,
+                           [&](const catalog::RoleCatalogEntry& role) {
+                             user_oid = role.oid;
+                           }) ||
+        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
+          group_oid = role.oid;
+        })) {
       return false;  // missing_ok: unknown login role or target group
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_role->oid);
-    return std::ranges::binary_search(closure->closure, group_role->oid);
+    const auto closure = auth::ClosureFor(nullptr, user_oid);
+    return absl::c_binary_search(closure->closure, group_oid);
   };
 
   hba::ClientInfo client;
@@ -1004,15 +1032,14 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  auto& cluster = catalog::ClusterOf();
-  auto entry =
-    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{UserName()});
-  const auto* login_role =
-    entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
-  if (login_role && login_role->HasValidUntil() &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >=
-        login_role->ValidUntil()) {
+  int64_t valid_until = 0;
+  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
+    if (role.HasValidUntil()) {
+      valid_until = role.ValidUntil();
+    }
+  });
+  if (valid_until != 0 &&
+      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -1330,8 +1357,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   // through the catalog (TryReparsePragma), so the snapshot must be held
   // before ExtractStatements.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  auto extracted = _conn->ExtractStatements(
-    std::string{query}, &raw_statement_ends, /*wrap_multi=*/false);
+  auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
+                                            /*wrap_multi=*/false);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.
@@ -1382,6 +1409,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (!_txn_state->GuardNotAborted(*statement)) {
       ThrowAbortedTransaction();
     }
+    _connection_ctx->SetInTransactionBlock(
+      implicit_block || !this->_conn->context->transaction.IsAutoCommit());
     if (implicit_block &&
         statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       _txn_state->Arm();
@@ -1412,7 +1441,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     // DataRow (a plan error then lands after T, which is postgres's
     // mid-stream error behavior).
     const auto stmt_type = statement->type;
-    const auto tag = sdb::pg::BuildCommandTag(*statement, *_conn->context);
+    const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
+                       ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
+                       : sdb::pg::BuildCommandTag(*statement, *_conn->context);
     auto wire = MakeWireContext({});
     wire->announce_rowdesc = true;
     ClosingPending pending;
@@ -1523,13 +1554,11 @@ PgWireSession<Kind>::DriveToResult(duckdb::PreparedStatement& prepared,
 }
 
 // COPY FROM STDIN binds (sniffs the CSV dialect by reading /dev/stdin) at
-// PendingQuery time, so the bridge + feeder must be live BEFORE binding, and
-// CopyInResponse must already be on its way out (the client streams CopyData
-// only after seeing it). While the COPY runs, the io-pinned feeder takes over
-// the recv-consumer role: it assembles CopyData frames from the channel and
-// publishes them to the bridge, whose worker-side Read blocks inside DuckDB's
-// synchronous FileSystem::Read; the SessionTask itself is parked in DriveQuery
-// for the duration, so the single-consumer invariant holds.
+// PendingQuery time, so the batch queue + feeder must be live BEFORE binding,
+// and CopyInResponse must already be on its way out (the client streams
+// CopyData only after seeing it). While the COPY runs, the io-pinned feeder
+// takes over the recv-consumer role; the SessionTask itself is parked in
+// DriveQuery for the duration, so the single-consumer invariant holds.
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
@@ -1552,10 +1581,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   }
   _client_state->copy_stdin_open_count = 0;
   _client_state->copy_stdin_done = false;
-  sdb::pg::CopyInBridge bridge;
-  _connection_ctx->SetSideChannel(&bridge);
-  _feeder_done.store(false, std::memory_order_relaxed);
-  _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
@@ -1570,9 +1595,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
   }
+  sdb::pg::CopyInBatches batches;
+  _connection_ctx->SetSideChannel(&batches);
+  _feeder_done.store(false, std::memory_order_relaxed);
+  _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
   this->KickSend();
-  RunCopyInFeeder(bridge, format).Detach();
+  RunCopyInFeeder(batches, format).Detach();
 
   // The feeder join below is an async park (co_await), so the cleanup that must
   // run on every exit cannot live in a destructor (no RAII guard /
@@ -1593,17 +1622,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   } catch (...) {
     error = std::current_exception();
   }
-  // Always join the feeder before the bridge (a local) is destroyed; Abort
+  // Always join the feeder before the queue (a local) is destroyed; Abort
   // wakes it if the worker errored without draining the client's CopyData.
   // The join is a park (the feeder's last act is RequestRun), keeping the
   // SessionTask on its pool.
-  bridge.Abort();
+  batches.Abort();
   _copy_gate.Kick();
   while (!_feeder_done.load(std::memory_order_acquire)) {
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
-  _connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
+  _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }
@@ -1628,12 +1657,12 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   if (binary) {
     RejectBinaryCopyOptions(*copy.info);
   }
-  // The wire collector runs the extracted INNER query, so the generic COPY
-  // staging in PendingQueryEnsured never sees this statement.
-  StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = _conn->Prepare(std::move(inner));
   ThrowIfError(*prepared);
+  // The wire collector runs the extracted INNER query, so the generic COPY
+  // staging in PendingQueryEnsured never sees this statement.
+  StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
 
   // CopyOutResponse, plus (binary only) the PGCOPY 19-byte header as a CopyData
   // frame, both before arming/PendingQuery (see comment above).
@@ -1723,8 +1752,24 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
 }
 
 template<SocketKind Kind>
+yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
+  if (!_client) {
+    co_await _copy_gate.Wait(*this->_ioexec);
+    co_return {};
+  }
+  auto [ec, n] =
+    co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock)).NoThrow();
+  if (ec || n == 0) {
+    this->Stop();
+    co_return {};
+  }
+  this->_recv.CommitWrite(n);
+  co_return {};
+}
+
+template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
-  sdb::pg::CopyInBridge& bridge, CopyFormat format) {
+  sdb::pg::CopyInBatches& batches, CopyFormat format) {
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
   // and csv stream straight through.
   const bool is_text = format == CopyFormat::Text;
@@ -1732,27 +1777,56 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     _feeder_done.store(true, std::memory_order_release);
     this->_task->RequestRun();
   };
+  bool closed = false;
   const auto fail = [&](int code, auto&&... msg) {
-    bridge.Fail(std::make_exception_ptr(irs::SqlException{
+    closed = true;
+    batches.Fail(std::make_exception_ptr(irs::SqlException{
       SQL_ERROR_DATA(ERR_CODE(code),
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
   };
   absl::Cleanup close_guard = [&] {
-    if (!bridge.Closed()) {
+    if (!closed) {
       fail(ERRCODE_CONNECTION_EXCEPTION,
            "unexpected EOF during COPY from stdin");
       this->Stop();
     }
   };
-  // CopyData bodies stream straight to the bridge -- never assembled whole, so
-  // there is no per-message size cap (PG/pgwire-rs accept ~1GB; memory stays
-  // bounded by the recv buffer, not the frame length). The text "\."
-  // end-of-data marker is recognised by a stateful scanner that survives
-  // chunk/frame splits; binary/CSV pass through untouched.
-  CopyEodScanner scanner;
-  bool eod = false;  // text marker seen: stop feeding, just drain to CopyDone
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
+  CopyEodScanner scanner;
+  sdb::pg::CopyBatchBuilder builder{is_text ? sdb::pg::CopyBatchFormat::Text
+                                    : format == CopyFormat::Binary
+                                      ? sdb::pg::CopyBatchFormat::Binary
+                                      : sdb::pg::CopyBatchFormat::Raw};
+  bool eod = false;
+  bool failed = false;
+  message::Chain retained;
+  this->_recv.RetainConsumed(&retained);
+  absl::Cleanup release_guard = [&] {
+    this->_recv.RetainConsumed(nullptr);
+    batches.Release(std::move(retained));
+  };
+  const auto feeding = [&] { return !eod && !failed && !batches.Aborted(); };
+  const auto guarded = [&](auto&& step) {
+    try {
+      step();
+    } catch (...) {
+      failed = true;
+      closed = true;
+      batches.Fail(std::current_exception());
+    }
+  };
+  const auto publish = [&]() -> yaclib::Task<> {
+    if (!builder.HasRows() || !feeding()) {
+      co_return {};
+    }
+    if (batches.NeedSpace()) {
+      co_await batches.SpaceReady(*this->_ioexec);
+      batches.ResetSpace();
+    }
+    batches.Push(builder.Take(), std::exchange(retained, {}));
+    co_return {};
+  };
   for (;;) {
     while (this->_recv.ReadableSize() < kHeader) {
       if (this->SendBroken()) {
@@ -1760,7 +1834,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
              "unexpected EOF during COPY from stdin");
         co_return {};
       }
-      co_await _copy_gate.Wait(*this->_ioexec);
+      co_await publish();
+      co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
     {
@@ -1790,49 +1865,56 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await publish();
+          co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take = std::min<uint64_t>(body, chunk.size());
-        if (!eod && !bridge.Aborted()) {
-          const std::string_view piece = chunk.substr(0, take);
-          std::array<std::string_view, 2> spans{piece, std::string_view{}};
-          if (is_text) {
-            const auto scanned = scanner.Scan(piece);
-            spans = {scanned.carry, scanned.data};
-          }
-          for (const auto span : spans) {
-            if (span.empty()) {
-              continue;
+        if (feeding()) {
+          const auto piece = chunk.substr(0, take);
+          guarded([&] {
+            if (is_text) {
+              const auto scanned = scanner.Scan(piece);
+              builder.Feed(scanned.carry, false);
+              builder.Feed(scanned.data, true);
+            } else {
+              builder.Feed(piece, true);
             }
-            bridge.Publish(span.data(), span.size());
-            co_await bridge.Drained(*this->_ioexec);
-            bridge.ResetDrained();
-          }
-          if (is_text && scanner.Ended()) {
+          });
+          if (is_text && scanner.Ended() && feeding()) {
+            guarded([&] { builder.Finish(); });
+            co_await publish();
             eod = true;
-            // worker sees EOF; the rest of the stream is dropped
-            bridge.Finish();
+            if (!failed) {
+              closed = true;
+              batches.Finish();
+            }
           }
         }
         this->_recv.Consume(take);
         body -= take;
+        if (builder.Ready()) {
+          co_await publish();
+        }
       }
     } else if (type == PQ_MSG_COPY_DONE) {
-      if (!eod && !bridge.Aborted()) {
-        if (is_text) {
-          if (const auto tail = scanner.Finish(); !tail.empty()) {
-            bridge.Publish(tail.data(), tail.size());
-            co_await bridge.Drained(*this->_ioexec);
-            bridge.ResetDrained();
+      if (feeding()) {
+        guarded([&] {
+          if (is_text) {
+            builder.Feed(scanner.Finish(), false);
           }
+          builder.Finish();
+        });
+        co_await publish();
+        if (!failed) {
+          batches.Finish();
         }
-        bridge.Finish();
       }
+      closed = true;
       co_return {};
-    } else if (type == PQ_MSG_COPY_FAIL) {
-      // The client's CopyFail carries its own failure text; PG echoes it,
-      // reading it as a NUL-terminated string (truncate at the first NUL).
+    } else if (type == PQ_MSG_COPY_FAIL ||
+               (_client && (type == PQ_MSG_ERROR_RESPONSE ||
+                            type == PQ_MSG_NOTICE_RESPONSE))) {
       std::string detail;
       detail.reserve(body);
       while (detail.size() < body) {
@@ -1842,13 +1924,22 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take =
           std::min<uint64_t>(body - detail.size(), chunk.size());
         detail.append(chunk.data(), take);
         this->_recv.Consume(take);
+      }
+      if (type == PQ_MSG_NOTICE_RESPONSE) {
+        continue;
+      }
+      if (type == PQ_MSG_ERROR_RESPONSE) {
+        closed = true;
+        batches.Fail(std::make_exception_ptr(irs::SqlException{
+          ParseErrorResponse(detail), std::source_location::current()}));
+        co_return {};
       }
       fail(ERRCODE_QUERY_CANCELED, "COPY from stdin failed: ",
            std::string_view{detail}.substr(0, detail.find('\0')));
@@ -1861,7 +1952,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await WaitCopyInput();
         }
         const auto take = std::min<uint64_t>(body, this->_recv.Front().size());
         this->_recv.Consume(take);
@@ -1871,7 +1962,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
            "unexpected message during COPY from stdin");
       co_return {};
     }
-    // Flush/Sync carry an empty body -- already fully consumed (header only).
   }
 }
 
@@ -1898,10 +1988,12 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   }
 
   duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
+  std::vector<uint64_t> param_oids;
+  param_oids.reserve(num_params);
   for (uint16_t i = 0; i < num_params; ++i) {
-    const auto oid =
-      static_cast<int32_t>(absl::big_endian::Load32(payload.data()));
-    payload.remove_prefix(sizeof(int32_t));
+    const uint64_t oid = absl::big_endian::Load32(payload.data());
+    payload.remove_prefix(sizeof(uint32_t));
+    param_oids.push_back(oid);
     if (oid != 0) {
       type_hints.emplace(
         absl::StrCat(i + 1),
@@ -1922,8 +2014,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  auto extracted = _conn->ExtractStatements(
-    std::string{query}, &raw_statement_ends, /*wrap_multi=*/false);
+  auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
+                                            /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -1986,6 +2078,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     }
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
+    statement.SetParamOids(std::move(param_oids));
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2047,7 +2140,7 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
-    const auto type = ResolveExpectedType(prepared, i);
+    const auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
     const auto fn =
       sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format);
@@ -2198,10 +2291,16 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   stmt.MarkDescribed(prepared);
   const auto param_count = prepared.GetNamedParameterMap().size();
-  std::vector<int32_t> oids;
+  const auto& client_oids = stmt.ParamOids();
+  std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    oids.emplace_back(sdb::pg::Type2Oid(ResolveExpectedType(prepared, i)));
+    if (i < client_oids.size() && client_oids[i] != 0) {
+      oids.emplace_back(client_oids[i]);
+      continue;
+    }
+    oids.emplace_back(
+      sdb::pg::Type2Oid(ResolveExpectedType(prepared, stmt.TypeHints(), i)));
   }
   WriteParameterDescription(this->_send, oids);
 
@@ -2248,7 +2347,8 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(Statement& stmt, const PlanPtr& plan) {
   auto hints = stmt.TypeHints();
   const auto param_count = plan->GetNamedParameterMap().size();
   for (size_t i = 0; i < param_count; ++i) {
-    hints.emplace(absl::StrCat(i + 1), ResolveExpectedType(*plan, i));
+    hints.emplace(absl::StrCat(i + 1),
+                  ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
   auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {
@@ -2385,6 +2485,8 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   // cursor survives across Flush (which does not commit) but not Sync, as in
   // postgres. A leading BEGIN/COMMIT/ROLLBACK is excluded: it must reach the
   // transaction operator itself, not run wrapped in our block.
+  _connection_ctx->SetInTransactionBlock(
+    !this->_conn->context->transaction.IsAutoCommit());
   if (prepared.GetStatementType() !=
       duckdb::StatementType::TRANSACTION_STATEMENT) {
     _txn_state->Arm();
@@ -2396,9 +2498,19 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
     if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
       // DDL/DML/SET: materialize, write the command tag (affected-row count),
       // done in this Execute -- these never page.
+      const bool commit_rolls_back = _txn_state->StatusByte() == 'E' &&
+                                     portal.stmt->Unbound() &&
+                                     IsCommit(*portal.stmt->Unbound());
       auto result = co_await DriveToResult(
         prepared, portal.bind_info.param_values, exec.pending, nullptr);
-      WriteCommandTag(prepared, *result, return_type);
+      if (commit_rolls_back) {
+        WriteCommandTag(
+          sdb::pg::CommandTag{"ROLLBACK",
+                              duckdb::StatementType::TRANSACTION_STATEMENT},
+          *result, return_type);
+      } else {
+        WriteCommandTag(prepared, *result, return_type);
+      }
       exec.state = PortalState::Exhausted;
       if (prepared.GetStatementType() ==
           duckdb::StatementType::TRANSACTION_STATEMENT) {
@@ -2550,9 +2662,11 @@ yaclib::Task<> PgWireSession<Kind>::Run() {
     auto cpu = SpawnSession();
     try {
       co_await PumpRecv();
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
       // Teardown boundary, not error handling: every socket op is NoThrow, so a
       // throw here is a genuine escape -- fall through to stop + join.
+      SDB_ERROR(GENERAL, "pg session terminated by exception: ",
+                duckdb::ErrorData{e}.RawMessage());
     }
     this->Stop();
     co_await std::move(cpu);
@@ -2788,14 +2902,9 @@ auto PgWireSession<Kind>::NegotiateStartup(StartupRequest& startup)
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SpawnSession() noexcept {
-  this->_task = duckdb::make_shared_ptr<CpuResumer>(
-    duckdb::TaskScheduler::GetScheduler(
-      irs::DuckDBEngine::Instance().instance()),
-    *this->_ioexec);
-  // SessionMain (eager) runs to its first Park, setting the resume job; the one
-  // bootstrap kick then schedules it onto a duck worker.
   auto cpu = SessionMain();
-  this->_task->RequestRun();
+  this->_handed_off = true;
+  this->_task->Start();
   return cpu;
 }
 
@@ -2981,6 +3090,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
 }
 
 template class PgWireSession<SocketKind::MaybeTls>;
+template class PgWireSession<SocketKind::Client>;
 template class PgWireSession<SocketKind::Tcp>;
 template class PgWireSession<SocketKind::Unix>;
 

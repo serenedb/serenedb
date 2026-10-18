@@ -4,11 +4,14 @@ target_sources(
         boot.cpp
         catalog.cpp
         cluster.cpp
+        database_directory.cpp
         entry/database.cpp
         entry/foreign_server.cpp
         entry/inverted_index.cpp
+        entry/job.cpp
         entry/role.cpp
         entry/search_table.cpp
+        entry/subscription.cpp
         entry/system_table.cpp
         entry/tokenizer.cpp
 )

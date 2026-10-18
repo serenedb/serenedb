@@ -72,7 +72,6 @@ class ColReader final {
     return _columns;
   }
 
-  bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
@@ -86,7 +85,7 @@ class ColReader final {
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
-  std::vector<std::unique_ptr<NormColumnReader>> _norm_readers;
+  std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
   irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
 };
 

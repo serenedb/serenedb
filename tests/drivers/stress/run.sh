@@ -91,20 +91,18 @@ fi
 
 PYTHON="${PYTHON:-python3}"
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
-	echo "[stress] python3 not found; skipping" >&2
-	exit 0
+	echo "[stress] python3 not found" >&2
+	exit 1
 fi
 
-# psycopg3 is the only third-party import. Prefer whatever the image already has,
-# then the driver-test venv, then skip loudly rather than pip-installing here.
 if ! "$PYTHON" -c "import psycopg" >/dev/null 2>&1; then
 	VENV="${WORKSPACE}/tests/drivers/python/.venv"
 	if [[ -x "${VENV}/bin/python3" ]] && "${VENV}/bin/python3" -c "import psycopg" >/dev/null 2>&1; then
 		PYTHON="${VENV}/bin/python3"
 	else
-		echo "[stress] psycopg not importable and no usable venv at ${VENV}; skipping" >&2
+		echo "[stress] psycopg not importable and no usable venv at ${VENV}" >&2
 		echo "[stress] provision it with: tests/drivers/python/run.sh (or pip install psycopg[binary])" >&2
-		exit 0
+		exit 1
 	fi
 fi
 

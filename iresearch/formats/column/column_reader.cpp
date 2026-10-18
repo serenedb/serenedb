@@ -52,7 +52,6 @@
 #include <optional>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -87,10 +86,12 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
   auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
   if (!codec) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "Column block uses compression ", static_cast<uint32_t>(compression_type),
-      ", which this release of SereneDB does not have; it was written by a "
-      "newer release")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Column block uses compression ",
+              static_cast<uint32_t>(compression_type),
+              ", which this release of SereneDB does not have; it was written "
+              "by a newer release"));
   }
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
                          codec.get()};
@@ -590,7 +591,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   // rows by run flag). Bare null checks keep the validity-only arm below, and
   // null-bearing spans keep the decode arm.
   const bool codec_filter =
-    within_segment && codec.filter &&
+    within_segment && codec.filter && !filter_state.can_throw &&
     (self_valid || (null_check == NullCheckKind::None &&
                     ValiditySpanAllValid(s, anchor, span)));
   if (codec_filter) {
@@ -719,6 +720,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       break;
     case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
+    case duckdb::LogicalTypeId::TUPLE:
       col = std::make_unique<StructColumnReader>(meta.id, std::move(meta.type),
                                                  std::move(validity),
                                                  std::move(children));
@@ -763,8 +765,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   if (validity) {
     _validity_window = validity->Locate(row, _validity_window);
     if (_validity_window.block != _cached_validity_block) {
-      _validity_block = validity->Open(_validity_window, _ctx);
       _validity_fetch_state = duckdb::ColumnFetchState{};
+      _validity_block = validity->Open(_validity_window, _ctx);
       _cached_validity_block = _validity_window.block;
     }
     _validity_block->FetchRow(
@@ -777,8 +779,8 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   }
   _window = _reader->Locate(row, _window);
   if (_window.block != _cached_block) {
-    _block = _reader->Open(_window, _ctx);
     _fetch_state = duckdb::ColumnFetchState{};
+    _block = _reader->Open(_window, _ctx);
     _cached_block = _window.block;
   }
   _block->FetchRow(_fetch_state,

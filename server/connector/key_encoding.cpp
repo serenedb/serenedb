@@ -197,6 +197,7 @@ void AppendValue(std::string& key,
         }
       }
     } break;
+    case duckdb::LogicalTypeId::TUPLE:
     case duckdb::LogicalTypeId::STRUCT: {
       for (duckdb::idx_t c = 0; c < vec.children.size(); ++c) {
         const auto& child = vec.children[c];

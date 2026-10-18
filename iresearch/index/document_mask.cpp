@@ -26,7 +26,8 @@
 #include <roaring/roaring.hh>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
@@ -57,7 +58,8 @@ roaring::Roaring CompressSet(const roaring_bitmap_t& set) {
   roaring::Roaring out;
   if (!roaring::api::roaring_bitmap_overwrite(&out.roaring, &set))
     [[unlikely]] {
-    throw IllegalState{"Failed to allocate a copy of the document mask"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a copy of the document mask"));
   }
   roaring::api::roaring_bitmap_repair_after_lazy(&out.roaring);
   out.runOptimize();
@@ -219,7 +221,8 @@ DocumentMaskBuilder::DocumentMaskBuilder(const roaring_bitmap_t& set,
     return;
   }
   if (!roaring::api::roaring_bitmap_overwrite(&_set, &set)) [[unlikely]] {
-    throw IllegalState{"Failed to allocate a copy of the document mask"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a copy of the document mask"));
   }
   _count = count;
 }
@@ -260,8 +263,9 @@ DocumentMaskBuilder DocumentMaskBuilder::Read(const char* buf, size_t size) {
     try {
       return roaring::Roaring::readSafe(buf, size);
     } catch (const std::exception& e) {
-      throw IndexError{absl::StrCat("Corrupted document mask of ", size,
-                                    " byte(s): ", e.what())};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+        ERR_MSG("Corrupted document mask of ", size, " byte(s): ", e.what()));
     }
   }();
 
@@ -271,8 +275,9 @@ DocumentMaskBuilder DocumentMaskBuilder::Read(const char* buf, size_t size) {
 
     if (compressed.minimum() < doc_limits::min() || doc_limits::eof(max))
       [[unlikely]] {
-      throw IndexError{absl::StrCat("Invalid document id in a document mask, [",
-                                    compressed.minimum(), ", ", max, "]")};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("Invalid document id in a document mask, [",
+                              compressed.minimum(), ", ", max, "]"));
     }
 
     mask._count = compressed.cardinality();
@@ -315,12 +320,6 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
     return;
   }
   roaring::api::roaring_bitmap_add_range(&_set, first, last);
-  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
-}
-
-void DocumentMaskBuilder::Truncate(doc_id_t first) noexcept {
-  SDB_ASSERT(doc_limits::valid(first));
-  roaring::api::roaring_bitmap_remove_range(&_set, first, uint64_t{1} << 32);
   _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
 }
 

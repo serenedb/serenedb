@@ -83,4 +83,44 @@ asio_ns::ssl::context BuildServerTlsContext(const TlsOptions& options) {
   return ctx;
 }
 
+asio_ns::ssl::context BuildClientTlsContext(const TlsClientOptions& options) {
+  asio_ns::ssl::context ctx{asio_ns::ssl::context::tls_client};
+  auto* native = ctx.native_handle();
+  SSL_CTX_set_min_proto_version(native, TLS1_2_VERSION);
+  SSL_CTX_set_options(native, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+  if (!options.key_password.empty()) {
+    ctx.set_password_callback(
+      [password = options.key_password](
+        std::size_t, asio_ns::ssl::context::password_purpose) {
+        return password;
+      });
+  }
+  if (!options.cert_file.empty()) {
+    ctx.use_certificate_chain_file(options.cert_file);
+    ctx.use_private_key_file(
+      options.key_file.empty() ? options.cert_file : options.key_file,
+      asio_ns::ssl::context::pem);
+  }
+  if (!options.verify_peer) {
+    ctx.set_verify_mode(asio_ns::ssl::verify_none);
+    return ctx;
+  }
+  if (options.root_cert.empty() || options.root_cert == "system") {
+    ctx.set_default_verify_paths();
+  } else {
+    ctx.load_verify_file(options.root_cert);
+  }
+  if (!options.crl_file.empty() || !options.crl_dir.empty()) {
+    auto* store = SSL_CTX_get_cert_store(native);
+    if (X509_STORE_load_locations(
+          store, options.crl_file.empty() ? nullptr : options.crl_file.c_str(),
+          options.crl_dir.empty() ? nullptr : options.crl_dir.c_str()) == 1) {
+      X509_STORE_set_flags(store,
+                           X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+    }
+  }
+  ctx.set_verify_mode(asio_ns::ssl::verify_peer);
+  return ctx;
+}
+
 }  // namespace sdb::network

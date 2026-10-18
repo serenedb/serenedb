@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/storage/shared_object_cache.hpp>
 #include <string>
 #include <string_view>
@@ -39,8 +41,9 @@ struct StopwordSet final : duckdb::ObjectCacheEntry,
     duckdb::SharedObjectCache& cache, duckdb::unique_ptr<StopwordSet> set) {
     char hex[duckdb::MD5Context::MD5_HASH_LENGTH_TEXT];
     set->Hash(hex);
-    return cache.GetOrBuild<StopwordSet>(std::string_view{hex, sizeof(hex)},
-                                         [&] { return std::move(set); });
+    const auto key =
+      absl::StrCat(ObjectType(), ":", std::string_view{hex, sizeof(hex)});
+    return cache.GetOrBuild<StopwordSet>(key, [&] { return std::move(set); });
   }
 
   explicit StopwordSet(std::vector<std::string> mask) {

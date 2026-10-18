@@ -1,0 +1,63 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE cif_t (id BIGINT, value TEXT);
+
+
+statement ok
+INSERT INTO cif_t VALUES (1, 'first'), (2, 'second');
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::Flush';
+
+
+statement error
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: failed to flush index 'cif_idx': intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'cif_idx';
+----
+n
+0
+
+
+statement ok
+INSERT INTO cif_t VALUES (3, 'third');
+
+
+statement ok
+CREATE INDEX cif_idx ON cif_t USING inverted(id) INCLUDE(value)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO cif_t VALUES (4, 'fourth');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cif_t;
+
+
+query
+SELECT id, value FROM cif_idx ORDER BY id;
+----
+id	value
+1	first
+2	second
+3	third
+4	fourth
+
+
+statement ok
+DROP TABLE cif_t CASCADE;

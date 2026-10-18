@@ -1,0 +1,244 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE melstroi_churn_0 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_0;
+
+
+statement ok
+CREATE TABLE melstroi_churn_1 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_1;
+
+
+statement ok
+CREATE TABLE melstroi_churn_2 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_2;
+
+
+statement ok
+CREATE TABLE melstroi_churn_3 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_3;
+
+
+statement ok
+CREATE TABLE melstroi_churn_4 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_4;
+
+
+statement ok
+CREATE TABLE melstroi_churn_5 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_5;
+
+
+statement ok
+CREATE TABLE melstroi_churn_6 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_6;
+
+
+statement ok
+CREATE TABLE melstroi_churn_7 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_7;
+
+
+statement ok
+CREATE TABLE melstroi_churn_8 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_8;
+
+
+statement ok
+CREATE TABLE melstroi_churn_9 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_9;
+
+
+statement ok
+CREATE TABLE melstroi_churn_10 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_10;
+
+
+statement ok
+CREATE TABLE melstroi_churn_11 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_11;
+
+
+statement ok
+CREATE TABLE melstroi_churn_12 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_12;
+
+
+statement ok
+CREATE TABLE melstroi_churn_13 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_13;
+
+
+statement ok
+CREATE TABLE melstroi_churn_14 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_14;
+
+
+statement ok
+CREATE TABLE melstroi_churn_15 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_15;
+
+
+statement ok
+CREATE TABLE melstroi_churn_16 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_16;
+
+
+statement ok
+CREATE TABLE melstroi_churn_17 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_17;
+
+
+statement ok
+CREATE TABLE melstroi_churn_18 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_18;
+
+
+statement ok
+CREATE TABLE melstroi_churn_19 (x INT);
+
+
+statement ok
+DROP TABLE melstroi_churn_19;
+
+
+statement ok
+CREATE TEMP TABLE wal_size AS SELECT size AS grown FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+
+
+connection pudge
+statement ok
+BEGIN;
+
+
+connection pudge
+statement ok
+CREATE TABLE pudge_hook (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE donsimon_first (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+query
+SELECT size > (SELECT grown FROM wal_size) AS deferred FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+----
+deferred
+t
+
+
+connection pudge
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE donsimon_second (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+query
+SELECT size < (SELECT grown FROM wal_size) AS rewritten FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/catalog.wal');
+----
+rewritten
+t
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(relname, ',' ORDER BY relname) AS tables FROM pg_class WHERE relname IN ('donsimon_first', 'donsimon_second', 'pudge_hook', 'melstroi_churn_0');
+----
+tables
+donsimon_first,donsimon_second

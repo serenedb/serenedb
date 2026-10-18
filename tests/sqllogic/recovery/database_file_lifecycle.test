@@ -117,7 +117,7 @@ count
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
 ----
 one_file_per_database
 t
@@ -143,7 +143,7 @@ dbfile_keep
 
 connection after_drop_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
 ----
 one_file_per_database
 t

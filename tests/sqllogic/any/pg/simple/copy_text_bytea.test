@@ -1,0 +1,39 @@
+control substitution on
+
+statement ok
+CREATE TABLE ctb_src (id INTEGER, b BYTEA);
+
+
+statement ok
+INSERT INTO ctb_src VALUES (1, ''::BYTEA), (2, NULL), (3, '\x41'::BYTEA), (4, '\x5c'::BYTEA), (5, '\x00ff'::BYTEA);
+
+
+statement count 5
+COPY ctb_src TO '${__TEST_DIR__}/copy_text_bytea.txt';
+
+
+statement ok
+CREATE TABLE ctb_dst (id INTEGER, b BYTEA);
+
+
+statement count 5
+COPY ctb_dst FROM '${__TEST_DIR__}/copy_text_bytea.txt';
+
+
+query
+SELECT id, b IS NULL AS b_null, octet_length(b) AS len, encode(b, 'hex') AS hex FROM ctb_dst ORDER BY id;
+----
+id	b_null	len	hex
+1	f	0	(empty)
+2	t	NULL	NULL
+3	f	1	41
+4	f	1	5c
+5	f	2	00ff
+
+
+statement ok
+DROP TABLE ctb_dst;
+
+
+statement ok
+DROP TABLE ctb_src;

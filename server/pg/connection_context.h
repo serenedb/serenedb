@@ -45,9 +45,14 @@ namespace sdb::connector {
 struct EsBulkInput;
 
 }  // namespace sdb::connector
+namespace sdb::replication {
+
+struct ReplBatch;
+
+}  // namespace sdb::replication
 namespace sdb::pg {
 
-class CopyInBridge;
+class CopyInBatches;
 
 // Outcome of the connect-time login gate. On success `role` is the id of the
 // resolved login role and `error` is default (errcode 0); on failure `role` is
@@ -75,9 +80,10 @@ class CancelRegistry;
 namespace sdb {
 
 using SideChannel =
-  PointerUnion<pg::CopyInBridge, otel::ExportRequest<otel::LogRecord>,
+  PointerUnion<pg::CopyInBatches, otel::ExportRequest<otel::LogRecord>,
                otel::ExportRequest<otel::Span>,
-               otel::ExportRequest<otel::Metric>, connector::EsBulkInput>;
+               otel::ExportRequest<otel::Metric>, connector::EsBulkInput,
+               replication::ReplBatch>;
 
 class ConnectionContext final : public query::Transaction {
  public:
@@ -129,6 +135,11 @@ class ConnectionContext final : public query::Transaction {
     return _side_channel.Get<T>();
   }
 
+  bool InTransactionBlock() const noexcept { return _in_transaction_block; }
+  void SetInTransactionBlock(bool value) noexcept {
+    _in_transaction_block = value;
+  }
+
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
@@ -173,6 +184,7 @@ class ConnectionContext final : public query::Transaction {
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
+  bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

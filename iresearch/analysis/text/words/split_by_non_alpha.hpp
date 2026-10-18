@@ -340,7 +340,7 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
 }
 
 template<bool KnownAscii, typename OnBlock, typename OnRun>
-IRS_TARGET_AVX512 IRS_NO_INLINE IRS_ALIGN_HOT void ForEachNonSpaceRunWide(
+IRS_TARGET_AVX512 IRS_NO_INLINE void ForEachNonSpaceRunWide(
   const byte_type* data, size_t size, OnBlock& on_block, OnRun& on_run) {
   ForEachNonSpaceRun512<KnownAscii>(data, size, on_block, on_run);
 }
@@ -620,8 +620,9 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachAlnumRun512(
 }
 
 template<bool Letters, typename OnRun>
-IRS_TARGET_AVX512 IRS_NO_INLINE IRS_ALIGN_HOT void ForEachAlnumRunWide(
-  const byte_type* data, size_t size, OnRun& on_run) {
+IRS_TARGET_AVX512 IRS_NO_INLINE void ForEachAlnumRunWide(const byte_type* data,
+                                                         size_t size,
+                                                         OnRun& on_run) {
   ForEachAlnumRun512<Letters>(data, size, on_run);
 }
 #endif

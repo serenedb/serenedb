@@ -336,7 +336,7 @@ duckdb::TableFunction BindSearchTableScan(
                           std::make_shared<search::InvertedIndexSnapshot>(
                             PinnedSearchReader(context, entry), nullptr));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = store->Config();
+  data->relation.inverted_config = store->ScanConfig();
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);

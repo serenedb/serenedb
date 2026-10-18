@@ -184,9 +184,15 @@ count
 
 statement error
 UPDATE chpk.default.pk_none SET v = 'z' WHERE a = 1;
+----
+db error: ERROR: Cannot UPDATE ClickHouse table "pk_none": it has no single integer PRIMARY KEY to use as a row identifier
+
 
 statement error
 DELETE FROM chpk.default.pk_none WHERE a = 1;
+----
+db error: ERROR: Cannot DELETE from ClickHouse table "pk_none": it has no single integer PRIMARY KEY to use as a row identifier
+
 
 # =====================================================================
 # Group D: COMPLEX PK column names round-trip through CREATE/scan/UPDATE/DELETE.

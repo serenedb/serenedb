@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
@@ -141,7 +142,7 @@ CompactionOptions PinCompactionOptions(SearchTable& table) {
   return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
-template<class Storage>
+template<typename Storage>
 void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -180,7 +181,7 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-template<class Storage>
+template<typename Storage>
 auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
   absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
@@ -207,21 +208,21 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
   } else {
-    SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx->GetId(),
-              "': ", res.message());
+    SDB_WARN(SEARCH, "error after running for ", time_ms,
+             "ms while compacting Search index '", idx->GetId(),
+             "': ", res.message());
   }
   co_return !empty_compaction;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is
 // independent: the tier policy + the writer's _compacting exclusion set hand
-// every concurrent call a disjoint candidate window (overlap -> Fail -> no
-// work), so concurrency is bounded only by the slot gate; the smaller policy
+// every concurrent call a disjoint candidate window, so concurrency is bounded
+// only by the slot gate; the smaller policy
 // when the gate is full keeps the pool draining. noexcept on purpose: a slot is
 // acquired here and released only by its child, so if Run/push_back threw (OOM)
 // the slot would leak into the gate count -- fail fast instead.
-template<class Storage>
+template<typename Storage>
 std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
   const std::weak_ptr<Storage>& weak) noexcept {
@@ -239,7 +240,13 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
         return yaclib::MakeFuture(false);
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
+      SDB_WAIT_ON_FAILURE("pause_compaction_run");
+      const auto& settings = idx->GetTasksSettings();
+      if (settings.compaction_interval_msec == 0) {
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
+      }
+      auto policy = MakeTierPolicy(settings, small);
       return DoCompaction(std::move(idx), std::move(policy), engine);
     }));
   }
@@ -250,7 +257,7 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
 // fit (one-shot, non-thread-safe Reset, lost-wakeup across iterations with many
 // producers), so we poll the per-index generation in bounded slices -- the
 // fallback the design explicitly allows. Returns early on a nudge or on stop.
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
                                           std::weak_ptr<Storage> weak,
                                           uint64_t base_gen,
@@ -286,12 +293,7 @@ enum class LoopTick {
   kNeutral,   // keep the stretch
 };
 
-// The scaffolding RefreshLoop and ReindexLoop share: lock-or-exit,
-// interval+stretch delay (kDisabledPoll while the interval is 0), the stop
-// gates, the executor hop and the stretch accounting. `tick` runs on the
-// executor and locks the target itself (so a long tick does not have to pin
-// the storage).
-template<class Storage, class GetIntervalMs, class Tick>
+template<typename Storage, typename GetIntervalMs, typename Tick>
 yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
                               std::string_view name,
                               GetIntervalMs get_interval_ms, Tick tick) {
@@ -355,14 +357,15 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
     // timer -- a clean termination signal, not an error.
     SDB_TRACE(SEARCH, name, " loop stopped");
   } catch (const std::exception& ex) {
-    SDB_ERROR(SEARCH, name, " loop terminated by exception: ", ex.what());
+    SDB_ERROR(SEARCH, name, " loop terminated by exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   }
   co_return {};
 }
 
 }  // namespace
 
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
@@ -396,7 +399,7 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
     });
 }
 
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   auto& s = BackgroundScheduler::instance();
   auto& engine = GetSearchEngine();
@@ -482,7 +485,8 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
     // timer -- a clean termination signal, not an error.
     SDB_TRACE(SEARCH, "compaction loop stopped");
   } catch (const std::exception& ex) {
-    SDB_ERROR(SEARCH, "compaction loop terminated by exception: ", ex.what());
+    SDB_ERROR(SEARCH, "compaction loop terminated by exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   }
   co_return {};
 }
@@ -492,49 +496,5 @@ template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
-
-namespace {
-
-// Installed once by the connector (RegisterServerExtensions) during the
-// single-threaded boot, strictly before any storage starts its loops.
-ReindexRunner g_reindex_runner;
-
-}  // namespace
-
-void SetReindexRunner(ReindexRunner runner) {
-  g_reindex_runner = std::move(runner);
-}
-
-yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
-  return IntervalLoop(
-    std::move(weak), "reindex",
-    [](InvertedIndexStorage& idx) -> size_t {
-      return idx.GetTasksSettings().reindex_interval_msec;
-    },
-    [](const std::weak_ptr<InvertedIndexStorage>& target) {
-      if (!g_reindex_runner) {
-        return LoopTick::kNeutral;
-      }
-      duckdb::idx_t database_id;
-      duckdb::idx_t id;
-      {
-        // The runner resolves the index by id through the catalog: don't pin
-        // the storage across a potentially long tick.
-        auto idx = target.lock();
-        if (!idx) {
-          return LoopTick::kNeutral;
-        }
-        database_id = idx->GetDatabaseId();
-        id = idx->GetId();
-      }
-      const auto did_work = g_reindex_runner(database_id, id);
-      if (!did_work.ok()) {
-        SDB_WARN(SEARCH, "periodic reindex of Search index '", id,
-                 "' failed: ", did_work.status().message());
-        return LoopTick::kIdle;
-      }
-      return *did_work ? LoopTick::kProgress : LoopTick::kIdle;
-    });
-}
 
 }  // namespace sdb::search

@@ -1,0 +1,17 @@
+statement ok
+CREATE TABLE dcv_t (a INT, g INT GENERATED ALWAYS AS (a + 1) VIRTUAL, b INT);
+
+
+statement ok
+CREATE INDEX dcv_b_idx ON dcv_t (b);
+
+
+statement ok
+ALTER TABLE dcv_t DROP COLUMN g;
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'dcv_t';
+----
+indexname
+dcv_b_idx

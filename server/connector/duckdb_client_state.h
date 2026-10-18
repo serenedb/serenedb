@@ -105,6 +105,12 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                                 duckdb::idx_t wal_generation,
                                 duckdb::idx_t wal_end_offset) final;
 
+  void TransactionDurable(duckdb::AttachedDatabase& db,
+                          duckdb::ClientContext& context) final;
+
+  void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
+                              duckdb::ClientContext& context) final;
+
   void TransactionPreRollback(
     duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
     duckdb::optional_ptr<duckdb::ErrorData> error) final;
@@ -145,7 +151,8 @@ struct SystemConnection {
   std::shared_ptr<ConnectionContext> ctx;
 };
 
-SystemConnection MakeSystemConnection(std::string_view database,
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
                                       duckdb::idx_t database_id);
 
 }  // namespace sdb::connector

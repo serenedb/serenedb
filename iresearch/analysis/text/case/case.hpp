@@ -244,7 +244,7 @@ IRS_FORCE_INLINE inline ScriptBlock ConvertScriptBlock(
 }
 
 template<bool ToLower>
-IRS_ALIGN_HOT size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
+size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
   static_assert(utf8_utils::kSimpleCaseMaxUtf8Growth <= 1);
   auto* out = dst;
   const auto* it = reinterpret_cast<const byte_type*>(in.data());

@@ -156,8 +156,7 @@ uint32_t ParsePositiveUintOption(std::string_view kind,
 duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
                                              std::string_view column_name,
                                              std::string_view name) {
-  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-    std::string{name}.c_str());
+  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
   auto& storage =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
       .GetAttached()
@@ -761,6 +760,7 @@ void ValidateIncludedKey(std::string_view label,
     case ENUM:
     case LIST:
     case ARRAY:
+    case TUPLE:
     case STRUCT:
     case MAP:
     case VARIANT:
@@ -915,7 +915,7 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   retriever.SetSearchPath({{schema.ParentCatalog().GetName(), schema.name}});
   auto dict = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(std::string{name})},
+                            duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
     return nullptr;
@@ -1181,8 +1181,10 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::LogicalType& generated_pk_type) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto config = std::make_shared<InvertedIndexConfig>();
-  config->row_group_size =
-    catalog::ResolveSettings(entry.options).row_group_size;
+  if (const auto* row_group_size =
+        catalog::FindOption(entry.options, kRowGroupSizeSetting)) {
+    config->row_group_size = row_group_size->GetValue<uint32_t>();
+  }
   config->top_k_scorer = catalog::TopKScorer(context, entry.options);
   config->pk = ResolvePkPolicy(
     entry.options, table_backed,

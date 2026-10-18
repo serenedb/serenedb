@@ -1,0 +1,45 @@
+control substitution on
+
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+
+statement ok
+CREATE SERVER srv2_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__}_gone;
+
+
+query
+SELECT count(*) AS listed FROM duckdb_schemas()
+WHERE database_name = 'srv2_${__DATABASE__}' AND schema_name = '${__DATABASE__}_gone';
+----
+listed
+1
+
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__}_gone;
+
+
+query
+SELECT count(*) AS listed FROM duckdb_schemas()
+WHERE database_name = 'srv2_${__DATABASE__}' AND schema_name = '${__DATABASE__}_gone';
+----
+listed
+0
+
+
+statement ok
+DROP SERVER srv2_${__DATABASE__};
+
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

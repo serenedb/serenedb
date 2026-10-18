@@ -20,9 +20,9 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -177,6 +177,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
   std::vector<std::pair<duckdb::idx_t, const duckdb::TableCatalogEntry*>>
     tables;
   irs::containers::FlatHashSet<duckdb::idx_t> generated_pk_sequences;
+  std::vector<std::pair<size_t, duckdb::ViewCatalogEntry*>> views;
 
   VisitSchemas(context, database, [&](duckdb::SchemaCatalogEntry& schema_ref) {
     schema_ref.Scan(
@@ -199,7 +200,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
             static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
           // Postgres counts CHECK constraints here and nothing else: NOT NULL
           // is a pg_constraint row of its own but not one of these.
-          row.relchecks = static_cast<int16_t>(std::ranges::count_if(
+          row.relchecks = static_cast<int16_t>(absl::c_count_if(
             table->GetConstraints(), [](const auto& constraint) {
               return constraint->type == duckdb::ConstraintType::CHECK;
             }));
@@ -233,8 +234,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           values.emplace_back(std::move(row));
           return;
         }
-        const auto* view_entry =
-          dynamic_cast<const duckdb::ViewCatalogEntry*>(&entry);
+        auto* view_entry = dynamic_cast<duckdb::ViewCatalogEntry*>(&entry);
         if (!view_entry) {
           return;
         }
@@ -245,9 +245,15 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
                       view_entry->permissions.owner);
         row.relkind = PgClass::Relkind::View;
         row.relacl = {view_entry->permissions.acl};
+        views.emplace_back(values.size(), view_entry);
         values.emplace_back(std::move(row));
       });
   });
+
+  for (const auto& [row, view] : views) {
+    values[row].relnatts =
+      static_cast<int16_t>(GetViewColumns(context, *view).names.size());
+  }
 
   for (const auto& [entry, host_id] : indexes) {
     const auto owner = relation_owners.find(host_id);
@@ -299,7 +305,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
 
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, database, [&](const duckdb::TypeCatalogEntry& type) {
-      if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
+      if (!duckdb::StructType::IsStruct(type.user_type)) {
         return;
       }
       auto row =
@@ -356,9 +362,12 @@ MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
                         ? static_cast<int16_t>(
                             duckdb::StructType::GetChildTypes(row_type).size())
                         : 0;
-      // pg_hba_file_rules is a view in PostgreSQL (relkind 'v'), not a base
-      // table, so relkind='r' queries must not list it.
-      const auto relkind = table.GetName() == "pg_hba_file_rules"
+      // These are views in PostgreSQL (relkind 'v'), not base tables, so
+      // relkind='r' queries must not list them.
+      const auto& name = table.GetName();
+      const auto relkind = name == "pg_hba_file_rules" ||
+                               name == "pg_stat_subscription" ||
+                               name == "pg_stat_subscription_stats"
                              ? PgClass::Relkind::View
                              : PgClass::Relkind::OrdinaryTable;
       PgClass row{

@@ -1,0 +1,135 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE tuple_inc AS
+SELECT id::INTEGER AS id, payload,
+       struct_pack(t := payload, n := id::INTEGER) AS s
+FROM (VALUES (1, ROW('alpha', 10)), (2, NULL),
+             (3, ROW(NULL, 30)), (4, ROW('delta', NULL))) AS v(id, payload);
+
+statement ok
+ALTER TABLE tuple_inc ADD PRIMARY KEY (id);
+
+statement ok
+CREATE INDEX tuple_inc_idx ON tuple_inc USING inverted(id)
+  INCLUDE (payload, s);
+
+statement ok
+VACUUM (REFRESH_TABLE) tuple_inc;
+
+query
+SELECT id, payload FROM tuple_inc_idx ORDER BY id;
+----
+id	payload
+1	(alpha,10)
+2	NULL
+3	(,30)
+4	(delta,)
+
+query
+SELECT id, payload[1] AS name, payload[2] AS score
+FROM tuple_inc_idx ORDER BY id;
+----
+id	name	score
+1	alpha	10
+2	NULL	NULL
+3	NULL	30
+4	delta	NULL
+
+query
+SELECT id, struct_extract(payload, 1) AS name,
+       struct_extract(payload, 2) AS score
+FROM tuple_inc_idx ORDER BY id;
+----
+id	name	score
+1	alpha	10
+2	NULL	NULL
+3	NULL	30
+4	delta	NULL
+
+query
+SELECT id, s.t AS payload, s.t[1] AS name
+FROM tuple_inc_idx ORDER BY id;
+----
+id	payload	name
+1	(alpha,10)	alpha
+2	NULL	NULL
+3	(,30)	NULL
+4	(delta,)	delta
+
+query
+SELECT id FROM tuple_inc_idx WHERE payload IS NULL ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM tuple_inc_idx WHERE payload IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tuple_inc_idx
+WHERE payload = ROW('alpha', 10) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tuple_inc_idx
+WHERE s.t = ROW('alpha', 10) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id, payload FROM tuple_inc_idx
+WHERE id IN (1, 3, 4) AND payload IS NOT NULL ORDER BY id;
+----
+id	payload
+1	(alpha,10)
+3	(,30)
+4	(delta,)
+
+statement ok
+CREATE TABLE tuple_inc_search WITH (storage = 'search', compaction_interval = 0) AS
+SELECT id::INTEGER AS id, payload
+FROM (VALUES (1, ROW('alpha', 10)), (2, NULL),
+             (3, ROW(NULL, 30)), (4, ROW('delta', NULL))) AS v(id, payload);
+
+statement ok
+VACUUM (REFRESH_TABLE) tuple_inc_search;
+
+query
+SELECT id, payload[1] AS name, payload[2] AS score
+FROM tuple_inc_search ORDER BY id;
+----
+id	name	score
+1	alpha	10
+2	NULL	NULL
+3	NULL	30
+4	delta	NULL
+
+query
+SELECT id FROM tuple_inc_search WHERE payload IS NULL ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM tuple_inc_search WHERE payload IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tuple_inc_search
+WHERE payload = ROW('alpha', 10) ORDER BY id;
+----
+id
+1

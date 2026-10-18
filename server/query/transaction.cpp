@@ -21,10 +21,9 @@
 #include "query/transaction.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
-#include <chrono>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -32,18 +31,14 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <random>
-#include <thread>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
-#include "search/tick_domain.h"
 
 namespace sdb::query {
 
@@ -162,7 +157,7 @@ void Transaction::PreCommit() {
   // here leaves the SET LOCAL overlays for RollbackVariables to undo on the
   // rollback this refusal turns into.
   if (_search_txn) {
-    _search_txn->FlushPending(GetClientContext());
+    _search_txn->PrepareCommit(GetClientContext());
   }
   // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
   // transaction is still active so custom-impl settings (search_path,
@@ -190,104 +185,57 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   return result;
 }
 
-void Transaction::CommitSearch(std::optional<search::WalCursor> cursor,
-                               std::optional<duckdb::idx_t> database) noexcept {
-  const auto in_scope = [&](const auto& item) {
-    return !database || item.second.storage->GetDatabaseId() == *database;
-  };
-  if (absl::c_none_of(_search_transactions, in_scope)) {
-    return;
-  }
-  const auto erase = [&] { absl::erase_if(_search_transactions, in_scope); };
-  absl::Cleanup rollback = erase;
-
-  // Pin every staged segment onto the flush context before the tick exists.
-  // Pinning must precede Advance -- otherwise a refresh whose tick snapshot
-  // lands in between could advance its committed tick past an unpinned segment
-  // (lost insert / FlushPending assert). The widest query count sizes the
-  // reserved band so every writer's first_tick stays strictly above the tick
-  // it last committed at.
-  uint64_t max_queries = 0;
-  for (auto& item : _search_transactions) {
-    if (!in_scope(item)) {
+void Transaction::StageSearch(const irs::SourcePosition& position,
+                              duckdb::idx_t database) noexcept {
+  for (auto& [index_id, entry] : _search_transactions) {
+    if (entry.storage->GetDatabaseId() != database) {
       continue;
     }
-    for (auto& slot : item.second.slots) {
+    uint64_t queries = 0;
+    for (auto& slot : entry.slots) {
       slot.writer.reset();
       if (slot.transaction) {
         slot.transaction->RegisterFlush();
-        max_queries =
-          std::max<uint64_t>(max_queries, slot.transaction->GetQueries());
+        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
       }
     }
+    entry.tick = entry.storage->NextTick(queries);
+    entry.position = position;
   }
-  SDB_IF_FAILURE("long_waited_advance") {
-    static std::atomic<uint32_t> gSeedCounter{0};
-    static thread_local std::mt19937 gRng{
-      gSeedCounter.fetch_add(1, std::memory_order_relaxed)};
-    std::this_thread::sleep_for(std::chrono::microseconds(
-      std::uniform_int_distribution<int>(0, 20000)(gRng)));
+  if (_search_txn) {
+    _search_txn->Stage(position, database);
   }
+}
 
-  const auto last_tick = search::TickDomain::Instance().Next(max_queries + 1);
-
-  std::move(rollback).Cancel();
-
-  // Each index records this commit's WAL cursor into its own table before its
-  // segment becomes flushable, then commits at the tick. The cursor is this
-  // commit's exact WAL position, captured under the WAL lock by the engine:
-  // commits overlap, so reading the WAL size here would include later
-  // transactions' bytes and over-claim (skipping their re-stream after a
-  // crash).
+void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
+  const auto in_scope = [&](const auto& item) {
+    return item.second.storage->GetDatabaseId() == database;
+  };
   for (auto& item : _search_transactions) {
     if (!in_scope(item)) {
       continue;
     }
     auto& [index_id, entry] = item;
-    if (cursor) {
-      entry.storage->RecordFlushCursor(last_tick, *cursor);
-    }
+    SDB_ASSERT(entry.tick != 0);
     for (auto& slot : entry.slots) {
-      if (!slot.transaction || slot.transaction->Commit(last_tick)) {
+      if (!slot.transaction ||
+          slot.transaction->Commit(entry.tick, entry.position)) {
         continue;
       }
       SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
-                "' at tick ", last_tick,
-                "; the index will be rebuilt from the store on next boot");
+                "'; the index replays it from the WAL on next boot");
       entry.storage->MarkOutOfSync();
     }
   }
-
-  erase();
+  absl::erase_if(_search_transactions, in_scope);
+  if (_search_txn) {
+    _search_txn->Publish(database);
+  }
 }
 
 void Transaction::Commit() {
   for (auto& action : _on_commit) {
     action();
-  }
-  // Search-table segments commit on the database WAL tick; register their flush
-  // up-front -- before any commit point -- so a concurrent background
-  // RefreshCommit waits for them. They commit in the WAL block below.
-  if (_search_txn) {
-    _search_txn->RegisterFlush();
-  }
-
-  // Inverted-index trxs: normally already settled inside the engine commit
-  // (TransactionPreCheckpoint); this is the fallback for transactions that did
-  // not commit the store database, so there is no store-WAL cursor to record.
-  CommitSearch(std::nullopt);
-
-  // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
-  // crash boundaries + the single multi-shard WAL fsync that is the atomic
-  // commit point live in SearchTableTransaction::Commit.
-  if (_search_txn && !_search_txn->Empty()) {
-    try {
-      _search_txn->Commit();
-    } catch (const std::exception& e) {
-      _search_txn->Abort();
-      Destroy();
-      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
-    }
   }
 
   Destroy();
@@ -314,14 +262,14 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
-const duckdb::Vector& Transaction::FeedColumn(const void* table,
-                                              duckdb::row_t first_row,
-                                              duckdb::idx_t count,
-                                              duckdb::idx_t column,
-                                              const duckdb::Vector& source) {
-  if (_feed_columns.table != table || _feed_columns.first_row != first_row ||
-      _feed_columns.count != count) {
-    _feed_columns.table = table;
+const duckdb::Vector& Transaction::FeedColumn(
+  const void* database, duckdb::idx_t table_oid, duckdb::row_t first_row,
+  duckdb::idx_t count, duckdb::idx_t column, const duckdb::Vector& source) {
+  if (_feed_columns.database != database ||
+      _feed_columns.table_oid != table_oid ||
+      _feed_columns.first_row != first_row || _feed_columns.count != count) {
+    _feed_columns.database = database;
+    _feed_columns.table_oid = table_oid;
     _feed_columns.first_row = first_row;
     _feed_columns.count = count;
     _feed_columns.columns.clear();
@@ -339,12 +287,24 @@ const duckdb::Vector& Transaction::FeedColumn(const void* table,
   return copy;
 }
 
+void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
+  for (const auto& [owner, storage] : _created_indexes) {
+    if (owner == database) {
+      if (const auto status = storage->Refresh(); !status.ok()) {
+        SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
+                 "' after its creation committed failed: ", status.message());
+      }
+    }
+  }
+}
+
 void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};
   _search_txn.reset();
   _on_commit.clear();
+  _created_indexes.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;

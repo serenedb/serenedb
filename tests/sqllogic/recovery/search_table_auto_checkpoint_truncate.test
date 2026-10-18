@@ -1,0 +1,106 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE act (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+SET GLOBAL checkpoint_threshold = '64KB';
+
+statement ok
+INSERT INTO act SELECT 1000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 2000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 3000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+VACUUM (REFRESH_TABLE) act;
+
+statement ok
+DELETE FROM act WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO act SELECT 4000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 5000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+TRUNCATE act;
+
+statement ok
+INSERT INTO act SELECT 6000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+VACUUM (REFRESH_TABLE) act;
+
+statement ok
+DELETE FROM act WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO act SELECT 7000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 8000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 9000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+VACUUM (REFRESH_TABLE) act;
+
+statement ok
+DELETE FROM act WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO act SELECT 10000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+TRUNCATE act;
+
+statement ok
+INSERT INTO act SELECT 11000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+INSERT INTO act SELECT 12000 + j, repeat('p', 1000) FROM range(50) r(j);
+
+statement ok
+VACUUM (REFRESH_TABLE) act;
+
+statement ok
+DELETE FROM act WHERE id % 2 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) act;
+
+query
+SELECT count(*) AS n, sum(id) AS s, min(id) AS lo, max(id) AS hi FROM act;
+----
+n	s	lo	hi
+50	576250	11001	12049
+
+statement ok
+INSERT INTO act VALUES (20000, 'tail');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s, min(id) AS lo, max(id) AS hi FROM act;
+----
+n	s	lo	hi
+51	596250	11001	20000
+
+connection after_crash
+statement ok
+SET GLOBAL checkpoint_threshold = '16MB';

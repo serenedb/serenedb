@@ -39,7 +39,7 @@ INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
 query
-SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
 ----
 indexed
 t
@@ -63,7 +63,7 @@ count
 
 connection after_index_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
 ----
 leftover
 0

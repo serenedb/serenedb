@@ -88,7 +88,7 @@ class ProbedAndNot {
         const auto bit = static_cast<uint32_t>(std::countr_zero(word));
         const auto doc = base + bit;
         if (detail::IsExcluded(_probe, doc)) {
-          live &= ~(uint64_t{1} << bit);
+          UnsetBit(live, bit);
         }
         word = PopBit(word);
       }
@@ -107,7 +107,7 @@ class ProbedAndNot {
         const auto bit = static_cast<uint32_t>(std::countr_zero(word));
         const auto doc = base + bit;
         if (detail::IsExcluded(_probe, doc)) {
-          live &= ~(uint64_t{1} << bit);
+          UnsetBit(live, bit);
           scores[w * detail::kWindowBits + bit] = reset;
         }
         word = PopBit(word);

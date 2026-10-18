@@ -174,3 +174,28 @@ TEST(NetworkPgFrameReader, StartupFrame) {
   EXPECT_EQ(f.type, '\0');
   EXPECT_EQ(StartupCode(f.payload), static_cast<uint32_t>(PG_PROTOCOL_LATEST));
 }
+
+TEST(NetworkPgFrameReader, RetainedChunksOutliveConsume) {
+  sdb::message::Buffer buf{32, 32};
+  FrameReader reader{buf};
+  sdb::message::Chain retained;
+  buf.RetainConsumed(&retained);
+  const std::string first(27, 'a');
+  const std::string second(27, 'b');
+  Feed(buf, TypedFrame(PQ_MSG_QUERY, first) + TypedFrame(PQ_MSG_QUERY, second));
+
+  const auto f1 = reader.TryAssemble(FrameKind::Typed, kMax);
+  ASSERT_EQ(f1.status, FrameStatus::Ok);
+  EXPECT_NE(f1.recv_consume, 0u);
+  reader.Consume(f1);
+  const auto f2 = reader.TryAssemble(FrameKind::Typed, kMax);
+  ASSERT_EQ(f2.status, FrameStatus::Ok);
+  EXPECT_NE(f2.recv_consume, 0u);
+  reader.Consume(f2);
+  EXPECT_FALSE(buf.Readable());
+
+  EXPECT_NE(retained.head, nullptr);
+  EXPECT_EQ(f1.payload, first);
+  EXPECT_EQ(f2.payload, second);
+  buf.RetainConsumed(nullptr);
+}

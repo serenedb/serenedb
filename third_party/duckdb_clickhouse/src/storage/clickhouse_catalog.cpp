@@ -53,8 +53,7 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 	}
 	sql += ClickHouseQuoteIdentifier(info.GetQualifiedName().Schema().GetIdentifierName());
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection->GetClient().Execute(sql);
+		connection->Execute(transaction.context, sql);
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("creating database", sql, e);
@@ -80,8 +79,7 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto sql =
 	    "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection->GetClient().Execute(sql);
+		connection->Execute(context, sql);
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("dropping database", sql, e);
@@ -108,13 +106,9 @@ void ClickHouseCatalog::ClearCache() {
 		describe_cache.clear();
 	}
 	lock_guard<mutex> l(schema_lock);
-	// Retire every cached schema (and its cached table metadata) rather than
-	// freeing it, so bound statements keep working; the next lookup rebuilds a
-	// fresh entry from the server.
 	for (auto &entry : schemas) {
-		retired_schemas.push_back(std::move(entry.second));
+		entry.second->ClearCache();
 	}
-	schemas.clear();
 }
 
 unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
@@ -128,9 +122,8 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 	auto &client = connection->GetClient();
 	vector<string> schema_names;
 	const string sql = "SELECT name FROM system.databases";
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
+		connection->BeginSelect(context, sql);
 		while (auto block = client.NextBlock()) {
 			if (block->GetColumnCount() == 0) {
 				continue;
@@ -174,9 +167,8 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 	auto &client = connection->GetClient();
 	bool found = false;
 	auto sql = "SELECT name FROM system.databases WHERE name = " + ClickHouseStringLiteral(schema_name);
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
+		connection->BeginSelect(transaction.context, sql);
 		while (auto block = client.NextBlock()) {
 			if (block->GetRowCount() > 0) {
 				found = true;
@@ -216,9 +208,8 @@ DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	    "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " + ClickHouseStringLiteral(default_schema) +
 	    " AND active";
 	DatabaseSize size;
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
+		connection->BeginSelect(context, sql);
 		while (auto block = client.NextBlock()) {
 			if (block->GetColumnCount() == 0 || block->GetRowCount() == 0) {
 				continue;

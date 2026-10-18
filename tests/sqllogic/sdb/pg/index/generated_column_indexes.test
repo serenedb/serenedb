@@ -1,0 +1,70 @@
+statement ok
+CREATE TABLE gci (id INT PRIMARY KEY, a INT, v INT GENERATED ALWAYS AS (a * 10) VIRTUAL, s INT GENERATED ALWAYS AS (a * 100) STORED, b TEXT);
+
+
+statement ok
+INSERT INTO gci (id, a, b) VALUES (1, 1, 'red'), (2, 2, 'blue'), (3, 3, 'red');
+
+
+statement ok
+CREATE INDEX gci_inv ON gci USING inverted (id, b, v, s, v included(), s included());
+
+
+statement ok
+CREATE UNIQUE INDEX gci_art_v ON gci (v);
+
+
+statement ok
+CREATE INDEX gci_art_s ON gci (s);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) gci;
+
+
+query
+SELECT id, v, s FROM gci_inv WHERE v = 20;
+----
+id	v	s
+2	20	200
+
+
+query
+SELECT id, v, s FROM gci_inv WHERE s = 300;
+----
+id	v	s
+3	30	300
+
+
+statement ok
+INSERT INTO gci (id, a, b) VALUES (4, 4, 'red');
+
+
+statement error
+INSERT INTO gci (id, a, b) VALUES (5, 4, 'dup');
+----
+db error: ERROR: Duplicate key "v: 40" violates unique constraint.
+
+
+statement ok
+VACUUM (REFRESH_TABLE) gci;
+
+
+query
+SELECT id, v, s, b FROM gci_inv WHERE b @@ 'red' ORDER BY id;
+----
+id	v	s	b
+1	10	100	red
+3	30	300	red
+4	40	400	red
+
+
+query
+SELECT id FROM gci WHERE s = 400;
+----
+id
+4
+
+
+statement ok
+DROP TABLE gci;

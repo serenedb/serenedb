@@ -1,0 +1,73 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP ROLE IF EXISTS papich_viewer;
+
+
+statement ok
+DROP ROLE IF EXISTS papich_readers;
+
+
+statement ok
+CREATE TABLE papich_scores (a INTEGER);
+
+
+statement ok
+INSERT INTO papich_scores VALUES (1), (2);
+
+
+statement ok
+CREATE ROLE papich_readers;
+
+
+statement ok
+GRANT SELECT ON papich_scores TO papich_readers;
+
+
+statement ok
+CREATE ROLE papich_viewer LOGIN PASSWORD 'pv_pw';
+
+
+statement ok
+SET sdb_faults = 'pause_after_catalog_decision';
+
+
+connection granter
+statement async ok
+GRANT papich_readers TO papich_viewer;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'GRANT papich_readers%';
+----
+n
+1
+
+
+connection viewer user=papich_viewer password=pv_pw
+statement error
+SELECT count(*) FROM papich_scores;
+----
+db error: ERROR: permission denied for table papich_scores
+
+
+connection default
+statement ok
+SET sdb_faults = '-pause_after_catalog_decision';
+
+
+connection granter
+wait
+
+
+connection viewer user=papich_viewer password=pv_pw
+query
+SELECT count(*) AS n FROM papich_scores;
+----
+n
+2

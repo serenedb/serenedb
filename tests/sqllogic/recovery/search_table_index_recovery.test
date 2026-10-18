@@ -30,7 +30,7 @@ VACUUM (REFRESH_TABLE) sidx;
 # never refresh-published, so they exist ONLY in the WAL; recovery must rebuild
 # them into iresearch -- terms included.
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO sidx VALUES (3, 'red'), (4, 'green');

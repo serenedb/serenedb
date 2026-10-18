@@ -188,9 +188,8 @@ bool LMDirichlet::equals(const Scorer& other) const noexcept {
   return p._mu == _mu;
 }
 
-ScoreBoundWriter::ptr LMDirichlet::PrepareScoreBoundWriter(
-  size_t max_levels) const {
-  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>(max_levels);
+ScoreBoundWriter::ptr LMDirichlet::PrepareScoreBoundWriter() const {
+  return std::make_unique<FreqNormWriter<kScoreBoundMinNorm>>();
 }
 
 ScoreBoundSource::ptr LMDirichlet::PrepareScoreBoundSource() const {

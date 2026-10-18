@@ -1,0 +1,52 @@
+statement ok
+CREATE TABLE tuple_base (id BIGINT PRIMARY KEY, x BIGINT, y BIGINT);
+
+
+statement ok
+INSERT INTO tuple_base VALUES (1, 10, 20), (2, 30, NULL);
+
+
+statement ok
+CREATE INDEX tuple_expr_idx ON tuple_base USING inverted(id, (ROW(x, y)) included());
+
+
+query
+SELECT id, ROW(x, y) AS payload FROM tuple_expr_idx ORDER BY id;
+----
+id	payload
+1	(10,20)
+2	(30,)
+
+
+statement ok
+INSERT INTO tuple_base VALUES (3, 40, 50);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tuple_base;
+
+
+query
+SELECT id, ROW(x, y) AS payload FROM tuple_expr_idx ORDER BY id;
+----
+id	payload
+1	(10,20)
+2	(30,)
+3	(40,50)
+
+
+statement ok
+CREATE INDEX tuple_pack_idx ON tuple_base USING inverted(id, (struct_pack(x, y)) included());
+
+
+query
+SELECT id, struct_pack(x, y) AS payload FROM tuple_pack_idx ORDER BY id;
+----
+id	payload
+1	(10,20)
+2	(30,)
+3	(40,50)
+
+
+statement ok
+DROP TABLE tuple_base;

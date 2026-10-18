@@ -30,11 +30,13 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -44,6 +46,7 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -67,6 +70,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/job.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
@@ -82,6 +86,8 @@
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/tsdictionary.h"
+#include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -148,7 +154,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      GetOid(), schema.oid, relation.oid, entry->oid,
+      _directory, InMemory(), GetOid(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -182,6 +188,27 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
     return nullptr;
   }
   return &entry->Cast<duckdb::SchemaCatalogEntry>();
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateTokenizerInfo& info) {
+  if (info.config.empty()) {
+    pg::CompileTokenizer(transaction.GetContext(), info);
+  }
+  return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
+}
+
+duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateJobInfo& info) {
+  VerifySchedule(info.schedule);
+  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
+                                                std::make_shared<JobState>());
+  if (transaction.context) {
+    job->ScheduleAtCommit(*transaction.context);
+  }
+  return job;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
@@ -222,8 +249,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   if (op.is_truncate) {
     return planner.Make<connector::SereneDBSearchTruncate>(
-      entry->Storage(), entry->name, op.estimated_cardinality,
-      context.transaction.IsAutoCommit());
+      *entry, op.estimated_cardinality, context.transaction.IsAutoCommit());
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
@@ -283,6 +309,13 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized parameter \"", unknown->first, "\""));
   }
+  const bool search_table =
+    dynamic_cast<const SearchTableEntry*>(&table) != nullptr;
+  if (search_table) {
+    for (const auto& [name, value] : info.options) {
+      RequireSearchTableIndexOption(name);
+    }
+  }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
     duckdb::vector<duckdb::ColumnIndex> column_ids;
@@ -303,9 +336,22 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     }
     duckdb::IndexBinder where_binder(*where_bind, binder.context);
     auto where_copy = info.where_clause->Copy();
-    const auto type = where_binder.Bind(where_copy)->GetReturnType();
-    if (type != duckdb::LogicalType::BOOLEAN &&
-        type.id() != duckdb::LogicalTypeId::SQLNULL) {
+    auto where = where_binder.Bind(where_copy);
+    if (where->IsFoldable() && where->IsConsistent()) {
+      const auto value = duckdb::ExpressionExecutor::EvaluateScalar(
+        binder.context,
+        *duckdb::BoundCastExpression::AddCastToType(
+          binder.context, std::move(where), duckdb::LogicalType::BOOLEAN));
+      if (value.IsNull()) {
+        info.where_clause = duckdb::ConstantExpression::Null();
+      } else if (value.GetValue<bool>()) {
+        info.where_clause = nullptr;
+      } else {
+        info.where_clause = duckdb::ConstantExpression::Boolean(false);
+      }
+    } else if (const auto& type = where->GetReturnType();
+               type != duckdb::LogicalType::BOOLEAN &&
+               type.id() != duckdb::LogicalTypeId::SQLNULL) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
         ERR_MSG("argument of WHERE must be type boolean, not type ",
@@ -314,7 +360,8 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
   }
   if (inverted) {
     BindInvertedIndexOptions(binder.context, info.options,
-                             table.type == duckdb::CatalogType::VIEW_ENTRY);
+                             table.type == duckdb::CatalogType::VIEW_ENTRY,
+                             search_table);
   } else {
     for (auto i = info.column_opclasses.size(); i-- > 0;) {
       if (info.column_opclasses[i] != kIncludedKind) {
@@ -412,11 +459,6 @@ duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   return ClusterOf(GetDatabase()).CatalogLog();
 }
 
-void SereneDBCatalog::RequestCatalogLogSync(
-  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
-  ClusterOf(GetDatabase()).RequestCatalogLogSync(std::move(log), offset);
-}
-
 bool SereneDBCatalog::AppendLocalIndexes(
   duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
   duckdb::RowGroupCollection& source,
@@ -453,6 +495,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  ForEachJob(*this, [](JobCatalogEntry& job) { job.OnDrop(); });
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(
@@ -460,19 +503,6 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   for (const auto& server : servers) {
     duckdb::DatabaseManager::Get(context).DetachDatabase(
       context, server, duckdb::OnEntryNotFound::RETURN_NULL);
-  }
-  if (context.transaction.HasActiveTransaction()) {
-    auto& cluster = ClusterOf(context);
-    const auto transaction = cluster.GetCatalogTransaction(context);
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                   .GetEntry(transaction, GetName());
-    if (entry && entry->oid == GetAttached().oid) {
-      duckdb::DropInfo info;
-      info.type = duckdb::CatalogType::DATABASE_ENTRY;
-      info.SetName(GetName());
-      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-      cluster.DropDatabase(transaction, info);
-    }
   }
   duckdb::DuckCatalog::OnDetach(context);
 }
@@ -574,18 +604,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   return duckdb::DuckCatalog::CreateSchema(transaction, info);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateTokenizer(
-  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-  duckdb::CreateTokenizerInfo& info) {
-  DeclareModified(transaction, *this);
-  return schema.CreateTokenizer(transaction, info);
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateForeignServerInfo& info) {
   DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  auto entry = duckdb::DuckCatalog::CreateForeignServer(transaction, info);
+  if (entry) {
+    entry->Cast<ForeignServerCatalogEntry>().Attach(transaction.GetContext());
+  }
+  return entry;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
+  duckdb::CatalogTransaction transaction,
+  duckdb::CreateSubscriptionInfo& info) {
+  DeclareModified(transaction, *this);
+  return duckdb::DuckCatalog::CreateSubscription(transaction, info);
 }
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
@@ -605,7 +639,8 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
        info.type == duckdb::AlterType::ALTER_INDEX)) {
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
-  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
+      type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;
   }
@@ -623,6 +658,13 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropForeignServer(transaction, info);
+}
+
+void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
+                                       duckdb::DropInfo& info) {
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
 }  // namespace sdb::catalog

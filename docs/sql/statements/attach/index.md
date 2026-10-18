@@ -36,7 +36,7 @@ Use `IF NOT EXISTS` to attach only when the alias is not already in use, or `OR 
 
 ## `DETACH`
 
-The `DETACH` statement closes a previously attached database and releases any locks held on it.
+The `DETACH` statement closes a previously attached database and releases any locks held on it. A database created with [`CREATE DATABASE`](../create_database/index.md) is not detached this way: `DETACH` refuses it, and `DROP DATABASE` removes it.
 
 ### `DETACH` Syntax
 

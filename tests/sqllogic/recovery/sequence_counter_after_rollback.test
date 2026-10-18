@@ -7,8 +7,8 @@ control substitution on
 # CatalogSet::DropEntry, which is MVCC, so a ROLLBACK brings it back. The
 # counter half -- CatalogStore::DropSequence, which wipes the counter and
 # appends a SequenceDropped record to the cluster log -- is deferred to the
-# commit through DeferDropAction, the same as the drop's artifact half, so a
-# rolled-back drop never runs it and the counter is left where it was.
+# commit through DeferDropAction, so a rolled-back drop never runs it and the
+# counter is left where it was.
 #
 # Only a restart shows it, because in memory the live counter is never touched;
 # this lives here for that reason.

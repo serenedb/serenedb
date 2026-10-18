@@ -51,9 +51,9 @@ namespace {
 // scheduler worker between executor slices). A failed call has already been
 // written out as an ES error envelope when this resolves null.
 yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
-  RequestContext& ctx, std::string sql, http::HttpResponseWriter& writer,
+  RequestContext& ctx, std::string_view sql, http::HttpResponseWriter& writer,
   std::string_view index = {}, bool writes = false) {
-  auto result = co_await ctx.RunQuery(std::move(sql), writes);
+  auto result = co_await ctx.RunQuery(sql, writes);
   if (result->HasError()) {
     WriteSqlError(writer, result->GetErrorObject(), index);
     co_return nullptr;
@@ -93,13 +93,13 @@ int64_t TookMs(std::chrono::steady_clock::time_point start) {
 // The official clients post to bare /_bulk and route via per-line _index;
 // peek the FIRST action line for it (es_bulk enforces that every line names
 // the same index -- multi-index bulks are not supported).
-std::string FirstActionIndex(std::string_view body) {
+std::string FirstActionIndex(std::string_view body, size_t capacity) {
   const auto line = body.substr(0, body.find('\n'));
   try {
-    simdjson::padded_string padded{line};
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document doc;
-    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+    if (parser.iterate(line.data(), line.size(), capacity).get(doc) !=
+        simdjson::SUCCESS) {
       return {};
     }
     for (auto action : doc.get_object()) {
@@ -122,15 +122,52 @@ std::string FirstActionIndex(std::string_view body) {
   return {};
 }
 
+constexpr size_t kBulkResponseFlushBytes = 64 << 10;
+constexpr size_t kBulkItemReserve = 4 << 10;
+constexpr std::string_view kBulkItemHead = R"({")";
+constexpr std::string_view kBulkItemIndex = R"(":{"_index":)";
+constexpr std::string_view kBulkItemId = R"(,"_id":)";
+constexpr std::string_view kBulkItemTail =
+  R"(,"_version":1,"result":"created","_shards":{"total":1,)"
+  R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
+  R"("status":201}})";
+
+std::string_view BulkOp(const connector::EsBulkItem& item) {
+  return item.create ? "create" : "index";
+}
+
+size_t BulkItemSize(const connector::EsBulkItem& item, std::string_view index) {
+  const size_t id =
+    item.id.empty() ? item.generated.size() + 2 : item.id.size();
+  return kBulkItemHead.size() + BulkOp(item).size() + kBulkItemIndex.size() +
+         index.size() + kBulkItemId.size() + id + kBulkItemTail.size();
+}
+
+void AppendBulkItem(std::string& out, const connector::EsBulkItem& item,
+                    std::string_view index) {
+  absl::StrAppend(&out, kBulkItemHead, BulkOp(item), kBulkItemIndex, index,
+                  kBulkItemId);
+  if (item.id.empty()) {
+    absl::StrAppend(
+      &out, "\"",
+      std::string_view{item.generated.data(), item.generated.size()}, "\"");
+  } else {
+    out.append(item.id);
+  }
+  out.append(kBulkItemTail);
+}
+
 // POST|PUT [/{index}]/_bulk
 class BulkHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
-    auto body = FlattenBody(request.body);
+    const auto padded = FlattenBody(request.body, simdjson::SIMDJSON_PADDING);
+    const std::string_view body{padded.data(),
+                                padded.size() - simdjson::SIMDJSON_PADDING};
     std::string index{request.Param("index")};
     if (index.empty()) {
-      index = FirstActionIndex(body);
+      index = FirstActionIndex(body, padded.size());
     }
     if (index.empty()) {
       WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
@@ -140,23 +177,24 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk);
-    if (auto error = EnsurePrepared(
-          ctx, entry,
-          absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                       " SELECT * FROM es_bulk_source(", SqlLiteral(index),
-                       ")"))) {
-      WriteSqlError(writer, *error, index);
+    const auto sql =
+      absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                   " SELECT * FROM es_bulk_source(", SqlLiteral(index),
+                   connector::EsBulkIsParallel(body.size()) ? ", true)" : ")");
+    auto prepared = PrepareCached(ctx, PreparedSlotId::EsBulk, sql);
+    if (prepared.error) {
+      WriteSqlError(writer, *prepared.error, index);
       co_return {};
     }
-    std::string items;
-    const connector::EsBulkInput input{.body = body, .items = &items};
+    std::vector<std::vector<connector::EsBulkItem>> items;
+    const connector::EsBulkInput input{
+      .body = body, .capacity = padded.size(), .items = &items};
     auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
     };
-    auto result = co_await ctx.RunPrepared(*entry.statement);
+    auto result = co_await ctx.RunPrepared(*prepared.statement);
     if (result->HasError()) {
       WriteSqlError(writer, result->GetErrorObject(), index);
       co_return {};
@@ -164,9 +202,44 @@ class BulkHandler final : public HttpHandler {
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
-    WriteJson(writer, HttpStatus::Ok,
-              absl::StrCat("{\"took\":", TookMs(start),
-                           ",\"errors\":false,\"items\":[", items, "]}"));
+    const std::string head = absl::StrCat("{\"took\":", TookMs(start),
+                                          ",\"errors\":false,\"items\":[");
+    static constexpr std::string_view kTail = "]}";
+    simdjson::builder::string_builder index_json;
+    index_json.escape_and_append_with_quotes(index);
+    const std::string_view index_token = index_json.view().value();
+    size_t length = head.size() + kTail.size();
+    size_t count = 0;
+    for (const auto& chunk : items) {
+      for (const auto& item : chunk) {
+        length += BulkItemSize(item, index_token);
+      }
+      count += chunk.size();
+    }
+    length += count == 0 ? 0 : count - 1;
+    writer.WriteHead(HttpStatus::Ok, kJsonContentType, length, kProductHeader);
+    std::string staging = head;
+    staging.reserve(kBulkResponseFlushBytes + kBulkItemReserve);
+    bool first = true;
+    for (const auto& chunk : items) {
+      for (const auto& item : chunk) {
+        if (!std::exchange(first, false)) {
+          staging.push_back(',');
+        }
+        AppendBulkItem(staging, item, index_token);
+        if (staging.size() >= kBulkResponseFlushBytes) {
+          writer.Write(staging);
+          staging.clear();
+          co_await writer.Drain();
+          if (writer.Broken()) {
+            co_return {};
+          }
+        }
+      }
+    }
+    staging.append(kTail);
+    writer.Write(staging);
+    writer.Finish();
     co_return {};
   }
 };

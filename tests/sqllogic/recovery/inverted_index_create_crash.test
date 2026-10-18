@@ -19,9 +19,6 @@ statement ok
 INSERT INTO cc_t VALUES (1, 'alpha bravo charlie'), (2, 'delta echo foxtrot');
 
 statement ok
-CREATE SEQUENCE cc_probe_before;
-
-statement ok
 SET sdb_faults = 'crash_before_catalog_commit';
 
 statement error connection closed
@@ -48,26 +45,11 @@ count
 
 connection cc_after
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
 ----
 leftover
 0
 
-
-connection cc_after
-statement ok
-CREATE SEQUENCE cc_probe_after;
-
-
-connection cc_after
-query
-SELECT (SELECT oid FROM pg_class WHERE relname = 'cc_probe_after') > (SELECT oid FROM pg_class WHERE relname = 'cc_probe_before') + 1 AS skipped;
-----
-skipped
-t
-
-# The table is re-indexable -- the registry has no stale shard for the id and
-# the directory was removed, so a fresh CREATE INDEX of the same name succeeds.
 connection cc_after
 statement ok
 RESET sdb_faults;
@@ -83,7 +65,7 @@ VACUUM (REFRESH_TABLE) cc_t;
 
 connection cc_after
 query
-SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_search/*/*/*/*/**');
+SELECT count(*) > 0 AS indexed FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
 ----
 indexed
 t

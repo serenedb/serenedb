@@ -309,8 +309,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     std::erase_if(expected, [&](const irs::ScoreDoc& hit) {
       const auto& segment = reader[hit.segment_idx];
       const auto* mask = segment.docs_mask();
-      return hit.doc >= segment.Meta().visible_end ||
-             (mask != nullptr && mask->Contains(hit.doc));
+      return mask != nullptr && mask->Contains(hit.doc);
     });
     ASSERT_EQ(total, expected.size());
     SortByDoc(expected);
@@ -387,9 +386,8 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       return docs;
     }
     const auto* mask = segment.docs_mask();
-    const auto visible_end = segment.Meta().visible_end;
     for (const auto doc : Drain(*lead)) {
-      if (doc < visible_end && (mask == nullptr || !mask->Contains(doc))) {
+      if (mask == nullptr || !mask->Contains(doc)) {
         docs.push_back(doc);
       }
     }

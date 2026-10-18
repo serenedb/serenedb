@@ -31,12 +31,14 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_parameters.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -59,6 +61,7 @@
 #include "network/http/auth.h"
 #include "network/http/common.h"
 #include "network/http/h1_codec.h"
+#include "network/http/handler.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
 #include "network/io_executor.h"
@@ -82,6 +85,7 @@ struct HttpServerContext {
   // unlimited). Over-cap connections get a 503 then close.
   std::atomic<uint32_t>* active = nullptr;
   uint32_t max_connections = 0;
+  uint64_t max_body_bytes = H1Limits{}.max_body_bytes;
   // Same cancel registry as the pg endpoint: http sessions register the same
   // tokens, so SQL pg_cancel/terminate_backend and server shutdown reach them.
   CancelRegistry* cancel = nullptr;
@@ -128,7 +132,8 @@ class HttpSession final
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
       _schema{ctx.schema},
-      _proxy{ctx.proxy} {}
+      _proxy{ctx.proxy},
+      _codec{H1Limits{.max_body_bytes = ctx.max_body_bytes}} {}
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::Ssl)
@@ -144,7 +149,8 @@ class HttpSession final
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
       _schema{ctx.schema},
-      _proxy{ctx.proxy} {}
+      _proxy{ctx.proxy},
+      _codec{H1Limits{.max_body_bytes = ctx.max_body_bytes}} {}
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
   // the writer + cpu futures on a raw `this`, and joins both before it returns.
@@ -171,16 +177,19 @@ class HttpSession final
     if (!_conn) {
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      auto database = catalog::FindDatabase(dbname);
-      if (!database) {
+      duckdb::idx_t database_id = 0;
+      duckdb::Permissions permissions;
+      if (!catalog::ReadDatabase(
+            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
+              database_id = database.oid;
+              permissions = database.permissions;
+            })) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
                         ERR_MSG("database \"", dbname, "\" does not exist"));
       }
-      const auto database_id = database->oid;
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login =
-        sdb::pg::RequireLoginRole(user, dbname, database->permissions);
+      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
       if (!login.role) {
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }
@@ -196,7 +205,6 @@ class HttpSession final
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
-      _conn->context->session_user = std::string{user};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
@@ -210,7 +218,7 @@ class HttpSession final
   // Connection().Query() would instead pin this scheduler worker for the
   // whole query and starve the pool under concurrent requests.
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
-    std::string sql, bool /*writes*/) final {
+    std::string_view sql, bool /*writes*/) final {
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
     // THROW_SQL_ERROR), preserving the typed exception so the handlers'
@@ -234,8 +242,7 @@ class HttpSession final
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
-
-  PreparedEntry& PreparedSlot(PreparedSlotId slot) final {
+  PreparedCache& PreparedSlot(PreparedSlotId slot) final {
     const auto index = static_cast<size_t>(slot);
     SDB_ASSERT(index < _prepared.size());
     return _prepared[index];
@@ -307,6 +314,7 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_handed_off;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -378,7 +386,7 @@ class HttpSession final
   std::shared_ptr<ConnectionContext> _connection_ctx;
   // Statements prepared on _conn; declared after it so they are destroyed
   // first.
-  std::array<PreparedEntry, kPreparedSlots> _prepared;
+  std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
 };
@@ -432,14 +440,9 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()),
-      *_ioexec);
-    // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
-    // it onto a duck worker.
     cpu = SessionMain();
-    _task->RequestRun();
+    _handed_off = true;
+    _task->Start();
 
     for (;;) {
       _deadline.expires_after(_idle.load(std::memory_order_acquire)
@@ -627,15 +630,19 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           co_await DrainSendOnTask();
           break;
         }
+        if (negotiated.acceptance == http::Acceptance::UnsupportedLevel) {
+          writer.Error(http::HttpStatus::BadRequest,
+                       "unsupported_compression_level");
+          co_await DrainSendOnTask();
+          break;
+        }
         if (negotiated.acceptance == http::Acceptance::NotAcceptable) {
           writer.Error(http::HttpStatus::NotAcceptable,
                        "no_acceptable_content_coding");
           co_await DrainSendOnTask();
           break;
         }
-        if (negotiated.coding != nullptr) {
-          writer.SetContentCoding(*negotiated.coding);
-        }
+        writer.SetContentCoding(negotiated.coding, negotiated.level);
         if (_max_conn != 0 && _active &&
             _active->load(std::memory_order_relaxed) > _max_conn) {
           writer.Fixed(http::HttpStatus::ServiceUnavailable,
@@ -680,15 +687,10 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        // A unix socket is inherently local; a TCP peer is loopback only if its
-        // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only
-        // when this is true (see HttpAuthenticator) -- never over the network.
-        bool peer_is_loopback = true;
-        if constexpr (Kind != SocketKind::Unix) {
-          asio_ns::error_code peer_ec;
-          const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-          peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
-        }
+        asio_ns::error_code peer_ec;
+        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+        const bool peer_is_loopback =
+          !peer_ec && peer_ep.address().is_loopback();
         auto auth = _auth.Authenticate(
           request.Header(HttpHeader::Authorization), peer_is_loopback);
         _user = std::move(auth.context.user);
@@ -705,7 +707,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           try {
             co_await handler->Handle(*this, request, writer);
-          } catch (const std::exception&) {
+          } catch (const std::exception& e) {
+            SDB_ERROR(HTTP, "request handler failed: ",
+                      duckdb::ErrorData{e}.RawMessage());
             if (!writer.HeadWritten()) {
               writer.Error(http::HttpStatus::InternalError, "internal");
             }
@@ -744,7 +748,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       _codec.Reset();
       _idle.store(true, std::memory_order_release);
     }
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    SDB_ERROR(HTTP, "http session terminated by exception: ",
+              duckdb::ErrorData{e}.RawMessage());
   }
   co_await DrainSendOnTask();
   this->Stop();

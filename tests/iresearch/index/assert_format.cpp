@@ -50,6 +50,7 @@
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -310,88 +311,56 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
 class PostingsImpl : public irs::TermPostings {
  public:
-  PostingsImpl(irs::IndexFeatures features, const tests::Term& data);
-
-  irs::doc_id_t Next() final {
-    if (_next == _data.postings.end()) {
-      return _doc = irs::doc_limits::eof();
+  PostingsImpl(irs::IndexFeatures features, const tests::Term& data)
+    : _data{data},
+      _has_freq{irs::IsSubsetOf(irs::IndexFeatures::Freq, features)},
+      _docs{data.postings.begin()},
+      _pos_doc{data.postings.begin()} {
+    if (_pos_doc != _data.postings.end()) {
+      _pos = _pos_doc->positions().begin();
     }
-
-    _prev = _next, ++_next;
-    _doc = _prev->id();
-    _freq = static_cast<uint32_t>(_prev->positions().size());
-    _pos.Clear();
-
-    return _doc;
   }
 
-  uint32_t GetFreq() const final { return _freq; }
+  uint32_t NextDocs(irs::doc_id_t* docs, uint32_t* freqs) final {
+    uint32_t n = 0;
+    for (; n != irs::doc_limits::kBlockSize && _docs != _data.postings.end();
+         ++n, ++_docs) {
+      docs[n] = _docs->id();
+      if (_has_freq) {
+        freqs[n] = static_cast<uint32_t>(_docs->positions().size());
+      }
+    }
+    return n;
+  }
 
-  irs::PosAttr* Positions() noexcept final { return _positions; }
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
+    for (uint32_t i = 0; i != n; ++i, ++_pos) {
+      while (_pos == _pos_doc->positions().end()) {
+        ++_pos_doc;
+        _pos = _pos_doc->positions().begin();
+        _last_pos = 0;
+        _last_start = 0;
+      }
+      pos[i] = _pos->pos - _last_pos;
+      _last_pos = _pos->pos;
+      if (offs_start != nullptr) {
+        offs_start[i] = _pos->start - _last_start;
+        offs_len[i] = _pos->end - _pos->start;
+        _last_start = _pos->start;
+      }
+    }
+  }
 
  private:
-  class PosIterator final : public irs::PosAttr {
-   public:
-    PosIterator(const PostingsImpl& owner, irs::IndexFeatures features)
-      : _owner(owner) {
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
-        _poffs = &_offs;
-      }
-    }
-
-    Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      if (irs::Type<irs::OffsAttr>::id() == type) {
-        return _poffs;
-      }
-
-      return nullptr;
-    }
-
-    void Clear() {
-      _next = _owner._prev->positions().begin();
-      _value = irs::pos_limits::invalid();
-      _offs.clear();
-    }
-
-    bool next() final {
-      if (_next == _owner._prev->positions().end()) {
-        _value = irs::pos_limits::eof();
-        return false;
-      }
-
-      _value = _next->pos;
-      _offs.start = _next->start;
-      _offs.end = _next->end;
-      ++_next;
-
-      return true;
-    }
-
-    void reset() final { ASSERT_TRUE(false); }
-
-   private:
-    std::set<Posting::Position>::const_iterator _next;
-    irs::OffsAttr _offs;
-    irs::OffsAttr* _poffs{};
-    const PostingsImpl& _owner;
-  };
-
   const tests::Term& _data;
-  uint32_t _freq = 0;
-  PosIterator _pos;
-  irs::PosAttr* _positions{};
-  std::set<Posting>::const_iterator _prev;
-  std::set<Posting>::const_iterator _next;
+  bool _has_freq;
+  std::set<Posting>::const_iterator _docs;
+  std::set<Posting>::const_iterator _pos_doc;
+  std::set<Posting::Position>::const_iterator _pos;
+  uint32_t _last_pos = 0;
+  uint32_t _last_start = 0;
 };
-
-PostingsImpl::PostingsImpl(irs::IndexFeatures features, const tests::Term& data)
-  : _data(data), _pos(*this, features) {
-  _next = _data.postings.begin();
-
-  if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
-    _positions = &_pos;
-  }
-}
 
 class TermIterator : public irs::SeekTermIterator {
  public:
@@ -477,12 +446,15 @@ irs::SeekTermIterator::ptr Field::iterator() const {
 
 template<typename PostingsFactory>
 void AssertDocs(irs::IndexFeatures features,
-                irs::TermPostings::ptr expected_docs,
+                irs::TermPostings::ptr expected_postings,
                 PostingsFactory&& factory) {
-  ASSERT_NE(nullptr, expected_docs);
+  ASSERT_NE(nullptr, expected_postings);
 
-  auto actual_docs = factory();
-  ASSERT_NE(nullptr, actual_docs);
+  auto actual_postings = factory();
+  ASSERT_NE(nullptr, actual_postings);
+
+  auto expected_docs = Docs(std::move(expected_postings), features);
+  auto actual_docs = Docs(std::move(actual_postings), features);
 
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
   ASSERT_TRUE(!irs::doc_limits::valid(actual_docs->Value()));
@@ -565,8 +537,9 @@ void AssertSeek(const irs::SubReader& segment,
                 const irs::TermReader& actual_terms,
                 const irs::PostingMeta& actual_cookie,
                 irs::IndexFeatures requested_features) {
-  auto expected_docs = expected_term.postings(requested_features);
-  ASSERT_NE(nullptr, expected_docs);
+  auto expected_postings = expected_term.postings(requested_features);
+  ASSERT_NE(nullptr, expected_postings);
+  auto expected_docs = Docs(std::move(expected_postings));
 
   auto seq_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
   ASSERT_NE(nullptr, seq_docs);

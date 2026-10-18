@@ -34,6 +34,7 @@
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -161,7 +162,8 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   auto meta_file_ref = LoadNewestIndexMeta(index_meta, dir, std::move(payload));
 
   if (!meta_file_ref) {
-    throw IndexNotFound{};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("the directory holds no committed index"));
   }
 
   if (cached && cached->_meta.index_meta == index_meta) {
@@ -203,12 +205,6 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
       reuse_candidates.erase(it);
     } else {
       *reader = SegmentReader{SegmentReaderImpl::Open(dir, meta, opts)};
-    }
-
-    if (!*reader) {
-      throw IndexError{absl::StrCat("While opening reader for segment '",
-                                    meta.name,
-                                    "', error: failed to open reader")};
     }
 
     ++reader;

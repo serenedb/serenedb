@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cmath>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -34,12 +33,6 @@
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
-namespace {
-
-inline constexpr double kPruneMatchesPerHit = 30.0;
-inline constexpr double kPruneMatchesPerHitPair = 75.0;
-
-}  // namespace
 
 Root::ptr MakePrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,
@@ -55,18 +48,6 @@ Root::ptr MakePrunedConjunction(
                                        exclude_filters, segment, ctx, merge);
   }
   if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
-    return {};
-  }
-  const auto docs = static_cast<double>(segment.docs_count());
-  const auto lead = static_cast<double>(terms.front().state.cookie.docs_count);
-  double share = 1.0;
-  for (size_t i = 1; i != terms.size(); ++i) {
-    share *= static_cast<double>(terms[i].state.cookie.docs_count) / docs;
-  }
-  const double matches = lead * std::sqrt(share);
-  const auto per_hit =
-    terms.size() == 2 ? kPruneMatchesPerHitPair : kPruneMatchesPerHit;
-  if (matches < static_cast<double>(ctx.k) * per_hit) {
     return {};
   }
   const auto* const doc =
@@ -87,19 +68,24 @@ Root::ptr MakePrunedConjunction(
                                           .fetcher = &ctx.fetcher,
                                           .boost = posting.boost});
     };
-    using Others = PruneLeaves<Clause>;
-    if (excludes.empty() && exclude_filters.empty()) {
-      return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
-        ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+    const auto make = [&]<typename Others> -> Root::ptr {
+      if (excludes.empty() && exclude_filters.empty()) {
+        return MakeShape<PrunedConjunction, Lead, Others, utils::Empty>(
+          ctx, ctx.fetcher, size, init, std::forward_as_tuple());
+      }
+      const uint64_t lead = terms.front().state.cookie.docs_count;
+      return irs::detail::BuildBlockExcludes<Root::ptr>(
+        excludes, exclude_filters, nullptr, segment, lead, lead,
+        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
+            ctx, ctx.fetcher, size, init,
+            std::forward<decltype(negated)>(negated));
+        });
+    };
+    if (size == 2) {
+      return make.template operator()<PruneLeaves<Clause, 1>>();
     }
-    const uint64_t lead = terms.front().state.cookie.docs_count;
-    return irs::detail::BuildBlockExcludes<Root::ptr>(
-      excludes, exclude_filters, nullptr, segment, lead, lead,
-      [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-        return MakeShape<PrunedConjunction, Lead, Others, Exclude>(
-          ctx, ctx.fetcher, size, init,
-          std::forward<decltype(negated)>(negated));
-      });
+    return make.template operator()<PruneLeaves<Clause>>();
   });
 }
 

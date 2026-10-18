@@ -20,6 +20,8 @@
 
 #include "iresearch/utils/remap_executable.hpp"
 
+#include <fast_float/fast_float.h>
+
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -95,13 +97,17 @@ std::vector<Mapping> ExecutableMappings() {
         line.compare(path_at, std::string::npos, exe) != 0) {
       continue;
     }
-    char* next = nullptr;
-    const auto begin = std::strtoull(line.c_str(), &next, 16);
-    if (next == nullptr || *next != '-') {
+    const auto* const line_end = line.data() + line.size();
+    uint64_t begin = 0;
+    const auto [dash, begin_ec] =
+      fast_float::from_chars(line.data(), line_end, begin, 16);
+    if (begin_ec != std::errc{} || *dash != '-') {
       continue;
     }
-    const auto end = std::strtoull(next + 1, &next, 16);
-    if (next == nullptr || *next != ' ' || next[1] != 'r') {
+    uint64_t end = 0;
+    const auto [next, end_ec] =
+      fast_float::from_chars(dash + 1, line_end, end, 16);
+    if (end_ec != std::errc{} || *next != ' ' || next[1] != 'r') {
       continue;
     }
     mappings.push_back({.begin = static_cast<uintptr_t>(begin),

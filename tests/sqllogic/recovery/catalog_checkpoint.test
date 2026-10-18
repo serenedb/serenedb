@@ -1,7 +1,7 @@
 control substitution on
 
 # Compaction is a checkpoint written from the catalog: the definitions come out
-# of the committed snapshot, not out of a copy the store kept beside it. Three
+# of the committed snapshot, not out of a copy the store kept beside it. Two
 # things have to hold for that to be safe.
 #
 # 1. Every kind of definition makes the round trip -- the checkpoint files each
@@ -10,10 +10,6 @@ control substitution on
 # 2. A checkpoint taken the moment a transaction has committed its catalog work
 #    must not lose it. The fold runs from the commit hook, off the catalog that
 #    commit just published, so it never reads a catalog that is behind the log.
-# 3. A drop still open at a checkpoint is rescheduled at boot from the record
-#    that opened it. The checkpoint no longer holds the definitions the drop
-#    removed, so the boot walk cannot find them to notice the tombstone -- the
-#    record carries its own subtree and is the only thing driving the sweep.
 
 
 # --- 1. every kind through a checkpoint ---

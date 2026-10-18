@@ -1,0 +1,70 @@
+statement ok
+CREATE DATABASE ddt_a;
+
+
+statement ok
+CREATE TABLE ddt_a.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddt_a.public.t VALUES (1), (2);
+
+
+statement ok
+DROP DATABASE ddt_a;
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddt_a';
+----
+n
+0
+
+
+statement error
+SELECT count(*) FROM ddt_a.public.t;
+
+
+statement ok
+DROP DATABASE IF EXISTS ddt_a;
+
+
+statement error
+DROP DATABASE ddt_a;
+
+
+statement ok
+CREATE DATABASE ddt_a;
+
+
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'ddt_a' AND table_name = 't';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE ddt_a.public.t (z INTEGER);
+
+
+statement ok
+INSERT INTO ddt_a.public.t VALUES (9);
+
+
+query
+SELECT z FROM ddt_a.public.t;
+----
+z
+9
+
+
+statement ok
+DROP DATABASE ddt_a;
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddt_a';
+----
+n
+0

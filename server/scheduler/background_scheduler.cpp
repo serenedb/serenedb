@@ -23,6 +23,8 @@
 #include <absl/flags/flag.h>
 
 #include <algorithm>
+#include <duckdb/common/types/timestamp.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
@@ -84,23 +86,6 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     std::move(p).Set();
     return std::move(f);
   }
-  auto* pool = Server::instance().IoPool();
-  if (pool == nullptr) {
-    // No io worker to host the timer. At boot the pool is still coming up, so
-    // park -- completing here would turn the caller's backoff loop into a spin
-    // (drops scheduled from tombstones run before StartIoPool). After
-    // CancelDelays the pool is gone for good and completing now is the point:
-    // it is how a loop gets to look at its stop flag.
-    absl::MutexLock lock{&_delays_mutex};
-    if (!_delays_open) {
-      _parked.push_back(std::move(p));
-      return std::move(f);
-    }
-    std::move(p).Set();
-    return std::move(f);
-  }
-  auto& ctx = pool->Next().Context();
-  auto timer = std::make_shared<asio_ns::steady_timer>(ctx, d);
   // Arm and register under one lock so a concurrent CancelDelays() either sees
   // the not-yet-armed timer (and this call completes immediately) or an armed,
   // registered one it can cancel -- an unregistered armed timer would sleep out
@@ -110,6 +95,14 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     std::move(p).Set();
     return std::move(f);
   }
+  if (!_delays_open) {
+    _parked.push_back(std::move(p));
+    return std::move(f);
+  }
+  auto* pool = Server::instance().IoPool();
+  SDB_ASSERT(pool);
+  auto timer =
+    std::make_shared<asio_ns::steady_timer>(pool->Next().Context(), d);
   timer->async_wait(
     [this, timer, p = std::move(p)](const asio_ns::error_code&) mutable {
       {
@@ -122,6 +115,17 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     });
   _delays.insert(std::move(timer));
   return std::move(f);
+}
+
+void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
+                                std::function<void()> task) {
+  const std::chrono::microseconds delay{
+    at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
+  Delay(delay).Detach(*_pool, [this, task = std::move(task)] {
+    if (!IsStopping()) {
+      task();
+    }
+  });
 }
 
 void BackgroundScheduler::OpenDelays() {

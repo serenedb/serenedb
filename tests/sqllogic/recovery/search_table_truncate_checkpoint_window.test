@@ -1,0 +1,119 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tcw (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE tcw_rows (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO tcw VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcw;
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async ok
+TRUNCATE tcw;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement error
+CHECKPOINT;
+----
+db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection checkpointer
+statement ok
+CHECKPOINT;
+
+connection default
+query
+SELECT count(*) AS n FROM tcw;
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO tcw VALUES (3, 'c');
+
+connection default
+statement ok
+SET GLOBAL checkpoint_threshold = '1KB';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async error connection closed
+TRUNCATE tcw;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement error
+CHECKPOINT;
+----
+db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
+
+
+connection writer
+statement ok
+INSERT INTO tcw_rows SELECT i, repeat('x', 100) FROM range(100) t(i);
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM tcw) AS search_rows, (SELECT count(*) FROM tcw_rows) AS duck_rows;
+----
+search_rows	duck_rows
+0	100
+
+connection after_crash
+statement ok
+SET GLOBAL checkpoint_threshold = '16MB';
+
+connection after_crash
+statement ok
+INSERT INTO tcw VALUES (4, 'd');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) tcw;
+
+connection after_crash
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcw;
+----
+ids
+4

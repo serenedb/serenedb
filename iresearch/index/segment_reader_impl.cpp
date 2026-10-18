@@ -158,14 +158,14 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(VisibleCount(_info));
+    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
   const auto live_end =
-    static_cast<doc_id_t>(doc_limits::min() + VisibleCount(_info));
+    static_cast<doc_id_t>(doc_limits::min() + _info.docs_count);
   return ResolveDocsMask(
-    _docs_mask.get(), doc_limits::eof(),
+    _docs_mask.get(),
     [&]<DocsMaskType Mask>(Mask docs_mask) -> lead::Node::ptr {
       return memory::make_managed<lead::Impl<detail::LiveDocs<Mask>>>(
         std::move(docs_mask), live_end);

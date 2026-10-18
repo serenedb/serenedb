@@ -18,10 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
+#include <unistd.h>
 
 #include <cstdio>
-#include <iostream>  // std::cin
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/remap_executable.hpp>
@@ -32,6 +33,11 @@
 #include "insert_field.hpp"
 
 static int Main(int argc, const char* argv[]) {
+  size_t threads = 1;
+  if (argc > 1 && (!absl::SimpleAtoi(argv[1], &threads) || threads == 0)) {
+    absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
+    return 1;
+  }
   irs::RemapExecutable();
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
@@ -65,10 +71,10 @@ static int Main(int argc, const char* argv[]) {
 
     struct IndexAllFields : bench::IBatchHandler {
       bench::Document doc;
-      void operator()(std::vector<std::string>& buf,
+      void operator()(const bench::Batch& batch,
                       irs::IndexWriter::Transaction& ctx) override {
-        for (auto& line : buf) {
-          doc.Fill(line);
+        for (const auto& item : batch.Docs()) {
+          doc.Fill(item);
           auto trx = ctx.Insert();
           tests::InsertFields(trx, doc.fields.begin(), doc.fields.end());
         }
@@ -78,7 +84,7 @@ static int Main(int argc, const char* argv[]) {
     bench::BenchConfig config;
     bench::IndexBuilderOptions builder_options{
       .batch_size = 100000,
-      .indexer_threads = 1,
+      .indexer_threads = threads,
       .refresh_interval_ms = 0,
       .compaction_interval_ms = 5000,
       .compaction_threads = 0,
@@ -87,10 +93,10 @@ static int Main(int argc, const char* argv[]) {
     };
 
     bench::IndexBuilder builder{"idx", builder_options, config};
-    builder.IndexFromStream(std::cin,
-                            [] -> std::unique_ptr<bench::IBatchHandler> {
-                              return std::make_unique<IndexAllFields>();
-                            });
+    bench::LineSource input{STDIN_FILENO};
+    builder.IndexFrom(input, [] -> std::unique_ptr<bench::IBatchHandler> {
+      return std::make_unique<IndexAllFields>();
+    });
 
     absl::PrintF("Number of documents: %d\n", builder.GetReader().docs_count());
   } catch (const std::exception& ex) {

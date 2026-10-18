@@ -57,7 +57,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+    irs::PostingsWriter writer;
     irs::PostingMeta posting_meta;
 
     // write postings for field
@@ -85,6 +85,9 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // write attributes to out
         writer.Encode(*out, posting_meta);
+        if (posting_meta.inline_size != 0) {
+          out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
+        }
       }
 
       auto stats = writer.EndField();
@@ -119,11 +122,19 @@ class Format10TestCase : public tests::FormatTestCase {
       {
         irs::PostingMeta read_meta;
         begin += reader.decode(begin, field.index_features, read_meta);
+        irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
+                                    irs::block_codec::kInSlack]{};
+        std::memcpy(inline_bytes, begin, read_meta.inline_size);
+        read_meta.inline_data = inline_bytes;
+        begin += read_meta.inline_size;
 
         // check PostingMeta
         {
           ASSERT_EQ(posting_meta.docs_count, read_meta.docs_count);
-          ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          ASSERT_EQ(posting_meta.Inline(), read_meta.Inline());
+          if (posting_meta.inline_size == 0 && posting_meta.docs_count != 1) {
+            ASSERT_EQ(posting_meta.doc_start, read_meta.doc_start);
+          }
           ASSERT_EQ(posting_meta.pos_start, read_meta.pos_start);
           ASSERT_EQ(posting_meta.pay_start, read_meta.pay_start);
           ASSERT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -247,7 +258,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;
 
   // write postings
@@ -350,8 +361,9 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
-                                read_meta, /*has_score_bounds=*/false);
+      auto it = tests::Docs(reader.Postings(field.index_features,
+                                            irs::IndexFeatures::None, read_meta,
+                                            /*has_score_bounds=*/false));
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
@@ -373,8 +385,9 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
-                                read_meta, /*has_score_bounds=*/false);
+      auto it = tests::Docs(reader.Postings(field.index_features,
+                                            irs::IndexFeatures::None, read_meta,
+                                            /*has_score_bounds=*/false));
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
@@ -397,8 +410,9 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
+  irs::bstring inline0, inline1;
 
   // write postings
   {
@@ -425,6 +439,9 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta0);
+      out->WriteData(meta0.inline_data, meta0.inline_size);
+      inline0.assign(meta0.Inline());
+      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -433,10 +450,13 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta1);
+      out->WriteData(meta1.inline_data, meta1.inline_size);
+      inline1.assign(meta1.Inline());
+      meta1.inline_data = inline1.data();
     }
 
-    // check doc positions for term0 & term1
-    ASSERT_LT(meta0.doc_start, meta1.doc_start);
+    ASSERT_NE(0, meta0.inline_size);
+    ASSERT_NE(0, meta1.inline_size);
 
     // finish writing
     writer.End();
@@ -464,15 +484,20 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // cumulative attribute
     irs::PostingMeta read_meta;
+    irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
+                                irs::block_codec::kInSlack]{};
 
     // read term0 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(inline_bytes, begin, read_meta.inline_size);
+      read_meta.inline_data = inline_bytes;
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
         ASSERT_EQ(meta0.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta0.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta0.Inline(), read_meta.Inline());
         ASSERT_EQ(meta0.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta0.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta0.pos_offset, read_meta.pos_offset);
@@ -480,8 +505,9 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
-                                read_meta, /*has_score_bounds=*/false);
+      auto it = tests::Docs(reader.Postings(field.index_features,
+                                            irs::IndexFeatures::None, read_meta,
+                                            /*has_score_bounds=*/false));
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs0[i++].first, it->Value());
       }
@@ -490,11 +516,14 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term1 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
+      std::memcpy(inline_bytes, begin, read_meta.inline_size);
+      read_meta.inline_data = inline_bytes;
+      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta1.doc_start, read_meta.doc_start);
+        ASSERT_EQ(meta1.Inline(), read_meta.Inline());
         ASSERT_EQ(meta1.pos_start, read_meta.pos_start);
         ASSERT_EQ(meta1.pay_start, read_meta.pay_start);
         ASSERT_EQ(meta1.pos_offset, read_meta.pos_offset);
@@ -502,8 +531,9 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader.Postings(field.index_features, irs::IndexFeatures::None,
-                                read_meta, /*has_score_bounds=*/false);
+      auto it = tests::Docs(reader.Postings(field.index_features,
+                                            irs::IndexFeatures::None, read_meta,
+                                            /*has_score_bounds=*/false));
       for (size_t i = 0; !irs::doc_limits::eof(it->Next());) {
         ASSERT_EQ(docs1[i++].first, it->Value());
       }
@@ -514,7 +544,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer;
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -914,7 +944,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+      irs::PostingsWriter writer;
       irs::PostingMeta posting_meta;
 
       // write postings
@@ -1081,7 +1111,8 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       irs::PostingsReader reader;
       reader.prepare(irs::ReaderState{.dir = dir.get(), .meta = &meta},
                      irs::IndexFeatures::None);
-    } catch (const irs::IndexError& e) {
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
       message = e.what();
     }
     return message;

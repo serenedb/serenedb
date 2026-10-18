@@ -45,6 +45,10 @@ The log level can be set using:
 
 <SqlLogicTest id="configuration/logging/index/example_004" />
 
+At the default `INFO` level the log holds the server's timeline and what needs attention. The timeline is a few lines per lifecycle step: `starting SereneDB <version>`, one `listening on …` line per endpoint, a recovery summary when recovery replayed the WAL, the ready line, and at shutdown `received shutdown signal` and `SereneDB is shut down`. The first start of a data directory adds the lines for what it creates, such as the database directory, the initial password from `POSTGRES_PASSWORD` and the OpenTelemetry schema. What needs attention is warnings and errors from background work, such as index refresh and compaction, checkpoints, recovery and cleanup, and failures that no statement reports. Routine events are logged at `DEBUG`, among them per-index recovery when nothing was replayed, the authentication mode, extension loads and credential refreshes.
+
+A warning about a client's own statement, such as a deprecated setting or a file a reader skipped, is sent to that client as a PostgreSQL `WARNING` notice instead of being written to the log.
+
 ## Log Types
 
 In SereneDB, log messages can have an associated log type. Log types allow two main things:
@@ -84,6 +88,8 @@ This is a (non-exhaustive) list of the available log types in SereneDB.
 | `QueryLog`   | Logs which queries are executed in SereneDB              | No         |
 | `FileSystem` | Logs all FileSystem interaction with SereneDB's Filesystem | Yes        |
 | `HTTP`       | Logs all HTTP traffic from SereneDB's internal HTTP client | Yes        |
+| `PostgresQueryLog` | Logs every query sent to a PostgreSQL server, with `query` and `duration_ms` | Yes |
+| `ClickHouseQueryLog` | Logs every query sent to a ClickHouse server, with `query` and `duration_ms`; a failed query is logged too | Yes |
 
 ### SereneDB Server Log Types
 

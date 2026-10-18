@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
@@ -213,7 +214,7 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
   if (pool.empty()) {
     return;
   }
-  std::ranges::sort(pool, [](const HnswCandidate& l, const HnswCandidate& r) {
+  absl::c_sort(pool, [](const HnswCandidate& l, const HnswCandidate& r) {
     return l.score > r.score;
   });
   HnswSelectNeighbors(dist, pool, static_cast<uint32_t>(links.size()), scratch);
@@ -642,8 +643,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
-  VisitLiveRanges(donor.reader->docs_mask(), donor.reader->Meta().visible_end,
-                  doc_limits::min(),
+  VisitLiveRanges(donor.reader->docs_mask(), doc_limits::min(),
                   static_cast<doc_id_t>(src_rows + doc_limits::min()),
                   [&](doc_id_t first, doc_id_t last) {
                     const auto base = donor.out_base + rank;

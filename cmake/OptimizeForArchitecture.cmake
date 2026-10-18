@@ -137,6 +137,8 @@ else()
     message(WARNING "${TARGET_ARCHITECTURE} is not supported")
 endif()
 
+list(APPEND ARCHITECTURE_OPTIMIZATIONS -falign-functions=64 -falign-loops=64)
+
 string(
     REPLACE ";"
     " "

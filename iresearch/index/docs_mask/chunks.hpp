@@ -475,19 +475,18 @@ class Chunked : public DocsMaskBase<Derived> {
 
  public:
   uint64_t CountIn(doc_id_t min, doc_id_t max) const noexcept {
-    uint64_t total = _end < max ? max - std::max(min, _end) : 0;
-    const auto stop = std::min<uint64_t>(max, _end);
-    if (min >= stop) {
+    uint64_t total = 0;
+    if (min >= max) {
       return total;
     }
     const auto count = _layout.Count();
     for (auto i = _layout.LowerBound(min >> kChunkShift); i < count; ++i) {
       const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
-      if (base >= stop) {
+      if (base >= max) {
         break;
       }
       const auto lo = std::max<uint64_t>(min, base);
-      const auto hi = std::min<uint64_t>(stop, base + kChunkDocs);
+      const auto hi = std::min<uint64_t>(max, base + kChunkDocs);
       total += _layout.At(i).Count(static_cast<uint32_t>(lo - base),
                                    static_cast<uint32_t>(hi - base));
     }
@@ -495,8 +494,7 @@ class Chunked : public DocsMaskBase<Derived> {
   }
 
  protected:
-  Chunked(const DocumentMask* mask, doc_id_t visible_end) noexcept
-    : _layout{mask}, _end{visible_end} {
+  explicit Chunked(const DocumentMask* mask) noexcept : _layout{mask} {
     if constexpr (kSingle) {
       _cursor.index = 0;
       _cursor.chunk = _layout.At(0);
@@ -504,9 +502,6 @@ class Chunked : public DocsMaskBase<Derived> {
   }
 
   MaskedSpan NextMasked(doc_id_t doc) noexcept {
-    if (doc >= _end) {
-      return {doc, doc_limits::eof()};
-    }
     const auto count = _layout.Count();
     auto i = Locate(doc);
     if constexpr (!kSingle) {
@@ -518,49 +513,41 @@ class Chunked : public DocsMaskBase<Derived> {
       const auto low = doc > base ? static_cast<uint32_t>(doc - base) : 0;
       Range range;
       if (_cursor.chunk.Next(low, range)) {
-        const auto first = base + range.first;
-        if (first >= _end) {
-          break;
-        }
-        return {
-          static_cast<doc_id_t>(first),
-          static_cast<doc_id_t>(std::min<uint64_t>(base + range.last, _end))};
+        return {static_cast<doc_id_t>(base + range.first),
+                static_cast<doc_id_t>(
+                  std::min<uint64_t>(base + range.last, doc_limits::eof()))};
       }
     }
-    return {_end, doc_limits::eof()};
+    return {doc_limits::eof(), doc_limits::eof()};
   }
 
   template<bool kAndNot>
   void Apply(doc_id_t min, doc_id_t max,
              uint64_t* IRS_RESTRICT words) noexcept {
-    const auto stop = std::min<uint64_t>(max, _end);
-    if (min < stop) {
-      const auto count = _layout.Count();
-      auto i = Locate(min);
-      if constexpr (!kSingle) {
-        _cursor.from = static_cast<doc_id_t>(stop);
-      }
-      for (; i < count; ++i) {
-        Select(i);
-        const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
-        if (base >= stop) {
-          break;
-        }
-        _cursor.chunk.template Apply<kAndNot>(
-          base, std::max<uint64_t>(min, base),
-          std::min<uint64_t>(stop, base + kChunkDocs), min, max, words);
-        if (base + kChunkDocs >= stop) {
-          break;
-        }
-      }
+    if (min >= max) {
+      return;
     }
-    if (_end < max) {
-      ApplyRange<kAndNot>(words, std::max(min, _end) - min, max - min);
+    const auto count = _layout.Count();
+    auto i = Locate(min);
+    if constexpr (!kSingle) {
+      _cursor.from = max;
+    }
+    for (; i < count; ++i) {
+      Select(i);
+      const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
+      if (base >= max) {
+        break;
+      }
+      _cursor.chunk.template Apply<kAndNot>(
+        base, std::max<uint64_t>(min, base),
+        std::min<uint64_t>(max, base + kChunkDocs), min, max, words);
+      if (base + kChunkDocs >= max) {
+        break;
+      }
     }
   }
 
   Layout _layout;
-  doc_id_t _end;
 
  private:
   struct Cursor {

@@ -1,0 +1,1036 @@
+control substitution on
+
+
+statement ok
+DROP ROLE IF EXISTS dacc_churn;
+
+
+statement ok
+CREATE ROLE dacc_churn;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+connection churn
+statement async ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM dacc_churn;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+statement async ok
+SELECT 1;
+
+
+wait
+
+
+statement ok
+DROP ROLE dacc_churn;

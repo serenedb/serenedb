@@ -107,3 +107,45 @@ SELECT '' LIKE '%' ESCAPE '%';
 ----
 <slt:ignore>
 f
+
+
+statement ok
+CREATE TABLE like_escaped (id INT, s VARCHAR)
+
+statement ok
+INSERT INTO like_escaped VALUES (1, 'admin_1'), (2, 'adminx1'), (3, 'admin\1'), (4, 'a%b'), (5, 'a%')
+
+query
+SELECT id FROM like_escaped WHERE s LIKE 'admin\_%' ORDER BY id
+----
+id
+1
+
+
+query
+SELECT id FROM like_escaped WHERE s LIKE 'a\%' ORDER BY id
+----
+id
+5
+
+
+query
+SELECT id FROM like_escaped WHERE s LIKE 'a\%%' ORDER BY id
+----
+id
+4
+5
+
+
+query
+SELECT id FROM like_escaped WHERE s ILIKE 'ADMIN\_%' ORDER BY id
+----
+id
+1
+
+
+query
+SELECT 'admin_1' ILIKE 'admin\_%' AS a, 'adminx1' ILIKE 'admin\_%' AS b
+----
+a	b
+t	f

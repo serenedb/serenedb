@@ -54,7 +54,7 @@ namespace {
 catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
                                           std::string_view dict_name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(std::string{dict_name}),
+    context, duckdb::QualifiedName::Parse(dict_name),
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     THROW_SQL_ERROR(

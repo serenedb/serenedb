@@ -41,7 +41,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/static_strings.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
@@ -51,7 +50,6 @@
 #include "catalog/cluster.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -188,6 +186,10 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Revert SET LOCAL variables while the DuckDB transaction is still active
+  // so catalog lookups performed by custom-impl settings (e.g. search_path)
+  // can succeed via their normal set_local path.
+  _connection_ctx->PreCommit();
   // Pre-durability crash point: fires before the engine commit, so the
   // transaction must be absent after restart. Only write transactions
   // crash (the fault-arming SET itself must survive).
@@ -196,12 +198,36 @@ void SereneDBClientState::TransactionPreCommit(
       SDB_IMMEDIATE_ABORT();
     }
   }
-  // Revert SET LOCAL variables while the DuckDB transaction is still active
-  // so catalog lookups performed by custom-impl settings (e.g. search_path)
-  // can succeed via their normal set_local path.
-  _connection_ctx->PreCommit();
+  std::vector<std::reference_wrapper<duckdb::AttachedDatabase>> written;
+  for (auto& db : transaction.OpenedTransactions()) {
+    if (db.get().GetCatalog().GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    auto opened = transaction.TryGetTransaction(db);
+    if (opened && opened->IsDuckTransaction() &&
+        opened->Cast<duckdb::DuckTransaction>().ChangesMade()) {
+      written.emplace_back(db);
+    }
+  }
+  for (auto& db : written) {
+    const auto& name = db.get().GetName();
+    if (db.get().GetCatalog().IsDropped()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", name.GetIdentifierName(),
+                              "\" was dropped by another transaction"));
+    }
+    auto& cluster = catalog::ClusterOf(context);
+    if (!cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+           .GetEntry(cluster.GetCatalogTransaction(context), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+        ERR_MSG("database \"", name.GetIdentifierName(), "\" does not exist"));
+    }
+  }
   if (InvertedStoreIndex::AnyBound()) {
-    for (auto& db : transaction.OpenedTransactions()) {
+    const auto opened_databases = transaction.OpenedTransactions();
+    for (auto& db : opened_databases) {
       if (db.get().GetCatalog().GetCatalogType() !=
           catalog::SereneDBCatalog::kStorageType) {
         continue;
@@ -238,16 +264,21 @@ void SereneDBClientState::TransactionPreCheckpoint(
       catalog::SereneDBCatalog::kStorageType) {
     return;
   }
-  // This commit's exact WAL position, captured under the WAL lock by the
-  // engine: with overlapping commits, reading the WAL size here would include
-  // later transactions' bytes and over-claim the recovery cursor (skipping
-  // their re-stream after a crash). A commit whose changes are carried by its
-  // in-commit checkpoint (wal_end_offset == 0) recovers from the start of the
-  // post-checkpoint WAL generation.
-  const auto cursor = wal_end_offset > 0
-                        ? search::WalCursor{wal_generation, wal_end_offset}
-                        : search::WalCursor{wal_generation + 1, 0};
-  _connection_ctx->CommitSearch(cursor, db.oid);
+  _connection_ctx->StageSearch({wal_generation, wal_end_offset}, db.oid);
+}
+
+void SereneDBClientState::TransactionDurable(duckdb::AttachedDatabase& db,
+                                             duckdb::ClientContext&) {
+  if (db.GetCatalog().GetCatalogType() !=
+      catalog::SereneDBCatalog::kStorageType) {
+    return;
+  }
+  _connection_ctx->PublishSearch(db.oid);
+}
+
+void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
+                                                 duckdb::ClientContext&) {
+  _connection_ctx->RefreshCreatedIndexes(db.oid);
 }
 
 void SereneDBClientState::TransactionPreRollback(
@@ -258,9 +289,7 @@ void SereneDBClientState::TransactionPreRollback(
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
-  // Post-durability crash point: the engine commit is durable, search
-  // ticks are not yet -- recovery must rebuild the storage. Only write
-  // transactions crash.
+  // Post-durability crash point. Only write transactions crash.
   SDB_IF_FAILURE("crash_after_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();
@@ -285,6 +314,9 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = progress_source->metrics;
     metrics.SetCommand(pending_copy_command);
+    if (pending_copy_command == pg::ProgressCommand::CreateTableAs) {
+      metrics.SetPhase(pg::progress_phase::CreateTableAs::Ingesting);
+    }
     metrics.SetIoType(pending_copy_io);
     pg::ProgressMetrics::Set(metrics.relid,
                              static_cast<int64_t>(pending_copy_relid));
@@ -325,7 +357,7 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
 
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database) {
-  const duckdb::Identifier catalog{std::string{database}};
+  const duckdb::Identifier catalog{database};
   std::vector<duckdb::CatalogSearchEntry> paths{
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"$user"}},
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"public"}},
@@ -335,16 +367,15 @@ void SetDefaultSearchPath(duckdb::ClientContext& context,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
-SystemConnection MakeSystemConnection(std::string_view database,
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
                                       duckdb::idx_t database_id) {
   SystemConnection system{.conn =
                             irs::DuckDBEngine::Instance().CreateConnection()};
   auto& context = *system.conn->context;
   system.ctx = std::make_shared<ConnectionContext>(
-    context, irs::StaticStrings::kDefaultUser, pg::kRootUser, database,
-    database_id, nullptr, 0, nullptr);
+    context, user, role, database, database_id, nullptr, 0, nullptr);
   SereneDBClientState::Register(context, system.ctx);
-  context.session_user = std::string{irs::StaticStrings::kDefaultUser};
   SetDefaultSearchPath(context, database);
   return system;
 }

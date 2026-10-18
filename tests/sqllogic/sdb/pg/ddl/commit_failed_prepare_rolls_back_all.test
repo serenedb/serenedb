@@ -1,0 +1,71 @@
+statement ok
+CREATE DATABASE cfpr_a;
+
+
+statement ok
+CREATE DATABASE cfpr_b;
+
+
+statement ok
+CREATE TABLE cfpr_b.public.t (id INTEGER PRIMARY KEY);
+
+
+connection t1
+statement ok
+BEGIN;
+
+
+connection t1
+statement ok
+CREATE TABLE cfpr_a.public.x (a INTEGER);
+
+
+connection t1
+statement ok
+INSERT INTO cfpr_b.public.t VALUES (1);
+
+
+connection t2
+statement ok
+INSERT INTO cfpr_b.public.t VALUES (1);
+
+
+connection t1
+statement error duplicate key
+COMMIT;
+
+
+connection t2
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'cfpr_a' AND table_name = 'x';
+----
+n
+0
+
+
+connection t2
+statement ok
+CREATE TABLE cfpr_a.public.x (b INTEGER);
+
+
+connection t2
+statement ok
+INSERT INTO cfpr_a.public.x VALUES (5);
+
+
+connection t1
+query
+SELECT b FROM cfpr_a.public.x;
+----
+b
+5
+
+
+connection default
+statement ok
+DROP DATABASE cfpr_a;
+
+
+connection default
+statement ok
+DROP DATABASE cfpr_b;

@@ -43,3 +43,21 @@ FROM sdb_external_file_cache();
 
 statement ok
 DETACH IF EXISTS db151;
+
+# DOCS_TEST: filter_reorder
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+count
+100
+
+statement ok
+SET filter_reorder = 'safe';
+
+statement error
+SELECT count(*) FROM range(1000) WHERE range < 100 AND range::TINYINT < range + 1;
+----
+db error: ERROR: Type INT64 with value 128 can't be cast because the value is out of range for the destination type INT8 when casting from source column range

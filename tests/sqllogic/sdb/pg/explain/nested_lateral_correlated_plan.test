@@ -1,0 +1,667 @@
+statement ok
+CREATE TABLE fuzz_users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, created_at TIMESTAMP, score DOUBLE PRECISION, is_active BOOLEAN);
+
+
+statement ok
+CREATE TABLE fuzz_events (id BIGINT PRIMARY KEY, user_id INTEGER, kind TEXT, payload TEXT, ts TIMESTAMP);
+
+
+statement ok
+EXPLAIN select
+  subq_12.c2 as c0,
+    pg_catalog.bool_or(
+      cast(false as bool)) over (partition by sample_0.attisdropped,subq_12.c1 order by subq_12.c0) as c1,
+  sample_0.attname as c2,
+  pg_catalog.range(
+    cast(
+      pg_catalog.arg_min_nulls_last(
+        cast(case when (subq_12.c0 is not NULL)
+            and (EXISTS (
+              select
+                  subq_12.c0 as c0,
+                  ref_12.prosrc as c1,
+                  ref_12.proargmodes as c2,
+                  subq_12.c1 as c3
+                from
+                  pg_catalog.pg_proc as ref_12
+                where (((EXISTS (
+                        select
+                            subq_14.c2 as c0,
+                            69 as c1,
+                            subq_13.c8 as c2,
+                            subq_13.c4 as c3,
+                            ref_13.amopstrategy as c4,
+                            1 as c5,
+                            ref_13.amopstrategy as c6,
+                            subq_13.c2 as c7,
+                            ref_13.amopstrategy as c8,
+                            subq_14.c7 as c9,
+                            36 as c10
+                          from
+                            pg_catalog.pg_amop as ref_13,
+                            lateral (select
+                                  ref_12.prorettype as c0,
+                                  ref_12.prosrc as c1,
+                                  ref_13.amopsortfamily as c2,
+                                  ref_13.amoplefttype as c3,
+                                  sample_0.atttypmod as c4,
+                                  ref_13.amopmethod as c5,
+                                  sample_0.atthasdef as c6,
+                                  ref_13.amoplefttype as c7,
+                                  ref_12.proretset as c8
+                                from
+                                  pg_catalog.pg_namespace as sample_19
+                                where ref_12.prolang is not NULL
+                                limit 97) as subq_13,
+                            lateral (select
+                                  ref_12.proargmodes as c0,
+                                  ref_12.pronamespace as c1,
+                                  subq_12.c1 as c2,
+                                  ref_12.proisstrict as c3,
+                                  sample_0.attnum as c4,
+                                  30 as c5,
+                                  ref_13.amopfamily as c6,
+                                  subq_12.c1 as c7,
+                                  subq_13.c4 as c8,
+                                  sample_0.attinhcount as c9,
+                                  subq_13.c8 as c10,
+                                  subq_12.c1 as c11,
+                                  subq_13.c6 as c12
+                                from
+                                  information_schema.attributes as ref_14
+                                where subq_12.c2 is NULL
+                                limit 71) as subq_14
+                          where (false)
+                            and ((false)
+                              or ((EXISTS (
+                                  select
+                                      sample_0.attoptions as c0,
+                                      ref_12.proparallel as c1,
+                                      subq_13.c1 as c2,
+                                      subq_13.c5 as c3,
+                                      ref_12.proargdefaults as c4,
+                                      ref_13.amopstrategy as c5
+                                    from
+                                      pg_catalog.pg_ts_parser as ref_15
+                                    where sample_0.attalign is NULL
+                                    limit 190))
+                                and ((EXISTS (
+                                    select
+                                        subq_12.c0 as c0
+                                      from
+                                        pg_catalog.pg_depend as sample_20
+                                      where sample_0.atttypid is not NULL
+                                      limit 126))
+                                  or (((subq_14.c11 is NULL)
+                                      or (false))
+                                    and (true)))))
+                          limit 133))
+                      or (31 is NULL))
+                    or ((81 is NULL)
+                      and ((true)
+                        or (ref_12.prosqlbody is NULL))))
+                  and (ref_12.proparallel is NULL)
+                limit 122)) then pg_catalog.now() else (select rolvaliduntil from pg_catalog.pg_authid limit 1 offset 1)
+             end
+           as timestamptz),
+        cast(case when true then pg_catalog.today() else case when (47 is not NULL)
+              and (false) then cast(null as date) else cast(null as date) end
+             end
+           as date)) over (partition by subq_12.c2,subq_12.c1 order by sample_0.attislocal) as timestamptz),
+    cast((select rolvaliduntil from pg_catalog.pg_authid limit 1 offset 6)
+       as timestamptz),
+    cast(
+      pg_catalog.mad(
+        cast(pg_catalog.today() as date)) over (partition by subq_12.c0,subq_12.c1 order by sample_0.attrelid) as "interval")) as c3,
+  sample_0.attacl as c4,
+  subq_12.c0 as c5,
+  pg_catalog.uuid() as c6,
+  case when true then sample_0.atthasdef else (select is_supported from information_schema.sql_features limit 1 offset 2)
+       end
+     as c7,
+  sample_0.atthasmissing as c8
+from
+  pg_catalog.pg_attribute as sample_0 ,
+  lateral (select
+        (select starelid from pg_catalog.pg_statistic limit 1 offset 4)
+           as c0,
+        pg_catalog.map() as c1,
+        sample_2.nspacl as c2
+      from
+        pg_catalog.pg_database as sample_1
+            left join pg_catalog.pg_stat_subscription_stats as ref_0
+              inner join pg_catalog.pg_namespace as sample_2
+                inner join information_schema.domain_udt_usage as ref_1
+                on (EXISTS (
+                    select
+                        sample_3.prattrs as c0
+                      from
+                        pg_catalog.pg_publication_rel as sample_3
+                      where (false)
+                        and (false)))
+              on ((((true)
+                      and (((sample_0.atthasmissing is not NULL)
+                          or (EXISTS (
+                            select
+                                sample_0.attndims as c0,
+                                sample_2.nspacl as c1,
+                                sample_2.nspacl as c2,
+                                sample_4.umserver as c3,
+                                sample_4.umuser as c4,
+                                sample_2.nspacl as c5
+                              from
+                                pg_catalog.pg_user_mapping as sample_4
+                              where (false)
+                                or ((true)
+                                  and ((((true)
+                                        or (EXISTS (
+                                          select
+                                              sample_2.nspowner as c0,
+                                              ref_2.setconfig as c1,
+                                              ref_2.setdatabase as c2,
+                                              ref_2.setrole as c3,
+                                              sample_4.umuser as c4,
+                                              subq_1.c0 as c5,
+                                              ref_2.setconfig as c6,
+                                              58 as c7,
+                                              sample_4.umuser as c8,
+                                              subq_1.c0 as c9,
+                                              ref_2.setrole as c10,
+                                              sample_4.umoptions as c11,
+                                              subq_1.c0 as c12
+                                            from
+                                              pg_catalog.pg_db_role_setting as ref_2,
+                                              lateral (select
+                                                    subq_0.c3 as c0
+                                                  from
+                                                    public.fuzz_events as sample_5 ,
+                                                    lateral (select
+                                                          sample_5.id as c0,
+                                                          sample_4.umuser as c1,
+                                                          sample_4.umuser as c2,
+                                                          ref_2.setrole as c3
+                                                        from
+                                                          pg_catalog.pg_stat_activity as ref_3
+                                                        where true
+                                                        limit 40) as subq_0
+                                                  where EXISTS (
+                                                    select
+                                                        subq_0.c1 as c0,
+                                                        sample_0.atthasdef as c1
+                                                      from
+                                                        pg_catalog.pg_amproc as sample_6
+                                                      where ((EXISTS (
+                                                            select
+                                                                sample_5.kind as c0,
+                                                                sample_0.attfdwoptions as c1,
+                                                                sample_0.attbyval as c2,
+                                                                sample_5.id as c3,
+                                                                (select set_option from pg_catalog.pg_auth_members limit 1 offset 1)
+                                                                   as c4,
+                                                                sample_0.atthasdef as c5
+                                                              from
+                                                                pg_catalog.pg_stat_progress_vacuum as ref_4
+                                                              where false))
+                                                          or ((true)
+                                                            and (true)))
+                                                        and (false)
+                                                      limit 152)) as subq_1
+                                            where (sample_4.umuser is NULL)
+                                              and ((sample_2.nspname is not NULL)
+                                                and (true))
+                                            limit 24)))
+                                      and (((EXISTS (
+                                            select
+                                                sample_4.umoptions as c0,
+                                                sample_7.spcoptions as c1
+                                              from
+                                                pg_catalog.pg_tablespace as sample_7 ,
+                                                lateral (select
+                                                      sample_4.umoptions as c0
+                                                    from
+                                                      pg_catalog.pg_operator as sample_8 ,
+                                                      lateral (select
+                                                            sample_4.umuser as c0,
+                                                            sample_9.sub_feature_id as c1,
+                                                            sample_8.oprrest as c2
+                                                          from
+                                                            information_schema.sql_features as sample_9 ,
+                                                            lateral (select
+                                                                  sample_2.nspowner as c0,
+                                                                  sample_10.rolvaliduntil as c1
+                                                                from
+                                                                  pg_catalog.pg_authid as sample_10 ,
+                                                                  lateral (select
+                                                                        sample_9.is_verified_by as c0,
+                                                                        83 as c1,
+                                                                        sample_4.umserver as c2
+                                                                      from
+                                                                        pg_catalog.pg_stats as ref_5,
+                                                                        lateral (select
+                                                                              ref_6.oprrest as c0,
+                                                                              sample_9.comments as c1,
+                                                                              sample_10.rolcanlogin as c2,
+                                                                              sample_2.nspowner as c3
+                                                                            from
+                                                                              pg_catalog.pg_operator as ref_6
+                                                                            where (true)
+                                                                              or (true)
+                                                                            limit 30) as subq_2
+                                                                      where false
+                                                                      limit 69) as subq_3
+                                                                where true
+                                                                limit 166) as subq_4
+                                                          where false
+                                                          limit 145) as subq_5
+                                                    where true
+                                                    limit 33) as subq_6
+                                              where subq_6.c0 is NULL))
+                                          and ((sample_0.attstattarget is NULL)
+                                            or ((EXISTS (
+                                                select
+                                                    sample_4.umserver as c0,
+                                                    sample_4.umserver as c1,
+                                                    subq_7.c4 as c2,
+                                                    subq_7.c4 as c3,
+                                                    sample_2.nspacl as c4
+                                                  from
+                                                    pg_catalog.pg_enum as sample_11 ,
+                                                    lateral (select
+                                                          sample_11.enumsortorder as c0,
+                                                          sample_11.enumlabel as c1,
+                                                          sample_11.enumtypid as c2,
+                                                          sample_4.umserver as c3,
+                                                          sample_2.nspacl as c4,
+                                                          sample_4.umuser as c5
+                                                        from
+                                                          information_schema._pg_foreign_servers as ref_7
+                                                        where true
+                                                        limit 175) as subq_7
+                                                  where EXISTS (
+                                                    select
+                                                        sample_0.attname as c0,
+                                                        sample_2.nspname as c1,
+                                                        sample_2.nspname as c2,
+                                                        sample_4.umuser as c3,
+                                                        sample_11.enumlabel as c4,
+                                                        sample_2.nspname as c5
+                                                      from
+                                                        information_schema.check_constraints as ref_8
+                                                      where false)
+                                                  limit 115))
+                                              and (EXISTS (
+                                                select
+                                                    sample_0.attalign as c0,
+                                                    (select condefault from pg_catalog.pg_conversion limit 1 offset 5)
+                                                       as c1,
+                                                    subq_8.c1 as c2,
+                                                    sample_2.nspacl as c3,
+                                                    sample_0.attnum as c4,
+                                                    subq_8.c1 as c5,
+                                                    (select aggfinalfn from pg_catalog.pg_aggregate limit 1 offset 2)
+                                                       as c6,
+                                                    sample_0.atthasdef as c7
+                                                  from
+                                                    pg_catalog.pg_policies as ref_9,
+                                                    lateral (select
+                                                          sample_0.atttypid as c0,
+                                                          sample_0.attlen as c1
+                                                        from
+                                                          pg_catalog.pg_default_acl as sample_12
+                                                        where (false)
+                                                          and ((true)
+                                                            and (sample_4.umoptions is NULL))
+                                                        limit 104) as subq_8,
+                                                    lateral (select
+                                                          sample_2.nspname as c0,
+                                                          sample_13.umserver as c1,
+                                                          sample_0.attstattarget as c2
+                                                        from
+                                                          pg_catalog.pg_user_mapping as sample_13 ,
+                                                          lateral (select
+                                                                subq_8.c0 as c0,
+                                                                sample_13.umoptions as c1,
+                                                                sample_2.nspacl as c2,
+                                                                sample_2.nspowner as c3,
+                                                                subq_8.c1 as c4,
+                                                                sample_2.nspowner as c5,
+                                                                sample_2.nspname as c6,
+                                                                sample_0.attislocal as c7,
+                                                                sample_13.umuser as c8,
+                                                                sample_13.umoptions as c9,
+                                                                sample_14.partclass as c10,
+                                                                sample_0.attcollation as c11,
+                                                                sample_4.umserver as c12,
+                                                                sample_0.attisdropped as c13
+                                                              from
+                                                                pg_catalog.pg_partitioned_table as sample_14
+                                                              where true
+                                                              limit 26) as subq_9
+                                                        where true
+                                                        limit 43) as subq_10
+                                                  where true)))))
+                                        or (false)))
+                                    or (true)))
+                              limit 75)))
+                        and (false)))
+                    or ((sample_0.attstattarget is not NULL)
+                      and (EXISTS (
+                        select
+                            63 as c0,
+                            69 as c1
+                          from
+                            pg_catalog.pg_trigger as sample_15
+                          where sample_2.nspacl is NULL
+                          limit 127))))
+                  or ((((true)
+                        or (((true)
+                            or (false))
+                          and (true)))
+                      and (((true)
+                          and (EXISTS (
+                            select
+                                sample_0.attacl as c0,
+                                sample_2.nspname as c1,
+                                22 as c2
+                              from
+                                pg_catalog.pg_conversion as sample_16
+                              where (sample_2.nspowner is not NULL)
+                                and (sample_2.nspacl is not NULL)
+                              limit 71)))
+                        or ((sample_0.attfdwoptions is NULL)
+                          or (false))))
+                    and ((sample_0.attstattarget is not NULL)
+                      or (sample_0.attoptions is NULL))))
+            on ((EXISTS (
+                  select
+                      sample_0.attcollation as c0,
+                      sample_2.nspowner as c1
+                    from
+                      pg_catalog.pg_shmem_allocations_numa as ref_10
+                    where sample_0.attname is NULL))
+                and (EXISTS (
+                  select
+                      sample_1.datallowconn as c0
+                    from
+                      public.fuzz_users as sample_17 ,
+                      lateral (select
+                            sample_2.nspacl as c0,
+                            ref_11.paracl as c1
+                          from
+                            pg_catalog.pg_parameter_acl as ref_11
+                          where (true)
+                            or (sample_2.nspacl is not NULL)) as subq_11
+                    where false
+                    limit 115)))
+          inner join pg_catalog.pg_shdescription as sample_18
+          on (sample_1.datcollate = sample_18.description )
+      where sample_1.datconnlimit is NULL) as subq_12
+where (((((subq_12.c1 is not NULL)
+          and (true))
+        and ((((EXISTS (
+                select
+                    sample_0.attalign as c0,
+                    sample_0.attislocal as c1,
+                    subq_12.c0 as c2,
+                    subq_12.c0 as c3,
+                    subq_12.c2 as c4,
+                    sample_0.attstattarget as c5,
+                    sample_0.attndims as c6
+                  from
+                    pg_catalog.pg_type as sample_21
+                  where true
+                  limit 97))
+              or (EXISTS (
+                select
+                    sample_0.attfdwoptions as c0
+                  from
+                    information_schema.user_mapping_options as ref_16
+                  where (true)
+                    or (sample_0.attidentity is NULL)
+                  limit 133)))
+            and (sample_0.attnotnull is not NULL))
+          and ((true)
+            and ((subq_12.c2 is not NULL)
+              or (((((((((subq_12.c0 is NULL)
+                              and (true))
+                            or ((EXISTS (
+                                select
+                                    subq_12.c2 as c0,
+                                    subq_12.c2 as c1,
+                                    (select tmplnamespace from pg_catalog.pg_ts_template limit 1 offset 4)
+                                       as c2,
+                                    subq_12.c2 as c3,
+                                    sample_22.conrelid as c4,
+                                    sample_22.conrelid as c5,
+                                    subq_12.c0 as c6
+                                  from
+                                    pg_catalog.pg_constraint as sample_22
+                                  where ((EXISTS (
+                                        select
+                                            sample_0.attrelid as c0
+                                          from
+                                            pg_catalog.pg_event_trigger as ref_17
+                                          where (((false)
+                                                and (true))
+                                              and ((true)
+                                                or (((EXISTS (
+                                                      select
+                                                          ref_17.evtname as c0,
+                                                          sample_0.atttypmod as c1,
+                                                          ref_17.evtname as c2,
+                                                          subq_12.c1 as c3,
+                                                          sample_0.attcompression as c4,
+                                                          sample_22.conislocal as c5,
+                                                          sample_23.adbin as c6,
+                                                          32 as c7,
+                                                          subq_12.c2 as c8,
+                                                          sample_23.adbin as c9,
+                                                          ref_17.evtfoid as c10,
+                                                          ref_17.evttags as c11,
+                                                          subq_12.c2 as c12,
+                                                          ref_17.evtfoid as c13,
+                                                          (select rngsubdiff from pg_catalog.pg_range limit 1 offset 2)
+                                                             as c14,
+                                                          subq_12.c1 as c15,
+                                                          subq_12.c2 as c16
+                                                        from
+                                                          pg_catalog.pg_attrdef as sample_23
+                                                        where (true)
+                                                          and (false)
+                                                        limit 148))
+                                                    or (true))
+                                                  or (((((select pubdelete from pg_catalog.pg_publication limit 1 offset 4)
+                                                             is NULL)
+                                                        and (EXISTS (
+                                                          select
+                                                              subq_12.c0 as c0
+                                                            from
+                                                              pg_catalog.pg_seclabel as sample_24
+                                                            where (false)
+                                                              or (false))))
+                                                      and (subq_12.c1 is NULL))
+                                                    or (EXISTS (
+                                                      select
+                                                          sample_0.attbyval as c0,
+                                                          sample_22.conenforced as c1,
+                                                          ref_17.evtevent as c2
+                                                        from
+                                                          pg_catalog.pg_hba_file_rules as ref_18
+                                                        where (false)
+                                                          and (true)
+                                                        limit 50))))))
+                                            or (EXISTS (
+                                              select
+                                                  ref_17.evtname as c0,
+                                                  sample_22.convalidated as c1,
+                                                  sample_0.attlen as c2
+                                                from
+                                                  information_schema.routines as ref_19
+                                                where true))
+                                          limit 68))
+                                      or (EXISTS (
+                                        select
+                                            sample_25.stxname as c0,
+                                            subq_12.c1 as c1,
+                                            sample_25.stxkind as c2,
+                                            sample_22.conppeqop as c3,
+                                            sample_22.conperiod as c4
+                                          from
+                                            pg_catalog.pg_statistic_ext as sample_25
+                                          where ((true)
+                                              or (((true)
+                                                  or (true))
+                                                or (67 is not NULL)))
+                                            or ((true)
+                                              or ((((true)
+                                                    or (53 is not NULL))
+                                                  or (subq_12.c2 is not NULL))
+                                                or ((true)
+                                                  and (sample_22.conperiod is NULL))))
+                                          limit 109)))
+                                    or (sample_0.attalign is NULL)))
+                              or (subq_12.c0 is NULL)))
+                          and (EXISTS (
+                            select
+                                sample_26.castsource as c0,
+                                sample_0.atttypid as c1
+                              from
+                                pg_catalog.pg_cast as sample_26
+                              where (EXISTS (
+                                  select
+                                      sample_26.castsource as c0,
+                                      sample_26.castfunc as c1,
+                                      sample_26.castfunc as c2,
+                                      sample_26.castsource as c3,
+                                      sample_0.attname as c4,
+                                      81 as c5,
+                                      sample_0.attisdropped as c6,
+                                      sample_0.attislocal as c7,
+                                      sample_0.attoptions as c8,
+                                      86 as c9,
+                                      sample_0.attndims as c10,
+                                      sample_26.casttarget as c11
+                                    from
+                                      pg_catalog.pg_stats as ref_20
+                                    where sample_26.castsource is NULL
+                                    limit 108))
+                                and (((sample_26.casttarget is NULL)
+                                    or (false))
+                                  and (sample_26.castfunc is not NULL)))))
+                        and ((false)
+                          or (true)))
+                      or ((true)
+                        and ((true)
+                          or (false))))
+                    or (((sample_0.attacl is not NULL)
+                        or (EXISTS (
+                          select
+                              sample_0.attndims as c0,
+                              sample_0.attalign as c1,
+                              sample_0.attinhcount as c2,
+                              62 as c3
+                            from
+                              pg_catalog.sdb_metrics as sample_27
+                            where (false)
+                              or (false)
+                            limit 70)))
+                      and (false)))
+                  and (subq_12.c0 is not NULL))
+                or (EXISTS (
+                  select
+                      subq_12.c2 as c0,
+                      sample_0.attcompression as c1,
+                      sample_0.attndims as c2,
+                      sample_0.attstattarget as c3,
+                      ref_21.colllocale as c4,
+                      subq_12.c0 as c5,
+                      ref_21.collisdeterministic as c6,
+                      sample_0.attbyval as c7,
+                      ref_21.collencoding as c8,
+                      subq_12.c2 as c9,
+                      ref_21.collprovider as c10,
+                      subq_12.c0 as c11,
+                      subq_12.c1 as c12
+                    from
+                      pg_catalog.pg_collation as ref_21
+                    where (false)
+                      and (EXISTS (
+                        select
+                            (select nspacl from pg_catalog.pg_namespace limit 1 offset 3)
+                               as c0
+                          from
+                            pg_catalog.pg_attrdef as sample_28
+                          where EXISTS (
+                            select
+                                sample_28.adrelid as c0,
+                                ref_21.collnamespace as c1,
+                                subq_12.c0 as c2,
+                                sample_0.attgenerated as c3,
+                                sample_0.attrelid as c4
+                              from
+                                pg_catalog.pg_extension as ref_22
+                              where ((true)
+                                  and (true))
+                                and (sample_0.attisdropped is NULL)
+                              limit 40)
+                          limit 66))
+                    limit 98)))))))
+      or ((EXISTS (
+          select
+              subq_12.c0 as c0,
+              subq_12.c0 as c1,
+              sample_29.opfnamespace as c2,
+              subq_12.c0 as c3,
+              subq_12.c2 as c4,
+              sample_29.opfname as c5
+            from
+              pg_catalog.pg_opfamily as sample_29
+            where false
+            limit 103))
+        or (false)))
+    and (true))
+  or ((sample_0.attndims is not NULL)
+    and (EXISTS (
+      select
+          subq_12.c0 as c0,
+          sample_0.attinhcount as c1
+        from
+          pg_catalog.pg_seclabel as sample_30
+        where (true)
+          or (EXISTS (
+            select
+                ref_23.spcname as c0,
+                sample_30.provider as c1,
+                sample_30.provider as c2,
+                subq_12.c0 as c3,
+                sample_0.atttypid as c4,
+                sample_0.attcompression as c5,
+                sample_0.attisdropped as c6,
+                subq_12.c0 as c7,
+                ref_23.spcacl as c8,
+                sample_0.attstattarget as c9,
+                (select srvname from pg_catalog.pg_foreign_server limit 1 offset 3)
+                   as c10,
+                ref_23.spcoptions as c11,
+                ref_23.spcowner as c12,
+                subq_12.c2 as c13
+              from
+                pg_catalog.pg_tablespace as ref_23
+              where (true)
+                or ((sample_30.provider is not NULL)
+                  and ((((false)
+                        or (((ref_23.spcowner is NULL)
+                            or ((select srvtype from pg_catalog.pg_foreign_server limit 1 offset 6)
+                                 is not NULL))
+                          or (ref_23.spcacl is not NULL)))
+                      or (true))
+                    or (false)))
+              limit 133)))))
+
+
+statement ok
+DROP TABLE fuzz_events;
+
+
+statement ok
+DROP TABLE fuzz_users;

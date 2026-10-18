@@ -229,7 +229,10 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                                    : Quote(_fast_path.key_columns[k].name),
                     " = u.__sdb_a", k);
   }
-  PrepareLookup(context, ref.catalog, inner, {});
+  duckdb::named_argument_map_t named;
+  named.insert("schema", duckdb::Value(ref.schema));
+  named.insert("table", duckdb::Value(ref.table));
+  PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
 void ExternalLookupIndexSource::BuildClickHouseQuery(

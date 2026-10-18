@@ -887,7 +887,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 
 void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
                        duckdb::LogicalOperator& root,
-                       duckdb::ClientContext& context) {
+                       duckdb::ClientContext& context, bool has_search_scan) {
   if (!expr) {
     return;
   }
@@ -931,13 +931,13 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
   } else if (expr->GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     auto& ref = expr->Cast<duckdb::BoundColumnRefExpression>();
-    if (BindingResolvesToScoreColumn(ref, root)) {
+    if (has_search_scan && BindingResolvesToScoreColumn(ref, root)) {
       ref.SetAlias({});
     }
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      RewriteCallInExpr(child, root, context);
+      RewriteCallInExpr(child, root, context, has_search_scan);
     });
 }
 
@@ -974,10 +974,19 @@ void ReuseExistingScoreColumn(duckdb::Expression& order_expr,
   }
 }
 
+bool HasSearchScan(duckdb::LogicalOperator& op) {
+  if (AsSearchScan(op)) {
+    return true;
+  }
+  return absl::c_any_of(op.children,
+                        [](auto& child) { return HasSearchScan(*child); });
+}
+
 void RewriteIResearchExpressions(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-  duckdb::unique_ptr<duckdb::LogicalOperator>& plan, duckdb::Binder& binder) {
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan, duckdb::Binder& binder,
+  bool has_search_scan) {
   if (plan->type == duckdb::LogicalOperatorType::LOGICAL_DELETE ||
       plan->type == duckdb::LogicalOperatorType::LOGICAL_UPDATE ||
       plan->type == duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO) {
@@ -985,7 +994,7 @@ void RewriteIResearchExpressions(
   }
 
   for (auto& child : plan->children) {
-    RewriteIResearchExpressions(context, root, child, binder);
+    RewriteIResearchExpressions(context, root, child, binder, has_search_scan);
   }
 
   switch (plan->type) {
@@ -993,19 +1002,23 @@ void RewriteIResearchExpressions(
     case duckdb::LogicalOperatorType::LOGICAL_FILTER:
     case duckdb::LogicalOperatorType::LOGICAL_WINDOW:
       for (auto& e : plan->expressions) {
-        RewriteCallInExpr(e, *root, context);
+        RewriteCallInExpr(e, *root, context, has_search_scan);
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
       for (auto& o : plan->Cast<duckdb::LogicalOrder>().orders) {
-        RewriteCallInExpr(o.expression, *root, context);
-        ReuseExistingScoreColumn(*o.expression, *root);
+        RewriteCallInExpr(o.expression, *root, context, has_search_scan);
+        if (has_search_scan) {
+          ReuseExistingScoreColumn(*o.expression, *root);
+        }
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
       for (auto& o : plan->Cast<duckdb::LogicalTopN>().orders) {
-        RewriteCallInExpr(o.expression, *root, context);
-        ReuseExistingScoreColumn(*o.expression, *root);
+        RewriteCallInExpr(o.expression, *root, context, has_search_scan);
+        if (has_search_scan) {
+          ReuseExistingScoreColumn(*o.expression, *root);
+        }
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY:
@@ -1190,8 +1203,8 @@ bool TryClaimSearchFilter(
 void RewriteSearchCallsToColumnRefs(
   duckdb::OptimizerExtensionInput& input,
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  RewriteIResearchExpressions(input.context, plan, plan,
-                              input.optimizer.binder);
+  RewriteIResearchExpressions(input.context, plan, plan, input.optimizer.binder,
+                              HasSearchScan(*plan));
 }
 
 void LimitTsDictScans(duckdb::OptimizerExtensionInput&,

@@ -170,8 +170,9 @@ class LiveTermCount : public Root,
     }
     SDB_ASSERT(left <= _left_in_list);
     const auto skipped = _left_in_list - left;
-    In().Seek(_walk.Landing().doc_ptr);
-    _last = _walk.Landing().doc;
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
     _left_in_list = left;
     return skipped;
   }

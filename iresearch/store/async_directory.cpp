@@ -25,9 +25,12 @@
 #include <absl/strings/str_cat.h>
 #include <liburing.h>
 
-#include "iresearch/error/error.hpp"
+#include <cstring>
+
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/pg/errcode_for_file_access.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -84,8 +87,13 @@ SegregatedBuffer::SegregatedBuffer() : _buffer{Allocate()} {
 class URing {
  public:
   URing(size_t queue_size, unsigned flags) {
-    if (io_uring_queue_init(queue_size, &ring, flags) != 0) {
-      throw NotSupported{};
+    if (const int ret = io_uring_queue_init(queue_size, &ring, flags);
+        ret != 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(-ret == ENOSYS || -ret == EPERM
+                   ? ERRCODE_FEATURE_NOT_SUPPORTED
+                   : ERRCODE_INSUFFICIENT_RESOURCES),
+        ERR_MSG("asynchronous I/O is not available: ", std::strerror(-ret)));
     }
   }
 
@@ -107,15 +115,19 @@ class URing {
 
 void URing::RegBuffer(byte_type* b, size_t size) {
   iovec iovec{.iov_base = b, .iov_len = size};
-  if (io_uring_register_buffers(&ring, &iovec, 1) != 0) {
-    throw IllegalState("failed to register buffer");
+  if (const int ret = io_uring_register_buffers(&ring, &iovec, 1); ret != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_RESOURCES),
+                    ERR_MSG("failed to register an asynchronous I/O buffer: ",
+                            std::strerror(-ret)));
   }
 }
 
 void URing::Submit() {
   const int ret = io_uring_submit(&ring);
   if (ret < 0) {
-    throw IoError{absl::StrCat("failed to submit write request, error ", -ret)};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("failed to submit write request: ", std::strerror(-ret)));
   }
 }
 
@@ -126,7 +138,9 @@ bool URing::Deque(bool wait, uint64_t* data) {
 
   if (ret < 0) {
     if (ret != -EAGAIN) {
-      throw IoError{absl::StrCat("Failed to peek a request, error ", -ret)};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_IO_ERROR),
+        ERR_MSG("Failed to peek a request: ", std::strerror(-ret)));
     }
 
     return false;
@@ -134,8 +148,9 @@ bool URing::Deque(bool wait, uint64_t* data) {
 
   SDB_ASSERT(cqe != nullptr);
   if (cqe->res < 0) {
-    throw IoError{
-      absl::StrCat("Async i/o operation failed, error ", -cqe->res)};
+    THROW_SQL_ERROR(
+      ERR_CODE(pg::ErrcodeForFileAccess(-cqe->res)),
+      ERR_MSG("Async i/o operation failed: ", std::strerror(-cqe->res)));
   }
 
   *data = cqe->user_data;
@@ -244,8 +259,7 @@ void AsyncFile::Drain(bool wait) {
 
 class AsyncIndexOutput final : public IndexOutput {
  public:
-  static IndexOutput::ptr Open(const path_char_t* name,
-                               AsyncFilePtr&& async) noexcept;
+  static IndexOutput::ptr Open(const path_char_t* name, AsyncFilePtr&& async);
 
   void Flush() final;
 
@@ -303,31 +317,22 @@ class AsyncIndexOutput final : public IndexOutput {
 };
 
 IndexOutput::ptr AsyncIndexOutput::Open(const path_char_t* name,
-                                        AsyncFilePtr&& async) noexcept {
+                                        AsyncFilePtr&& async) {
   SDB_ASSERT(name);
-
-  if (!async) {
-    return nullptr;
-  }
+  SDB_ASSERT(async);
 
   file_utils::handle_t handle(
     file_utils::Open(name, file_utils::OpenMode::Write, IR_FADVICE_NORMAL));
 
   if (nullptr == handle) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to open output file, error: ", GET_ERROR(),
-                           ", path: ", file_utils::ToStr(name)));
-
-    return nullptr;
+    const int error = GET_ERROR();
+    THROW_SQL_ERROR(ERR_CODE(pg::ErrcodeForFileAccess(error)),
+                    ERR_MSG("Failed to create file '", file_utils::ToStr(name),
+                            "': ", std::strerror(error)));
   }
 
-  try {
-    return IndexOutput::ptr{
-      new AsyncIndexOutput{std::move(async), std::move(handle)}};
-  } catch (...) {
-  }
-
-  return nullptr;
+  return IndexOutput::ptr{
+    new AsyncIndexOutput{std::move(async), std::move(handle)}};
 }
 
 void AsyncIndexOutput::Flush() {
@@ -380,18 +385,11 @@ AsyncDirectory::AsyncDirectory(std::filesystem::path dir,
     _queue_size{queue_size},
     _flags{flags} {}
 
-IndexOutput::ptr AsyncDirectory::create(std::string_view name) noexcept {
+IndexOutput::ptr AsyncDirectory::create(std::string_view name) {
   std::filesystem::path path;
-
-  try {
-    (path /= this->path()) /= name;
-
-    return AsyncIndexOutput::Open(path.c_str(),
-                                  _async_pool.emplace(_queue_size, _flags));
-  } catch (...) {
-  }
-
-  return nullptr;
+  (path /= this->path()) /= name;
+  return AsyncIndexOutput::Open(path.c_str(),
+                                _async_pool.emplace(_queue_size, _flags));
 }
 
 bool AsyncDirectory::sync(std::span<const std::string_view> names) noexcept {

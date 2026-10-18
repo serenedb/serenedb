@@ -20,8 +20,10 @@
 
 #include "network/http/routes.h"
 
+#include <algorithm>
 #include <array>
 
+#include "network/http/common.h"
 #include "network/http/es/handlers.h"
 #include "network/http/mcp/handlers.h"
 #include "network/http/otel/handlers.h"
@@ -142,6 +144,25 @@ void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis) {
       }
     }
   }
+}
+
+uint64_t MaxBodyBytes(std::span<const HttpApi> apis) noexcept {
+  uint64_t bytes = 0;
+  for (const auto api : apis) {
+    switch (api) {
+      case HttpApi::Es:
+      case HttpApi::Test:
+        bytes = std::max(bytes, kEsMaxBodyBytes);
+        break;
+      case HttpApi::Otel:
+        bytes = std::max(bytes, kOtelMaxBodyBytes);
+        break;
+      case HttpApi::Mcp:
+        bytes = std::max(bytes, kMcpMaxBodyBytes);
+        break;
+    }
+  }
+  return bytes;
 }
 
 }  // namespace sdb::network::http

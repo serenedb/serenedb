@@ -88,8 +88,7 @@ std::string QuoteIdentifier(std::string_view ident) {
     }
   }
   if (safe) {
-    const auto category =
-      duckdb::KeywordHelper::KeywordCategoryType(std::string{ident});
+    const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
     safe = category == duckdb::KeywordCategory::KEYWORD_NONE ||
            category == duckdb::KeywordCategory::KEYWORD_UNRESERVED;
   }
@@ -106,6 +105,23 @@ std::string QuoteIdentifier(std::string_view ident) {
     out += c;
   }
   out += '"';
+  return out;
+}
+
+std::string QuoteLiteral(std::string_view value) {
+  std::string out;
+  out.reserve(value.size() + 3);
+  if (value.find('\\') != std::string_view::npos) {
+    out += 'E';
+  }
+  out += '\'';
+  for (const auto c : value) {
+    if (c == '\'' || c == '\\') {
+      out += c;
+    }
+    out += c;
+  }
+  out += '\'';
   return out;
 }
 

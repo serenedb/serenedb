@@ -86,7 +86,7 @@ enum class ArrayKind {
   MultiDimensions,
 };
 
-inline constexpr int32_t kDynamicOid = -2;
+inline constexpr uint64_t kDynamicOid = std::numeric_limits<uint64_t>::max();
 
 enum class WrapContext : uint8_t {
   None,
@@ -724,12 +724,13 @@ struct IntTextCore {
 struct OidBinCore {
   using Value = int64_t;
   static constexpr uint32_t kMaxBytes = 4;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value oid) {
-    if (oid != static_cast<int32_t>(oid)) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value value) {
+    const auto oid = OidFromSql(value);
+    if (oid != WireOid(oid)) {
       SDB_WARN(HTTP, "reg* OID ", oid,
                " truncated to 32-bit for binary wire protocol");
     }
-    absl::big_endian::Store32(dst, static_cast<int32_t>(oid));
+    absl::big_endian::Store32(dst, WireOid(oid));
     return 4;
   }
 };
@@ -1182,21 +1183,21 @@ struct DateBinCore {
 struct RegtypeTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegtypeOut(oid));
+    EmitEscaped(ctx, RegtypeOut(ctx.client, OidFromSql(oid)));
   }
 };
 
 struct RegclassTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegclassOut(ctx.client, oid));
+    EmitEscaped(ctx, RegclassOut(ctx.client, OidFromSql(oid)));
   }
 };
 
 struct RegnamespaceTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegnamespaceOut(ctx.client, oid));
+    EmitEscaped(ctx, RegnamespaceOut(ctx.client, OidFromSql(oid)));
   }
 };
 
@@ -1480,7 +1481,8 @@ struct RecordBinCore {
     absl::big_endian::Store32(nfields_data,
                               static_cast<int32_t>(cache.functions.size()));
     for (size_t i = 0; i < cache.functions.size(); ++i) {
-      absl::big_endian::Store32(context.writer->Alloc(4), cache.oids[i]);
+      absl::big_endian::Store32(context.writer->Alloc(4),
+                                WireOid(cache.oids[i]));
       cache.functions[i](context, vdata.children[i], row);
     }
   }
@@ -1801,7 +1803,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   return has_null;
 }
 
-template<typename Core, int32_t ElementOID, VarFormat Format,
+template<typename Core, uint64_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct OneDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
@@ -1842,7 +1844,7 @@ struct OneDimArrayCore {
         emit_inside();
       }
     } else {
-      int32_t element_oid;
+      uint64_t element_oid;
       if constexpr (ElementOID == kDynamicOid) {
         element_oid = Type2Oid(child_vdata.logical_type);
       } else {
@@ -1852,12 +1854,12 @@ struct OneDimArrayCore {
         auto* prefix_data = context.writer->Alloc(12);
         absl::big_endian::Store32(prefix_data, /*dims*/ 0);
         absl::big_endian::Store32(prefix_data + 4, /*array_size*/ 0);
-        absl::big_endian::Store32(prefix_data + 8, element_oid);
+        absl::big_endian::Store32(prefix_data + 8, WireOid(element_oid));
         return;
       }
       auto* prefix_data = context.writer->Alloc(20);
       absl::big_endian::Store32(prefix_data, /*dims*/ 1);
-      absl::big_endian::Store32(prefix_data + 8, element_oid);
+      absl::big_endian::Store32(prefix_data + 8, WireOid(element_oid));
       absl::big_endian::Store32(prefix_data + 12, array_size);
       absl::big_endian::Store32(prefix_data + 16, 1);
       const bool has_null = EmitArrayElems<Core, VarFormat::Binary>(
@@ -1869,7 +1871,7 @@ struct OneDimArrayCore {
 
 template<typename Core>
 void FlattenArray(SerializationContext& context, const RUVF& vdata,
-                  duckdb::idx_t source_row, int32_t& leaf_oid, bool& has_null,
+                  duckdb::idx_t source_row, uint64_t& leaf_oid, bool& has_null,
                   uint8_t* dim_sizes_data, int32_t depth) {
   auto [array_size, array_offset] = GetSliceResolved(vdata, source_row);
   absl::big_endian::Store32(dim_sizes_data + depth * 8,
@@ -1927,7 +1929,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
   }
 }
 
-template<typename Core, int32_t ElementOID, VarFormat Format,
+template<typename Core, uint64_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct MultiDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
@@ -2005,7 +2007,7 @@ struct MultiDimArrayCore {
       // `row` is already the resolved source row.
       if (GetSliceResolved(vdata, row).size == 0) {
         // PG sends an empty array as ndim=0 with no dimension descriptors.
-        int32_t leaf_oid;
+        uint64_t leaf_oid;
         if constexpr (ElementOID == kDynamicOid) {
           leaf_oid = Type2Oid(*t);
         } else {
@@ -2014,20 +2016,20 @@ struct MultiDimArrayCore {
         auto* prefix_data = context.writer->Alloc(12);
         absl::big_endian::Store32(prefix_data, 0);
         absl::big_endian::Store32(prefix_data + 4, 0);
-        absl::big_endian::Store32(prefix_data + 8, leaf_oid);
+        absl::big_endian::Store32(prefix_data + 8, WireOid(leaf_oid));
         return;
       }
       // PG binary array: 12-byte top header (ndim, flags, elemtype) followed
       // by ndim*8 bytes of {dim_size, lbound} pairs, then element bytes.
       // FlattenArray fills each dim's size into its slot as it descends.
       auto* prefix_data = context.writer->Alloc(12 + ndim * 8);
-      int32_t leaf_oid = ElementOID;
+      uint64_t leaf_oid = ElementOID;
       bool has_null = false;
       FlattenArray<Core>(context, vdata, row, leaf_oid, has_null,
                          prefix_data + 12, 0);
       absl::big_endian::Store32(prefix_data, ndim);
       absl::big_endian::Store32(prefix_data + 4, has_null ? 1 : 0);
-      absl::big_endian::Store32(prefix_data + 8, leaf_oid);
+      absl::big_endian::Store32(prefix_data + 8, WireOid(leaf_oid));
     }
   }
 };
@@ -2051,7 +2053,7 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
   return SerializeField<Framing::BinaryField, TextCore>;
 }
 
-template<typename TextCore, typename BinaryCore, int32_t Oid>
+template<typename TextCore, typename BinaryCore, uint64_t Oid>
 SerializationFunction MakeArraySerializer(VarFormat format,
                                           SerializationContext& context,
                                           ArrayKind kind) {

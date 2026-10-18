@@ -25,12 +25,12 @@ if [[ ! -x "$SERENED" ]]; then
 	exit 1
 fi
 if ! command -v python3 >/dev/null 2>&1; then
-	echo "[network] python3 not found; skipping" >&2
-	exit 0
+	echo "[network] python3 not found" >&2
+	exit 1
 fi
 if ! command -v psql >/dev/null 2>&1; then
-	echo "[network] psql not found; skipping (mask test needs SET hba over psql)" >&2
-	exit 0
+	echo "[network] psql not found (mask test needs SET hba over psql)" >&2
+	exit 1
 fi
 
 echo "[network] running HBA mask test (serened=$SERENED)"

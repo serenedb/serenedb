@@ -1,0 +1,99 @@
+statement ok
+DROP DATABASE IF EXISTS papich_ghost;
+
+
+connection pudge
+statement ok
+BEGIN;
+
+
+connection pudge
+statement ok
+CREATE DATABASE papich_ghost;
+
+
+connection donsimon
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'papich_ghost';
+----
+n
+0
+
+
+connection donsimon
+statement error
+CREATE TABLE papich_ghost.public.ghost_t (x INT);
+----
+db error: ERROR: database "papich_ghost" does not exist
+
+
+connection donsimon
+statement error
+CREATE DATABASE papich_ghost;
+----
+db error: ERROR: database "papich_ghost" is being created by another transaction
+
+
+connection donsimon
+statement error
+CREATE DATABASE IF NOT EXISTS papich_ghost;
+----
+db error: ERROR: database "papich_ghost" is being created by another transaction
+
+
+connection pudge
+statement ok
+ROLLBACK;
+
+
+connection donsimon
+statement ok
+CREATE DATABASE papich_ghost;
+
+
+connection donsimon
+statement ok
+CREATE TABLE papich_ghost.public.ghost_t (x INT);
+
+
+connection donsimon
+statement ok
+INSERT INTO papich_ghost.public.ghost_t VALUES (1);
+
+
+connection donsimon
+query
+SELECT count(*) AS n FROM papich_ghost.public.ghost_t;
+----
+n
+1
+
+
+connection donsimon
+statement ok
+BEGIN;
+
+
+connection donsimon
+statement error
+DROP DATABASE papich_ghost;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+connection donsimon
+statement ok
+ROLLBACK;
+
+
+connection donsimon
+query
+SELECT count(*) AS n FROM papich_ghost.public.ghost_t;
+----
+n
+1
+
+
+connection donsimon
+statement ok
+DROP DATABASE papich_ghost;

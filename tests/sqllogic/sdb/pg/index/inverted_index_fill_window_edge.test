@@ -1,0 +1,89 @@
+hash-threshold 200
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fill_edge_en AS split_by_non_alpha(case := 'lower');
+
+
+statement ok
+CREATE TABLE fill_edge (id INTEGER, body VARCHAR);
+
+
+statement ok
+INSERT INTO fill_edge
+SELECT r, concat_ws(' ',
+    CASE WHEN r >= 2 AND (r - 2) % 3 <> 2 THEN 'aligned' END,
+    CASE WHEN r >= 258 AND (r - 258) % 3 <> 2 THEN 'flush' END,
+    CASE WHEN r >= 3 AND (r - 3) % 3 <> 2 THEN 'shifted' END,
+    CASE WHEN r = 8700 THEN 'lone' END,
+    'every')
+FROM range(1, 8701) t(r);
+
+
+statement ok
+CREATE INDEX fill_edge_idx ON fill_edge USING inverted(body fill_edge_en);
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx
+    WHERE body @@ ('aligned'::TSQUERY || ('every'::TSQUERY && 'lone'::TSQUERY))) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE (id >= 2 AND (id - 2) % 3 <> 2) OR id = 8700) AS scanned;
+----
+indexed	scanned
+25235800	25235800
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx
+    WHERE body @@ ('flush'::TSQUERY || ('every'::TSQUERY && 'lone'::TSQUERY))) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE (id >= 258 AND (id - 258) % 3 <> 2) OR id = 8700) AS scanned;
+----
+indexed	scanned
+25210884	25210884
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx
+    WHERE body @@ ('shifted'::TSQUERY || ('every'::TSQUERY && 'lone'::TSQUERY))) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE (id >= 3 AND (id - 3) % 3 <> 2) OR id = 8700) AS scanned;
+----
+indexed	scanned
+25232899	25232899
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx WHERE body @@ ('every'::TSQUERY && !!'aligned'::TSQUERY)) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE NOT (id >= 2 AND (id - 2) % 3 <> 2)) AS scanned;
+----
+indexed	scanned
+12613550	12613550
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx WHERE body @@ ('every'::TSQUERY && !!'flush'::TSQUERY)) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE NOT (id >= 258 AND (id - 258) % 3 <> 2)) AS scanned;
+----
+indexed	scanned
+12638466	12638466
+
+
+query
+SELECT
+  (SELECT sum(id) FROM fill_edge_idx WHERE body @@ ('every'::TSQUERY && !!'shifted'::TSQUERY)) AS indexed,
+  (SELECT sum(id) FROM fill_edge WHERE NOT (id >= 3 AND (id - 3) % 3 <> 2)) AS scanned;
+----
+indexed	scanned
+12616451	12616451
+
+
+statement ok
+DROP TABLE fill_edge CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fill_edge_en;

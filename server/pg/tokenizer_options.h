@@ -131,8 +131,11 @@ inline constexpr OptionInfo kMaxGram{"max_gram", 3, "Maximum n-gram length"};
 inline constexpr OptionInfo kPreserveOriginal{
   "preserve_original", false, "Emit the original token alongside n-grams"};
 
+void CheckInputType(std::string_view option, std::string_view value);
+
 inline constexpr OptionInfo kInputType{"input_type", "utf8"sv,
-                                       "Input stream encoding: binary, utf8"};
+                                       "Input stream encoding: binary, utf8",
+                                       CheckInputType};
 
 inline constexpr OptionInfo kStartMarker{
   "start_marker", ""sv, "Prefix marker appended at n-gram boundary"};

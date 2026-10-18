@@ -150,8 +150,8 @@ template<typename Func>
 void SearchSinkInsertBaseImpl::InvertField(const Field& field, Func&& func) {
   if (!_document->WithField(field.Id(), field.GetIndexFeatures(),
                             std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 
@@ -161,8 +161,8 @@ void SearchSinkInsertBaseImpl::InvertTokens(const Field& field,
                                             Func&& func) {
   if (!_document->WithTokens(field.Id(), field.GetIndexFeatures(), store,
                              std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 
@@ -171,8 +171,8 @@ void SearchSinkInsertBaseImpl::InvertEntryTokens(const Field& field,
                                                  Func&& func) {
   if (!_document->WithEntryTokens(field.Id(), field.GetIndexFeatures(),
                                   std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 
@@ -940,6 +940,19 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
     _trx->Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
+}
+
+void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
+                         std::span<const int64_t> rows) {
+  SearchSinkDeleteBaseImpl remover{trx};
+  remover.InitImpl(rows.size());
+  std::string key;
+  for (const auto row : rows) {
+    key.clear();
+    primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
+    remover.DeleteRowImpl(key);
+  }
+  remover.FinishImpl();
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

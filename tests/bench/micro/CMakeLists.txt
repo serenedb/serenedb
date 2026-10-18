@@ -62,12 +62,15 @@ add_bench(document_mask)
 add_bench(docs_mask_kinds)
 add_bench(function)
 add_bench(hash_map)
+add_bench(insertion_order_map)
 add_bench(tokenizer_pool)
 add_bench(invert_kernels)
 add_bench(lower_bound)
+add_bench(exclude_costs)
 add_bench(memory_file)
 add_bench(multi_delimited_tokenizer)
 add_bench(posting_fill_seek)
+add_bench(posting_block_codec)
 add_bench(text_stream)
 add_bench(split_by_non_alpha)
 add_bench(term_enumeration)
@@ -80,10 +83,15 @@ add_bench(json_functions)
 add_bench(config_var_lookup)
 add_bench(setting_ref)
 add_bench(norm_gather)
+add_bench(norm_fetch)
 add_bench(word_bloom)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
+add_bench(http_codecs)
 add_bench(http_compression)
+add_bench(http_response)
+add_bench(http_router)
+add_bench(listen_spec)
 add_bench(sloppy_phrase_vs_disjunction)
 add_bench(phrase_search)
 add_bench(filter_prepare)
@@ -143,7 +151,6 @@ set_property(
 add_library(
     serenedb-bench-docs-mask-iresearch
     STATIC
-    ${CMAKE_SOURCE_DIR}/iresearch/error/error.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/index/docs_mask/chunks.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/index/document_mask.cpp
     ${CMAKE_SOURCE_DIR}/iresearch/utils/crash_handler.cpp

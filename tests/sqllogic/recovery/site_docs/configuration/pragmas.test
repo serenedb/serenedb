@@ -482,24 +482,6 @@ SET log_query_path = '${__TEST_DIR__}/configuration_pragmas_example_048_duckdb_l
 statement ok
 SET log_query_path = '';
 
-# DOCS_TEST: example_054
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA enable_object_cache;
-----
-Success
-
-# DOCS_TEST: example_055
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA disable_object_cache;
-----
-Success
-
 # DOCS_TEST: example_056
 
 # DOCS_TEST_BODY
@@ -574,24 +556,6 @@ Did you mean "<slt:ignore>"?
 
 statement ok
 SET ieee_floating_point_ops = false;
-
-# DOCS_TEST: example_065
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA enable_verification;
-----
-Success
-
-# DOCS_TEST: example_066
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA disable_verification;
-----
-Success
 
 # DOCS_TEST: example_067
 

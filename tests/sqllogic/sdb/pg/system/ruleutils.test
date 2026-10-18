@@ -210,7 +210,7 @@ proname	def
 add1	CREATE OR REPLACE FUNCTION rs.add1(x integer, y integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$(SELECT (x + y) LIMIT 1)$function$\n
 m	CREATE MACRO rs.m (a, b := 3) AS ((a + b));
 p	CREATE OR REPLACE PROCEDURE rs.p(IN x integer)\n LANGUAGE sql\nAS $procedure$SELECT 1$procedure$\n
-tf	CREATE OR REPLACE FUNCTION rs.tf(n integer)\n RETURNS TABLE(i integer, s text)\n LANGUAGE sql\nAS $function$SELECT n AS i, 'x' AS s$function$\n
+tf	CREATE OR REPLACE FUNCTION rs.tf(n integer)\n RETURNS TABLE(i integer, s text)\n LANGUAGE sql\nAS $function$SELECT n, 'x'$function$\n
 
 
 query

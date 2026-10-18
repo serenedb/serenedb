@@ -66,6 +66,11 @@ on:
         type: string
         required: false
         default: ""
+      BUILD_IMAGE:
+        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        type: string
+        required: false
+        default: ""
       FUZZ_QUERIES:
         description: "sqlsmith --max-queries per instance (empty = runner default)"
         type: string
@@ -153,6 +158,11 @@ on:
         type: string
         required: false
         default: ""
+      BUILD_IMAGE:
+        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        type: string
+        required: false
+        default: ""
       FUZZ_QUERIES:
         type: string
         required: false
@@ -181,7 +191,7 @@ on:
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
   SDB_TIMING_CACHE: /mnt/data/sdb-ci/timing
@@ -337,6 +347,10 @@ jobs:
           BIGLAKE_PRIVATE_KEY: ${{ secrets.BIGLAKE_PRIVATE_KEY }}
           BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
         run: BUILD_DIR=build CONFIG="${{ inputs.CONFIG }}" ./scripts/ci/steps/run-suites.sh
+
+      - name: Summary
+        if: always() && steps.build.outcome == 'success'
+        run: ./scripts/ci/steps/07-ci-summary.bash
 
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''

@@ -1,0 +1,64 @@
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE papich_chat (id INT PRIMARY KEY, word TEXT, mood TEXT);
+
+
+statement ok
+CREATE INDEX papich_chat_word ON papich_chat USING inverted (word);
+
+
+statement ok
+CREATE INDEX papich_chat_mood ON papich_chat USING inverted (mood);
+
+
+statement ok
+INSERT INTO papich_chat SELECT i, 'word' || (i % 5), 'mood' || (i % 3) FROM range(0, 100000) t(i);
+
+
+statement ok
+INSERT INTO papich_chat SELECT i, 'word' || (i % 5), 'mood' || (i % 3) FROM range(100000, 200000) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO papich_chat SELECT i, 'word' || (i % 5), 'mood' || (i % 3) FROM range(200000, 250000) t(i);
+
+
+statement ok
+INSERT INTO papich_chat SELECT i, 'word' || (i % 5), 'mood' || (i % 3) FROM range(250000, 300000) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) papich_chat;
+
+
+query
+SELECT (SELECT count(*) FROM papich_chat_word) AS words, (SELECT count(*) FROM papich_chat_mood) AS moods, (SELECT count(*) FROM papich_chat_word WHERE word @@ 'word2') AS word2, (SELECT count(*) FROM papich_chat_mood WHERE mood @@ 'mood1') AS mood1;
+----
+words	moods	word2	mood1
+300000	300000	60000	100000
+
+
+statement ok
+DELETE FROM papich_chat WHERE id % 2 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) papich_chat;
+
+
+query
+SELECT (SELECT count(*) FROM papich_chat_word) AS words, (SELECT count(*) FROM papich_chat_mood) AS moods;
+----
+words	moods
+150000	150000

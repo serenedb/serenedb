@@ -1,0 +1,206 @@
+control substitution on
+
+statement ok
+CREATE DATABASE exf_src;
+
+
+statement ok
+USE exf_src;
+
+
+statement ok
+CREATE TABLE f (id INT, n NUMERIC(38, 10), b BYTEA, j JSON, bits BIT, iv INTERVAL, t TEXT);
+
+
+statement ok
+INSERT INTO f VALUES (1, 1234567890.0123456789, '\x00ff'::BYTEA, '{"a": [1, 2]}', '1011', INTERVAL '1 day 02:03:04', 'x'), (2, 0, ''::BYTEA, 'null', '0', INTERVAL '0', ''), (3, NULL, NULL, NULL, NULL, NULL, NULL);
+
+
+statement ok
+CREATE TABLE neg (iv INTERVAL);
+
+
+statement ok
+INSERT INTO neg VALUES (INTERVAL '-1 day');
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_csv' (FORMAT csv);
+
+
+statement ok
+CREATE DATABASE exf_csv;
+
+
+statement ok
+USE exf_csv;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_csv';
+
+
+statement ok
+USE exf_src;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_text' (FORMAT text);
+
+
+statement ok
+CREATE DATABASE exf_text;
+
+
+statement ok
+USE exf_text;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_text';
+
+
+statement ok
+USE exf_src;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_binary' (FORMAT binary);
+
+
+statement ok
+CREATE DATABASE exf_binary;
+
+
+statement ok
+USE exf_binary;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_binary';
+
+
+statement ok
+USE exf_src;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_json' (FORMAT json);
+
+
+statement ok
+CREATE DATABASE exf_json;
+
+
+statement ok
+USE exf_json;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_json';
+
+
+statement ok
+USE exf_src;
+
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM exf_src.public.f EXCEPT ALL SELECT * FROM exf_csv.public.f)) AS only_src, (SELECT count(*) FROM (SELECT * FROM exf_csv.public.f EXCEPT ALL SELECT * FROM exf_src.public.f)) AS only_dst, (SELECT count(*) FROM (SELECT * FROM exf_src.public.neg EXCEPT ALL SELECT * FROM exf_csv.public.neg)) AS neg_diff;
+----
+only_src	only_dst	neg_diff
+0	0	0
+
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM exf_src.public.f EXCEPT ALL SELECT * FROM exf_text.public.f)) AS only_src, (SELECT count(*) FROM (SELECT * FROM exf_text.public.f EXCEPT ALL SELECT * FROM exf_src.public.f)) AS only_dst, (SELECT count(*) FROM (SELECT * FROM exf_src.public.neg EXCEPT ALL SELECT * FROM exf_text.public.neg)) AS neg_diff;
+----
+only_src	only_dst	neg_diff
+0	0	0
+
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM exf_src.public.f EXCEPT ALL SELECT * FROM exf_binary.public.f)) AS only_src, (SELECT count(*) FROM (SELECT * FROM exf_binary.public.f EXCEPT ALL SELECT * FROM exf_src.public.f)) AS only_dst, (SELECT count(*) FROM (SELECT * FROM exf_src.public.neg EXCEPT ALL SELECT * FROM exf_binary.public.neg)) AS neg_diff;
+----
+only_src	only_dst	neg_diff
+0	0	0
+
+
+query
+SELECT id, n::TEXT AS n, encode(b, 'hex') AS b, j::TEXT AS j, j IS NULL AS j_null, bits::TEXT AS bits, iv::TEXT AS iv, t FROM exf_json.public.f ORDER BY id;
+----
+id	n	b	j	j_null	bits	iv	t
+1	1234567890.0123457536	5c7830305c784646	{"a":[1,2]}	f	1011	1 day 02:03:04	x
+2	0.0000000000	(empty)	NULL	t	0	00:00:00	(empty)
+3	NULL	NULL	NULL	t	NULL	NULL	NULL
+
+
+query
+SELECT iv::TEXT AS iv FROM exf_json.public.neg;
+----
+iv
+-1 days
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/exf_parquet_neg' (FORMAT parquet);
+----
+db error: ERROR: Parquet files do not support negative intervals
+
+
+statement ok
+DROP TABLE neg;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE DATABASE exf_parquet;
+
+
+statement ok
+USE exf_parquet;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_parquet';
+
+
+statement ok
+USE exf_src;
+
+
+query
+SELECT (SELECT count(*) FROM (SELECT * FROM exf_src.public.f EXCEPT ALL SELECT * FROM exf_parquet.public.f)) AS only_src, (SELECT count(*) FROM (SELECT * FROM exf_parquet.public.f EXCEPT ALL SELECT * FROM exf_src.public.f)) AS only_dst;
+----
+only_src	only_dst
+0	0
+
+
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE exf_csv;
+
+
+statement ok
+DROP DATABASE exf_text;
+
+
+statement ok
+DROP DATABASE exf_binary;
+
+
+statement ok
+DROP DATABASE exf_json;
+
+
+statement ok
+DROP DATABASE exf_parquet;
+
+
+statement ok
+DROP DATABASE exf_src;

@@ -59,7 +59,39 @@ std::vector<duckdb::string_t> KeyTerms(
 using namespace sdb;
 using namespace connector;
 
-irs::doc_id_t SeekPostings(irs::TermPostings& postings, irs::doc_id_t target) {
+class DocCursor {
+ public:
+  DocCursor(irs::TermPostings::ptr postings, const irs::DocumentMask* mask)
+    : _postings{std::move(postings)}, _mask{mask} {}
+
+  irs::doc_id_t Next() {
+    while (true) {
+      if (_at == _size) {
+        _size = _postings->NextDocs(_docs, nullptr);
+        _at = 0;
+        if (_size == 0) {
+          return _doc = irs::doc_limits::eof();
+        }
+      }
+      _doc = _docs[_at++];
+      if (_mask == nullptr || !_mask->Contains(_doc)) {
+        return _doc;
+      }
+    }
+  }
+
+  irs::doc_id_t Value() const noexcept { return _doc; }
+
+ private:
+  irs::TermPostings::ptr _postings;
+  const irs::DocumentMask* _mask;
+  irs::doc_id_t _docs[irs::doc_limits::kBlockSize];
+  uint32_t _at = 0;
+  uint32_t _size = 0;
+  irs::doc_id_t _doc = irs::doc_limits::invalid();
+};
+
+irs::doc_id_t SeekPostings(DocCursor& postings, irs::doc_id_t target) {
   auto doc = postings.Value();
   while (doc < target) {
     doc = postings.Next();
@@ -67,38 +99,13 @@ irs::doc_id_t SeekPostings(irs::TermPostings& postings, irs::doc_id_t target) {
   return doc;
 }
 
-class MaskedPostings : public irs::TermPostings {
- public:
-  MaskedPostings(irs::TermPostings::ptr postings, const irs::DocumentMask& mask)
-    : _postings{std::move(postings)}, _mask{mask} {}
+std::unique_ptr<DocCursor> Docs(irs::TermPostings::ptr postings) {
+  return std::make_unique<DocCursor>(std::move(postings), nullptr);
+}
 
-  irs::doc_id_t Next() final {
-    for (;;) {
-      _doc = _postings->Next();
-      if (irs::doc_limits::eof(_doc) || !_mask.Contains(_doc)) {
-        return _doc;
-      }
-    }
-  }
-
-  uint32_t GetFreq() const final { return _postings->GetFreq(); }
-
-  irs::PosAttr* Positions() noexcept final { return _postings->Positions(); }
-
-  void Subscribe(AttrRefresh refresh) final { _postings->Subscribe(refresh); }
-
- private:
-  irs::TermPostings::ptr _postings;
-  const irs::DocumentMask& _mask;
-};
-
-irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
-                                    irs::TermPostings::ptr postings) {
-  const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->Empty()) {
-    return postings;
-  }
-  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+std::unique_ptr<DocCursor> MaskPostings(const irs::SubReader& segment,
+                                        irs::TermPostings::ptr postings) {
+  return std::make_unique<DocCursor>(std::move(postings), segment.docs_mask());
 }
 
 constexpr irs::field_id kPKFieldId = connector::kGeneratedPKId;
@@ -590,11 +597,11 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator();
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
-      varchar_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
     ASSERT_EQ(1, read_pk_at(varchar_postings->Value()));
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_nulls_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*varchar_nulls_postings, varchar_postings->Value())));
     // NULL is not in this row
@@ -602,7 +609,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto unknown_terms_itr = unknown_terms->iterator();
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(unknown_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*unknown_postings, varchar_postings->Value())));
     ASSERT_EQ(varchar_postings->Value(), unknown_postings->Value());
@@ -617,14 +624,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator();
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_nulls_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*varchar_nulls_postings, row_doc_id)));
     ASSERT_EQ(varchar_nulls_postings->Value(), row_doc_id);
     auto unknown_terms_itr = unknown_terms->iterator();
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(unknown_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(
       irs::doc_limits::valid(SeekPostings(*unknown_postings, row_doc_id)));
     ASSERT_EQ(unknown_postings->Value(), row_doc_id);
@@ -639,11 +646,11 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator();
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
-      varchar_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
     ASSERT_EQ(3, read_pk_at(varchar_postings->Value()));
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_nulls_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*varchar_nulls_postings, varchar_postings->Value())));
     // NULL is not in this row
@@ -651,7 +658,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto unknown_terms_itr = unknown_terms->iterator();
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(unknown_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*unknown_postings, varchar_postings->Value())));
     ASSERT_EQ(varchar_postings->Value(), unknown_postings->Value());
@@ -666,14 +673,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator();
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      Docs(varchar_nulls_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(irs::doc_limits::valid(
       SeekPostings(*varchar_nulls_postings, row_doc_id)));
     ASSERT_EQ(varchar_nulls_postings->Value(), row_doc_id);
     auto unknown_terms_itr = unknown_terms->iterator();
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      Docs(unknown_terms_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(
       irs::doc_limits::valid(SeekPostings(*unknown_postings, row_doc_id)));
     ASSERT_EQ(unknown_postings->Value(), row_doc_id);
@@ -725,7 +732,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_TRUE(varchar_terms_itr->seek(
     irs::ViewCast<irs::byte_type>(std::string_view{"\x0foo", 4})));
 
-  auto varchar_postings = varchar_terms_itr->postings(irs::IndexFeatures::None);
+  auto varchar_postings =
+    Docs(varchar_terms_itr->postings(irs::IndexFeatures::None));
   ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->Next()));
   ASSERT_EQ(1, read_pk_at(varchar_postings->Value()));
 }

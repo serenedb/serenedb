@@ -93,14 +93,13 @@ SinkFinalizeType ClickHouseDelete::Finalize(Pipeline &pipeline, Event &event, Cl
 	// Guard against deleting rows that merely share a (non-unique) key value. Very
 	// large id lists can exceed the server's max_query_size -- a loud error
 	// (per-statement settings would lift it).
-	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, gstate.pk_column, id_list, seen.size(),
-	                    "DELETE");
+	VerifyRowIdCoverage(context, connection, gstate.table.database, gstate.table.table, gstate.pk_column, id_list,
+	                    seen.size(), "DELETE");
 	string sql = "ALTER TABLE " + ClickHouseQuoteIdentifier(gstate.table.database) + "." +
 	             ClickHouseQuoteIdentifier(gstate.table.table) + " DELETE WHERE " +
 	             ClickHouseQuoteIdentifier(gstate.pk_column) + " IN (" + id_list + ") SETTINGS mutations_sync = 1";
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection.GetClient().Execute(sql);
+		connection.Execute(context, sql);
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("during DELETE", sql, e);
 	}
@@ -142,7 +141,7 @@ PhysicalOperator &ClickHouseCatalog::PlanDelete(ClientContext &context, Physical
 	auto &ch_table = op.table.Cast<ClickHouseTableEntry>();
 	string pk_column;
 	if (!ch_table.TryGetRowIdColumn(pk_column)) {
-		throw BinderException("Cannot DELETE from ClickHouse table \"%s\": it has no single integer PRIMARY KEY to "
+		throw BinderException("Cannot DELETE from ClickHouse table %s: it has no single integer PRIMARY KEY to "
 		                      "use as a row identifier",
 		                      ch_table.name);
 	}

@@ -721,7 +721,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // ExtractPlan may throw duckdb::Exception on binding errors. We want
     // those surfaced into the test result, not swallowed.
     try {
-      (void)_conn.ExtractPlan(std::string{sql});
+      (void)_conn.ExtractPlan(sql);
     } catch (const std::exception& e) {
       if (must_succeed) {
         FAIL() << "ExtractPlan threw: " << e.what();
@@ -816,8 +816,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     if (!expected_error.empty()) {
       ASSERT_FALSE(caught_message.empty())
         << "expected MakeSearchFilter to throw";
-      ASSERT_NE(caught_message.find(std::string{expected_error}),
-                std::string::npos)
+      ASSERT_NE(caught_message.find(expected_error), std::string::npos)
         << "exception message: <" << caught_message << ">\n"
         << "expected substring: <" << expected_error << ">";
       return;
@@ -4414,15 +4413,14 @@ TEST_F(SearchFilterBuilderTest,
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeNonIdentityVarchar) {
-  // VARCHAR column with a non-keyword analyzer rejects standalone
-  // RANGE (the indexed tokens are transformed; raw bounds wouldn't
-  // line up with them).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter({},
-               "SELECT * FROM foo WHERE b @@ ts_between('a', 'm', true, true)",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires keyword-analyzed column");
+  irs::BooleanFilter expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"a"}, true,
+                                   std::string_view{"m"}, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ts_between('A', 'M', true, true)",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {

@@ -581,7 +581,10 @@ if(NOT SDB_SANITIZE STREQUAL "")
         # TODO(mbkkt) patch libc++ to be able work with -fsanitize-memory-track-origins=1 (default is 2)
         # TODO(mbkkt) add ability to apply -fno-sanitize-memory-use-after-dtor
         set(SDB_SANITIZE_FLAGS -fsanitize=memory)
-        set(SDB_SANITIZE_EXTRA -fsanitize-memory-use-after-dtor)
+        set(SDB_SANITIZE_EXTRA
+            -fsanitize-memory-use-after-dtor
+            -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/resources/suppressions/msan.txt
+        )
         if(SDB_SANITIZE STREQUAL "MemoryWithOrigins")
             list(APPEND SDB_SANITIZE_EXTRA -fsanitize-memory-track-origins)
         endif()

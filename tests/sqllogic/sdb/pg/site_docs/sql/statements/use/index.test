@@ -116,3 +116,14 @@ SELECT current_schema();
 ----
 current_schema
 foo
+
+# DOCS_TEST_END
+
+statement ok
+USE postgres;
+
+statement ok
+DROP DATABASE shop;
+
+statement ok
+DROP DATABASE foo;

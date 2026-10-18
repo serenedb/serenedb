@@ -1,0 +1,47 @@
+statement ok
+CREATE TABLE didc_t (a INT, b INT, c INT);
+
+
+statement ok
+CREATE UNIQUE INDEX didc_u ON didc_t (c);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO didc_t VALUES (1, 1, 1);
+
+
+statement ok
+DROP INDEX didc_u;
+
+
+statement ok
+ALTER TABLE didc_t DROP COLUMN a;
+
+
+statement ok
+INSERT INTO didc_t VALUES (2, 2);
+
+
+statement ok
+INSERT INTO didc_t VALUES (3, 1);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT b, c FROM didc_t ORDER BY b;
+----
+b	c
+1	1
+2	2
+3	1
+
+
+statement ok
+DROP TABLE didc_t;

@@ -146,6 +146,7 @@ bool GeoTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
       _json_cap = needed;
     }
     std::memcpy(_json_buf.get(), raw.GetData(), size);
+    std::memset(_json_buf.get() + size, 0, simdjson::SIMDJSON_PADDING);
     simdjson::padded_string_view padded_view{_json_buf.get(), size, _json_cap};
     simdjson::ondemand::document doc;
     if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {

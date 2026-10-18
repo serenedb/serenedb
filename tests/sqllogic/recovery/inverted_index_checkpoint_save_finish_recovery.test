@@ -1,0 +1,41 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_finish;
+
+
+statement ok
+CREATE TABLE ckpt_finish.public.docs (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_finish.public.docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ckpt_finish.public.docs SELECT i, 'saved' FROM range(0, 1000) r(i);
+
+
+statement ok
+SET sdb_faults = 'crash_before_index_checkpoint_finish';
+
+
+statement error connection closed
+CHECKPOINT ckpt_finish;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ckpt_finish.public.docs;
+----
+n
+1000
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM ckpt_finish.public.docs_idx) AS docs, (SELECT count(*) FROM ckpt_finish.public.docs_idx WHERE body @@ 'saved') AS saved;
+----
+docs	saved
+1000	1000

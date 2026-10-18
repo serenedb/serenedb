@@ -107,9 +107,8 @@ class CapturingScorer final : public irs::Scorer {
     return _impl.PrepareScorer(ctx);
   }
 
-  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter(
-    size_t max_levels) const final {
-    return _impl.PrepareScoreBoundWriter(max_levels);
+  irs::ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final {
+    return _impl.PrepareScoreBoundWriter();
   }
 
   irs::ScoreBoundSource::ptr PrepareScoreBoundSource() const final {

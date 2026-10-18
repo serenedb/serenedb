@@ -85,8 +85,7 @@ class CaseRuns {
 };
 
 template<TokenLayout Layout, Case C, bool KeepNonAscii>
-IRS_NO_INLINE IRS_ALIGN_HOT void SplitByNonAlphaFill(duckdb::string_t raw,
-                                                     TokenSink& sink) {
+IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
   const char* const base = raw.GetData();
   const size_t size = raw.GetSize();
   const char* const limit = base + size;

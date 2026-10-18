@@ -1,0 +1,143 @@
+control substitution on
+
+statement ok
+CREATE SEQUENCE sovv_comment;
+
+
+statement ok
+CREATE SEQUENCE sovv_grant;
+
+
+statement ok
+CREATE SEQUENCE sovv_owned;
+
+
+statement ok
+CREATE SEQUENCE sovv_restart;
+
+
+statement ok
+CREATE TABLE sovv_owner (id INTEGER);
+
+
+statement ok
+CREATE ROLE sovv_reader;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON SEQUENCE sovv_comment IS 'c';
+
+
+query
+SELECT nextval('sovv_comment') AS a, nextval('sovv_comment') AS b;
+----
+a	b
+1	2
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE sovv_grant TO sovv_reader;
+
+
+query
+SELECT nextval('sovv_grant') AS a, nextval('sovv_grant') AS b, nextval('sovv_grant') AS c;
+----
+a	b	c
+1	2	3
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE sovv_owned OWNED BY sovv_owner.id;
+
+
+query
+SELECT nextval('sovv_owned') AS a;
+----
+a
+1
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE sovv_restart RESTART WITH 100;
+
+
+query
+SELECT nextval('sovv_restart') AS a, nextval('sovv_restart') AS b;
+----
+a	b
+100	101
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('sovv_comment') > 2 AS c, nextval('sovv_grant') > 3 AS g, nextval('sovv_owned') > 1 AS o, nextval('sovv_restart') > 101 AS r;
+----
+c	g	o	r
+t	t	t	t
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('sovv_comment') > 3 AS c, nextval('sovv_grant') > 4 AS g, nextval('sovv_owned') > 2 AS o, nextval('sovv_restart') > 102 AS r;
+----
+c	g	o	r
+t	t	t	t

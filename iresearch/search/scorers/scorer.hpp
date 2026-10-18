@@ -38,8 +38,6 @@ namespace irs {
 
 class DataOutput;
 struct IndexReader;
-class MemoryIndexOutput;
-class IndexOutput;
 struct SubReader;
 struct ScorerOptions;
 struct NormProvider;
@@ -75,27 +73,27 @@ struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
   virtual void Read(DataInput& in, size_t size) = 0;
+
+  virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };
 
 struct ScoreBoundWriter {
   using ptr = std::unique_ptr<ScoreBoundWriter>;
 
-  static constexpr byte_type kMaxSize = 127;
-
   virtual ~ScoreBoundWriter() = default;
 
   virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
-                       const AttributeProvider& attrs) = 0;
+                       bool has_freq) = 0;
 
   virtual void Reset() = 0;
 
-  virtual void Update() = 0;
+  virtual void Update(std::span<const doc_id_t> docs,
+                      const uint32_t* freqs) = 0;
 
-  virtual void Write(size_t level, MemoryIndexOutput& out) = 0;
-  virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
+  virtual void WriteRoot(DataOutput& out) = 0;
+  virtual void Take(size_t level, uint32_t* out) = 0;
 
-  virtual byte_type Size(size_t level) const = 0;
-  virtual byte_type SizeRoot(size_t level) = 0;
+  virtual byte_type SizeRoot() const = 0;
 };
 
 struct ScoreContext {
@@ -128,8 +126,7 @@ struct Scorer {
     return PrepareScorer(ctx).Score();
   }
 
-  virtual ScoreBoundWriter::ptr PrepareScoreBoundWriter(
-    size_t max_levels) const = 0;
+  virtual ScoreBoundWriter::ptr PrepareScoreBoundWriter() const = 0;
 
   virtual ScoreBoundSource::ptr PrepareScoreBoundSource() const = 0;
 
@@ -180,7 +177,7 @@ class ScorerBase : public Scorer {
   static_assert(std::is_void_v<StatsType> ||
                 std::is_trivially_constructible_v<StatsType>);
 
-  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t) const override {
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter() const override {
     return nullptr;
   }
 

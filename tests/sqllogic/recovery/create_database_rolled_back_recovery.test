@@ -1,0 +1,70 @@
+control substitution on
+
+statement ok
+CREATE TABLE cdd_marker (a INTEGER);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE cdd_db;
+
+
+statement ok
+CREATE TABLE cdd_db.public.t (a INTEGER);
+
+
+statement ok
+INSERT INTO cdd_db.public.t VALUES (1);
+
+
+statement error
+DROP DATABASE cdd_db;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO cdd_marker VALUES (1);
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cdd_db';
+----
+n
+0
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM duckdb_databases() WHERE database_name = 'cdd_db') AS d, (SELECT count(*) FROM cdd_marker) AS m;
+----
+d	m
+0	1
+
+
+connection after_crash
+statement ok
+CREATE DATABASE cdd_db;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'cdd_db' AND table_name = 't';
+----
+n
+0

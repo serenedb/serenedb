@@ -93,3 +93,66 @@ file_row_number	json
 0	{"id":1,"body":"pudge alpha"}
 30	{"id":2,"body":"manga beta"}
 59	{"id":3,"body":"pudge gamma"}
+
+
+# file_row_number projected alone and between columns: every projected column
+# gets its own output slot.
+query
+SELECT file_row_number
+FROM read_json('${__TEST_DIR__}/frn_nd.jsonl', format='nd')
+ORDER BY file_row_number;
+----
+file_row_number
+0
+30
+59
+
+
+query
+SELECT id, file_row_number, body
+FROM read_json('${__TEST_DIR__}/frn_nd.jsonl', format='nd')
+ORDER BY id;
+----
+id	file_row_number	body
+1	0	pudge alpha
+2	30	manga beta
+3	59	pudge gamma
+
+
+query
+SELECT body, file_row_number
+FROM read_json('${__TEST_DIR__}/frn_array.json', format='array')
+WHERE id = 2;
+----
+body	file_row_number
+manga beta	35
+
+
+# Over several files the offsets are per file.
+statement ok
+COPY (SELECT 4::int4 AS id, 'manga delta' AS body)
+TO '${__TEST_DIR__}/frn_nd2.jsonl' (FORMAT JSON);
+
+
+query
+SELECT id, file_row_number
+FROM read_json(['${__TEST_DIR__}/frn_nd.jsonl', '${__TEST_DIR__}/frn_nd2.jsonl'], format='nd')
+ORDER BY id;
+----
+id	file_row_number
+1	0
+2	30
+3	59
+4	0
+
+
+query
+SELECT file_row_number, json
+FROM read_json_objects(['${__TEST_DIR__}/frn_nd.jsonl', '${__TEST_DIR__}/frn_nd2.jsonl'], format='nd')
+ORDER BY json;
+----
+file_row_number	json
+0	{"id":1,"body":"pudge alpha"}
+30	{"id":2,"body":"manga beta"}
+59	{"id":3,"body":"pudge gamma"}
+0	{"id":4,"body":"manga delta"}

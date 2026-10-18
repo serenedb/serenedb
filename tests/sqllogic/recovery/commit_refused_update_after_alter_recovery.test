@@ -1,0 +1,85 @@
+control substitution on
+
+statement ok
+CREATE TABLE cru_t (id INTEGER, v INTEGER);
+
+
+statement ok
+INSERT INTO cru_t VALUES (1, 10), (2, 20), (3, 30);
+
+
+connection t1
+statement ok
+BEGIN;
+
+
+connection t1
+statement ok
+UPDATE cru_t SET v = v + 1 WHERE id = 2;
+
+
+connection t1
+statement ok
+CREATE TABLE cru_ddl (a INTEGER);
+
+
+connection t2
+statement ok
+ALTER TABLE cru_t ADD COLUMN c INTEGER;
+
+
+connection t1
+statement error another transaction has altered this table
+COMMIT;
+
+
+connection t2
+query
+SELECT id, v FROM cru_t ORDER BY id;
+----
+id	v
+1	10
+2	20
+3	30
+
+
+connection t2
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'cru_ddl';
+----
+n
+0
+
+
+connection t2
+statement ok
+INSERT INTO cru_t VALUES (4, 40, 400);
+
+
+connection t2
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection t2
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, v, c FROM cru_t ORDER BY id;
+----
+id	v	c
+1	10	NULL
+2	20	NULL
+3	30	NULL
+4	40	400
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'cru_ddl';
+----
+n
+0

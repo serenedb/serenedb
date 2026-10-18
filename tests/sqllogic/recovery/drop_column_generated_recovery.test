@@ -1,0 +1,109 @@
+control substitution on
+
+statement ok
+CREATE TABLE dcgr_s (s INT GENERATED ALWAYS AS (1) STORED, a INT PRIMARY KEY, b INT);
+
+
+statement ok
+INSERT INTO dcgr_s (a, b) VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE dcgr_s DROP COLUMN b;
+
+
+statement ok
+CREATE TABLE dcgr_v (a INT, g INT GENERATED ALWAYS AS (a + 1) VIRTUAL, b INT, c INT);
+
+
+statement ok
+CREATE INDEX dcgr_v_c ON dcgr_v (c);
+
+
+statement ok
+INSERT INTO dcgr_v (a, b, c) VALUES (1, 11, 111), (2, 22, 222), (3, 33, 333);
+
+
+statement ok
+ALTER TABLE dcgr_v DROP COLUMN g;
+
+
+statement ok
+INSERT INTO dcgr_v (a, b, c) VALUES (4, 44, 444);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM dcgr_s;
+----
+n
+2
+
+
+connection after_crash
+statement error
+INSERT INTO dcgr_s (a) VALUES (2);
+----
+db error: ERROR: Duplicate key "a: 2" violates primary key constraint.
+
+
+connection after_crash
+query
+SELECT a FROM dcgr_v WHERE c = 222;
+----
+a
+2
+
+
+connection after_crash
+query
+SELECT a FROM dcgr_v WHERE c = 444;
+----
+a
+4
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM dcgr_v WHERE b = 222;
+----
+n
+0
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a FROM dcgr_v WHERE c = 333;
+----
+a
+3
+
+
+connection after_shutdown
+statement error
+INSERT INTO dcgr_s (a) VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.

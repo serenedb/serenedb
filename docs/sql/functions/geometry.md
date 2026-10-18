@@ -556,7 +556,7 @@ Returns the boundary of the geometry: the rings of a polygon, the endpoints of a
 
 #### `ST_PointOnSurface(geom)` {#st_pointonsurface-function}
 
-Returns a point guaranteed to lie on the geometry.
+Returns a point guaranteed to lie on the geometry, the same point PostGIS returns: for polygons, the middle of the widest stretch of a horizontal line across them; for lines, the vertex nearest their centroid, preferring vertices other than endpoints; for points, the point nearest their centroid.
 
 <SqlLogicTest id="sql/functions/geometry/st_pointonsurface" />
 
@@ -649,7 +649,7 @@ Reverses the vertex order of the geometry.
 
 #### `ST_Normalize(geom)` {#st_normalize-function}
 
-Rewrites the geometry into a canonical form, so that geometries covering the same space become identical.
+Rewrites the geometry into the canonical form PostGIS uses, so that geometries differing only in where their rings start, in their direction or in the order of their parts become identical: every ring starts at its smallest point (by X, then Y), shells and closed lines run clockwise and holes counter-clockwise, an open line starts at its smaller end, and holes and the parts of a multi-geometry are sorted in descending order.
 
 <SqlLogicTest id="sql/functions/geometry/st_normalize" />
 

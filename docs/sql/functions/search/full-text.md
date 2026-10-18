@@ -175,6 +175,8 @@ Match indexed tokens against a regular expression.
 
 **How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
 
+A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile.
+
 A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. Alternatives that begin or end the same way are merged before matching, so thousands of `^(the\s+)?<name>\b.*` branches cost about as much as the distinct names they spell. A pattern that can only match a short list of words (up to 1024), such as `x|y|zz` or `gr[ae]y`, looks those words up directly, as `ts_any` does. A prepared statement compiles its patterns once; to reuse compiled patterns across queries as well, set [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) to the number of bytes the server may keep for them.
 
 Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
@@ -269,7 +271,11 @@ Range match between two bounds, with explicit control over each end's inclusivit
 | `min_incl` | `BOOLEAN` | — *(required)* | `true` includes `min` (`>=`), `false` excludes it (`>`). |
 | `max_incl` | `BOOLEAN` | — *(required)* | `true` includes `max` (`<=`), `false` excludes it (`<`). |
 
-**How it works.** `ts_between` performs a range scan over a numeric, temporal or verbatim-text (`keyword`-analyzed) column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** — there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every indexed value. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+**How it works.** `ts_between` performs a range scan over a numeric, temporal, boolean, text or `BLOB` column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** -- there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every row, including rows where the column is `NULL`. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+
+On text and `BLOB` columns, each non-`NULL` bound is analyzed with the column's dictionary, just like the one-sided functions. A bound must produce one token: multiple tokens are an error, and no tokens makes the range match nothing. An empty-string token is still a valid bound. This supports `keyword`, `normalize_tokens` and `collate_tokens` dictionaries, as well as tokenizing dictionaries when each bound produces one token. Comparisons use the resulting token bytes, so `collate_tokens` ranges follow the dictionary's locale order.
+
+A row matches when an indexed token satisfies both bounds. For dictionaries that emit one token per value, this agrees with combining the corresponding one-sided functions using `&&`. With multiple indexed tokens, the two separate comparisons can match different tokens in the same row. Inside a [`##` phrase](#a--b-phrase), `ts_between` bounds remain verbatim token bytes at that phrase position.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

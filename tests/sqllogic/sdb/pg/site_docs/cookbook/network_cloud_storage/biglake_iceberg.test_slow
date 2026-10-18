@@ -70,7 +70,7 @@ CREATE TABLE __docs_noop_biglake_004 (i INTEGER);
 # DOCS_TEST_RAW
 #| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse 'bl://projects/⟨my-project⟩/catalogs/⟨my-catalog⟩',
-#|     endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
+#|     uri 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
 #|     secret 'gcp',
 #|     access_delegation_mode 'none'
 #| );

@@ -17,7 +17,7 @@ This page provides an overview of the currently supported system tables and view
 
 ## System Tables
 
-System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements.
+System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs.
 
 System tables often contain many low-level details. For more accessible and friendly access to the same information, consider using the built-in system views, or the SQL-standard information schema.
 
@@ -28,7 +28,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_amop                     | 🟡            | Stores information about operators associated with access methods. |
 | pg_amproc                   | 🟡            | Contains information about support procedures associated with access methods. |
 | pg_attrdef                  | 🟢            | Stores column default values. |
-| pg_attribute                | 🟢            | Contains information about table columns. |
+| pg_attribute                | 🟢            | Contains information about the columns of tables, views and composite types. |
 | pg_authid                   | 🟢            | Stores information about database roles. |
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |
@@ -65,7 +65,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
 | pg_publication_rel          | 🟡            | Maps relations (tables) to publications (many-to-many). |
 | pg_range                    | 🟡            | Stores information about range types. |
-| pg_replication_origin       | 🟡            | Contains replication origins shared across the cluster. |
+| pg_replication_origin       | 🟢            | One origin `pg_<subscription oid>` per subscription; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
 | pg_rewrite                  | 🟢            | Stores rewrite rules for tables and views. |
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
 | pg_sequence                 | 🟢            | Contains information about sequences. |
@@ -75,8 +75,8 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_statistic                | 🟡            | Stores planner statistics. |
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |
 | pg_statistic_ext_data       | 🟡            | Contains data for extended statistics. |
-| pg_subscription             | 🟡            | Stores logical replication subscriptions. |
-| pg_subscription_rel         | 🟡            | Tracks per-relation subscription state. |
+| pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
+| pg_subscription_rel         | 🟡            | Tracks per-relation subscription state: `i` before the initial copy, `r` once replicated, with the copy's LSN. |
 | pg_tablespace               | 🟢            | Stores information about tablespaces. |
 | pg_transform                | 🟡            | Stores transforms between data types and languages. |
 | pg_trigger                  | 🟢            | Contains information about table triggers. |
@@ -109,7 +109,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_prepared_statements | 🟡 | Lists prepared statements. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
-| pg_replication_origin_status | 🟡 | Provides information about replication origins, including replication progress. |
+| pg_replication_origin_status | 🟢 | Shows each subscription's origin with the publisher position it has durably applied; `local_lsn` is always `0/0`. |
 | pg_replication_slots | 🟡 | Displays replication slot information. |
 | pg_roles | 🟢 | Lists database roles. |
 | pg_rules | 🟡 | Shows information about rules. |

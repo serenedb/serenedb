@@ -1,0 +1,104 @@
+statement ok
+CREATE TABLE vc_t (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE VIEW vc_plain AS SELECT a, b FROM vc_t;
+
+
+statement ok
+CREATE VIEW vc_aliased (x, y) AS SELECT a, b FROM vc_t;
+
+
+statement ok
+CREATE VIEW vc_partial (x) AS SELECT a, b FROM vc_t;
+
+
+statement ok
+CREATE VIEW vc_expr AS SELECT a + 1 AS next, b || '!' AS shout, a::BIGINT AS wide FROM vc_t;
+
+
+statement ok
+CREATE VIEW vc_nested AS SELECT x AS z FROM vc_aliased;
+
+
+query
+SELECT c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('vc_plain', 'vc_aliased', 'vc_partial', 'vc_expr', 'vc_nested') AND a.attnum > 0
+ORDER BY c.relname, a.attnum;
+----
+relname	attnum	attname	type	attnotnull
+vc_aliased	1	x	integer	f
+vc_aliased	2	y	text	f
+vc_expr	1	next	integer	f
+vc_expr	2	shout	text	f
+vc_expr	3	wide	bigint	f
+vc_nested	1	z	integer	f
+vc_partial	1	x	integer	f
+vc_partial	2	b	text	f
+vc_plain	1	a	integer	f
+vc_plain	2	b	text	f
+
+
+query
+SELECT relname, relnatts FROM pg_class
+WHERE relname IN ('vc_plain', 'vc_aliased', 'vc_partial', 'vc_expr', 'vc_nested')
+ORDER BY relname;
+----
+relname	relnatts
+vc_aliased	2
+vc_expr	3
+vc_nested	1
+vc_partial	2
+vc_plain	2
+
+
+query
+SELECT table_name, ordinal_position, column_name, data_type FROM information_schema.columns
+WHERE table_name IN ('vc_plain', 'vc_aliased', 'vc_partial', 'vc_expr', 'vc_nested')
+ORDER BY table_name, ordinal_position;
+----
+table_name	ordinal_position	column_name	data_type
+vc_aliased	1	x	integer
+vc_aliased	2	y	text
+vc_expr	1	next	integer
+vc_expr	2	shout	text
+vc_expr	3	wide	bigint
+vc_nested	1	z	integer
+vc_partial	1	x	integer
+vc_partial	2	b	text
+vc_plain	1	a	integer
+vc_plain	2	b	text
+
+
+statement ok
+DROP VIEW vc_nested;
+
+
+statement ok
+DROP VIEW vc_plain;
+
+
+query
+SELECT count(*) AS n FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('vc_plain', 'vc_nested');
+----
+n
+0
+
+
+statement ok
+DROP VIEW vc_expr;
+
+
+statement ok
+DROP VIEW vc_partial;
+
+
+statement ok
+DROP VIEW vc_aliased;
+
+
+statement ok
+DROP TABLE vc_t;

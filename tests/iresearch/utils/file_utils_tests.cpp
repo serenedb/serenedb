@@ -355,3 +355,41 @@ TEST(file_utils_tests, path_parts) {
   }
 #endif
 }
+
+TEST(file_utils_tests, residency_map) {
+  irs::file_utils::ResidencyMap map;
+  map.Reset(200);
+  ASSERT_FALSE(map.Valid(7));
+  ASSERT_TRUE(map.Adopt(7));
+  ASSERT_TRUE(map.Valid(7));
+  ASSERT_FALSE(map.Test(0, 199));
+
+  map.Set(60, 130);
+  ASSERT_TRUE(map.Test(60, 130));
+  ASSERT_TRUE(map.Test(63, 64));
+  ASSERT_TRUE(map.Test(128));
+  ASSERT_FALSE(map.Test(59));
+  ASSERT_FALSE(map.Test(131));
+  ASSERT_FALSE(map.Test(59, 130));
+  ASSERT_FALSE(map.Test(60, 131));
+
+  map.Set(199);
+  ASSERT_TRUE(map.Test(199));
+  ASSERT_FALSE(map.Test(198, 199));
+
+  ASSERT_FALSE(map.Adopt(6));
+  ASSERT_TRUE(map.Valid(7));
+  ASSERT_TRUE(map.Test(60, 130));
+
+  ASSERT_TRUE(map.Adopt(8));
+  ASSERT_TRUE(map.Valid(8));
+  ASSERT_FALSE(map.Valid(7));
+  ASSERT_FALSE(map.Test(60));
+  ASSERT_FALSE(map.Test(199));
+}
+
+TEST(file_utils_tests, residency_epoch) {
+  const auto epoch = irs::file_utils::ResidencyEpoch();
+  irs::file_utils::InvalidateResidency();
+  ASSERT_NE(epoch, irs::file_utils::ResidencyEpoch());
+}

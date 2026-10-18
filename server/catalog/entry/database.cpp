@@ -27,11 +27,16 @@
 
 namespace sdb::catalog {
 
-DatabaseCatalogEntry::DatabaseCatalogEntry(duckdb::Catalog& catalog,
-                                           duckdb::CreateDatabaseInfo& info)
+DatabaseCatalogEntry::DatabaseCatalogEntry(
+  duckdb::Catalog& catalog, duckdb::CreateDatabaseInfo& info,
+  std::shared_ptr<DatabaseDirectory> directory)
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
-    _options{info.options} {
+    _options{info.options},
+    _directory{directory
+                 ? std::move(directory)
+                 : std::make_shared<DatabaseDirectory>(
+                     ClusterLayout(catalog.GetAttached()).DatabaseDir(oid))} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
@@ -50,18 +55,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
   return duckdb::make_uniq<DatabaseCatalogEntry>(
-    catalog, info->Cast<duckdb::CreateDatabaseInfo>());
-}
-
-DatabaseCatalogEntry::~DatabaseCatalogEntry() {
-  if (_dropped) {
-    RemoveDatabaseFiles(catalog.GetAttached(), oid);
-  }
+    catalog, info->Cast<duckdb::CreateDatabaseInfo>(), _directory);
 }
 
 void DatabaseCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
-    RemoveDatabaseFiles(catalog.GetAttached(), oid);
+    _directory->MarkDropped();
   }
 }
 

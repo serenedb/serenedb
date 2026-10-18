@@ -95,7 +95,7 @@ void WithMask(benchmark::State& state, Fn&& fn) {
   const auto layout = state.range(2);
   const auto& mask = MaskOf(state.range(0), layout >= 6 ? layout - 3 : layout);
   irs::ResolveDocsMask(
-    &mask, irs::doc_limits::eof(),
+    &mask,
     [&]<irs::DocsMaskType Mask>(Mask docs_mask) {
       state.SetLabel(std::to_string(static_cast<int>(Mask::kKind)));
       fn(docs_mask);

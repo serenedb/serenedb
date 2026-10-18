@@ -28,7 +28,6 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace duckdb {
 
@@ -44,8 +43,9 @@ namespace sdb::catalog {
 struct DataDirectory final : duckdb::StorageExtensionInfo {
   explicit DataDirectory(std::string directory);
 
+  std::filesystem::path EngineDir() const;
   std::string CatalogLogFile() const;
-  std::string DatabaseDir() const;
+  std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
   std::string DatabaseFile(duckdb::idx_t oid) const;
 
   std::string directory;
@@ -61,12 +61,7 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
                                        const duckdb::Identifier& name,
                                        duckdb::idx_t oid);
 
-void RemoveDatabaseFiles(duckdb::AttachedDatabase& cluster, duckdb::idx_t oid);
-
 const DataDirectory& ClusterLayout(duckdb::AttachedDatabase& cluster);
-
-std::vector<std::filesystem::path> DatabaseArtifacts(
-  duckdb::AttachedDatabase& cluster, duckdb::idx_t oid);
 
 void RegisterClusterStorage(duckdb::DBConfig& config,
                             duckdb::shared_ptr<DataDirectory> layout);

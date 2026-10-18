@@ -1,0 +1,128 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE mr_s (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100);
+
+statement ok
+CREATE INDEX mr_s_idx ON mr_s USING inverted (body);
+
+statement ok
+CREATE TABLE mr_t (id INT, body TEXT);
+
+statement ok
+CREATE INDEX mr_t_idx ON mr_t USING inverted (body)
+  WITH (refresh_interval = 100, compaction_interval = 100);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+ALTER TABLE mr_s SET (compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+ALTER INDEX mr_t_idx SET (compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(1, 10) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_s;
+
+statement ok
+INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(11, 20) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_s;
+
+statement ok
+INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(21, 30) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_s;
+
+statement ok
+INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(1, 10) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_t;
+
+statement ok
+INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(11, 20) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_t;
+
+statement ok
+INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(21, 30) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr_t;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+connection after_crash
+query
+SELECT relname, list_contains(reloptions, 'refresh_interval=0') AS refresh_off,
+       list_contains(reloptions, 'compaction_interval=0') AS compaction_off
+FROM pg_class WHERE relname IN ('mr_s', 'mr_t_idx') ORDER BY relname;
+----
+relname	refresh_off	compaction_off
+mr_s	t	t
+mr_t_idx	t	t
+
+connection after_crash
+statement ok
+INSERT INTO mr_s SELECT i, 'fox' FROM generate_series(31, 40) s(i);
+
+connection after_crash
+statement ok
+INSERT INTO mr_t SELECT i, 'fox' FROM generate_series(31, 40) s(i);
+
+connection after_crash
+sleep 2s
+
+connection after_crash
+query
+SELECT
+  (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
+     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_s')) AS s_segments,
+  (SELECT count(*) FROM mr_s) AS s_rows,
+  (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
+     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_t_idx')) AS t_segments,
+  (SELECT count(*) FROM mr_t_idx) AS t_rows;
+----
+s_segments	s_rows	t_segments	t_rows
+3	30	3	30
+
+connection after_crash
+statement ok
+ALTER TABLE mr_s SET (compaction_interval = 100, refresh_interval = 100);
+
+connection after_crash
+statement ok
+ALTER INDEX mr_t_idx SET (compaction_interval = 100, refresh_interval = 100);
+
+connection after_crash
+query ok retry 60 backoff 200ms
+SELECT
+  (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
+     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_s')) AS s_segments,
+  (SELECT count(*) FROM mr_s) AS s_rows,
+  (SELECT value FROM sdb_metrics WHERE metric = 'num_segments'
+     AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mr_t_idx')) AS t_segments,
+  (SELECT count(*) FROM mr_t_idx) AS t_rows;
+----
+s_segments	s_rows	t_segments	t_rows
+1	40	1	40

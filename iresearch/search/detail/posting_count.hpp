@@ -30,8 +30,8 @@
 namespace irs::detail {
 
 template<typename InputType>
-class PostingCount : public PostingLeaf<InputType, kWindowShape> {
-  using Base = PostingLeaf<InputType, kWindowShape>;
+class PostingCount : public PostingLeaf<InputType, kCountShape> {
+  using Base = PostingLeaf<InputType, kCountShape>;
 
   using Base::_doc;
   using Base::_docs;
@@ -74,7 +74,7 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
     for (;;) {
       if (_left_in_leaf != 0) {
         const auto* it = Behind(end - _left_in_leaf, end, min);
-        [[clang::code_align(64)]] while (it != end && *it < max) {
+        while (it != end && *it < max) {
           ++counts[*it - min];
           ++it;
         }

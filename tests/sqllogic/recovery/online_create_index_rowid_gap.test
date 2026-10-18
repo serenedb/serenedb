@@ -52,7 +52,7 @@ CREATE INDEX oci_gap_idx ON oci_gap USING inverted(label);
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM pg_stat_progress_create_index
-WHERE relid = 'oci_gap'::regclass;
+WHERE relid = 'oci_gap'::regclass AND phase = 'building index';
 ----
 count
 1

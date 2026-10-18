@@ -30,6 +30,7 @@
 #include <absl/strings/strip.h>
 
 #include <algorithm>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
@@ -112,8 +113,9 @@ std::map<std::string, size_t> TopSections(duckdb::DatabaseInstance& db) {
 
 std::string LinkTarget(duckdb::DatabaseInstance& db, std::string_view page,
                        std::string_view anchor) {
-  const auto entry = ResolveLink(
-    db, anchor.empty() ? std::string{page} : absl::StrCat(page, "#", anchor));
+  const auto entry = anchor.empty()
+                       ? ResolveLink(db, page)
+                       : ResolveLink(db, absl::StrCat(page, "#", anchor));
   return entry ? entry->path : std::string{page};
 }
 
@@ -555,7 +557,7 @@ class Session {
     }
 
     if (kind.empty()) {
-      const auto directory = std::string{absl::StripSuffix(term, "/")};
+      const auto directory = absl::StripSuffix(term, "/");
       const bool listed =
         !DirectoryChoices(*request.instance, directory).empty();
       if (url || (!listed && LooksLikePath(term))) {
@@ -564,7 +566,8 @@ class Session {
         }
       }
       if (listed) {
-        return Open(request, {.path = directory, .directory = true}, out);
+        return Open(request,
+                    {.path = std::string{directory}, .directory = true}, out);
       }
     }
 
@@ -671,9 +674,10 @@ class Session {
   std::string Menu(const duckdb_shell::DocsRequest& request,
                    std::string_view heading, std::vector<Choice> choices) {
     const bool offer = request.interactive && choices.size() > 1;
-    auto out = Render(
-      request, offer ? std::string{heading}
-                     : absl::StrCat(Listing(heading, choices), kOpenHint));
+    auto out =
+      offer
+        ? Render(request, heading)
+        : Render(request, absl::StrCat(Listing(heading, choices), kOpenHint));
     _list = std::move(choices);
     _offered = offer;
     return out;
@@ -823,8 +827,8 @@ void RegisterShellDocsBackend() {
          try {
            return session->Run(request, out);
          } catch (const std::exception& e) {
-           out =
-             absl::StrCat("Could not read the documentation: ", e.what(), "\n");
+           out = absl::StrCat("Could not read the documentation: ",
+                              duckdb::ErrorData{e}.RawMessage(), "\n");
            return false;
          }
        },

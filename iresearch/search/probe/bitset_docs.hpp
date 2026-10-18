@@ -37,6 +37,10 @@ class BitsetDocs {
   explicit BitsetDocs(detail::BitsetStorage&& set) noexcept
     : _set{std::move(set)}, _words{_set.Words()}, _count{_set.WordCount()} {}
 
+  const uint64_t* Words() const noexcept { return _words; }
+
+  uint32_t WordCount() const noexcept { return _count; }
+
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
     const auto offset = target - kMin;
     const auto word = offset / kBits;

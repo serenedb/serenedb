@@ -7,7 +7,7 @@
 # DOCS_TEST_RAW
 #| CREATE SERVER dev_lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse '⟨warehouse⟩',
-#|     endpoint 'http://localhost:8181',
+#|     uri 'http://localhost:8181',
 #|     authorization_type 'none'
 #| );
 
@@ -21,7 +21,7 @@ CREATE TABLE __docs_noop_iceauth_001 (i INTEGER);
 # DOCS_TEST_RAW
 #| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse '⟨warehouse⟩',
-#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     uri '⟨https://catalog.example.com/api/catalog⟩',
 #|     authorization_type 'oauth2',
 #|     token '⟨access token⟩'
 #| );
@@ -44,7 +44,7 @@ CREATE TABLE __docs_noop_iceauth_002 (i INTEGER);
 #|
 #| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse '⟨warehouse⟩',
-#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     uri '⟨https://catalog.example.com/api/catalog⟩',
 #|     secret 'catalog_oauth'
 #| );
 
@@ -141,7 +141,7 @@ CREATE TABLE __docs_noop_iceauth_008 (i INTEGER);
 # DOCS_TEST_RAW
 #| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse '⟨warehouse⟩',
-#|     endpoint '⟨https://catalog.example.com/api/catalog⟩',
+#|     uri '⟨https://catalog.example.com/api/catalog⟩',
 #|     secret 'catalog_oauth'
 #| );
 
@@ -161,7 +161,7 @@ CREATE TABLE __docs_noop_iceauth_009 (i INTEGER);
 #|
 #| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
 #|     warehouse 'bl://projects/⟨my-project⟩/catalogs/⟨my-catalog⟩',
-#|     endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
+#|     uri 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
 #|     secret 'gcp',
 #|     access_delegation_mode 'none'
 #| );

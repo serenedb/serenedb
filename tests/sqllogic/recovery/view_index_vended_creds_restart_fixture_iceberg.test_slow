@@ -6,7 +6,7 @@ ${ICEBERG_BOOTSTRAP}
 statement ok
 CREATE SERVER vivc FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
   warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
+  uri '${ICEBERG_REST_URL}',
   authorization_type 'sigv4',
   sigv4_service 'custom',
   sigv4_region 'us-east-1',

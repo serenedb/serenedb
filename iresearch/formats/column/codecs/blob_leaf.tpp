@@ -83,7 +83,7 @@ struct BlobScan {
       Decode(s, f, out, out);
     } else {
       const auto bytes = trained->Bytes();
-      char* staging = TrainedWindow(*trained, s.frames[f].raw_len);
+      char* staging = Window(s, bytes);
       decoder.SetDictionary({staging - bytes.size(), bytes.size()});
       Decode(s, f, out, staging);
     }
@@ -121,8 +121,8 @@ struct BlobScan {
   char* Window(const Frames& s, std::string_view dictionary) {
     if (!window) {
       uint32_t largest = 0;
-      for (uint32_t f = 1; f < s.frames.size(); ++f) {
-        largest = std::max(largest, s.frames[f].raw_len);
+      for (const auto& m : s.frames) {
+        largest = std::max(largest, m.raw_len);
       }
       window =
         duckdb::make_unsafe_uniq_array<char>(dictionary.size() + largest);

@@ -114,8 +114,6 @@ NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h);
 const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
                                    const Header& header);
 
-char* TrainedWindow(const TrainedDictionary& dictionary, size_t frame_bytes);
-
 using EntryRanges = std::vector<std::pair<uint32_t, uint32_t>>;
 
 EntryRanges Normalize(EntryRanges ranges);

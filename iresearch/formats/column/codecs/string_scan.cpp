@@ -20,12 +20,10 @@
 
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -97,36 +95,6 @@ const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
   SDB_ENSURE(dictionaries && header.dictionary <= dictionaries->size(),
              "col codec: missing trained dictionary ", header.dictionary);
   return (*dictionaries)[header.dictionary - 1].get();
-}
-
-char* TrainedWindow(const TrainedDictionary& dictionary, size_t frame_bytes) {
-  struct Window {
-    uint64_t dictionary = 0;
-    size_t capacity = 0;
-    duckdb::unsafe_unique_array<char> buffer;
-  };
-  thread_local std::array<Window, 4> windows;
-  thread_local size_t next = 0;
-  auto it = absl::c_find_if(windows, [&](const Window& window) {
-    return window.dictionary == dictionary.Id();
-  });
-  if (it == windows.end()) {
-    it = windows.begin() + next;
-    next = (next + 1) % windows.size();
-  }
-  auto& w = *it;
-  const auto bytes = dictionary.Bytes();
-  const size_t need = bytes.size() + frame_bytes;
-  if (w.capacity < need) {
-    w.capacity = std::max(need, bytes.size() + kTrainedFrameBytes);
-    w.buffer = duckdb::make_unsafe_uniq_array<char>(w.capacity);
-    w.dictionary = 0;
-  }
-  if (w.dictionary != dictionary.Id()) {
-    std::memcpy(w.buffer.get(), bytes.data(), bytes.size());
-    w.dictionary = dictionary.Id();
-  }
-  return w.buffer.get() + bytes.size();
 }
 
 EntryRanges Normalize(EntryRanges ranges) {

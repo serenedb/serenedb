@@ -136,7 +136,7 @@ struct ColumnOptions {
   uint8_t compression_level = 0;
 };
 
-inline constexpr uint32_t kDefaultColSegmentTarget = 256 * 1024;
+inline constexpr uint32_t kDefaultColSegmentTarget = 512 * 1024;
 
 enum class WriteTier : uint8_t {
   Flush,

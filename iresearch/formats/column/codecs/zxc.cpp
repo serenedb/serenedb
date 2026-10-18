@@ -30,7 +30,7 @@
 
 /*
 Data layout per segment, one block of one column; a text column's row group
-is cut into segments of about 256 KiB:
+is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                        Header                        |
 |   +----------------------------------------------+   |

@@ -564,6 +564,13 @@ TEST_F(ColumnSplitTest, SplitTextSamplesRowGroupsPastDeletedRows) {
   ExpectOneSharedDictionary(17000, true, 8192);
 }
 
+TEST_F(ColumnSplitTest, SplitTextUnderAForcedNumericCodecSharesOneDictionary) {
+  auto con = irs::DuckDBEngine::Instance().CreateConnection();
+  ASSERT_FALSE(con->Query("SET force_compression = 'bitpacking'")->HasError());
+  absl::Cleanup reset = [&] { con->Query("SET force_compression = 'auto'"); };
+  ExpectOneSharedDictionary(30000, true, 8192);
+}
+
 TEST_F(ColumnSplitTest, RangesPadInputsWithoutTheColumn) {
   constexpr irs::field_id kNumber = kFirstColumn;
   constexpr irs::field_id kText = kFirstColumn + 1;

@@ -1821,11 +1821,10 @@ bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
     return false;
   }
   const auto forced_method = ForcedMethod(db, forced);
-  const auto named = codecs::ChoiceOf(forced_method);
-  if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
+  if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
     return false;
   }
-  return codecs::TrainsDictionary(named, params);
+  return codecs::TrainsDictionary(codecs::ChoiceOf(forced_method), params);
 }
 
 bool ColumnWriter::TrainsDictionary() const noexcept {

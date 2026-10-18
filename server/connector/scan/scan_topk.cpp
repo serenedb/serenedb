@@ -197,6 +197,14 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   return units;
 }
 
+void PlanFetch(ScanGlobalState& g) {
+  auto& t = g.topk;
+  SortByAddress(t.answer);
+  t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
+  t.fetched.resize(t.fetch_units.size());
+  t.fetched_pk.resize(t.fetch_units.size());
+}
+
 void Merge(ScanGlobalState& g) {
   auto& t = g.topk;
   size_t total = 0;
@@ -219,10 +227,7 @@ void Merge(ScanGlobalState& g) {
     all = all.first(std::min<size_t>(all.size(), t.verify_first));
   }
   t.answer.assign(all.begin(), all.end());
-  SortByAddress(t.answer);
-  t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
-  t.fetched.resize(t.fetch_units.size());
-  t.fetched_pk.resize(t.fetch_units.size());
+  PlanFetch(g);
 }
 
 bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
@@ -396,7 +401,8 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
   l.answer_chunk->Append(batch, duckdb::VectorAppendMode::ALLOW_RESIZE);
 }
 
-std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l) {
+std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l,
+                                       uint64_t per_segment) {
   auto vs = *g.vector_scorer;
   vs.exact = true;
   const auto filter =
@@ -409,7 +415,7 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l) {
       continue;
     }
     const auto& segment = (*g.reader)[seg];
-    const auto slots = segment.docs_count();
+    const auto slots = std::min<uint64_t>(segment.docs_count(), per_segment);
     if (slots == 0) {
       continue;
     }
@@ -434,6 +440,19 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l) {
   return ranked;
 }
 
+void FillShortAnswer(ScanGlobalState& g, TopKLocalState& l) {
+  auto& t = g.topk;
+  const auto* vs = g.vector_scorer;
+  if (t.answer.size() >= t.limit || g.has_lookup_filter || !vs ||
+      vs->kind != irs::AnnKind::Ivf || vs->exact ||
+      vs->radius != std::numeric_limits<float>::max()) {
+    return;
+  }
+  t.answer = RankExactly(g, l, t.limit);
+  t.answer.resize(std::min<size_t>(t.answer.size(), t.limit));
+  PlanFetch(g);
+}
+
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
                 TopKLocalState& l, std::vector<irs::ScoreDoc>& row_hits) {
   const auto& t = g.topk;
@@ -453,7 +472,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
         return;
       }
       widened = true;
-      exact = RankExactly(g, l);
+      exact = RankExactly(g, l, std::numeric_limits<uint64_t>::max());
       ranked = exact;
       verified = 0;
       step = std::max<size_t>(step, want);
@@ -617,6 +636,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
         g.worker_count.load(std::memory_order_acquire);
     if (collected && !t.merge_taken.exchange(true, std::memory_order_acq_rel)) {
       Merge(g);
+      FillShortAnswer(g, l);
       t.merge_barrier.Release(input);
     } else {
       if (!t.shared_fetch &&

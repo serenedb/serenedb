@@ -59,6 +59,57 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
+/*
+Data layout per segment, one block of one column holding a whole row group:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   NumericHeader, 64 bytes                    |   |
+|   +----------------------------------------------+   |
+|   value width, transform, leaf, stored width,        |
+|   run width, flags, counts, section offsets,         |
+|   frame size, base, common divisor (scale)           |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   NumericFrameMeta frames[frame_count]       |   |
+|   +----------------------------------------------+   |
+|   first row, decoded size and stored range of        |
+|   each frame in Data, its min and max, and a         |
+|   base: delta's previous value, rle_ffor's           |
+|   run count                                          |
++------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   value dict[dict_count]                     |   |
+|   +----------------------------------------------+   |
+|   dict and dict_ffor only                            |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   frames                                     |   |
+|   +----------------------------------------------+   |
+|   raw, for, delta, dict: one item per row, the       |
+|   value, value - base, the difference to the         |
+|   previous row minus base, or the dictionary         |
+|   index, in the stored width; shuffled into          |
+|   byte planes when flagged                           |
+|   rle: the frame's run values (value - base),        |
+|   then their run lengths                             |
+|   these frames are lz4 or zstd compressed when       |
+|   the leaf makes them smaller                        |
+|   ffor, dict_ffor: 16384 rows per frame, in          |
+|   blocks of 1024 values (dictionary indexes for      |
+|   dict_ffor): a 16-byte meta (base, bit width)       |
+|   per block, then each block's values minus its      |
+|   base, bitpacked                                    |
+|   rle_ffor: 1024 runs per frame, run values and      |
+|   run lengths each packed like ffor                  |
++------------------------------------------------------+
+The header holds the section offsets; bit-packed data starts at an
+8-byte boundary.
+*/
+
 namespace irs::codecs {
 namespace {
 

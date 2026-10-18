@@ -26,6 +26,18 @@
 
 #include "iresearch/formats/column/codecs/compression.hpp"
 
+/*
+Data layout per segment, the list codes of a LIST column's row group when
+every row holds a list not seen before:
++------------------------------------------------------+
+|                     First value                      |
+|   +----------------------------------------------+   |
+|   |   uint64_t first                             |   |
+|   +----------------------------------------------+   |
+|   row i holds first + i                              |
++------------------------------------------------------+
+*/
+
 namespace irs::codecs {
 namespace {
 

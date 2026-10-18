@@ -34,6 +34,43 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
+/*
+Data layout per segment, one block of one column; a text column's row group
+is cut into segments of about 256 KiB:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
+|   +----------------------------------------------+   |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags, trained dictionary id      |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   FrameMeta frames[frame_count]              |   |
+|   +----------------------------------------------+   |
+|   first entry, decoded size and stored range         |
+|   of each frame in Data                              |
++------------------------------------------------------+
+|                    Entry lengths                     |
+|   +----------------------------------------------+   |
+|   |   bitpacked length[entry_count]              |   |
+|   +----------------------------------------------+   |
+|   one entry per row, empty for a NULL row            |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   lz4 frames of the concatenated entries     |   |
+|   +----------------------------------------------+   |
+|   frame 0 holds up to 32 KiB and is the              |
+|   dictionary of the later frames of up to 16 KiB;    |
+|   or 64 KiB frames without a dictionary;             |
+|   or 16 KiB frames compressed with the column's      |
+|   trained dictionary, stored once per column         |
++------------------------------------------------------+
+Sections start at 8-byte boundaries.
+*/
+
 namespace irs::codecs {
 
 static_assert(Lz4::kMaxLevel == LZ4HC_CLEVEL_MAX);

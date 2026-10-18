@@ -25,6 +25,54 @@
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
+/*
+Data layout per segment, one block of one column; a text column's row group
+is cut into segments of about 256 KiB:
++------------------------------------------------------+
+|                        Header                        |
+|   +----------------------------------------------+   |
+|   |   Header (string_layout.hpp), 72 bytes       |   |
+|   +----------------------------------------------+   |
+|   shape, leaf, level, bit widths, counts,            |
+|   section offsets, flags, trained dictionary id      |
++------------------------------------------------------+
+|                     Frame table                      |
+|   +----------------------------------------------+   |
+|   |   FrameMeta frames[frame_count]              |   |
+|   +----------------------------------------------+   |
+|   first entry, decoded size and stored range         |
+|   of each frame in Data                              |
++------------------------------------------------------+
+|                    Entry lengths                     |
+|   +----------------------------------------------+   |
+|   |   bitpacked encoded length[entry_count]      |   |
+|   +----------------------------------------------+   |
+|   length of each row's FSST-encoded suffix,          |
+|   0 for a NULL row                                   |
++------------------------------------------------------+
+|                   Shared prefixes                    |
+|   +----------------------------------------------+   |
+|   |   bitpacked lcp[entry_count]                 |   |
+|   +----------------------------------------------+   |
+|   bytes shared with the previous entry; 0 on a       |
+|   frame's first entry and every 16th after it        |
++------------------------------------------------------+
+|                     Symbol table                     |
+|   +----------------------------------------------+   |
+|   |   FSST symbol table, at most 2066 bytes      |   |
+|   +----------------------------------------------+   |
+|   trained once per row group; each of the row        |
+|   group's FSST segments stores a copy                |
++------------------------------------------------------+
+|                         Data                         |
+|   +----------------------------------------------+   |
+|   |   FSST-encoded suffixes                      |   |
+|   +----------------------------------------------+   |
+|   frames of up to 16 KiB of decoded entries          |
++------------------------------------------------------+
+Sections start at 8-byte boundaries.
+*/
+
 namespace irs::codecs {
 
 const duckdb::CompressionFunction* FsstFunction(duckdb::PhysicalType physical) {

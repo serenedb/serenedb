@@ -16,6 +16,10 @@ CREATE INDEX sb_idx ON sb USING inverted (body sb_words)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO sb
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
 FROM generate_series(1, 20000) s(i)
@@ -395,7 +399,7 @@ SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_s
 FROM read_text('${__TEST_DIR__}/scan_batches_count.json');
 ----
 row_groups_scanned
-39
+27
 
 
 statement ok

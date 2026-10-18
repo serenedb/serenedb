@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 These functions measure how close two equal-length vectors are -- the basis of [vector search](../indexes/inverted/vector-search.md), where a query embedding is compared against the embeddings stored in a column.
 
-Every function and operator here is a plain scalar: pass any two vectors and get the distance back, in any expression, with or without an index. The operators (`<->`, `<+>`, `<=>`, `<#>`) are short forms of the named functions. When a query orders by -- or filters on -- the distance between an indexed column and a constant query vector, as in `ORDER BY embedding <-> :query LIMIT k`, the planner answers it from the column's [IVF index](../indexes/inverted/vector-search.md) and returns the approximate `k` nearest neighbours -- far faster than scoring every row. Each function computes one fixed metric and only uses an index whose configured `metric` **matches** it (`l2`, `l1`, `cosine` or `ip`).
+Every function and operator here is a plain scalar: pass any two vectors and get the distance back, in any expression, with or without an index. The operators (`<->`, `<+>`, `<=>`, `<#>`) are short forms of the named functions. When a query orders by -- or filters on -- the distance between an indexed column and a constant query vector, as in `ORDER BY embedding <-> :query LIMIT k`, the planner answers it from the column's [vector index](../indexes/inverted/vector-search.md) and returns the approximate `k` nearest neighbours -- far faster than scoring every row. Each function computes one fixed metric and only uses an index whose configured `metric` **matches** it (`l2`, `l1`, `cosine` or `ip`).
 
 Lower distance means more similar. `cosine_similarity` and `inner_product` are the exceptions -- there, *higher* means more similar. `negative_inner_product` flips the sign so that lower is again more similar, which is what the `ip` index metric needs.
 
@@ -47,7 +47,7 @@ The four metrics answer different questions about two vectors `x` and `y` of len
 - **Cosine** -- `1 - (x · y) / (‖x‖ · ‖y‖)`. Compares only the *direction* of the vectors and ignores their length. This is the usual choice for text and embedding models, where two documents about the same topic point the same way regardless of length. A zero vector has no direction: its cosine similarity with any vector is `0` and its cosine distance `1`, the same values the index scores it with.
 - **Inner product (dot)** -- `Σ xᵢ yᵢ`. Rewards vectors that are both aligned *and* large. For vectors that are already L2-normalized to unit length, inner product equals cosine similarity, so many embedding pipelines normalize once and then use the cheaper dot product. Because higher means more similar, the index uses **negative** inner product (`negative_inner_product`) so that, like every other metric, a *smaller* value sorts first.
 
-### Operators, metrics and the IVF index {#operators-and-the-index}
+### Operators, metrics and the vector index {#operators-and-the-index}
 
 Each operator is bound to exactly one metric and is **independent of how a column happens to be indexed** -- `a <-> b` always computes L2 even if `a` comes from a cosine-indexed column. To get acceleration, the operator's metric must match the index's `metric`:
 
@@ -64,7 +64,7 @@ A query of the shape
 SELECT id FROM index_name ORDER BY emb <-> $query LIMIT k;
 ```
 
-lets the planner probe the [IVF index](../indexes/inverted/vector-search.md)'s clusters closest to `$query` and return the approximate `k` nearest neighbours, touching only a small fraction of the rows. Use the operator whose metric matches the index you built; mixing them (for example `<=>` against an `l2` index) still returns correct distances but cannot use the index, so it falls back to scanning every row. For tiny tables the planner may scan anyway because a sequential pass is cheaper than probing clusters -- the speed-up matters at scale.
+lets the planner answer it from the [vector index](../indexes/inverted/vector-search.md) and return the approximate `k` nearest neighbours, touching only a small fraction of the rows. Use the operator whose metric matches the index you built; mixing them (for example `<=>` against an `l2` index) still returns correct distances but cannot use the index, so it falls back to scanning every row.
 
 ## Distance functions {#distance-functions}
 
@@ -140,7 +140,7 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 
 ## Distance operators: `<->`, `<+>`, `<=>`, `<#>` {#distance-operators}
 
-Each operator maps to one metric and to a named function, and like it only accelerates a query when its metric matches the index (see [Operators, metrics and the IVF index](#operators-and-the-index)). On `GEOMETRY` operands `<->` is instead the planar distance, as in PostGIS -- see [Geo Functions](./search/geo.md#distance-operator).
+Each operator maps to one metric and to a named function, and like it only accelerates a query when its metric matches the index (see [Operators, metrics and the vector index](#operators-and-the-index)). On `GEOMETRY` operands `<->` is instead the planar distance, as in PostGIS -- see [Geo Functions](./search/geo.md#distance-operator).
 
 | Operator | Metric | Equivalent function |
 | :--- | :--- | :--- |

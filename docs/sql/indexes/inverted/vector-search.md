@@ -35,7 +35,9 @@ There are two ways to query a vector index: **k-nearest-neighbor** search (the c
 
 ### k-nearest-neighbor (kNN)
 
-Order by the distance to a query vector and `LIMIT` to the number of neighbors you want. Each distance operator computes a **fixed** metric -- `<->` is L2, `<=>` is cosine, `<+>` is L1 and `<#>` is inner product -- so use the one matching the metric your index was built with; the optimizer then routes the query through the IVF index, and `EXPLAIN` shows the distance as the scan's `Score` with a `Top: k` row. With another operator the query still returns correct distances, but from a full scan: a `TOP_N` over a `PROJECTION` that computes each distance.
+Order by the distance to a query vector and `LIMIT` to the number of neighbors you want. Each distance operator computes a **fixed** metric -- `<->` is L2, `<=>` is cosine, `<+>` is L1 and `<#>` is inner product -- so use the one matching the metric your index was built with; the optimizer then routes the query through the vector index, and `EXPLAIN` shows the distance as the scan's `Score` with a `Top: k` row. With another operator the query still returns correct distances, but from a full scan: a `TOP_N` over a `PROJECTION` that computes each distance.
+
+A kNN query returns `k` rows whenever at least `k` rows match its `WHERE`. When the clusters an `ivf` index probes hold fewer, the query is answered exactly from every matching row instead.
 
 ```sql
 SELECT id FROM index_name ORDER BY emb <-> $query_vector LIMIT k;

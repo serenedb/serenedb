@@ -119,7 +119,7 @@ Query types:
 
 - [Full-Text Search](sql/indexes/inverted/full-text-search.md) — the `@@` operator, phrases, fuzzy, boolean queries
 - [Ranking](sql/indexes/inverted/ranking.md) — BM25 and other scorers, boosting, top-K / WAND
-- [Vector Search](sql/indexes/inverted/vector-search.md) — IVF indexing, kNN and range search
+- [Vector Search](sql/indexes/inverted/vector-search.md) — IVF and HNSW indexing, kNN and range search
 - [Hybrid Search](sql/indexes/inverted/hybrid-search.md) — combine full-text filters with vector ranking
 - [Geospatial Search](sql/indexes/inverted/geospatial-search.md) — `ST_*` predicates over GeoJSON / `GEOMETRY`
 

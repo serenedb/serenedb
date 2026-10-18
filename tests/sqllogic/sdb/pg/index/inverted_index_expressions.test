@@ -2216,7 +2216,7 @@ statement error
 CREATE INDEX ivf_e3_idx ON ivf_e3 USING inverted(
     id, (array_value(a, b, c)) ivf(metric='l2'));
 ----
-db error: ERROR: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+db error: ERROR: Column 'array_value(a, b, c)' must be FLOAT[N] to use the 'ivf' opclass, not INTEGER[3]
 
 
 # Non-ARRAY return type rejected when ivf is requested.
@@ -2225,7 +2225,7 @@ statement error
 CREATE INDEX ivf_e_scalar ON ivf_e USING inverted(
     id, (x + y + z) ivf(metric='l2'));
 ----
-db error: ERROR: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
+db error: ERROR: Column '((x + y) + z)' must be FLOAT[N] to use the 'ivf' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------

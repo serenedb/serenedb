@@ -334,8 +334,9 @@ std::string DescribeHNSWOptions() {
     ", must be >= m), ", "compression (bool, default true)");
 }
 
-irs::VectorMetric ParseIVFMetric(std::string_view column_name,
-                                 std::string_view name) {
+irs::VectorMetric ParseMetric(std::string_view kind,
+                              std::string_view column_name,
+                              std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
   static constexpr std::pair<std::string_view, irs::VectorMetric> kMap[] = {
@@ -350,13 +351,14 @@ irs::VectorMetric ParseIVFMetric(std::string_view column_name,
     }
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("Column '", column_name, "': unknown ivf metric '", n,
-                          "'. Expected one of: ", kL2Metric, " ", kL1Metric,
-                          " ", kCosineMetric, " ", kIPMetric));
+                  ERR_MSG("Column '", column_name, "': unknown ", kind,
+                          " metric '", n, "'. Expected one of: ", kL2Metric,
+                          " ", kL1Metric, " ", kCosineMetric, " ", kIPMetric));
 }
 
-irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
-                                      std::string_view name) {
+irs::VectorQuantization ParseQuant(std::string_view kind,
+                                   std::string_view column_name,
+                                   std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
   for (const auto& [k, v] : kQuantNames) {
@@ -364,9 +366,10 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
       return v;
     }
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
-                          "'. Expected one of: ", JoinQuantNames(" ")));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Column '", column_name, "': unknown ", kind, " quant '", n,
+            "'. Expected one of: ", JoinQuantNames(" ")));
 }
 
 void ValidateQuantBits(std::string_view kind, std::string_view column_name,
@@ -523,12 +526,12 @@ bool ApplyAnnOption(std::string_view kind, std::string_view column_name,
                     irs::AnnInfo& cfg, bool& compression,
                     AnnOptionsSeen& seen) {
   if (key == kMetricField) {
-    cfg.metric = ParseIVFMetric(
-      column_name, GetIndexStringOption(kind, column_name, key, raw_val));
+    cfg.metric = ParseMetric(
+      kind, column_name, GetIndexStringOption(kind, column_name, key, raw_val));
     seen.metric = true;
   } else if (key == kQuantField) {
-    cfg.quant.kind = ParseIVFQuant(
-      column_name, GetIndexStringOption(kind, column_name, key, raw_val));
+    cfg.quant.kind = ParseQuant(
+      kind, column_name, GetIndexStringOption(kind, column_name, key, raw_val));
     seen.quant = true;
   } else if (key == kPqMField) {
     cfg.quant.pq_m = ParsePositiveUintOption(kind, column_name, key, raw_val);
@@ -890,7 +893,7 @@ void ValidateIncludedKey(std::string_view label,
   }
 }
 
-uint32_t IVFDimension(const duckdb::LogicalType& type) noexcept {
+uint32_t VectorDimension(const duckdb::LogicalType& type) noexcept {
   if (type.id() != duckdb::LogicalTypeId::ARRAY) {
     return 0;
   }
@@ -901,13 +904,13 @@ uint32_t IVFDimension(const duckdb::LogicalType& type) noexcept {
   return static_cast<uint32_t>(duckdb::ArrayType::GetSize(type));
 }
 
-void ValidateIVFKey(std::string_view label, const duckdb::LogicalType& type) {
-  if (IVFDimension(type) == 0) {
+void ValidateVectorKey(std::string_view label, const duckdb::LogicalType& type,
+                       std::string_view kind) {
+  if (VectorDimension(type) == 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-      ERR_MSG("Column '", label,
-              "' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not ",
-              type.ToString()));
+      ERR_MSG("Column '", label, "' must be FLOAT[N] to use the '", kind,
+              "' opclass, not ", type.ToString()));
   }
 }
 
@@ -1005,7 +1008,7 @@ void ValidateInvertedIndexKey(std::string_view label,
                               const duckdb::LogicalType& type,
                               const KeyOpclass& opclass) {
   if (opclass.IsAnn()) {
-    ValidateIVFKey(label, type);
+    ValidateVectorKey(label, type, opclass.name);
     return;
   }
   if (opclass.IsBuiltin(catalog::kIncludedKind)) {

@@ -142,10 +142,9 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
 }
 
 size_t HistorySize() {
-  static constinit SettingRef gHistorySize{"sdb_job_history_size"};
-  return gHistorySize
-    .Global(
-      duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()))
+  return GetGlobalSetting(duckdb::DBConfig::GetConfig(
+                            irs::DuckDBEngine::Instance().instance()),
+                          "sdb_job_history_size")
     .GetValue<uint64_t>();
 }
 
@@ -163,11 +162,11 @@ void ForAllJobs(
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                            duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
-  static constinit SettingRef gMaxDepth{"sdb_job_max_depth"};
   auto parent =
     caller ? caller->registered_state->Get<JobRun>(kJobRunKey) : nullptr;
   const uint32_t depth = parent ? parent->depth + 1 : 1;
-  const uint32_t max_depth = caller ? gMaxDepth.Int(*caller) : depth;
+  const uint32_t max_depth =
+    caller ? GetIntSetting(*caller, "sdb_job_max_depth") : depth;
   if (depth > max_depth) {
     return duckdb::ErrorData{
       duckdb::ExceptionType::INVALID_INPUT,

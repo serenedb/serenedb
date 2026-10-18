@@ -435,3 +435,32 @@ pk
 
 statement ok
 DEALLOCATE ap_label_range;
+
+statement ok
+CREATE FUNCTION ap_twice(x INTEGER) AS x * 2;
+
+query
+SELECT pk FROM ap WHERE ap_twice(num) = 1000
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+500
+
+statement ok
+PREPARE ap_macro AS SELECT pk FROM ap WHERE ap_twice(num) = $2
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_macro([100.4, 0, 0, 0, 0, 0, 0, 0], 1000);
+----
+pk
+500
+
+query
+EXECUTE ap_macro([100.4, 0, 0, 0, 0, 0, 0, 0], 202);
+----
+pk
+101
+
+statement ok
+DEALLOCATE ap_macro;

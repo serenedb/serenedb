@@ -1104,32 +1104,30 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
 bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
                                                TsDictFacetKey& key) {
   const auto expr_ti = SingleReferencedTableIndex(expr);
-  if (!expr_ti || !AdoptScan(FindIResearchScan(_root, *expr_ti))) {
+  if (!expr_ti || !AdoptScan(FindIResearchScan(_root, *expr_ti)) ||
+      !ColumnIndex()->HasExpressionKeys()) {
     return false;
   }
   if (!_projected_ids) {
     _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
-  const auto resolve_in = [&](const catalog::InvertedIndexConfig& index) {
-    auto normalized = connector::NormalizeBoundExpression(
-      expr, _found.bind_data->RelationId(), *_projected_ids, _context);
-    const auto serialized = connector::SerializeBoundExpression(*normalized);
-    const auto field_id = index.FindFieldIdByExpression(serialized);
-    if (!irs::field_limits::valid(field_id)) {
-      return false;
-    }
-    const auto* info = index.FindEntry(field_id);
-    if (!info || !irs::field_limits::valid(info->null_field_id)) {
-      return false;
-    }
-    key.field_id = field_id;
-    key.null_field_id = info->null_field_id;
-    key.index = &index;
-    return true;
-  };
-  if (!resolve_in(*ColumnIndex())) {
+  const auto& index = *ColumnIndex();
+  const auto* term =
+    index
+      .FindExpressionKeys(connector::NormalizedExpression(
+        expr, _found.bind_data->RelationId(), *_projected_ids, _context))
+      .term;
+  if (!term) {
     return false;
   }
+  const auto* info = index.FindEntry(term->field_id);
+  SDB_ASSERT(info);
+  if (!irs::field_limits::valid(info->null_field_id)) {
+    return false;
+  }
+  key.field_id = term->field_id;
+  key.null_field_id = info->null_field_id;
+  key.index = &index;
   key.anchor = _found.get->table_index;
   return true;
 }

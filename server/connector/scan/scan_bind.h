@@ -66,8 +66,15 @@ struct RowFilter {
   std::shared_ptr<const duckdb::TableFilter> filter;
 };
 
+struct DeferredCheck {
+  const irs::Filter* source;
+  irs::field_id column;
+  std::shared_ptr<const duckdb::TableFilter> check;
+};
+
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
+  std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
   std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
@@ -196,6 +203,16 @@ struct RelationSpec {
     SDB_ASSERT(inverted_config);
     return *inverted_config;
   }
+  bool Stores(ColumnId column) const noexcept {
+    if (IsSearchTable()) {
+      return true;
+    }
+    const auto* info = ScannedIndex().FindColumnInfo(column);
+    return info && info->IsStored();
+  }
+  bool StoresExpression(ColumnId field) const noexcept {
+    return inverted_config && inverted_config->StoresExpression(field);
+  }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {
     return {context,
@@ -229,6 +246,9 @@ struct ScanBindData final : duckdb::FunctionData {
   }
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
+  bool DefersChecks() const noexcept {
+    return offsets.requests.empty() && !score.vector;
+  }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
   }
@@ -292,6 +312,7 @@ struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
   std::vector<DeferredColumnFilter> column_filters;
+  std::vector<DeferredCheck> checks;
 };
 
 DeferredBuild BuildDeferredFilter(

@@ -343,8 +343,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                                          std::memory_order_relaxed);
     }
   } else if (state->shape == ScanShape::Stream) {
-    static constinit SettingRef gDisableTopK{"sdb_disable_top_k_optimization"};
-    const bool topk_disabled = gDisableTopK.Bool(context);
+    const bool topk_disabled =
+      GetBoolSetting(context, "sdb_disable_top_k_optimization");
     const bool dynamic_bound =
       state->score_dynamic_filter &&
       (state->score_dynamic_filter->comparison_type ==
@@ -498,8 +498,7 @@ void IResearchSetScanOrder(
       (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
-  static constinit SettingRef gDisableTopK{"sdb_disable_top_k_optimization"};
-  if (gDisableTopK.Bool(context)) {
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
     return;
   }
   auto& bd = bind_data->Cast<ScanBindData>();
@@ -509,12 +508,7 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    const auto* info = bd.relation.IsInvertedIndex()
-                         ? bd.relation.ScannedIndex().FindColumnInfo(col_id)
-                         : nullptr;
-    const bool stored =
-      bd.relation.IsSearchTable() || (info && info->IsStored());
-    if (stored && !bd.scan_order) {
+    if (bd.relation.Stores(col_id) && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,
                       options->order_by, options->column_type};

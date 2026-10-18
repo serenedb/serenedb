@@ -358,8 +358,9 @@ IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(
 
 }  // namespace detail
 
-template<typename Emit>
-IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
+template<typename Emit, typename Progress = classify::NoProgress>
+IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit,
+                                  Progress progress = {}) {
   const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   using detail::kSegAlpha;
@@ -385,7 +386,11 @@ IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit) {
     }
   };
 
+  size_t reported = 0;
   while (i < n) {
+    if (!classify::KeepScanning(progress, reported, i)) {
+      return;
+    }
     const byte_type byte = b[i];
     uint8_t cls;
     bool extpict = false;

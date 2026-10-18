@@ -148,7 +148,8 @@ std::string KindName(CatalogType type) {
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid;
+  return entry.permissions.owner == pg::kInvalidOid ||
+         entry.ParentCatalog().GetAttached().IsReadOnly();
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
@@ -664,10 +665,17 @@ class Enforcer {
       return;
     }
     const auto& bind = get.bind_data->Cast<connector::ScanBindData>();
-    if (!bind.IsViewBacked() || !bind.relation.inverted_index) {
+    if (!bind.relation.inverted_index) {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
+    if (index.catalog.GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
+      RequireServerUsage(index.catalog.GetName());
+    }
+    if (!bind.IsViewBacked()) {
+      return;
+    }
     auto view =
       index.GetRelation(index.catalog.GetCatalogTransaction(_context));
     if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
@@ -685,7 +693,8 @@ class Enforcer {
       CheckIndexScan(get);
       return;
     }
-    if (!table->catalog.IsDuckCatalog()) {
+    if (table->catalog.GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
       RequireServerUsage(table->catalog.GetName());
     }
     if (Unowned(*table)) {

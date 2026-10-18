@@ -100,16 +100,6 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "background_threads",
-          "flag": "--background_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Number of background worker threads (drop / cleanup / maintenance tasks; later object-store prefetch). 0 = auto-detect.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "cpu_threads",
           "flag": "--cpu_threads",
           "type": "",

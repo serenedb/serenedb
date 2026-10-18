@@ -77,10 +77,6 @@ class HitBatcher {
   // The segment's bound `.col` filter chain (empty when none): the streaming
   // loop consults its zonemap skip before staging windows.
   ColFilterChain& Filters() noexcept { return _filters; }
-  // Rows in the segment's columnstore (0 when no column is bound).
-  uint64_t SegmentRowCount() const noexcept {
-    return _rg_col != nullptr ? _rg_col->RowCount() : 0;
-  }
 
   uint32_t Segment() const noexcept { return _seg_idx; }
 

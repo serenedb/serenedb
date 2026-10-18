@@ -136,8 +136,9 @@ IRS_FORCE_INLINE inline uint32_t BridgeMask(const WordBridgeMasks& m) noexcept {
          (m.mid_nu & (m.digit << 1) & (m.digit >> 1));
 }
 
-template<typename Emit>
-IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
+template<typename Emit, typename Progress = classify::NoProgress>
+IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit,
+                                    Progress progress = {}) {
   const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   size_t i = 0;
@@ -183,6 +184,9 @@ IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
     const size_t blk = i;
     i = blk + classify::kClassifyBlock;
     drain(m, blk, BridgeMask(m) | (1u << (classify::kClassifyBlock - 1)));
+    if (!progress()) {
+      return;
+    }
   }
   while (i < n) {
     const auto m = ClassifyWordBridge(classify::LoadPadded(b + i, n - i));
@@ -192,12 +196,17 @@ IRS_FORCE_INLINE void ScanAsciiRuns(duckdb::string_t value, Emit&& emit) {
   }
 }
 
-template<typename Emit>
-IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit) {
+template<typename Emit, typename Progress = classify::NoProgress>
+IRS_FORCE_INLINE void ScanAscii(duckdb::string_t value, Emit&& emit,
+                                Progress progress = {}) {
   const auto* b = reinterpret_cast<const byte_type*>(value.GetData());
   const size_t n = value.GetSize();
   size_t i = 0;
+  size_t reported = 0;
   while (i < n) {
+    if (!classify::KeepScanning(progress, reported, i)) {
+      return;
+    }
     const size_t seg_begin = i;
     const uint8_t c0 = kWbClass[b[i]];
     bool has_alpha = false;

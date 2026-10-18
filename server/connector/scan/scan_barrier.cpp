@@ -114,6 +114,7 @@ void ScanBarrier::Wait() {
   if (Released()) {
     return;
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   _notification.WaitForNotification();
 }
 

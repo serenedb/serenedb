@@ -49,8 +49,10 @@
 #include <stringzilla/utf8_tokens/sve2.h>
 #include <stringzilla/utf8_uncased_fold/neon.h>
 #include <stringzilla/utf8_uncased_fold/sve2.h>
+#ifdef __linux__
 #include <sys/auxv.h>
 #include <sys/prctl.h>
+#endif
 #endif
 
 #include <cstddef>
@@ -80,18 +82,27 @@ inline bool HasAvx512Bw() noexcept {
 }
 #elif defined(__aarch64__)
 inline bool HasSve() noexcept {
+#ifdef __linux__
   static const bool kHas = (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
   return kHas;
+#else
+  return false;
+#endif
 }
 
 inline bool HasSve2() noexcept {
+#ifdef __linux__
   static const bool kHas = (getauxval(AT_HWCAP2) & HWCAP2_SVE2) != 0;
   return kHas;
+#else
+  return false;
+#endif
 }
 
 inline constexpr int kNeonBytes = 16;
 
 inline bool HasWideSve2() noexcept {
+#ifdef __linux__
   static const bool kHas = [] {
     if (!HasSve2()) {
       return false;
@@ -100,6 +111,9 @@ inline bool HasWideSve2() noexcept {
     return vl > 0 && (vl & PR_SVE_VL_LEN_MASK) > kNeonBytes;
   }();
   return kHas;
+#else
+  return false;
+#endif
 }
 #endif
 

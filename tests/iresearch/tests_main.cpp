@@ -23,6 +23,7 @@
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
+#include <duckdb/catalog/default/default_types.hpp>
 
 #include <iresearch/utils/application_exit.hpp>
 #include <type_traits>
@@ -59,6 +60,13 @@
     ? templ                                                               \
     : nullptr
 #endif
+
+// Standalone IResearch tests do not provide the server's additional SQL types.
+extern "C" const duckdb::DefaultType* duckdb_external_types(
+  duckdb::idx_t* count) {
+  *count = 0;
+  return nullptr;
+}
 
 ABSL_FLAG(bool, ires_log_stack, false, "always log stack trace");
 // String (not bool): the CI passes --ires_output=xml:<path>, so the flag must

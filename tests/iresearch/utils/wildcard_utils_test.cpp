@@ -127,6 +127,16 @@ TEST_F(WildcardUtilsTest, wildcard_type) {
               irs::ViewCast<irs::byte_type>(std::string_view("%c%%"))));
 }
 
+TEST_F(WildcardUtilsTest, wildcard_prefix) {
+  ASSERT_EQ(B("foo"), irs::ExtractWildcardPrefix(B("foo%")));
+  ASSERT_EQ(B("foo"), irs::ExtractWildcardPrefix(B("foo%%")));
+  ASSERT_EQ(B(""), irs::ExtractWildcardPrefix(B("%")));
+  ASSERT_EQ(B("50\\%"), irs::ExtractWildcardPrefix(B("50\\%%")));
+  ASSERT_EQ(B("\\%"), irs::ExtractWildcardPrefix(B("\\%%")));
+  ASSERT_EQ(B("a\\\\"), irs::ExtractWildcardPrefix(B("a\\\\%")));
+  ASSERT_EQ(B("\xD0\xBF\\%"), irs::ExtractWildcardPrefix(B("\xD0\xBF\\%%")));
+}
+
 TEST_F(WildcardUtilsTest, accepting_state_reads_nothing) {
   const auto a = FromWildcard("f_o");
   ASSERT_TRUE(a.ok());

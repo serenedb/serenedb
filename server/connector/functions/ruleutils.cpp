@@ -40,7 +40,6 @@
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
@@ -73,26 +72,25 @@ namespace {
 
 using Definition = std::optional<std::string>;
 
-catalog::SereneDBCatalog& SessionCatalog(duckdb::ClientContext& context) {
-  return duckdb::Catalog::GetCatalog(
-           context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-    .Cast<catalog::SereneDBCatalog>();
-}
-
 template<typename T>
 const T* EntryByOid(duckdb::ClientContext& context, duckdb::CatalogType type,
                     uint64_t oid) {
-  if (oid == pg::kInvalidOid) {
+  auto database = catalog::DefaultDuckCatalog(context);
+  if (oid == pg::kInvalidOid || !database) {
     return nullptr;
   }
-  auto entry = SessionCatalog(context).FindEntryById(&context, type, oid);
+  auto entry = database->FindEntryById(&context, type, oid);
   return entry && entry->type == type ? &entry->Cast<T>() : nullptr;
 }
 
 template<typename Visitor>
 void VisitTables(duckdb::ClientContext& context, Visitor&& visitor) {
+  auto database = catalog::DefaultDuckCatalog(context);
+  if (!database) {
+    return;
+  }
   std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
-  for (auto& schema : SessionCatalog(context).GetSchemas(context)) {
+  for (auto& schema : database->GetSchemas(context)) {
     schema.get().Scan(
       context, duckdb::CatalogType::TABLE_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
@@ -432,10 +430,9 @@ Definition IndexDefinition(duckdb::ClientContext& context, uint64_t oid,
   if (const auto* index = EntryByOid<duckdb::IndexCatalogEntry>(
         context, duckdb::CatalogType::INDEX_ENTRY, oid)) {
     shape = ShapeOf(context, *index);
-  } else if (oid != pg::kInvalidOid) {
-    if (const auto key =
-          pg::FindKeyIndex(context, SessionCatalog(context), oid);
-        key.table) {
+  } else if (auto database = catalog::DefaultDuckCatalog(context);
+             database && oid != pg::kInvalidOid) {
+    if (const auto key = pg::FindKeyIndex(context, *database, oid); key.table) {
       shape = ShapeOf(key);
     }
   }

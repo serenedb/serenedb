@@ -58,12 +58,14 @@ public:
 	//! paths (not catalog-metadata queries, matching postgres).
 	static clickhouse::Query MakeQuery(duckdb::ClientContext &context, const string &sql);
 
-	void Execute(optional_ptr<ClientContext> context, const clickhouse::Query &query);
+	void Execute(optional_ptr<ClientContext> context, clickhouse::Query query);
 	void Select(optional_ptr<ClientContext> context, const string &sql, clickhouse::SelectCallback callback);
-	void BeginSelect(optional_ptr<ClientContext> context, const clickhouse::Query &query);
-	void BeginSelectWithExternalData(optional_ptr<ClientContext> context, const clickhouse::Query &query,
+	void BeginSelect(optional_ptr<ClientContext> context, clickhouse::Query query);
+	void BeginSelectWithExternalData(optional_ptr<ClientContext> context, clickhouse::Query query,
 	                                 const clickhouse::ExternalTables &external_tables);
 	void Insert(optional_ptr<ClientContext> context, const string &table, const clickhouse::Block &block);
+	std::optional<clickhouse::Block> NextBlock();
+	void Ping();
 
 	//! Uniform error translation: throw an IOException naming the failed operation and
 	//! carrying the SQL that failed.

@@ -291,8 +291,6 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
 
   // Indexed term values per row (per column).
-  // VARCHAR: terms are exactly the string bytes -- no legacy kStringPrefix
-  // dance under the Vector-native API.
   const std::vector<std::string_view> string_values{
     std::string_view{"rrr", 3}, std::string_view{"", 0},
     std::string_view{"abcdef", 6}, std::string_view{"\x0", 1}};

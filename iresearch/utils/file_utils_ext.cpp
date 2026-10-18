@@ -283,10 +283,17 @@ void Prefetch(const void* addr, size_t size) noexcept {
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
   for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
+#ifdef __APPLE__
+    radvisory advice{
+      .ra_offset = static_cast<off_t>(offset + at),
+      .ra_count = static_cast<int>(std::min<uint64_t>(kWillNeedChunk, size - at))};
+    ::fcntl(fd, F_RDADVISE, &advice);
+#else
     ::posix_fadvise(
       fd, static_cast<off_t>(offset + at),
       static_cast<off_t>(std::min<uint64_t>(kWillNeedChunk, size - at)),
       POSIX_FADV_WILLNEED);
+#endif
   }
 #endif
 }
@@ -297,14 +304,19 @@ bool IsResident(const void* addr, size_t size) noexcept {
     return true;
   }
   constexpr size_t kMaxPages = 1024;
+  const auto page = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  char resident[kMaxPages];
+#else
   unsigned char resident[kMaxPages];
-  for (size_t done = 0; done < total; done += kMaxPages * kPage) {
-    const auto len = std::min(total - done, kMaxPages * kPage);
+#endif
+  for (size_t done = 0; done < total; done += kMaxPages * page) {
+    const auto len = std::min(total - done, kMaxPages * page);
     if (::mincore(reinterpret_cast<void*>(aligned + done), len, resident) !=
           0 ||
-        !std::all_of(resident, resident + (len + kPage - 1) / kPage,
-                     [](unsigned char page) { return (page & 1) != 0; })) {
+        !std::all_of(resident, resident + (len + page - 1) / page,
+                     [](unsigned char value) { return (value & 1) != 0; })) {
       return false;
     }
   }
@@ -322,8 +334,13 @@ size_t Residency(const void* addr, size_t size,
   }
   const auto page = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  auto* resident = reinterpret_cast<char*>(pages.data());
+#else
+  auto* resident = pages.data();
+#endif
   if ((total + page - 1) / page > pages.size() ||
-      ::mincore(reinterpret_cast<void*>(aligned), total, pages.data()) != 0) {
+      ::mincore(reinterpret_cast<void*>(aligned), total, resident) != 0) {
     return 0;
   }
   return page;

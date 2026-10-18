@@ -542,6 +542,86 @@ def test_char_oid18_param_roundtrip(conn):
     assert first_field(m) == b"A"
 
 
+def test_bytea_text_param_decodes_input_syntax(conn):
+    cases = [
+        (b"abc\\001", b"\\x61626301"),
+        (b"a\\\\b", b"\\x615c62"),
+        (b"\\x de ad\tbe\nef", b"\\xdeadbeef"),
+        (b"\\001" * 20, b"\\x" + b"01" * 20),
+        (b"no escapes", b"\\x6e6f2065736361706573"),
+        (b"\\x" + b"ab" * 12, b"\\x" + b"ab" * 12),
+        (b"\\x" + b"ab" * 13, b"\\x" + b"ab" * 13),
+        (b"x" * 11 + b"\\001", b"\\x" + b"78" * 11 + b"01"),
+        (b"x" * 12 + b"\\001", b"\\x" + b"78" * 12 + b"01"),
+        (b"\\x" + b"cd" * 5000, b"\\x" + b"cd" * 5000),
+    ]
+    for text, expected in cases:
+        conn.parse("", "select $1", oids=(17,))
+        conn.bind("", "", params=(text,))
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), (text, errors(m))
+        assert first_field(m) == expected, text
+
+    first = b"y" * 40 + b"\\001"
+    second = b"\\x" + b"ef" * 40
+    conn.parse("", "select $1, $2", oids=(17, 17))
+    conn.bind("", "", params=(first, second))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b"\\x" + b"79" * 40 + b"01", second]
+
+    conn.parse("", "select $1", oids=(17,))
+    conn.bind("", "", params=(b"a\\9",))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+
+
+def test_bytea_binary_param_keeps_its_bytes(conn):
+    for value in (b"", bytes(range(12)), bytes(range(13)),
+                  bytes(range(256)) * 40):
+        conn.parse("", "select $1", oids=(17,))
+        conn.bind("", "", params=(value,), formats=(1,))
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        assert first_field(m) == b"\\x" + value.hex().encode(), len(value)
+
+
+def test_bytea_array_text_param(conn):
+    conn.parse("", "select encode($1[1], 'hex'), encode($1[2], 'hex'), "
+               "$1[3] is null, encode($1[4], 'hex')", oids=(1001,))
+    conn.bind("", "", params=(
+        b'{"\\\\x000102030405060708090a0b0c0d0e0f",'
+        b'"abcdefghijklmnop\\\\001",NULL,"\\\\x"}',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b"000102030405060708090a0b0c0d0e0f",
+                             b"6162636465666768696a6b6c6d6e6f7001", b"t", b""]
+
+
+def test_bytea_input_errors(conn):
+    cases = [
+        ("select '\\xzz'::bytea", "22023", 'invalid hexadecimal digit: "z"'),
+        ("select '\\xé0'::bytea", "22023", 'invalid hexadecimal digit: "é"'),
+        ("select '\\x0'::bytea", "22023",
+         "invalid hexadecimal data: odd number of digits"),
+        ("select 'a\\9'::bytea", "22P02", "invalid input syntax for type bytea"),
+        ("select 'x\\400'::bytea", "22P02",
+         "invalid input syntax for type bytea"),
+    ]
+    for sql, code, message in cases:
+        errs = errors(conn.run(sql))
+        assert [(e.get("C"), e.get("M")) for e in errs] == [(code, message)], sql
+
+
 def test_describe_resolves_deferred_param_output(conn):
     # A bare projected parameter carries no type until it is known, so duckdb
     # leaves the prepared statement's output type UNKNOWN. Describe must
@@ -1604,12 +1684,35 @@ def test_describe_trailing_bytes_rejected(conn):
     assert sqlstates(m) == ["08P01"], (statuses(m), sqlstates(m))
 
 
-def test_empty_database_defaults_to_user():
-    # PG defaults an empty database startup parameter to the user name
-    # (backend_startup.c) and connects; serenedb must not FATAL 3D000.
-    # Verified against PostgreSQL.
+@pytest.fixture(scope="module")
+def startup_database():
+    name = "drv_startup_explicit_database"
+    admin = WireConn()
+    try:
+        admin.run_ok(f"CREATE DATABASE {name}")
+        try:
+            yield name
+        finally:
+            admin.run_ok(f"DROP DATABASE {name}")
+    finally:
+        admin.close()
+
+
+@pytest.mark.parametrize("database", [None, "", "explicit"])
+@pytest.mark.parametrize("extra_count", range(9))
+def test_startup_database_selection(startup_database, database, extra_count):
     kw = conn_kwargs()
-    sock = socket.create_connection((kw["host"], kw["port"]))
+    extra = [
+        ("application_name", "startup_database_selection"),
+        ("client_encoding", "UTF8"),
+        ("DateStyle", "ISO, MDY"),
+        ("TimeZone", "UTC"),
+        ("extra_float_digits", "3"),
+        ("search_path", "public"),
+        ("options", ""),
+        ("replication", "false"),
+    ]
+    sock = socket.create_connection((kw["host"], kw["port"]), timeout=5)
     try:
 
         def recv_exact(n: int) -> bytes:
@@ -1621,17 +1724,37 @@ def test_empty_database_defaults_to_user():
                 buf += chunk
             return buf
 
-        params = _cstr("user") + _cstr(kw["user"]) + _cstr("database") + _cstr("") + b"\0"
+        params = _cstr("user") + _cstr(kw["user"])
+        if database is not None:
+            params += _cstr("database") + _cstr(startup_database if database else "")
+        for key, value in extra[:extra_count]:
+            params += _cstr(key) + _cstr(value)
+        params += b"\0"
         sock.sendall(struct.pack("!II", len(params) + 8, 196608) + params)
         seen = []
         while True:
             t = recv_exact(1).decode()
             (ln,) = struct.unpack("!I", recv_exact(4))
-            recv_exact(ln - 4)
+            body = recv_exact(ln - 4)
             seen.append(t)
+            assert t != "E", errors([(t, body)])
             if t in ("Z", "E"):
                 break
         assert "Z" in seen and "E" not in seen, seen
+        query = _cstr("SELECT current_database(), current_user")
+        sock.sendall(b"Q" + struct.pack("!I", len(query) + 4) + query)
+        result = []
+        while True:
+            t = recv_exact(1).decode()
+            (ln,) = struct.unpack("!I", recv_exact(4))
+            body = recv_exact(ln - 4)
+            assert t != "E", errors([(t, body)])
+            if t == "D":
+                result.append(_data_row(body))
+            if t == "Z":
+                break
+        expected = startup_database if database else kw["user"]
+        assert result == [[expected.encode(), kw["user"].encode()]]
     finally:
         sock.close()
 

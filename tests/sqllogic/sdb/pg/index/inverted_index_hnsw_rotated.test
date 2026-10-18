@@ -352,6 +352,9 @@ FROM pragma_storage_info('rot_sq8') WHERE column_name = 'id';
 segments
 2
 
+statement ok
+SET sdb_ann_oversample = 4;
+
 query
 SELECT count(*) FROM (
   (SELECT id FROM rot_sq8 ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)
@@ -367,6 +370,9 @@ SELECT count(*) FROM (
 ----
 count
 0
+
+statement ok
+RESET sdb_ann_oversample;
 
 query
 SELECT count(*) FROM (

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/top/make.hpp>
@@ -618,7 +619,8 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       Merge(g);
       t.merge_barrier.Release(input);
     } else {
-      if (!t.shared_fetch) {
+      if (!t.shared_fetch &&
+          duckdb::TaskScheduler::GetScheduler(ctx).GetNumberOfTasks() != 0) {
         output.SetChildCardinality(0);
         return;
       }

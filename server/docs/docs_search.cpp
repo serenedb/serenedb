@@ -788,7 +788,7 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
   const auto matched = irs::ExecuteTopK(reader, filter, *scorer, capacity,
                                         /*score_prune=*/false, std::span{hits});
 
-  hits.resize(std::min(matched, capacity));
+  hits.resize(std::min<size_t>(matched, capacity));
   absl::c_sort(hits, [](const irs::ScoreDoc& lhs, const irs::ScoreDoc& rhs) {
     return std::tie(lhs.segment_idx, lhs.doc) <
            std::tie(rhs.segment_idx, rhs.doc);

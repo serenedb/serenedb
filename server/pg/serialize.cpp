@@ -188,10 +188,12 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
     const char c = p[i];
     const size_t run = i - start;
     if (c == '"') {
+      CheckMessageSize(writer.Written() + run + quote_seq_size);
       char* buf = reinterpret_cast<char*>(writer.Alloc(run + quote_seq_size));
       std::memcpy(buf, p + start, run);
       std::memcpy(buf + run, ctx.quote_seq.data(), quote_seq_size);
     } else if (c == '\\') {
+      CheckMessageSize(writer.Written() + run + backslash_count);
       char* buf = reinterpret_cast<char*>(writer.Alloc(run + backslash_count));
       std::memcpy(buf, p + start, run);
       std::memset(buf + run, '\\', backslash_count);
@@ -235,6 +237,7 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
 //   source '"'  -> previous '\\' encoding + previous '"' encoding
 //   source '\\' -> two previous '\\' encodings (count doubles)
 void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
+  CheckMessageSize(size_t{ctx.backslash_count} * 2 + ctx.quote_seq.size());
   q_buf.clear();
   q_buf.append(ctx.backslash_count, '\\');
   q_buf.append(ctx.quote_seq);
@@ -246,6 +249,7 @@ void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
 //   source '"'  -> two previous '"' encodings
 //   source '\\' -> two previous '\\' encodings (count doubles)
 void EnterRecordWrap(SerializationContext& ctx, std::string& q_buf) {
+  CheckMessageSize(size_t{ctx.backslash_count} * 2 + ctx.quote_seq.size() * 2);
   q_buf.clear();
   absl::StrAppend(&q_buf, ctx.quote_seq, ctx.quote_seq);
   ctx.quote_seq = q_buf;
@@ -1126,7 +1130,7 @@ struct BitBinCore {
 
 struct DateTextCore {
   using Value = duckdb::date_t;
-  static constexpr uint32_t kMaxBytes = 13;
+  static constexpr uint32_t kMaxBytes = sizeof("-5877641-06-25") - 1;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value date) {
     // days from 1970-01-01
     char* buf = reinterpret_cast<char*>(dst);
@@ -1139,7 +1143,7 @@ struct DateTextCore {
       return 9;
     }
     // TODO(mkornaukhov) support BC date and add some validation for dates
-    // Format is "%04d-%02d-%02d", max year is 5874897
+    // Format is "%04d-%02d-%02d"
     absl::CivilDay days{1970, 1, 1};
     days += date.days;
 
@@ -2322,6 +2326,12 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
 }
 
 }  // namespace
+
+void ThrowMessageTooLarge() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                  ERR_MSG("row exceeds maximum allowed message length (",
+                          kMaxMessageSize, " bytes)"));
+}
 
 void ByteaOutHex(char* buf, std::string_view value) {
   *buf++ = '\\';

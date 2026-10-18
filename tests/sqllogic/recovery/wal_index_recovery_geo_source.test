@@ -37,22 +37,29 @@ EXPLAIN SELECT pk, geo FROM wal_geo_src_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────╮
-│ Projections: pk, geo   │
-│ ~1 row                 │
-╰────────────┬───────────╯
-╭─ IRESEARCH_SCAN ───────╮
-│ Index: wal_geo_src_idx │
-│ Lookup: table          │
-│ Index Filter:          │
-│ ╭─ Geo Distance ─────╮ │
-│ │ Field: geo(string) │ │
-│ │ Range: *, <1000    │ │
-│ ╰────────────────────╯ │
-│ Projections: geo (i),  │
-│              pk (l)    │
-│ ~1 row                 │
-╰────────────────────────╯
+╭─ PROJECTION ─────────────╮
+│ Projections: pk, geo     │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: wal_geo_src_idx   │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo Distance ─────╮   │
+│ │ Field: geo(string) │   │
+│ │ Range: *, <1000    │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo Distance ───────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Range: *, <1000      │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: geo (i),    │
+│              pk (l)      │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # Pre-crash row: geo distance query works against on-disk segment.
 query

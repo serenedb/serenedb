@@ -43,6 +43,7 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/hash.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
@@ -290,8 +291,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // connector/duckdb_client_state.cpp), which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
-  config.SetOptionByName("scheduler_process_partial",
-                         duckdb::Value::BOOLEAN(true));
   // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
   // DuckDB's writer defaults it on.
   config.SetOptionByName("copy_csv_header_default",
@@ -309,6 +308,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterHashFunctions(db);
 
   connector::RegisterSubscriptionPragma(db);
 

@@ -112,8 +112,11 @@ set(IResearch_core_sources
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
+    ./search/detail/compiled_phrase.cpp
     ./search/detail/pattern_cache.cpp
+    ./search/detail/row_values.cpp
     ./search/detail/term_acceptor.cpp
+    ./search/detail/token_phrase.cpp
     ./search/filters/filter.cpp
     ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
@@ -144,6 +147,7 @@ set(IResearch_core_sources
     ./search/count/make_ngram.cpp
     ./search/count/make_ngram_all.cpp
     ./search/count/make_wildcard_ngram.cpp
+    ./search/count/make_token_phrase.cpp
     ./search/count/make_geo_intersects.cpp
     ./search/count/make_geo_contains.cpp
     ./search/count/make_geo_is_contained.cpp
@@ -176,6 +180,7 @@ set(IResearch_core_sources
     ./search/lead/make_ngram_all_scored.cpp
     ./search/lead/make_wildcard_ngram_docs.cpp
     ./search/lead/make_wildcard_ngram_scored.cpp
+    ./search/lead/make_token_phrase.cpp
     ./search/lead/make_geo_intersects_docs.cpp
     ./search/lead/make_geo_intersects_scored.cpp
     ./search/lead/make_geo_contains_docs.cpp
@@ -223,6 +228,7 @@ set(IResearch_core_sources
     ./search/probe/make_ngram_all_scored.cpp
     ./search/probe/make_wildcard_ngram_docs.cpp
     ./search/probe/make_wildcard_ngram_scored.cpp
+    ./search/probe/make_token_phrase.cpp
     ./search/probe/make_geo_intersects_docs.cpp
     ./search/probe/make_geo_intersects_scored.cpp
     ./search/probe/make_geo_contains_docs.cpp
@@ -259,6 +265,7 @@ set(IResearch_core_sources
     ./search/fill/make_ngram_all_scored.cpp
     ./search/fill/make_wildcard_ngram_docs.cpp
     ./search/fill/make_wildcard_ngram_scored.cpp
+    ./search/fill/make_token_phrase.cpp
     ./search/fill/make_geo_intersects_docs.cpp
     ./search/fill/make_geo_intersects_scored.cpp
     ./search/fill/make_geo_contains_docs.cpp
@@ -284,6 +291,7 @@ set(IResearch_core_sources
     ./search/docs/make_ngram.cpp
     ./search/docs/make_ngram_all.cpp
     ./search/docs/make_wildcard_ngram.cpp
+    ./search/docs/make_token_phrase.cpp
     ./search/docs/make_geo_intersects.cpp
     ./search/docs/make_geo_contains.cpp
     ./search/docs/make_geo_is_contained.cpp
@@ -306,6 +314,7 @@ set(IResearch_core_sources
     ./search/hits/make_ngram.cpp
     ./search/hits/make_ngram_all.cpp
     ./search/hits/make_wildcard_ngram.cpp
+    ./search/hits/make_token_phrase.cpp
     ./search/hits/make_geo_intersects.cpp
     ./search/hits/make_geo_contains.cpp
     ./search/hits/make_geo_is_contained.cpp
@@ -327,6 +336,7 @@ set(IResearch_core_sources
     ./search/top/make_ngram.cpp
     ./search/top/make_ngram_all.cpp
     ./search/top/make_wildcard_ngram.cpp
+    ./search/top/make_token_phrase.cpp
     ./search/top/make_geo_intersects.cpp
     ./search/top/make_geo_contains.cpp
     ./search/top/make_geo_is_contained.cpp
@@ -344,6 +354,7 @@ set(IResearch_core_sources
     ./search/queries/boolean_query.cpp
     ./search/filters/filter_optimizer.cpp
     ./search/filters/boolean_rules.cpp
+    ./search/filters/deferral.cpp
     ./search/filters/range_rules.cpp
     ./search/filters/lowering_rules.cpp
     ./search/filters/levenshtein_prefix_rules.cpp

@@ -52,10 +52,12 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
 #include "query/config.h"
+#include "search/scorer_options.h"
 #include "search/search_table.h"
 #include "search/search_table_transaction.h"
 
@@ -114,22 +116,23 @@ const duckdb::ColumnDefinition* FindColumnById(
 }
 
 irs::DirectoryReader PinnedSearchReader(
-  duckdb::ClientContext& context, duckdb::idx_t oid,
+  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
   const std::shared_ptr<search::SearchTable>& store) {
   auto* conn_ctx = GetSereneDBContextPtr(context);
   if (!conn_ctx) {
     return store->GetDirectoryReader();
   }
   return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
-    oid, [&] { return store->GetDirectoryReader(); })};
+    database_oid, oid, [&] { return store->GetDirectoryReader(); })};
 }
 
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
-  return [oid = table.oid, store = table.Storage()](
+  return [database_oid = table.catalog.GetOid(), oid = table.oid,
+          store = table.Storage()](
            duckdb::ClientContext& context) -> search::InvertedIndexSnapshotPtr {
     return std::make_shared<search::InvertedIndexSnapshot>(
-      PinnedSearchReader(context, oid, store), nullptr);
+      PinnedSearchReader(context, database_oid, oid, store), nullptr);
   };
 }
 
@@ -245,8 +248,7 @@ double SegmentBeamShare(double k, size_t segments) noexcept {
 
 double AnnOversample(duckdb::ClientContext& context,
                      const VectorScorerOptions& vs, bool& chosen_here) {
-  static constinit SettingRef gOversample{"sdb_ann_oversample"};
-  auto factor = gOversample.Double(context);
+  auto factor = GetDoubleSetting(context, "sdb_ann_oversample");
   chosen_here = factor < 0.0;
   return chosen_here ? AutoOversample(vs) : factor;
 }
@@ -263,29 +265,23 @@ uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept {
 
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context) {
-  static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
-  static constinit SettingRef gMinFanout{"sdb_ivf_min_search_fanout"};
-  static constinit SettingRef gMaxFanout{"sdb_ivf_max_search_fanout"};
-  static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
-  static constinit SettingRef gColumnFilter{"sdb_hnsw_column_filter"};
-  static constinit SettingRef gExact{"sdb_ann_force_exact"};
-  const auto count = [&](const SettingRef& setting) {
-    const auto n = setting.SignedInt(context);
+  const auto count = [&](std::string_view name) {
+    const auto n = GetSignedIntSetting(context, name);
     return n < 0 ? 0 : static_cast<uint32_t>(n);
   };
-  const auto mode = [&]<typename E>(const SettingRef& setting, E fallback) {
+  const auto mode = [&]<typename E>(std::string_view name, E fallback) {
     static constexpr auto kNames = magic_enum::enum_names<E>();
-    const auto i = setting.Enum(context, kNames);
+    const auto i = GetEnumSetting(context, name, kNames);
     return i < kNames.size() ? static_cast<E>(i) : fallback;
   };
-  vs.nprobe = count(gNprobe);
-  vs.min_search_fanout = count(gMinFanout);
-  vs.max_search_fanout = count(gMaxFanout);
-  vs.ef_search = count(gEfSearch);
-  vs.hnsw_filter_mode = mode(gFilterMode, irs::HnswFilterMode::Auto);
-  vs.hnsw_column_filter = mode(gColumnFilter, irs::HnswColumnFilter::Auto);
-  vs.exact = gExact.Bool(context);
+  vs.nprobe = count("sdb_ivf_search_nprobe");
+  vs.min_search_fanout = count("sdb_ivf_min_search_fanout");
+  vs.max_search_fanout = count("sdb_ivf_max_search_fanout");
+  vs.ef_search = count("sdb_hnsw_ef_search");
+  vs.hnsw_filter_mode = mode("sdb_hnsw_filter_mode", irs::HnswFilterMode::Auto);
+  vs.hnsw_column_filter =
+    mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
+  vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
 }
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
@@ -649,7 +645,10 @@ DeferredBuild BuildDeferredFilter(
   }
   irs::Filter::ptr filter = std::move(root);
   EnsureIncludeSides(*filter);
-  irs::OptimizeContext ctx;
+  const auto scorer =
+    scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
+  irs::OptimizeContext ctx{.scored = static_cast<bool>(scan.score.text),
+                           .scorer = scorer.get()};
   ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
                              claim.analyzed_fields.end());
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
@@ -657,9 +656,14 @@ DeferredBuild BuildDeferredFilter(
     null_markers[marker] = field;
   }
   ctx.null_markers = &null_markers;
+  irs::Deferral deferral{.reader = snapshot.reader};
+  if (scan.DefersChecks()) {
+    ctx.deferral = &deferral;
+  }
   irs::Optimize(filter, ctx);
   out.filter = std::shared_ptr<const irs::Filter>{std::move(filter)};
   out.scorers = std::move(scorers);
+  out.checks = MakeChecks(std::move(deferral));
   return out;
 }
 

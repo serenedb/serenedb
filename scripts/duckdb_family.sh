@@ -120,7 +120,6 @@ setup_regen_tools() {
 		make -s -C "$DUCKDB" PYTHON="$GENERATE_VENV/bin/python" generate-files-deps >/dev/null
 	fi
 	make -s -C "$DUCKDB" CAPIGEN_VENV="$CAPIGEN_VENV" capigen_venv >/dev/null
-	PATH="$FORMAT_VENV/bin:$PATH"
 	if ! command -v uv >/dev/null 2>&1; then
 		if [[ ! -x "$UV_VENV/bin/uv" ]]; then
 			python3 -m venv "$UV_VENV"
@@ -295,10 +294,9 @@ regen() {
 	trap "rm -rf '$scratch'" EXIT
 	git clone --quiet --shared --no-checkout "$DUCKDB" "$scratch/duckdb"
 	git -C "$scratch/duckdb" checkout --quiet --force -B main "$base"
-	local tree second log="$CACHE/regen.log"
-	: >"$log"
-	tree=$(run_generators "$scratch/duckdb" "$log")
-	second=$(run_generators "$scratch/duckdb" "$log")
+	local tree second
+	tree=$(run_generators "$scratch/duckdb" "$scratch/regen.log")
+	second=$(run_generators "$scratch/duckdb" "$scratch/regen.log")
 	if [[ "$tree" != "$second" ]]; then
 		git -C "$scratch/duckdb" diff --stat "$tree" "$second" >&2
 		die "a second generator run changed the files above"

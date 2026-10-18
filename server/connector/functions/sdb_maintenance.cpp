@@ -53,6 +53,18 @@ namespace {
 
 constinit SettingRef gTargetSegments{"sdb_compact_target_segments"};
 
+MergeTarget ResolveWritable(duckdb::ClientContext& context,
+                            std::string_view relation,
+                            std::string_view function) {
+  auto target = MergeTarget::Resolve(context, relation);
+  if (target.ReadOnly()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                    ERR_MSG("cannot run ", function, " on database \"",
+                            target.Database(), "\": it is attached read-only"));
+  }
+  return target;
+}
+
 const duckdb::Value& NamedParameter(const duckdb::TableFunctionBindInput& input,
                                     const char* name) {
   const auto entry = input.named_parameters.find(name);
@@ -134,7 +146,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
       ERR_MSG("sdb_compact target_segments requires mode compact or optimize"));
   }
 
-  auto target = MergeTarget::Resolve(context, relation);
+  auto target = ResolveWritable(context, relation, "sdb_compact");
   const auto snapshot = target.Snapshot();
   if (mode == search::MergeMode::Segments) {
     if (const auto unknown = search::UnknownSegments(snapshot, segments);
@@ -198,7 +210,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindRelation(
   }
   auto data = duckdb::make_uniq<MaintenanceBindData>();
   data->relation = input.inputs[0].GetValue<std::string>();
-  MergeTarget::Resolve(context, data->relation);
+  ResolveWritable(context, data->relation, function);
   return data;
 }
 
@@ -244,7 +256,7 @@ void RefreshExecute(duckdb::ClientContext& context,
     return;
   }
   const auto& data = input.bind_data->Cast<MaintenanceBindData>();
-  const auto target = MergeTarget::Resolve(context, data.relation);
+  const auto target = ResolveWritable(context, data.relation, "sdb_refresh");
   const auto begin = std::chrono::steady_clock::now();
   absl::flat_hash_set<std::string> published;
   for (const auto& segment : target.Snapshot()) {
@@ -277,7 +289,7 @@ void CleanupExecute(duckdb::ClientContext& context,
     return;
   }
   const auto& data = input.bind_data->Cast<MaintenanceBindData>();
-  const auto target = MergeTarget::Resolve(context, data.relation);
+  const auto target = ResolveWritable(context, data.relation, "sdb_cleanup");
   const auto begin = std::chrono::steady_clock::now();
   const auto removed = target.Cleanup();
   output.data[0].Append(Bigint(removed.count));

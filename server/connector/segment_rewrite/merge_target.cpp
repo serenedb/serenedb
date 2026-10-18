@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/utils/async.hpp>
@@ -65,6 +66,11 @@ std::string QualifiedDisplayName(const duckdb::CatalogEntry& entry) {
 
 }  // namespace
 
+void MergeTarget::SetDatabase(const duckdb::InCatalogEntry& entry) {
+  _database = entry.catalog.GetName().GetIdentifierName();
+  _read_only = entry.catalog.GetAttached().IsReadOnly();
+}
+
 MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
                                  std::string_view relation) {
   const auto name = duckdb::QualifiedName::Parse(relation);
@@ -83,6 +89,7 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
                               "\" is not a search table or an inverted index"));
     }
     RequireMaintain(context, *search);
+    target.SetDatabase(*search);
     target._table = search->Storage();
     target._relation_id = search->oid;
     target._name = QualifiedDisplayName(*search);
@@ -99,6 +106,7 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
                       ERR_MSG("\"", relation,
                               "\" is not a search table or an inverted index"));
     }
+    target.SetDatabase(*inverted);
     auto owner =
       inverted->GetRelation(inverted->catalog.GetCatalogTransaction(context));
     if (owner) {

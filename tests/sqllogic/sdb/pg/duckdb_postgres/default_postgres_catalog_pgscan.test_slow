@@ -1,0 +1,43 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgdc_${__DATABASE__} (TYPE postgres);
+
+statement ok
+USE pgdc_${__DATABASE__};
+
+skipif pg-wire-extended
+query
+SELECT 999999::regclass AS r, 999999::regnamespace AS n, 999999::regtype AS t;
+----
+r	n	t
+999999	999999	999999
+
+query
+SELECT has_table_privilege(999999::oid, 'SELECT') AS t,
+       has_schema_privilege(999999::oid, 'USAGE') AS s,
+       pg_get_indexdef(999999::oid) AS i;
+----
+t	s	i
+NULL	NULL	NULL
+
+statement error
+SELECT pg_schema_size(999999::BIGINT);
+----
+db error: ERROR: schema with OID 999999 does not exist
+
+
+statement error
+CREATE SUBSCRIPTION pgdc_sub CONNECTION 'host=127.0.0.1 port=1' PUBLICATION pgdc_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
+
+
+statement ok
+PRAGMA serenedb_reindex_by_id(999999);
+
+statement ok
+USE ${__DATABASE__};
+
+statement ok
+DETACH pgdc_${__DATABASE__};

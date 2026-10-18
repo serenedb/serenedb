@@ -150,19 +150,23 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
+std::string QuotedTerms(const auto& terms) {
+  return absl::StrJoin(terms, "", [](std::string* out, const auto& term) {
+    absl::StrAppend(out, "'", TermToString(term), "',");
+  });
+}
+
 // Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
   }
   auto operator()(const TermSetOptions& opts) const {
-    absl::StrAppend(out, "Terms:[",
-                    absl::StrJoin(opts.terms, "",
-                                  [](std::string* o, const auto& term) {
-                                    absl::StrAppend(o, "'", TermToString(term),
-                                                    "',");
-                                  }),
-                    "]");
+    absl::StrAppend(out, "Terms:[", QuotedTerms(opts.terms), "]");
+  }
+  auto operator()(const ShingleOptions& opts) const {
+    absl::StrAppend(out, "Shingle:", TermToString(opts.term), "[",
+                    QuotedTerms(opts.words), "]");
   }
   auto operator()(const ByPrefixOptions& opts) const {
     absl::StrAppend(out, "Prefix:", TermToString(opts.term));
@@ -207,6 +211,14 @@ struct PhrasePartVisitor : util::Noncopyable {
   }
   std::string* out;
 };
+
+template<typename Options>
+std::string_view GeoVerify(const Options& options) {
+  return field_limits::valid(options.store_field_id) &&
+             PlanGeo(options)->kind == GeoPlan::Kind::Cells
+           ? "inline"
+           : "false";
+}
 
 std::string_view GeoFilterTypeName(GeoFilterType type) {
   switch (type) {
@@ -264,9 +276,9 @@ struct FilterPrinter {
     return kind_of(sdb::connector::ColumnId{fid});
   }
 
-  std::string PhraseParts(const ByPhrase& filter) const {
+  std::string PhraseParts(const ByPhraseOptions& options) const {
     std::string s;
-    for (const auto& part : filter.options()) {
+    for (const auto& part : options) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
       absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
@@ -513,9 +525,10 @@ struct FilterPrinter {
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
       node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
       node.attributes["Query"] = irs::ToString(options.query);
-      node.attributes["Verify"] = !options.matcher          ? "false"
-                                  : options.deferred_verify ? "table filter"
-                                                            : "inline";
+      node.attributes["Verify"] =
+        options.matcher && field_limits::valid(options.store_field_id)
+          ? "inline"
+          : "false";
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -525,7 +538,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPhrase>(filter);
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Parts"] = PhraseParts(f);
+      node.attributes["Parts"] = PhraseParts(f.options());
       if (const auto separator = f.options().word_separator();
           !separator.empty()) {
         node.attributes["Separator"] =
@@ -533,6 +546,9 @@ struct FilterPrinter {
       }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
+      }
+      if (field_limits::valid(f.options().text())) {
+        node.attributes["Verify"] = "inline";
       }
       return node;
     }
@@ -543,6 +559,7 @@ struct FilterPrinter {
       node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
       node.attributes["Shape"].assign(
         GeoShapeTypeName(f.options().shape.type()));
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -550,6 +567,7 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] = GeoDistanceRange(f);
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<ByRadius>::id()) {

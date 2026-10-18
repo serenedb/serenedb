@@ -1,0 +1,555 @@
+# Where each deferred wildcard and regexp shape is checked. Their answers are
+# compared with the table itself in wildcard_deferred_matrix.gen.test, which
+# tests/sqllogic/generators/sdb/pg/index/wildcard_deferred_matrix.py generates.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_kw3 AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_kw3_pos AS generate_wildcard_ngrams(keyword(), 3) WITH (frequency, position)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_words AS generate_wildcard_ngrams(split_text_csv(' '), 3)
+
+statement ok
+CREATE TABLE wdm (id INTEGER PRIMARY KEY, x INTEGER, msg VARCHAR, tags VARCHAR[])
+
+statement ok
+INSERT INTO wdm VALUES
+    (0, 0, 'user-12-abc', ['user-12-abc', 'xyz']::VARCHAR[]),
+    (1, 21, 'admin_7%', []::VARCHAR[]),
+    (2, 30, 'abcabc', ['abc']::VARCHAR[]),
+    (7, 7, '/api/v1/users', ['user-3-xyz']::VARCHAR[])
+
+statement ok
+CREATE INDEX wdm_kw3_idx ON wdm USING inverted (id, msg wdm_kw3) INCLUDE (x)
+
+statement ok
+CREATE INDEX wdm_kw3_pos_idx ON wdm USING inverted (id, msg wdm_kw3_pos) INCLUDE (x)
+
+statement ok
+CREATE INDEX wdm_tags_idx ON wdm USING inverted (id, tags wdm_kw3) INCLUDE (x)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm
+
+statement ok
+CREATE TABLE wdm_w (id INTEGER PRIMARY KEY, x INTEGER, msg VARCHAR)
+
+statement ok
+INSERT INTO wdm_w VALUES (0, 0, 'user-12-abc abc'), (1, 21, 'xyz admin_7')
+
+statement ok
+CREATE INDEX wdm_words_idx ON wdm_w USING inverted (id, msg wdm_words) INCLUDE (x)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm_w
+
+statement ok
+CREATE TABLE wdm_s (id INTEGER, x INTEGER, msg VARCHAR) WITH (storage = 'search')
+
+statement ok
+CREATE INDEX wdm_s_idx ON wdm_s USING inverted (id, msg wdm_kw3)
+
+statement ok
+INSERT INTO wdm_s SELECT id, x, msg FROM wdm
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm_s
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_kw2 AS generate_wildcard_ngrams(keyword(), 2)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_kw4 AS generate_wildcard_ngrams(keyword(), 4)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_words_pos AS generate_wildcard_ngrams(split_text_csv(' '), 3) WITH (frequency, position)
+
+statement ok
+CREATE INDEX wdm_kw2_idx ON wdm USING inverted (id, msg wdm_kw2) INCLUDE (x)
+
+statement ok
+CREATE INDEX wdm_kw4_idx ON wdm USING inverted (id, msg wdm_kw4) INCLUDE (x)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm
+
+statement ok
+CREATE INDEX wdm_words_pos_idx ON wdm_w USING inverted (id, msg wdm_words_pos) INCLUDE (x)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm_w
+
+query
+SELECT id FROM wdm_kw2_idx WHERE msg @@ ts_like('user-%-abc') ORDER BY id
+----
+id
+0
+
+query
+EXPLAIN SELECT id FROM wdm_kw2_idx WHERE msg @@ ts_like('user-%-abc')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_kw2_idx                      │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+SELECT id FROM wdm_kw4_idx WHERE msg @@ ts_like('%abc%') ORDER BY id
+----
+id
+0
+2
+
+query
+EXPLAIN SELECT id FROM wdm_kw4_idx WHERE msg @@ ts_like('%abc%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: wdm_kw4_idx           │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*abc.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "abc"             │ │
+│ │ Verify: false            │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+query
+SELECT id FROM wdm_words_pos_idx WHERE msg @@ ts_like('user-%-abc') ORDER BY id
+----
+id
+0
+
+query
+EXPLAIN SELECT id FROM wdm_words_pos_idx WHERE msg @@ ts_like('user-%-abc')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_words_pos_idx                │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: true                       │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: true                       │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wdm_norm AS split_text(case := 'lower') WITH (frequency, norm)
+
+statement ok
+CREATE TABLE wdm_score (id INTEGER PRIMARY KEY, msg VARCHAR, body VARCHAR)
+
+statement ok
+INSERT INTO wdm_score VALUES
+    (1, 'user-1-abc', 'house on a long quiet street near the old green park by the river'),
+    (2, 'user-abc-x', 'house house house')
+
+statement ok
+CREATE INDEX wdm_score_idx ON wdm_score USING inverted (id, msg wdm_kw3, body wdm_norm)
+
+statement ok
+VACUUM (REFRESH_TABLE) wdm_score
+
+query
+SELECT id FROM wdm_score_idx
+WHERE msg @@ ts_like('user-%-abc') AND body @@ 'house'
+  AND (BM25(wdm_score_idx.tableoid) * 115)::TINYINT < 125
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM wdm_score_idx
+WHERE msg @@ ts_like('user-%-abc') AND body @@ 'house'
+  AND (BM25(wdm_score_idx.tableoid) * 115)::TINYINT < 125
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections: #0                                                  │
+│ ~1 row                                                           │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ FILTER ────────────────────────┴────────────────────────────────╮
+│ Expression:                                                      │
+│ CAST((sdb_inverted_index_score * 115) AS TINYINT) < 125          │
+│ ~1 row                                                           │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────┴────────────────────────────────╮
+│ Index: wdm_score_idx                                             │
+│ Lookup: table                                                    │
+│ Index Filter:                                                    │
+│ ╭─ And ───────────────╮                                          │
+│ ╰──────────┬──────────╯                                          │
+│            ├────────────────────────────────╮                    │
+│ ╭─ Terms ──┴──────────╮  ╭─ Wildcard NGram ─┴──────────────────╮ │
+│ │ Field: body(string) │  │ Field: msg(string)                  │ │
+│ │ Values: 'house'     │  │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ ╰─────────────────────╯  │ Syntax: perl                        │ │
+│                          │ Has Pos: false                      │ │
+│                          │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│                          │ Verify: false                       │ │
+│                          ╰─────────────────────────────────────╯ │
+│ Table Filter:                                                    │
+│ ╭─ Wildcard NGram ────────────────────╮                          │
+│ │ Field: msg(string)                  │                          │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │                          │
+│ │ Syntax: perl                        │                          │
+│ │ Has Pos: false                      │                          │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │                          │
+│ │ Verify: table filter                │                          │
+│ ╰─────────────────────────────────────╯                          │
+│ Score: bm25(k1=1.2, b=0.75)                                      │
+│ Projections: id, sdb_inverted_index_score                        │
+│ ~1 row                                                           │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%-abc')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_kw3_idx                      │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('%abc%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: wdm_kw3_idx           │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*abc.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "abc"             │ │
+│ │ Verify: false            │ │
+│ ╰──────────────────────────╯ │
+│ Table Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*abc.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "abc"             │ │
+│ │ Verify: table filter     │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('ab%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: wdm_kw3_idx        │
+│ Lookup: table             │
+│ Index Filter:             │
+│ ╭─ Wildcard NGram ──────╮ │
+│ │ Field: msg(string)    │ │
+│ │ Pattern: (?s)\\Aab.*\\z │ │
+│ │ Syntax: perl          │ │
+│ │ Has Pos: false        │ │
+│ │ Query: "\\x1fab"       │ │
+│ │ Verify: false         │ │
+│ ╰───────────────────────╯ │
+│ Table Filter:             │
+│ ╭─ Wildcard NGram ──────╮ │
+│ │ Field: msg(string)    │ │
+│ │ Pattern: (?s)\\Aab.*\\z │ │
+│ │ Syntax: perl          │ │
+│ │ Has Pos: false        │ │
+│ │ Query: "\\x1fab"       │ │
+│ │ Verify: table filter  │ │
+│ ╰───────────────────────╯ │
+│ Projections: id           │
+│ ~1 row                    │
+╰───────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_pos_idx WHERE msg @@ ts_like('%abc%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: wdm_kw3_pos_idx       │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\A.*abc.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: true            │ │
+│ │ Query: "abc"             │ │
+│ │ Verify: false            │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg LIKE 'admin\_%' ESCAPE '\'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: wdm_kw3_idx            │
+│ Lookup: table                 │
+│ Index Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\Aadmin_.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "\\x1fadmin_"       │ │
+│ │ Verify: false             │ │
+│ ╰───────────────────────────╯ │
+│ Table Filter:                 │
+│ ╭─ Wildcard NGram ──────────╮ │
+│ │ Field: msg(string)        │ │
+│ │ Pattern: (?s)\\Aadmin_.*\\z │ │
+│ │ Syntax: perl              │ │
+│ │ Has Pos: false            │ │
+│ │ Query: "\\x1fadmin_"       │ │
+│ │ Verify: table filter      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_regexp('user-[0-9]+-.*')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: wdm_kw3_idx                                                                                                                                 │
+│ Lookup: table                                                                                                                                      │
+│ Index Filter:                                                                                                                                      │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                             │ │
+│ │ Pattern: user-[0-9]+-.*                                                                                                                        │ │
+│ │ Syntax: perl                                                                                                                                   │ │
+│ │ Has Pos: false                                                                                                                                 │ │
+│ │ Query:                                                                                                                                         │ │
+│ │ Or("\\x1fuser-0", "\\x1fuser-1", "\\x1fuser-2", "\\x1fuser-3", "\\x1fuser-4", "\\x1fuser-5", "\\x1fuser-6", "\\x1fuser-7", "\\x1fuser-8", "\\x1fuser-9") │ │
+│ │ Verify: false                                                                                                                                  │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Table Filter:                                                                                                                                      │
+│ ╭─ Wildcard NGram ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: msg(string)                                                                                                                             │ │
+│ │ Pattern: user-[0-9]+-.*                                                                                                                        │ │
+│ │ Syntax: perl                                                                                                                                   │ │
+│ │ Has Pos: false                                                                                                                                 │ │
+│ │ Query:                                                                                                                                         │ │
+│ │ Or("\\x1fuser-0", "\\x1fuser-1", "\\x1fuser-2", "\\x1fuser-3", "\\x1fuser-4", "\\x1fuser-5", "\\x1fuser-6", "\\x1fuser-7", "\\x1fuser-8", "\\x1fuser-9") │ │
+│ │ Verify: table filter                                                                                                                           │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                                                                                    │
+│ ~1 row                                                                                                                                             │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%') AND x > 20
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: wdm_kw3_idx           │
+│ Lookup: table                │
+│ Index Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\Auser-.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "\\x1fuser-"       │ │
+│ │ Verify: false            │ │
+│ ╰──────────────────────────╯ │
+│ Column Filter: x > 20        │
+│ Table Filter:                │
+│ ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: msg(string)       │ │
+│ │ Pattern: (?s)\\Auser-.*\\z │ │
+│ │ Syntax: perl             │ │
+│ │ Has Pos: false           │ │
+│ │ Query: "\\x1fuser-"       │ │
+│ │ Verify: table filter     │ │
+│ ╰──────────────────────────╯ │
+│ Projections: id              │
+│ ~1 row                       │
+╰──────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_kw3_idx WHERE msg @@ ts_like('user-%') OR id = 7
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: wdm_kw3_idx                                   │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ Or ───────────────╮                               │
+│ ╰──────────┬─────────╯                               │
+│            ├──────────────────────────╮              │
+│ ╭─ Terms ──┴─────────╮  ╭─ Wildcard NGram ─────────╮ │
+│ │ Field: id(numeric) │  │ Field: msg(string)       │ │
+│ │ Values: 7          │  │ Pattern: (?s)\\Auser-.*\\z │ │
+│ ╰────────────────────╯  │ Syntax: perl             │ │
+│                         │ Has Pos: false           │ │
+│                         │ Query: "\\x1fuser-"       │ │
+│                         │ Verify: inline           │ │
+│                         ╰──────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_words_idx WHERE msg @@ ts_like('user-%-abc')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_words_idx                    │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: msg(string)                  │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_tags_idx WHERE tags @@ ts_like('user-%-abc')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: wdm_tags_idx                     │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: tags                         │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: false                       │ │
+│ ╰─────────────────────────────────────╯ │
+│ Table Filter:                           │
+│ ╭─ Wildcard NGram ────────────────────╮ │
+│ │ Field: tags                         │ │
+│ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
+│ │ Syntax: perl                        │ │
+│ │ Has Pos: false                      │ │
+│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Verify: table filter                │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: id                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wdm_s_idx WHERE msg @@ ts_regexp('(abc|cba)')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────╮
+│ Index: wdm_s_idx                            │
+│ Lookup: search                              │
+│ Index Filter:                               │
+│ ╭─ Wildcard NGram ────────────────────────╮ │
+│ │ Field: msg(string)                      │ │
+│ │ Pattern: (abc|cba)                      │ │
+│ │ Syntax: perl                            │ │
+│ │ Has Pos: false                          │ │
+│ │ Query: Or("\\x1fabc\\x1f", "\\x1fcba\\x1f") │ │
+│ │ Verify: false                           │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Table Filter:                               │
+│ ╭─ Wildcard NGram ────────────────────────╮ │
+│ │ Field: msg(string)                      │ │
+│ │ Pattern: (abc|cba)                      │ │
+│ │ Syntax: perl                            │ │
+│ │ Has Pos: false                          │ │
+│ │ Query: Or("\\x1fabc\\x1f", "\\x1fcba\\x1f") │ │
+│ │ Verify: table filter                    │ │
+│ ╰─────────────────────────────────────────╯ │
+│ Projections: id                             │
+│ ~1 row                                      │
+╰─────────────────────────────────────────────╯

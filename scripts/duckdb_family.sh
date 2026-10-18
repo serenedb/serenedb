@@ -263,9 +263,11 @@ check_range() {
 
 run_generators() {
 	local work=$1 log=$2
-	(cd "$work" && DUCKDB_FORMAT_SKIP_FETCH=1 make generate-files PYTHON="$GENERATE_VENV/bin/python" \
-		FORMAT_VENV="$FORMAT_VENV" CAPIGEN_VENV="$CAPIGEN_VENV") >>"$log" 2>&1 || die "make generate-files failed, see $log"
-	(cd "$work" && scripts/capi_v2_regen.sh) >>"$log" 2>&1 || die "scripts/capi_v2_regen.sh failed, see $log"
+	(cd "$work" && PATH="$FORMAT_VENV/bin:$PATH" DUCKDB_FORMAT_SKIP_FETCH=1 make generate-files \
+		PYTHON="$GENERATE_VENV/bin/python" FORMAT_VENV="$FORMAT_VENV" CAPIGEN_VENV="$CAPIGEN_VENV") >>"$log" 2>&1 ||
+		die "make generate-files failed, see $log"
+	(cd "$work" && PATH="$FORMAT_VENV/bin:$PATH" scripts/capi_v2_regen.sh) >>"$log" 2>&1 ||
+		die "scripts/capi_v2_regen.sh failed, see $log"
 	(cd "$work" && "$GENERATE_VENV/bin/python" scripts/generate_enums.py) >>"$log" 2>&1 ||
 		die "scripts/generate_enums.py failed, see $log"
 	git -C "$work" add --update
@@ -294,9 +296,11 @@ regen() {
 	trap "rm -rf '$scratch'" EXIT
 	git clone --quiet --shared --no-checkout "$DUCKDB" "$scratch/duckdb"
 	git -C "$scratch/duckdb" checkout --quiet --force -B main "$base"
-	local tree second
-	tree=$(run_generators "$scratch/duckdb" "$scratch/regen.log")
-	second=$(run_generators "$scratch/duckdb" "$scratch/regen.log")
+	mkdir -p "$CACHE"
+	local log="$CACHE/regen.log" tree second
+	: >"$log"
+	tree=$(run_generators "$scratch/duckdb" "$log")
+	second=$(run_generators "$scratch/duckdb" "$log")
 	if [[ "$tree" != "$second" ]]; then
 		git -C "$scratch/duckdb" diff --stat "$tree" "$second" >&2
 		die "a second generator run changed the files above"
@@ -310,7 +314,6 @@ regen() {
 		local expected=$head
 		[[ -n "$old_regen" ]] && expected=$old_regen
 		if [[ "$tree" != "$(git -C "$DUCKDB" rev-parse "$expected^{tree}")" ]]; then
-			mkdir -p "$CACHE"
 			git -C "$scratch/duckdb" diff "$expected" "$tree" >"$CACHE/regen-check.diff"
 			git -C "$scratch/duckdb" diff --stat "$expected" "$tree"
 			[[ -n "$old_regen" ]] ||

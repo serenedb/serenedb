@@ -20,16 +20,16 @@
 
 #pragma once
 
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/lead/geo_slots_docs.hpp"
 #include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/probe/geo_slots_docs.hpp"
 #include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
 
 namespace irs::detail {
 
@@ -39,31 +39,25 @@ Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
                Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto check = query.MakeCheck();
-  SDB_ASSERT(check.recipe.has_value());
-  const auto& recipe = *check.recipe;
   const auto& cells = query.Cells();
   SDB_ASSERT(cells.Kind() != QueryKind::Empty);
-
-  if constexpr (kProbed) {
-    auto approx = cells.PlanProbe({}, interrogations);
-    if (!approx) {
-      return {};
+  auto node = [&] {
+    if constexpr (kProbed) {
+      return cells.PlanProbe({}, interrogations);
+    } else {
+      return cells.PlanLead({});
     }
-    using Slots = probe::GeoSlotsDocs<Parser, Acceptor, probe::Erased>;
-    return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
-      std::forward<Prefix>(prefix)..., std::piecewise_construct,
-      std::forward_as_tuple(std::move(approx)), recipe);
-  } else {
-    auto approx = cells.PlanLead({});
-    if (!approx) {
-      return {};
-    }
-    using Slots = lead::GeoSlotsDocs<Parser, Acceptor, lead::Erased>;
-    return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
-      std::forward<Prefix>(prefix)..., std::piecewise_construct,
-      std::forward_as_tuple(std::move(approx)), recipe);
+  }();
+  if (!node) {
+    return {};
   }
+  using Cells = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
+  using Slots =
+    std::conditional_t<kProbed, probe::GeoSlotsDocs<Parser, Acceptor, Cells>,
+                       lead::GeoSlotsDocs<Parser, Acceptor, Cells>>;
+  return memory::make_managed<Impl<TwoPhaseFor<Result, Slots>>>(
+    std::forward<Prefix>(prefix)..., std::piecewise_construct,
+    std::forward_as_tuple(std::move(node)), query.MakeRecipe());
 }
 
 }  // namespace irs::detail

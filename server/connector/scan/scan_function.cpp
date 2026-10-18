@@ -370,12 +370,7 @@ void IResearchSetScanOrder(
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
-    const auto* info = bd.relation.IsInvertedIndex()
-                         ? bd.relation.ScannedIndex().FindColumnInfo(col_id)
-                         : nullptr;
-    const bool stored =
-      bd.relation.IsSearchTable() || (info && info->IsStored());
-    if (stored && !bd.scan_order) {
+    if (bd.relation.Stores(col_id) && !bd.scan_order) {
       bd.scan_order =
         ScanOrderSpec{col_id, options->order_type, options->null_order,
                       options->order_by, options->column_type};

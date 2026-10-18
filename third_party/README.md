@@ -27,8 +27,7 @@ fork introduces, on our version branch.
 
 # Layout
 
-52 submodules; duckdb-pdf, PoDoFo and FreeType currently point to contributor forks pending
-their import into the serenedb org. `yaclib` tracks upstream.
+52 submodules, all serenedb forks except `yaclib`.
 
 8 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
 `liburing-cmake`, `libxml2-cmake`, `openssl-cmake`, `podofo-cmake`. Three of them carry

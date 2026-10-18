@@ -30,7 +30,9 @@
 #include <atomic>
 #include <exception>
 #include <filesystem>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iterator>
 #include <memory>
@@ -889,6 +891,10 @@ std::optional<ParseError> SetHbaFromText(std::string_view text) {
   if (!parsed) {
     return err;  // keep-last-good: live ruleset untouched
   }
+  if (parsed->rules.empty()) {
+    SetHbaRuleset(std::make_shared<const Ruleset>(DefaultRuleset()));
+    return std::nullopt;
+  }
   Ruleset combined = ParseTrusted(SafetyRules());
   // Force-prepend the safety rules unless the user's ruleset already begins
   // with the exact same escape hatch (compare the leading lines verbatim), so
@@ -945,6 +951,9 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
   }
   const std::string tmp = target.string() + ".tmp";
   try {
+    SDB_IF_FAILURE("hba_config_write_fails") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
     utils::file_utils::Spit(tmp, text, /*sync=*/true);
   } catch (const std::exception& e) {
     return absl::StrCat("could not write hba config file '", tmp,
@@ -1094,11 +1103,11 @@ std::vector<RenderedRule> RenderHbaRules() {
   return out;
 }
 
-void LoadPersistedHba() {
+std::string LoadPersistedHba() {
   namespace fs = std::filesystem;
   const std::string& path = ConfigPath();
   if (path.empty()) {
-    return;  // no data directory configured -> keep the built-in default
+    return {};  // no data directory configured -> keep the built-in default
   }
   std::error_code ec;
   if (!fs::exists(fs::path{path}, ec)) {
@@ -1106,7 +1115,7 @@ void LoadPersistedHba() {
       SDB_ERROR(GENERAL, "hba config file '", path,
                 "' could not be read: ", ec.message(), " -- keeping default");
     }
-    return;  // no config file -> keep the built-in default
+    return {};  // no config file -> keep the built-in default
   }
   std::string text;
   try {
@@ -1114,12 +1123,14 @@ void LoadPersistedHba() {
   } catch (const std::exception& e) {
     SDB_ERROR(GENERAL, "hba config file '", path,
               "' could not be read: ", e.what(), " -- keeping default");
-    return;
+    return {};
   }
   if (auto err = SetHbaFromText(text)) {
     SDB_ERROR(GENERAL, "hba config file '", path, "' failed to parse (line ",
               err->line, "): ", err->message, " -- keeping default");
+    return {};
   }
+  return text;
 }
 
 }  // namespace sdb::network::pg::hba

@@ -79,6 +79,7 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
       _approx{std::move(approx)},
       _store_field_id{store_field_id},
       _boost{boost} {
+    SDB_ASSERT(_matcher);
     SDB_ASSERT(_approx);
     SDB_ASSERT(!QueryBuilder::IsEmpty(*_approx));
   }
@@ -93,12 +94,9 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
     }
   };
 
-  bool HasMatcher() const noexcept { return _matcher != nullptr; }
-
   const QueryBuilder& NGrams() const noexcept { return *_approx; }
 
   Recipe MakeRecipe() const {
-    SDB_ASSERT(_matcher);
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     const auto* col_reader = _segment.GetColReader();
     SDB_ASSERT(col_reader != nullptr);
@@ -134,12 +132,11 @@ struct ByWildcardNGramOptions {
   bool has_pos{false};
   std::shared_ptr<const re2::RE2> matcher;
   field_id store_field_id{irs::field_limits::invalid()};
-  bool deferred_verify{false};
 
   bool operator==(const ByWildcardNGramOptions& other) const noexcept {
     return pattern == other.pattern && syntax == other.syntax &&
            has_pos == other.has_pos && store_field_id == other.store_field_id &&
-           deferred_verify == other.deferred_verify && query == other.query;
+           query == other.query;
   }
 
   ByWildcardNGramOptions() noexcept = default;

@@ -20,9 +20,6 @@
 
 #include "connector/functions/inout.h"
 
-#include <absl/strings/escaping.h>
-#include <fast_float/fast_float.h>
-
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
@@ -32,98 +29,44 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 
 namespace sdb::connector {
 namespace {
 
-// PG-compatible byteain -- ported from server/pg/functions/inout.cpp
-// ByteaInFunction. Handles \x hex format (whitespace between pairs ignored)
-// and PG escape format (\\ and \NNN octal).
 duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
-  if (input.starts_with("\\x")) {
-    std::string_view payload{input.begin() + 2, input.end()};
-    // Worst case: every 2 chars = 1 byte
-    auto target =
-      duckdb::StringVector::EmptyString(result_vec, payload.size() / 2);
-    char* out = target.GetDataWriteable();
-
-    for (size_t i = 0; i < payload.size();) {
-      char c = payload[i];
-      if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-        ++i;
-        continue;
-      }
-      const auto h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
-      if (h1 == -1) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-          ERR_MSG("invalid hexadecimal digit: \"", std::string(1, c), "\""));
-      }
-      if (i + 1 >= payload.size()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-          ERR_MSG("invalid hexadecimal data: odd number of digits"));
-      }
-      const auto h2 =
-        absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
-      if (h2 == -1) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        ERR_MSG("invalid hexadecimal digit: \"",
-                                std::string(1, payload[i + 1]), "\""));
-      }
-      *out++ = static_cast<char>((h1 << 4) + h2);
-      i += 2;
+  const auto capacity = pg::ByteaTextCapacity(input);
+  auto target = duckdb::StringVector::EmptyString(result_vec, capacity);
+  const auto decoded = pg::DecodeByteaText(input, target.GetDataWriteable());
+  switch (decoded.error) {
+    case pg::ByteaTextError::None:
+      break;
+    case pg::ByteaTextError::InvalidHexDigit: {
+      const auto* begin = reinterpret_cast<const irs::byte_type*>(input.data());
+      const auto* digit = begin + decoded.error_pos;
+      const auto* next = irs::utf8_utils::Next(digit, begin + input.size());
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid hexadecimal digit: \"",
+                input.substr(decoded.error_pos, next - digit), "\""));
     }
-    auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
-    target.Finalize();
-    return duckdb::StringVector::AddStringOrBlob(
-      result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
+    case pg::ByteaTextError::OddHexDigits:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid hexadecimal data: odd number of digits"));
+    case pg::ByteaTextError::InvalidEscape:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type bytea"));
   }
-
-  // Escape format: \\ -> backslash, \NNN -> octal byte, rest literal
-  auto target = duckdb::StringVector::EmptyString(result_vec, input.size());
-  char* out = target.GetDataWriteable();
-
-  for (size_t i = 0; i < input.size();) {
-    char c = input[i];
-    if (c != '\\') {
-      *out++ = c;
-      ++i;
-      continue;
-    }
-    if (i + 1 >= input.size()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
-    }
-    if (input[i + 1] == '\\') {
-      *out++ = '\\';
-      i += 2;
-      continue;
-    }
-    if (i + 3 >= input.size()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
-    }
-    const char* octal = input.data() + i + 1;
-    unsigned value = 0;
-    const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
-    if (res.ec != std::errc() || res.ptr != octal + 3 || value > 0xFFU) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("invalid input syntax for type bytea"));
-    }
-    *out++ = static_cast<char>(value);
-    i += 4;
-  }
-  auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
-  target.Finalize();
-  return duckdb::StringVector::AddStringOrBlob(
-    result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
+  target.SetSizeAndFinalize(static_cast<uint32_t>(decoded.size), capacity);
+  return target;
 }
 
 bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,

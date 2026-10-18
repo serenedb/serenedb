@@ -1082,6 +1082,11 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
+  if (target.index->catalog.GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                    ERR_MSG("cannot REINDEX \"", name,
+                            "\": its database is attached read-only"));
+  }
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey);
@@ -1213,10 +1218,11 @@ void ReindexPragma(duckdb::ClientContext& context,
 void ReindexByIdPragma(duckdb::ClientContext& context,
                        const duckdb::FunctionParameters& parameters) {
   const auto index_id = parameters.values[0].GetValue<int64_t>();
-  const auto& home =
-    duckdb::ClientData::Get(context).catalog_search_path->GetDefault();
-  auto& catalog = duckdb::Catalog::GetCatalog(context, home.GetCatalog())
-                    .Cast<catalog::SereneDBCatalog>();
+  auto database = catalog::DefaultSereneDBCatalog(context);
+  if (!database) {
+    return;
+  }
+  auto& catalog = *database;
   const auto trx = catalog.GetCatalogTransaction(context);
   auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
     &context, static_cast<duckdb::idx_t>(index_id));

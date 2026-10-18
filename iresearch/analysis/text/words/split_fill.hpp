@@ -84,8 +84,10 @@ class CaseRuns {
   casing::AsciiFoldRing<C == Case::Lower> _ring;
 };
 
-template<TokenLayout Layout, Case C, bool KeepNonAscii>
-IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool KeepNonAscii,
+         typename Progress = classify::NoProgress>
+IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink,
+                                       Progress progress = {}) {
   const char* const base = raw.GetData();
   const size_t size = raw.GetSize();
   const char* const limit = base + size;
@@ -99,7 +101,8 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
         sink.EmitSlice<Layout>(
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
-      });
+      },
+      progress);
     return;
   }
   constexpr size_t kBlock = classify::kClassifyBlock;
@@ -123,11 +126,14 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
       }
       return mask;
     },
-    [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
+    [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
+    progress);
 }
 
-template<TokenLayout Layout, Case C, bool KnownAscii>
-void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool KnownAscii,
+         typename Progress = classify::NoProgress>
+void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink,
+                         Progress progress = {}) {
   const char* const base = raw.GetData();
   const auto* const bytes = reinterpret_cast<const byte_type*>(base);
   const size_t size = raw.GetSize();
@@ -139,21 +145,25 @@ void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink) {
         sink.EmitSlice<Layout>(
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
-      });
+      },
+      progress);
   } else {
     CaseRuns<Layout, C, !KnownAscii> runs{base, size, sink};
     ForEachNonSpaceRunBest<KnownAscii>(
       bytes, size,
       [&](size_t offset, classify::Block b)
         IRS_FORCE_INLINE { runs.Fold(offset, b); },
-      [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
+      [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
+      progress);
   }
 }
 
-template<TokenLayout Layout, Case C, bool Letters, bool KnownAscii>
-void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool Letters, bool KnownAscii,
+         typename Progress = classify::NoProgress>
+void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink,
+                         Progress progress = {}) {
   if constexpr (KnownAscii && !Letters) {
-    SplitByNonAlphaFill<Layout, C, false>(raw, sink);
+    SplitByNonAlphaFill<Layout, C, false>(raw, sink, progress);
   } else {
     const char* const base = raw.GetData();
     const char* const limit = base + raw.GetSize();
@@ -171,10 +181,10 @@ void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
       }
     };
     if constexpr (KnownAscii) {
-      SplitByNonLetter(raw, emit);
+      SplitByNonLetter(raw, emit, progress);
     } else {
       ForEachAlnumRunBest<Letters>(reinterpret_cast<const byte_type*>(base),
-                                   raw.GetSize(), emit);
+                                   raw.GetSize(), emit, progress);
     }
   }
 }

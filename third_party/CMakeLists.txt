@@ -610,6 +610,12 @@ sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "READM
 
 add_subdirectory(libxml2-cmake)
 
+sdb_update_module(${GIT_EXECUTABLE} "freetype" ${CMAKE_CURRENT_SOURCE_DIR} "README")
+add_subdirectory(freetype-cmake)
+
+sdb_update_module(${GIT_EXECUTABLE} "podofo" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(podofo-cmake)
+
 ################################################################################
 ## Azure SDK (monolithic build)
 ################################################################################
@@ -687,7 +693,7 @@ set(BUILD_EXTENSIONS
     FORCE
 )
 set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;pdf"
     CACHE STRING
     ""
     FORCE
@@ -698,10 +704,14 @@ set(STATICALLY_LINK_EXTENSIONS
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_pdf/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
 )
+
+set(PDF_USE_PODOFO ON CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_pdf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")

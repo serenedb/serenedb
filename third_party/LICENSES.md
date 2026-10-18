@@ -52,6 +52,10 @@
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet)
 * [brotli](https://github.com/google/brotli)
 
+### [GPL-2.0-or-later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+
+* [duckdb-pdf](https://github.com/asubbarao/duckdb-pdf), with the SereneDB PoDoFo backend; upstream license and bundled notices are preserved in `duckdb_pdf`.
+
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
 * [lz4](https://github.com/lz4/lz4)
@@ -68,6 +72,8 @@
 
 ### Other licenses
 
+* [PoDoFo](https://github.com/podofo/podofo), MPL-2.0 (alternative license: LGPL-2.0-or-later); bundled component notices are in `podofo/NOTICE` and the source headers.
+* [FreeType](https://github.com/freetype/freetype), FreeType License (`freetype/docs/FTL.TXT`; alternative license: GPL-2.0).
 * [ICU](https://icu.unicode.org), [Unicode License V3](https://github.com/unicode-org/icu/blob/main/LICENSE)
 * [glibc](https://www.gnu.org/software/libc), GNU LGPL
 * [jemalloc](https://github.com/jemalloc/jemalloc), free as-is license with the comment:

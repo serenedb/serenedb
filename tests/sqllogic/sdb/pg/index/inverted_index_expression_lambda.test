@@ -1,0 +1,91 @@
+# Index keys with a lambda: list_transform and list_filter over a list column, inline and through a macro, on a
+# plain table and on a search table. CREATE INDEX validates an expression's constant parts by evaluating them, and
+# a lambda has no children to the expression iterator, so it looked foldable and failed with "Unimplemented type
+# for StandardVectorBuffer::GetValue" before the lambda was skipped.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iel_kw AS keyword() WITH (frequency)
+
+
+statement ok
+CREATE MACRO iel_names(l) AS list_transform(l, x -> x.a)
+
+
+statement ok
+CREATE TABLE iel_items (id INTEGER PRIMARY KEY, tags VARCHAR[], parts STRUCT(a VARCHAR, b INTEGER)[])
+
+
+statement ok
+INSERT INTO iel_items VALUES (1, ['Red', 'Blue'], [{'a': 'Foo', 'b': 1}]), (2, ['green'], [{'a': 'Bar', 'b': 2}, {'a': 'Baz', 'b': 3}])
+
+
+statement ok
+CREATE INDEX iel_items_idx ON iel_items USING inverted (id, (list_transform(tags, x -> lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, p -> p.b > 1)) included())
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iel_items
+
+
+query
+SELECT id FROM iel_items_idx WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM iel_items_idx WHERE (iel_names(parts)) @@ ts_like('Baz') ORDER BY id
+----
+id
+2
+
+statement ok
+INSERT INTO iel_items VALUES (3, ['RED'], [{'a': 'Baz', 'b': 4}])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iel_items
+
+
+query
+SELECT id FROM iel_items_idx WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM iel_items_idx WHERE (iel_names(parts)) @@ ts_like('Baz') ORDER BY id
+----
+id
+2
+3
+
+statement ok
+CREATE TABLE iel_search (id INTEGER, parts STRUCT(a VARCHAR, b INTEGER)[]) WITH (storage = 'search')
+
+
+statement ok
+CREATE INDEX iel_search_idx ON iel_search USING inverted (id, (iel_names(parts)) iel_kw)
+
+
+statement ok
+INSERT INTO iel_search VALUES (1, [{'a': 'Foo', 'b': 1}]), (2, [{'a': 'Bar', 'b': 2}])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iel_search
+
+
+query
+SELECT id FROM iel_search WHERE iel_names(parts) @@ ts_like('Bar') ORDER BY id
+----
+id
+2
+
+# the rest of an expression with a lambda is still checked when the index is created
+statement error
+CREATE INDEX iel_items_bad_idx ON iel_items USING inverted (id, (list_concat(list_transform(tags, x -> lower(x)), [CASE WHEN id > 1000 THEN CAST(CAST(300 AS BIGINT) AS TINYINT) ELSE 0 END::VARCHAR])) iel_kw)
+----
+db error: ERROR: Type INT64 with value 300 can't be cast because the value is out of range for the destination type INT8
+

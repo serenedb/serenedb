@@ -1101,6 +1101,12 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
 
 void ValidateConstantParts(const duckdb::Expression& expr,
                            duckdb::ClientContext& context) {
+  // A lambda is an argument of its list function, not a value: it has no
+  // children to the iterator, so it looks foldable, but it cannot be evaluated
+  // on its own.
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    return;
+  }
   if (expr.IsFoldable()) {
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::ExpressionExecutor::EvaluateScalar(context, expr);

@@ -72,4 +72,18 @@ WildcardType ComputeWildcardType(bytes_view pattern) noexcept {
   return WildcardType::Wildcard;
 }
 
+bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept {
+  bool escaped = false;
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    if (escaped) {
+      escaped = false;
+    } else if (pattern[i] == WildcardMatch::kEscape) {
+      escaped = true;
+    } else if (pattern[i] == WildcardMatch::kAnyStr) {
+      return pattern.substr(0, i);
+    }
+  }
+  return pattern;
+}
+
 }  // namespace irs

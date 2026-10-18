@@ -63,6 +63,7 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
+#include "connector/pg_logical_types.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
@@ -952,10 +953,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 bool DependsOnSession(const duckdb::LogicalType& type) {
   return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
     return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
            t.id() == duckdb::LogicalTypeId::TIME_TZ ||
-           t.id() == duckdb::LogicalTypeId::VARIANT ||
-           (t.id() == duckdb::LogicalTypeId::BIGINT &&
-            t.GetAlias().starts_with("reg"));
+           t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
   });
 }
 

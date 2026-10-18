@@ -638,6 +638,8 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `(a b)` | Grouping. |
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
+A quoted single word or pattern needs neither positions nor the column's text: `"car"` matches and scores like [`ts_phrase('car')`](#ts_phrase), and `"b*"` like `b*`.
+
 These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`.
 
 A column on the left of `@@` names the field, so every term in the query searches it and a `field:term` prefix is rejected. To let the query choose its own fields, put the relation's `tableoid` on the left instead — the same handle [`BM25`](./scoring.md) takes. The operand then means "this index" rather than "this field", and every term must name one:

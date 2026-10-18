@@ -1,0 +1,145 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS dfw_ro_${__DATABASE__};
+
+statement ok
+DROP SERVER IF EXISTS dfw_rw_${__DATABASE__};
+
+statement ok
+DETACH IF EXISTS dfw_src_${__DATABASE__};
+
+statement ok
+DROP ROLE IF EXISTS dfw_reader;
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfw.duckdb' AS dfw_src_${__DATABASE__};
+
+statement ok
+CREATE OR REPLACE TABLE dfw_src_${__DATABASE__}.main.docs(id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO dfw_src_${__DATABASE__}.main.docs VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+DETACH dfw_src_${__DATABASE__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfw_rw.duckdb' AS dfw_src_${__DATABASE__};
+
+statement ok
+CREATE OR REPLACE TABLE dfw_src_${__DATABASE__}.main.docs(id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO dfw_src_${__DATABASE__}.main.docs VALUES (1, 'alpha');
+
+statement ok
+DETACH dfw_src_${__DATABASE__};
+
+
+statement error
+CREATE SERVER dfw_ro_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw;
+----
+db error: ERROR: option "path" is required for duckdb_fdw
+
+
+
+statement ok
+CREATE SERVER dfw_ro_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw
+  OPTIONS (path '${__TEST_DIR__}/dfw.duckdb', read_only 'true');
+
+query
+SELECT id, body FROM dfw_ro_${__DATABASE__}.main.docs ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+query
+SELECT readonly FROM duckdb_databases() WHERE database_name = 'dfw_ro_${__DATABASE__}';
+----
+readonly
+t
+
+statement error
+INSERT INTO dfw_ro_${__DATABASE__}.main.docs VALUES (3, 'gamma');
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
+
+
+statement error
+DELETE FROM dfw_ro_${__DATABASE__}.main.docs;
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
+
+
+statement error
+CREATE TABLE dfw_ro_${__DATABASE__}.main.more(a INTEGER);
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
+
+
+
+statement ok
+CREATE ROLE dfw_reader LOGIN PASSWORD 'dfw_pw';
+
+connection dfw_reader user=dfw_reader password=dfw_pw
+statement error
+SELECT count(*) FROM dfw_ro_${__DATABASE__}.main.docs;
+----
+db error: ERROR: permission denied for foreign server dfw_ro_<slt:ignore>
+
+
+connection default
+statement ok
+GRANT USAGE ON FOREIGN SERVER dfw_ro_${__DATABASE__} TO dfw_reader;
+
+connection dfw_reader user=dfw_reader password=dfw_pw
+query
+SELECT count(*) AS n FROM dfw_ro_${__DATABASE__}.main.docs;
+----
+n
+2
+
+connection default
+statement ok
+DROP SERVER dfw_ro_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfw.duckdb' AS dfw_src_${__DATABASE__} (READ_ONLY);
+
+query
+SELECT count(*) AS n FROM dfw_src_${__DATABASE__}.main.docs;
+----
+n
+2
+
+statement ok
+DETACH dfw_src_${__DATABASE__};
+
+
+statement ok
+CREATE SERVER dfw_rw_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw
+  OPTIONS (path '${__TEST_DIR__}/dfw_rw.duckdb');
+
+statement ok
+INSERT INTO dfw_rw_${__DATABASE__}.main.docs VALUES (2, 'beta');
+
+query
+SELECT readonly FROM duckdb_databases() WHERE database_name = 'dfw_rw_${__DATABASE__}';
+----
+readonly
+f
+
+query
+SELECT count(*) AS n FROM dfw_rw_${__DATABASE__}.main.docs;
+----
+n
+2
+
+statement ok
+DROP SERVER dfw_rw_${__DATABASE__};
+
+statement ok
+DROP ROLE dfw_reader;

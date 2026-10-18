@@ -1,0 +1,243 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfr_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX sfr_docs_idx ON postgres.public.sfr_docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO postgres.public.sfr_docs
+SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i);
+
+statement ok
+CREATE TABLE postgres.public.sfr_notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX sfr_notes_idx ON postgres.public.sfr_notes USING inverted(body);
+
+statement ok
+INSERT INTO postgres.public.sfr_notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
+
+statement ok
+CREATE VIEW postgres.public.sfr_even AS SELECT id FROM postgres.public.sfr_docs WHERE id % 2 = 0;
+
+statement ok
+CREATE SEQUENCE postgres.public.sfr_seq START 7;
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfr_snap && mkdir $__TEST_DIR__/sfr_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfr_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfr_snap/catalog.wal
+
+statement ok
+CREATE TABLE sfr_files AS
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**');
+
+query
+SELECT count(*) > 0 AS listed FROM sfr_files;
+----
+listed
+t
+
+
+statement ok
+CREATE SERVER sfr_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfr_snap/5');
+
+query
+SELECT type, readonly FROM duckdb_databases() WHERE database_name = 'sfr_snap';
+----
+type	readonly
+serenedb_readonly	t
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sfr_snap.public.sfr_docs;
+----
+n	s
+100	5050
+
+query
+SELECT count(*) AS n FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even';
+----
+n
+50
+
+query
+SELECT id FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even' ORDER BY id LIMIT 3;
+----
+id
+2
+4
+6
+
+query
+SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
+----
+n
+40
+
+query
+SELECT id FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1' ORDER BY id LIMIT 3;
+----
+id
+1
+5
+9
+
+query
+SELECT count(*) AS n FROM sfr_snap.public.sfr_even;
+----
+n
+50
+
+
+statement ok
+INSERT INTO postgres.public.sfr_docs VALUES (1000, 'even');
+
+statement ok
+INSERT INTO postgres.public.sfr_notes VALUES (1000, 'note1');
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.sfr_notes;
+
+statement ok
+VACUUM (REFRESH_INDEX) postgres.public.sfr_docs_idx;
+
+statement ok
+CHECKPOINT postgres;
+
+statement ok
+FORCE CHECKPOINT postgres;
+
+system ok
+stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfr_log.inode
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+statement ok
+CREATE TABLE postgres.public.sfr_compacted (x INT);
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+system ok
+[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfr_log.inode)" ]
+
+query
+SELECT (SELECT count(*) FROM sfr_snap.public.sfr_docs) AS docs, (SELECT count(*) FROM sfr_snap.public.sfr_notes) AS notes;
+----
+docs	notes
+100	40
+
+query
+SELECT (SELECT count(*) FROM postgres.public.sfr_docs_idx WHERE body @@ 'even') AS live_docs,
+       (SELECT count(*) FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even') AS snap_docs,
+       (SELECT count(*) FROM postgres.public.sfr_notes WHERE body @@ 'note1') AS live_notes,
+       (SELECT count(*) FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1') AS snap_notes;
+----
+live_docs	snap_docs	live_notes	snap_notes
+51	50	11	10
+
+sleep 1500ms
+
+query
+SELECT count(*) AS n FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'odd';
+----
+n
+50
+
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**')
+   EXCEPT SELECT * FROM sfr_files)
+  UNION ALL
+  (SELECT * FROM sfr_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**')));
+----
+changed
+0
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even';
+----
+n
+50
+
+connection after_restart
+query
+SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
+----
+n
+40
+
+connection after_restart
+query
+SELECT (SELECT count(*) FROM postgres.public.sfr_docs_idx WHERE body @@ 'even') AS live_docs,
+       (SELECT count(*) FROM sfr_snap.public.sfr_docs_idx WHERE body @@ 'even') AS snap_docs,
+       (SELECT count(*) FROM postgres.public.sfr_notes WHERE body @@ 'note1') AS live_notes,
+       (SELECT count(*) FROM sfr_snap.public.sfr_notes WHERE body @@ 'note1') AS snap_notes;
+----
+live_docs	snap_docs	live_notes	snap_notes
+51	50	11	10
+
+connection after_restart
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**')
+   EXCEPT SELECT * FROM sfr_files)
+  UNION ALL
+  (SELECT * FROM sfr_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfr_snap/**')));
+----
+changed
+0
+
+connection after_restart
+statement ok
+DROP SERVER sfr_snap;
+
+connection after_restart
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfr_snap';
+----
+n
+0
+
+connection after_restart
+query
+SELECT count(*) AS n FROM sfr_files
+WHERE filename NOT IN (SELECT filename FROM read_blob('${__TEST_DIR__}/sfr_snap/**'));
+----
+n
+0
+
+connection after_restart
+statement ok
+CREATE SERVER sfr_again FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfr_snap/5');
+
+connection after_restart
+query
+SELECT count(*) AS n FROM sfr_again.public.sfr_docs;
+----
+n
+100
+
+connection after_restart
+statement ok
+DROP SERVER sfr_again;

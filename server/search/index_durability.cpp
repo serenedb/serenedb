@@ -121,6 +121,15 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
   return {std::move(writer), std::move(stamp)};
 }
 
+std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
+  irs::Directory& dir, const irs::IndexReaderOptions& options) {
+  IndexStamp stamp;
+  irs::DirectoryReader reader{
+    dir, options,
+    [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
+  return {std::move(reader), std::move(stamp)};
+}
+
 void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                    const FileManifest* manifest,
                                    duckdb::BinarySerializer& out) {

@@ -1,0 +1,296 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdc_words AS split_text(case := 'lower') WITH (frequency)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdc_words_pos AS split_text(case := 'lower') WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE pdc_docs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+INSERT INTO pdc_docs VALUES (1, 'quick brown fox'), (2, 'quick brown brawn bright')
+
+
+statement ok
+CREATE INDEX pdc_text_idx ON pdc_docs USING inverted (id, body pdc_words) INCLUDE (body)
+
+
+statement ok
+CREATE INDEX pdc_pos_idx ON pdc_docs USING inverted (id, body pdc_words_pos)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pdc_docs
+
+
+query
+SELECT id, constant(pdc_pos_idx.tableoid, 2.0) AS score FROM pdc_pos_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+EXPLAIN SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────────────╮
+│ Order By: id ASC                                 │
+│ ~1 row                                           │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: pdc_text_idx                              │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ │ Merge: max          │                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'quick'     │  │ Prefix: br          │ │
+│ ╰─────────────────────╯  │ Score: unscored     │ │
+│                          ╰─────────────────────╯ │
+│ Table Filter:                                    │
+│ ╭─ Phrase ────────────────────────────╮          │
+│ │ Field: body(string)                 │          │
+│ │ Parts:                              │          │
+│ │ Term:quick(0, 0); Prefix:br(1, 1);  │          │
+│ │ Verify: table filter                │          │
+│ ╰─────────────────────────────────────╯          │
+│ Score: constant(value=2)                         │
+│ Projections: id, sdb_inverted_index_score        │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+query
+SELECT id, constant(pdc_pos_idx.tableoid, 2.0) AS score FROM pdc_pos_idx
+WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::boost(3.0) ORDER BY id
+----
+id	score
+1	6
+2	6
+
+query
+SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::boost(3.0) ORDER BY id
+----
+id	score
+1	6
+2	6
+
+query
+SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ (ts_phrase('quick') ## ts_like('br%')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ (ts_starts_with('qu') ## ts_starts_with('br')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+EXPLAIN SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ (ts_starts_with('qu') ## ts_starts_with('br')) ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────────────────────────╮
+│ Order By: id ASC                                             │
+│ ~1 row                                                       │
+╰───────────────────────────────┬──────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────┴──────────────────────────────╮
+│ Index: pdc_text_idx                                          │
+│ Lookup: table                                                │
+│ Index Filter:                                                │
+│ ╭─ And ───────────────╮                                      │
+│ │ Merge: max          │                                      │
+│ ╰──────────┬──────────╯                                      │
+│            ├────────────────────────┬──────────────────╮     │
+│ ╭─ Starts With ───────╮  ╭─ Starts With ───────╮  ╭─ All ──╮ │
+│ │ Field: body(string) │  │ Field: body(string) │  ╰────────╯ │
+│ │ Prefix: qu          │  │ Prefix: br          │             │
+│ │ Score: unscored     │  │ Score: unscored     │             │
+│ ╰─────────────────────╯  ╰─────────────────────╯             │
+│ Table Filter:                                                │
+│ ╭─ Phrase ───────────────────────────╮                       │
+│ │ Field: body(string)                │                       │
+│ │ Parts:                             │                       │
+│ │ Prefix:qu(0, 0); Prefix:br(1, 1);  │                       │
+│ │ Verify: table filter               │                       │
+│ ╰────────────────────────────────────╯                       │
+│ Score: constant(value=2)                                     │
+│ Projections: id, sdb_inverted_index_score                    │
+│ ~1 row                                                       │
+╰──────────────────────────────────────────────────────────────╯
+
+query
+SELECT id, constant(pdc_text_idx.tableoid, 2.0) AS score FROM pdc_text_idx
+WHERE body @@ to_tsquery('"quick br*"') ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+SELECT id, round(BM25(pdc_pos_idx.tableoid)::numeric, 4) AS score FROM pdc_pos_idx
+WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::score('constant(1)')
+  AND body @@ 'quick'
+ORDER BY id
+----
+id	score
+1	1.117
+2	1.117
+
+query
+SELECT id, round(BM25(pdc_text_idx.tableoid)::numeric, 4) AS score FROM pdc_text_idx
+WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::score('constant(1)')
+  AND body @@ 'quick'
+ORDER BY id
+----
+id	score
+1	1.117
+2	1.117
+
+query
+EXPLAIN SELECT id, round(BM25(pdc_text_idx.tableoid)::numeric, 4) AS score FROM pdc_text_idx
+WHERE (body @@ (ts_phrase('quick') ## ts_starts_with('br')))::score('constant(1)')
+  AND body @@ 'quick'
+ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────────────────────────────────────────────╮
+│ Order By: id ASC                                                               │
+│ ~1 row                                                                         │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────┴───────────────────────────────────────╮
+│ Projections: id, score                                                         │
+│ ~1 row                                                                         │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────┴───────────────────────────────────────╮
+│ Index: pdc_text_idx                                                            │
+│ Lookup: table                                                                  │
+│ Index Filter:                                                                  │
+│ ╭─ And ───────────────╮                                                        │
+│ ╰──────────┬──────────╯                                                        │
+│            ├───────────────────────────╮                                       │
+│ ╭─ Terms ──┴──────────╮  ╭─ And ───────┴────────────╮                          │
+│ │ Field: body(string) │  │ Merge: max               │                          │
+│ │ Values: 'quick'     │  │ Score: constant(value=1) │                          │
+│ ╰─────────────────────╯  ╰─────────────┬────────────╯                          │
+│                                        ├──────────────────────────╮            │
+│                          ╭─ Terms ─────┴────────────╮  ╭─ Starts With ───────╮ │
+│                          │ Field: body(string)      │  │ Field: body(string) │ │
+│                          │ Values: 'quick'          │  │ Prefix: br          │ │
+│                          ╰──────────────────────────╯  │ Score: unscored     │ │
+│                                                        ╰─────────────────────╯ │
+│ Table Filter:                                                                  │
+│ ╭─ Phrase ────────────────────────────╮                                        │
+│ │ Field: body(string)                 │                                        │
+│ │ Parts:                              │                                        │
+│ │ Term:quick(0, 0); Prefix:br(1, 1);  │                                        │
+│ │ Verify: table filter                │                                        │
+│ │ Score: constant(value=1)            │                                        │
+│ ╰─────────────────────────────────────╯                                        │
+│ Score: bm25(k1=1.2, b=0.75)                                                    │
+│ Projections: id, sdb_inverted_index_score                                      │
+│ ~1 row                                                                         │
+╰────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdc_syn AS split_text(case := 'lower') | expand_solr_synonyms('quick, fast') WITH (frequency)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdc_syn_pos AS split_text(case := 'lower') | expand_solr_synonyms('quick, fast') WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE pdc_syn_docs (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+INSERT INTO pdc_syn_docs VALUES (1, 'quick brown fox'), (2, 'fast brown brawn bright'), (3, 'slow brown')
+
+
+statement ok
+CREATE INDEX pdc_syn_text_idx ON pdc_syn_docs USING inverted (id, body pdc_syn) INCLUDE (body)
+
+
+statement ok
+CREATE INDEX pdc_syn_pos_idx ON pdc_syn_docs USING inverted (id, body pdc_syn_pos)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pdc_syn_docs
+
+
+query
+SELECT id, constant(pdc_syn_pos_idx.tableoid, 2.0) AS score FROM pdc_syn_pos_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+SELECT id, constant(pdc_syn_text_idx.tableoid, 2.0) AS score FROM pdc_syn_text_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+id	score
+1	2
+2	2
+
+query
+EXPLAIN SELECT id, constant(pdc_syn_text_idx.tableoid, 2.0) AS score FROM pdc_syn_text_idx
+WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br')) ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────────────────╮
+│ Order By: id ASC                                     │
+│ ~1 row                                               │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Index: pdc_syn_text_idx                              │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ And ───────────────────╮                          │
+│ │ Merge: max              │                          │
+│ ╰────────────┬────────────╯                          │
+│              ├──────────────────────────╮            │
+│ ╭─ Or ───────┴────────────╮  ╭─ Starts With ───────╮ │
+│ │ Merge: max              │  │ Field: body(string) │ │
+│ ╰────────────┬────────────╯  │ Prefix: br          │ │
+│ ╭─ Terms ────┴────────────╮  │ Score: unscored     │ │
+│ │ Field: body(string)     │  ╰─────────────────────╯ │
+│ │ Values: 'fast', 'quick' │                          │
+│ ╰─────────────────────────╯                          │
+│ Table Filter:                                        │
+│ ╭─ Phrase ─────────────────────────────────────────╮ │
+│ │ Field: body(string)                              │ │
+│ │ Parts:                                           │ │
+│ │ Terms:['fast','quick',](0, 0); Prefix:br(1, 1);  │ │
+│ │ Verify: table filter                             │ │
+│ ╰──────────────────────────────────────────────────╯ │
+│ Score: constant(value=2)                             │
+│ Projections: id, sdb_inverted_index_score            │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯

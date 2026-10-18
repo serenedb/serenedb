@@ -94,7 +94,7 @@ class InvertedIndexStorage final
     public MaintainedStore {
  public:
   InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                       bool in_memory, duckdb::idx_t db_id,
+                       bool in_memory, bool read_only, duckdb::idx_t db_id,
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
@@ -105,7 +105,9 @@ class InvertedIndexStorage final
   // removes the directory once the last of them lets go. Never set on
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
-    _dropped.store(true, std::memory_order_release);
+    if (_writer) {
+      _dropped.store(true, std::memory_order_release);
+    }
   }
   bool Dropped() const noexcept {
     return _dropped.load(std::memory_order_acquire);
@@ -121,14 +123,17 @@ class InvertedIndexStorage final
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-    duckdb::idx_t db_id, duckdb::idx_t index_id,
+    bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer,
     const irs::SortSpec& sort, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
-      sort, is_new);
+      std::move(directory), in_memory, read_only, db_id, index_id, options,
+      top_k_scorer, sort, is_new);
   }
+
+  bool ReadOnly() const noexcept { return !_writer; }
+  void OpenReader();
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -251,7 +256,11 @@ class InvertedIndexStorage final
   const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
   bool Sorted() const noexcept { return _sorted; }
 
-  void StartTasks() { _search.StartTasks(shared_from_this()); }
+  void StartTasks() {
+    if (_writer) {
+      _search.StartTasks(shared_from_this());
+    }
+  }
 
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
@@ -263,6 +272,7 @@ class InvertedIndexStorage final
   bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
+  irs::IndexReaderOptions ReaderOptions() const;
   auto AwaitMerge(
     MergeRecorder& recorder, bool& empty_compaction,
     irs::CompactionResult* outcome,

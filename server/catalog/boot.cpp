@@ -82,7 +82,6 @@ struct MissingDatabases {
 MissingDatabases gMissingDatabases;
 
 constexpr std::string_view kEngineDir = "engine_v1";
-constexpr std::string_view kCatalogLog = "catalog.wal";
 
 std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
   const std::filesystem::path& directory) {
@@ -255,9 +254,9 @@ std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {
 }
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
-            std::string_view type, duckdb::AttachVisibility visibility,
-            bool defer_storage_load) {
-  duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
+            std::string_view type, duckdb::AccessMode access_mode,
+            duckdb::AttachVisibility visibility, bool defer_storage_load) {
+  duckdb::AttachOptions options{info.options, access_mode};
   options.db_type.assign(type);
   options.visibility = visibility;
   options.defer_storage_load = defer_storage_load;
@@ -295,7 +294,8 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
       info.options.emplace(key, value);
     }
   }
-  Attach(context, info, SereneDBCatalog::kStorageType, visibility, true);
+  Attach(context, info, SereneDBCatalog::kStorageType,
+         duckdb::AccessMode::READ_WRITE, visibility, true);
   return manager.GetDatabase(name)->GetCatalog();
 }
 
@@ -353,7 +353,8 @@ void InitCatalog(std::string_view directory) {
   cluster_info.path = IN_MEMORY_PATH;
   context.RunFunctionInTransaction([&] {
     Attach(context, cluster_info, ClusterCatalog::kStorageType,
-           duckdb::AttachVisibility::HIDDEN, false);
+           duckdb::AccessMode::READ_WRITE, duckdb::AttachVisibility::HIDDEN,
+           false);
   });
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);

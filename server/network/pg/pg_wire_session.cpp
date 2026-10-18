@@ -74,7 +74,9 @@ inline duckdb::LogicalType ResolveExpectedType(
       type.id() != duckdb::LogicalTypeId::INVALID) {
     return type;
   }
-  if (const auto hint = hints.find(key); hint != hints.end()) {
+  if (const auto hint = hints.find(key);
+      hint != hints.end() &&
+      hint->second.id() != duckdb::LogicalTypeId::UNKNOWN) {
     return hint->second;
   }
   return duckdb::LogicalTypeId::VARCHAR;
@@ -1996,8 +1998,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   for (uint16_t i = 0; i < num_params; ++i) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
-    param_oids.emplace_back(oid);
-    if (oid != 0 && oid != sdb::pg::kUnknown) {
+    param_oids.push_back(oid);
+    if (oid != 0) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -2298,13 +2300,12 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    if (i < client_oids.size() && client_oids[i] != 0 &&
-        client_oids[i] != sdb::pg::kUnknown) {
+    if (i < client_oids.size() && client_oids[i] != 0) {
       oids.emplace_back(client_oids[i]);
       continue;
     }
     oids.emplace_back(
-      sdb::pg::WireType(ResolveExpectedType(prepared, stmt.TypeHints(), i))
+      sdb::pg::Logical2Pg(ResolveExpectedType(prepared, stmt.TypeHints(), i))
         .oid);
   }
   WriteParameterDescription(this->_send, oids);

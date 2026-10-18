@@ -444,7 +444,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
 
 }  // namespace
 
-PgTypeInfo WireType(const duckdb::LogicalType& type) {
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type) {
   const auto info = Logical2Pg(type, false, true);
   if (info.oid == kAclitem) {
     return {kText, -1, -1};

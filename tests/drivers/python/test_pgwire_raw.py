@@ -553,6 +553,20 @@ def test_parse_param_oid_unknown_is_inferred(conn):
     assert first_field(m) == b"42"
 
 
+@pytest.mark.parametrize(
+    "query, expected",
+    [("select $1", b"abc"), ("select $1 || 'x'", b"abcx")],
+)
+def test_parse_param_oid_unknown_reads_as_text(conn, query, expected):
+    conn.parse("", query, oids=(705,))
+    conn.bind("", "", params=(b"abc",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
 def parameter_types(msgs):
     for t, p in msgs:
         if t == "t":
@@ -564,7 +578,7 @@ def parameter_types(msgs):
 @pytest.mark.parametrize(
     "query, oids, expected",
     [
-        ("select $1::int4 + 1", (705,), [23]),
+        ("select $1::int4 + 1", (705,), [705]),
         (
             "select table_name from information_schema.tables "
             "where table_name = $1",

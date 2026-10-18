@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -34,7 +36,6 @@
 #include <duckdb/storage/table/scan_state.hpp>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -423,7 +424,7 @@ class ColumnReader {
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
   std::vector<ColumnDictionaryMeta> _dictionary_metas;
-  mutable std::once_flag _dictionaries_loaded;
+  mutable absl::once_flag _dictionaries_loaded;
   mutable codecs::TrainedDictionaries _dictionaries;
 
  private:

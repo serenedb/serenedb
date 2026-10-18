@@ -371,7 +371,7 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
   if (_dictionary_metas.empty()) {
     return nullptr;
   }
-  std::call_once(_dictionaries_loaded, [&] {
+  absl::call_once(_dictionaries_loaded, [&] {
     codecs::TrainedDictionaries loaded;
     loaded.reserve(_dictionary_metas.size());
     for (const auto& d : _dictionary_metas) {

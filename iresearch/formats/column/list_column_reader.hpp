@@ -33,6 +33,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
@@ -88,6 +89,8 @@ class ListColumnReader final : public ColumnReader {
       duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
         result_offset,
       odata, scan_count, base, child_base);
+    SDB_ENSURE(last_entry <= _children[0]->RowCount(),
+               "list column: corrupted list ends");
     const uint64_t child_scan_count = last_entry - base;
     duckdb::ListVector::Reserve(result, child_base + child_scan_count);
     if (child_scan_count > 0) {
@@ -119,6 +122,9 @@ class ListColumnReader final : public ColumnReader {
     SDB_ASSERT(scan_count == 1);
     const uint64_t last_entry =
       duckdb::FlatVector::GetData<uint64_t>(offsets)[0];
+    SDB_ENSURE(
+      last_entry >= s.st.last_offset && last_entry <= _children[0]->RowCount(),
+      "list column: corrupted list ends");
     const uint64_t child_skip = last_entry - s.st.last_offset;
     s.st.last_offset = last_entry;
     if (child_skip > 0) {
@@ -179,14 +185,16 @@ class ListColumnReader final : public ColumnReader {
   }
 
   static void FillEntries(duckdb::list_entry_t* entries, const uint64_t* ends,
-                          uint64_t count, uint64_t first,
-                          uint64_t child_base) noexcept {
+                          uint64_t count, uint64_t first, uint64_t child_base) {
     uint64_t prev = first;
+    bool ordered = true;
     for (uint64_t k = 0; k < count; ++k) {
+      ordered &= ends[k] >= prev;
       entries[k] =
         duckdb::list_entry_t{child_base + (prev - first), ends[k] - prev};
       prev = ends[k];
     }
+    SDB_ENSURE(ordered, "list column: corrupted list ends");
   }
 
   static ListDictionary& Dictionary(ScanState& s) {
@@ -223,6 +231,8 @@ class ListColumnReader final : public ColumnReader {
                  uint64_t count, duckdb::Vector& out,
                  duckdb::list_entry_t* entries, uint64_t child_base,
                  Accept&& accept) const {
+    SDB_ENSURE(first + count <= _children[1]->RowCount(),
+               "list column: corrupted list codes");
     const uint64_t first_end = first == 0 ? 0 : first - 1;
     SeekChild(s, 1, d.ends_pos, first_end);
     const uint64_t end_count = first + count - first_end;
@@ -238,6 +248,8 @@ class ListColumnReader final : public ColumnReader {
     const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
     const uint64_t first_elem = first == 0 ? 0 : ends[0];
     const uint64_t last_elem = ends[end_count - 1];
+    SDB_ENSURE(first_elem <= last_elem && last_elem <= _children[0]->RowCount(),
+               "list column: corrupted list ends");
     const uint64_t elem_count = last_elem - first_elem;
     if (!accept(elem_count)) {
       return false;
@@ -514,6 +526,8 @@ class ListColumnReader final : public ColumnReader {
                                       static_cast<duckdb::idx_t>(child_base));
       return scan_count;
     }
+    SDB_ENSURE(hi < _children[1]->RowCount(),
+               "list column: corrupted list codes");
     auto& d = s.ctx->ReadAhead() && hi - lo < 2 * kReadAheadLists
                 ? Lists(s, lo, hi, scan_count)
                 : ReferencedLists(s, codes, validity, result_offset, scan_count,

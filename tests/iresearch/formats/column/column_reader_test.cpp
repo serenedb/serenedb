@@ -2505,6 +2505,68 @@ TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
                  false);
 }
 
+void ScanCorruptedLists(duckdb::DatabaseInstance& db, std::string_view segment,
+                        std::span<const uint64_t> stored, size_t word,
+                        uint64_t value, const char* error) {
+  constexpr irs::field_id kId = 71;
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  {
+    duckdb::Connection con{db};
+    ASSERT_FALSE(
+      con.Query("SET force_compression = 'uncompressed'")->HasError());
+    WriteViaSql(db, dir, segment, kId, type,
+                "SELECT ['r' || (i % 5), 'x'] FROM range(4096) t(i)", 4096,
+                expected);
+    con.Query("SET force_compression = 'auto'");
+  }
+  const auto file = irs::FileName(segment);
+  std::string bytes;
+  {
+    auto in = dir.open(file, irs::IOAdvice::NORMAL);
+    ASSERT_NE(in, nullptr);
+    bytes.resize(in->Length());
+    in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());
+  }
+  std::string needle(stored.size() * sizeof(uint64_t), '\0');
+  std::memcpy(needle.data(), stored.data(), needle.size());
+  const auto at = bytes.find(needle);
+  ASSERT_NE(at, std::string::npos);
+  std::memcpy(bytes.data() + at + word * sizeof(uint64_t), &value,
+              sizeof(value));
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+  }
+  irs::ColReader r{dir, segment, db};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(ScanValues(*col, r.Ctx()), error);
+#else
+  EXPECT_ANY_THROW(ScanValues(*col, r.Ctx()));
+#endif
+}
+
+TEST_F(ColumnReaderTest, CorruptedListCodesAreRejected) {
+  constexpr uint64_t kCodes[] = {0, 1, 2, 3, 4, 0, 1, 2, 3, 4};
+  ScanCorruptedLists(Db(), "cseg", kCodes, 7, 1000, "corrupted list codes");
+}
+
+TEST_F(ColumnReaderTest, CorruptedListEndsAreRejected) {
+  constexpr uint64_t kEnds[] = {2, 4, 6, 8, 10};
+  ScanCorruptedLists(Db(), "eseg", kEnds, 2, 1, "corrupted list ends");
+}
+
+TEST_F(ColumnReaderTest, ListEndsPastTheElementsAreRejected) {
+  constexpr uint64_t kEnds[] = {2, 4, 6, 8, 10};
+  ScanCorruptedLists(Db(), "pseg", kEnds, 4, 1000, "corrupted list ends");
+}
+
 TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};

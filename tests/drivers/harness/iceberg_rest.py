@@ -11,6 +11,8 @@ ENV_KEYS = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
             "MINIO_BUCKET", "ICEBERG_REST_URL", "ICEBERG_WAREHOUSE")
 MINIO_IMAGE = "pgsty/minio:latest"
 REST_IMAGE = "apache/iceberg-rest-fixture:1.10.1"
+OWNER_LABEL = (["--label", f"serenedb.owner={os.environ['SDB_DOCKER_OWNER']}"]
+               if os.environ.get("SDB_DOCKER_OWNER") else [])
 
 
 def _docker(*args, check=True, capture=False):
@@ -43,10 +45,10 @@ class IcebergRestFixture:
             return self.env
         access, secret, bucket = "minioadmin", "minioadmin", "testbucket"
         self.network = f"{self.name}-net"
-        _docker("network", "create", self.network)
+        _docker("network", "create", *OWNER_LABEL, self.network)
         minio_port = free_port()
         self.minio = f"{self.name}-minio"
-        _docker("run", "-d", "--name", self.minio, "--network", self.network,
+        _docker("run", "-d", "--name", self.minio, *OWNER_LABEL, "--network", self.network,
                 "--ulimit", "nofile=65536:65536",
                 "-p", f"{minio_port}:9000",
                 "-e", f"MINIO_ROOT_USER={access}", "-e", f"MINIO_ROOT_PASSWORD={secret}",
@@ -62,7 +64,7 @@ class IcebergRestFixture:
         _docker("exec", self.minio, "mc", "mb", f"local/{bucket}")
         rest_port = free_port()
         self.rest = f"{self.name}-iceberg-rest"
-        _docker("run", "-d", "--name", self.rest, "--network", self.network,
+        _docker("run", "-d", "--name", self.rest, *OWNER_LABEL, "--network", self.network,
                 "--ulimit", "nofile=65536:65536",
                 "-p", f"{rest_port}:8181",
                 "-e", f"AWS_ACCESS_KEY_ID={access}", "-e", f"AWS_SECRET_ACCESS_KEY={secret}",

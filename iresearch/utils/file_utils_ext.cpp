@@ -284,9 +284,9 @@ void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
   for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
 #ifdef __APPLE__
-    radvisory advice{
-      .ra_offset = static_cast<off_t>(offset + at),
-      .ra_count = static_cast<int>(std::min<uint64_t>(kWillNeedChunk, size - at))};
+    radvisory advice{.ra_offset = static_cast<off_t>(offset + at),
+                     .ra_count = static_cast<int>(
+                       std::min<uint64_t>(kWillNeedChunk, size - at))};
     ::fcntl(fd, F_RDADVISE, &advice);
 #else
     ::posix_fadvise(

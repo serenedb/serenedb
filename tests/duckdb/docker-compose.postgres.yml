@@ -1,6 +1,10 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   postgres:
     image: ${PG_FIXTURE_IMAGE}
+    labels: *owner
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: postgres
@@ -20,3 +24,7 @@ services:
     # read host-path files that tests COPY FROM via postgres_execute().
     volumes:
       - "${SDB_WORKSPACE_DIR:-/serenedb}:${SDB_WORKSPACE_DIR:-/serenedb}:ro"
+
+networks:
+  default:
+    labels: *owner

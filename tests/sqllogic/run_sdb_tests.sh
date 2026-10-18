@@ -13,17 +13,21 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
-# Under TSan: nested_subqueries runs queries hundreds of levels deep, and TSan
-# keeps every distinct call stack it has seen until the process exits, so those
-# stacks alone fill most of its 32 GB stack store and the server crashes once it
-# is full. ai_ollama drives a local Ollama container; on arm64 inference is slow
-# enough that ai_generate's own HTTP timeout fires. Neither exercises anything
-# TSan-specific.
-TSAN_SKIP=""
+# The step takes as long as its slowest file, so under ASan the files that take
+# over 100 s and under TSan the ones over 200 s are skipped; the dev and perf
+# jobs still run them. nested_subqueries also runs queries hundreds of levels
+# deep, and TSan keeps every distinct call stack it has seen until the process
+# exits, so those stacks alone fill most of its 32 GB stack store and the server
+# crashes once it is full. ai_ollama drives a local Ollama container; on arm64
+# inference is slow enough that ai_generate's own HTTP timeout fires.
+SANITIZER_SKIP=""
+if [[ "${SANITIZERS:-}" == *Address* || "${SANITIZERS:-}" == *Thread* ]]; then
+	SANITIZER_SKIP='simple/(planner_scaling|nested_subqueries)\.test|simple/unicode/regexp_properties\.test|simple/temporal/(bucket_groups_alias_distinct_matrix|monotone_predicate_matrix_1)\.test|index/(geo|phrase|wildcard)_deferred_matrix\.gen\.test'
+fi
 if [[ "${SANITIZERS:-}" == *Thread* ]]; then
-	TSAN_SKIP='simple/nested_subqueries\.test'
+	SANITIZER_SKIP+='|simple/large_values\.test|simple/unicode/case_mapping\.test'
 	if [[ "$(uname -m)" == "aarch64" ]]; then
-		TSAN_SKIP+='|_ollama\.test_slow'
+		SANITIZER_SKIP+='|_ollama\.test_slow'
 	fi
 fi
 
@@ -31,7 +35,7 @@ fi
 declare -a SEL
 JUNIT="tests-serenedb"
 case "${SDB_SQLLOGIC_SCOPE:-all}" in
-ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${TSAN_SKIP:+|$TSAN_SKIP}") ;;
+ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${SANITIZER_SKIP:+|$SANITIZER_SKIP}") ;;
 sqlite) SEL=(--test "sdb/pg/any/sqlite/**/*.test*") ;;
 biglake)
 	SEL=(--test "sdb/**/*_iceberg.test_slow" --jobs 2)
@@ -40,7 +44,7 @@ biglake)
 	;;
 all | *)
 	SEL=(--test "sdb/**/*.test*")
-	[[ -n "$TSAN_SKIP" ]] && SEL+=(--skip "$TSAN_SKIP")
+	[[ -n "$SANITIZER_SKIP" ]] && SEL+=(--skip "$SANITIZER_SKIP")
 	;;
 esac
 

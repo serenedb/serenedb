@@ -68,9 +68,11 @@ set(IResearch_core_sources
     ./formats/column/codecs/dict_zstd.cpp
     ./formats/column/codecs/dict_zxc.cpp
     ./formats/column/codecs/fsst.cpp
+    ./formats/column/codecs/fsst_chain_encoder.cpp
     ./formats/column/codecs/lz4.cpp
     ./formats/column/codecs/numeric.cpp
     ./formats/column/codecs/registry.cpp
+    ./formats/column/codecs/segment_builder.cpp
     ./formats/column/codecs/sequence.cpp
     ./formats/column/codecs/string_scan.cpp
     ./formats/column/codecs/string_writer.cpp

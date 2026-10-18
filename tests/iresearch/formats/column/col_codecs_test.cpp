@@ -2176,6 +2176,77 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
 #endif
 }
 
+TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
+  struct Case {
+    std::string_view name;
+    void (*corrupt)(irs::codecs::Header&);
+    const char* error;
+  };
+  const Case cases[] = {
+    {"frames", [](irs::codecs::Header& h) { h.off_frames = 0; },
+     "corrupted segment header"},
+    {"entries",
+     [](irs::codecs::Header& h) {
+       h.length_width = 0;
+       h.entry_count = h.row_count + 2;
+     },
+     "corrupted segment header"},
+    {"raw_bytes",
+     [](irs::codecs::Header& h) { h.raw_bytes = uint64_t{1} << 46; },
+     "corrupted frame table"},
+  };
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return "value-" + std::to_string((g * 0x9E3779B97F4A7C15ULL >> 40) % 1000);
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / ("col_codecs_corrupt_sizes_" + std::string{c.name});
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      irs::MMapDirectory dir{path};
+      Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, 5000, 2048,
+            values);
+      irs::ColReader r{dir, std::string{kSeg}, Db()};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      offset = col->DataBlocks().front().file_offset;
+      size = col->DataBlocks().front().byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::Header::Parse(block, size);
+    c.corrupt(h);
+    h.Write(block);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    irs::MMapDirectory dir{path};
+    const auto scan = [&] {
+      irs::ColReader r{dir, std::string{kSeg}, Db()};
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+#ifdef SDB_DEV
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(scan(), c.error);
+#else
+    EXPECT_ANY_THROW(scan());
+#endif
+  }
+}
+
 const Value kTripledValues = [](uint64_t g) -> std::optional<std::string> {
   return "v" + std::to_string(g / 3);
 };

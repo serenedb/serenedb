@@ -74,11 +74,14 @@ struct EntryFrames {
     SDB_ENSURE(header.shape == static_cast<uint8_t>(S) &&
                  header.codec == static_cast<uint8_t>(Leaf::kCodec) &&
                  header.row_count == segment.count &&
+                 uint64_t{header.entry_count} <=
+                   uint64_t{header.row_count} + kFirstEntry &&
                  (kDedup || header.entry_count == header.row_count),
                "col codec: corrupted segment header");
     if (!load) {
       return;
     }
+    LoadFrames();
     if constexpr (kDedup) {
       dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
         type, header.entry_count);
@@ -95,7 +98,6 @@ struct EntryFrames {
              .GetDataWriteable();
     duckdb::StringVector::AddAuxiliaryData(
       dict_data, duckdb::make_uniq<ImmutablePayloads>());
-    LoadFrames();
     leaf.emplace(segment, *this);
   }
 

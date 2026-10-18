@@ -116,6 +116,7 @@ struct Header {
           Trainable(static_cast<ByteCodec>(h.codec)))) &&
         (h.flags == kTrainedDictionary) == (h.dictionary != 0) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
+        h.off_frames >= kHeaderSize &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
           h.off_lengths &&
         h.off_lengths + BitpackingPrimitives::GetRequiredSize(h.entry_count,

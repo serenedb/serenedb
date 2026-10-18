@@ -714,7 +714,19 @@ std::unique_ptr<duckdb::TableFilter> MakeFilter(bool like) {
           ValueAt(Data().rows / 3))));
   }
   const auto source = ValueAt(Data().rows / 2).GetValue<std::string>();
-  const auto piece = source.substr(source.size() / 3, 4);
+  const auto continuation = [&](size_t i) {
+    return i < source.size() &&
+           (static_cast<unsigned char>(source[i]) & 0xC0) == 0x80;
+  };
+  auto begin = source.size() / 3;
+  while (continuation(begin)) {
+    --begin;
+  }
+  auto end = std::min(source.size(), begin + 4);
+  while (continuation(end)) {
+    ++end;
+  }
+  const auto piece = source.substr(begin, end - begin);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
   args.push_back(std::move(column));
   args.push_back(

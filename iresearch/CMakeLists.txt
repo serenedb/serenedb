@@ -390,6 +390,7 @@ set(IResearch_core_sources
     ./utils/application_exit.cpp
     ./utils/async_utils.cpp
     ./utils/bit_packing.cpp
+    ./utils/cpu_features.cpp
     ./utils/crash_handler.cpp
     ./utils/debugging.cpp
     ./utils/duckdb_engine.cpp

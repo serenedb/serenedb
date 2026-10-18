@@ -42,6 +42,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/attributes.hpp>
 #include <iresearch/utils/containers/bitset.hpp>
+#include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/log.hpp>
@@ -248,6 +249,7 @@ void TestBase::TearDown() {
 }
 
 int main(int argc, char* argv[]) {
+  irs::CheckCpuFeatures(argv[0]);
   // SDB_* needs a Logger installed before it fires. DuckDBEngine wires
   // duckdb::LogManager into the shim during Initialize(). Tear it down
   // before main returns -- duckdb's BlockAllocator dtor reads a

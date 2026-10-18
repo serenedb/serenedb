@@ -31,6 +31,7 @@
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -221,6 +222,7 @@ int RunSubcommand(int argc, char* argv[],
 extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
+  irs::CheckCpuFeatures(argv[0]);
   SetSanitizerThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();

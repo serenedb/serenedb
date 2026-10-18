@@ -1069,7 +1069,9 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
   frontier.assign(found.begin(), found.end());
   std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   found.clear();
+  s.visited.Next();
   for (const auto& seed : frontier) {
+    s.visited.Set(seed.node);
     if (accept(seed.score) && admit(seed.node)) {
       found.push_back(seed);
     }

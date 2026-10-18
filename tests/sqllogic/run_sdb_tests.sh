@@ -13,19 +13,25 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
-# ai_ollama drives a local Ollama container. Under TSan on arm64 inference is
-# slow enough that ai_generate's own HTTP timeout fires, and nothing
-# TSan-specific is exercised there anyway.
-OLLAMA_SKIP=""
-if [[ "${SANITIZERS:-}" == *Thread* && "$(uname -m)" == "aarch64" ]]; then
-	OLLAMA_SKIP='_ollama\.test_slow'
+# Under TSan: nested_subqueries runs queries hundreds of levels deep, and TSan
+# keeps every distinct call stack it has seen until the process exits, so those
+# stacks alone fill most of its 32 GB stack store and the server crashes once it
+# is full. ai_ollama drives a local Ollama container; on arm64 inference is slow
+# enough that ai_generate's own HTTP timeout fires. Neither exercises anything
+# TSan-specific.
+TSAN_SKIP=""
+if [[ "${SANITIZERS:-}" == *Thread* ]]; then
+	TSAN_SKIP='simple/nested_subqueries\.test'
+	if [[ "$(uname -m)" == "aarch64" ]]; then
+		TSAN_SKIP+='|_ollama\.test_slow'
+	fi
 fi
 
 # sqlite subtree is under sdb/pg/any via the any/pg symlink; --skip is a path regex.
 declare -a SEL
 JUNIT="tests-serenedb"
 case "${SDB_SQLLOGIC_SCOPE:-all}" in
-ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${OLLAMA_SKIP:+|$OLLAMA_SKIP}") ;;
+ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${TSAN_SKIP:+|$TSAN_SKIP}") ;;
 sqlite) SEL=(--test "sdb/pg/any/sqlite/**/*.test*") ;;
 biglake)
 	SEL=(--test "sdb/**/*_iceberg.test_slow" --jobs 2)
@@ -34,7 +40,7 @@ biglake)
 	;;
 all | *)
 	SEL=(--test "sdb/**/*.test*")
-	[[ -n "$OLLAMA_SKIP" ]] && SEL+=(--skip "$OLLAMA_SKIP")
+	[[ -n "$TSAN_SKIP" ]] && SEL+=(--skip "$TSAN_SKIP")
 	;;
 esac
 

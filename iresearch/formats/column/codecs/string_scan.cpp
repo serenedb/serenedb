@@ -71,11 +71,11 @@ const ReadContext::CacheSlot& CacheSlotOf(
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   duckdb::ColumnSegment& segment) {
   const auto& slot = CacheSlotOf(segment);
-  if (slot.key.empty()) {
+  if (!slot.touched) {
     return nullptr;
   }
   return segment.GetDatabase().GetObjectCache().Get<DecodedDictionary>(
-    slot.key);
+    DictionaryCacheKey(slot.file_id, slot.file_offset));
 }
 
 NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {

@@ -349,7 +349,10 @@ class FrameDecoder {
     }
     std::string key;
     if (frame != kNoFrame && _cache.cache) {
-      key = FrameCacheKey(_cache.key, frame);
+      if (_segment_key.empty()) {
+        _segment_key = DictionaryCacheKey(_cache.file_id, _cache.file_offset);
+      }
+      key = FrameCacheKey(_segment_key, frame);
       if (auto hit = _cache.cache->Get<DecodedFrame>(key);
           hit && hit->Bytes().size() == m.frame.raw_len) {
         _held = std::move(hit);
@@ -614,6 +617,7 @@ class FrameDecoder {
   duckdb::const_data_ptr_t _base;
   NumericHeader _h;
   FrameCache _cache;
+  std::string _segment_key;
   duckdb::shared_ptr<DecodedFrame> _held;
   int8_t _admit = -1;
   uint32_t _per_frame = 0;

@@ -475,12 +475,13 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
   ReadContext::CacheSlot slot;
   if (duckdb::IsSereneDBCompressionType(codec.type)) {
     if (_touched) {
-      slot.key = DictionaryCacheKey(w.block);
+      slot.file_id = _file_id;
+      slot.file_offset = m.file_offset;
       slot.touched = &_touched[w.block];
     }
     slot.dictionaries = Dictionaries(ctx);
   }
-  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, std::move(slot));
+  auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);
   auto segment = std::make_unique<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(m.tuple_count), codec, std::move(stats),

@@ -133,7 +133,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   uint64_t offset, uint64_t size, CacheSlot slot) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
-  _cache_slots.push_back(std::move(slot));
+  _cache_slots.push_back(slot);
   ++_live_handles;
   return RegisterBlock(
     id, duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size));

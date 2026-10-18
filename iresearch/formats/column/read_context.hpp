@@ -77,7 +77,8 @@ class ReadContext final : public BlockManager,
             duckdb::idx_t size) final;
 
   struct CacheSlot {
-    std::string key;
+    uint64_t file_id = 0;
+    uint64_t file_offset = 0;
     std::atomic<bool>* touched = nullptr;
     const codecs::TrainedDictionaries* dictionaries = nullptr;
   };

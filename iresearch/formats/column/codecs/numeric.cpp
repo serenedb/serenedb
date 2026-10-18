@@ -858,10 +858,11 @@ FrameCache FrameCacheOf(duckdb::ColumnSegment& segment) {
   const auto& block = segment.GetBlockHandle();
   const auto& slot = static_cast<const ReadContext&>(block->GetBlockManager())
                        .CacheSlotOf(block->BlockId());
-  if (slot.key.empty()) {
+  if (!slot.touched) {
     return {};
   }
-  return {&segment.GetDatabase().GetObjectCache(), slot.key, slot.touched};
+  return {&segment.GetDatabase().GetObjectCache(), slot.file_id,
+          slot.file_offset, slot.touched};
 }
 
 template<typename T>

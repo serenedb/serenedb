@@ -85,7 +85,8 @@ inline std::string FrameCacheKey(std::string_view segment, uint32_t frame) {
 
 struct FrameCache {
   duckdb::ObjectCache* cache = nullptr;
-  std::string_view key;
+  uint64_t file_id = 0;
+  uint64_t file_offset = 0;
   std::atomic<bool>* touched = nullptr;
 };
 

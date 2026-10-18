@@ -232,10 +232,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached} {
-    if (const auto& slot = CacheSlotOf(segment); !slot.key.empty()) {
+    if (const auto& slot = CacheSlotOf(segment); slot.touched) {
       cache = &segment.GetDatabase().GetObjectCache();
-      cache_key = slot.key;
-      touched = slot.touched;
+      cache_slot = slot;
     }
     if (cached) {
       AdoptDictionary(*cached);
@@ -275,7 +274,8 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       return;
     }
     if (cache) {
-      if (const auto cached = cache->Get<DecodedDictionary>(cache_key)) {
+      if (const auto cached = cache->Get<DecodedDictionary>(
+            DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset))) {
         AdoptDictionary(*cached);
         return;
       }
@@ -286,13 +286,15 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   void Admit() {
     full = true;
-    if (!cache || !touched->exchange(true, std::memory_order_relaxed)) {
+    if (!cache ||
+        !cache_slot.touched->exchange(true, std::memory_order_relaxed)) {
       return;
     }
     const auto bytes = entries.CacheBytes();
     if (cache->GetCurrentMemory() + bytes <= cache->GetMaxMemory()) {
-      cache->Put(cache_key, duckdb::make_shared_ptr<DecodedDictionary>(
-                              entries.dictionary, bytes));
+      cache->Put(
+        DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
+        duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));
     }
   }
 
@@ -793,8 +795,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   EntryFrames<Shape::Dedup, Leaf> entries;
   duckdb::ObjectCache* cache = nullptr;
-  std::string cache_key;
-  std::atomic<bool>* touched = nullptr;
+  ReadContext::CacheSlot cache_slot;
   bool full = false;
   bool cold_entries = false;
   uint64_t warmed_bytes = 0;

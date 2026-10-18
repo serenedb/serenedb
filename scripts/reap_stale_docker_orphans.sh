@@ -2,10 +2,11 @@
 # Reap orphan docker artifacts from earlier interrupted test runs.
 #
 # When the wrapping shell of tests/{sqllogic,drivers}/run_in_docker.sh is
-# terminated by SIGKILL (OOM-killer, CI hard-timeout, ssh drop, `kill -9`),
-# the EXIT trap that normally calls `docker compose down` never fires and
-# the prior PREFIX's stack stays alive forever. Repeated occurrences pile
-# up "Up About an hour" / "Up 8 days" containers on shared dev boxes.
+# terminated by SIGKILL (OOM-killer, ssh drop, `kill -9`), the EXIT trap
+# that normally calls `docker compose down` never fires and the prior
+# PREFIX's stack stays alive forever. Repeated occurrences pile up
+# "Up About an hour" / "Up 8 days" containers on shared dev boxes. CI jobs
+# do not use this: they remove their runner's containers by owner label.
 #
 # Source this file from a `run_in_docker.sh` once `COMPOSE_FILE` is set and
 # call `reap_stale_docker_orphans`. Safe to run concurrently from multiple

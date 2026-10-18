@@ -70,7 +70,7 @@ Name the codec on the column with `USING COMPRESSION`, optionally with a level i
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 
-A list, map or struct column whose values are all text takes the text codecs too, and the codec then compresses every string inside it, the keys and the values of a map alike. This suits attribute maps that queries return but seldom filter on: name `dict_zstd` on them to store them smaller, and leave the text columns that queries search or filter on to `auto`, whose codecs decode faster.
+A codec named on a list, map or struct column applies to the values inside it. A column whose values are all text takes the text codecs, and the codec then compresses every string inside it, the keys and the values of a map alike; a column whose values are all numbers takes the numeric codecs, such as `alp` on a `DOUBLE[]` column. Naming a codec on a nested column suits attribute maps that queries return but seldom filter on: name `dict_zstd` on them to store them smaller, and leave the text columns that queries search or filter on to `auto`, whose codecs decode faster.
 
 On an inverted index, an `INCLUDE`d column takes the same names, with the same optional level, through `included (compression = '...')`:
 

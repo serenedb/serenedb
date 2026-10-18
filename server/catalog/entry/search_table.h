@@ -111,6 +111,8 @@ TableEngine ReadStorageEngine(
 
 void RequireSearchTableIndexOption(std::string_view name);
 duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type);
+duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type);
 bool SearchTableOnly(duckdb::CompressionType type) noexcept;
 void CheckCompressionLevel(std::string_view column_name,
                            duckdb::CompressionType type, uint8_t level,

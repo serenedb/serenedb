@@ -178,6 +178,33 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
+void CollectLeafPhysicalTypes(const duckdb::LogicalType& type,
+                              duckdb::vector<duckdb::PhysicalType>& leaves) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+      return CollectLeafPhysicalTypes(duckdb::ArrayType::GetChildType(type),
+                                      leaves);
+    case duckdb::LogicalTypeId::LIST:
+      return CollectLeafPhysicalTypes(duckdb::ListType::GetChildType(type),
+                                      leaves);
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::STRUCT: {
+      const auto& fields = duckdb::StructType::GetChildTypes(
+        type.id() == duckdb::LogicalTypeId::MAP
+          ? duckdb::ListType::GetChildType(type)
+          : type);
+      for (const auto& field : fields) {
+        CollectLeafPhysicalTypes(field.second, leaves);
+      }
+      return;
+    }
+    default:
+      if (!absl::c_linear_search(leaves, type.InternalType())) {
+        leaves.push_back(type.InternalType());
+      }
+  }
+}
+
 }  // namespace
 
 TableEngine ReadStorageEngine(const WithOptions& options) {
@@ -227,31 +254,16 @@ void RequireSearchTableIndexOption(std::string_view name) {
   }
 }
 
+duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type) {
+  duckdb::vector<duckdb::PhysicalType> leaves;
+  CollectLeafPhysicalTypes(type, leaves);
+  return leaves;
+}
+
 duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::ARRAY:
-      return LeafPhysicalType(duckdb::ArrayType::GetChildType(type));
-    case duckdb::LogicalTypeId::LIST:
-      return LeafPhysicalType(duckdb::ListType::GetChildType(type));
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::STRUCT: {
-      const auto& fields = duckdb::StructType::GetChildTypes(
-        type.id() == duckdb::LogicalTypeId::MAP
-          ? duckdb::ListType::GetChildType(type)
-          : type);
-      std::optional<duckdb::PhysicalType> leaf;
-      for (const auto& field : fields) {
-        const auto field_leaf = LeafPhysicalType(field.second);
-        if (leaf && *leaf != field_leaf) {
-          return duckdb::PhysicalType::STRUCT;
-        }
-        leaf = field_leaf;
-      }
-      return leaf.value_or(duckdb::PhysicalType::STRUCT);
-    }
-    default:
-      return type.InternalType();
-  }
+  const auto leaves = LeafPhysicalTypes(type);
+  return leaves.size() == 1 ? leaves.front() : duckdb::PhysicalType::STRUCT;
 }
 
 bool SearchTableOnly(duckdb::CompressionType type) noexcept {

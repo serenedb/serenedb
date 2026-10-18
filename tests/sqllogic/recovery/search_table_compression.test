@@ -561,3 +561,50 @@ db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (ph
 
 statement ok
 DROP TABLE search_nested_codecs;
+
+statement ok
+CREATE TABLE search_nested_engine_names (a INTEGER PRIMARY KEY, tags TEXT[] USING COMPRESSION dict_fsst, notes TEXT[] USING COMPRESSION zstd, vals DOUBLE[] USING COMPRESSION alp)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_nested_engine_names SELECT a, ['t' || (a % 5), 'u' || (a % 11)], [repeat('n' || a, 8)], [a / 10.0, a * 0.5] FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_nested_engine_names;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_nested_engine_names') WHERE column_name IN ('tags', 'notes', 'vals') AND segment_type IN ('VARCHAR', 'DOUBLE') GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+notes	ZSTD
+tags	DICT_FSST
+vals	ALP
+
+statement ok
+ALTER TABLE search_nested_engine_names ALTER COLUMN tags SET COMPRESSION zstd;
+
+query
+SELECT count(*) FROM search_nested_engine_names WHERE tags[2] IS DISTINCT FROM 'u' || (a % 11) OR notes[1] IS DISTINCT FROM repeat('n' || a, 8) OR vals[2] IS DISTINCT FROM a * 0.5;
+----
+count
+0
+
+statement ok
+DROP TABLE search_nested_engine_names;
+
+statement ok
+CREATE TABLE search_mixed_uncompressed (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION uncompressed) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+DROP TABLE search_mixed_uncompressed;
+
+statement error
+CREATE TABLE search_mixed_zstd (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION zstd) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'ZSTD'
+
+
+statement error
+CREATE TABLE plain_nested_dict_fsst (a INTEGER, tags TEXT[] USING COMPRESSION dict_fsst);
+----
+db error: ERROR: Can't compress column "tags" with type 'VARCHAR[]' (physical: LIST) using compression type 'DICT_FSST'

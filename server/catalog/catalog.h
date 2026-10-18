@@ -82,6 +82,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
     duckdb::row_t row_start, duckdb::ErrorData& error) final;
   bool SupportsSereneDBCompression() const final { return true; }
+  duckdb::vector<duckdb::PhysicalType> CompressionLeafTypes(
+    const duckdb::CreateTableInfo& info,
+    const duckdb::LogicalType& type) const final;
 
   void Initialize(bool load_builtin) final;
   duckdb::idx_t DefaultSchemaOid() const final;

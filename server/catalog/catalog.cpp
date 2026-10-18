@@ -514,6 +514,14 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
+duckdb::vector<duckdb::PhysicalType> SereneDBCatalog::CompressionLeafTypes(
+  const duckdb::CreateTableInfo& info, const duckdb::LogicalType& type) const {
+  if (ReadStorageEngine(info.options) != TableEngine::Search) {
+    return {};
+  }
+  return LeafPhysicalTypes(type);
+}
+
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   if (_detached.load(std::memory_order_acquire)) {
     return nullptr;

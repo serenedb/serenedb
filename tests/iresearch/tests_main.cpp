@@ -23,8 +23,8 @@
 
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
-#include <duckdb/catalog/default/default_types.hpp>
 
+#include <duckdb/catalog/default/default_types.hpp>
 #include <iresearch/utils/application_exit.hpp>
 #include <type_traits>
 #include <utility>

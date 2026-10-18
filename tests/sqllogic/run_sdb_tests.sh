@@ -13,19 +13,19 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
-# Under ASan and TSan each of these files takes 3 to 14 minutes and alone sets
-# the step's wall time; the dev and perf jobs still run them. Under TSan:
-# large_values is as slow there; nested_subqueries runs queries hundreds of
-# levels deep, and TSan keeps every distinct call stack it has seen until the
-# process exits, so those stacks alone fill most of its 32 GB stack store and
-# the server crashes once it is full. ai_ollama drives a local Ollama container;
-# on arm64 inference is slow enough that ai_generate's own HTTP timeout fires.
+# The step takes as long as its slowest file, so under ASan the files that take
+# over 100 s and under TSan the ones over 200 s are skipped; the dev and perf
+# jobs still run them. nested_subqueries also runs queries hundreds of levels
+# deep, and TSan keeps every distinct call stack it has seen until the process
+# exits, so those stacks alone fill most of its 32 GB stack store and the server
+# crashes once it is full. ai_ollama drives a local Ollama container; on arm64
+# inference is slow enough that ai_generate's own HTTP timeout fires.
 SANITIZER_SKIP=""
 if [[ "${SANITIZERS:-}" == *Address* || "${SANITIZERS:-}" == *Thread* ]]; then
-	SANITIZER_SKIP='simple/planner_scaling\.test|simple/unicode/regexp_properties\.test|index/(geo|phrase|wildcard)_deferred_matrix\.gen\.test'
+	SANITIZER_SKIP='simple/(planner_scaling|nested_subqueries)\.test|simple/unicode/regexp_properties\.test|simple/temporal/(bucket_groups_alias_distinct_matrix|monotone_predicate_matrix_1)\.test|index/(geo|phrase|wildcard)_deferred_matrix\.gen\.test'
 fi
 if [[ "${SANITIZERS:-}" == *Thread* ]]; then
-	SANITIZER_SKIP+='|simple/large_values\.test|simple/nested_subqueries\.test'
+	SANITIZER_SKIP+='|simple/large_values\.test|simple/unicode/case_mapping\.test'
 	if [[ "$(uname -m)" == "aarch64" ]]; then
 		SANITIZER_SKIP+='|_ollama\.test_slow'
 	fi

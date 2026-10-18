@@ -33,7 +33,7 @@
 #include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -45,7 +45,8 @@ void PatchDictionary(std::string& bytes,
   if (header.flags != codecs::kTrainedDictionary) {
     return;
   }
-  SDB_ASSERT(header.dictionary <= dictionaries.size());
+  SDB_ENSURE(header.dictionary <= dictionaries.size(),
+             "col codec: missing trained dictionary ", header.dictionary);
   header.dictionary = dictionaries[header.dictionary - 1];
   header.Write(data);
 }

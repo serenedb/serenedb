@@ -24,7 +24,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_block_copy.hpp>
+#include <iresearch/formats/column/col_block_sink.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
@@ -1271,6 +1273,58 @@ TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {
   const auto dictionaries = DictionariesByBlock(*merged, kText);
   EXPECT_TRUE(absl::c_linear_search(dictionaries, "trained:1"));
   EXPECT_TRUE(absl::c_linear_search(dictionaries, "trained:2"));
+}
+
+TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
+  irs::MemoryDirectory dir;
+  const auto written = TrainedSegment(dir);
+  const auto meta = _meta;
+  const auto* col = written->GetColReader()->Column(kText);
+  ASSERT_NE(col, nullptr);
+  const auto dictionaries = DictionariesByBlock(*written, kText);
+  const auto trained = absl::c_find(dictionaries, "trained:1");
+  ASSERT_NE(trained, dictionaries.end());
+  const auto& block = col->DataBlocks()[trained - dictionaries.begin()];
+  const auto file = irs::FileName(meta.name);
+  std::string bytes;
+  {
+    auto in = dir.open(file, irs::IOAdvice::NORMAL);
+    ASSERT_NE(in, nullptr);
+    bytes.resize(in->Length());
+    in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());
+  }
+  auto* data =
+    reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + block.file_offset);
+  auto header = irs::codecs::Header::Parse(data, block.byte_size);
+  ASSERT_EQ(header.dictionary, 1);
+  header.dictionary = 9;
+  header.Write(data);
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+  }
+  const auto corrupted =
+    irs::SegmentReaderImpl::Open(dir, meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(corrupted, nullptr);
+  const auto* cs = corrupted->GetColReader();
+  ASSERT_NE(cs, nullptr);
+  irs::MemoryDirectory out_dir;
+  auto out = out_dir.create("copy");
+  ASSERT_NE(out, nullptr);
+  irs::ColBlockSink sink{*out};
+  constexpr uint16_t kRemapped[] = {2};
+  const auto copy = [&] {
+    irs::CopyColumnBlocks(*cs, *cs->Column(kText), true, kRemapped, sink,
+                          [] { return true; });
+  };
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(copy(), "missing trained dictionary 9");
+#else
+  EXPECT_ANY_THROW(copy());
+#endif
 }
 
 TEST_F(ColumnCopyTest, CopiedBlocksWithoutTheDictionaryStayAsTheyAre) {

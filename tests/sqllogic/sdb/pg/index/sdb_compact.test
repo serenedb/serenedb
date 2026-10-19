@@ -1152,18 +1152,16 @@ statement ok
 VACUUM (REFRESH_TABLE) sdbc_par
 
 
+connection timed
 statement ok
 SET statement_timeout = 1
 
 
+connection timed
 statement error
 SELECT * FROM sdb_compact('sdbc_par', mode := 'compact', target_segments := 2)
 ----
 db error: ERROR: canceling statement due to statement timeout
-
-
-statement ok
-RESET statement_timeout
 
 
 query

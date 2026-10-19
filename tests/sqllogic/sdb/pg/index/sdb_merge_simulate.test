@@ -223,10 +223,12 @@ statement ok
 DROP TABLE sdbms
 
 
+connection timed
 statement ok
 SET statement_timeout = 1
 
 
+connection timed
 statement error
 SELECT count(*) FROM sdb_merge_simulate((
   SELECT TIMESTAMPTZ '2026-01-01 00:00:00+00' + i * INTERVAL '1 second' AS finished,
@@ -235,10 +237,6 @@ SELECT count(*) FROM sdb_merge_simulate((
   threads := 7)
 ----
 db error: ERROR: canceling statement due to statement timeout
-
-
-statement ok
-RESET statement_timeout
 
 
 query

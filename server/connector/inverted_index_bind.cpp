@@ -38,6 +38,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/optimizer/matcher/expression_matcher.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
@@ -1171,18 +1172,18 @@ bool ContainsRegLike(const duckdb::Expression& expr) {
   return found;
 }
 
-void ValidateConstantParts(const duckdb::Expression& expr,
+void ValidateConstantParts(duckdb::Expression& expr,
                            duckdb::ClientContext& context) {
-  if (expr.IsFoldable()) {
+  duckdb::vector<duckdb::reference<duckdb::Expression>> bindings;
+  if (duckdb::FoldableConstantMatcher{}.Match(expr, bindings)) {
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::ExpressionExecutor::EvaluateScalar(context, expr);
     }
     return;
   }
   duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      ValidateConstantParts(child, context);
-    });
+    expr,
+    [&](duckdb::Expression& child) { ValidateConstantParts(child, context); });
 }
 
 std::shared_ptr<InvertedIndexConfig> DeriveKeys(

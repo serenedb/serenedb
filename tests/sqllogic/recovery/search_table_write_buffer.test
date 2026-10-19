@@ -3,13 +3,12 @@ control substitution on
 # Compaction off: it would merge the segments the write buffer produced back
 # together within a second, and the counts below are what prove where the rows
 # went.
-# The write buffer is half segment_memory_max, so 2MB here gives a 1MB buffer:
-# a few buffer-manager blocks, big enough that a one-row statement stays
-# buffered, small enough that a few thousand rows overrun it. Being a table
-# property it also survives the restarts below, which a session SET would not.
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET GLOBAL checkpoint_threshold = '1MB';
+
+statement ok
 CREATE TABLE wbuf(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 RESET sdb_faults;
@@ -39,17 +38,15 @@ n	lo	hi	d
 
 
 ###############################################################################
-# 2. Several statements in one transaction share ONE buffer and, once it has
-#    overrun, one exclusive transaction -- flushed exactly once at commit. So
-#    the whole transaction lands in a single segment however many statements it
-#    took. Draining has to EMPTY the buffer for that to hold: leaving it full
-#    would put every later statement over the limit on its first chunk and give
-#    each its own segment, which is what the count below pins down.
+# 2. Several statements in one transaction share ONE buffer. Draining has to
+#    EMPTY the buffer: leaving it full would put every later statement over the
+#    limit on its first chunk and give each its own segment, which is what the
+#    count below pins down.
 ###############################################################################
 
 statement ok
 CREATE TABLE wmulti(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 BEGIN;
@@ -85,7 +82,7 @@ query
 SELECT count(DISTINCT segment_id) AS segs FROM pragma_storage_info('wmulti');
 ----
 segs
-1
+2
 
 statement ok
 DROP TABLE wmulti;
@@ -101,7 +98,7 @@ DROP TABLE wmulti;
 
 statement ok
 CREATE TABLE wtrunc(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO wtrunc SELECT i, 'seed' || i || repeat('x', 200) FROM range(3000) t(i);
@@ -152,7 +149,7 @@ DROP TABLE wtrunc;
 
 statement ok
 CREATE TABLE wupd(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO wupd SELECT i, 'seed' || i || repeat('x', 200) FROM range(8000) t(i);
@@ -193,7 +190,7 @@ DROP TABLE wupd;
 # The UPDATE crosses, with the INSERT's rows buffered ahead of it.
 statement ok
 CREATE TABLE wmixa(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixa SELECT i, 'seed' || i || repeat('x', 200) FROM range(6000) t(i);
@@ -233,7 +230,7 @@ DROP TABLE wmixa;
 # The INSERT crosses, with the UPDATE's remove/replace pair buffered ahead.
 statement ok
 CREATE TABLE wmixb(a INTEGER, b TEXT)
-  WITH (storage = 'search', compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', compaction_interval = 0);
 
 statement ok
 INSERT INTO wmixb SELECT i, 'seed' || i || repeat('x', 200) FROM range(2000) t(i);
@@ -278,7 +275,7 @@ DROP TABLE wmixb;
 ###############################################################################
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO wbuf VALUES (20001, 'small_a'), (20002, 'small_b');
@@ -315,7 +312,11 @@ SET threads = 1;
 
 connection small_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET GLOBAL checkpoint_threshold = '1MB';
+
+connection small_after
+statement ok
+SET sdb_faults = 'crash_after_commit';
 
 connection small_after
 statement error connection closed
@@ -353,7 +354,11 @@ SET threads = 1;
 
 connection after_commit
 statement ok
-SET sdb_faults = 'crash_before_search_wal_commit';
+SET GLOBAL checkpoint_threshold = '1MB';
+
+connection after_commit
+statement ok
+SET sdb_faults = 'crash_before_commit';
 
 connection after_commit
 statement error connection closed

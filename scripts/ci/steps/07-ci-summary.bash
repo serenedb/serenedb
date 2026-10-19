@@ -60,7 +60,7 @@ fi
 reports=0
 for log in "${OUT}"/sanitizers/*/log*; do
 	[[ -f "$log" ]] || continue
-	n=$(grep -cE '^(==[0-9]+==)?(WARNING|ERROR): [A-Za-z]+Sanitizer|: runtime error: ' "$log")
+	n=$(grep -cE '^(==([^=]+==)?[0-9]+==)?(WARNING|ERROR): [A-Za-z]+Sanitizer|: runtime error: ' "$log")
 	if [[ "$n" -ne 0 ]]; then
 		reports=$((reports + n))
 		echo "::error file=${log#"${WORKSPACE}"/}::${n} sanitizer report(s)"

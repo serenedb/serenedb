@@ -36,7 +36,8 @@
 namespace irs {
 namespace hits {
 
-template<template<typename...> class Shape, typename... Parts, typename... Args>
+template<template<typename...> typename Shape, typename... Parts,
+         typename... Args>
 Root::ptr MakeShape(const Context&, Args&&... args) {
   return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
 }
@@ -52,6 +53,8 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr Make(const AllQuery& query, const Context& ctx);
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
+Root::ptr Make(const ApproxQuery& query, const Context& ctx);
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
 Root::ptr Make(const BooleanQuery& query, const Context& ctx);
@@ -64,6 +67,7 @@ inline Root::ptr Make(const EmptyQueryBuilder&, const Context&) {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
+Root::ptr Make(const ExactVectorQuery& query, const Context& ctx);
 
 Root::ptr MakePosting(const irs::detail::PostingClause& posting,
                       const SubReader& segment, const Context& ctx);

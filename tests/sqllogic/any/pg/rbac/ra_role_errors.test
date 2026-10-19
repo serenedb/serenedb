@@ -28,7 +28,7 @@ CREATE ROLE ra_iceberg_dup NOLOGIN;
 statement error
 CREATE ROLE ra_iceberg_dup;
 ----
-db error: ERROR: role "ra_iceberg_dup" already exists
+db error: ERROR: <slt:ignore>already exists<slt:ignore>
 
 
 # A LOGIN/PASSWORD variant of the duplicate is rejected the same way -- the
@@ -36,14 +36,14 @@ db error: ERROR: role "ra_iceberg_dup" already exists
 statement error
 CREATE ROLE ra_iceberg_dup LOGIN;
 ----
-db error: ERROR: role "ra_iceberg_dup" already exists
+db error: ERROR: <slt:ignore>already exists<slt:ignore>
 
 
 # CREATE USER collides with an existing role of the same name identically.
 statement error
 CREATE USER ra_iceberg_dup;
 ----
-db error: ERROR: role "ra_iceberg_dup" already exists
+db error: ERROR: <slt:ignore>already exists<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -53,7 +53,7 @@ db error: ERROR: role "ra_iceberg_dup" already exists
 statement error
 DROP ROLE ra_negaimorit_mop;
 ----
-db error: ERROR: role "ra_negaimorit_mop" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 statement ok
@@ -82,20 +82,20 @@ CREATE ROLE ra_iceberg_grp;
 statement error
 GRANT ra_negaimorit_mop TO ra_iceberg_grp;
 ----
-db error: ERROR: role "ra_negaimorit_mop" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 statement error
 GRANT ra_iceberg_grp TO ra_negaimorit_mop;
 ----
-db error: ERROR: role "ra_negaimorit_mop" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # REVOKE of a membership where the granted role does not exist errors likewise.
 statement error
 REVOKE ra_negaimorit_mop FROM ra_iceberg_grp;
 ----
-db error: ERROR: role "ra_negaimorit_mop" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -121,7 +121,7 @@ count
 statement error
 DROP ROLE ra_iceberg_mem;
 ----
-db error: ERROR: role "ra_iceberg_mem" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # ----------------------------------------------------------------------

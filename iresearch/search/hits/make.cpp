@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
@@ -135,6 +136,11 @@ Root::ptr Make(const AllQuery& query, const Context& ctx) {
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   return MakeWildcardNGram(query, ctx);
+}
+
+Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
+  return irs::detail::MakeApprox<ConstantWalk, Root::ptr>(
+    query, 0, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

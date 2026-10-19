@@ -1,0 +1,65 @@
+control substitution on
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+CREATE OR REPLACE SECRET fer_good_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+statement ok
+COPY (SELECT 'pudge' AS hero) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_good/hero.csv';
+
+
+statement ok
+COPY (SELECT 'pudge' AS hero) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_bad/hero.csv';
+
+
+query
+SELECT count(filename) AS n FROM read_text('s3://${MINIO_BUCKET}/${__DATABASE__}_good/hero.csv');
+----
+n
+1
+
+
+query
+SELECT count(filename) AS n FROM read_text('s3://${MINIO_BUCKET}/${__DATABASE__}_good/missing.csv');
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE SECRET fer_bad_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET 'not-the-secret',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_bad/'
+);
+
+
+statement error
+SELECT count(filename) AS n FROM read_text('s3://${MINIO_BUCKET}/${__DATABASE__}_bad/hero.csv');
+----
+db error: ERROR: HTTP GET error reading 's3://<slt:ignore>_bad/hero.csv' (HTTP 403 Forbidden)<slt:ignore>
+
+
+statement ok
+DROP SECRET fer_bad_${__DATABASE__};
+
+
+statement ok
+DROP SECRET fer_good_${__DATABASE__};

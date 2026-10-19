@@ -20,9 +20,9 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -200,7 +200,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
             static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
           // Postgres counts CHECK constraints here and nothing else: NOT NULL
           // is a pg_constraint row of its own but not one of these.
-          row.relchecks = static_cast<int16_t>(std::ranges::count_if(
+          row.relchecks = static_cast<int16_t>(absl::c_count_if(
             table->GetConstraints(), [](const auto& constraint) {
               return constraint->type == duckdb::ConstraintType::CHECK;
             }));
@@ -362,9 +362,12 @@ MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
                         ? static_cast<int16_t>(
                             duckdb::StructType::GetChildTypes(row_type).size())
                         : 0;
-      // pg_hba_file_rules is a view in PostgreSQL (relkind 'v'), not a base
-      // table, so relkind='r' queries must not list it.
-      const auto relkind = table.GetName() == "pg_hba_file_rules"
+      // These are views in PostgreSQL (relkind 'v'), not base tables, so
+      // relkind='r' queries must not list them.
+      const auto& name = table.GetName();
+      const auto relkind = name == "pg_hba_file_rules" ||
+                               name == "pg_stat_subscription" ||
+                               name == "pg_stat_subscription_stats"
                              ? PgClass::Relkind::View
                              : PgClass::Relkind::OrdinaryTable;
       PgClass row{

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -104,10 +106,26 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
       });
   } else {
     static_assert(std::is_enum_v<T>);
-    SDB_ASSERT(std::ranges::contains(DispatchValues<T>::kValues, value),
+    SDB_ASSERT(absl::c_contains(DispatchValues<T>::kValues, value),
                "fill dispatch: option enum out of range");
     return ResolveEnum<T, 0>(value, with);
   }
+}
+
+template<typename Impl, typename Fill, typename... Lead>
+IRS_FORCE_INLINE constexpr decltype(auto) DispatchTags(Impl& impl,
+                                                       BlockTraits traits,
+                                                       Fill&& fill,
+                                                       Lead... lead) {
+  constexpr auto kNumTags =
+    std::tuple_size_v<decltype(std::declval<Impl&>().PrepareBatch(
+      std::declval<BlockTraits>()))>;
+  return [&]<size_t... I>(std::index_sequence<I...>)
+           IRS_FORCE_INLINE -> decltype(auto) {
+             [[maybe_unused]] const auto tags = impl.PrepareBatch(traits);
+             return ResolveValues(std::forward<Fill>(fill), lead...,
+                                  std::get<I>(tags)...);
+           }(std::make_index_sequence<kNumTags>{});
 }
 
 template<typename Impl, typename Fill>
@@ -115,15 +133,7 @@ IRS_FORCE_INLINE constexpr decltype(auto) DispatchFill(Impl& impl,
                                                        TokenLayout layout,
                                                        BlockTraits traits,
                                                        Fill&& fill) {
-  constexpr auto kNumTags =
-    std::tuple_size_v<decltype(std::declval<Impl&>().PrepareBatch(
-      std::declval<BlockTraits>()))>;
-  return [&]<size_t... I>(std::index_sequence<I...>)
-           IRS_FORCE_INLINE -> decltype(auto) {
-             [[maybe_unused]] const auto tags = impl.PrepareBatch(traits);
-             return ResolveValues(std::forward<Fill>(fill), layout,
-                                  std::get<I>(tags)...);
-           }(std::make_index_sequence<kNumTags>{});
+  return DispatchTags(impl, traits, std::forward<Fill>(fill), layout);
 }
 
 struct Offs {
@@ -208,11 +218,13 @@ class ArenaTerm final : util::Noncopyable {
   byte_type* _data;
 };
 
-class TokenSink final : util::Noncopyable {
+class TokenSink : util::Noncopyable {
  public:
   explicit TokenSink(
     duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
     : _arena{alloc} {}
+
+  const TokenBatch& Batch() const noexcept { return _batch; }
 
   void Bind(TokenConsumer& consumer, StoreSink* store) noexcept {
     SDB_ASSERT((_batch.count == 0 && _nruns == 0) ||
@@ -558,6 +570,22 @@ class TokenSink final : util::Noncopyable {
     }
   }
 
+ protected:
+  uint32_t Buffered() const noexcept { return _batch.count; }
+
+  bool ReportProgress() { return _consumer->OnProgress(_batch); }
+
+  void Flush() {
+    bool tail_open = false;
+    if (_run_start != kOutsideValue && _batch.count > _run_start) {
+      SDB_ASSERT(_nruns < kMaxRuns);
+      _runs[_nruns++] = {_doc, _batch.count - _run_start};
+      tail_open = true;
+    }
+    _consumer->Consume(_batch, {{_runs, _nruns}, tail_open});
+    Reset();
+  }
+
  private:
   IRS_FORCE_INLINE byte_type* AllocateTerm(size_t size) {
     return _arena.Allocate(std::max(size, kTermViewSlack));
@@ -663,17 +691,6 @@ class TokenSink final : util::Noncopyable {
     if constexpr (L == TokenLayout::TermsPosOffs && kNumOffs == 0) {
       apply(Offs{0, _value_size});
     }
-  }
-
-  void Flush() {
-    bool tail_open = false;
-    if (_run_start != kOutsideValue && _batch.count > _run_start) {
-      SDB_ASSERT(_nruns < kMaxRuns);
-      _runs[_nruns++] = {_doc, _batch.count - _run_start};
-      tail_open = true;
-    }
-    _consumer->Consume(_batch, {{_runs, _nruns}, tail_open});
-    Reset();
   }
 
   void Reset() {

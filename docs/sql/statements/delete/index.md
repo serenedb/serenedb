@@ -50,7 +50,7 @@ The `TRUNCATE` statement removes all rows from a table, acting as an alias for `
 
 <SqlLogicTest id="sql/statements/delete/index/example_006" />
 
-PostgreSQL makes `TRUNCATE` wait for the transactions that are writing to the table. SereneDB does not wait: `TRUNCATE` fails with a serialization error (`40001`) when another transaction has added rows to the table and not committed yet, or committed them after the truncating transaction started, and the transaction can be retried. On a search table, any open write to the table refuses `TRUNCATE` the same way, and while a transaction that truncated a search table is open, writes to that table from other transactions fail with `40001`.
+PostgreSQL makes `TRUNCATE` wait for the transactions that are writing to the table. SereneDB waits only for a commit that is writing the table at that moment: `TRUNCATE` fails with a serialization error (`40001`) when another transaction has added rows to the table that the truncating transaction does not see, because they are not committed yet or were committed after its snapshot, and the transaction can be retried. On a search table, any open write to the table refuses `TRUNCATE` the same way, and while a transaction that truncated a search table is open, writes to that table from other transactions fail with `40001`.
 
 ## Limitations on Reclaiming Memory and Disk Space
 

@@ -50,7 +50,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
   info.oid = table.Id();
   for (const auto& [name, type] :
        duckdb::StructType::GetChildTypes(table.RowType())) {
-    info.columns.AddColumn(duckdb::ColumnDefinition{name, type});
+    duckdb::ColumnDefinition column{name, type};
+    const auto acl = table.ColumnAcl(name.GetIdentifierName());
+    column.SetAcl({acl.begin(), acl.end()});
+    info.columns.AddColumn(std::move(column));
   }
   return duckdb::make_uniq<SystemTableEntry>(catalog, schema, info, table);
 }

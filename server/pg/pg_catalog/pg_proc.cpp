@@ -20,7 +20,8 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <deque>
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
@@ -29,6 +30,7 @@
 #include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <span>
 #include <string>
 #include <vector>
@@ -69,6 +71,18 @@ PgProc::Prokind KindOf(duckdb::CatalogType type) {
     default:
       return PgProc::Prokind::Function;
   }
+}
+
+PgProc::Provolatile VolatilityOf(duckdb::FunctionStability stability) {
+  switch (stability) {
+    case duckdb::FunctionStability::CONSISTENT:
+      return PgProc::Provolatile::Immutable;
+    case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
+      return PgProc::Provolatile::Stable;
+    case duckdb::FunctionStability::VOLATILE:
+      return PgProc::Provolatile::Volatile;
+  }
+  SDB_UNREACHABLE();
 }
 
 constexpr uint64_t kNamedArgsNullMask =
@@ -117,7 +131,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       for (duckdb::idx_t i = 0; i < macro->parameters.size(); ++i) {
         argnames.push_back(MacroParameterName(*macro, i));
       }
-      const bool named = std::ranges::any_of(
+      const bool named = absl::c_any_of(
         argnames, [](const std::string& name) { return !name.empty(); });
       auto& argname_views =
         argnames_views.emplace_back(argnames.begin(), argnames.end());
@@ -184,7 +198,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       .proleakproof = false,
       .proisstrict = false,
       .proretset = builtin.returns_set,
-      .provolatile = PgProc::Provolatile::Immutable,
+      .provolatile = VolatilityOf(builtin.stability),
       .proparallel = PgProc::Proparallel::Safe,
       .pronargs = pronargs,
       .pronargdefaults = 0,

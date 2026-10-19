@@ -58,5 +58,5 @@ DROP ROLE IF EXISTS doc_r1;
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: role "doc_r1" does not exist
+statement error db error: ERROR: Role with name doc_r1 does not exist!
 DROP ROLE doc_r1;

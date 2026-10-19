@@ -34,7 +34,7 @@ static unique_ptr<SecretEntry> GetSecretEntry(ClientContext &context, const stri
 	string name = secret_name;
 	bool explicit_secret = !name.empty();
 	if (!explicit_secret) {
-		name = "clickhouse";
+		name = "__default_clickhouse";
 	}
 	auto secret_entry = GetSecret(context, name);
 	if (!secret_entry && explicit_secret) {
@@ -226,8 +226,7 @@ static unique_ptr<Catalog> ClickHouseAttach(optional_ptr<StorageExtensionInfo> s
 
 	try {
 		auto conn = ClickHouseConnection::Open(params);
-		ClickHouseConnection::LogQuery("SELECT version()");
-		conn.GetClient().Execute("SELECT version()");
+		conn.Execute(context, "SELECT version()");
 	} catch (const std::exception &e) {
 		throw IOException("Failed to connect to ClickHouse at %s:%d: %s", params.host, (int)params.port, e.what());
 	}

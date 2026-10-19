@@ -303,7 +303,7 @@ id
 4
 
 
-# Two-bound ts_between requires the keyword analyzer (asserted at ts_between.cpp:263).
+# Two-bound ts_between analyzes both bounds, just like the one-sided ranges.
 query
 SELECT id FROM blob_kw_docs_idx
 WHERE term @@ ts_between('a', 'c', true, false) ORDER BY id;

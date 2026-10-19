@@ -40,6 +40,7 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -89,20 +90,22 @@ ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
 QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
                        score_t boost,
                        const std::shared_ptr<const re2::RE2>& matcher,
-                       field_id store_field_id, bool deferred_verify,
-                       QueryBuilder::ptr&& approx) {
+                       field_id store_field_id, QueryBuilder::ptr&& approx) {
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  if (matcher) {
-    const auto* col_reader = segment.GetColReader();
-    if (!col_reader || !col_reader->Column(store_field_id)) {
-      return QueryBuilder::Empty();
-    }
+  if (!matcher || !field_limits::valid(store_field_id)) {
+    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
+                                                   std::move(approx), boost);
+    query->SetStats(ctx.Record());
+    return query;
+  }
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader || !col_reader->Column(store_field_id)) {
+    return QueryBuilder::Empty();
   }
   auto query = memory::make_tracked<WildcardNGramQuery>(
-    ctx.memory, segment, deferred_verify ? nullptr : matcher, std::move(approx),
-    store_field_id, boost);
+    ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);
   query->SetStats(ctx.Record());
   return query;
 }
@@ -280,7 +283,7 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
   auto approx =
     GramQueryPreparer{*this, segment, ctx, sub_ctx}.Prepare(opts.query);
   return Wrap(segment, ctx, sub_ctx.boost, opts.matcher, opts.store_field_id,
-              opts.deferred_verify, std::move(approx));
+              std::move(approx));
 }
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(

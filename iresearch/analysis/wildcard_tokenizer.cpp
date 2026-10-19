@@ -27,7 +27,7 @@
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {
@@ -47,9 +47,11 @@ constexpr byte_type kBoundary = WildcardTokenizer::kBoundary;
 
 void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
   const size_t size = term.GetSize();
-  if (size > std::numeric_limits<int32_t>::max()) {
-    SDB_WARN(IRESEARCH, "too long input for wildcard analyzer: ", size);
-    return;
+  if (size > std::numeric_limits<int32_t>::max()) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("generate_wildcard_ngrams: a ", size,
+                            "-byte token exceeds the limit of ",
+                            std::numeric_limits<int32_t>::max(), " bytes"));
   }
   const auto vlen = bytes_io<uint32_t>::vsize(static_cast<uint32_t>(size));
   const auto idx = terms.size();

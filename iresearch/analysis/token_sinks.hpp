@@ -230,4 +230,32 @@ class ValueAnalyzer {
   TokenSink _writer;
 };
 
+class ScanAnalyzer {
+ public:
+  explicit ScanAnalyzer(
+    duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
+    : _writer{alloc} {}
+
+  const TokenBatch& Batch() const noexcept { return _writer.Batch(); }
+
+  template<typename Consumer>
+  IRS_FORCE_INLINE bool Scan(analysis::Tokenizer& tokenizer,
+                             duckdb::string_t value, Consumer& out) {
+    static_assert(Consumer::kLayout == TokenLayout::TermsPos);
+    _writer.Bind(out, nullptr);
+    out.Prepare(value);
+    _writer.BeginScan();
+    if (!tokenizer.Scan(value, _writer, {})) [[unlikely]] {
+      _writer.Discard();
+      out.Discard();
+      return false;
+    }
+    _writer.Finish();
+    return true;
+  }
+
+ private:
+  ScanSink _writer;
+};
+
 }  // namespace irs

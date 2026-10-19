@@ -20,7 +20,9 @@
 
 #pragma once
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -38,6 +40,11 @@ namespace duckdb {
 class ClientContext;
 
 }  // namespace duckdb
+namespace sdb::catalog {
+
+class ClusterCatalog;
+
+}  // namespace sdb::catalog
 namespace sdb::auth {
 
 struct RoleGraph {
@@ -76,21 +83,21 @@ struct RoleClosure {
   }
 
   bool MemberOf(duckdb::idx_t r) const {
-    return is_superuser || std::ranges::binary_search(closure, r);
+    return is_superuser || absl::c_binary_search(closure, r);
   }
 
   bool Owns(duckdb::idx_t owner) const { return MemberOf(owner); }
 
   bool IsMember(duckdb::idx_t r) const {
-    return std::ranges::binary_search(members, r);
+    return absl::c_binary_search(members, r);
   }
 
   bool CanSet(duckdb::idx_t r) const {
-    return std::ranges::binary_search(settable, r);
+    return absl::c_binary_search(settable, r);
   }
 
   bool IsAdminOf(duckdb::idx_t r) const {
-    return std::ranges::binary_search(admin, r);
+    return absl::c_binary_search(admin, r);
   }
 
   bool Can(duckdb::CatalogType type, const duckdb::Permissions& perm,
@@ -110,10 +117,21 @@ struct RoleClosure {
   duckdb::AclMode GrantableModes(std::span<const duckdb::AclItem> acl) const;
 };
 
+struct RoleCache {
+  absl::Mutex mutex;
+  duckdb::idx_t version ABSL_GUARDED_BY(mutex) = 0;
+  std::shared_ptr<const RoleGraph> roles ABSL_GUARDED_BY(mutex);
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<const RoleClosure>>
+    closures ABSL_GUARDED_BY(mutex);
+};
+
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
 
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
                                               duckdb::idx_t role);
+
+void PublishRoles(catalog::ClusterCatalog& cluster);
 
 RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role);
 

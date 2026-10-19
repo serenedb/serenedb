@@ -53,8 +53,7 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 	}
 	sql += ClickHouseQuoteIdentifier(info.GetQualifiedName().Schema().GetIdentifierName());
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection->GetClient().Execute(sql);
+		connection->Execute(transaction.context, sql);
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("creating database", sql, e);
@@ -80,8 +79,7 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto sql =
 	    "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection->GetClient().Execute(sql);
+		connection->Execute(context, sql);
 	} catch (const clickhouse::Error &e) {
 		connection.Invalidate();
 		ClickHouseConnection::ThrowError("dropping database", sql, e);
@@ -121,13 +119,11 @@ unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, C
 
 void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	vector<string> schema_names;
 	const string sql = "SELECT name FROM system.databases";
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
-		while (auto block = client.NextBlock()) {
+		connection->BeginSelect(context, sql);
+		while (auto block = connection->NextBlock()) {
 			if (block->GetColumnCount() == 0) {
 				continue;
 			}
@@ -167,13 +163,11 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
                                                                  OnEntryNotFound if_not_found) {
 	auto schema_name = schema_lookup.GetEntryName();
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	bool found = false;
 	auto sql = "SELECT name FROM system.databases WHERE name = " + ClickHouseStringLiteral(schema_name);
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
-		while (auto block = client.NextBlock()) {
+		connection->BeginSelect(transaction.context, sql);
+		while (auto block = connection->NextBlock()) {
 			if (block->GetRowCount() > 0) {
 				found = true;
 			}
@@ -207,15 +201,13 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 
 DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	auto sql =
 	    "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " + ClickHouseStringLiteral(default_schema) +
 	    " AND active";
 	DatabaseSize size;
-	ClickHouseConnection::LogQuery(sql);
 	try {
-		client.BeginSelect(sql);
-		while (auto block = client.NextBlock()) {
+		connection->BeginSelect(context, sql);
+		while (auto block = connection->NextBlock()) {
 			if (block->GetColumnCount() == 0 || block->GetRowCount() == 0) {
 				continue;
 			}

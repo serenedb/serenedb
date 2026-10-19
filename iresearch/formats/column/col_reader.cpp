@@ -32,7 +32,6 @@
 #include <map>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -48,18 +47,13 @@ IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
   const std::string filename = FileName(segment_name);
   bool exists = false;
   if (!dir.exists(exists, filename)) {
-    throw IoError{
-      absl::StrCat("col reader: cannot stat .col file: ", filename)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("col reader: cannot stat .col file: ", filename));
   }
   if (!exists) {
     return nullptr;
   }
-  auto in = dir.open(filename, advice);
-  if (!in) {
-    throw IoError{
-      absl::StrCat("col reader: cannot open .col file: ", filename)};
-  }
-  return in;
+  return dir.open(filename, advice);
 }
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,

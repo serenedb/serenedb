@@ -36,7 +36,7 @@ t	f	f
 statement ok
 CREATE ROLE doc_mr_dupe;
 
-statement error db error: ERROR: role "doc_mr_dupe" already exists
+statement error db error: ERROR: Role with name "doc_mr_dupe" already exists!
 CREATE ROLE doc_mr_dupe;
 
 # DOCS_TEST: example_004
@@ -44,4 +44,7 @@ CREATE ROLE doc_mr_dupe;
 # DOCS_TEST_BODY
 
 statement ok
-DROP ROLE doc_mr_admin, doc_mr_dupe;
+DROP ROLE doc_mr_admin;
+
+statement ok
+DROP ROLE doc_mr_dupe;

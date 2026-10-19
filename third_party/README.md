@@ -27,9 +27,9 @@ fork introduces, on our version branch.
 
 # Layout
 
-61 submodules, all serenedb forks except `yaclib`.
+49 submodules, all serenedb forks except `yaclib`.
 
-7 wrappers: `aws-cmake`, `azure-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
+6 wrappers: `azure-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
 `liburing-cmake`, `libxml2-cmake`, `openssl-cmake`. Three of them carry
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.

@@ -1,0 +1,125 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tcp (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tcp VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcp;
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE tcp;
+
+statement ok
+INSERT INTO tcp VALUES (3, 'c');
+
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+statement error connection closed
+COMMIT;
+
+connection after_before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcp;
+----
+ids
+1,2
+
+connection after_before_commit
+statement ok
+INSERT INTO tcp VALUES (4, 'd');
+
+connection after_before_commit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_before_commit
+statement error connection closed
+TRUNCATE tcp;
+
+connection after_autocommit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM tcp;
+----
+n
+0
+
+connection after_autocommit
+statement ok
+INSERT INTO tcp VALUES (5, 'e');
+
+connection after_autocommit
+statement ok
+VACUUM (REFRESH_TABLE) tcp;
+
+connection after_autocommit
+statement ok
+BEGIN;
+
+connection after_autocommit
+statement ok
+INSERT INTO tcp VALUES (6, 'f');
+
+connection after_autocommit
+statement ok
+TRUNCATE tcp;
+
+connection after_autocommit
+statement ok
+INSERT INTO tcp VALUES (7, 'g');
+
+connection after_autocommit
+statement ok
+TRUNCATE tcp;
+
+connection after_autocommit
+statement ok
+INSERT INTO tcp VALUES (8, 'h'), (9, 'i');
+
+connection after_autocommit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_autocommit
+statement error connection closed
+COMMIT;
+
+connection after_txn
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcp;
+----
+ids
+8,9
+
+connection after_txn
+statement ok
+VACUUM (REFRESH_TABLE) tcp;
+
+connection after_txn
+statement ok
+DELETE FROM tcp WHERE id = 8;
+
+connection after_txn
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_txn
+statement error connection closed
+SELECT 1;
+
+connection after_delete
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcp;
+----
+ids
+9

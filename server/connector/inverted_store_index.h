@@ -91,7 +91,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
   bool RemovalNeedsColumnValues() const final { return false; }
 
-  void FinishReplay();
+  bool FinishReplay();
 
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext context,
@@ -146,7 +146,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                duckdb::Vector& row_ids);
 
   irs::IndexWriter::Transaction NewTransaction();
-  duckdb::idx_t Evaluate(duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+  duckdb::idx_t Evaluate(duckdb::ClientContext& context,
+                         duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
                          duckdb::DataChunk& results, duckdb::Vector& rows,
                          duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
@@ -167,11 +168,11 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                              duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
-  bool CommitReplay(ReplaySession& session,
-                    std::span<irs::IndexWriter::Transaction* const> trxs,
-                    const search::WalCursor* cursor);
-  bool CommitReplaySlots(ReplaySession& session,
-                         const search::WalCursor* cursor);
+  irs::SourcePosition ReplayPosition() const;
+  void CommitReplay(std::span<irs::IndexWriter::Transaction* const> trxs,
+                    const irs::SourcePosition& position);
+  void CommitReplaySlots(ReplaySession& session,
+                         const irs::SourcePosition& position);
 
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;
@@ -179,6 +180,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
+  std::vector<FeedColumn> _columns;
+  std::vector<ExpressionSlot> _expressions;
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;

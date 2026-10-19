@@ -9,9 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The table below shows all the built-in general-purpose data types. The alternatives listed in the aliases column can be used to refer to these types as well, however, note that the aliases are not part of the SQL standard and hence might not be accepted by other database engines.
 
-`SMALLSERIAL`, `SERIAL` and `BIGSERIAL` are not aliases: each declares the corresponding
-integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to
-the next value of that sequence.
+`SMALLSERIAL`, `SERIAL` and `BIGSERIAL`, also written `SERIAL2`, `SERIAL4` and `SERIAL8`, are not aliases: each declares the corresponding integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to the next value of that sequence, so the column can't also declare `NULL` or a `DEFAULT`. They declare columns only, in [`CREATE TABLE`](../statements/create_table/index.md) or [`ALTER TABLE ... ADD COLUMN`](../statements/alter_table/index.md#add-column), and can't be used as a type anywhere else, such as in a cast. The sequence is named `⟨table⟩_⟨column⟩_seq`, with a number appended when that name is taken, and `pg_get_serial_sequence('⟨table⟩', '⟨column⟩')` returns it. It belongs to the table's owner, gets the owner's default privileges for sequences, changes owner only with the table through `ALTER TABLE ... OWNER TO`, and is dropped with the column or the table.
 
 | Name                       | Aliases                            | Description                                                                                                |
 | :------------------------- | :--------------------------------- | :--------------------------------------------------------------------------------------------------------- |
@@ -55,7 +53,7 @@ Implicit and explicit typecasting is possible between numerous types, see the [T
 
 ## Nested / Composite Types
 
-SereneDB supports five nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT` and `UNION`. Each supports different use cases and has a different structure.
+SereneDB supports six nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT`, `TUPLE` and `UNION`. Each supports different use cases and has a different structure.
 
 | Name                                         | Description                                                                                                                                                                                     | Rules when used in a column                                                                                    | Build from values         | Define in DDL/CREATE               |
 | :------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- | :------------------------ | :--------------------------------- |
@@ -63,6 +61,7 @@ SereneDB supports five nested data types: `ARRAY`, `LIST`, `MAP`, `STRUCT` and `
 | [`LIST`](../../sql/data_types/list.md)       | An ordered sequence of data values of the same type.                                                                                                                                            | Each row must have the same data type within each instance of the `LIST`, but can have any number of elements. | `[1, 2, 3]`               | `INTEGER[]`                        |
 | [`MAP`](../../sql/data_types/map.md)         | A dictionary of multiple named values, each key having the same type and each value having the same type. Keys and values can be any type and can be different types from one another.          | Rows may have different keys.                                                                                  | `map([1, 2], ['a', 'b'])` | `MAP(INTEGER, VARCHAR)`            |
 | [`STRUCT`](../../sql/data_types/struct.md)   | A dictionary of multiple named values, where each key is a string, but the value can be a different type for each key.                                                                          | Each row must have the same keys.                                                                              | `{'i': 42, 'j': 'a'}`     | `STRUCT(i INTEGER, j VARCHAR)`     |
+| [`TUPLE`](../../sql/data_types/tuple.md)     | An ordered sequence of values without names, where each value can have a different type.                                                                                                       | Each row must have the same number of values, with the same type at each position.                             | `row(1, 'a')`             | `TUPLE(INTEGER, VARCHAR)`          |
 | [`UNION`](../../sql/data_types/union.md)     | A union of multiple alternative data types, storing one of them in each value at a time. A union also contains a discriminator “tag” value to inspect and access the currently set member type. | Rows may be set to different member types of the union.                                                        | `union_value(num := 2)`   | `UNION(num INTEGER, text VARCHAR)` |
 | [`VARIANT`](../../sql/data_types/variant.md) | A semi-structured type where each value is self-contained with its own type information.                                                                                                        | Each row may hold a value of a different type.                                                                 | `42::VARIANT`             | `VARIANT`                          |
 
@@ -78,7 +77,7 @@ When used in a table with ART indexes (either via explicit indexes or primary ke
 
 ## Nesting
 
-`ARRAY`, `LIST`, `MAP`, `STRUCT` and `UNION` types can be arbitrarily nested to any depth, so long as the type rules are observed.
+`ARRAY`, `LIST`, `MAP`, `STRUCT`, `TUPLE` and `UNION` types can be arbitrarily nested to any depth, so long as the type rules are observed.
 
 Struct with `LIST`s:
 

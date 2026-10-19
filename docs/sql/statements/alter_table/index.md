@@ -114,6 +114,12 @@ Add a new column with name `l` to the table integers, it will be filled with the
 
 The `ADD [COLUMN]` clause can be used to add a new column of a specified type to a table. The new column will be filled with the specified default value, or `NULL` if none is specified. Besides `DEFAULT`, the new column can declare `UNIQUE` or `PRIMARY KEY`, and the constraint is enforced from the start. A `PRIMARY KEY` is also checked against the rows already in the table, which all get the default value: adding `id INT DEFAULT 5 PRIMARY KEY` to a table of two rows fails because the key contains duplicates. An inline `CHECK` constraint and a named constraint (`CONSTRAINT ⟨name⟩ UNIQUE`) are not supported; add them with [`ADD CONSTRAINT`](#add-constraint), and `NOT NULL` with `ALTER COLUMN ... SET NOT NULL`, in a separate `ALTER TABLE` step.
 
+A [serial column](../../data_types/index.md#general-purpose-data-types) gets a sequence of its own, every row already in the table gets a number from it, and new rows continue from there:
+
+<SqlLogicTest id="sql/statements/alter_table/index/add_column_serial" />
+
+With `IF NOT EXISTS`, adding a serial column that already exists changes nothing and creates no sequence. On a table that already has rows, a serial column can't declare `PRIMARY KEY` or `UNIQUE` in the same statement: it fails with `Cannot create index with outstanding updates`.
+
 ## `DROP COLUMN`
 
 To drop a column of a table, use the `DROP` or `DROP COLUMN` clause:
@@ -227,6 +233,14 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
 `SET` and `RESET` of storage options are supported only for search tables.
+
+## `ENABLE` / `DISABLE TRIGGER`
+
+`DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_037" />
+
+Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not turn off foreign key checks; a session with `session_replication_role` set to `replica` skips them.
 
 ## Search tables
 

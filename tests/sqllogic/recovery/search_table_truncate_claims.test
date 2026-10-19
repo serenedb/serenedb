@@ -1,0 +1,140 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tcl (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tcl VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcl;
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async ok
+TRUNCATE tcl;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection other
+statement error
+TRUNCATE tcl;
+----
+db error: ERROR: Attempting to write to table tcl but another transaction is truncating it
+
+
+connection other
+statement error
+DELETE FROM tcl WHERE id = 1;
+----
+db error: ERROR: Attempting to write to table tcl but another transaction is truncating it
+
+
+connection other
+statement ok
+BEGIN;
+
+connection other
+statement error
+TRUNCATE tcl;
+----
+db error: ERROR: Attempting to write to table tcl but another transaction is truncating it
+
+
+connection other
+statement ok
+ROLLBACK;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+INSERT INTO tcl VALUES (3, 'c');
+
+connection other
+statement error
+TRUNCATE tcl;
+----
+db error: ERROR: Attempting to truncate table tcl but another transaction is writing to this table
+
+
+connection writer
+statement ok
+COMMIT;
+
+connection other
+statement ok
+BEGIN;
+
+connection other
+statement ok
+TRUNCATE tcl;
+
+connection other
+statement ok
+INSERT INTO tcl VALUES (4, 'd');
+
+connection writer
+statement error
+INSERT INTO tcl VALUES (5, 'e');
+----
+db error: ERROR: Attempting to write to table tcl but another transaction is truncating it
+
+
+connection other
+statement ok
+ROLLBACK;
+
+connection writer
+statement ok
+INSERT INTO tcl VALUES (5, 'e');
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) tcl;
+
+connection writer
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcl;
+----
+ids
+3,5
+
+connection other
+statement ok
+TRUNCATE tcl;
+
+connection other
+statement ok
+INSERT INTO tcl VALUES (6, 'f');
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcl;
+----
+ids
+6

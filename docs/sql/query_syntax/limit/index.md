@@ -13,6 +13,8 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 Note that while `LIMIT` can be used without an `ORDER BY` clause, the results might not be deterministic without the `ORDER BY` clause. This can still be useful, however, for example when you want to inspect a quick snapshot of the data.
 
+An `OFFSET` over rows whose order is not guaranteed, that is, a query without `ORDER BY` whose rows pass through an operation that does not [preserve their order](../../../compatibility/order_preservation.md), such as `GROUP BY` or a join, sends the client a `WARNING` notice: the rows it skips may differ between runs.
+
 ## Examples
 
 Select the first 5 rows from the addresses table:

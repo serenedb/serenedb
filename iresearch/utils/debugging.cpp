@@ -81,7 +81,7 @@ bool RemoveFailurePointDebugging(std::string_view value) {
   }
 
   if (removed) {
-    SDB_INFO(GENERAL, "cleared failure point ", value);
+    SDB_DEBUG(GENERAL, "cleared failure point ", value);
   }
   return removed;
 }
@@ -96,7 +96,7 @@ void ClearFailurePointsDebugging() noexcept {
   }
 
   if (num_existing > 0) {
-    SDB_INFO(GENERAL, "cleared ", num_existing, " failure point(s)");
+    SDB_DEBUG(GENERAL, "cleared ", num_existing, " failure point(s)");
   }
 }
 

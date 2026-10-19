@@ -2,7 +2,7 @@
 """Pre-commit hook: forbid raw `throw` in server/ -- use the throw macros.
 
 A raw exception loses its PG sqlstate on the way to the client: only a typed
-irs::SqlException (built by THROW_SQL_ERROR / SDB_THROW) carries the
+irs::SqlException (built by THROW_SQL_ERROR) carries the
 errcode/detail/hint through ErrorData::Throw() to the wire, while anything
 else is flattened through a lossy per-type mapping. Server code must not
 `throw` directly.
@@ -15,6 +15,10 @@ Sanctioned exceptions:
     LogicalOperator::Serialize and ToString), so our table function's
     serialize / deserialize callbacks must raise it for the fallback to run;
     anything else aborts the query instead
+  - `throw duckdb::ParameterNotResolvedException` -- DuckDB's planner catches
+    this exact type (planner.cpp, Planner::CreatePlan) and binds the prepared
+    statement again once the parameter values are known, so a bind callback
+    that cannot type an unresolved parameter must raise it
   - allowlisted paths below, each a subsystem whose exceptions never reach
     the pg wire.
 """
@@ -41,6 +45,7 @@ THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
 ALLOWED_EXPRS = (
     "irs::SqlException",
     "duckdb::NotImplementedException",
+    "duckdb::ParameterNotResolvedException",
 )
 
 
@@ -88,11 +93,12 @@ def main() -> int:
     if failed:
         print(
             "\nRaw `throw` in server code. Use "
-            "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) (or "
-            "SDB_THROW) so the PG sqlstate survives to the client "
-            "(pg/sql_exception_macro.h). Sanctioned: bare `throw;`, "
+            "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) so the PG "
+            "sqlstate survives to the client "
+            "(iresearch/utils/pg/sql_exception_macro.hpp). Sanctioned: bare `throw;`, "
             "`throw irs::SqlException{...}`, "
-            "`throw duckdb::NotImplementedException`, and the allowlisted "
+            "`throw duckdb::NotImplementedException`, "
+            "`throw duckdb::ParameterNotResolvedException`, and the allowlisted "
             "subsystems in scripts/check_no_raw_throw.py.",
             file=sys.stderr,
         )

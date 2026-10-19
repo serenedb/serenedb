@@ -23,13 +23,15 @@
 
 #include "memory_directory.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
 #include <cstring>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
@@ -265,7 +267,7 @@ bool MemoryDirectory::exists(bool& result,
   return true;
 }
 
-IndexOutput::ptr MemoryDirectory::create(std::string_view name) noexcept try {
+IndexOutput::ptr MemoryDirectory::create(std::string_view name) {
   std::lock_guard lock{_flock};
 
   auto it = _files.try_emplace(name).first;
@@ -283,8 +285,6 @@ IndexOutput::ptr MemoryDirectory::create(std::string_view name) noexcept try {
   }
 
   return IndexOutput::ptr{new ChecksumMemoryIndexOutput{*file}};
-} catch (...) {
-  return nullptr;
 }
 
 bool MemoryDirectory::length(uint64_t& result,
@@ -321,20 +321,15 @@ bool MemoryDirectory::mtime(std::time_t& result,
 }
 
 IndexInput::ptr MemoryDirectory::open(std::string_view name,
-                                      IOAdvice /*advice*/) const noexcept try {
+                                      IOAdvice /*advice*/) const {
   absl::ReaderMutexLock lock{&_flock};
   const auto it = _files.find(name);
-  if (it != _files.end()) {
-    return std::make_unique<MemoryIndexInput>(*it->second);
+  if (it == _files.end()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("Failed to open file '", name, "': No such file or directory"));
   }
-  SDB_ERROR(
-    IRESEARCH,
-    absl::StrCat("Failed to open input file, error: File not found, path: ",
-                 name));
-  return nullptr;
-} catch (...) {
-  SDB_ERROR(IRESEARCH, absl::StrCat("Failed to open input file, path: ", name));
-  return nullptr;
+  return std::make_unique<MemoryIndexInput>(*it->second);
 }
 
 bool MemoryDirectory::remove(std::string_view name) noexcept {

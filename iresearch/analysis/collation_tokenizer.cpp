@@ -20,18 +20,14 @@
 
 #include "collation_tokenizer.hpp"
 
-#include <absl/strings/str_cat.h>
-
+#include <limits>
 #include <string>
 
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
 namespace {
-
-constexpr size_t kMaxTokenSize = 1 << 15;
 
 std::string CollationName(const duckdb::text::Locale& locale) {
   if (locale.IsBogus()) {
@@ -55,11 +51,11 @@ template<TokenLayout Layout, typename Sink>
 bool CollationTokenizer::DoFill(duckdb::string_t raw, Sink& sink) {
   _collator.GetSortKey(raw.GetData(), raw.GetSize(), _buffer);
   const auto size = _buffer.key.size() - 1;
-  if (size >= kMaxTokenSize) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Collated token exceeds maximum allowed length of ",
-                           kMaxTokenSize, " bytes"));
-    return false;
+  if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("collate_tokens: the collation key of a ",
+                            raw.GetSize(), "-byte value exceeds the limit of ",
+                            std::numeric_limits<uint32_t>::max(), " bytes"));
   }
   sink.template Emit<Layout>(_buffer.key.data(), static_cast<uint32_t>(size));
   return true;

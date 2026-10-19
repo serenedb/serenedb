@@ -20,6 +20,7 @@
 
 #include "html_strip_tokenizer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
@@ -148,7 +149,7 @@ constexpr auto kInlineKeys = [] {
   for (size_t i = 0; i < keys.size(); ++i) {
     keys[i] = PackName(kInlineElements[i]);
   }
-  std::ranges::sort(keys);
+  absl::c_sort(keys);
   return keys;
 }();
 
@@ -168,7 +169,7 @@ bool IsInlineElement(const char* name, const char* end) noexcept {
   for (size_t i = 0; i < size; ++i) {
     key |= uint64_t{static_cast<uint8_t>(name[i] | 0x20)} << (8 * i);
   }
-  return std::ranges::binary_search(kInlineKeys, key);
+  return absl::c_binary_search(kInlineKeys, key);
 }
 
 const char* SkipRawText(const char* p, const char* end,

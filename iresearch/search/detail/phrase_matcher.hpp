@@ -186,6 +186,17 @@ class IntervalPositionStrategy {
 
   bool AdvanceIterators(bool match, PosAttr::value_t sought,
                         const Iterator& end, Iterator& it) {
+    PosAttr::value_t lead_bound;
+    if (AdvanceIterators(match, sought, end, it, lead_bound)) {
+      return true;
+    }
+    _lead_pos.seek(lead_bound);
+    return false;
+  }
+
+  bool AdvanceIterators(bool match, PosAttr::value_t sought,
+                        const Iterator& end, Iterator& it,
+                        PosAttr::value_t& lead_bound) {
     const auto fail_it = it;
     _interval_delta = 0;
     if (match) {
@@ -207,7 +218,7 @@ class IntervalPositionStrategy {
     }
 
     const auto bound = _skipped ? 0 : Reach(sought, _lead_it, fail_it);
-    _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));
+    lead_bound = std::max(bound, _lead_pos.value() + 1);
     return false;
   }
 
@@ -328,6 +339,9 @@ class PhraseMatcher {
   static constexpr bool kHasScale = HasBoost;
   static constexpr bool kHasFreq = HasFreq;
   static constexpr bool kOffsets = Offs;
+  static constexpr size_t kRarestLeadSlots = 4;
+  static constexpr bool kRarestLead =
+    HasIntervals && !Offs && (N == 0 || N >= kRarestLeadSlots);
 
   explicit PhraseMatcher(size_t size) : _pos{size} {}
 
@@ -371,8 +385,7 @@ class PhraseMatcher {
   }
 
   uint32_t DocFreqBound() {
-    OrderByDocFreq();
-    const auto freq = _pos.front().first->DocFreq();
+    const auto freq = LeadFreq();
     if constexpr (HasIntervals) {
       uint64_t by_window = uint64_t{freq} * _freq_scale;
       uint64_t by_occurrence = 1;
@@ -415,10 +428,25 @@ class PhraseMatcher {
       _phrase_boost = 0.f;
     }
     if constexpr (HasIntervals || Offs) {
+      if constexpr (kRarestLead) {
+        if (_pos.size() >= kRarestLeadSlots) {
+          return NextPositionRarest();
+        }
+      }
       return NextPositionGeneric<Ordered>();
     } else {
       return NextPositionOptimized<Ordered>();
     }
+  }
+
+  uint32_t LeadFreq() {
+    if constexpr (kRarestLead) {
+      if (_pos.size() >= kRarestLeadSlots) {
+        return Rarest()->first->DocFreq();
+      }
+    }
+    OrderByDocFreq();
+    return _pos.front().first->DocFreq();
   }
 
   IRS_FORCE_INLINE void TakeBoost() noexcept {
@@ -501,6 +529,165 @@ class PhraseMatcher {
   }
 
  private:
+  struct Side {
+    uint32_t matches = 0;
+    PosAttr::value_t lead_bound = 0;
+    bool exhausted = false;
+    [[no_unique_address]] utils::Need<HasBoost, score_t> boost{};
+  };
+
+  uint32_t NextPositionRarest() {
+    SDB_ASSERT(_pos.size() > 1);
+    const auto lead_it = Rarest();
+    if (lead_it == _pos.begin()) {
+      return NextPositionFrom<true, false>(lead_it);
+    }
+    if (lead_it + 1 == _pos.end()) {
+      return NextPositionFrom<false, true>(lead_it);
+    }
+    const auto rarest = [](auto first, auto last) {
+      auto freq = first->first->DocFreq();
+      for (++first; first != last; ++first) {
+        freq = std::min(freq, first->first->DocFreq());
+      }
+      return freq;
+    };
+    if (rarest(_pos.begin(), lead_it) < rarest(lead_it + 1, _pos.end())) {
+      return NextPositionFrom<true, true, true>(lead_it);
+    }
+    return NextPositionFrom<true, true>(lead_it);
+  }
+
+  static Side Whole() noexcept {
+    Side side{.matches = 1};
+    if constexpr (HasBoost) {
+      side.boost = kNoBoost;
+    }
+    return side;
+  }
+
+  template<bool Forward, bool Backward, bool BackwardFirst = false>
+  uint32_t NextPositionFrom(typename Positions::iterator lead_it) {
+    using Iterator = typename Positions::iterator;
+    using ReverseIterator = std::reverse_iterator<Iterator>;
+    auto& lead = *lead_it->first;
+    const auto end = _pos.end();
+    auto reverse_lead_it = ReverseIterator{lead_it + 1};
+    const ReverseIterator reverse_end{_pos.begin()};
+    IntervalPositionStrategy<Iterator> forward{lead_it, lead};
+    IntervalPositionStrategy<ReverseIterator> backward{reverse_lead_it, lead,
+                                                       true};
+    uint32_t phrase_freq = 0;
+    for (lead.next(); !pos_limits::eof(lead.value());) {
+      auto after = Whole();
+      auto before = Whole();
+      if constexpr (BackwardFirst) {
+        before = Complete(backward, reverse_lead_it, reverse_end);
+        if (before.matches != 0) {
+          after = Complete(forward, lead_it, end);
+        }
+      } else {
+        if constexpr (Forward) {
+          after = Complete(forward, lead_it, end);
+        }
+        if constexpr (Backward) {
+          if (after.matches != 0) {
+            before = Complete(backward, reverse_lead_it, reverse_end);
+          }
+        }
+      }
+      if (after.matches != 0 && before.matches != 0) {
+        if constexpr (!HasFreq) {
+          return 1;
+        }
+        phrase_freq += after.matches * before.matches;
+        if constexpr (HasBoost) {
+          _phrase_boost = std::max(
+            _phrase_boost,
+            std::min({after.boost, before.boost, Traits::Boost(*lead_it)}));
+        }
+      }
+      if (after.exhausted || before.exhausted) {
+        return phrase_freq;
+      }
+      lead.seek(
+        std::max({after.lead_bound, before.lead_bound, lead.value() + 1}));
+    }
+    return phrase_freq;
+  }
+
+  template<typename Strategy, typename Iterator>
+  IRS_FORCE_INLINE Side Complete(Strategy& strategy, const Iterator& lead_it,
+                                 const Iterator& end) {
+    Side side;
+    strategy.NotifyNextLead(end);
+    bool match = true;
+    for (auto it = lead_it + 1; it != end;) {
+      auto& pos = *it->first;
+
+      const auto term_position = strategy.NextPosition(it);
+      if (!pos_limits::valid(term_position)) {
+        side.exhausted = true;
+        return side;
+      }
+      const auto sought = pos.seek(term_position);
+
+      if (pos_limits::eof(sought)) {
+        if constexpr (HasFreq) {
+          if (!strategy.NextPermutation(it, end)) {
+            side.exhausted = true;
+            return side;
+          }
+          if (it == end) {
+            match = false;
+          }
+          continue;
+        } else {
+          side.exhausted = true;
+          return side;
+        }
+      }
+      match =
+        strategy.AdvanceIterators(strategy.Match(term_position, sought, it),
+                                  sought, end, it, side.lead_bound);
+
+      if constexpr (HasFreq) {
+        if (it == end && match) {
+          if (!strategy.NextPermutation(it, end)) {
+            break;
+          }
+          Count(side, lead_it, end);
+        }
+      }
+      if (!match) {
+        break;
+      }
+    }
+    if (match) {
+      Count(side, lead_it, end);
+    }
+    return side;
+  }
+
+  template<typename Iterator>
+  IRS_FORCE_INLINE static void Count(Side& side, const Iterator& lead_it,
+                                     const Iterator& end) noexcept {
+    ++side.matches;
+    if constexpr (HasBoost) {
+      score_t match = kNoBoost;
+      for (auto it = lead_it + 1; it != end; ++it) {
+        match = std::min(match, Traits::Boost(*it));
+      }
+      side.boost = std::max(side.boost, match);
+    }
+  }
+
+  auto Rarest() {
+    return absl::c_min_element(_pos, [](const auto& l, const auto& r) {
+      return l.first->DocFreq() < r.first->DocFreq();
+    });
+  }
+
   void OrderByDocFreq() {
     if constexpr (Offs) {
     } else if constexpr (HasIntervals) {

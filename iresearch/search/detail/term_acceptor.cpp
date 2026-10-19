@@ -29,6 +29,8 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 
 namespace irs {
@@ -213,16 +215,20 @@ class BothPredicate final : public TermPredicate {
   TermPredicate::ptr _rhs;
 };
 
-class BorrowedPredicate final : public TermPredicate {
- public:
-  explicit BorrowedPredicate(const TermPredicate& impl) noexcept
-    : _impl{&impl} {}
-
-  bool Accepts(bytes_view term) const final { return _impl->Accepts(term); }
-
- private:
-  const TermPredicate* _impl;
+struct Residual {
+  Filter::ptr filter;
+  TermPredicate::ptr predicate;
 };
+
+std::shared_ptr<const Residual> MakeResidual(Filter::ptr&& filter) {
+  if (!filter) {
+    return nullptr;
+  }
+  auto predicate = filter->CompileTermPredicate();
+  SDB_ASSERT(predicate);
+  return std::make_shared<const Residual>(std::move(filter),
+                                          std::move(predicate));
+}
 
 class ConjunctionSource final : public TermAcceptorSource {
  public:
@@ -230,40 +236,38 @@ class ConjunctionSource final : public TermAcceptorSource {
                     Filter::ptr&& residual)
     : _driver{std::move(driver)},
       _bounds{std::move(bounds)},
-      _residual{std::move(residual)},
-      _predicate{_residual ? _residual->CompileTermPredicate() : nullptr} {
-    SDB_ASSERT(!_residual || _predicate);
-  }
+      _residual{MakeResidual(std::move(residual))} {}
 
   bool ok() const noexcept final { return true; }
 
   SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
     auto it = _driver ? _driver->Iterator(reader) : reader.iterator();
-    if (!_predicate && _bounds.lower.empty() && _bounds.upper.empty()) {
+    if (!_residual && _bounds.lower.empty() && _bounds.upper.empty()) {
       return it;
     }
     return memory::make_managed<BoundedTermIterator>(
-      std::move(it), _bounds.lower, _bounds.upper, _predicate.get());
+      std::move(it), _bounds.lower, _bounds.upper,
+      _residual ? _residual->predicate.get() : nullptr);
   }
 
   TermPredicate::ptr Predicate() const final {
+    if (!_residual) {
+      return _driver->Predicate();
+    }
+    auto checked = MakeTermPredicate([residual = _residual](bytes_view term) {
+      return residual->predicate->Accepts(term);
+    });
     if (!_driver) {
-      SDB_ASSERT(_predicate);
-      return std::make_unique<BorrowedPredicate>(*_predicate);
+      return checked;
     }
-    auto exact = _driver->Predicate();
-    if (!_predicate) {
-      return exact;
-    }
-    return std::make_unique<BothPredicate>(
-      std::move(exact), std::make_unique<BorrowedPredicate>(*_predicate));
+    return std::make_unique<BothPredicate>(_driver->Predicate(),
+                                           std::move(checked));
   }
 
  private:
   TermAcceptorSource::ptr _driver;
   TermBounds _bounds;
-  Filter::ptr _residual;
-  TermPredicate::ptr _predicate;
+  std::shared_ptr<const Residual> _residual;
 };
 
 }  // namespace
@@ -272,6 +276,14 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
                                           PatternKind kind) {
   SDB_ASSERT(kind != PatternKind::Fused);
   auto acceptor = PatternCache::Instance().Get(pattern, kind);
+  if (const auto error = acceptor->Error(); !error.empty()) {
+    if (kind == PatternKind::Wildcard) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                      ERR_MSG("pattern is too complex"));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", error));
+  }
   if (acceptor->Finite()) {
     return std::make_shared<const LiteralSetSource>(std::move(acceptor));
   }

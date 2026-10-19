@@ -5,6 +5,11 @@ add_compile_warnings_flags()
 ################################################################################
 
 add_executable(serened rest_server/serened.cpp)
+target_compile_definitions(
+    serened
+    PRIVATE
+        SDB_REMAP_EXECUTABLE_DEFAULT=$<IF:$<CONFIG:Release,MinSizeRel>,true,false>
+)
 
 target_link_libraries(serened serene_docs_shell)
 sdb_link_duckdb_extensions(serened)
@@ -57,6 +62,7 @@ add_subdirectory(network)
 add_subdirectory(otel)
 add_subdirectory(pg)
 add_subdirectory(query)
+add_subdirectory(replication)
 add_subdirectory(rest_server)
 add_subdirectory(scheduler)
 add_subdirectory(storage_engine)

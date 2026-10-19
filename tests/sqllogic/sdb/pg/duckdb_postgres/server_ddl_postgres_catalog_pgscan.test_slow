@@ -1,0 +1,48 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgddl_${__DATABASE__} (TYPE postgres);
+
+
+connection inside
+statement ok
+USE pgddl_${__DATABASE__};
+
+
+connection inside
+statement error
+CREATE SERVER pgddl_srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+----
+db error: ERROR: CREATE SERVER is not supported by a postgres catalog
+
+
+connection inside
+statement error
+DROP SERVER IF EXISTS pgddl_srv_${__DATABASE__};
+----
+db error: ERROR: DROP SERVER is not supported by a postgres catalog
+
+
+connection inside
+statement ok
+CREATE ROLE pgddl_role_${__DATABASE__};
+
+
+connection inside
+statement ok
+DROP ROLE pgddl_role_${__DATABASE__};
+
+
+connection inside
+statement ok
+DROP DATABASE IF EXISTS pgddl_db_${__DATABASE__};
+
+
+connection inside
+statement ok
+USE postgres;
+
+
+statement ok
+DETACH pgddl_${__DATABASE__};

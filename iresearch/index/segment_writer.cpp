@@ -100,7 +100,8 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
       options.resource_manager}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
-    _ann_env{options.ann_env} {}
+    _ann_env{options.ann_env},
+    _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra) {
@@ -223,6 +224,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
   _col_writer->SetFieldOptions(active);
+  _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());
   _fields.SetFieldOptions(active);
 

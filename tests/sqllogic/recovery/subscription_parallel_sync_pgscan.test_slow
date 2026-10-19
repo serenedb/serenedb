@@ -1,0 +1,114 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rpsync_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rpsync_sub''');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rpsync_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN DROP PUBLICATION IF EXISTS rpsync_pub; FOREACH t IN ARRAY ARRAY[''rpsync_a'', ''rpsync_b'', ''rpsync_c'', ''rpsync_d''] LOOP EXECUTE format(''DROP TABLE IF EXISTS %I'', t); EXECUTE format(''CREATE TABLE %I (id int PRIMARY KEY, payload text)'', t); EXECUTE format(''INSERT INTO %I SELECT g, md5(g::text) FROM generate_series(1, 150000) g'', t); END LOOP; CREATE PUBLICATION rpsync_pub FOR TABLE rpsync_a, rpsync_b, rpsync_c, rpsync_d; END $$');
+
+onlyif serenedb
+statement ok
+CREATE TABLE rpsync_a (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE TABLE rpsync_b (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE TABLE rpsync_c (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE TABLE rpsync_d (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION rpsync_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rpsync_pub WITH (slot_name = 'rpsync_sub');
+
+onlyif serenedb
+query ok retry 480 backoff 100ms
+SELECT count(*) FILTER (WHERE srsubstate = 'r') > 0 AS some_ready FROM pg_subscription_rel;
+----
+some_ready
+t
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname FROM pg_subscription;
+----
+subname
+rpsync_sub
+
+onlyif serenedb
+connection after_crash
+query ok retry 480 backoff 250ms
+SELECT count(*) FILTER (WHERE srsubstate = 'r') AS ready, count(*) FILTER (WHERE srsublsn IS NULL) AS without_lsn FROM pg_subscription_rel;
+----
+ready	without_lsn
+4	0
+
+onlyif serenedb
+connection after_crash
+query
+SELECT (SELECT count(*) FROM rpsync_a) AS a, (SELECT count(*) FROM rpsync_b) AS b, (SELECT count(*) FROM rpsync_c) AS c, (SELECT count(*) FROM rpsync_d) AS d, (SELECT count(*) FILTER (WHERE payload = md5(id::text)) FROM rpsync_d) AS intact;
+----
+a	b	c	d	intact
+150000	150000	150000	150000	150000
+
+onlyif serenedb
+connection after_crash
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rpsync_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY[''rpsync_a'', ''rpsync_b'', ''rpsync_c'', ''rpsync_d''] LOOP EXECUTE format(''INSERT INTO %I VALUES (150001, ''''after crash'''')'', t); END LOOP; END $$');
+
+onlyif serenedb
+connection after_crash
+query ok retry 480 backoff 250ms
+SELECT (SELECT count(*) FROM rpsync_a) + (SELECT count(*) FROM rpsync_b) + (SELECT count(*) FROM rpsync_c) + (SELECT count(*) FROM rpsync_d) AS n;
+----
+n
+600004
+
+onlyif serenedb
+connection after_crash
+query
+SELECT sync_error_count + apply_error_count AS errors FROM pg_stat_subscription_stats WHERE subname = 'rpsync_sub';
+----
+errors
+0
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP SUBSCRIPTION rpsync_sub;
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rpsync_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rpsync_pub; DROP TABLE rpsync_a, rpsync_b, rpsync_c, rpsync_d; END $$');
+
+onlyif serenedb
+connection after_crash
+statement ok
+DETACH rpsync_${__DATABASE__};

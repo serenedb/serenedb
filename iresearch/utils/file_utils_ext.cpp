@@ -24,10 +24,13 @@
 #include "file_utils_ext.hpp"
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
@@ -105,7 +108,8 @@ pid_t GetPid() {
 }
 
 bool IsValidPid(const char* buf) {
-  const auto pid = strtol(buf, nullptr, 10);
+  long pid = 0;
+  fast_float::from_chars(buf, buf + std::strlen(buf), pid);
   return 0 != pid && pid <= std::numeric_limits<pid_t>::max() &&
          pid >= std::numeric_limits<pid_t>::min() &&
          IsRunning(static_cast<pid_t>(pid));
@@ -279,10 +283,17 @@ void Prefetch(const void* addr, size_t size) noexcept {
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
 #ifndef _WIN32
   for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
+#ifdef __APPLE__
+    radvisory advice{.ra_offset = static_cast<off_t>(offset + at),
+                     .ra_count = static_cast<int>(
+                       std::min<uint64_t>(kWillNeedChunk, size - at))};
+    ::fcntl(fd, F_RDADVISE, &advice);
+#else
     ::posix_fadvise(
       fd, static_cast<off_t>(offset + at),
       static_cast<off_t>(std::min<uint64_t>(kWillNeedChunk, size - at)),
       POSIX_FADV_WILLNEED);
+#endif
   }
 #endif
 }
@@ -293,14 +304,19 @@ bool IsResident(const void* addr, size_t size) noexcept {
     return true;
   }
   constexpr size_t kMaxPages = 1024;
+  const auto page = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  char resident[kMaxPages];
+#else
   unsigned char resident[kMaxPages];
-  for (size_t done = 0; done < total; done += kMaxPages * kPage) {
-    const auto len = std::min(total - done, kMaxPages * kPage);
+#endif
+  for (size_t done = 0; done < total; done += kMaxPages * page) {
+    const auto len = std::min(total - done, kMaxPages * page);
     if (::mincore(reinterpret_cast<void*>(aligned + done), len, resident) !=
           0 ||
-        !std::all_of(resident, resident + (len + kPage - 1) / kPage,
-                     [](unsigned char page) { return (page & 1) != 0; })) {
+        !std::all_of(resident, resident + (len + page - 1) / page,
+                     [](unsigned char value) { return (value & 1) != 0; })) {
       return false;
     }
   }
@@ -318,8 +334,13 @@ size_t Residency(const void* addr, size_t size,
   }
   const auto page = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  auto* resident = reinterpret_cast<char*>(pages.data());
+#else
+  auto* resident = pages.data();
+#endif
   if ((total + page - 1) / page > pages.size() ||
-      ::mincore(reinterpret_cast<void*>(aligned), total, pages.data()) != 0) {
+      ::mincore(reinterpret_cast<void*>(aligned), total, resident) != 0) {
     return 0;
   }
   return page;
@@ -514,16 +535,16 @@ bool verify_lock_file(const path_char_t* file) {
   // check hostname
   const size_t len = strlen(buf);
   if (!is_same_hostname(buf, len)) {
-    SDB_INFO(IRESEARCH, "Index locked by another host, hostname: '",
-             std::string_view{buf, len}, "', file: '", ToStr(file), "'");
+    SDB_DEBUG(IRESEARCH, "Index locked by another host, hostname: '",
+              std::string_view{buf, len}, "', file: '", ToStr(file), "'");
     return true;  // locked
   }
 
   // check pid
   const char* pid = buf + len + 1;
   if (is_valid_pid(pid)) {
-    SDB_INFO(IRESEARCH, "Index locked by another process, PID: '", pid,
-             "', file: '", ToStr(file), "'");
+    SDB_DEBUG(IRESEARCH, "Index locked by another process, PID: '", pid,
+              "', file: '", ToStr(file), "'");
     return true;  // locked
   }
 
@@ -575,7 +596,7 @@ lock_handle_t create_lock_file(const path_char_t* file) {
   }
 
   // write PID to lock file
-  const size_t size = sprintf(buf, "%d", get_pid());
+  const size_t size = absl::SNPrintF(buf, sizeof(buf), "%d", get_pid());
   if (!file_utils::write(fd, buf, size)) {
     SDB_ERROR(IRESEARCH, "Unable to write lock file: '", ToStr(file),
               "', error: ", GET_ERROR());
@@ -661,8 +682,8 @@ bool VerifyLockFile(const path_char_t* file) {
   // check hostname
   const size_t len = strlen(buf);  // hostname length
   if (!IsSameHostname(buf, len)) {
-    SDB_INFO(IRESEARCH, "Index locked by another host, hostname: '",
-             std::string_view{buf, len}, "', file: '", file, "'");
+    SDB_DEBUG(IRESEARCH, "Index locked by another host, hostname: '",
+              std::string_view{buf, len}, "', file: '", file, "'");
     return true;  // locked
   }
 
@@ -674,8 +695,8 @@ bool VerifyLockFile(const path_char_t* file) {
   // check pid
   const char* pid = buf + len + 1;
   if (IsValidPid(pid)) {
-    SDB_INFO(IRESEARCH, "Index locked by another process, PID: '", pid,
-             "', file: '", file, "'");
+    SDB_DEBUG(IRESEARCH, "Index locked by another process, PID: '", pid,
+              "', file: '", file, "'");
     return true;  // locked
   }
 
@@ -708,7 +729,7 @@ lock_handle_t CreateLockFile(const path_char_t* file) {
   }
 
   // write PID to lock file
-  size_t size = sprintf(buf, "%d", GetPid());
+  size_t size = absl::SNPrintF(buf, sizeof(buf), "%d", GetPid());
   if (!file_utils::Write(reinterpret_cast<void*>(fd), buf, size)) {
     SDB_ERROR(IRESEARCH, "Unable to write lock file: '", file,
               "', error: ", GET_ERROR());
@@ -793,18 +814,18 @@ bool ByteSize(uint64_t& result, int fd) noexcept {
   return true;
 }
 
+static bool StatSaysMissing() noexcept {
+  const auto error = GET_ERROR();
+  return error == ENOENT || error == ENOTDIR;
+}
+
 bool Exists(bool& result, const path_char_t* file) noexcept {
   SDB_ASSERT(file != nullptr);
   FILE_STAT_T info;
 
   result = 0 == PathStats(info, file);
 
-  if (!result && ENOENT != GET_ERROR()) {
-    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
-              " path: ", ToStr(file));
-  }
-
-  return true;
+  return result || StatSaysMissing();
 }
 
 bool ExistsDirectory(bool& result, const path_char_t* name) noexcept {
@@ -813,17 +834,14 @@ bool ExistsDirectory(bool& result, const path_char_t* name) noexcept {
 
   result = 0 == PathStats(info, name);
 
-  if (result) {
-#ifdef _WIN32
-    result = (info.st_mode & _S_IFDIR) > 0;
-#else
-    result = (info.st_mode & S_IFDIR) > 0;
-#endif
-  } else if (ENOENT != GET_ERROR()) {
-    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
-              " path: ", ToStr(name));
+  if (!result) {
+    return StatSaysMissing();
   }
-
+#ifdef _WIN32
+  result = (info.st_mode & _S_IFDIR) > 0;
+#else
+  result = (info.st_mode & S_IFDIR) > 0;
+#endif
   return true;
 }
 
@@ -833,17 +851,14 @@ bool ExistsFile(bool& result, const path_char_t* name) noexcept {
 
   result = 0 == PathStats(info, name);
 
-  if (result) {
-#ifdef _WIN32
-    result = (info.st_mode & _S_IFREG) > 0;
-#else
-    result = (info.st_mode & S_IFREG) > 0;
-#endif
-  } else if (ENOENT != GET_ERROR()) {
-    SDB_ERROR(IRESEARCH, "Failed to get stat, error ", GET_ERROR(),
-              " path: ", ToStr(name));
+  if (!result) {
+    return StatSaysMissing();
   }
-
+#ifdef _WIN32
+  result = (info.st_mode & _S_IFREG) > 0;
+#else
+  result = (info.st_mode & S_IFREG) > 0;
+#endif
   return true;
 }
 
@@ -926,8 +941,6 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
 #endif
   auto fd = ::open(path ? path : "/dev/null", posix_mode, S_IRUSR | S_IWUSR);
   if (fd < 0) {
-    SDB_ERROR(IRESEARCH, "Failed to open file, error: ", GET_ERROR(),
-              ", path: ", path);
     return handle_t(nullptr);
   }
 #ifdef __APPLE__
@@ -1015,7 +1028,8 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
   // approximate maximum number of chars, +1 for \0
   char path[14 + sizeof(fd) * 3 + 1];
 
-  if (0 > fd || 0 > sprintf(path, "/proc/self/fd/%d", fd)) {
+  if (0 > fd ||
+      0 > absl::SNPrintF(path, sizeof(path), "/proc/self/fd/%d", fd)) {
     SDB_ERROR(IRESEARCH,
 
               "Failed to get system handle from file handle, error ",
@@ -1453,7 +1467,10 @@ bool VisitDirectory(const path_char_t* name,
 
   return !terminate;
 #else
-  DIR* dir = opendir(name);
+  struct DirDeleter {
+    void operator()(DIR* dir) const noexcept { closedir(dir); }
+  };
+  const std::unique_ptr<DIR, DirDeleter> dir{opendir(name)};
 
   if (!dir) {
     return false;
@@ -1462,7 +1479,7 @@ bool VisitDirectory(const path_char_t* name,
   struct dirent* direntry;
   bool terminate = false;
 
-  while (!terminate && (direntry = readdir(dir))) {
+  while (!terminate && (direntry = readdir(dir.get()))) {
     if (include_dot_dir ||
         !((direntry->d_name[0] == '.' && direntry->d_name[1] == '\0') ||
           (direntry->d_name[0] == '.' && direntry->d_name[1] == '.' &&
@@ -1470,8 +1487,6 @@ bool VisitDirectory(const path_char_t* name,
       terminate = !visitor(direntry->d_name);
     }
   }
-
-  closedir(dir);
 
   return !terminate;
 #endif

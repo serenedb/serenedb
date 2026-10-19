@@ -12,7 +12,9 @@ import json
 import os
 import socket
 
+import psycopg
 import pytest
+from spec_loader import conn_kwargs
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
@@ -247,11 +249,14 @@ def test_bulk_index_and_create(conn, index):
         '{"title":"A Time to Kill","year":1989,"published":612918000000}\n'
         '{"index":{"_id":"3","_index":"%s"}}\n'
         '{"title":"The Firm","unmapped_extra":"source only"}\n'
+        '{"index":{"_id" : "q\\"uo\\\\te\\u00e9" }}\n'
+        '{"title":"Escaped"}\n'
     ) % index
     status, body = _bulk(conn, index, payload, refresh=True)
     assert status == 200
     assert body["errors"] is False
-    assert len(body["items"]) == 3
+    assert len(body["items"]) == 4
+    assert body["items"][3]["index"]["_id"] == 'q"uo\\teé'
     first = body["items"][0]["index"]
     assert first["_id"] == "1"
     assert first["status"] == 201
@@ -262,7 +267,7 @@ def test_bulk_index_and_create(conn, index):
 
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert status == 200
-    assert body["count"] == 3
+    assert body["count"] == 4
 
 
 def test_bulk_errors(conn, index):
@@ -282,6 +287,75 @@ def test_bulk_errors(conn, index):
         assert status == 400, payload
         assert body["error"]["type"] == expected_type, payload
     # a failed bulk inserts nothing
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 0
+
+
+def test_large_bulk_keeps_items_in_request_order(conn, index):
+    docs = 300_000
+    payload = "".join(
+        '{"index":{"_id":"d%d"}}\n{"year":%d,"title":"doc %d"}\n' % (i, i, i)
+        for i in range(docs))
+    status, body = _bulk(conn, index, payload, refresh=True)
+    assert status == 200
+    assert body["errors"] is False
+    assert [item["index"]["_id"] for item in body["items"]] == [
+        f"d{i}" for i in range(docs)]
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == docs
+
+
+def test_large_bulk_reports_the_failing_line(conn, index):
+    good = '{"index":{}}\n{"year":1}\n'
+    payload = good * 360_000 + '{"delete":{"_id":"x"}}\n{"year":1}\n' + good
+    status, body = _bulk(conn, index, payload)
+    assert status == 400
+    assert "line [720001]" in body["error"]["reason"], body
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 0
+
+
+def test_large_bulk_with_documents_shaped_like_actions(conn, index):
+    docs = 200_000
+    payload = "".join(
+        '{"index":{"_id":"a%d"}}\n{"index":{"year":%d}}\n' % (i, i)
+        for i in range(docs))
+    status, body = _bulk(conn, index, payload, refresh=True)
+    assert status == 200
+    assert [item["index"]["_id"] for item in body["items"]] == [
+        f"a{i}" for i in range(docs)]
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == docs
+
+
+def test_large_bulk_reports_a_stray_line(conn, index):
+    good = '{"index":{}}\n{"year":1}\n'
+    payload = good * 180_000 + '{"year":2}\n' + good * 180_000
+    status, body = _bulk(conn, index, payload)
+    assert status == 400
+    assert "line [360001]" in body["error"]["reason"], body
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 0
+
+
+def _threads() -> int:
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        return int(pg.execute(
+            "SELECT current_setting('threads')").fetchone()[0])
+
+
+def test_large_bulk_reports_the_first_of_many_failing_lines(conn, index):
+    if _threads() < 2:
+        pytest.skip("the batches of a _bulk load only race on 2+ threads")
+    good = '{"index":{}}\n{"year":1}\n'
+    bad = '{"delete":{"_id":"x"}}\n{"year":1}\n'
+    failing = {120_000, 122_885, 245_765}
+    payload = "".join(bad if doc in failing else good
+                      for doc in range(370_000))
+    for _ in range(3):
+        status, body = _bulk(conn, index, payload)
+        assert status == 400
+        assert "line [240001]" in body["error"]["reason"], body
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert body["count"] == 0
 
@@ -317,6 +391,34 @@ def test_bulk_after_index_recreated(conn):
         assert body["error"]["type"] == "index_not_found_exception"
     finally:
         _request(conn, "DELETE", f"/{name}")
+
+
+def test_bulk_alternating_indexes(conn):
+    names = [f"drv_es_alt_{i}" for i in range(3)]
+    for name in names:
+        _request(conn, "DELETE", f"/{name}")
+        status, _ = _request(conn, "PUT", f"/{name}", MAPPINGS)
+        assert status == 200
+    try:
+        for round_ in range(3):
+            for name in names:
+                status, body = _bulk(
+                    conn, name, '{"index":{}}\n{"year":%d}\n' % round_,
+                    refresh=True)
+                assert status == 200 and body["errors"] is False, body
+        _request(conn, "DELETE", f"/{names[0]}")
+        status, _ = _request(conn, "PUT", f"/{names[0]}", {
+            "mappings": {"properties": {"code": {"type": "keyword"}}}})
+        assert status == 200
+        status, body = _bulk(conn, names[0], '{"index":{}}\n{"code":"x"}\n',
+                             refresh=True)
+        assert status == 200 and body["errors"] is False, body
+        for name, count in zip(names, (1, 3, 3)):
+            status, body = _request(conn, "GET", f"/{name}/_count")
+            assert body["count"] == count, name
+    finally:
+        for name in names:
+            _request(conn, "DELETE", f"/{name}")
 
 
 def test_bulk_bare_url_with_line_index(conn, index):
@@ -539,6 +641,57 @@ def test_search_bool(conn, corpus):
         "should": [{"match": {"title": "fox"}}, {"match": {"title": "dog"}}],
     }}})
     assert sorted(h["_id"] for h in body["hits"]["hits"]) == ["1", "2"]
+
+
+@pytest.mark.parametrize("endpoint", ["_search", "_count"])
+@pytest.mark.parametrize("query", [
+    '{"term":{"year":%s}}',
+    '{"term":{"year":{"value":%s}}}',
+    '{"range":{"year":{"gt":%s}}}',
+    '{"range":{"year":{"gte":%s}}}',
+    '{"range":{"year":{"lt":%s}}}',
+    '{"range":{"year":{"lte":%s}}}',
+])
+@pytest.mark.parametrize("token", [
+    "1abc", "9999/**/OR/**/TRUE", "-1/**/OR/**/TRUE", "01", "1.",
+    "1e", "1e+", "0x10", "1+1", "1e9999",
+])
+def test_query_rejects_malformed_numbers(conn, corpus, endpoint, query, token):
+    conn.request(
+        "POST", f"/{corpus}/{endpoint}",
+        body='{"query":' + query % token + '}',
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 400, body
+    assert body["status"] == 400
+    assert body["error"]["type"] == "parsing_exception"
+
+
+@pytest.mark.parametrize("query, expected", [
+    ('{"term":{"year":1900}}', ["1"]),
+    ('{"term":{"year":{"value":1950.0}}}', ["2", "3"]),
+    ('{"term":{"year":1.95e3}}', ["2", "3"]),
+    ('{"term":{"year":1.9E+3 \t\r\n}}', ["1"]),
+    ('{"term":{"year":-0}}', []),
+    ('{"range":{"year":{"gt":0,"lte":1900}}}', ["1"]),
+    ('{"range":{"year":{"gte":-42,"lt":1.95e3}}}', ["1"]),
+    ('{"range":{"year":{"gte":9999}}}', []),
+    ('{"range":{"year":{"gt":-9223372036854775808}}}', ["1", "2", "3"]),
+    ('{"range":{"year":{"lt":18446744073709551615}}}', ["1", "2", "3"]),
+])
+def test_search_numeric_literals(conn, corpus, query, expected):
+    conn.request(
+        "POST", f"/{corpus}/_search",
+        body='{"query":' + query + '}',
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 200, body
+    assert sorted(hit["_id"] for hit in body["hits"]["hits"]) == expected
+    assert body["hits"]["total"]["value"] == len(expected)
 
 
 def test_search_paging_and_source(conn, corpus):

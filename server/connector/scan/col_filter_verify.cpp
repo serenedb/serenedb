@@ -75,14 +75,16 @@ uint32_t ColFilterVerify::Narrow(irs::doc_id_t* docs, irs::score_t* scores,
   return static_cast<uint32_t>(_chain.FilterDocs(docs, scores, left));
 }
 
-uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, uint64_t* mask,
-                                 irs::score_t* scores, uint32_t words) {
+uint32_t ColFilterVerify::Narrow(irs::doc_id_t base, const uint64_t* in,
+                                 uint64_t* out, irs::score_t* scores,
+                                 uint32_t words) {
   SDB_ASSERT(_score_filter == nullptr || scores != nullptr);
   if (_score_filter != nullptr) {
-    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, mask,
-                                          scores, words);
+    irs::ColFilterChain::FilterMaskScores(*_score_filter, *_score_state, in,
+                                          out, scores, words);
+    in = out;
   }
-  return static_cast<uint32_t>(_chain.FilterMask(base, mask, words));
+  return static_cast<uint32_t>(_chain.FilterMask(base, in, out, words));
 }
 
 uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
@@ -93,7 +95,8 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out) {
+                               irs::ColFilterClassification& out,
+                               bool prepare_leaves) {
   out.segment_dead = false;
   out.active.clear();
   if (g.col_filters.empty()) {
@@ -112,8 +115,13 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
       .not_null = cf.not_null.get(),
       .extract_path = cf.extract_path,
       .extract_type = &cf.type,
+      .row_fields = cf.row_fields,
+      .row_types = cf.row_types,
     };
-    if (spec.is_score) {
+    if (prepare_leaves && !cf.row_leaves.empty()) {
+      spec.row_leaves = states.Leaves(*cf.filter, seg, cf.row_leaves);
+    }
+    if (spec.is_score || !spec.row_fields.empty()) {
       out.active.push_back(spec);
       continue;
     }
@@ -183,7 +191,7 @@ void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, filter_states, seg_cls);
+  ClassifySegmentColFilters((*g.reader)[seg], g, filter_states, seg_cls, true);
   classified_seg = seg;
 }
 

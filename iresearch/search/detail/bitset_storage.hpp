@@ -25,7 +25,6 @@
 #include <cstdlib>
 #include <memory>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"

@@ -41,6 +41,14 @@ CREATE TABLE ob_d (id INT DEFAULT nextval('ob_released'));
 
 
 statement ok
+CREATE TABLE oc_t (a serial, b INT, c INT);
+
+
+statement ok
+CREATE SEQUENCE oc_s OWNED BY oc_t.c;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -51,6 +59,14 @@ SELECT 1;
 connection after_log
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_log
+query
+SELECT pg_get_serial_sequence('oc_t', 'a') AS a, pg_get_serial_sequence('oc_t', 'b') AS b, pg_get_serial_sequence('oc_t', 'c') AS c;
+----
+a	b	c
+public.oc_t_a_seq	NULL	public.oc_s
 
 
 connection after_log
@@ -117,3 +133,47 @@ DROP SEQUENCE ob_released;
 connection after_rewrite
 statement ok
 DROP TABLE ob_compaction;
+
+
+connection after_rewrite
+query
+SELECT pg_get_serial_sequence('oc_t', 'a') AS a, pg_get_serial_sequence('oc_t', 'b') AS b, pg_get_serial_sequence('oc_t', 'c') AS c;
+----
+a	b	c
+public.oc_t_a_seq	NULL	public.oc_s
+
+
+connection after_rewrite
+statement ok
+ALTER TABLE oc_t DROP COLUMN b;
+
+
+connection after_rewrite
+statement ok
+ALTER TABLE oc_t DROP COLUMN c;
+
+
+connection after_rewrite
+query
+SELECT sequencename FROM pg_sequences WHERE sequencename LIKE 'oc_%' ORDER BY 1;
+----
+sequencename
+oc_t_a_seq
+
+
+connection after_rewrite
+statement ok
+ALTER TABLE oc_t DROP COLUMN a;
+
+
+connection after_rewrite
+query
+SELECT count(*) AS sequences FROM pg_sequences WHERE sequencename LIKE 'oc_%';
+----
+sequences
+0
+
+
+connection after_rewrite
+statement ok
+DROP TABLE oc_t;

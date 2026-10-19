@@ -30,6 +30,7 @@
 #include <absl/strings/strip.h>
 
 #include <algorithm>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/logging/log_manager.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
@@ -826,8 +827,8 @@ void RegisterShellDocsBackend() {
          try {
            return session->Run(request, out);
          } catch (const std::exception& e) {
-           out =
-             absl::StrCat("Could not read the documentation: ", e.what(), "\n");
+           out = absl::StrCat("Could not read the documentation: ",
+                              duckdb::ErrorData{e}.RawMessage(), "\n");
            return false;
          }
        },

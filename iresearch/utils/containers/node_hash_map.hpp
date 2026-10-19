@@ -26,9 +26,9 @@
 namespace irs::containers {
 
 template<typename K, typename V,
-         class Hash = typename absl::node_hash_map<K, V>::hasher,
-         class Eq = typename absl::node_hash_map<K, V, Hash>::key_equal,
-         class Allocator =
+         typename Hash = typename absl::node_hash_map<K, V>::hasher,
+         typename Eq = typename absl::node_hash_map<K, V, Hash>::key_equal,
+         typename Allocator =
            typename absl::node_hash_map<K, V, Hash, Eq>::allocator_type>
 using NodeHashMap = absl::node_hash_map<K, V, Hash, Eq, Allocator>;
 

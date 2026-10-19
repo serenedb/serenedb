@@ -1,0 +1,175 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE DATABASE sfd_shop;
+
+statement ok
+CREATE TABLE sfd_shop.public.docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX docs_idx ON sfd_shop.public.docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+ALTER INDEX sfd_shop.public.docs_idx SET (compaction_interval = 600000);
+
+statement ok
+INSERT INTO sfd_shop.public.docs
+SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i);
+
+statement ok
+VACUUM (REFRESH_INDEX) sfd_shop.public.docs_idx;
+
+statement ok
+CREATE TABLE sfd_shop.public.notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+ALTER TABLE sfd_shop.public.notes SET (compaction_interval = 600000);
+
+statement ok
+CREATE INDEX notes_idx ON sfd_shop.public.notes USING inverted(body);
+
+statement ok
+INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sfd_shop.public.notes;
+
+statement ok
+CREATE TABLE sfd_shop.public.gone(id INTEGER, body VARCHAR);
+
+statement ok
+CREATE INDEX gone_idx ON sfd_shop.public.gone USING inverted(body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sfd_shop.public.gone VALUES (1, 'kept');
+
+statement ok
+VACUUM (REFRESH_INDEX) sfd_shop.public.gone_idx;
+
+statement ok
+CREATE INDEX gone_id_idx ON sfd_shop.public.gone USING inverted(id)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE sfd_shop.public.gone_notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sfd_shop.public.gone_notes VALUES (1, 'dropped');
+
+statement ok
+VACUUM (REFRESH_TABLE) sfd_shop.public.gone_notes;
+
+statement ok
+COPY (SELECT oid FROM pg_database WHERE datname = 'sfd_shop') TO '${__TEST_DIR__}/sfd_shop.oid' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (SELECT index_oid FROM duckdb_indexes() WHERE database_name = 'sfd_shop' AND index_name = 'gone_idx') TO '${__TEST_DIR__}/sfd_gone_idx.oid' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (SELECT index_oid FROM duckdb_indexes() WHERE database_name = 'sfd_shop' AND index_name = 'gone_id_idx') TO '${__TEST_DIR__}/sfd_gone_id_idx.oid' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'gone_notes') TO '${__TEST_DIR__}/sfd_gone_notes.oid' (FORMAT csv, HEADER false);
+
+system ok
+rm -rf $__TEST_DIR__/sfd_gone_store && cp -r ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_idx.oid) $__TEST_DIR__/sfd_gone_store
+
+statement ok
+DROP INDEX sfd_shop.public.gone_idx;
+
+statement ok
+DROP INDEX sfd_shop.public.gone_id_idx;
+
+statement ok
+DROP TABLE sfd_shop.public.gone_notes;
+
+statement ok
+ALTER TABLE sfd_shop.public.gone RENAME TO gone_renamed;
+
+statement ok
+CHECKPOINT sfd_shop;
+
+system ok
+for i in $(seq 1 100); do [ ! -e ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_idx.oid) ] && [ ! -e ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_id_idx.oid) ] && [ ! -e ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_notes.oid) ] && exit 0; sleep 0.1; done; exit 1
+
+system ok
+rm -rf $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_shop && mkdir $__TEST_DIR__/sfd_copy && cp -r ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfd_copy/ && cp -r $__TEST_DIR__/sfd_gone_store $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_idx.oid) && mkdir $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_id_idx.oid) && ln -s $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_shop
+
+statement ok
+CREATE SERVER sfd_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfd_shop');
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sfd_snap.public.docs;
+----
+n	s
+100	5050
+
+query
+SELECT count(*) AS n FROM sfd_snap.public.docs_idx WHERE body @@ 'even';
+----
+n
+50
+
+query
+SELECT id FROM sfd_snap.public.docs_idx WHERE body @@ 'even' ORDER BY id LIMIT 3;
+----
+id
+2
+4
+6
+
+query
+SELECT count(*) AS n FROM sfd_snap.public.notes;
+----
+n
+40
+
+query
+SELECT id FROM sfd_snap.public.notes WHERE body @@ 'note1' ORDER BY id LIMIT 3;
+----
+id
+1
+5
+9
+
+query
+SELECT count(*) AS n FROM sfd_snap.public.gone_renamed;
+----
+n
+1
+
+query
+SELECT
+  (SELECT count(*) FROM duckdb_indexes() WHERE database_name = 'sfd_snap' AND index_name IN ('gone_idx', 'gone_id_idx')) AS indexes,
+  (SELECT count(*) FROM duckdb_tables() WHERE database_name = 'sfd_snap' AND table_name = 'gone_notes') AS tables;
+----
+indexes	tables
+0	0
+
+statement ok
+DROP SERVER sfd_snap;
+
+system ok
+for i in $(seq 1 20); do [ -d $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_idx.oid) ] && [ -d $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_gone_id_idx.oid) ] || exit 1; sleep 0.1; done
+
+statement ok
+COPY (SELECT table_oid FROM duckdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'notes') TO '${__TEST_DIR__}/sfd_notes.oid' (FORMAT csv, HEADER false);
+
+system ok
+rm -rf $__TEST_DIR__/sfd_torn $__TEST_DIR__/sfd_torn_shop && mkdir $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_torn/ && cp $__TEST_DIR__/sfd_copy/catalog.wal $__TEST_DIR__/sfd_torn/ && rm -rf $__TEST_DIR__/sfd_torn/$(cat $__TEST_DIR__/sfd_shop.oid)/$(cat $__TEST_DIR__/sfd_notes.oid) && ln -s $__TEST_DIR__/sfd_torn/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_torn_shop
+
+statement error
+CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfd_torn_shop');
+----
+db error: ERROR: the directory holds no committed index
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name IN ('sfd_snap', 'sfd_torn');
+----
+n
+0

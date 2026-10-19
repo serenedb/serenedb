@@ -1,0 +1,152 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsub_sync''');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rsub_sync_pub; DROP TABLE IF EXISTS rsub_sync_rows; CREATE TABLE rsub_sync_rows (id integer PRIMARY KEY, payload text); INSERT INTO rsub_sync_rows SELECT g, md5(g::text) FROM generate_series(1, 300000) g; CREATE PUBLICATION rsub_sync_pub FOR TABLE rsub_sync_rows; END $$');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'ALTER SYSTEM SET logical_decoding_work_mem = ''64kB''', use_transaction := false);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+onlyif serenedb
+statement ok
+CREATE TABLE rsub_sync_rows (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION rsub_sync CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsub_sync_pub WITH (streaming = on);
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname FROM pg_subscription;
+----
+subname
+rsub_sync
+
+onlyif serenedb
+connection after_crash
+query ok retry 480 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM rsub_sync_rows;
+----
+n	ids	lo	hi
+300000	300000	1	300000
+
+onlyif serenedb
+connection after_crash
+query
+SELECT r.srsubstate, r.srsublsn IS NOT NULL AS has_lsn FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'rsub_sync';
+----
+srsubstate	has_lsn
+r	t
+
+onlyif serenedb
+connection after_crash
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection after_crash
+statement ok
+BEGIN;
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'INSERT INTO rsub_sync_rows SELECT g, ''never committed'' FROM generate_series(400001, 420000) g');
+
+onlyif serenedb
+connection stream_probe
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection stream_probe
+query ok retry 120 backoff 250ms
+SELECT * FROM postgres_query('rsync_${__DATABASE__}', 'SELECT stream_txns > 0 AS streamed FROM pg_stat_replication_slots WHERE slot_name = ''rsub_sync''');
+----
+streamed
+t
+
+onlyif serenedb
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname FROM pg_subscription;
+----
+subname
+rsub_sync
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsync_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'INSERT INTO rsub_sync_rows SELECT g, ''after crash'' FROM generate_series(500001, 520000) g');
+
+onlyif serenedb
+connection after_second_crash
+query ok retry 480 backoff 250ms
+SELECT count(*) AS n, count(*) FILTER (WHERE payload = 'after crash') AS after, count(*) FILTER (WHERE payload = 'never committed') AS never FROM rsub_sync_rows;
+----
+n	after	never
+320000	20000	0
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+DROP SUBSCRIPTION rsub_sync;
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'ALTER SYSTEM RESET logical_decoding_work_mem', use_transaction := false);
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+CALL postgres_execute('rsync_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rsub_sync_pub; DROP TABLE rsub_sync_rows; END $$');
+
+onlyif serenedb
+connection after_second_crash
+statement ok
+DETACH rsync_${__DATABASE__};

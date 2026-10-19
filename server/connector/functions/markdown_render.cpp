@@ -387,7 +387,7 @@ std::string HighlightSql(const std::string& code, const Style& s) {
       out.append(code, 0, start);
     }
     const auto end = i + 1 < tokens.size()
-                       ? std::min(tokens[i + 1].start, code.size())
+                       ? std::min<size_t>(tokens[i + 1].start, code.size())
                        : code.size();
     if (end <= start) {
       continue;
@@ -424,7 +424,9 @@ std::string Literal(cmark_node* node) {
 
 std::string FlatText(cmark_node* root) {
   std::string out;
-  auto* iter = cmark_iter_new(root);
+  const std::unique_ptr<cmark_iter, decltype(&cmark_iter_free)> owner{
+    cmark_iter_new(root), &cmark_iter_free};
+  auto* const iter = owner.get();
   for (auto event = cmark_iter_next(iter); event != CMARK_EVENT_DONE;
        event = cmark_iter_next(iter)) {
     auto* node = cmark_iter_get_node(iter);
@@ -439,7 +441,6 @@ std::string FlatText(cmark_node* root) {
       out.push_back(' ');
     }
   }
-  cmark_iter_free(iter);
   return out;
 }
 

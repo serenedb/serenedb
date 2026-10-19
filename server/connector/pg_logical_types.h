@@ -84,9 +84,6 @@ DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
 DECLARE_PG_TYPE(SQLIDENTIFIER,  SqlIdentifier,  "sql_identifier",  VARCHAR)
 DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
 DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
-DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
-DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
-DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
 // PG pseudo-type `void`: functions declared RETURNS VOID still need a
 // representable result type. We back it with SQLNULL.
 DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
@@ -111,6 +108,11 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
     return false;
   }
   return kOidLikeAliases.contains(type.GetAlias());
+}
+
+inline bool IsRegLike(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::BIGINT &&
+         type.GetAlias().starts_with("reg");
 }
 
 #undef DECLARE_PG_TYPE

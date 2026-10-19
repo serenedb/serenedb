@@ -32,6 +32,7 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <string>
@@ -348,7 +349,7 @@ TEST(term_predicate_test, regexp_matches_its_lowering) {
 
   irs::ByRegexp broken;
   broken.mutable_options()->pattern = irs::bstring{B("a(b")};
-  EXPECT_EQ(nullptr, broken.CompileTermPredicate());
+  EXPECT_THROW(broken.CompileTermPredicate(), irs::SqlException);
 }
 
 TEST(term_predicate_test, regexp) {

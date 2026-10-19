@@ -52,6 +52,7 @@
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -243,6 +244,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
 
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
                             const irs::IndexFieldOptions& field_options,
+                            std::string_view index_name,
                             duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
@@ -255,16 +257,10 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
-  auto& engine = search::GetSearchEngine();
-  const bool slot = engine.TryAcquireCompaction();
-  absl::Cleanup release_slot = [&engine, slot] {
-    if (slot) {
-      engine.ReleaseCompaction();
-    }
-  };
-  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
+  const search::ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
 
-  inverted.Refresh();
+  search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
@@ -277,7 +273,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));
     }
-    inverted.Refresh();
+    search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
     if (empty_compaction) {
       break;
     }
@@ -294,6 +290,7 @@ struct InvertedStep {
   // encoding has to finish against it.
   std::shared_ptr<const irs::IndexFieldOptions> field_options;
   std::shared_ptr<search::SearchTable> search_data;
+  std::string name;
 };
 
 // Every base table of `database`, or of one schema of it when `schema` is set.
@@ -331,14 +328,16 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
       }
       const auto& inverted = index.Cast<catalog::InvertedIndexEntry>();
       if (inverted.Storage()) {
-        steps.emplace_back(inverted.Storage(), inverted.Config(), nullptr);
+        steps.emplace_back(inverted.Storage(), inverted.Config(), nullptr,
+                           index.name.GetIdentifierName());
       }
     });
   // Search tables also commit/consolidate/GC in the background; VACUUM is the
   // synchronous, on-demand path through the same maintenance ops.
   if (const auto* search =
         dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
-    steps.emplace_back(nullptr, nullptr, search->Storage());
+    steps.emplace_back(nullptr, nullptr, search->Storage(),
+                       table.name.GetIdentifierName());
   }
 }
 
@@ -411,7 +410,8 @@ void DispatchInverted(duckdb::ClientContext& context,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.emplace_back(std::move(storage), inverted->Config(), nullptr);
+      steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
+                         index->name.GetIdentifierName());
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(
@@ -488,22 +488,26 @@ void DispatchInverted(duckdb::ClientContext& context,
           pg::ProgressMetrics::Set(progress->stages_total, 4);
           pg::ProgressMetrics::Set(progress->stage, 0);
         }
-        step.storage->Refresh(report);
+        search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
       } else {
-        CompactInvertedStorage(*step.storage, *step.field_options, context,
-                               progress);
+        CompactInvertedStorage(*step.storage, *step.field_options, step.name,
+                               context, progress);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      if (action == Action::Refresh) {
-        search->VacuumRefresh();  // commit pending inserts + reclaim files
-      } else {
-        static constinit SettingRef gTargetSegments{
-          "sdb_compact_target_segments"};
-        search->VacuumCompact(gTargetSegments.Int(context));
+      const auto status = action == Action::Refresh
+                            ? search->VacuumRefresh()
+                            : search->VacuumCompact(GetIntSetting(
+                                context, "sdb_compact_target_segments"));
+      if (!status.ok()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INTERNAL_ERROR),
+          ERR_MSG("failed to ",
+                  action == Action::Refresh ? "refresh" : "compact",
+                  " search table '", step.name, "': ", status.message()));
       }
     }
   }
@@ -637,6 +641,13 @@ void VacuumExecute(duckdb::ClientContext& context,
   }
 
   auto target = ResolveName(context, bind_data, verb->scope);
+  if (needs_name &&
+      LookupDatabase(context, target.database).GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+      ERR_MSG("cannot run VACUUM (", bind_data.option, ") on database \"",
+              target.database, "\": it is attached read-only"));
+  }
 
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(

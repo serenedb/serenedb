@@ -36,6 +36,7 @@ class ConnectionContext;
 
 namespace sdb::network::pg {
 
+class ProtocolState;
 class WireSinkContext;
 
 }  // namespace sdb::network::pg
@@ -97,6 +98,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // it alive on every error/teardown path.
   std::shared_ptr<network::pg::WireSinkContext> wire_sink;
 
+  const network::pg::ProtocolState* protocol_state = nullptr;
+
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;
 
@@ -104,6 +107,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                                 duckdb::ClientContext& context,
                                 duckdb::idx_t wal_generation,
                                 duckdb::idx_t wal_end_offset) final;
+
+  void TransactionDurable(duckdb::AttachedDatabase& db,
+                          duckdb::ClientContext& context) final;
 
   void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
                               duckdb::ClientContext& context) final;
@@ -148,7 +154,8 @@ struct SystemConnection {
   std::shared_ptr<ConnectionContext> ctx;
 };
 
-SystemConnection MakeSystemConnection(std::string_view database,
+SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
+                                      std::string_view database,
                                       duckdb::idx_t database_id);
 
 }  // namespace sdb::connector

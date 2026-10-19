@@ -25,7 +25,6 @@
 #include <type_traits>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"

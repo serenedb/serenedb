@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -81,16 +82,25 @@ struct MissingDatabases {
 MissingDatabases gMissingDatabases;
 
 constexpr std::string_view kEngineDir = "engine_v1";
-constexpr std::string_view kCatalogLog = "catalog.wal";
 
 std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
   const std::filesystem::path& directory) {
   std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
   std::error_code ec;
-  for (const auto& entry : std::filesystem::directory_iterator{directory, ec}) {
+  std::filesystem::directory_iterator entries{directory, ec};
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
+              "': ", ec.message());
+  }
+  for (const auto& entry : entries) {
+    const bool is_directory = entry.is_directory(ec);
+    if (ec) {
+      SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
+                "': ", ec.message());
+    }
     const auto name = entry.path().filename().string();
     duckdb::idx_t oid = 0;
-    if (entry.is_directory(ec) && absl::c_all_of(name, absl::ascii_isdigit) &&
+    if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
         absl::SimpleAtoi(name, &oid)) {
       found.emplace_back(oid, entry.path());
     }
@@ -220,8 +230,8 @@ void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
   static_assert(
     duckdb::SERENEDB_VERSION_LOWER == duckdb::StorageVersion::SERENEDB_LATEST,
     "a file below SERENEDB_LATEST is raised on attach only in memory: "
-    "checkpoint it before anything writes its WAL or search WAL, so "
-    "neither log gets ahead of the file header");
+    "checkpoint it before anything writes its WAL, so the log does not get "
+    "ahead of the file header");
   options.options["storage_version"] =
     duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
       duckdb::StorageVersion::SERENEDB_LATEST)};
@@ -244,9 +254,9 @@ std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {
 }
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
-            std::string_view type, duckdb::AttachVisibility visibility,
-            bool defer_storage_load) {
-  duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
+            std::string_view type, duckdb::AccessMode access_mode,
+            duckdb::AttachVisibility visibility, bool defer_storage_load) {
+  duckdb::AttachOptions options{info.options, access_mode};
   options.db_type.assign(type);
   options.visibility = visibility;
   options.defer_storage_load = defer_storage_load;
@@ -270,6 +280,9 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
   auto visibility = duckdb::AttachVisibility::SHOWN;
   std::error_code ec;
   if (!gMissingDatabases.fresh_cluster && !std::filesystem::exists(file, ec)) {
+    if (ec) {
+      SDB_FATAL(STARTUP, "cannot stat '", file, "': ", ec.message());
+    }
     gMissingDatabases.missing.insert(oid);
     info.path = IN_MEMORY_PATH;
     visibility = duckdb::AttachVisibility::HIDDEN;
@@ -281,7 +294,8 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
       info.options.emplace(key, value);
     }
   }
-  Attach(context, info, SereneDBCatalog::kStorageType, visibility, true);
+  Attach(context, info, SereneDBCatalog::kStorageType,
+         duckdb::AccessMode::READ_WRITE, visibility, true);
   return manager.GetDatabase(name)->GetCatalog();
 }
 
@@ -309,10 +323,18 @@ void InitCatalog(std::string_view directory) {
   const auto log_path = layout.CatalogLogFile();
   std::error_code log_ec;
   gMissingDatabases.fresh_cluster = !std::filesystem::exists(log_path, log_ec);
+  if (log_ec) {
+    SDB_FATAL(STARTUP, "cannot stat '", log_path, "': ", log_ec.message());
+  }
   if (gMissingDatabases.fresh_cluster &&
       absl::c_any_of(OidDirectories(layout.EngineDir()), [](const auto& dir) {
         std::error_code ec;
-        return !std::filesystem::is_empty(dir.second, ec);
+        const bool empty = std::filesystem::is_empty(dir.second, ec);
+        if (ec) {
+          SDB_FATAL(STARTUP, "cannot list directory '", dir.second.string(),
+                    "': ", ec.message());
+        }
+        return !empty;
       })) {
     SDB_FATAL(STARTUP, "'", log_path, "' does not exist, but '",
               layout.EngineDir().string(),
@@ -331,7 +353,8 @@ void InitCatalog(std::string_view directory) {
   cluster_info.path = IN_MEMORY_PATH;
   context.RunFunctionInTransaction([&] {
     Attach(context, cluster_info, ClusterCatalog::kStorageType,
-           duckdb::AttachVisibility::HIDDEN, false);
+           duckdb::AccessMode::READ_WRITE, duckdb::AttachVisibility::HIDDEN,
+           false);
   });
   auto& instance = irs::DuckDBEngine::Instance().instance();
   auto& cluster = ClusterOf(instance);
@@ -381,7 +404,7 @@ void InitCatalog(std::string_view directory) {
       db->GetStorageManager().FinishLoad(context);
     }
   }
-  search::InitInvertedIndexes();
+  search::RecoverSearchStorages();
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();
@@ -399,7 +422,8 @@ void InitCatalog(std::string_view directory) {
       context.RunFunctionInTransaction([&] { server.get().Attach(context); });
     } catch (const std::exception& e) {
       SDB_WARN(GENERAL, "failed to re-attach foreign server '",
-               server.get().name.GetIdentifierName(), "': ", e.what());
+               server.get().name.GetIdentifierName(),
+               "': ", duckdb::ErrorData{e}.RawMessage());
     }
   }
 }

@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/file_opener.hpp>
@@ -34,7 +35,7 @@
 
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
+#include "pg/copy_in_batches.h"
 #include "pg/protocol.h"
 #include "server/utils/message_buffer.h"
 
@@ -45,7 +46,7 @@ constexpr std::string_view kDevStdin = "/dev/stdin";
 constexpr std::string_view kDevStdout = "/dev/stdout";
 
 struct ConnectionPlumbing {
-  pg::CopyInBridge* bridge;
+  pg::CopyInBatches* batches;
   message::Buffer* send_buffer;
   SereneDBClientState& state;
 };
@@ -69,31 +70,25 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
               " requires SereneDB client state (not registered)"));
   }
   auto& conn = state->GetConnectionContext();
-  auto* send = conn.GetSendBuffer();
-  if (!send) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("COPY ", path,
-              " requires a PG wire connection (transport not attached)"));
-  }
-  return {conn.GetSideChannel<pg::CopyInBridge>(), send, *state};
+  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(),
+          *state};
 }
 
 }  // namespace
 
-// Reads the non-seekable COPY FROM STDIN wire stream SINGLE-PASS, off the
-// bridge. Every COPY format opens it exactly once (csv/json sniff+scan share
-// one buffer-manager pass), so the ctor rejects an unexpected re-open -- a
-// non-seekable stream has nothing to replay. The session has already sent
-// CopyInResponse by the time the handle exists.
+// Reads the non-seekable COPY FROM STDIN wire stream SINGLE-PASS. Every COPY
+// format opens it exactly once (csv/json sniff+scan share one buffer-manager
+// pass), so the ctor rejects an unexpected re-open -- a non-seekable stream has
+// nothing to replay. The session has already sent CopyInResponse by the time
+// the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
   CopyInFileHandle(duckdb::FileSystem& fs, SereneDBClientState& state,
-                   pg::CopyInBridge& bridge)
+                   pg::CopyInBatches& batches)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
       _state{state},
-      _bridge{bridge} {
+      _batches{batches} {
     const auto open_idx = _state.copy_stdin_open_count++;
     if (open_idx != 0) {
       // A re-open would need to replay from offset 0, but the wire stream is
@@ -115,7 +110,30 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     if (_state.copy_stdin_done) {
       return 0;
     }
-    const auto read = _bridge.Read(static_cast<char*>(buf), nr_bytes);
+    auto* out = static_cast<char*>(buf);
+    int64_t read = 0;
+    while (read < nr_bytes) {
+      if (!_batch) {
+        _batch = _batches.Next();
+        if (!_batch) {
+          break;
+        }
+        _segment = 0;
+        _offset = 0;
+      }
+      const auto segment = _batch->segments[_segment].substr(_offset);
+      const auto take =
+        std::min<size_t>(segment.size(), static_cast<size_t>(nr_bytes - read));
+      std::memcpy(out + read, segment.data(), take);
+      read += static_cast<int64_t>(take);
+      _offset += take;
+      if (_offset == _batch->segments[_segment].size()) {
+        _offset = 0;
+        if (++_segment == _batch->segments.size()) {
+          _batch.Reset();
+        }
+      }
+    }
     if (read == 0) {
       _state.copy_stdin_done = true;
     }
@@ -124,7 +142,10 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
 
  private:
   SereneDBClientState& _state;
-  pg::CopyInBridge& _bridge;
+  pg::CopyInBatches& _batches;
+  pg::CopyBatchLease _batch;
+  size_t _segment = 0;
+  size_t _offset = 0;
 };
 
 // A dumb byte sink: each Write becomes one CopyData frame, nothing more. The
@@ -172,17 +193,23 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
   if (path == kDevStdin) {
     auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.bridge) {
+    if (!plumbing.batches) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
     return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
-                                               *plumbing.bridge);
+                                               *plumbing.batches);
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
+    if (!plumbing.send_buffer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ", path,
+                " requires a PG wire connection (transport not attached)"));
+    }
     return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
   }
   THROW_SQL_ERROR(
@@ -213,10 +240,12 @@ void SereneDBCopyFileSystem::Write(duckdb::FileHandle& handle, void* buffer,
                   ERR_MSG("Positional write not supported for COPY TO STDOUT"));
 }
 
-bool SereneDBCopyFileSystem::FileExists(
-  const std::string& filename,
-  duckdb::optional_ptr<duckdb::FileOpener> opener) {
-  return filename == kDevStdin || filename == kDevStdout;
+duckdb::FileExistence SereneDBCopyFileSystem::TryFileExists(
+  const std::string& filename, duckdb::optional_ptr<duckdb::FileOpener> opener,
+  duckdb::optional_ptr<duckdb::ErrorData> error) {
+  return filename == kDevStdin || filename == kDevStdout
+           ? duckdb::FileExistence::EXISTS
+           : duckdb::FileExistence::MISSING;
 }
 
 duckdb::vector<duckdb::OpenFileInfo> SereneDBCopyFileSystem::Glob(
@@ -255,6 +284,17 @@ duckdb::idx_t SereneDBCopyFileSystem::SeekPosition(duckdb::FileHandle& handle) {
 duckdb::FileType SereneDBCopyFileSystem::GetFileType(
   duckdb::FileHandle& handle) {
   return duckdb::FileType::FILE_TYPE_FIFO;
+}
+
+void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
+  auto chain = buffer.ReleaseChain();
+  for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+    const auto data = chunk->Data(chunk->GetEnd());
+    if (!data.empty()) {
+      handle.Write(const_cast<uint8_t*>(data.data()),
+                   static_cast<duckdb::idx_t>(data.size()));
+    }
+  }
 }
 
 }  // namespace sdb::connector

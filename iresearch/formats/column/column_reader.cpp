@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -49,10 +50,8 @@
 #include <duckdb/storage/statistics/variant_stats.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <memory>
-#include <optional>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -87,10 +86,12 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
   auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
   if (!codec) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "Column block uses compression ", static_cast<uint32_t>(compression_type),
-      ", which this release of SereneDB does not have; it was written by a "
-      "newer release")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Column block uses compression ",
+              static_cast<uint32_t>(compression_type),
+              ", which this release of SereneDB does not have; it was written "
+              "by a newer release"));
   }
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
                          codec.get()};
@@ -105,6 +106,61 @@ void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                   SerializeColumnBlockMeta(obj, blocks[i]);
                 });
               });
+}
+
+struct GatherBands {
+  uint32_t flat;
+  uint32_t native;
+};
+
+GatherBands BandsFor(duckdb::CompressionType codec,
+                     const duckdb::LogicalType& type) noexcept {
+  switch (codec) {
+    case duckdb::CompressionType::COMPRESSION_CONSTANT:
+      return {0, 1000};
+    case duckdb::CompressionType::COMPRESSION_RLE:
+      return {2, 70};
+    default:
+      return type.InternalType() == duckdb::PhysicalType::VARCHAR
+               ? GatherBands{10, 1000}
+               : GatherBands{10, 0};
+  }
+}
+
+bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+               uint64_t limit) noexcept {
+  if (hits < limit) {
+    return true;
+  }
+  uint64_t runs = 1;
+  for (duckdb::idx_t i = 1; i < hits; ++i) {
+    runs += sel.get_index(i) != sel.get_index(i - 1) + 1;
+    if (runs >= limit) {
+      return false;
+    }
+  }
+  return runs < limit;
+}
+
+bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                 duckdb::idx_t span) noexcept {
+  if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
+    return true;
+  }
+  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  switch (block.codec->type) {
+    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
+    case duckdb::CompressionType::COMPRESSION_FSST:
+      return FewerRuns(sel, hits, (650 * span - 1) / block.tuple_count + 1);
+    case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
+    case duckdb::CompressionType::COMPRESSION_ZSTD:
+      return FewerRuns(sel, hits, (120 * (span - hits) + 999) / 1000);
+    default:
+      return false;
+  }
 }
 
 }  // namespace
@@ -500,6 +556,9 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                  const duckdb::SelectionVector& sel,
                                  duckdb::idx_t hits, duckdb::Vector& out,
                                  duckdb::idx_t at) const {
+  if (at == 0) {
+    NewOutputVector(s);
+  }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
 
@@ -518,16 +577,17 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     ColumnReader::Scan(s, out, span);
     return;
   }
-  BeginScanVector(s);
-  if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
-    const auto codec = _segments[s.window.block].codec->type;
-    const auto bands = column_internal::BandsFor(codec, _type);
-    const auto permille = hits * 1000;
-    if (permille <= bands.flat * span) {
+  if (anchor < _row_count) {
+    const auto& block = _segments[Locate(anchor, s.window).block];
+    if (ScatterWins(block, _type, sel, hits, span)) {
       column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
       return;
     }
-    if (permille <= bands.native * span &&
+  }
+  BeginScanVector(s);
+  if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
+    const auto bands = BandsFor(_segments[s.window.block].codec->type, _type);
+    if (hits * 1000 <= bands.native * span &&
         _segments[s.window.block].codec->select != nullptr) {
       const bool self_valid = _segments[s.window.block].codec->validity ==
                               duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
@@ -751,7 +811,56 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
 
 ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        const ColumnReader& col)
-  : _ctx{col_reader}, _reader{&col} {}
+  : _ctx{col_reader, true},
+    _reader{&col},
+    _blocks(col.DataRgCount()),
+    _validity_blocks(col.Validity() ? col.Validity()->DataRgCount() : 0) {}
+
+ColumnReader::PointReader::OpenBlock& ColumnReader::PointReader::Block(
+  std::vector<OpenBlock>& blocks, const ColumnReader& reader,
+  BlockWindow& window, uint64_t row) {
+  if (row < window.begin || row >= window.end) {
+    window = reader.Locate(row, window);
+  }
+  auto& block = blocks[window.block];
+  block.last_use = ++_uses;
+  if (!block.segment) {
+    const auto bytes = reader._segments[window.block].byte_size;
+    Evict(bytes);
+    block.segment = reader.Open(window, _ctx);
+    block.bytes = bytes;
+    _open_bytes += bytes;
+    _open.push_back(&block);
+  }
+  return block;
+}
+
+void ColumnReader::PointReader::Evict(uint64_t incoming) {
+  constexpr uint64_t kOpenBytes = uint64_t{64} << 20;
+  while (!_open.empty() && _open_bytes + incoming > kOpenBytes) {
+    const auto oldest =
+      absl::c_min_element(_open, [](const OpenBlock* l, const OpenBlock* r) {
+        return l->last_use < r->last_use;
+      });
+    auto& block = **oldest;
+    block.state = duckdb::ColumnFetchState{};
+    block.segment.reset();
+    _open_bytes -= block.bytes;
+    block.bytes = 0;
+    *oldest = _open.back();
+    _open.pop_back();
+  }
+}
+
+IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchValidity(
+  const ColumnReader& validity, uint64_t row, duckdb::Vector& out,
+  duckdb::idx_t out_offset) {
+  auto& block = Block(_validity_blocks, validity, _validity_window, row);
+  block.segment->FetchRow(
+    block.state, static_cast<duckdb::row_t>(row - _validity_window.begin), out,
+    out_offset);
+  return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
+}
 
 bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
                                          duckdb::idx_t out_offset) {
@@ -761,31 +870,27 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
   const auto* validity = _reader->_validity.get();
-  if (validity) {
-    _validity_window = validity->Locate(row, _validity_window);
-    if (_validity_window.block != _cached_validity_block) {
-      _validity_block = validity->Open(_validity_window, _ctx);
-      _validity_fetch_state = duckdb::ColumnFetchState{};
-      _cached_validity_block = _validity_window.block;
-    }
-    _validity_block->FetchRow(
-      _validity_fetch_state,
-      static_cast<duckdb::row_t>(row - _validity_window.begin), out,
-      out_offset);
-    if (!duckdb::FlatVector::Validity(out).RowIsValid(out_offset)) {
-      return false;
-    }
+  if (validity && !FetchValidity(*validity, row, out, out_offset)) {
+    return false;
   }
-  _window = _reader->Locate(row, _window);
-  if (_window.block != _cached_block) {
-    _block = _reader->Open(_window, _ctx);
-    _fetch_state = duckdb::ColumnFetchState{};
-    _cached_block = _window.block;
-  }
-  _block->FetchRow(_fetch_state,
-                   static_cast<duckdb::row_t>(row - _window.begin), out,
-                   out_offset);
+  auto& block = Block(_blocks, *_reader, _window, row);
+  block.segment->FetchRow(block.state,
+                          static_cast<duckdb::row_t>(row - _window.begin), out,
+                          out_offset);
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
+}
+
+bool ColumnReader::PointReader::ValidRow(uint64_t row,
+                                         duckdb::Vector& scratch) {
+  if (row >= _reader->RowCount()) {
+    return false;
+  }
+  const auto* validity = _reader->_validity.get();
+  if (!validity) {
+    return true;
+  }
+  duckdb::FlatVector::ValidityMutable(scratch).SetValid(0);
+  return FetchValidity(*validity, row, scratch, 0);
 }
 
 }  // namespace irs

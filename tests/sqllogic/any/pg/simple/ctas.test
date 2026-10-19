@@ -184,7 +184,7 @@ query
 EXPLAIN CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-╭─ CREATE_TABLE_AS ─────────╮
+╭─ BATCH_CREATE_TABLE_AS ───╮
 ╰─────────────┬─────────────╯
 ╭─ GENERATE_SERIES ─────────╮
 │ Function: GENERATE_SERIES │
@@ -214,7 +214,7 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ CREATE_TABLE_AS ─────────╮
+╭─ BATCH_CREATE_TABLE_AS ───╮
 │ 1 row                 0µs │
 ╰─────────────┒┎────────────╯
 ╭─ TABLE_SCAN ┚┖────────────╮

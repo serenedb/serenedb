@@ -278,7 +278,13 @@ CREATE TABLE t1 AS (
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE t2 AS SELECT row('a');
+CREATE TABLE t2 AS SELECT row('a') AS r;
+
+query
+SELECT r, typeof(r) AS type FROM t2;
+----
+r	type
+(a)	TUPLE(VARCHAR)
 
 
 # DOCS_TEST: example_022

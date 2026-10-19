@@ -195,12 +195,12 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(VisibleCount(_info));
+    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
   return memory::make_managed<SegmentLiveDocs>(
-    doc_limits::min(), doc_limits::min() + VisibleCount(_info), *_docs_mask);
+    doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
@@ -209,7 +209,7 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
   SDB_ASSERT(options.db);
   col_reader =
     std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::RANDOM);
-  idx_reader = std::make_unique<IdxReader>(dir, meta.name);
+  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases);
 }
 
 }  // namespace irs

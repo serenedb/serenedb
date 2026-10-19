@@ -26,7 +26,6 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
-#include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -54,6 +53,14 @@ constexpr size_t kFrameTag = 1;  // leading message-type byte
 constexpr size_t kInt16 = 2;     // a big-endian int16 wire field
 constexpr size_t kInt32 = 4;     // a big-endian int32 wire field
 constexpr size_t kFrameHeader = kFrameTag + kInt32;  // type byte + length
+
+// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
+// length (0).
+constexpr std::string_view kPgCopyHeader{
+  "PGCOPY\n\xFF\r\n\0"
+  "\0\0\0\0"
+  "\0\0\0\0",
+  19};
 
 int DuckExceptionToErrcode(duckdb::ExceptionType type) {
   switch (type) {
@@ -147,6 +154,10 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (kind == "Type") {
       return dup ? ERRCODE_DUPLICATE_OBJECT : ERRCODE_UNDEFINED_OBJECT;
     }
+    if (kind == "prepared statement") {
+      return dup ? ERRCODE_DUPLICATE_PSTATEMENT
+                 : ERRCODE_INVALID_SQL_STATEMENT_NAME;
+    }
     if (kind == "configuration parameter") {
       // Unknown GUC -- DuckDB throws CatalogException::MissingEntry(
       // "configuration parameter", ...) for SET / RESET / current_setting. PG
@@ -159,6 +170,10 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (error.Type() == duckdb::ExceptionType::BINDER) {
     if (subtype == "NO_MATCHING_FUNCTION") {
       return ERRCODE_UNDEFINED_FUNCTION;
+    }
+    if (const auto kind_it = extra.find("type");
+        kind_it != extra.end() && kind_it->second == "prepared statement") {
+      return ERRCODE_INVALID_SQL_STATEMENT_NAME;
     }
     if (subtype == "UNSUPPORTED") {
       return ERRCODE_FEATURE_NOT_SUPPORTED;
@@ -190,6 +205,17 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
       return ERRCODE_UNIQUE_VIOLATION;
     }
     return ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION;
+  }
+  if (error.Type() == duckdb::ExceptionType::SEQUENCE) {
+    if (subtype == "NOT_YET_DEFINED") {
+      return ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE;
+    }
+    if (subtype == "LIMIT_REACHED") {
+      return ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED;
+    }
+    if (subtype == "OUT_OF_BOUNDS") {
+      return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+    }
   }
   return DuckExceptionToErrcode(error.Type());
 }
@@ -224,6 +250,7 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     for (uint16_t column = 0; column < columns; ++column) {
       serializers[column](context, decoded[column], row);
     }
+    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
     prefix[0] = PQ_MSG_DATA_ROW;
     absl::big_endian::Store32(
       prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
@@ -235,7 +262,8 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
 template<RowEncoding Encoding>
 void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
                     std::span<const sdb::pg::SerializationFunction> serializers,
-                    sdb::pg::SerializationContext& context) {
+                    sdb::pg::SerializationContext& context,
+                    bool binary_header) {
   const auto rows = chunk.size();
   if (rows == 0) {
     return;
@@ -248,14 +276,14 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
                                              decoded[column]);
   }
-  // The whole chunk's rows go in one CopyData ('d') frame whose length is
-  // backpatched after the rows. The frame is atomic: if a row throws partway,
-  // the Writer rewinds the entire partial frame.
-  message::Writer writer{out};
-  context.writer = &writer;
-  auto* prefix = writer.Alloc(kFrameHeader);
   for (duckdb::idx_t row = 0; row < rows; ++row) {
+    message::Writer writer{out};
+    context.writer = &writer;
+    auto* prefix = writer.Alloc(kFrameHeader);
     if constexpr (Encoding == RowEncoding::CopyBinary) {
+      if (binary_header && row == 0) {
+        writer.Write(kPgCopyHeader);
+      }
       // PGCOPY row: int16 field count, then the binary fields.
       absl::big_endian::Store16(writer.Alloc(kInt16), columns);
       for (uint16_t column = 0; column < columns; ++column) {
@@ -273,31 +301,22 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
       }
       writer.Write("\n");
     }
+    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
+    prefix[0] = PQ_MSG_COPY_DATA;
+    absl::big_endian::Store32(
+      prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
+    writer.Commit(false);
   }
-  prefix[0] = PQ_MSG_COPY_DATA;
-  absl::big_endian::Store32(prefix + kFrameTag,
-                            static_cast<int32_t>(writer.Written() - kFrameTag));
-  writer.Commit(false);
 }
 
 template void WriteCopyChunk<RowEncoding::CopyBinary>(
   message::Buffer&, const duckdb::DataChunk&,
   std::span<const sdb::pg::SerializationFunction>,
-  sdb::pg::SerializationContext&);
+  sdb::pg::SerializationContext&, bool);
 template void WriteCopyChunk<RowEncoding::CopyText>(
   message::Buffer&, const duckdb::DataChunk&,
   std::span<const sdb::pg::SerializationFunction>,
-  sdb::pg::SerializationContext&);
-
-namespace {
-
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
-// length (0).
-constexpr std::array<uint8_t, 19> kPgCopyHeader{
-  'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
-  0x00, 0,   0,   0,   0,   0,   0,    0,    0};
-
-}  // namespace
+  sdb::pg::SerializationContext&, bool);
 
 void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
   message::Writer w{out};
@@ -318,16 +337,20 @@ void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
   w.Commit(false);
 }
 
-void WriteCopyBinaryHeader(message::Buffer& out) {
+void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
+  auto& head = *first.head;
+  const auto* frame = head.WritableData() + head.GetBegin();
+  SDB_ASSERT(head.Size() >= kFrameHeader && frame[0] == PQ_MSG_COPY_DATA);
   message::Writer w{out};
-  const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
-  w.Write({reinterpret_cast<const char*>(kPgCopyHeader.data()),
-           kPgCopyHeader.size()});
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
-    prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));
+    prefix + kFrameTag,
+    absl::big_endian::Load32(frame + kFrameTag) + kPgCopyHeader.size());
+  w.Write(kPgCopyHeader);
   w.Commit(false);
+  head.SetBegin(head.GetBegin() + kFrameHeader);
+  first.bytes -= kFrameHeader;
 }
 
 void WriteCopyTextHeader(message::Buffer& out,
@@ -371,10 +394,13 @@ void WriteCopyTextHeader(message::Buffer& out,
   w.Commit(false);
 }
 
-void WriteCopyBinaryFooter(message::Buffer& out) {
+void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
+  if (binary_header) {
+    w.Write(kPgCopyHeader);
+  }
   absl::big_endian::Store16(w.Alloc(kInt16), static_cast<int16_t>(-1));
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
@@ -388,6 +414,87 @@ void WriteCopyDone(message::Buffer& out) {
   data[0] = PQ_MSG_COPY_DONE;
   absl::big_endian::Store32(data + kFrameTag, kInt32);
   w.Commit(false);
+}
+
+namespace {
+
+template<typename Body>
+void WriteFrame(message::Buffer& out, char type, Body&& body) {
+  message::Writer w{out};
+  const auto start = w.Written();
+  auto* prefix = w.Alloc(kFrameHeader);
+  std::forward<Body>(body)(w);
+  prefix[0] = static_cast<uint8_t>(type);
+  absl::big_endian::Store32(
+    prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));
+  w.Commit(false);
+}
+
+template<typename Body>
+void WriteUntypedFrame(message::Buffer& out, Body&& body) {
+  message::Writer w{out};
+  const auto start = w.Written();
+  auto* prefix = w.Alloc(kInt32);
+  std::forward<Body>(body)(w);
+  absl::big_endian::Store32(prefix, static_cast<int32_t>(w.Written() - start));
+  w.Commit(false);
+}
+
+}  // namespace
+
+void WriteSslRequest(message::Buffer& out) {
+  WriteUntypedFrame(out, [](message::Writer& w) {
+    absl::big_endian::Store32(w.Alloc(kInt32), NEGOTIATE_SSL_CODE);
+  });
+}
+
+void WriteStartupMessage(
+  message::Buffer& out,
+  std::span<const std::pair<std::string_view, std::string_view>> parameters) {
+  WriteUntypedFrame(out, [&](message::Writer& w) {
+    absl::big_endian::Store32(w.Alloc(kInt32), PG_PROTOCOL_LATEST);
+    for (const auto& [name, value] : parameters) {
+      w.Write(name);
+      w.Write(kNull);
+      w.Write(value);
+      w.Write(kNull);
+    }
+    w.Write(kNull);
+  });
+}
+
+void WriteQuery(message::Buffer& out, std::string_view query) {
+  WriteFrame(out, PQ_MSG_QUERY, [&](message::Writer& w) {
+    w.Write(query);
+    w.Write(kNull);
+  });
+}
+
+void WritePasswordMessage(message::Buffer& out, std::string_view password) {
+  WriteFrame(out, PQ_MSG_PASSWORD_MESSAGE, [&](message::Writer& w) {
+    w.Write(password);
+    w.Write(kNull);
+  });
+}
+
+void WriteSaslInitialResponse(message::Buffer& out, std::string_view mechanism,
+                              std::string_view data) {
+  WriteFrame(out, PQ_MSG_SASL_INITIAL_RESPONSE, [&](message::Writer& w) {
+    w.Write(mechanism);
+    w.Write(kNull);
+    absl::big_endian::Store32(w.Alloc(kInt32),
+                              static_cast<int32_t>(data.size()));
+    w.Write(data);
+  });
+}
+
+void WriteSaslResponse(message::Buffer& out, std::string_view data) {
+  WriteFrame(out, PQ_MSG_SASL_RESPONSE,
+             [&](message::Writer& w) { w.Write(data); });
+}
+
+void WriteCopyData(message::Buffer& out, std::string_view data) {
+  WriteFrame(out, PQ_MSG_COPY_DATA, [&](message::Writer& w) { w.Write(data); });
 }
 
 void WriteParameterStatus(message::Buffer& out, std::string_view name,
@@ -500,6 +607,41 @@ void WriteDiagnostic(message::Buffer& out, char type, std::string_view severity,
   w.Commit(false);
 }
 
+irs::pg::SqlErrorData ParseErrorResponse(std::string_view body) {
+  irs::pg::SqlErrorData error;
+  error.errcode = ERRCODE_INTERNAL_ERROR;
+  while (body.size() > 1) {
+    const char field = body.front();
+    body.remove_prefix(1);
+    const auto end = body.find('\0');
+    const auto value = body.substr(0, end);
+    body.remove_prefix(end == std::string_view::npos ? body.size() : end + 1);
+    switch (field) {
+      case 'C':
+        if (value.size() == 5) {
+          error.errcode =
+            MAKE_SQLSTATE(value[0], value[1], value[2], value[3], value[4]);
+        }
+        break;
+      case 'M':
+        error.errmsg = value;
+        break;
+      case 'D':
+        error.errdetail = value;
+        break;
+      case 'H':
+        error.errhint = value;
+        break;
+      case 'W':
+        error.context = value;
+        break;
+      default:
+        break;
+    }
+  }
+  return error;
+}
+
 void WriteErrorResponse(message::Buffer& out,
                         const irs::pg::SqlErrorData& error) {
   WriteDiagnostic(out, PQ_MSG_ERROR_RESPONSE, "ERROR", error);
@@ -512,7 +654,10 @@ void WriteFatalResponse(message::Buffer& out,
 
 void WriteNoticeResponse(message::Buffer& out,
                          const irs::pg::SqlErrorData& notice) {
-  WriteDiagnostic(out, PQ_MSG_NOTICE_RESPONSE, "WARNING", notice);
+  WriteDiagnostic(
+    out, PQ_MSG_NOTICE_RESPONSE,
+    notice.errcode == ERRCODE_SUCCESSFUL_COMPLETION ? "NOTICE" : "WARNING",
+    notice);
 }
 
 irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {

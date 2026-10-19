@@ -19,15 +19,19 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/config.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
+#include <pthread.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/error_data.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -43,17 +47,24 @@
 #include "network/pg/hba.h"
 #include "network/server.h"
 #include "query/server_engine.h"
+#include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
+#include "scheduler/job_scheduler.h"
 #include "server/utils/app_server.h"
+#include "server/utils/build.h"
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
-ABSL_FLAG(bool, remap_executable, true,
+ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE_DEFAULT,
           "Copy the server's machine code into anonymous huge-page memory at "
-          "startup and pre-read its read-only data, so the first queries after "
-          "a cold start pay no code page faults. Turn off when profiling with "
-          "perf, which symbolizes only file-backed code.");
+          "startup, so the first queries after a cold start pay no code page "
+          "faults and the code runs from huge pages. Off, the machine code is "
+          "locked in memory instead, or pre-read where locking is not "
+          "permitted, and perf can symbolize it, which it cannot for "
+          "anonymous code. Read-only data is pre-read either way. On by "
+          "default in Release and MinSizeRel builds, the ones that omit frame "
+          "pointers, and off in the others.");
 
 namespace {
 
@@ -61,6 +72,18 @@ using namespace sdb;
 using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+
+void SetSanitizerThreadStackSize() {
+#if defined(__GLIBC__) &&                  \
+  (defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
+   defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER))
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, size_t{64} << 20);
+  pthread_setattr_default_np(&attr);
+  pthread_attr_destroy(&attr);
+#endif
+}
 
 int RunServer(int argc, char** argv) {
   try {
@@ -79,19 +102,18 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
+    std::optional<replication::SubscriptionEngine> subscriptions;
+    JobScheduler jobs;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. The non-obvious edge: the search loops run ON
-    // the background pool, so SearchEngine::stop() must join them (it sets
-    // _stopping and Waits the loop Futures, which resume on the still-live
-    // pool) BEFORE BackgroundScheduler::stop() tears that pool down -- else a
-    // loop is stranded mid-resume. search.stop() does not destroy the engine
+    // NOT the reverse of startup. search.stop() does not destroy the engine
     // (its dtor runs at end of scope), so drop tasks draining on the pool
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_background = false, up_search = false, up_network = false;
+    bool up_background = false, up_search = false, up_subscriptions = false,
+         up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       irs::CrashHandler::SetState("stopping");
@@ -99,7 +121,8 @@ int RunServer(int argc, char** argv) {
         try {
           fn();
         } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception stopping ", what, ": ", ex.what());
+          SDB_ERROR(GENERAL, "exception stopping ", what, ": ",
+                    duckdb::ErrorData{ex}.RawMessage());
         } catch (...) {
           SDB_ERROR(GENERAL, "unknown exception stopping ", what);
         }
@@ -114,17 +137,24 @@ int RunServer(int argc, char** argv) {
         // stretched refresh timer (up to 5x the interval) expires.
         background.CancelDelays();
       }
+      if (up_subscriptions) {
+        stop("subscriptions signal", [&] { subscriptions->RequestStop(); });
+      }
       if (up_network) {
         // Listeners close and every session is terminated: its in-flight query
         // interrupted, its socket closed by its own writer.
         stop("network signal", [&] { network.RequestStop(); });
       }
       // Joins, in dependency order.
+      if (up_subscriptions) {
+        stop("subscriptions", [&] { subscriptions->stop(); });
+      }
       if (up_network) {
         // Sessions complete against the fully-live engine, then the io pool
-        // goes down. The search loops' Delay()s complete instantly without it.
+        // goes down.
         stop("network", [&] { network.stop(); });
       }
+      stop("jobs", [&] { jobs.Stop(); });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
@@ -135,6 +165,7 @@ int RunServer(int argc, char** argv) {
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
       stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
+      SDB_INFO(GENERAL, "SereneDB is shut down");
     };
 
     irs::CrashHandler::SetState("starting");
@@ -142,10 +173,6 @@ int RunServer(int argc, char** argv) {
     background.start();
     up_background = true;
     catalog::InitCatalog(db_path.directory());
-    // The io pool must be up before search.start(): the per-index refresh /
-    // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
-    // timers on the io pool. Without it Delay() returns instantly and the loops
-    // busy-spin every core, starving startup so no listener ever binds.
     network.StartIoPool();
     up_network = true;
     // Timers can be armed now. InitCatalog above already scheduled a drop per
@@ -154,14 +181,18 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }
+    subscriptions.emplace(*network.IoPool());
+    subscriptions->start();
+    up_subscriptions = true;
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();
 
-    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+    SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
 
     irs::CrashHandler::SetState("running");
     server.wait();
@@ -170,8 +201,8 @@ int RunServer(int argc, char** argv) {
     // gLogger is still up (Shutdown runs in main() after RunServer
     // returns), but go through SDB_ERROR so the line lands in the same
     // duckdb_logs() store as everything else.
-    SDB_ERROR(GENERAL,
-              "serened terminated because of an exception: ", ex.what());
+    SDB_ERROR(GENERAL, "serened terminated because of an exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   } catch (...) {
     SDB_ERROR(GENERAL,
               "serened terminated because of an exception of unknown type");
@@ -195,6 +226,8 @@ int RunSubcommand(int argc, char* argv[],
 extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
+  irs::CheckCpuFeatures(argv[0]);
+  SetSanitizerThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
@@ -219,20 +252,20 @@ int main(int argc, char* argv[]) {
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
-  const auto remap = absl::GetFlag(FLAGS_remap_executable)
-                       ? irs::RemapExecutable()
-                       : irs::ExecutableRemap{.skipped = "disabled"};
+  const auto remap =
+    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
+  SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
   server::query::RegisterServerExtensions(engine.instance());
 
   sdb::app::InitProcess(argv[0]);
-  SDB_INFO(STARTUP, "executable memory: ", remap.remapped >> 20,
-           " MB of machine code remapped into anonymous huge-page memory, ",
-           remap.populated >> 20, " MB of read-only mappings pre-read",
-           remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
+  SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
+            " MB of machine code remapped into anonymous huge-page memory, ",
+            remap.locked >> 20, " MB locked, ", remap.populated >> 20,
+            " MB pre-read",
+            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
-  sdb::app::ShutdownGlobals();
 
   engine.Shutdown();
   return rc;

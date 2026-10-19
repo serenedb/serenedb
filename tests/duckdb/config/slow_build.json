@@ -1,0 +1,9 @@
+{
+  "description": "SereneDB test-config added for sanitizer and Debug builds, on top of each suite's own. Tests that guard against a runaway query with `SET max_execution_time={TEST_MAX_EXECUTION_TIME}` default to their normal limit; these builds run the same queries several times slower, so they get ten times the recursive workloads' 30 seconds.",
+  "test_env": [
+    {
+      "env_name": "TEST_MAX_EXECUTION_TIME",
+      "env_value": "300000"
+    }
+  ]
+}

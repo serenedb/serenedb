@@ -94,10 +94,17 @@ class PhraseVariadicPositions {
       _value = pos.value();
       return true;
     }
+    if (pos_limits::eof(_value)) {
+      return false;
+    }
     auto min = pos_limits::eof();
     for (uint32_t i = 0; i != _size; ++i) {
       auto& pos = *_live[i];
-      if (pos.value() <= _value && !pos.next()) {
+      const auto at = pos.value();
+      if (at == _value && !pos.next()) {
+        continue;
+      }
+      if (at < _value && pos_limits::eof(pos.seek(_value + 1))) {
         continue;
       }
       if (pos.value() < min) {
@@ -129,19 +136,6 @@ class PhraseVariadicPositions {
   }
 
   uint32_t DocFreq() { return _freq; }
-
-  uint32_t Live() { return _size; }
-
-  auto& Term(uint32_t i) noexcept { return *_live[i]; }
-
-  bool Has(PosAttr::value_t low, PosAttr::value_t high) {
-    for (uint32_t i = 0; i != _size; ++i) {
-      if (_live[i]->seek(low) <= high) {
-        return true;
-      }
-    }
-    return false;
-  }
 
  private:
   IRS_FORCE_INLINE void Won([[maybe_unused]] uint32_t i) noexcept {
@@ -183,10 +177,6 @@ class PhraseVariadicPos {
     SDB_ASSERT(_count != 0);
     std::make_heap(_heap.begin(), _heap.end(), Greater);
   }
-
-  doc_id_t Value() const noexcept { return _doc; }
-
-  const doc_id_t& ValueRef() const noexcept { return _doc; }
 
   uint32_t Estimate() const noexcept {
     uint32_t estimate = 0;

@@ -21,8 +21,6 @@
 
 #include "search_engine.h"
 
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
@@ -40,25 +38,17 @@
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
-
-ABSL_DECLARE_FLAG(uint64_t, background_threads);
-ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
 SearchEngine::SearchEngine() { gInstance = this; }
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
-  // The background pool is max(logical/4, 2) threads (--background_threads,
-  // resolved at startup). Merges may use all but one of them -- refresh,
-  // cleanup, and drop are light and interleave on the single spare thread.
-  return std::max<int>(
-    1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+  return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
@@ -67,22 +57,40 @@ uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
 
 const irs::AnnBuildEnv& AnnBuildEnv() {
   static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .executor = &BackgroundScheduler::instance().executor(),
     .acquire = AnnAcquireWorkers,
     .release = AnnReleaseWorkers};
   return env;
 }
 
-void SearchEngine::start() {
-  StartInvertedIndexTasks();
-  if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
-    RunSearchTableRecovery();
+namespace {
+
+uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(
+    want, held, SearchEngine::MaxAnnBuildWorkers());
+}
+
+}  // namespace
+
+ManualCompactionSlot::ManualCompactionSlot() noexcept
+  : _held{GetSearchEngine().TryAcquireCompaction()} {}
+
+ManualCompactionSlot::~ManualCompactionSlot() {
+  if (_held) {
+    GetSearchEngine().ReleaseCompaction();
   }
-  // Only now that every shard is fully replayed + committed do we start the
-  // search-table background loops -- never while recovery is still rebuilding a
-  // table, or a background commit's WAL GC could reclaim un-replayed chunks.
-  StartSearchTableMaintenance();
-  SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
+}
+
+const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
+  static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
+                                    .acquire = AnnAcquireAllWorkers,
+                                    .release = AnnReleaseWorkers};
+  return _held ? &env : nullptr;
+}
+
+void SearchEngine::start() {
+  StartSearchStorageTasks();
+  SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
@@ -91,16 +99,13 @@ void SearchEngine::stop() {
   _loops.Wait();
 }
 
-template<class Storage>
+template<typename Storage>
 void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
   _loops.Consume(RefreshLoop<Storage>(storage),
                  CompactionCoordinator<Storage>(storage));
-  if constexpr (std::is_same_v<Storage, InvertedIndexStorage>) {
-    _loops.Consume(ReindexLoop(storage));
-  }
 }
 
 template void SearchEngine::StartTasks(

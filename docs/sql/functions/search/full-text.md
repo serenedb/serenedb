@@ -79,7 +79,7 @@ Match a run of tokens in their indexed order, optionally separated by token gaps
 | `text, ...` | `VARCHAR`/`BLOB` | — | Further segments, each preceded by its own `gap`. |
 | `slop` | `INTEGER` (named) | `0` | Budget of position moves allowed when lining the query up with the document. Must be between `0` and `65535`; incompatible with `[min, max]` interval gaps. |
 
-**How it works.** `ts_phrase` matches positions, so the column's dictionary must have `position` enabled. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` still answers a phrase that one of its shingles covers. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
+**How it works.** `ts_phrase` needs `position` on the column's dictionary, or the column's text in the index, as in a search table or a column also listed in `INCLUDE`; both return the same rows, and [Phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions) describes what the second costs. A [`generate_shingles`](./tokenizers/generate_shingles.md#phrase-search) dictionary without `position` answers a phrase that one of its shingles covers without the column's text. The tokens of each `text` segment must appear adjacent and in order. A dictionary can put several tokens at one position — the synonyms of [`expand_solr_synonyms`](./tokenizers/expand_solr_synonyms.md), or the n-grams of [`generate_ngrams`](./tokenizers/generate_ngrams.md) that start at the same character — and any one of them matches that position: with the synonyms `car, automobile`, `ts_phrase('red car')` also matches `red automobile`. The optional `gap` arguments control how far apart consecutive segments may sit. The gap counts the tokens *between* the two segments — `0` is immediate adjacency, `2` means exactly two intervening tokens. A `[min, max]` array accepts any gap in that inclusive range. Without `slop`, order is always preserved: `ts_phrase('a', 0, 'b')` does not match `b a`.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -175,6 +175,8 @@ Match indexed tokens against a regular expression.
 
 **How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
 
+A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile.
+
 A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. Alternatives that begin or end the same way are merged before matching, so thousands of `^(the\s+)?<name>\b.*` branches cost about as much as the distinct names they spell. A pattern that can only match a short list of words (up to 1024), such as `x|y|zz` or `gr[ae]y`, looks those words up directly, as `ts_any` does. A prepared statement compiles its patterns once; to reuse compiled patterns across queries as well, set [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) to the number of bytes the server may keep for them.
 
 Anchors and word boundaries keep their RE2 meaning inside a term: `^` and `$` hold only at its ends (and, with `(?m)`, around line breaks), and `\b` and `\B` look at the characters on either side. Over whole values indexed with a `keyword()` dictionary, `ts_regexp('(?i)^(the\s+)?siemens\b.*')` matches `The Siemens AG` and `siemens financial services` but not `siemensland`.
@@ -269,7 +271,11 @@ Range match between two bounds, with explicit control over each end's inclusivit
 | `min_incl` | `BOOLEAN` | — *(required)* | `true` includes `min` (`>=`), `false` excludes it (`>`). |
 | `max_incl` | `BOOLEAN` | — *(required)* | `true` includes `max` (`<=`), `false` excludes it (`<`). |
 
-**How it works.** `ts_between` performs a range scan over a numeric, temporal or verbatim-text (`keyword`-analyzed) column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** — there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every indexed value. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+**How it works.** `ts_between` performs a range scan over a numeric, temporal, boolean, text or `BLOB` column. Unlike `BETWEEN` in plain SQL, both inclusivity flags are explicit and **required** -- there is no default. Either bound may be `NULL` to make that side unbounded; both `NULL` matches every row, including rows where the column is `NULL`. (For a one-sided range you can also use the shorthand [`ts_lt`](#ts_lt)/[`ts_le`](#ts_le)/[`ts_gt`](#ts_gt)/[`ts_ge`](#ts_ge), which take a single non-`NULL` bound.)
+
+On text and `BLOB` columns, each non-`NULL` bound is analyzed with the column's dictionary, just like the one-sided functions. A bound must produce one token: multiple tokens are an error, and no tokens makes the range match nothing. An empty-string token is still a valid bound. This supports `keyword`, `normalize_tokens` and `collate_tokens` dictionaries, as well as tokenizing dictionaries when each bound produces one token. Comparisons use the resulting token bytes, so `collate_tokens` ranges follow the dictionary's locale order.
+
+A row matches when an indexed token satisfies both bounds. For dictionaries that emit one token per value, this agrees with combining the corresponding one-sided functions using `&&`. With multiple indexed tokens, the two separate comparisons can match different tokens in the same row. Inside a [`##` phrase](#a--b-phrase), `ts_between` bounds remain verbatim token bytes at that phrase position.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
@@ -632,6 +638,8 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `(a b)` | Grouping. |
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
+A quoted single word or pattern needs neither positions nor the column's text: `"car"` matches and scores like [`ts_phrase('car')`](#ts_phrase), and `"b*"` like `b*`.
+
 These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`.
 
 A column on the left of `@@` names the field, so every term in the query searches it and a `field:term` prefix is rejected. To let the query choose its own fields, put the relation's `tableoid` on the left instead — the same handle [`BM25`](./scoring.md) takes. The operand then means "this index" rather than "this field", and every term must name one:
@@ -707,7 +715,7 @@ Parse forgiving, web-search-bar syntax into a `TSQUERY`.
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR` | — | A search-engine-style string. Quoted substrings become phrases, the `OR` keyword separates alternatives, a leading `-` excludes a term and unquoted words are otherwise combined with `AND`. |
 
-**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed. An unquoted word that the dictionary splits into several tokens, such as `wi-fi`, matches as a phrase, as in PostgreSQL; on a column without the `position` feature every part is required instead. Synonyms of a word are alternatives, and a row matching several of them scores as its best match.
+**How it works.** This is the parser for untrusted, user-facing input: unlike [`to_tsquery`](#to_tsquery) it never raises on malformed syntax — stray operators are simply treated as text. It recognizes `"quoted phrases"`, the literal `OR` keyword, and a leading `-` for exclusion; everything else is `AND`-ed. An unquoted word that the dictionary splits into several tokens, such as `wi-fi`, matches as a phrase, as in PostgreSQL; on a column with neither the `position` feature nor [its text in the index](../../indexes/inverted/full-text-search.md#phrases-without-positions) every part is required instead. Synonyms of a word are alternatives, and a row matching several of them scores as its best match.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

@@ -20,6 +20,8 @@
 
 #include "iresearch/utils/remap_executable.hpp"
 
+#include <fast_float/fast_float.h>
+
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -95,13 +97,17 @@ std::vector<Mapping> ExecutableMappings() {
         line.compare(path_at, std::string::npos, exe) != 0) {
       continue;
     }
-    char* next = nullptr;
-    const auto begin = std::strtoull(line.c_str(), &next, 16);
-    if (next == nullptr || *next != '-') {
+    const auto* const line_end = line.data() + line.size();
+    uint64_t begin = 0;
+    const auto [dash, begin_ec] =
+      fast_float::from_chars(line.data(), line_end, begin, 16);
+    if (begin_ec != std::errc{} || *dash != '-') {
       continue;
     }
-    const auto end = std::strtoull(next + 1, &next, 16);
-    if (next == nullptr || *next != ' ' || next[1] != 'r') {
+    uint64_t end = 0;
+    const auto [next, end_ec] =
+      fast_float::from_chars(dash + 1, line_end, end, 16);
+    if (end_ec != std::errc{} || *next != ' ' || next[1] != 'r') {
       continue;
     }
     mappings.push_back({.begin = static_cast<uintptr_t>(begin),
@@ -115,6 +121,14 @@ size_t Populate(const Mapping& mapping) {
   const auto size = mapping.end - mapping.begin;
   if (madvise(reinterpret_cast<void*>(mapping.begin), size,
               MADV_POPULATE_READ) != 0) {
+    return 0;
+  }
+  return size;
+}
+
+size_t Lock(const Mapping& mapping) {
+  const auto size = mapping.end - mapping.begin;
+  if (mlock(reinterpret_cast<void*>(mapping.begin), size) != 0) {
     return 0;
   }
   return size;
@@ -244,7 +258,7 @@ bool RemapText(const Mapping& text) {
 
 }  // namespace
 
-ExecutableRemap RemapExecutable() {
+ExecutableRemap RemapExecutable(bool remap_text) {
   ExecutableRemap remap;
 #if defined(__linux__)
   const auto mappings = ExecutableMappings();
@@ -257,13 +271,18 @@ ExecutableRemap RemapExecutable() {
       remap.populated += Populate(mapping);
     }
   }
+  if (!remap_text) {
+    remap.skipped = "disabled";
+  }
 #if defined(IRS_REMAP_EXECUTABLE)
-  const bool background = SetAllocatorBackgroundThreads(false);
-  if (ThreadCount() != 1) {
+  const bool background = remap_text && SetAllocatorBackgroundThreads(false);
+  if (remap.skipped.empty() && ThreadCount() != 1) {
     remap.skipped = "other threads are already running";
   }
 #else
-  remap.skipped = "not supported by this build";
+  if (remap.skipped.empty()) {
+    remap.skipped = "not supported by this build";
+  }
 #endif
   for (const auto& mapping : mappings) {
     if (!mapping.exec) {
@@ -278,6 +297,10 @@ ExecutableRemap RemapExecutable() {
       remap.skipped = std::strerror(errno);
     }
 #endif
+    if (const auto locked = Lock(mapping); locked != 0) {
+      remap.locked += locked;
+      continue;
+    }
     remap.populated += Populate(mapping);
   }
 #if defined(IRS_REMAP_EXECUTABLE)

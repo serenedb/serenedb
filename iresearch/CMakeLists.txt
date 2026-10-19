@@ -51,7 +51,6 @@ set(IResearch_core_sources
     ./analysis/wildcard_tokenizer.cpp
     ./analysis/html_strip_tokenizer.cpp
     ./analysis/filter_tokens_tokenizer.cpp
-    ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp
@@ -71,6 +70,7 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
     ./formats/hnsw/hnsw_writer.cpp
@@ -79,6 +79,13 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
+    ./formats/ivf/quantizers/bq.cpp
+    ./formats/ivf/quantizers/osq.cpp
+    ./formats/ivf/quantizers/panorama.cpp
+    ./formats/ivf/quantizers/pq.cpp
+    ./formats/ivf/quantizers/rabitq.cpp
+    ./formats/ivf/quantizers/scalar.cpp
+    ./formats/ivf/quantizers/tq.cpp
     ./index/directory_reader.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
@@ -105,8 +112,11 @@ set(IResearch_core_sources
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
+    ./search/detail/compiled_phrase.cpp
     ./search/detail/pattern_cache.cpp
+    ./search/detail/row_values.cpp
     ./search/detail/term_acceptor.cpp
+    ./search/detail/token_phrase.cpp
     ./search/filters/filter.cpp
     ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
@@ -122,6 +132,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_filter.cpp
     ./search/count/make.cpp
     ./search/count/make_hnsw.cpp
+    ./search/count/make_exact.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
@@ -136,6 +147,7 @@ set(IResearch_core_sources
     ./search/count/make_ngram.cpp
     ./search/count/make_ngram_all.cpp
     ./search/count/make_wildcard_ngram.cpp
+    ./search/count/make_token_phrase.cpp
     ./search/count/make_geo_intersects.cpp
     ./search/count/make_geo_contains.cpp
     ./search/count/make_geo_is_contained.cpp
@@ -168,6 +180,7 @@ set(IResearch_core_sources
     ./search/lead/make_ngram_all_scored.cpp
     ./search/lead/make_wildcard_ngram_docs.cpp
     ./search/lead/make_wildcard_ngram_scored.cpp
+    ./search/lead/make_token_phrase.cpp
     ./search/lead/make_geo_intersects_docs.cpp
     ./search/lead/make_geo_intersects_scored.cpp
     ./search/lead/make_geo_contains_docs.cpp
@@ -215,6 +228,7 @@ set(IResearch_core_sources
     ./search/probe/make_ngram_all_scored.cpp
     ./search/probe/make_wildcard_ngram_docs.cpp
     ./search/probe/make_wildcard_ngram_scored.cpp
+    ./search/probe/make_token_phrase.cpp
     ./search/probe/make_geo_intersects_docs.cpp
     ./search/probe/make_geo_intersects_scored.cpp
     ./search/probe/make_geo_contains_docs.cpp
@@ -251,6 +265,7 @@ set(IResearch_core_sources
     ./search/fill/make_ngram_all_scored.cpp
     ./search/fill/make_wildcard_ngram_docs.cpp
     ./search/fill/make_wildcard_ngram_scored.cpp
+    ./search/fill/make_token_phrase.cpp
     ./search/fill/make_geo_intersects_docs.cpp
     ./search/fill/make_geo_intersects_scored.cpp
     ./search/fill/make_geo_contains_docs.cpp
@@ -261,6 +276,7 @@ set(IResearch_core_sources
     ./search/fill/make_geo_distance_scored.cpp
     ./search/docs/make.cpp
     ./search/docs/make_hnsw.cpp
+    ./search/docs/make_exact.cpp
     ./search/docs/make_ivf.cpp
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
@@ -275,12 +291,14 @@ set(IResearch_core_sources
     ./search/docs/make_ngram.cpp
     ./search/docs/make_ngram_all.cpp
     ./search/docs/make_wildcard_ngram.cpp
+    ./search/docs/make_token_phrase.cpp
     ./search/docs/make_geo_intersects.cpp
     ./search/docs/make_geo_contains.cpp
     ./search/docs/make_geo_is_contained.cpp
     ./search/docs/make_geo_distance.cpp
     ./search/hits/make.cpp
     ./search/hits/make_hnsw.cpp
+    ./search/hits/make_exact.cpp
     ./search/hits/make_ivf.cpp
     ./search/hits/make_posting.cpp
     ./search/hits/make_single_posting.cpp
@@ -296,12 +314,14 @@ set(IResearch_core_sources
     ./search/hits/make_ngram.cpp
     ./search/hits/make_ngram_all.cpp
     ./search/hits/make_wildcard_ngram.cpp
+    ./search/hits/make_token_phrase.cpp
     ./search/hits/make_geo_intersects.cpp
     ./search/hits/make_geo_contains.cpp
     ./search/hits/make_geo_is_contained.cpp
     ./search/hits/make_geo_distance.cpp
     ./search/top/make.cpp
     ./search/top/make_hnsw.cpp
+    ./search/top/make_exact.cpp
     ./search/top/make_ivf.cpp
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
@@ -316,6 +336,7 @@ set(IResearch_core_sources
     ./search/top/make_ngram.cpp
     ./search/top/make_ngram_all.cpp
     ./search/top/make_wildcard_ngram.cpp
+    ./search/top/make_token_phrase.cpp
     ./search/top/make_geo_intersects.cpp
     ./search/top/make_geo_contains.cpp
     ./search/top/make_geo_is_contained.cpp
@@ -333,11 +354,13 @@ set(IResearch_core_sources
     ./search/queries/boolean_query.cpp
     ./search/filters/filter_optimizer.cpp
     ./search/filters/boolean_rules.cpp
+    ./search/filters/deferral.cpp
     ./search/filters/range_rules.cpp
     ./search/filters/lowering_rules.cpp
     ./search/filters/levenshtein_prefix_rules.cpp
     ./search/filters/ngram_similarity_filter.cpp
     ./search/filters/vector_similarity_filter.cpp
+    ./search/filters/vector_exact_filter.cpp
     ./search/queries/hnsw_query.cpp
     ./search/queries/vector_similarity_query.cpp
     ./search/scorers/vector_similarity_scorer.cpp
@@ -380,6 +403,7 @@ set(IResearch_core_sources
     ./utils/application_exit.cpp
     ./utils/async_utils.cpp
     ./utils/bit_packing.cpp
+    ./utils/cpu_features.cpp
     ./utils/crash_handler.cpp
     ./utils/debugging.cpp
     ./utils/duckdb_engine.cpp
@@ -395,7 +419,6 @@ set(IResearch_core_sources
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
     ./utils/string_utils.cpp
-    ./utils/zstd_context.cpp
 )
 
 find_package(FLEX)
@@ -519,6 +542,7 @@ target_link_libraries(
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
+    PUBLIC pcg
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2

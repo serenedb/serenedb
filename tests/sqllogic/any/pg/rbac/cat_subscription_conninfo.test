@@ -1,0 +1,70 @@
+statement ok
+DROP SUBSCRIPTION IF EXISTS cat_sub_conninfo;
+
+statement ok
+DROP ROLE IF EXISTS cat_sub_intern;
+
+statement ok
+CREATE ROLE cat_sub_intern LOGIN PASSWORD 'cat_sub_intern_pw';
+
+statement ok
+CREATE SUBSCRIPTION cat_sub_conninfo CONNECTION 'host=127.0.0.1 port=1 user=x password=cat_sub_secret dbname=y' PUBLICATION cat_sub_pub WITH (connect = false, slot_name = NONE);
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+statement error
+SELECT subconninfo FROM pg_subscription;
+----
+db error: ERROR: permission denied for table pg_subscription<slt:ignore>
+
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+statement error
+SELECT * FROM pg_subscription;
+----
+db error: ERROR: permission denied for table pg_subscription<slt:ignore>
+
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT subname, subenabled, subpublications FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
+----
+subname	subenabled	subpublications
+cat_sub_conninfo	f	{cat_sub_pub}
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT count(*) > 0 AS counted FROM pg_subscription;
+----
+counted
+t
+
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT has_table_privilege('pg_subscription', 'SELECT') AS on_table,
+       has_column_privilege('pg_subscription', 'subconninfo', 'SELECT') AS on_conninfo,
+       has_column_privilege('pg_subscription', 'subname', 'SELECT') AS on_name,
+       has_any_column_privilege('pg_subscription', 'SELECT') AS on_any,
+       has_any_column_privilege('pg_subscription', 'SELECT, INSERT') AS on_any_list;
+----
+on_table	on_conninfo	on_name	on_any	on_any_list
+f	f	t	t	t
+
+query
+SELECT has_column_privilege('cat_sub_intern', 'pg_subscription', 14::int2, 'SELECT') AS on_conninfo,
+       has_column_privilege('cat_sub_intern', 'pg_subscription', 4::int2, 'SELECT') AS on_name;
+----
+on_conninfo	on_name
+f	t
+
+connection default
+query
+SELECT subconninfo FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
+----
+subconninfo
+host=127.0.0.1 port=1 user=x password=cat_sub_secret dbname=y
+
+statement ok
+DROP SUBSCRIPTION cat_sub_conninfo;
+
+statement ok
+DROP ROLE cat_sub_intern;

@@ -50,6 +50,11 @@ if [[ -n "$SDB_DUCKDB_MAX_THREADS" ]] && [[ -z "${SLURM_CPUS_ON_NODE:-}" ]]; the
 	export SLURM_CPUS_ON_NODE="$SDB_DUCKDB_MAX_THREADS"
 fi
 
+OWNER_LABEL=()
+if [[ -n "${SDB_DOCKER_OWNER:-}" ]]; then
+	OWNER_LABEL=(--label "serenedb.owner=$SDB_DOCKER_OWNER")
+fi
+
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(
 	[core]="$WORKSPACE/third_party/duckdb"
@@ -65,6 +70,11 @@ declare -A SUITE_DIR=(
 	[interop]="$SCRIPT_DIR/interop"
 )
 SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
+CORE_SERIAL_TESTS=(
+	test/sql/storage/concurrent_checkpoint_append_before_snapshot.test_slow
+	test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow
+	test/sql/storage/concurrent_checkpoint_writes_mid_write.test_slow
+)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and
@@ -168,7 +178,7 @@ PROXY_PIDS=()
 
 cleanup_fixtures() {
 	if [[ -n "$AZURITE_CONTAINER" ]]; then
-		docker rm -f "$AZURITE_CONTAINER" >/dev/null 2>&1 || true
+		docker rm -fv "$AZURITE_CONTAINER" >/dev/null 2>&1 || true
 	fi
 	if [[ ${#PROXY_PIDS[@]} -gt 0 ]]; then
 		kill "${PROXY_PIDS[@]}" 2>/dev/null || true
@@ -202,6 +212,7 @@ start_postgres_docker() {
 	# Same path inside the container as outside, so tests that COPY FROM a
 	# host path via postgres_execute() resolve it in the postgres backend.
 	export SDB_WORKSPACE_DIR="$WORKSPACE"
+	export PG_FIXTURE_IMAGE="${PG_FIXTURE_IMAGE:-serenedb/serenedb-test-postgres:$("$WORKSPACE/tests/sqllogic/fixtures/image_tag.sh" "$WORKSPACE/tests/sqllogic/fixtures/postgres")}"
 	echo "Starting postgres in docker (host port $POSTGRES_HOST_PORT)..."
 	docker compose -p "$PG_DOCKER_PROJECT" -f "$SCRIPT_DIR/docker-compose.postgres.yml" up -d || return 1
 	for i in $(seq 1 30); do
@@ -223,6 +234,8 @@ start_postgres_docker() {
 # tests query fixtures that must already be in it. Idempotent: repeated runs
 # against the same server skip straight past.
 provision_postgres() {
+	PGPASSWORD="" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 -q \
+		-c "CREATE EXTENSION IF NOT EXISTS postgis" || return 1
 	if PGPASSWORD="" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
 		-tAc "SELECT 1 FROM pg_database WHERE datname='postgresscanner'" | grep -q 1; then
 		echo "Master database 'postgresscanner' already provisioned, skipping."
@@ -252,7 +265,7 @@ ensure_postgres_fixture() {
 	fi
 	provision_postgres || return 1
 	# Upstream tests gate on this: require-env POSTGRES_TEST_DATABASE_AVAILABLE.
-	export POSTGRES_TEST_DATABASE_AVAILABLE=1
+	export POSTGRES_TEST_DATABASE_AVAILABLE=1 HAS_POSTGIS=1
 	if grep -qE '^SDB_SANITIZE:STRING=.+' "$WORKSPACE/$BUILD_DIR/CMakeCache.txt"; then
 		export SANITIZER_BUILD=1
 	fi
@@ -282,7 +295,7 @@ generate_iceberg_data() {
 	local generator=("$SCRIPT_DIR/generate_iceberg_data.sh" fixture local)
 	echo "Generating Iceberg test data, log: $REPORTS_DIR/iceberg-data.log"
 	if ! python3 -c 'import pyspark' 2>/dev/null; then
-		generator=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		generator=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${generator[@]}")
 	fi
 	"${generator[@]}" >"$REPORTS_DIR/iceberg-data.log" 2>&1 || {
@@ -366,7 +379,7 @@ provision_s3() {
 	local provision=(python3 "$SCRIPT_DIR/provision_s3.py" "http://$S3_HOST:9000"
 		"${SUITE_DIR[core]}/data" "$1")
 	if ! python3 -c 'import boto3' 2>/dev/null; then
-		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		provision=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		--add-host "$S3_HOST:$(getent hosts "$S3_HOST" | awk '{print $1}')"
 		-v "$WORKSPACE:$WORKSPACE" -v "$1:$1" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}"
 		"${provision[@]}")
@@ -416,7 +429,7 @@ ensure_azurite() {
 	if [[ -z "${AZURITE_RUNNING:-}" ]] && ! curl -s -o /dev/null http://127.0.0.1:10000; then
 		AZURITE_CONTAINER="sdb-azurite-$$"
 		echo "Starting Azurite in docker (127.0.0.1:10000)..."
-		docker run -d --name "$AZURITE_CONTAINER" -p 127.0.0.1:10000:10000 \
+		docker run -d --name "$AZURITE_CONTAINER" "${OWNER_LABEL[@]}" -p 127.0.0.1:10000:10000 \
 			mcr.microsoft.com/azure-storage/azurite:3.37.0 \
 			azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck >/dev/null || return 1
 	fi
@@ -430,7 +443,7 @@ ensure_azurite() {
 	done
 	local provision=(python3 "$SCRIPT_DIR/provision_azurite.py" "$AZURITE_CONNECTION_STRING" "${SUITE_DIR[azure]}/data")
 	if ! python3 -c 'import azure.storage.blob' 2>/dev/null; then
-		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		provision=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${provision[@]}")
 	fi
 	"${provision[@]}" >"$REPORTS_DIR/azurite-data.log" 2>&1 || {
@@ -494,6 +507,9 @@ done
 
 log="$REPORTS_DIR/duckdb.log"
 args=(--test-dir "${SUITE_DIR[core]}")
+if grep -qsE '^(SDB_SANITIZE:STRING=.+|CMAKE_BUILD_TYPE:STRING=Debug)$' "$WORKSPACE/$BUILD_DIR/CMakeCache.txt"; then
+	args+=(--test-config "$SCRIPT_DIR/config/slow_build.json")
+fi
 filters=()
 serial_filters=()
 for suite in $unittest_suites; do
@@ -501,6 +517,13 @@ for suite in $unittest_suites; do
 	[[ -f "$config" ]] && args+=(--test-config "$config")
 	if [[ "$suite" == "postgres_scanner" ]]; then
 		serial_filters+=("$(suite_filter "$suite")")
+	elif [[ "$suite" == "core" ]]; then
+		core_filter="\"$(suite_filter "$suite")\""
+		for test in "${CORE_SERIAL_TESTS[@]}"; do
+			core_filter+=" ~\"$test\""
+			serial_filters+=("\"$test\"")
+		done
+		filters+=("$core_filter")
 	elif [[ "$suite" == "iceberg" ]]; then
 		filters+=("\"$(suite_filter "$suite")\" ~\"$ICEBERG_DIR/test/sql/local/catalog_*\"")
 	elif [[ "$suite" == "httpfs" ]]; then

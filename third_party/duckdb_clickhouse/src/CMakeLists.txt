@@ -6,6 +6,7 @@ add_library(
   clickhouse_ext_library OBJECT
   clickhouse_extension.cpp
   clickhouse_connection.cpp
+  clickhouse_logging.cpp
   clickhouse_types.cpp
   clickhouse_filter_pushdown.cpp
   clickhouse_scanner.cpp

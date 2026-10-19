@@ -1,0 +1,106 @@
+statement ok
+CREATE TABLE hnsw_fp16 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_fp16_idx ON hnsw_fp16
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'fp16'));
+
+statement ok
+INSERT INTO hnsw_fp16 SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_fp16;
+
+query
+SELECT pk FROM hnsw_fp16_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+51
+35
+
+query
+SELECT count(*) FROM hnsw_fp16_idx;
+----
+count
+64
+
+
+statement ok
+CREATE TABLE hnsw_bf16 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_bf16_idx ON hnsw_bf16
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'bf16'));
+
+statement ok
+INSERT INTO hnsw_bf16 SELECT pk, emb FROM hnsw_fp16;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bf16;
+
+query
+SELECT pk FROM hnsw_bf16_idx
+  ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+58
+50
+42
+
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+CREATE TABLE ivf_fp16 (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_fp16_idx ON ivf_fp16
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'fp16'));
+
+statement count 4
+INSERT INTO ivf_fp16 VALUES
+  (1, [1, 0, 0]::FLOAT[3]),
+  (2, [0, 1, 0]::FLOAT[3]),
+  (3, [0, 0, 1]::FLOAT[3]),
+  (4, [1, 1, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_fp16;
+
+query
+SELECT pk FROM ivf_fp16_idx ORDER BY emb <=> [0.9, 1, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+4
+2
+
+
+statement error
+CREATE INDEX hnsw_fp16_bits ON hnsw_fp16
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'fp16', nb_bits = 2));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'rabitq', 'tq', 'bq' or 'osq'
+
+
+statement error
+CREATE INDEX hnsw_bf16_l1 ON hnsw_fp16
+  USING inverted(pk, emb hnsw (metric = 'l1', quant = 'bf16'));
+----
+db error: ERROR: Column 'emb': hnsw with metric = 'l1' supports only quant = none
+
+
+statement ok
+DROP TABLE hnsw_fp16;
+
+statement ok
+DROP TABLE hnsw_bf16;
+
+statement ok
+DROP TABLE ivf_fp16;

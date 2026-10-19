@@ -14,6 +14,9 @@ hash-threshold 100
 #   - MVCC: the index snapshot and the source read must agree
 
 statement ok
+SET sdb_ann_oversample = 4
+
+statement ok
 SET sdb_ivf_search_nprobe = 1000
 
 # --- a pool spanning several lookup chunks ------------------------------------

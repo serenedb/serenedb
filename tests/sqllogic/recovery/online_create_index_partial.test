@@ -35,7 +35,7 @@ CREATE INDEX ocp_race_idx ON ocp_race USING inverted(label) WHERE live;
 connection default
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM pg_stat_progress_create_index
-WHERE relid = 'ocp_race'::regclass;
+WHERE relid = 'ocp_race'::regclass AND phase = 'building index';
 ----
 count
 1

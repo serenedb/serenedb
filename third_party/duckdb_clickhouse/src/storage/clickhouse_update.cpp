@@ -144,11 +144,10 @@ SinkFinalizeType ClickHouseUpdate::Finalize(Pipeline &pipeline, Event &event, Cl
 	// Guard against mutating rows that merely share a (non-unique) key value. `rows`
 	// holds one entry per distinct key. Very large id lists can exceed the server's
 	// max_query_size -- a loud error (per-statement settings would lift it).
-	VerifyRowIdCoverage(connection, gstate.table.database, gstate.table.table, pk_column, id_list, rows.size(),
+	VerifyRowIdCoverage(context, connection, gstate.table.database, gstate.table.table, pk_column, id_list, rows.size(),
 	                    "UPDATE");
 	try {
-		ClickHouseConnection::LogQuery(sql);
-		connection.GetClient().Execute(sql);
+		connection.Execute(context, sql);
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error during UPDATE: %s", e.what());
 	}

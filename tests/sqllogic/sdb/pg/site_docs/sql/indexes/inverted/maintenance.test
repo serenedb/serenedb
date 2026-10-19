@@ -86,3 +86,20 @@ ALTER TABLE my_events RESET (compaction_interval);
 
 statement ok
 ALTER INDEX logs_idx RESET (compaction_interval);
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (refresh_interval = 0);
+----
+db error: ERROR: refresh_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (refresh_interval = ...).
+
+
+statement error
+CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (row_group_size = 4096);
+----
+db error: ERROR: row_group_size is a table option on a search-backed table
+HINT: Set it in CREATE TABLE ... WITH (storage = 'search', row_group_size = ...).

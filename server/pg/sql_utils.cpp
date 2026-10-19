@@ -108,6 +108,23 @@ std::string QuoteIdentifier(std::string_view ident) {
   return out;
 }
 
+std::string QuoteLiteral(std::string_view value) {
+  std::string out;
+  out.reserve(value.size() + 3);
+  if (value.find('\\') != std::string_view::npos) {
+    out += 'E';
+  }
+  out += '\'';
+  for (const auto c : value) {
+    if (c == '\'' || c == '\\') {
+      out += c;
+    }
+    out += c;
+  }
+  out += '\'';
+  return out;
+}
+
 namespace {
 
 template<typename Match>
@@ -164,6 +181,9 @@ KeyIndex FindKeyIndex(duckdb::ClientContext& context,
 }
 
 std::string MacroBody(const duckdb::MacroFunction& macro) {
+  if (!macro.source.empty()) {
+    return macro.source;
+  }
   if (macro.type == duckdb::MacroType::TABLE_MACRO) {
     return macro.Cast<duckdb::TableMacroFunction>().query_node->ToString();
   }

@@ -25,6 +25,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
@@ -183,14 +184,15 @@ void ValidateKey(const duckdb::TableCatalogEntry& table) {
 
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   const duckdb::TableCatalogEntry& table) {
-  auto config = std::make_shared<InvertedIndexConfig>();
+  std::vector<InvertedIndexKey> keys;
+  InvertedIndexFields fields;
   for (const auto index : connector::primary_key::KeyColumns(table)) {
     const auto column = table.GetColumn(index).Oid();
-    config->fields.emplace(column,
-                           InvertedIndexField{{.indexed_term_dict = true}});
-    config->keys.push_back({{.field_id = column, .column_id = column}, {}});
+    fields.emplace(column, InvertedIndexField{{.indexed_term_dict = true}});
+    keys.push_back({{.field_id = column, .column_id = column}, {}});
   }
-  return config;
+  return std::make_shared<InvertedIndexConfig>(std::move(keys),
+                                               std::move(fields));
 }
 
 }  // namespace
@@ -221,6 +223,27 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
             "\" must be 'transactional' or 'search', got \"", engine, "\""));
 }
 
+void RequireSearchTableIndexOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option on a search-backed table"),
+      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
+  }
+  if (absl::c_contains(kSearchTableSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option on a search-backed table"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', ", name,
+               " = ...)."));
+  }
+  if (name == kSegmentDocsMaxSetting) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " does not apply to an index on a search-backed table"));
+  }
+}
+
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
@@ -245,9 +268,9 @@ SearchTableEntry::SearchTableEntry(
   }
   if (!_storage) {
     _storage = search::SearchTable::Create(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(), oid,
-      base.oid == 0, _options,
-      search::SearchTable::DeclaredCompression(GetColumns()));
+      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
+      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
+      _options, search::SearchTable::DeclaredCompression(GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -444,6 +467,49 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
   }
+}
+
+void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
+                                    duckdb::DataChunk& chunk,
+                                    duckdb::optional_idx row_start) {
+  std::vector<connector::ColumnId> column_ids;
+  for (const auto& column : _columns.Logical()) {
+    column_ids.emplace_back(connector::TableColumnId(column));
+  }
+  _storage->ReplayInsert(context, catalog, column_ids, chunk,
+                         row_start.GetIndex());
+}
+
+void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
+                                    duckdb::DataChunk& chunk) {
+  _storage->ReplayDelete(catalog.GetAttached(), chunk);
+}
+
+void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
+  _storage->ReplayTruncate(catalog.GetAttached());
+}
+
+void SearchTableEntry::ReplayAdoptSegments(
+  duckdb::ClientContext&, duckdb::vector<std::string> segments) {
+  _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
+}
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  duckdb::DuckCatalog& catalog) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  std::vector<std::shared_ptr<search::SearchTable>> tables;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
+            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
+          tables.push_back(entry.Cast<SearchTableEntry>().Storage());
+        }
+      });
+  }
+  return tables;
 }
 
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,

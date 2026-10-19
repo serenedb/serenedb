@@ -105,6 +105,9 @@ mkdir -p "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}"
 if test -z "$BUILD_IMAGE"; then
 	export BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
 fi
+if test -z "${PG_FIXTURE_IMAGE:-}"; then
+	export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$("$SQLLOGIC_DIR/fixtures/image_tag.sh" "$SQLLOGIC_DIR/fixtures/postgres")"
+fi
 
 # Pass host user to compose/docker for correct file ownership
 export DOCKER_UID="$(id -u)"
@@ -124,10 +127,13 @@ if ! test -f "$SQLLOGIC_DIR/$COMPOSE_FILE"; then
 	exit 255
 fi
 
-# Reap orphans from earlier interrupted runs before bringing the stack up.
+# Reap orphans from earlier interrupted runs before bringing the stack up; CI
+# jobs remove their runner's containers by owner label instead.
 # See scripts/reap_stale_docker_orphans.sh for the full rationale.
-source "$SQLLOGIC_DIR/../../scripts/reap_stale_docker_orphans.sh"
-reap_stale_docker_orphans
+if [[ -z "${SDB_DOCKER_OWNER:-}" ]]; then
+	source "$SQLLOGIC_DIR/../../scripts/reap_stale_docker_orphans.sh"
+	reap_stale_docker_orphans
+fi
 
 cleanup() {
 	docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans

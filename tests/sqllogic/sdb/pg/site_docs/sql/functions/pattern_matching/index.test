@@ -284,3 +284,38 @@ FROM glob('${__TEST_DIR__}/site_docs_pattern_matching_example_013_**/README.md')
 ORDER BY file;
 ----
 file
+
+# DOCS_TEST: example_014
+
+statement ok
+DROP TABLE IF EXISTS logins;
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'a%c' LIKE 'a\%c' AS percent, 'azc' LIKE 'a\%c' AS other, 'a\c' LIKE 'a\\c' AS backslash;
+----
+percent	other	backslash
+t	f	t
+
+statement ok
+CREATE TABLE logins (name VARCHAR);
+
+statement ok
+INSERT INTO logins VALUES ('admin_1'), ('adminx1');
+
+query
+SELECT name FROM logins WHERE name LIKE 'admin\_%';
+----
+name
+admin_1
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'a\c' LIKE 'a\c' AS default_escape, 'a\c' LIKE 'a\c' ESCAPE '' AS no_escape;
+----
+default_escape	no_escape
+f	t

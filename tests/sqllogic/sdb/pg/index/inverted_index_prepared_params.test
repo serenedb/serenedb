@@ -1,0 +1,419 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY ppa_dict AS split_text(case := 'lower')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE ppa (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX ppa_idx ON ppa
+  USING inverted(pk, v, b ppa_dict, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE TABLE ppas (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX ppas_idx ON ppas
+  USING inverted(pk, v, b ppa_dict, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO ppa SELECT i, i % 10,
+  CASE WHEN i < 5 THEN repeat('zeta ', i + 1) || 'alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100) t(i);
+
+statement ok
+INSERT INTO ppas SELECT i, i % 10,
+  CASE WHEN i < 5 THEN repeat('zeta ', i + 1) || 'alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ppa;
+
+statement ok
+VACUUM (REFRESH_TABLE) ppas;
+
+statement ok
+PREPARE ppa_knn AS SELECT pk FROM ppa_idx WHERE v = $1
+  ORDER BY emb <-> $2::FLOAT[2] LIMIT $3;
+
+statement ok
+PREPARE ppa_bm25 AS SELECT pk FROM ppa_idx WHERE b @@ $1::VARCHAR
+  ORDER BY bm25(tableoid) DESC LIMIT $2 OFFSET $3;
+
+statement ok
+PREPARE ppa_in AS SELECT count(*) AS n FROM ppa_idx WHERE v IN ($1, $2);
+
+statement ok
+PREPARE ppa_range AS SELECT count(*) AS n FROM ppa_idx
+  WHERE v BETWEEN $1 AND $2;
+
+statement ok
+PREPARE ppa_text AS SELECT count(*) AS n FROM ppa_idx WHERE b @@ $1::VARCHAR;
+
+statement ok
+PREPARE ppas_knn AS SELECT pk FROM ppas WHERE v = $1
+  ORDER BY emb <-> $2::FLOAT[2] LIMIT $3;
+
+statement ok
+PREPARE ppas_bm25 AS SELECT pk FROM ppas WHERE b @@ $1::VARCHAR
+  ORDER BY bm25(tableoid) DESC LIMIT $2 OFFSET $3;
+
+statement ok
+PREPARE ppas_range AS SELECT count(*) AS n FROM ppas_idx
+  WHERE v BETWEEN $1 AND $2;
+
+statement ok
+PREPARE ppas_in AS SELECT count(*) AS n FROM ppas WHERE v IN ($1, $2);
+
+statement ok
+PREPARE ppas_between AS SELECT count(*) AS n FROM ppas
+  WHERE v BETWEEN $1 AND $2;
+
+statement ok
+PREPARE ppas_text AS SELECT count(*) AS n FROM ppas WHERE b @@ $1::VARCHAR;
+
+statement ok
+PREPARE ppas_beyond AS SELECT count(*) AS n FROM ppas WHERE v > 1000;
+
+query
+EXECUTE ppa_knn(3, [150, 0], 2);
+----
+pk
+93
+83
+
+query
+SELECT pk FROM ppa_idx WHERE v = 3 ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+----
+pk
+93
+83
+
+query
+EXECUTE ppa_knn(5, [0, 0], 3);
+----
+pk
+5
+15
+25
+
+query
+EXECUTE ppa_bm25('zeta', 2, 1);
+----
+pk
+3
+2
+
+query
+SELECT pk FROM ppa_idx WHERE b @@ 'zeta'
+  ORDER BY bm25(tableoid) DESC LIMIT 2 OFFSET 1;
+----
+pk
+3
+2
+
+query
+EXECUTE ppa_bm25('zeta', 3, 0);
+----
+pk
+4
+3
+2
+
+query
+EXECUTE ppa_in(3, 5);
+----
+n
+20
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v IN (3, 5);
+----
+n
+20
+
+query
+EXECUTE ppa_range(2, 4);
+----
+n
+30
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
+EXECUTE ppa_text('zeta');
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE b @@ 'zeta';
+----
+n
+5
+
+query
+EXECUTE ppa_text('alpha');
+----
+n
+100
+
+query
+EXECUTE ppas_knn(3, [150, 0], 2);
+----
+pk
+93
+83
+
+query
+SELECT pk FROM ppas WHERE v = 3 ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+----
+pk
+93
+83
+
+query
+EXECUTE ppas_bm25('zeta', 2, 1);
+----
+pk
+3
+2
+
+query
+SELECT pk FROM ppas WHERE b @@ 'zeta'
+  ORDER BY bm25(tableoid) DESC LIMIT 2 OFFSET 1;
+----
+pk
+3
+2
+
+query
+EXECUTE ppas_range(2, 4);
+----
+n
+30
+
+query
+SELECT count(*) AS n FROM ppas_idx WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
+EXECUTE ppas_in(3, 5);
+----
+n
+20
+
+query
+SELECT count(*) AS n FROM ppas WHERE v IN (3, 5);
+----
+n
+20
+
+query
+EXECUTE ppas_between(2, 4);
+----
+n
+30
+
+query
+SELECT count(*) AS n FROM ppas WHERE v BETWEEN 2 AND 4;
+----
+n
+30
+
+query
+EXECUTE ppas_text('zeta');
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM ppas WHERE b @@ 'zeta';
+----
+n
+5
+
+query
+EXECUTE ppas_beyond;
+----
+n
+0
+
+statement ok
+INSERT INTO ppa SELECT i, i,
+  CASE WHEN i = 150 THEN 'omega alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100, 200) t(i);
+
+statement ok
+INSERT INTO ppas SELECT i, i,
+  CASE WHEN i = 150 THEN 'omega alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100, 200) t(i);
+
+statement ok
+INSERT INTO ppas VALUES (200, 5000, 'beta', [500, 0]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ppa;
+
+statement ok
+VACUUM (REFRESH_TABLE) ppas;
+
+query
+EXECUTE ppa_knn(3, [150, 0], 2);
+----
+pk
+93
+83
+
+query
+EXECUTE ppa_knn(150, [0, 0], 1);
+----
+pk
+150
+
+query
+EXECUTE ppa_bm25('omega', 3, 0);
+----
+pk
+150
+
+query
+EXECUTE ppa_bm25('zeta', 2, 1);
+----
+pk
+3
+2
+
+query
+EXECUTE ppa_in(3, 150);
+----
+n
+11
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v IN (3, 150);
+----
+n
+11
+
+query
+EXECUTE ppa_range(100, 149);
+----
+n
+50
+
+query
+EXECUTE ppa_range(2, 4);
+----
+n
+30
+
+query
+EXECUTE ppa_text('omega');
+----
+n
+1
+
+query
+EXECUTE ppa_text('alpha');
+----
+n
+200
+
+query
+EXECUTE ppas_knn(150, [0, 0], 1);
+----
+pk
+150
+
+query
+EXECUTE ppas_bm25('omega', 3, 0);
+----
+pk
+150
+
+query
+EXECUTE ppas_range(100, 149);
+----
+n
+50
+
+query
+EXECUTE ppas_in(3, 150);
+----
+n
+11
+
+query
+SELECT count(*) AS n FROM ppas WHERE v IN (3, 150);
+----
+n
+11
+
+query
+EXECUTE ppas_between(100, 149);
+----
+n
+50
+
+query
+SELECT count(*) AS n FROM ppas WHERE v BETWEEN 100 AND 149;
+----
+n
+50
+
+query
+EXECUTE ppas_text('alpha');
+----
+n
+200
+
+query
+EXECUTE ppas_beyond;
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM ppas WHERE v > 1000;
+----
+n
+1
+
+query
+SELECT pk FROM ppas WHERE b @@ 'omega'
+  ORDER BY bm25(tableoid) DESC LIMIT 3;
+----
+pk
+150
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE v BETWEEN 100 AND 149;
+----
+n
+50
+
+query
+SELECT count(*) AS n FROM ppa_idx WHERE b @@ 'alpha';
+----
+n
+200
+
+statement ok
+DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppa;
+
+statement ok
+DROP TABLE ppas;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ppa_dict;

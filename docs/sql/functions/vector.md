@@ -7,14 +7,14 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 ## Vector-Distance Functions {#vector-distance-functions}
 
-These functions measure how close two equal-length vectors are — the basis of [vector search](../indexes/inverted/vector-search.md), where a query embedding is compared against the embeddings stored in a column.
+These functions measure how close two equal-length vectors are -- the basis of [vector search](../indexes/inverted/vector-search.md), where a query embedding is compared against the embeddings stored in a column.
 
-Every function and operator here is a plain scalar: pass any two vectors and get the distance back, in any expression, with or without an index. The operators (`<->`, `<+>`, `<=>`, `<#>`) are short forms of the named functions. When a query orders by — or filters on — the distance between an indexed column and a constant query vector, as in `ORDER BY embedding <-> :query LIMIT k`, the planner answers it from the column's [IVF index](../indexes/inverted/vector-search.md) and returns the approximate `k` nearest neighbours — far faster than scoring every row. Each function computes one fixed metric and only uses an index whose configured `metric` **matches** it (`l2`, `l1`, `cosine` or `ip`).
+Every function and operator here is a plain scalar: pass any two vectors and get the distance back, in any expression, with or without an index. The operators (`<->`, `<+>`, `<=>`, `<#>`) are short forms of the named functions. When a query orders by -- or filters on -- the distance between an indexed column and a constant query vector, as in `ORDER BY embedding <-> :query LIMIT k`, the planner answers it from the column's [vector index](../indexes/inverted/vector-search.md) and returns the approximate `k` nearest neighbours -- far faster than scoring every row. Each function computes one fixed metric and only uses an index whose configured `metric` **matches** it (`l2`, `l1`, `cosine` or `ip`).
 
-Lower distance means more similar. `cosine_similarity` and `inner_product` are the exceptions — there, *higher* means more similar. `negative_inner_product` flips the sign so that lower is again more similar, which is what the `ip` index metric needs.
+Lower distance means more similar. `cosine_similarity` and `inner_product` are the exceptions -- there, *higher* means more similar. `negative_inner_product` flips the sign so that lower is again more similar, which is what the `ip` index metric needs.
 
 :::info Vectors
-A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `DOUBLE[N]`), and both operands of a distance must have the same length — a mismatch is an error. A `NULL` vector gives `NULL`; a vector with a `NULL` element is an error. Empty lists are at distance `0` from each other and have norm `0`, except under cosine, which gives `NULL`. An indexed vector column must be a fixed-size `FLOAT[N]`; the query vector can be written as `'[1, 0, 0]'`, `[1, 0, 0]` or `[1, 0, 0]::FLOAT[3]`.
+A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `DOUBLE[N]`), and both operands of a distance must have the same length -- a mismatch is an error. A `NULL` vector gives `NULL`; a vector with a `NULL` element is an error. Empty lists are at distance `0` from each other and have norm `0`, except under cosine, which gives `NULL`. An indexed vector column must be a fixed-size `FLOAT[N]`; the query vector can be written as `'[1, 0, 0]'`, `[1, 0, 0]` or `[1, 0, 0]::FLOAT[3]`.
 :::
 
 | Function / operator | Metric | Direction | Description |
@@ -22,18 +22,18 @@ A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `D
 | [`l2_distance(a, b)`](#l2_distance) | L2 | lower = closer | Euclidean (straight-line) distance. |
 | [`l2_sqr_distance(a, b)`](#l2_sqr_distance) | L2² | lower = closer | Squared Euclidean distance (skips the square root). |
 | [`l1_distance(a, b)`](#l1_distance) | L1 | lower = closer | Manhattan distance. |
-| [`cosine_distance(a, b)`](#cosine_distance) | cosine | lower = closer | `1 − cosine_similarity`. |
+| [`cosine_distance(a, b)`](#cosine_distance) | cosine | lower = closer | `1 - cosine_similarity`. |
 | [`cosine_similarity(a, b)`](#cosine_similarity) | cosine | **higher = closer** | Cosine of the angle between the vectors. |
 | [`inner_product(a, b)`](#inner_product) | dot | **higher = closer** | Dot product. |
-| [`negative_inner_product(a, b)`](#negative_inner_product) | ip | lower = closer | `−inner_product`; backs the `ip` index metric. |
+| [`negative_inner_product(a, b)`](#negative_inner_product) | ip | lower = closer | `-inner_product`; backs the `ip` index metric. |
 | [`a <-> b`](#distance-operators) | L2 | lower = closer | Same as `l2_distance`. |
 | [`a <+> b`](#distance-operators) | L1 | lower = closer | Same as `l1_distance`. |
 | [`a <=> b`](#distance-operators) | cosine | lower = closer | Same as `cosine_distance`. |
 | [`a <#> b`](#distance-operators) | ip | lower = closer | Same as `negative_inner_product`. |
-| [`l2_norm(a)`](#norms) | L2 | — | Vector magnitude. |
-| [`l1_norm(a)`](#norms) | L1 | — | Vector magnitude. |
-| [`l2_normalize(a)`](#norms) | L2 | — | Scale to a unit vector. |
-| [`l1_normalize(a)`](#norms) | L1 | — | Scale to a unit vector. |
+| [`l2_norm(a)`](#norms) | L2 | -- | Vector magnitude. |
+| [`l1_norm(a)`](#norms) | L1 | -- | Vector magnitude. |
+| [`l2_normalize(a)`](#norms) | L2 | -- | Scale to a unit vector. |
+| [`l1_normalize(a)`](#norms) | L1 | -- | Scale to a unit vector. |
 
 DuckDB's names for the same functions take lists and arrays alike, and use the index the same way: `list_distance` and `array_distance` are `l2_distance`; `list_cosine_distance` and `array_cosine_distance` are `cosine_distance`; `list_cosine_similarity` and `array_cosine_similarity` are `cosine_similarity`; `list_inner_product`, `array_inner_product`, `list_dot_product` and `array_dot_product` are `inner_product`; `list_negative_inner_product`, `array_negative_inner_product`, `list_negative_dot_product` and `array_negative_dot_product` are `negative_inner_product`; `vector_norm` is `l2_norm`.
 
@@ -41,15 +41,15 @@ DuckDB's names for the same functions take lists and arrays alike, and use the i
 
 The four metrics answer different questions about two vectors `x` and `y` of length `n`:
 
-- **Euclidean / L2** — `sqrt(Σ (xᵢ − yᵢ)²)`. Straight-line distance through space. It accounts for both *direction* and *magnitude*, so it is the natural default when the absolute size of the components is meaningful (e.g. raw feature vectors, coordinates).
-- **Squared Euclidean / L2²** — `Σ (xᵢ − yᵢ)²`. The same ordering as L2 with the square root dropped, so it is cheaper whenever you only rank or threshold and never need the true distance value.
-- **Manhattan / L1** — `Σ |xᵢ − yᵢ|`. Sums the per-axis differences instead of combining them with Pythagoras. Less sensitive to a single large-deviation dimension than L2, and a common choice for sparse or high-dimensional data.
-- **Cosine** — `1 − (x · y) / (‖x‖ · ‖y‖)`. Compares only the *direction* of the vectors and ignores their length. This is the usual choice for text and embedding models, where two documents about the same topic point the same way regardless of length. A zero vector has no direction: its cosine similarity with any vector is `0` and its cosine distance `1`, the same values the index scores it with.
-- **Inner product (dot)** — `Σ xᵢ yᵢ`. Rewards vectors that are both aligned *and* large. For vectors that are already L2-normalized to unit length, inner product equals cosine similarity, so many embedding pipelines normalize once and then use the cheaper dot product. Because higher means more similar, the index uses **negative** inner product (`negative_inner_product`) so that, like every other metric, a *smaller* value sorts first.
+- **Euclidean / L2** -- `sqrt(Σ (xᵢ - yᵢ)²)`. Straight-line distance through space. It accounts for both *direction* and *magnitude*, so it is the natural default when the absolute size of the components is meaningful (e.g. raw feature vectors, coordinates).
+- **Squared Euclidean / L2²** -- `Σ (xᵢ - yᵢ)²`. The same ordering as L2 with the square root dropped, so it is cheaper whenever you only rank or threshold and never need the true distance value.
+- **Manhattan / L1** -- `Σ |xᵢ - yᵢ|`. Sums the per-axis differences instead of combining them with Pythagoras. Less sensitive to a single large-deviation dimension than L2, and a common choice for sparse or high-dimensional data.
+- **Cosine** -- `1 - (x · y) / (‖x‖ · ‖y‖)`. Compares only the *direction* of the vectors and ignores their length. This is the usual choice for text and embedding models, where two documents about the same topic point the same way regardless of length. A zero vector has no direction: its cosine similarity with any vector is `0` and its cosine distance `1`, the same values the index scores it with.
+- **Inner product (dot)** -- `Σ xᵢ yᵢ`. Rewards vectors that are both aligned *and* large. For vectors that are already L2-normalized to unit length, inner product equals cosine similarity, so many embedding pipelines normalize once and then use the cheaper dot product. Because higher means more similar, the index uses **negative** inner product (`negative_inner_product`) so that, like every other metric, a *smaller* value sorts first.
 
-### Operators, metrics and the IVF index {#operators-and-the-index}
+### Operators, metrics and the vector index {#operators-and-the-index}
 
-Each operator is bound to exactly one metric and is **independent of how a column happens to be indexed** — `a <-> b` always computes L2 even if `a` comes from a cosine-indexed column. To get acceleration, the operator's metric must match the index's `metric`:
+Each operator is bound to exactly one metric and is **independent of how a column happens to be indexed** -- `a <-> b` always computes L2 even if `a` comes from a cosine-indexed column. To get acceleration, the operator's metric must match the index's `metric`:
 
 | Operator | Metric | Equivalent function | Matching index `metric` |
 | :--- | :--- | :--- | :--- |
@@ -64,13 +64,13 @@ A query of the shape
 SELECT id FROM index_name ORDER BY emb <-> $query LIMIT k;
 ```
 
-lets the planner probe the [IVF index](../indexes/inverted/vector-search.md)'s clusters closest to `$query` and return the approximate `k` nearest neighbours, touching only a small fraction of the rows. Use the operator whose metric matches the index you built; mixing them (for example `<=>` against an `l2` index) still returns correct distances but cannot use the index, so it falls back to scanning every row. For tiny tables the planner may scan anyway because a sequential pass is cheaper than probing clusters — the speed-up matters at scale.
+lets the planner answer it from the [vector index](../indexes/inverted/vector-search.md) and return the approximate `k` nearest neighbours, touching only a small fraction of the rows. Use the operator whose metric matches the index you built; mixing them (for example `<=>` against an `l2` index) still returns correct distances but cannot use the index, so it falls back to scanning every row.
 
 ## Distance functions {#distance-functions}
 
 #### `l2_distance(a, b)` {#l2_distance}
 
-Euclidean (L2) distance between two equal-length vectors — the straight-line distance in space.
+Euclidean (L2) distance between two equal-length vectors -- the straight-line distance in space.
 
 | Operand | Type |
 | :--- | :--- |
@@ -90,7 +90,7 @@ The squared L2 distance. It preserves the same ordering as `l2_distance` while s
 
 #### `l1_distance(a, b)` {#l1_distance}
 
-Manhattan (L1) distance — the sum of the absolute per-component differences.
+Manhattan (L1) distance -- the sum of the absolute per-component differences.
 
 | Operand | Type |
 | :--- | :--- |
@@ -100,7 +100,7 @@ Manhattan (L1) distance — the sum of the absolute per-component differences.
 
 #### `cosine_distance(a, b)` {#cosine_distance}
 
-Cosine distance, defined as `1 − cosine_similarity`. It ignores vector magnitude and depends only on direction, which makes it the usual choice for normalized text/embedding models. Lies in `[0, 2]`.
+Cosine distance, defined as `1 - cosine_similarity`. It ignores vector magnitude and depends only on direction, which makes it the usual choice for normalized text/embedding models. Lies in `[0, 2]`.
 
 | Operand | Type |
 | :--- | :--- |
@@ -110,7 +110,7 @@ Cosine distance, defined as `1 − cosine_similarity`. It ignores vector magnitu
 
 #### `cosine_similarity(a, b)` {#cosine_similarity}
 
-The cosine of the angle between the vectors, in `[−1, 1]`. Unlike the distance functions, **higher** values mean more similar. For unit-length vectors it equals `inner_product`.
+The cosine of the angle between the vectors, in `[-1, 1]`. Unlike the distance functions, **higher** values mean more similar. For unit-length vectors it equals `inner_product`.
 
 | Operand | Type |
 | :--- | :--- |
@@ -130,7 +130,7 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 
 #### `negative_inner_product(a, b)` {#negative_inner_product}
 
-`−inner_product`, so that lower values mean more similar — the form used by the `ip` index metric, where the index orders neighbours by ascending distance. It is the function behind the `<#>` operator.
+`-inner_product`, so that lower values mean more similar -- the form used by the `ip` index metric, where the index orders neighbours by ascending distance. It is the function behind the `<#>` operator.
 
 | Operand | Type |
 | :--- | :--- |
@@ -140,7 +140,7 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 
 ## Distance operators: `<->`, `<+>`, `<=>`, `<#>` {#distance-operators}
 
-Each operator maps to one metric and to a named function, and like it only accelerates a query when its metric matches the index (see [Operators, metrics and the IVF index](#operators-and-the-index)). On `GEOMETRY` operands `<->` is instead the planar distance, as in PostGIS — see [Geo Functions](./search/geo.md#distance-operator).
+Each operator maps to one metric and to a named function, and like it only accelerates a query when its metric matches the index (see [Operators, metrics and the vector index](#operators-and-the-index)). On `GEOMETRY` operands `<->` is instead the planar distance, as in PostGIS -- see [Geo Functions](./search/geo.md#distance-operator).
 
 | Operator | Metric | Equivalent function |
 | :--- | :--- | :--- |
@@ -171,17 +171,17 @@ Manhattan (`<+>`, `l1` index):
 
 <SqlLogicTest id="sql/functions/full_text_search/a-plus-b-distance" />
 
-Cosine (`<=>`, `cosine` index) — id `1` is the query direction itself, so its distance is `0`:
+Cosine (`<=>`, `cosine` index) -- id `1` is the query direction itself, so its distance is `0`:
 
 <SqlLogicTest id="sql/functions/full_text_search/a-eq-b-distance" />
 
-Inner product (`<#>`, `ip` index) — the operator returns the *negative* dot product, so the largest dot product (id `3`, the longest aligned vector) sorts first:
+Inner product (`<#>`, `ip` index) -- the operator returns the *negative* dot product, so the largest dot product (id `3`, the longest aligned vector) sorts first:
 
 <SqlLogicTest id="sql/functions/full_text_search/a-hash-b-distance" />
 
 ## Norms and normalization {#norms}
 
-`l2_norm` and `l1_norm` return a vector's magnitude; `l2_normalize` and `l1_normalize` scale it to a unit vector under the corresponding norm. Normalizing before indexing with `cosine` (or comparing with `inner_product`) keeps comparisons magnitude-independent — once vectors are unit-length, `inner_product` and `cosine_similarity` coincide.
+`l2_norm` and `l1_norm` return a vector's magnitude; `l2_normalize` and `l1_normalize` scale it to a unit vector under the corresponding norm. Normalizing before indexing with `cosine` (or comparing with `inner_product`) keeps comparisons magnitude-independent -- once vectors are unit-length, `inner_product` and `cosine_similarity` coincide.
 
 | Function | Operand | Returns |
 | :--- | :--- | :--- |
@@ -211,9 +211,9 @@ Elasticsearch [kNN search](https://www.elastic.co/guide/en/elasticsearch/referen
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) query (`k`, `num_candidates`) | [`ORDER BY emb <-> $q LIMIT k`](#knn) |
 | [`knn`](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) with `filter` | a `WHERE` clause beside the `ORDER BY` ([Hybrid Search](../indexes/inverted/hybrid-search.md)) |
 
-**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_ivf_search_nprobe`](../indexes/inverted/maintenance.md#session-settings) — SereneDB's analogue of `num_candidates` — and [`sdb_rerank_factor`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
+**Notable differences.** SereneDB adds a Manhattan metric ([`<+>`](#distance-operators) / [`l1_distance`](#l1_distance)) that Elasticsearch lacks, while Elasticsearch's `l_inf` / Hamming (binary-vector) similarities have no SereneDB equivalent. Cluster count ([`nlist`](../indexes/inverted/vector-search.md)) and vector compression ([`quant`](../indexes/inverted/vector-search.md#quantization)) are set at index build time, while [`sdb_ivf_search_nprobe`](../indexes/inverted/maintenance.md#session-settings) and [`sdb_hnsw_ef_search`](../indexes/inverted/maintenance.md#session-settings) -- SereneDB's analogues of `num_candidates` -- and [`sdb_ann_oversample`](../indexes/inverted/maintenance.md#session-settings) tune recall per session.
 
 ## See also
 
-- [Full-Text Search Functions](./search/full-text.md) — operators, constructors, parsers
+- [Full-Text Search Functions](./search/full-text.md) -- operators, constructors, parsers
 - [Inverted Index](../indexes/inverted/index.md) · [Vector Search](../indexes/inverted/vector-search.md)

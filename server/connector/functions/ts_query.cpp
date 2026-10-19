@@ -701,7 +701,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       }
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
-      info->modifiers.emplace_back(duckdb::Value::BLOB_RAW(encoded));
+      info->modifiers.emplace_back(duckdb::Value::BLOB_RAW(std::move(encoded)));
       return type.WithExtensionInfo(std::move(info));
     });
 }

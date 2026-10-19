@@ -5,6 +5,7 @@
 # so it runs in-container on the same host as the server (loopback is always
 # available inside the container).
 if ! docker run --rm \
+	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
 	--user "$(id -u):$(id -g)" \
 	-e HOME=/serenedb \
 	--ulimit core=-1 \

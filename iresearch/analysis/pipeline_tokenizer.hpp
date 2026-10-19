@@ -71,6 +71,9 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   void Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
+  bool Scan(const duckdb::string_t& value, ScanSink& sink,
+            BlockTraits known) final;
+
   void Bind(duckdb::ClientContext& ctx) final {
     for (auto& sub : _pipeline) {
       sub->Bind(ctx);
@@ -85,7 +88,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   }
 
   size_t MemoryUsage() const noexcept final {
-    size_t size = _links.size() * sizeof(TokenSink);
+    size_t size = _links.size() * sizeof(ChainSink);
     for (const auto& link : _links) {
       size += link->ScratchBytes();
     }
@@ -171,7 +174,7 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
 
     void Consume(TokenBatch& batch, DocRuns runs) final;
 
-    TokenSink writer;
+    ScanSink writer;
 
    private:
     struct Rebase final : TokenConsumer {

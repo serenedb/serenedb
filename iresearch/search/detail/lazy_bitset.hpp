@@ -22,11 +22,13 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/utils/bit_utils.hpp"
@@ -58,20 +60,43 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, fill::DocsMask&& mask) noexcept
+  LazyBitset(BitsetStorage&& set, fill::DocsMask&& mask,
+             TableFilter* table = nullptr) noexcept
     : _set{std::move(set)},
       _mask{std::move(mask)},
       _has_removals{!_mask.Empty()},
       _filled{_set.End()} {
     Drop(0, _set.WordCount());
+    if (table) {
+      SDB_ASSERT(table->Foldable());
+      _set.Trim();
+      auto* const words = _set.Words();
+      for (uint32_t first = 0, n = _set.WordCount(); first < n;
+           first += kWindowWords) {
+        table->Narrow(kMin + static_cast<doc_id_t>(first) * kBits,
+                      words + first, words + first, nullptr,
+                      std::min<uint32_t>(kWindowWords, n - first));
+      }
+    }
   }
 
-  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, fill::DocsMask&& mask)
+  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, fill::DocsMask&& mask,
+             TableFilter* table = nullptr)
     : _set{docs_count},
       _node{std::move(node)},
       _mask{std::move(mask)},
-      _has_removals{!_mask.Empty()} {
+      _has_removals{!_mask.Empty()},
+      _table{table} {
     SDB_ASSERT(_node);
+    SDB_ASSERT(!_table || _table->Foldable());
+  }
+
+  LazyBitset(doc_id_t docs_count, fill::DocsMask&& mask, TableFilter* table)
+    : _set{docs_count},
+      _mask{std::move(mask)},
+      _has_removals{!_mask.Empty()},
+      _table{table} {
+    SDB_ASSERT(!_table || _table->Foldable());
   }
 
   const uint64_t* Words() const noexcept { return _set.Words(); }
@@ -98,8 +123,23 @@ class LazyBitset {
     do {
       const auto min = _filled;
       const auto first = (min - kMin) / kBits;
-      const auto next = _node->FillOr(min, min + kWindowDocs, words + first);
+      doc_id_t next;
+      if (_node) {
+        next = _node->FillOr(min, min + kWindowDocs, words + first);
+      } else {
+        std::fill_n(words + first, kWindowWords, ~uint64_t{0});
+        next = min + kWindowDocs;
+      }
       Drop(first, first + kWindowWords);
+      if (_table) {
+        const auto last =
+          std::min<size_t>(first + kWindowWords, _set.WordCount());
+        if (last == _set.WordCount()) {
+          _set.Trim();
+        }
+        _table->Narrow(min, words + first, words + first, nullptr,
+                       static_cast<uint32_t>(last - first));
+      }
       if (next >= end) {
         _filled = end;
         break;
@@ -109,6 +149,39 @@ class LazyBitset {
     if (_filled >= end) {
       Finish();
     }
+  }
+
+  uint64_t Count() {
+    const auto end = _set.End();
+    Reach(end);
+    if (end <= kMin) {
+      return 0;
+    }
+    return CountBitRange(_set.Words(), 0, end - kMin);
+  }
+
+  uint64_t EstimateCount(uint32_t windows) {
+    const auto end = _set.End();
+    if (end <= kMin) {
+      return 0;
+    }
+    const uint64_t total = end - kMin;
+    const uint64_t want =
+      std::min<uint64_t>(total, uint64_t{windows} * kWindowDocs);
+    Reach(kMin + static_cast<doc_id_t>(want));
+    const uint64_t filled = _filled - kMin;
+    if (filled == 0) {
+      return 0;
+    }
+    const uint64_t seen = CountBitRange(_set.Words(), 0, filled);
+    if (filled >= total || seen == 0) {
+      return seen;
+    }
+    const auto share =
+      static_cast<long double>(seen) / static_cast<long double>(filled);
+    const auto est = static_cast<uint64_t>(
+      std::ceil(share * static_cast<long double>(total) * 1.125L));
+    return std::min<uint64_t>(est, total);
   }
 
   bool Contains(doc_id_t doc) {
@@ -176,18 +249,32 @@ class LazyBitset {
   }
 
   void Finish() noexcept {
-    if (_node) {
-      _set.Trim();
-      _node.reset();
-    }
+    _set.Trim();
+    _node.reset();
+    _table = nullptr;
   }
 
   BitsetStorage _set;
   FillNode::ptr _node;
   fill::DocsMask _mask;
   bool _has_removals = false;
+  TableFilter* _table = nullptr;
   doc_id_t _filled = kMin;
 };
+
+inline LazyBitset MakeDocSet(const QueryBuilder* query, doc_id_t docs_count,
+                             TableFilter* table = nullptr) {
+  if (!query) {
+    return LazyBitset{docs_count, fill::DocsMask{nullptr}, table};
+  }
+  auto node = query->PlanFill({}, ScoreMergeType::Noop);
+  SDB_ASSERT(node);
+  if (auto* folded = node->Folded()) {
+    return LazyBitset{std::move(*folded), fill::DocsMask{nullptr}, table};
+  }
+  return LazyBitset{std::move(node), docs_count, fill::DocsMask{nullptr},
+                    table};
+}
 
 class CountAgainst {
  public:

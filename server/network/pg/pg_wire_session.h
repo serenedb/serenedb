@@ -91,7 +91,7 @@
 #include "network/socket.h"
 #include "pg/command_tag.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
+#include "pg/copy_in_batches.h"
 #include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
@@ -147,7 +147,7 @@ enum class CopyFormat : uint8_t {
 // that own them).
 
 template<SocketKind Kind>
-class PgWireSession final
+class PgWireSession
   : public Transport<Kind, PgWireSession<Kind>>,
     public duckdb::enable_shared_from_this<PgWireSession<Kind>> {
  public:
@@ -227,7 +227,16 @@ class PgWireSession final
     }
   }
 
- private:
+ protected:
+  struct ClientTag {};
+  PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
+    requires(Kind == SocketKind::Client)
+    : Transport<Kind, PgWireSession<Kind>>{exec, ssl},
+      _io{exec.Context()},
+      _deadline{exec.Context()},
+      _frames{this->_recv},
+      _client{true} {}
+
   // The session owner. Starts the writer, negotiates startup+auth, hands off to
   // the cpu task, pumps recv, then stops everything and joins the cpu + writer
   // futures before its frame (and the session) is destroyed.
@@ -316,8 +325,9 @@ class PgWireSession final
   // writes the bytes, the session frames them.
   yaclib::Task<> RunCopyToStdoutViaFormat(
     duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format);
-  yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge,
+  yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBatches& batches,
                                  CopyFormat format);
+  yaclib::Task<> WaitCopyInput();
   void HandleParse(std::string_view payload);
   void HandleBind(std::string_view payload);
   void HandleDescribe(std::string_view payload);
@@ -338,6 +348,11 @@ class PgWireSession final
   // Throws whatever a fresh Parse of the same text would throw, so a relation
   // the session has since dropped surfaces as 42P01 instead of stale rows.
   void RevalidatePlan(Statement& stmt);
+  void DropDeallocated(std::string_view name);
+  void ReleaseDeallocated();
+  void RegisterUnprepared(
+    Statement& statement, std::string_view name, std::string_view query,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan);
@@ -435,6 +450,7 @@ class PgWireSession final
   std::atomic_bool _copy_route = false;
   Gate _copy_gate;
   std::atomic_bool _feeder_done = false;
+  const bool _client = false;
   // Prepared-statement + portal stores (named + anon slots) and the cross-store
   // close cascade; see ProtocolState.
   ProtocolState _proto;

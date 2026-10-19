@@ -26,7 +26,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
+async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
@@ -53,7 +53,6 @@ Calendar	gregorian	The current calendar
 catalog_error_max_schemas	100	The maximum number of schemas in the catalog that the system will scan to generate the "did you mean..." error message.
 ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
 ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
-ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
 ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
 ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
@@ -119,7 +118,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -130,6 +129,7 @@ external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
+filter_reorder	fast	How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	Forces the usage of a specific compression method.
 force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
@@ -139,7 +139,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
@@ -170,6 +170,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
@@ -185,6 +186,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -203,7 +205,6 @@ perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
 pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
-pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
@@ -221,7 +222,7 @@ pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_staleness_query	NULL	Custom query used in place of the default table staleness query when pg_staleness_query_enabled resolves to true. Must contain a ${SCHEMA} placeholder and return at least 3 columns (identity, name, revision marker). Empty (default) uses the built-in pg_class/xmin query.
-pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit. Defaults to the opposite of pg_use_information_schema_introspection when not explicitly set (off for pg protocol compatible databases that may not support the underlying query, on for Postgres).
+pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit (default: false).
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections
 pg_use_binary_copy	on	Whether or not to use BINARY copy to read data
 pg_use_ctid_scan	on	Whether or not to parallelize scanning using table ctids
@@ -242,7 +243,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
-reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
@@ -264,14 +265,13 @@ s3_url_style	vhost	S3 URL style
 s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	Deprecated setting. Throw an error when a scalar subquery returns more than one row. This will become the default behavior. When disabled, an arbitrary row is returned instead.
-scheduler_process_partial	on	Partially process tasks before rescheduling. Enabling this allows for more scheduler fairness between separate queries.
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests run on DuckDB's async I/O threads (async_threads) and on the threads that evaluate the calls. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests are sent by async tasks (async_threads) and by the threads that evaluate the calls. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
@@ -280,16 +280,22 @@ sdb_ai_system_one_default_secret	(empty)	Name of the typesafe secret used by ai_
 sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_throw_on_error	on	When true, a row whose AI function request fails fails the query; when false, that row returns NULL. Authentication, not-found, validation (422) and exhausted-quota (429 insufficient_quota) errors always fail the query. Default: true.
 sdb_ai_throw_on_quota_exceeded	on	When true, exceeding sdb_ai_max_api_calls_per_query or sdb_ai_max_output_tokens_per_query fails the query; when false, the remaining rows return NULL. Default: true.
+sdb_ann_force_exact	off	When true, a vector search (ORDER BY <distance> LIMIT k, or a distance range) returns the exact answer instead of walking the ANN index, split across the scan's workers. Every row with a vector is considered; where an hnsw index stores 8-bit codes, a row's stored vector is read only if its code leaves it a chance at the top k. Default false, which leaves the choice to the engine.
+sdb_ann_oversample	-1	Oversample for a quantized vector-similarity query, HNSW and IVF alike: the search runs on quantized codes and ceil(sdb_ann_oversample * k) of each segment's candidates are read back at full precision, re-ordered, and only then compared against other segments -- a quantized score is an estimate and two segments' estimates are not comparable, because each trains its own quantizer. Where the search can return fewer candidates than the pool asks for, it is widened to hold it: for HNSW that means the beam, since a beam of a hundred cannot hand four hundred to the rescorer. 0 disables the rescore: the query answers from the codes, which is faster and caps recall at whatever the codes can tell apart -- well below 1 for a 4-bit or binary quantizer, and worse still across many segments. -1 (the default) rescores every quantized index at 1. Fractional values are allowed, but a factor between 0 and 1 is rejected because the pool must cover k. Unquantized (quant = 'none') indexes never rerank, regardless of this setting, and a query whose pool exists to survive a lookup filter keeps that pool either way.
 sdb_compact_target_segments	1	How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or 1 (default) merges every segment into one; a larger N splits the segments into N disjoint groups, merges each group into one segment and stops there, so no single merge holds the whole table. A table with N segments or fewer is left as it is. Default 1.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).
-sdb_hnsw_ef_search	64	Search-time beam width (ef) for HNSW vector indexes. Higher values improve recall at the cost of latency. The beam is also the result ceiling: a value below the query's LIMIT returns fewer rows than asked for. Default 64.
-sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expanded per node while descending to the probed clusters. Decouples the descent width from sdb_ivf_search_nprobe: lower values cut centroid work on deep (multi-level) trees at some recall cost. The width applies per node and so compounds over the tree's levels; it is raised when smaller than the width whose compounded value reaches sdb_ivf_search_nprobe, so the descent can always supply the requested number of clusters. Default 16.
+sdb_hnsw_column_filter	auto	How an HNSW graph walk answers a predicate only the columnstore can: 'fold' evaluates it over the whole segment before the walk; 'read' reads the columns of each row the walk reaches; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, weighing what one read costs in the columns' encodings. Default 'auto'.
+sdb_hnsw_ef_search	-1	Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly.
+sdb_hnsw_filter_mode	auto	How an HNSW vector index answers a query with a WHERE: 'auto' picks by the predicate's estimated selectivity, and walks as 'twohop' where a vector's code is long enough that crossing a rejected row costs less than scoring it; 'scan' scores every row the predicate admits; 'walk' walks the graph scoring every neighbour and passing through rejected rows; 'prune' walks scoring and expanding admitted rows only; 'twohop' walks expanding a rejected row's neighbours in its place; 'bridge' walks scoring every neighbour but expanding a rejected row into admitted ones only. Default 'auto'.
+sdb_ivf_max_search_fanout	-1	Upper bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a narrower one scores fewer centroids at some recall cost. Applied after sdb_ivf_min_search_fanout. -1 (the default) leaves the beam unbounded.
+sdb_ivf_min_search_fanout	-1	Lower bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a wider one reaches clusters a narrow descent misses, and one as wide as the segment's list count makes the descent exact. -1 (the default) leaves the beam unbounded.
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
 sdb_ivf_sample_factor	0.2	Fraction of rows used to train the IVF centroid tree (sample_size = sample_factor * N), captured into the index config at CREATE INDEX. Any value in (0, 1]. Default 0.2.
-sdb_ivf_search_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_ivf_search_nprobe	-1	Number of IVF cluster lists each segment scans per vector-similarity query. Higher values improve recall at the cost of latency. A value is used as written. -1 (the default) lets the engine choose per segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is the segment's rows over the index's posting size, which keeps recall near 0.95 at any LIMIT and segment size.
+sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
+sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
-sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = ceil(sdb_rerank_factor * k)). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Fractional values are allowed, but a nonzero factor below 1 is rejected because the pool must cover k. Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
@@ -302,6 +308,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -322,6 +329,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
@@ -361,7 +371,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O.
+async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
@@ -388,7 +398,6 @@ Calendar	gregorian	The current calendar
 catalog_error_max_schemas	100	The maximum number of schemas in the catalog that the system will scan to generate the "did you mean..." error message.
 ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
 ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
-ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
 ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
 ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
@@ -454,7 +463,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -465,6 +474,7 @@ external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
+filter_reorder	fast	How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	Forces the usage of a specific compression method.
 force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
@@ -474,7 +484,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
@@ -505,6 +515,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
@@ -520,6 +531,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -538,7 +550,6 @@ perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
 pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
-pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
@@ -556,7 +567,7 @@ pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_staleness_query	NULL	Custom query used in place of the default table staleness query when pg_staleness_query_enabled resolves to true. Must contain a ${SCHEMA} placeholder and return at least 3 columns (identity, name, revision marker). Empty (default) uses the built-in pg_class/xmin query.
-pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit. Defaults to the opposite of pg_use_information_schema_introspection when not explicitly set (off for pg protocol compatible databases that may not support the underlying query, on for Postgres).
+pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit (default: false).
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections
 pg_use_binary_copy	on	Whether or not to use BINARY copy to read data
 pg_use_ctid_scan	on	Whether or not to parallelize scanning using table ctids
@@ -577,7 +588,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
-reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
@@ -599,14 +610,13 @@ s3_url_style	vhost	S3 URL style
 s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	Deprecated setting. Throw an error when a scalar subquery returns more than one row. This will become the default behavior. When disabled, an arbitrary row is returned instead.
-scheduler_process_partial	on	Partially process tasks before rescheduling. Enabling this allows for more scheduler fairness between separate queries.
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests run on DuckDB's async I/O threads (async_threads) and on the threads that evaluate the calls. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests are sent by async tasks (async_threads) and by the threads that evaluate the calls. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
@@ -615,16 +625,22 @@ sdb_ai_system_one_default_secret	(empty)	Name of the typesafe secret used by ai_
 sdb_ai_text_default_secret	(empty)	Name of the openai secret used by ai_generate, ai_classify, ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_throw_on_error	on	When true, a row whose AI function request fails fails the query; when false, that row returns NULL. Authentication, not-found, validation (422) and exhausted-quota (429 insufficient_quota) errors always fail the query. Default: true.
 sdb_ai_throw_on_quota_exceeded	on	When true, exceeding sdb_ai_max_api_calls_per_query or sdb_ai_max_output_tokens_per_query fails the query; when false, the remaining rows return NULL. Default: true.
+sdb_ann_force_exact	off	When true, a vector search (ORDER BY <distance> LIMIT k, or a distance range) returns the exact answer instead of walking the ANN index, split across the scan's workers. Every row with a vector is considered; where an hnsw index stores 8-bit codes, a row's stored vector is read only if its code leaves it a chance at the top k. Default false, which leaves the choice to the engine.
+sdb_ann_oversample	-1	Oversample for a quantized vector-similarity query, HNSW and IVF alike: the search runs on quantized codes and ceil(sdb_ann_oversample * k) of each segment's candidates are read back at full precision, re-ordered, and only then compared against other segments -- a quantized score is an estimate and two segments' estimates are not comparable, because each trains its own quantizer. Where the search can return fewer candidates than the pool asks for, it is widened to hold it: for HNSW that means the beam, since a beam of a hundred cannot hand four hundred to the rescorer. 0 disables the rescore: the query answers from the codes, which is faster and caps recall at whatever the codes can tell apart -- well below 1 for a 4-bit or binary quantizer, and worse still across many segments. -1 (the default) rescores every quantized index at 1. Fractional values are allowed, but a factor between 0 and 1 is rejected because the pool must cover k. Unquantized (quant = 'none') indexes never rerank, regardless of this setting, and a query whose pool exists to survive a lookup filter keeps that pool either way.
 sdb_compact_target_segments	1	How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or 1 (default) merges every segment into one; a larger N splits the segments into N disjoint groups, merges each group into one segment and stops there, so no single merge holds the whole table. A table with N segments or fewer is left as it is. Default 1.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on).
-sdb_hnsw_ef_search	64	Search-time beam width (ef) for HNSW vector indexes. Higher values improve recall at the cost of latency. The beam is also the result ceiling: a value below the query's LIMIT returns fewer rows than asked for. Default 64.
-sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expanded per node while descending to the probed clusters. Decouples the descent width from sdb_ivf_search_nprobe: lower values cut centroid work on deep (multi-level) trees at some recall cost. The width applies per node and so compounds over the tree's levels; it is raised when smaller than the width whose compounded value reaches sdb_ivf_search_nprobe, so the descent can always supply the requested number of clusters. Default 16.
+sdb_hnsw_column_filter	auto	How an HNSW graph walk answers a predicate only the columnstore can: 'fold' evaluates it over the whole segment before the walk; 'read' reads the columns of each row the walk reaches; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, weighing what one read costs in the columns' encodings. Default 'auto'.
+sdb_hnsw_ef_search	-1	Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly.
+sdb_hnsw_filter_mode	auto	How an HNSW vector index answers a query with a WHERE: 'auto' picks by the predicate's estimated selectivity, and walks as 'twohop' where a vector's code is long enough that crossing a rejected row costs less than scoring it; 'scan' scores every row the predicate admits; 'walk' walks the graph scoring every neighbour and passing through rejected rows; 'prune' walks scoring and expanding admitted rows only; 'twohop' walks expanding a rejected row's neighbours in its place; 'bridge' walks scoring every neighbour but expanding a rejected row into admitted ones only. Default 'auto'.
+sdb_ivf_max_search_fanout	-1	Upper bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a narrower one scores fewer centroids at some recall cost. Applied after sdb_ivf_min_search_fanout. -1 (the default) leaves the beam unbounded.
+sdb_ivf_min_search_fanout	-1	Lower bound on the beam of the descent through a multi-level IVF centroid tree, where each level keeps the beam's worth of its nearest centroids and scores only their children. The beam follows sdb_ivf_search_nprobe as the query resolves it; a wider one reaches clusters a narrow descent misses, and one as wide as the segment's list count makes the descent exact. -1 (the default) leaves the beam unbounded.
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
 sdb_ivf_sample_factor	0.2	Fraction of rows used to train the IVF centroid tree (sample_size = sample_factor * N), captured into the index config at CREATE INDEX. Any value in (0, 1]. Default 0.2.
-sdb_ivf_search_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_ivf_search_nprobe	-1	Number of IVF cluster lists each segment scans per vector-similarity query. Higher values improve recall at the cost of latency. A value is used as written. -1 (the default) lets the engine choose per segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is the segment's rows over the index's posting size, which keeps recall near 0.95 at any LIMIT and segment size.
+sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
+sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
-sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = ceil(sdb_rerank_factor * k)). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Fractional values are allowed, but a nonzero factor below 1 is rejected because the pool must cover k. Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
@@ -637,6 +653,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -657,6 +674,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.

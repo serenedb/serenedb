@@ -13,8 +13,6 @@ CRASH_ON_DROP_FAULT = "crash_on_drop"
 CRASH_ON_PACKET_FAULT = "crash_on_packet"
 CRASH_BEFORE_COMMIT_FAULT = "crash_before_commit"
 CRASH_AFTER_COMMIT_FAULT = "crash_after_commit"
-CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT = "crash_before_search_wal_commit"
-CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT = "crash_after_search_wal_commit"
 CRASH_AFTER_SEARCH_REFRESH_FAULT = "Search::CrashAfterCommit"
 SLOW_SEARCH_TASK_FAULT = "slow_search_task"
 UNABLE_TO_CREATE_FAULT = "unable_to_create"
@@ -31,8 +29,6 @@ CRASH_FAULTS = frozenset({
     CRASH_ON_PACKET_FAULT,
     CRASH_BEFORE_COMMIT_FAULT,
     CRASH_AFTER_COMMIT_FAULT,
-    CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT,
-    CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT,
     CRASH_AFTER_SEARCH_REFRESH_FAULT,
 })
 

@@ -1,0 +1,55 @@
+statement ok
+SELECT pg_replication_origin_drop(roname) FROM pg_replication_origin WHERE roname = 'docs_origin';
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT pg_replication_origin_create('docs_origin');
+
+statement ok
+SELECT pg_replication_origin_advance('docs_origin', '0/16B3748');
+
+query
+SELECT pg_replication_origin_progress('docs_origin', true) AS remote_lsn;
+----
+remote_lsn
+0/16B3748
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT pg_replication_origin_session_setup('docs_origin');
+
+statement ok
+CREATE TABLE docs_origin_rows (id INTEGER);
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/16B3800', now());
+
+statement ok
+INSERT INTO docs_origin_rows VALUES (1);
+
+statement ok
+COMMIT;
+
+query
+SELECT pg_replication_origin_session_progress(true) AS remote_lsn;
+----
+remote_lsn
+0/16B3800
+
+statement ok
+SELECT pg_replication_origin_session_reset();
+
+statement ok
+DROP TABLE docs_origin_rows;
+
+statement ok
+SELECT pg_replication_origin_drop('docs_origin');

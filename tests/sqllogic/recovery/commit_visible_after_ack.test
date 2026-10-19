@@ -1,0 +1,99 @@
+statement ok
+CREATE TABLE ack_rows (id INT)
+
+
+connection s4
+statement ok
+BEGIN
+
+
+connection s4
+query
+SELECT count(*) AS n FROM ack_rows
+----
+n
+0
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 3000
+
+
+connection s1
+statement async ok
+INSERT INTO ack_rows VALUES (1)
+
+
+sleep 1s
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 0
+
+
+connection s2
+statement ok
+CREATE SCHEMA ack_schema
+
+
+connection s3
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'ack_schema'
+----
+n
+1
+
+
+connection s1
+wait
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 3000
+
+
+connection s1
+statement async ok
+INSERT INTO ack_rows VALUES (2)
+
+
+sleep 1s
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 0
+
+
+connection s2
+statement ok
+DROP SCHEMA ack_schema
+
+
+connection s3
+statement ok
+CREATE SCHEMA ack_schema
+
+
+connection s1
+wait
+
+
+connection s4
+statement ok
+COMMIT
+
+
+query
+SELECT id FROM ack_rows ORDER BY id
+----
+id
+1
+2
+
+
+statement ok
+DROP SCHEMA ack_schema
+
+
+statement ok
+DROP TABLE ack_rows

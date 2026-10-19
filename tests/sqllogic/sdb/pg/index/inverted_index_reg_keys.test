@@ -1,0 +1,65 @@
+statement ok
+CREATE SCHEMA rir_s;
+
+
+statement ok
+CREATE TABLE rir_s.rir_target (x INT);
+
+
+statement ok
+CREATE TABLE rir (id INT PRIMARY KEY, r OID);
+
+
+statement error
+CREATE INDEX rir_text_idx ON rir USING inverted (id, (r::REGCLASS::VARCHAR) included());
+----
+db error: ERROR: Index keys cannot convert to or from reg* types: the conversion reads the catalog.
+HINT: Index the OID column and compare it with a reg* value, such as oid_column = 'name'::regclass.
+
+
+statement error
+CREATE INDEX rir_name_idx ON rir USING inverted (id, (r::REGCLASS::VARCHAR));
+----
+db error: ERROR: Index keys cannot convert to or from reg* types: the conversion reads the catalog.
+HINT: Index the OID column and compare it with a reg* value, such as oid_column = 'name'::regclass.
+
+
+statement ok
+CREATE TABLE rir_class (id INT PRIMARY KEY, r REGCLASS);
+
+
+statement error
+CREATE INDEX rir_class_idx ON rir_class USING inverted (id, (r::VARCHAR) included());
+----
+db error: ERROR: Index keys cannot convert to or from reg* types: the conversion reads the catalog.
+HINT: Index the OID column and compare it with a reg* value, such as oid_column = 'name'::regclass.
+
+
+statement ok
+CREATE TABLE rir_names (id INT PRIMARY KEY, n VARCHAR);
+
+
+statement error
+CREATE INDEX rir_names_idx ON rir_names USING inverted (id, (n::REGCLASS::OID) included());
+----
+db error: ERROR: Index keys cannot convert to or from reg* types: the conversion reads the catalog.
+HINT: Index the OID column and compare it with a reg* value, such as oid_column = 'name'::regclass.
+
+
+statement ok
+CREATE INDEX rir_idx ON rir USING inverted (id, r);
+
+
+statement ok
+INSERT INTO rir SELECT 1, 'rir_s.rir_target'::REGCLASS::OID;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rir;
+
+
+query
+SELECT id FROM rir_idx WHERE r = 'rir_s.rir_target'::REGCLASS;
+----
+id
+1

@@ -237,7 +237,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      });
     if (!ok) {
       THROW_SQL_ERROR(
-        ERR_MSG("Failed to insert field into IResearch document"));
+        ERR_MSG("could not index the text to highlight: ", doc.Error()));
     }
   });
 
@@ -366,9 +366,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
                     ERR_MSG("ts_offsets(): dict must not be NULL"));
   }
 
-  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(dict_name),
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  auto dict = BindDictionary(input, dict_name);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

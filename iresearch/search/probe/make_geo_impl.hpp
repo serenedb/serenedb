@@ -42,14 +42,8 @@ Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                const detail::ScoredCtx& ctx, uint64_t interrogations) {
-  const auto record = query.Stats(ctx);
-  const auto score = detail::AllDocsScore(
-    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                       .stats = record.stats,
-                                       .fetcher = ctx.fetcher,
-                                       .boost = query.Boost()});
-  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(query, interrogations,
-                                                        score);
+  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(
+    query, interrogations, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::probe

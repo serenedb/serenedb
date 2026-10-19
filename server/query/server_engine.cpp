@@ -30,13 +30,12 @@
 
 #include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
-#include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
-#include "connector/duckdb_tokenizer_function.h"
+#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
@@ -44,7 +43,9 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/hash.h"
 #include "connector/functions/inout.h"
+#include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
@@ -59,12 +60,15 @@
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
-#include "pg/commands/rbac.h"
+#include "pg/pg_catalog/pg_prepared_statements.h"
+#include "pg/pg_catalog/pg_replication_origin.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "replication/functions.h"
+#include "replication/repl_source.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
@@ -196,22 +200,6 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::YESORNO(),
       nullptr,
     },
-    // pseudo-types for SERIAL types.
-    {
-      "serial",
-      sdb::pg::SERIAL(),
-      nullptr,
-    },
-    {
-      "bigserial",
-      sdb::pg::BIGSERIAL(),
-      nullptr,
-    },
-    {
-      "smallserial",
-      sdb::pg::SMALLSERIAL(),
-      nullptr,
-    },
     // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
     {
       "void",
@@ -232,10 +220,6 @@ ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
           "Maximum WAL chunks in flight per inverted index during recovery "
           "replay (the prefetch window; bounds replay memory). 0 = auto "
           "(4 x cpu threads).");
-
-ABSL_FLAG(bool, skip_search_recovery, false,
-          "Do not replay the search-table WAL at startup; search tables come "
-          "up with what their last refresh made durable.");
 
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
@@ -292,8 +276,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // connector/duckdb_client_state.cpp), which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
-  config.SetOptionByName("scheduler_process_partial",
-                         duckdb::Value::BOOLEAN(true));
   // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
   // DuckDB's writer defaults it on.
   config.SetOptionByName("copy_csv_header_default",
@@ -310,11 +292,11 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
-  connector::RegisterTokenizerPragma(db);
-
-  connector::RegisterForeignServerPragma(db);
-
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterHashFunctions(db);
+
+  connector::RegisterSubscriptionPragma(db);
 
   connector::RegisterKeyEncodingFunctions(db);
 
@@ -340,6 +322,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   docs::RegisterDocsFunctions(db);
 
+  connector::RegisterJobFunctions(db);
+
   connector::RegisterDuckDBAliases(db);
 
   connector::RegisterVacuumFunction(db);
@@ -349,14 +333,16 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgBinaryCopyFunction(db);
 
   connector::RegisterPgTextCopyFunction(db);
+  replication::RegisterReplicationSourceFunction(db);
+  replication::RegisterReplicationFunctions(db);
+  pg::RegisterReplicationOriginStatus(db);
+  pg::RegisterPreparedStatements(db);
 
   connector::RegisterSearchFunctions(db);
 
   connector::RegisterIResearchScanFunction(db);
 
   connector::RegisterSystemTableScanFunction(db);
-
-  pg::RegisterRbacFunctions(db);
 
   connector::RegisterAIFunctions(db);
 

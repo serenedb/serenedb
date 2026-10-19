@@ -61,6 +61,14 @@ jobs:
       contents: read
 
     steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -88,6 +96,7 @@ jobs:
           export DOCKER_GID="$(id -g)"
           export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
           export PG_CHANGED_TESTS="${{ inputs.PG_TESTS }}"
+          export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$(tests/sqllogic/fixtures/image_tag.sh tests/sqllogic/fixtures/postgres)"
 
           cd tests/sqllogic
           PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
@@ -101,7 +110,6 @@ jobs:
             -p "${PREFIX}" \
             -f docker-compose.validate-pg-tests.yml \
             up \
-            --build \
             --attach tests \
             --exit-code-from tests \
             --remove-orphans
@@ -113,6 +121,10 @@ jobs:
           name: validate-pg-results-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
             out/logs/*
-            **/tests/sqllogic/*.xml
+            tests/sqllogic/*.xml
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

@@ -21,7 +21,8 @@
 #include <snappy-sinksource.h>
 #include <snappy.h>
 
-#include <string>
+#include <exception>
+#include <iresearch/utils/assert.hpp>
 
 #include "network/http/codecs/codec.h"
 
@@ -29,63 +30,72 @@
 namespace sdb::network::http {
 namespace {
 
-class SnappyEncoder final : public ContentEncoder {
- public:
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
-    _pending.append(in);
-    if (!finish) {
-      return;
-    }
-    std::string out;
-    snappy::Compress(_pending.data(), _pending.size(), &out);
-    _pending.clear();
-    sink(out);
-  }
-
- private:
-  std::string _pending;
-};
-
 class ForwardSink final : public snappy::Sink {
  public:
-  explicit ForwardSink(absl::FunctionRef<void(std::string_view)> sink)
-    : _sink{sink} {}
+  explicit ForwardSink(DecodeSink sink) : _sink{sink} {}
 
-  void Append(const char* bytes, size_t n) override { _sink({bytes, n}); }
-
- private:
-  absl::FunctionRef<void(std::string_view)> _sink;
-};
-
-class SnappyDecoder final : public ContentDecoder {
- public:
-  void Decode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
-    _pending.append(in);
-    if (!finish) {
+  void Append(const char* bytes, size_t n) noexcept override {
+    if (_error) {
       return;
     }
-    snappy::ByteArraySource source{_pending.data(), _pending.size()};
-    ForwardSink out{sink};
-    if (!snappy::Uncompress(&source, &out)) {
-      ThrowCorrupt("snappy", "corrupt or truncated body");
+    try {
+      _sink({bytes, n});
+    } catch (...) {
+      _error = std::current_exception();
     }
-    _pending.clear();
+  }
+
+  void RethrowError() const {
+    if (_error) {
+      std::rethrow_exception(_error);
+    }
   }
 
  private:
-  std::string _pending;
+  DecodeSink _sink;
+  std::exception_ptr _error;
 };
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeSnappyEncoder() {
-  return std::make_unique<SnappyEncoder>();
+SnappyEncoder::SnappyEncoder(int level) { SDB_ASSERT(level == kNoLevel); }
+
+void SnappyEncoder::Encode(std::string_view in, bool finish,
+                           message::Writer& out) {
+  if (!finish) {
+    _pending.append(in);
+    return;
+  }
+  if (!_pending.empty()) {
+    _pending.append(in);
+    in = _pending;
+  }
+  out.Write(snappy::MaxCompressedLength(in.size()), [&](uint8_t* dst) {
+    size_t size = 0;
+    snappy::RawCompress(in.data(), in.size(), reinterpret_cast<char*>(dst),
+                        &size);
+    return size;
+  });
+  _pending.clear();
 }
 
-std::unique_ptr<ContentDecoder> MakeSnappyDecoder() {
-  return std::make_unique<SnappyDecoder>();
+void SnappyDecoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
+  if (!finish) {
+    _pending.append(in);
+    return;
+  }
+  if (!_pending.empty()) {
+    _pending.append(in);
+    in = _pending;
+  }
+  snappy::ByteArraySource source{in.data(), in.size()};
+  ForwardSink out{sink};
+  const bool ok = snappy::Uncompress(&source, &out);
+  out.RethrowError();
+  if (!ok) {
+    ThrowCorrupt("snappy", "corrupt or truncated body");
+  }
+  _pending.clear();
 }
 
 }  // namespace sdb::network::http

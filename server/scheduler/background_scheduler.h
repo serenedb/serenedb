@@ -26,25 +26,20 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <duckdb/common/types/timestamp.hpp>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/promise.hpp>
 #include <yaclib/async/run.hpp>
 #include <yaclib/exe/executor.hpp>
-#include <yaclib/runtime/fair_thread_pool.hpp>
-#include <yaclib/util/intrusive_ptr.hpp>
 
+#include "scheduler/duck_executor.h"
 #include "server/utils/asio_ns.h"
 
 namespace sdb {
 
-// The single background work pool: drop tasks today, and (later) search
-// refresh/compaction/cleanup and object-store prefetch. One fair yaclib thread
-// pool so blocking / latency-tolerant work stays off the io threads (which only
-// do socket IO) and off the DuckDB cpu pool (which runs queries). Sized by
-// --server_background_threads. Eventually merges into DuckDB's async pool.
-//
 // Delays reuse the network io workers' asio timers: arming a steady_timer there
 // is free and the fire callback only re-enqueues onto this pool, so io threads
 // never run background work. The io pool is absent in two very different
@@ -71,18 +66,18 @@ class BackgroundScheduler final {
   // value -- the queueWithFuture contract the old scheduler exposed.
   template<typename Func>
   auto Run(Func&& func) {
-    return yaclib::Run(*_pool, std::forward<Func>(func));
+    return yaclib::Run(*_executor, std::forward<Func>(func));
   }
 
-  yaclib::IExecutor& executor() noexcept { return *_pool; }
-
-  yaclib::IExecutor& annExecutor() noexcept { return *_ann_pool; }
+  yaclib::IExecutor& executor() noexcept { return *_executor; }
 
   static std::uint64_t AnnBuildBudget() noexcept;
 
   // Completes after `d` (best-effort; immediate once CancelDelays() has run,
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
+
+  void RunAt(duckdb::timestamp_t at, std::function<void()> task);
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().
@@ -102,9 +97,7 @@ class BackgroundScheduler final {
   }
 
  private:
-  std::uint64_t _threads;
-  yaclib::IntrusivePtr<yaclib::FairThreadPool> _pool;
-  yaclib::IntrusivePtr<yaclib::FairThreadPool> _ann_pool;
+  std::unique_ptr<DuckExecutor> _executor;
   std::atomic_bool _delays_cancelled = false;
   absl::Mutex _delays_mutex;
   absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> _delays;

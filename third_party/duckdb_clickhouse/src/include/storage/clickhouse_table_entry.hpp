@@ -65,7 +65,8 @@ private:
 //! the mutation must touch exactly one server row per distinct key. `id_list` is the
 //! comma-joined DEDUPLICATED rowid list, `distinct_keys` its element count; `op` is
 //! "UPDATE"/"DELETE".
-void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &database, const string &table_name,
-                         const string &pk_column, const string &id_list, idx_t distinct_keys, const char *op);
+void VerifyRowIdCoverage(ClientContext &context, ClickHouseConnection &connection, const string &database,
+                         const string &table_name, const string &pk_column, const string &id_list, idx_t distinct_keys,
+                         const char *op);
 
 } // namespace duckdb

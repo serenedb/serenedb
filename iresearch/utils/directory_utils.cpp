@@ -23,6 +23,8 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
+#include <duckdb/parallel/task_scheduler.hpp>
+
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
@@ -49,6 +51,7 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
 }
 
 bool RemoveAllUnreferenced(Directory& dir) {
+  duckdb::TaskScheduler::BlockingScope blocking;
   auto& refs = dir.attributes().refs();
 
   dir.visit([&refs](std::string_view name) {
@@ -65,17 +68,17 @@ bool RemoveAllUnreferenced(Directory& dir) {
 TrackingDirectory::TrackingDirectory(Directory& impl) noexcept
   : Directory{impl.ResourceManager()}, _impl{impl} {}
 
-IndexOutput::ptr TrackingDirectory::create(std::string_view name) noexcept try {
+IndexOutput::ptr TrackingDirectory::create(std::string_view name) {
   _files.emplace(name);
-  if (auto result = _impl.create(name)) [[likely]] {
+  try {
+    auto result = _impl.create(name);
     result->SetOnClose({absl::FunctionValue{},
                         [&](uint64_t size) noexcept { _files_size += size; }});
     return result;
+  } catch (...) {
+    _files.erase(name);
+    throw;
   }
-  _files.erase(name);  // Revert change
-  return nullptr;
-} catch (...) {
-  return nullptr;
 }
 
 bool TrackingDirectory::remove(std::string_view name) noexcept {
@@ -141,29 +144,24 @@ void RefTrackingDirectory::clear_refs() const {
   _refs.clear();
 }
 
-IndexOutput::ptr RefTrackingDirectory::create(std::string_view name) noexcept
-  try {
+IndexOutput::ptr RefTrackingDirectory::create(std::string_view name) {
   // Do not change the order of calls!
   // The cleaner should "see" the file in directory
   // ONLY if there is a tracking reference present!
   auto ref = _attribute.add(name);
-  auto result = _impl.create(name);
-
-  // only track ref on successful call to impl_
-  if (result) {
+  try {
+    auto result = _impl.create(name);
     std::lock_guard lock{_mutex};
     _refs.insert(std::move(ref));
-  } else {
+    return result;
+  } catch (...) {
     _attribute.remove(name);
+    throw;
   }
-
-  return result;
-} catch (...) {
-  return nullptr;
 }
 
 IndexInput::ptr RefTrackingDirectory::open(std::string_view name,
-                                           IOAdvice advice) const noexcept try {
+                                           IOAdvice advice) const {
   if (!_track_open) {
     return _impl.open(name, advice);
   }
@@ -171,19 +169,15 @@ IndexInput::ptr RefTrackingDirectory::open(std::string_view name,
   // The cleaner should "see" the file in directory
   // ONLY if there is a tracking reference present!
   auto ref = _attribute.add(name);
-  auto result = _impl.open(name, advice);
-
-  // only track ref on successful call to impl_
-  if (result) {
+  try {
+    auto result = _impl.open(name, advice);
     std::lock_guard lock{_mutex};
     _refs.emplace(std::move(ref));
-  } else {
+    return result;
+  } catch (...) {
     _attribute.remove(name);
+    throw;
   }
-
-  return result;
-} catch (...) {
-  return nullptr;
 }
 
 bool RefTrackingDirectory::remove(std::string_view name) noexcept try {

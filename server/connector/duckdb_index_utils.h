@@ -36,12 +36,9 @@ struct FeedColumn {
   ColumnDescriptor desc;
 };
 
-// One already-evaluated indexed expression: the field it feeds and its values
-// for this batch. Callers evaluate with whatever executor they own -- duckdb's
-// index expressions for DML/recovery, the pipeline for CREATE INDEX.
-struct ExpressionValue {
+struct ExpressionSlot {
   irs::field_id field_id;
-  duckdb::Vector* values;
+  duckdb::idx_t slot;
 };
 
 // The single feed path shared by every caller that tokenizes a chunk into an
@@ -53,7 +50,7 @@ struct ExpressionValue {
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
-               std::span<const ExpressionValue> expression_values = {},
+               std::span<const ExpressionSlot> expressions = {},
                irs::CommitOnFlush* commit_on_flush = nullptr);
 
 // The single removal path shared by every caller that deletes rows from an

@@ -26,7 +26,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <random>
+#include <pcg_random.hpp>
 #include <span>
 #include <utility>
 #include <yaclib/async/make.hpp>
@@ -96,7 +96,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
 
   std::vector<float> train;
   size_t train_seen = 0;
-  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
+  pcg32 train_rng{kTrainSeed};
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);
@@ -269,26 +269,18 @@ class IvfTermIterator final : public TermOnlyIterator {
  private:
   class DocIter final : public TermPostings {
    public:
-    void Reset(std::span<const doc_id_t> docs) noexcept {
-      _docs = docs;
-      _pos = 0;
-      _doc = doc_limits::invalid();
+    void Reset(std::span<const doc_id_t> docs) noexcept { _docs = docs; }
+
+    uint32_t NextDocs(doc_id_t* docs, uint32_t* /*freqs*/) noexcept final {
+      const auto n = static_cast<uint32_t>(
+        std::min<size_t>(_docs.size(), doc_limits::kBlockSize));
+      std::copy_n(_docs.data(), n, docs);
+      _docs = _docs.subspan(n);
+      return n;
     }
-
-    doc_id_t Next() noexcept final {
-      if (_pos >= _docs.size()) {
-        return _doc = doc_limits::eof();
-      }
-      return _doc = _docs[_pos++];
-    }
-
-    uint32_t GetFreq() const final { return 1; }
-
-    // The provider never changes, so the one call it owes is made at once.
 
    private:
     std::span<const doc_id_t> _docs;
-    size_t _pos = 0;
   };
 
   std::span<const doc_id_t> _cluster_docs;
@@ -388,8 +380,7 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
   auto qw = MakeQuantizerWriter(
-    _info.quant.kind, d, EffectiveQuantMetric(_info.metric), _info.quant.pq_m,
-    kDefaultClusterIters, _info.quant.nb_bits);
+    _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());

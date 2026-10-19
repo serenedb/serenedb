@@ -417,6 +417,23 @@ def test_binder_error_sqlstates():
         c.close()
 
 
+def test_job_error_sqlstates():
+    job = f"rfq_job_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cases = [
+                ("SELECT * FROM execute_job(NULL)", "22004"),
+                (f'CREATE JOB "{job}" EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1', "22023"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_array_csv_roundtrip():
     # Arrays survive a CSV copy round-trip: csv-out emits no spurious header
     # (PG default), and the input cast accepts both PG {..} and DuckDB [..].
@@ -601,6 +618,37 @@ def test_standalone_commit_rollback_no_txn_warns_25p01():
         c.close()
 
 
+def test_engine_warning_reaches_the_client_as_a_notice():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SET profiling_mode = 'standard'")
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "profiling_mode setting is deprecated" in diags[0][1], diags
+    finally:
+        c.close()
+
+
+def test_offset_without_guaranteed_order_warns():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    grouped = "SELECT k, count(*) FROM (VALUES ('a'), ('b'), ('a')) t(k) GROUP BY k"
+    try:
+        with c.cursor() as cur:
+            cur.execute(grouped + " ORDER BY k OFFSET 1")
+            assert cur.fetchall() == [("b", 1)]
+            assert diags == [], diags
+            cur.execute(grouped + " OFFSET 1")
+            assert len(cur.fetchall()) == 1
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "row order is not guaranteed" in diags[0][1], diags
+    finally:
+        c.close()
+
+
 def test_copy_text_header():
     # PG honors HEADER in FORMAT text (DuckDB treats it as csv-only): TO STDOUT
     # emits the column-name header line, FROM STDIN skips the first line.
@@ -642,7 +690,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 100000000000) g(i)"
+                    "select count(*) from generate_series(1, 200000000000) g(i)"
                 )
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:
@@ -678,3 +726,31 @@ def test_binary_parameters_after_an_untyped_null_in_a_transaction():
     with psycopg.connect(**conn_kwargs()) as c:
         assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)
         c.rollback()
+
+
+def _protocol_statements(c: psycopg.Connection) -> list[str]:
+    rows = c.execute(
+        "SELECT name FROM pg_prepared_statements WHERE NOT from_sql ORDER BY name",
+        prepare=False,
+    ).fetchall()
+    return [name for (name,) in rows]
+
+
+def test_prepared_statement_cache_flush_releases_server_statements():
+    with psycopg.connect(**conn_kwargs(), prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER + 1", (41,)).fetchone() == (42,)
+        assert c.execute("SELECT %s::TEXT", ("x",)).fetchone() == ("x",)
+        assert len(_protocol_statements(c)) == 2
+        c.rollback()
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER + 1", (1,)).fetchone() == (2,)
+        assert len(_protocol_statements(c)) == 1
+        c.rollback()
+
+
+def test_discard_all_drops_driver_prepared_statements():
+    with psycopg.connect(**conn_kwargs(), autocommit=True, prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER", (5,)).fetchone() == (5,)
+        c.execute("DISCARD ALL", prepare=False)
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER", (6,)).fetchone() == (6,)

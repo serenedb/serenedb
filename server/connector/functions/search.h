@@ -21,10 +21,13 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "catalog/entry/tokenizer.h"
+
 namespace sdb::connector {
 
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
@@ -134,8 +137,13 @@ duckdb::LogicalType MakeTSQueryType();
                                duckdb::ExpressionState& state,
                                duckdb::Vector& result);
 
+bool IsSearchStub(const duckdb::BoundFunctionExpression& call);
+
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);
+
+duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
+  duckdb::BindScalarFunctionInput& input, std::string_view name);
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

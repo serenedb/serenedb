@@ -1,0 +1,94 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY lep_kw AS keyword() WITH (frequency)
+
+
+statement ok
+CREATE TABLE lep_logs (id INT, msg VARCHAR) WITH (storage = 'search')
+
+
+statement ok
+CREATE INDEX lep_logs_idx ON lep_logs USING inverted (id, msg lep_kw)
+
+
+statement ok
+INSERT INTO lep_logs VALUES (1, '50% off'), (2, '500 items'), (3, '%done'), (4, 'done')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lep_logs
+
+
+query
+SELECT id FROM lep_logs WHERE msg LIKE '50\%%' ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lep_logs WHERE msg LIKE '\%%' ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM lep_logs WHERE msg LIKE '50#%%' ESCAPE '#' ORDER BY id
+----
+id
+1
+
+statement ok
+CREATE TABLE lep_plain (id INT PRIMARY KEY, msg VARCHAR)
+
+
+statement ok
+CREATE INDEX lep_plain_idx ON lep_plain USING inverted (id, msg lep_kw)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO lep_plain VALUES (1, '50% off'), (2, '500 items'), (3, '%done'), (4, 'done')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lep_plain
+
+
+query
+SELECT id FROM lep_plain WHERE msg LIKE '50\%%' ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lep_plain_idx WHERE msg LIKE '50\%%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM lep_plain_idx WHERE msg LIKE '50\%%';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: lep_plain_idx   │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: 50%        │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM lep_plain_idx WHERE msg @@ ts_like('50\%%') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lep_plain_idx WHERE msg @@ ts_like('\%%') ORDER BY id
+----
+id
+3

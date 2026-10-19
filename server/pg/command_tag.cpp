@@ -28,9 +28,12 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -39,15 +42,16 @@
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+#include <duckdb/parser/statement/vacuum_statement.hpp>
 
 #include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
 
-std::string_view CreateObjectTag(duckdb::CatalogType type) {
+std::string_view CreateObjectTag(const duckdb::CreateInfo& info) {
   using duckdb::CatalogType;
-  switch (type) {
+  switch (info.type) {
     case CatalogType::TABLE_ENTRY:
       return "CREATE TABLE";
     case CatalogType::VIEW_ENTRY:
@@ -62,19 +66,43 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE TYPE";
     case CatalogType::MACRO_ENTRY:
     case CatalogType::TABLE_MACRO_ENTRY:
-      return "CREATE FUNCTION";
+      return info.Cast<duckdb::CreateMacroInfo>().is_procedure
+               ? "CREATE PROCEDURE"
+               : "CREATE FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "CREATE DATABASE";
     case CatalogType::TRIGGER_ENTRY:
       return "CREATE TRIGGER";
+    case CatalogType::ROLE_ENTRY:
+      return "CREATE ROLE";
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return "CREATE SERVER";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "CREATE TEXT SEARCH DICTIONARY";
+    case CatalogType::JOB_ENTRY:
+      return "CREATE JOB";
     default:
       return "CREATE";
   }
 }
 
-std::string_view DropObjectTag(duckdb::CatalogType type) {
+std::string_view DiscardTag(duckdb::DiscardTarget target) {
+  switch (target) {
+    case duckdb::DiscardTarget::ALL:
+      return "DISCARD ALL";
+    case duckdb::DiscardTarget::PLANS:
+      return "DISCARD PLANS";
+    case duckdb::DiscardTarget::SEQUENCES:
+      return "DISCARD SEQUENCES";
+    case duckdb::DiscardTarget::TEMP:
+      return "DISCARD TEMP";
+  }
+  return "DISCARD";
+}
+
+std::string_view DropObjectTag(const duckdb::DropInfo& info) {
   using duckdb::CatalogType;
-  switch (type) {
+  switch (info.type) {
     case CatalogType::TABLE_ENTRY:
       return "DROP TABLE";
     case CatalogType::VIEW_ENTRY:
@@ -89,13 +117,19 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP TYPE";
     case CatalogType::MACRO_ENTRY:
     case CatalogType::TABLE_MACRO_ENTRY:
-      return "DROP FUNCTION";
+      return info.is_procedure ? "DROP PROCEDURE" : "DROP FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "DROP DATABASE";
     case CatalogType::TRIGGER_ENTRY:
       return "DROP TRIGGER";
+    case CatalogType::ROLE_ENTRY:
+      return "DROP ROLE";
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return "DROP SERVER";
     case CatalogType::TOKENIZER_ENTRY:
       return "DROP TEXT SEARCH DICTIONARY";
+    case CatalogType::JOB_ENTRY:
+      return "DROP JOB";
     default:
       return "DROP";
   }
@@ -164,6 +198,13 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::EXPLAIN_STATEMENT:
       return make("EXPLAIN");
     case StatementType::VACUUM_STATEMENT:
+      if (unbound) {
+        const auto& options =
+          unbound->Cast<duckdb::VacuumStatement>().info->options;
+        if (options.analyze && !options.vacuum) {
+          return make("ANALYZE");
+        }
+      }
       return make("VACUUM");
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
@@ -207,7 +248,7 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               create_stmt.info->Cast<duckdb::CreateTableInfo>().query) {
             return make("SELECT", true);
           }
-          return make(CreateObjectTag(create_stmt.info->type));
+          return make(CreateObjectTag(*create_stmt.info));
         }
       }
       return make("CREATE");
@@ -217,11 +258,16 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
         const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
         if (drop_stmt.info) {
           if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
+            if (drop_stmt.info->extra_drop_info) {
+              return make(DiscardTag(drop_stmt.info->extra_drop_info
+                                       ->Cast<duckdb::ExtraDropDiscardInfo>()
+                                       .target));
+            }
             return make(drop_stmt.info->GetQualifiedName().Name().empty()
                           ? "DEALLOCATE ALL"
                           : "DEALLOCATE");
           }
-          return make(DropObjectTag(drop_stmt.info->type));
+          return make(DropObjectTag(*drop_stmt.info));
         }
       }
       return make("DROP");
@@ -246,9 +292,29 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               return make("ALTER SEQUENCE");
             case duckdb::AlterType::ALTER_DATABASE:
               return make("ALTER DATABASE");
+            case duckdb::AlterType::ALTER_JOB:
+              return make("ALTER JOB");
             case duckdb::AlterType::SET_COMMENT:
             case duckdb::AlterType::SET_COLUMN_COMMENT:
               return make("COMMENT");
+            case duckdb::AlterType::ALTER_PERMISSIONS: {
+              const auto& permissions =
+                alter_stmt.info->Cast<duckdb::AlterPermissionsInfo>();
+              if (!permissions.new_owner.empty()) {
+                break;
+              }
+              if (permissions.default_objtype != duckdb::CatalogType::INVALID) {
+                return make("ALTER DEFAULT PRIVILEGES");
+              }
+              return make(permissions.revoke ? "REVOKE" : "GRANT");
+            }
+            case duckdb::AlterType::ALTER_ROLE: {
+              const auto& role = alter_stmt.info->Cast<duckdb::AlterRoleInfo>();
+              if (!role.grant_role.empty()) {
+                return make(role.revoke ? "REVOKE ROLE" : "GRANT ROLE");
+              }
+              return make("ALTER ROLE");
+            }
             default:
               break;
           }
@@ -295,7 +361,7 @@ const duckdb::SQLStatement* UnboundStatement(
   }
   const auto& statements =
     duckdb::ClientData::Get(*context).prepared_statements;
-  const auto it = statements.find(duckdb::Identifier{prepared.GetName()});
+  const auto it = statements.find(prepared.GetName());
   return it != statements.end() && it->second
            ? it->second->unbound_statement.get()
            : nullptr;

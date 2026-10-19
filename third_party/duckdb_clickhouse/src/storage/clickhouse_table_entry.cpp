@@ -101,8 +101,7 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known "
 			             "FROM system.tables WHERE database = " +
 			             ClickHouseStringLiteral(database) + " AND name = " + ClickHouseStringLiteral(table);
-			ClickHouseConnection::LogQuery(sql);
-			conn->GetClient().Select(sql, [&](const clickhouse::Block &block) {
+			conn->Select(context, sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
 					return;
 				}
@@ -162,8 +161,9 @@ TableStorageInfo ClickHouseTableEntry::GetStorageInfo(ClientContext &context) {
 	return result;
 }
 
-void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &database, const string &table_name,
-                         const string &pk_column, const string &id_list, idx_t distinct_keys, const char *op) {
+void VerifyRowIdCoverage(ClientContext &context, ClickHouseConnection &connection, const string &database,
+                         const string &table_name, const string &pk_column, const string &id_list, idx_t distinct_keys,
+                         const char *op) {
 	if (id_list.empty()) {
 		return;
 	}
@@ -173,10 +173,9 @@ void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &databas
 	string sql = "SELECT count() FROM " + ClickHouseQuoteIdentifier(database) + "." +
 	             ClickHouseQuoteIdentifier(table_name) + " WHERE " + ClickHouseQuoteIdentifier(pk_column) + " IN (" +
 	             id_list + ")";
-	ClickHouseConnection::LogQuery(sql);
 	uint64_t table_count = 0;
 	try {
-		connection.GetClient().Select(sql, [&](const clickhouse::Block &block) {
+		connection.Select(context, sql, [&](const clickhouse::Block &block) {
 			if (block.GetColumnCount() == 0 || block.GetRowCount() == 0) {
 				return;
 			}

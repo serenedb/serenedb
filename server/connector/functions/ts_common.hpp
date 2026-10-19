@@ -69,6 +69,7 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
+  WideRanges wide_ranges = WideRanges::Build;
   uint32_t* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
@@ -85,6 +86,7 @@ struct FilterContext {
       .client_context = client_context,
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
+      .wide_ranges = wide_ranges,
       .min_match = min_match,
     };
   }
@@ -108,6 +110,12 @@ struct FilterContext {
   }
 
   FilterContext WithoutMinMatch() const { return WithMinMatch(nullptr); }
+
+  FilterContext Claimed() const {
+    FilterContext ctx = *this;
+    ctx.wide_ranges = WideRanges::Build;
+    return ctx;
+  }
 };
 
 inline uint32_t TakeMinMatch(const FilterContext& ctx) {
@@ -233,6 +241,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all);
 void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info, std::string_view text);
+bool MatchesPhrases(const SearchColumnInfo& column_info);
 
 using TokenGroups = std::vector<std::vector<irs::bstring>>;
 
@@ -256,6 +265,8 @@ struct RangeArgs {
 // All Parse*/Fill*/Extract*/Flatten*/Attach*/Emit* helpers below throw
 // THROW_SQL_ERROR on any failure -- callers don't need to wrap.
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func);
+// Phrase-part ranges compare verbatim bounds against indexed terms.
+// Standalone ranges instead analyze each bound with the column's tokenizer.
 void FillByRangeOptionsVarchar(const RangeArgs& args, irs::ByRangeOptions& out);
 
 // ts_levenshtein-as-part dispatch.
@@ -312,9 +323,14 @@ irs::analysis::ShingleTokenizer* QueryShingle(
   const FilterContext& ctx, const SearchColumnInfo& column_info);
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
                                          const SearchColumnInfo& column_info);
-void PlanShinglePhrases(
-  irs::Filter& root,
-  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of);
+
+struct PhraseField {
+  const SearchColumnInfo* info = nullptr;
+  const irs::analysis::ShingleTokenizer* shingle = nullptr;
+};
+
+void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
+                 absl::FunctionRef<PhraseField(irs::field_id)> field_of);
 
 enum class TSQueryOp {
   Unknown,

@@ -22,38 +22,57 @@
 
 #include <absl/status/status.h>
 
+#include <cstdint>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <optional>
 
 #include "connector/comparison_op.hpp"
+#include "connector/functions/ts_common.hpp"
 #include "connector/search_filter_builder.hpp"
 
-namespace duckdb {
-
-class Expression;
-class BoundFunctionExpression;
-class BoundOperatorExpression;
-
-}  // namespace duckdb
 namespace sdb::connector {
 
-struct FilterContext;
+struct InetOperands {
+  const SearchColumnInfo* column = nullptr;
+  const duckdb::Value* constant = nullptr;
+  bool swapped = false;
+};
 
-std::optional<absl::Status> TryFromInetEquality(BoolTarget filter,
-                                                const FilterContext& ctx,
-                                                const duckdb::Expression& left,
-                                                const duckdb::Expression& right,
-                                                bool not_equal);
+enum class InetContainmentOp : uint8_t {
+  ContainedBy,
+  Contains,
+};
 
-std::optional<absl::Status> TryFromInetComparison(
-  BoolTarget filter, const FilterContext& ctx, const duckdb::Expression& left,
-  const duckdb::Expression& right, ComparisonOp op);
+struct InetContainment {
+  const SearchColumnInfo* column = nullptr;
+  const duckdb::Value* constant = nullptr;
+  InetContainmentOp op = InetContainmentOp::ContainedBy;
+};
 
-std::optional<absl::Status> TryFromInetIn(
-  BoolTarget filter, const FilterContext& ctx,
-  const duckdb::BoundOperatorExpression& op_expr);
+const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
+                                       const duckdb::Expression& expr);
 
-std::optional<absl::Status> TryFromInetFunction(
-  BoolTarget filter, const FilterContext& ctx,
-  const duckdb::BoundFunctionExpression& func);
+std::optional<InetOperands> ResolveInetOperands(
+  const FilterContext& ctx, const duckdb::Expression& left,
+  const duckdb::Expression& right);
+
+std::optional<InetContainment> ResolveInetContainment(
+  const FilterContext& ctx, const duckdb::BoundFunctionExpression& func);
+
+absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
+                              const InetOperands& operands, bool not_equal);
+
+absl::Status FromInetComparison(BoolTarget filter, const FilterContext& ctx,
+                                const InetOperands& operands, ComparisonOp op);
+
+absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
+                        const SearchColumnInfo& column,
+                        const duckdb::BoundOperatorExpression& op_expr);
+
+absl::Status FromInetContainment(BoolTarget filter, const FilterContext& ctx,
+                                 const InetContainment& containment);
 
 }  // namespace sdb::connector

@@ -20,6 +20,8 @@
 
 #include "search_sink_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -30,6 +32,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
+#include <span>
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
@@ -124,8 +127,9 @@ bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
   return DispatchNumericKind<VARCHAR, BLOB, BOOLEAN>(kind, std::forward<F>(f));
 }
 
-bool ValidWhereParentValid(const duckdb::ValidityMask& parent,
-                           const duckdb::ValidityMask& child, uint32_t count) {
+bool ChildValidWhereverParentIs(const duckdb::ValidityMask& parent,
+                                const duckdb::ValidityMask& child,
+                                uint32_t count) {
   if (child.CannotHaveNull()) {
     return true;
   }
@@ -147,6 +151,78 @@ bool ValidWhereParentValid(const duckdb::ValidityMask& parent,
   }
   return true;
 }
+
+bool ChildrenAlignWithRows(
+  const duckdb::UnifiedVectorFormat& parent,
+  std::span<const duckdb::UnifiedVectorFormat> children, uint32_t count) {
+  return irs::analysis::IsIdentitySel(parent) &&
+         absl::c_all_of(children, [&](const auto& child) {
+           return irs::analysis::IsIdentitySel(child) &&
+                  ChildValidWhereverParentIs(parent.validity, child.validity,
+                                             count);
+         });
+}
+
+// Collects the terms of consecutive INET rows and hands them to the inverter
+// whenever the next row might not fit.
+class InetTermWriter {
+ public:
+  explicit InetTermWriter(irs::TokenBatch& tokens, std::span<irs::DocRun> runs,
+                          std::span<uint8_t> bytes,
+                          irs::FieldInverter& inverter,
+                          irs::doc_id_t first_doc) noexcept
+    : _tokens{tokens},
+      _runs{runs},
+      _bytes{bytes},
+      _inverter{inverter},
+      _first_doc{first_doc},
+      _next_byte{bytes.data()} {}
+
+  IRS_NO_INLINE bool Add(uint32_t row, uint8_t ip_type,
+                         duckdb::hugeint_t address, uint16_t mask) {
+    if (_term_count + inet_terms::kMaxTerms > irs::TokenBatch::kCapacity &&
+        !Flush()) {
+      return false;
+    }
+    const auto family = static_cast<inet_terms::Family>(ip_type);
+    auto upper = static_cast<uint64_t>(address.upper);
+    if (family == inet_terms::Family::V6) {
+      upper ^= pg::kInetV6SortBit;
+    }
+    const auto written =
+      inet_terms::WriteTerms(family, upper, address.lower, mask,
+                             _tokens.terms + _term_count, _next_byte);
+    SDB_ASSERT(_run_count < _runs.size());
+    SDB_ASSERT(_next_byte <= _bytes.data() + _bytes.size());
+    _runs[_run_count++] =
+      irs::DocRun{.doc = _first_doc + row, .ntokens = written};
+    _term_count += written;
+    return true;
+  }
+
+  bool Flush() {
+    if (_run_count == 0) {
+      return true;
+    }
+    _tokens.count = _term_count;
+    const bool ok =
+      _inverter.InvertBlock(_tokens, irs::DocRuns{{_runs.data(), _run_count}});
+    _term_count = 0;
+    _run_count = 0;
+    _next_byte = _bytes.data();
+    return ok;
+  }
+
+ private:
+  irs::TokenBatch& _tokens;
+  std::span<irs::DocRun> _runs;
+  std::span<uint8_t> _bytes;
+  irs::FieldInverter& _inverter;
+  irs::doc_id_t _first_doc;
+  uint8_t* _next_byte;
+  uint32_t _term_count = 0;
+  uint32_t _run_count = 0;
+};
 
 [[noreturn]] void ThrowJsonComposite() {
   THROW_SQL_ERROR(
@@ -243,18 +319,6 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
   });
   return true;
 }
-
-struct SearchSinkInsertBaseImpl::InetBatch {
-  std::array<duckdb::UnifiedVectorFormat, pg::kInetChildCount> fields;
-  irs::TokenBatch tokens;
-  std::array<irs::DocRun, irs::TokenBatch::kCapacity / inet_terms::kV4BaseTerms>
-    runs;
-  std::array<uint8_t, irs::TokenBatch::kCapacity / inet_terms::kV6BaseTerms *
-                        inet_terms::kV6LongTermBytes>
-    bytes;
-};
-
-SearchSinkInsertBaseImpl::~SearchSinkInsertBaseImpl() = default;
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
@@ -414,6 +478,8 @@ void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
     _inet_batch = std::make_unique_for_overwrite<InetBatch>();
   }
   auto& batch = *_inet_batch;
+  // Views over the struct's ip_type, address and mask children; nothing is
+  // copied.
   const auto& entries = duckdb::StructVector::GetEntries(vec);
   auto& [types, addresses, masks] = batch.fields;
   entries[pg::kInetIpTypeChild].ToUnifiedFormat(types);
@@ -428,84 +494,43 @@ void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
     null_field, count,
     [&](const duckdb::UnifiedVectorFormat& fmt, uint32_t n,
         irs::doc_id_t first_doc) {
-      InvertField(field, [&](irs::FieldInverter& fld) {
-        uint32_t terms = 0;
-        uint32_t runs = 0;
-        auto* bytes = batch.bytes.data();
-        const auto flush = [&] {
-          if (runs == 0) {
-            return true;
-          }
-          batch.tokens.count = terms;
-          const bool ok = fld.InvertBlock(
-            batch.tokens, irs::DocRuns{{batch.runs.data(), runs}});
-          terms = 0;
-          runs = 0;
-          bytes = batch.bytes.data();
-          return ok;
-        };
-        const auto add = [&](uint32_t row, uint8_t ip_type,
-                             duckdb::hugeint_t address,
-                             uint16_t mask) IRS_NO_INLINE {
-          if (terms + inet_terms::kMaxTermsPerValue >
-                irs::TokenBatch::kCapacity &&
-              !flush()) {
-            return false;
-          }
-          auto upper = static_cast<uint64_t>(address.upper);
-          if (ip_type == inet_terms::kV6Type) {
-            upper ^= pg::kInetV6SortBit;
-          }
-          const auto written =
-            inet_terms::WriteTerms(ip_type, upper, address.lower, mask,
-                                   batch.tokens.terms + terms, bytes);
-          if (written != 0) {
-            SDB_ASSERT(runs < batch.runs.size());
-            SDB_ASSERT(bytes <= batch.bytes.data() + batch.bytes.size());
-            batch.runs[runs++] =
-              irs::DocRun{.doc = first_doc + row, .ntokens = written};
-            terms += written;
-          }
-          return true;
-        };
-        if (irs::analysis::IsIdentitySel(fmt) &&
-            irs::analysis::IsIdentitySel(types) &&
-            irs::analysis::IsIdentitySel(addresses) &&
-            irs::analysis::IsIdentitySel(masks) &&
-            ValidWhereParentValid(fmt.validity, types.validity, n) &&
-            ValidWhereParentValid(fmt.validity, addresses.validity, n) &&
-            ValidWhereParentValid(fmt.validity, masks.validity, n)) {
+      InvertField(field, [&](irs::FieldInverter& inverter) {
+        InetTermWriter writer{batch.tokens, batch.runs, batch.bytes, inverter,
+                              first_doc};
+        // Fast path: the children are plain arrays, valid wherever the row
+        // is, so row i is element i of each.
+        if (ChildrenAlignWithRows(fmt, batch.fields, n)) {
           return irs::analysis::ForEachValidRun(
                    fmt, n,
                    [&](uint32_t start, uint32_t length) {
-                     for (uint32_t i = start; i < start + length; ++i) {
-                       if (!add(i, type_data[i], address_data[i],
-                                mask_data[i])) {
+                     for (uint32_t row = start; row != start + length; ++row) {
+                       if (!writer.Add(row, type_data[row], address_data[row],
+                                       mask_data[row])) {
                          return false;
                        }
                      }
                      return true;
                    }) &&
-                 flush();
+                 writer.Flush();
         }
-        for (uint32_t i = 0; i < n; ++i) {
-          if (!fmt.validity.RowIsValid(fmt.sel->get_index(i))) {
+        // General path: each child is read through its own selection; a row
+        // with a NULL child has no terms.
+        for (uint32_t row = 0; row < n; ++row) {
+          const auto type = types.sel->get_index(row);
+          const auto address = addresses.sel->get_index(row);
+          const auto mask = masks.sel->get_index(row);
+          if (!fmt.validity.RowIsValid(fmt.sel->get_index(row)) ||
+              !types.validity.RowIsValid(type) ||
+              !addresses.validity.RowIsValid(address) ||
+              !masks.validity.RowIsValid(mask)) {
             continue;
           }
-          const auto type_idx = types.sel->get_index(i);
-          const auto address_idx = addresses.sel->get_index(i);
-          const auto mask_idx = masks.sel->get_index(i);
-          if (!types.validity.RowIsValid(type_idx) ||
-              !addresses.validity.RowIsValid(address_idx) ||
-              !masks.validity.RowIsValid(mask_idx)) {
-            continue;
-          }
-          if (!add(i, type_data[type_idx], address_data[address_idx],
-                   mask_data[mask_idx])) {
+          if (!writer.Add(row, type_data[type], address_data[address],
+                          mask_data[mask])) {
             return false;
           }
         }
-        return flush();
+        return writer.Flush();
       });
     });
 }
@@ -912,13 +937,15 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       append_stored();
       WriteBoolColumn(_field, _null_field, count);
       return;
-    default: {
-      if (pg::IsInetOrCidr(type)) {
-        _field.PrepareForBlockValue(field_id);
-        append_stored();
-        WriteInetColumn(_field, _null_field, vec, count);
+    case duckdb::LogicalTypeId::STRUCT:
+      if (!pg::IsInetOrCidr(type)) {
         return;
       }
+      _field.PrepareForBlockValue(field_id);
+      append_stored();
+      WriteInetColumn(_field, _null_field, vec, count);
+      return;
+    default: {
       if (!term_dict::IsNumeric(term_dict::Classify(kind))) {
         return;
       }

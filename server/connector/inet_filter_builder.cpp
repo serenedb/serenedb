@@ -67,16 +67,6 @@ const duckdb::Expression& PeelSortKey(const duckdb::Expression& expr) {
   return PeelCidrCast(*func.GetChildren()[0]);
 }
 
-const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
-                                       const duckdb::Expression& expr) {
-  const auto& column = PeelSortKey(expr);
-  if (!pg::IsInetOrCidr(column.GetReturnType())) {
-    return nullptr;
-  }
-  const auto* info = FindColumnInfoForExpr(ctx, column);
-  return info && pg::IsInetOrCidr(info->logical_type) ? info : nullptr;
-}
-
 const duckdb::Value* FindInetConstant(const duckdb::Expression& expr) {
   if (const auto* value = TryGetConstant(expr)) {
     return value;
@@ -84,25 +74,12 @@ const duckdb::Value* FindInetConstant(const duckdb::Expression& expr) {
   return TryGetConstant(PeelSortKey(expr));
 }
 
-struct Operands {
-  const SearchColumnInfo* column;
-  const duckdb::Value* constant;
-  bool swapped;
-};
-
-std::optional<Operands> ResolveOperands(const FilterContext& ctx,
-                                        const duckdb::Expression& left,
-                                        const duckdb::Expression& right) {
-  if (const auto* column = FindInetColumn(ctx, left)) {
-    if (const auto* constant = FindInetConstant(right)) {
-      return Operands{column, constant, false};
-    }
-    return std::nullopt;
+std::optional<InetContainmentOp> ContainmentOpOf(std::string_view name) {
+  if (name == kContainedByOp || name == kContainedByFunction) {
+    return InetContainmentOp::ContainedBy;
   }
-  if (const auto* column = FindInetColumn(ctx, right)) {
-    if (const auto* constant = FindInetConstant(left)) {
-      return Operands{column, constant, true};
-    }
+  if (name == kContainsOp || name == kContainsFunction) {
+    return InetContainmentOp::Contains;
   }
   return std::nullopt;
 }
@@ -148,17 +125,17 @@ void AddBytePrefix(BoolTarget target, irs::field_id field,
 void AddComparison(BoolTarget target, const SearchColumnInfo& column,
                    const inet_terms::Inet& value, ComparisonOp op) {
   const auto group = AddGroup(target, irs::Occur::Should);
-  for (const bool v6 : {false, true}) {
-    const bool below = v6 < value.v6;
-    const bool above = v6 > value.v6;
+  for (const auto family : {inet_terms::Family::V4, inet_terms::Family::V6}) {
+    const bool below = family < value.family;
+    const bool above = family > value.family;
     switch (op) {
       case ComparisonOp::Lt:
       case ComparisonOp::Le:
         if (below) {
           AddBytePrefix(group, column.field_id,
-                        inet_terms::CoarsestLevelPrefixOf(v6));
+                        inet_terms::CoarsestLevelPrefixOf(family));
         } else if (!above) {
-          AddGranularRange(group, column, inet_terms::FamilyMin(v6),
+          AddGranularRange(group, column, inet_terms::FamilyMin(family),
                            irs::BoundType::Inclusive, value,
                            op == ComparisonOp::Lt ? irs::BoundType::Exclusive
                                                   : irs::BoundType::Inclusive);
@@ -168,12 +145,12 @@ void AddComparison(BoolTarget target, const SearchColumnInfo& column,
       case ComparisonOp::Ge:
         if (above) {
           AddBytePrefix(group, column.field_id,
-                        inet_terms::CoarsestLevelPrefixOf(v6));
+                        inet_terms::CoarsestLevelPrefixOf(family));
         } else if (!below) {
           AddGranularRange(group, column, value,
                            op == ComparisonOp::Gt ? irs::BoundType::Exclusive
                                                   : irs::BoundType::Inclusive,
-                           inet_terms::FamilyMax(v6),
+                           inet_terms::FamilyMax(family),
                            irs::BoundType::Inclusive);
         }
         break;
@@ -187,39 +164,40 @@ void AddComparison(BoolTarget target, const SearchColumnInfo& column,
 void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
                     const inet_terms::Inet& value) {
   const auto field = column.field_id;
-  const auto bits = value.NetworkBits();
+  const uint32_t bits = value.mask;
   const auto group = AddGroup(target, irs::Occur::Must);
   if (bits == 0) {
-    AddBytePrefix(group, field, inet_terms::CoarsestLevelPrefixOf(value.v6));
+    AddBytePrefix(group, field,
+                  inet_terms::CoarsestLevelPrefixOf(value.family));
     return;
   }
   const auto network = inet_terms::Network(value, bits);
   const auto broadcast = inet_terms::Broadcast(value, bits);
-  uint32_t level = inet_terms::LevelCount(value.v6);
-  while (level != 0 && inet_terms::LevelBits(value.v6, level) < bits) {
+  uint32_t level = inet_terms::LevelCount(value.family);
+  while (level != 0 && inet_terms::LevelBits(value.family, level) < bits) {
     --level;
   }
   if (level == 0) {
-    AddByteRange(
-      group, field,
-      inet_terms::ExactPrefixOf(value.v6, network, static_cast<uint16_t>(bits)),
-      inet_terms::ExactUpperOf(value.v6, broadcast));
+    AddByteRange(group, field,
+                 inet_terms::ExactPrefixOf(value.family, network,
+                                           static_cast<uint16_t>(bits)),
+                 inet_terms::ExactUpperOf(value.family, broadcast));
     return;
   }
-  if (inet_terms::LevelBits(value.v6, level) == bits) {
-    AddTerm(group, field, inet_terms::LevelTermOf(value.v6, level, network),
+  if (inet_terms::LevelBits(value.family, level) == bits) {
+    AddTerm(group, field, inet_terms::LevelTermOf(value.family, level, network),
             irs::kNoBoost, &irs::ForceConstScore());
   } else {
     AddByteRange(group, field,
-                 inet_terms::LevelTermOf(value.v6, level, network),
-                 inet_terms::LevelTermOf(value.v6, level, broadcast));
+                 inet_terms::LevelTermOf(value.family, level, network),
+                 inet_terms::LevelTermOf(value.family, level, broadcast));
   }
-  const auto min_mask = inet_terms::MinMaskOf(value.v6, network);
+  const auto min_mask = inet_terms::MinMaskOf(value.family, network);
   if (min_mask < bits) {
     AddByteRange(
       {group.node, irs::Occur::MustNot}, field,
-      inet_terms::MaskTermOf(value.v6, static_cast<uint8_t>(min_mask)),
-      inet_terms::MaskTermOf(value.v6, static_cast<uint8_t>(bits - 1)));
+      inet_terms::MaskTermOf(value.family, static_cast<uint8_t>(min_mask)),
+      inet_terms::MaskTermOf(value.family, static_cast<uint8_t>(bits - 1)));
   }
 }
 
@@ -229,74 +207,106 @@ void AddContains(BoolTarget target, const SearchColumnInfo& column,
   *filter.mutable_field_id() = column.field_id;
   filter.SetScorer(&irs::ForceConstScore());
   std::vector<irs::bstring> prefixes;
-  prefixes.reserve(value.NetworkBits() + 1);
-  for (uint32_t bits = 0; bits <= value.NetworkBits(); ++bits) {
-    prefixes.push_back(inet_terms::ExactPrefixOf(
-      value.v6, inet_terms::Network(value, bits), static_cast<uint16_t>(bits)));
+  prefixes.reserve(value.mask + 1);
+  for (uint32_t bits = 0; bits <= value.mask; ++bits) {
+    prefixes.push_back(
+      inet_terms::ExactPrefixOf(value.family, inet_terms::Network(value, bits),
+                                static_cast<uint16_t>(bits)));
   }
   filter.mutable_options()->SetPrefixes(std::move(prefixes));
 }
 
 }  // namespace
 
-std::optional<absl::Status> TryFromInetEquality(BoolTarget filter,
-                                                const FilterContext& ctx,
-                                                const duckdb::Expression& left,
-                                                const duckdb::Expression& right,
-                                                bool not_equal) {
-  const auto operands = ResolveOperands(ctx, left, right);
-  if (!operands) {
-    return std::nullopt;
+const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
+                                       const duckdb::Expression& expr) {
+  const auto& column = PeelSortKey(expr);
+  if (!pg::IsInetOrCidr(column.GetReturnType())) {
+    return nullptr;
   }
-  if (operands->constant->IsNull()) {
-    AddFilter<irs::Empty>(filter);
-    return absl::OkStatus();
-  }
-  const auto value = inet_terms::FromValue(*operands->constant);
-  if (!value) {
-    return Unsupported();
-  }
-  const auto target = (ctx.negated != not_equal)
-                        ? NegateScoped(filter, *operands->column)
-                        : filter;
-  AddTerm(target, operands->column->field_id, inet_terms::ExactTermOf(*value),
-          ctx.boost, &irs::ForceConstScore());
-  return absl::OkStatus();
+  const auto* info = FindColumnInfoForExpr(ctx, column);
+  return info && pg::IsInetOrCidr(info->logical_type) ? info : nullptr;
 }
 
-std::optional<absl::Status> TryFromInetComparison(
-  BoolTarget filter, const FilterContext& ctx, const duckdb::Expression& left,
-  const duckdb::Expression& right, ComparisonOp op) {
-  const auto operands = ResolveOperands(ctx, left, right);
+std::optional<InetOperands> ResolveInetOperands(
+  const FilterContext& ctx, const duckdb::Expression& left,
+  const duckdb::Expression& right) {
+  if (const auto* column = FindInetColumn(ctx, left)) {
+    if (const auto* constant = FindInetConstant(right)) {
+      return InetOperands{.column = column, .constant = constant};
+    }
+    return std::nullopt;
+  }
+  if (const auto* column = FindInetColumn(ctx, right)) {
+    if (const auto* constant = FindInetConstant(left)) {
+      return InetOperands{
+        .column = column, .constant = constant, .swapped = true};
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<InetContainment> ResolveInetContainment(
+  const FilterContext& ctx, const duckdb::BoundFunctionExpression& func) {
+  auto op = ContainmentOpOf(func.Function().GetName().GetIdentifierName());
+  const auto& args = func.GetChildren();
+  if (!op || args.size() != 2) {
+    return std::nullopt;
+  }
+  const auto operands = ResolveInetOperands(ctx, *args[0], *args[1]);
   if (!operands) {
     return std::nullopt;
   }
   if (operands->swapped) {
+    op = *op == InetContainmentOp::ContainedBy ? InetContainmentOp::Contains
+                                               : InetContainmentOp::ContainedBy;
+  }
+  return InetContainment{
+    .column = operands->column, .constant = operands->constant, .op = *op};
+}
+
+absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
+                              const InetOperands& operands, bool not_equal) {
+  if (operands.constant->IsNull()) {
+    AddFilter<irs::Empty>(filter);
+    return absl::OkStatus();
+  }
+  const auto value = inet_terms::FromValue(*operands.constant);
+  if (!value) {
+    return Unsupported();
+  }
+  const auto target = (ctx.negated != not_equal)
+                        ? NegateScoped(filter, *operands.column)
+                        : filter;
+  AddTerm(target, operands.column->field_id, inet_terms::ExactTermOf(*value),
+          ctx.boost, &irs::ForceConstScore());
+  return absl::OkStatus();
+}
+
+absl::Status FromInetComparison(BoolTarget filter, const FilterContext& ctx,
+                                const InetOperands& operands, ComparisonOp op) {
+  if (operands.swapped) {
     op = SwapComparisonOp(op);
   }
   if (ctx.negated) {
     op = InvertComparisonOp(op);
   }
-  if (operands->constant->IsNull()) {
+  if (operands.constant->IsNull()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
-  const auto value = inet_terms::FromValue(*operands->constant);
+  const auto value = inet_terms::FromValue(*operands.constant);
   if (!value) {
     return Unsupported();
   }
-  AddComparison(filter, *operands->column, *value, op);
+  AddComparison(filter, *operands.column, *value, op);
   return absl::OkStatus();
 }
 
-std::optional<absl::Status> TryFromInetIn(
-  BoolTarget filter, const FilterContext& ctx,
-  const duckdb::BoundOperatorExpression& op_expr) {
+absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
+                        const SearchColumnInfo& column,
+                        const duckdb::BoundOperatorExpression& op_expr) {
   const auto& children = op_expr.GetChildren();
-  const auto* column = FindInetColumn(ctx, *children[0]);
-  if (!column) {
-    return std::nullopt;
-  }
   std::vector<irs::bstring> terms;
   terms.reserve(children.size() - 1);
   bool has_null = false;
@@ -321,48 +331,30 @@ std::optional<absl::Status> TryFromInetIn(
     return absl::OkStatus();
   }
   auto& node =
-    AddTermSet(MaybeNegated(filter, ctx, *column), column->field_id, terms, 1);
+    AddTermSet(MaybeNegated(filter, ctx, column), column.field_id, terms, 1);
   node.SetBoost(ctx.boost);
   node.SetScorer(&irs::ForceConstScore());
   return absl::OkStatus();
 }
 
-std::optional<absl::Status> TryFromInetFunction(
-  BoolTarget filter, const FilterContext& ctx,
-  const duckdb::BoundFunctionExpression& func) {
-  const std::string_view name = func.Function().GetName().GetIdentifierName();
-  bool contained;
-  if (name == kContainedByOp || name == kContainedByFunction) {
-    contained = true;
-  } else if (name == kContainsOp || name == kContainsFunction) {
-    contained = false;
-  } else {
-    return std::nullopt;
-  }
-  const auto& args = func.GetChildren();
-  if (args.size() != 2) {
-    return std::nullopt;
-  }
-  const auto operands = ResolveOperands(ctx, *args[0], *args[1]);
-  if (!operands) {
-    return std::nullopt;
-  }
-  if (operands->swapped) {
-    contained = !contained;
-  }
-  if (operands->constant->IsNull()) {
+absl::Status FromInetContainment(BoolTarget filter, const FilterContext& ctx,
+                                 const InetContainment& containment) {
+  if (containment.constant->IsNull()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
-  const auto value = inet_terms::FromValue(*operands->constant);
+  const auto value = inet_terms::FromValue(*containment.constant);
   if (!value) {
     return Unsupported();
   }
-  const auto target = MaybeNegated(filter, ctx, *operands->column);
-  if (contained) {
-    AddContainedBy(target, *operands->column, *value);
-  } else {
-    AddContains(target, *operands->column, *value);
+  const auto target = MaybeNegated(filter, ctx, *containment.column);
+  switch (containment.op) {
+    case InetContainmentOp::ContainedBy:
+      AddContainedBy(target, *containment.column, *value);
+      break;
+    case InetContainmentOp::Contains:
+      AddContains(target, *containment.column, *value);
+      break;
   }
   return absl::OkStatus();
 }

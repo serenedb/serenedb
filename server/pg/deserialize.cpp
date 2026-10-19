@@ -1873,10 +1873,13 @@ bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
   }
   std::memcpy(&header, data.data(), sizeof(header));
   const bool is_v6 = header.family == kPgsqlAfInet6;
-  if ((!is_v6 && header.family != kPgsqlAfInet) ||
-      header.size != (is_v6 ? kInetWireV6Size : kInetWireV4Size) ||
-      header.bits > header.size * CHAR_BIT ||
-      data.size() != sizeof(header) + header.size) {
+  const bool known_family = is_v6 || header.family == kPgsqlAfInet;
+  const uint32_t address_size = is_v6 ? kInetWireV6Size : kInetWireV4Size;
+  const bool size_matches_family = header.size == address_size;
+  const bool mask_fits_address = header.bits <= address_size * CHAR_BIT;
+  const bool length_is_exact = data.size() == sizeof(header) + address_size;
+  if (!known_family || !size_matches_family || !mask_fits_address ||
+      !length_is_exact) {
     return false;
   }
   const char* addr = data.data() + sizeof(header);

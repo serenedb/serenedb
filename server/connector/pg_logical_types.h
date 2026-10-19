@@ -134,7 +134,6 @@ inline duckdb::LogicalType CTID() {
 #endif
 
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
-
 inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
 
 inline constexpr duckdb::idx_t kInetIpTypeChild = 0;

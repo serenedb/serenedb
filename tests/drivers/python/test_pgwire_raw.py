@@ -542,11 +542,6 @@ def test_char_oid18_param_roundtrip(conn):
     assert first_field(m) == b"A"
 
 
-def test_inet_binary_param_and_result_roundtrip(conn):
-    v6 = bytes([3, 64, 0, 16]) + bytes.fromhex("20010db8000000000000000000000001")
-    conn.parse("", "select $1::inet", oids=(869,))
-    conn.bind("", "", params=(v6,), formats=(1,), result_format=1)
-
 def test_bytea_text_param_decodes_input_syntax(conn):
     cases = [
         (b"abc\\001", b"\\x61626301"),
@@ -577,6 +572,23 @@ def test_bytea_text_param_decodes_input_syntax(conn):
     conn.sync()
     m = conn.drain_to_ready()
     assert "E" not in types(m), errors(m)
+    assert all_fields(m) == [b"\\x" + b"79" * 40 + b"01", second]
+
+    conn.parse("", "select $1", oids=(17,))
+    conn.bind("", "", params=(b"a\\9",))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+
+
+def test_inet_binary_param_and_result_roundtrip(conn):
+    v6 = bytes([3, 64, 0, 16]) + bytes.fromhex("20010db8000000000000000000000001")
+    conn.parse("", "select $1::inet", oids=(869,))
+    conn.bind("", "", params=(v6,), formats=(1,), result_format=1)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
     (row,) = rows(m)
     ncols, length = struct.unpack("!hi", row[:6])
     assert ncols == 1 and row[6 : 6 + length] == v6
@@ -599,13 +611,6 @@ def test_inet_binary_param_rejects_malformed(conn, value):
     conn.sync()
     m = conn.drain_to_ready()
     assert sqlstates(m) == ["22P03"], errors(m)
-    assert all_fields(m) == [b"\\x" + b"79" * 40 + b"01", second]
-
-    conn.parse("", "select $1", oids=(17,))
-    conn.bind("", "", params=(b"a\\9",))
-    conn.execute("")
-    conn.sync()
-    assert sqlstates(conn.drain_to_ready()) == ["22P02"]
 
 
 def test_bytea_binary_param_keeps_its_bytes(conn):

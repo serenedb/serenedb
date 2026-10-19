@@ -772,9 +772,8 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
       return absl::OkStatus();
     }
   }
-  if (auto s =
-        TryFromInetEquality(filter, ctx, left_expr, right_expr, not_equal)) {
-    return *s;
+  if (const auto inet = ResolveInetOperands(ctx, left_expr, right_expr)) {
+    return FromInetEquality(filter, ctx, *inet, not_equal);
   }
 
   // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
@@ -951,8 +950,8 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
                             const duckdb::Expression& value_expr,
                             ComparisonOp op) {
-  if (auto s = TryFromInetComparison(filter, ctx, field_expr, value_expr, op)) {
-    return *s;
+  if (const auto inet = ResolveInetOperands(ctx, field_expr, value_expr)) {
+    return FromInetComparison(filter, ctx, *inet, op);
   }
   if (ctx.negated) {
     op = InvertComparisonOp(op);
@@ -1131,8 +1130,8 @@ template<bool GenericVersion>
 absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
                     const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.GetChildren().size() >= 2);
-  if (auto s = TryFromInetIn(filter, ctx, op_expr)) {
-    return *s;
+  if (const auto* column = FindInetColumn(ctx, *op_expr.GetChildren()[0])) {
+    return FromInetIn(filter, ctx, *column, op_expr);
   }
 
   const auto* column_info =
@@ -1398,8 +1397,8 @@ absl::Status FromFunctionExpression(
   if (TryDispatchGeoFunction(filter, ctx, func)) {
     return absl::OkStatus();
   }
-  if (auto s = TryFromInetFunction(filter, ctx, func)) {
-    return *s;
+  if (const auto inet = ResolveInetContainment(ctx, func)) {
+    return FromInetContainment(filter, ctx, *inet);
   }
 
   char escape_char = '\\';
@@ -2316,23 +2315,22 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
   }
 
-  if (matched_unwrapped && unwrapped.override_type &&
-      (pg::IsInetOrCidr(*unwrapped.override_type) ||
-       pg::IsInetOrCidr(info->logical_type)) &&
-      *unwrapped.override_type != info->logical_type) {
-    return nullptr;
-  }
-
-  if (matched_unwrapped && unwrapped.override_type &&
-      unwrapped.override_type->id() != info->logical_type.id()) {
-    if (IsNumericTypeId(unwrapped.override_type->id())) {
-      if (!irs::field_limits::valid(info->numeric_field_id)) {
+  if (matched_unwrapped && unwrapped.override_type) {
+    const auto& cast_type = *unwrapped.override_type;
+    if (pg::IsInetOrCidr(cast_type) || pg::IsInetOrCidr(info->logical_type)) {
+      if (cast_type != info->logical_type) {
         return nullptr;
       }
-      // Numeric field id is set up -> it's json leaf
-      info->logical_type = duckdb::LogicalType::DOUBLE;
-    } else {
-      info->logical_type = *unwrapped.override_type;
+    } else if (cast_type.id() != info->logical_type.id()) {
+      if (IsNumericTypeId(cast_type.id())) {
+        if (!irs::field_limits::valid(info->numeric_field_id)) {
+          return nullptr;
+        }
+        // Numeric field id is set up -> it's json leaf
+        info->logical_type = duckdb::LogicalType::DOUBLE;
+      } else {
+        info->logical_type = cast_type;
+      }
     }
   }
 

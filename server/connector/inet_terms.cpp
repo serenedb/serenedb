@@ -23,19 +23,21 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <utility>
 
 #include "connector/pg_logical_types.h"
 
 namespace sdb::connector::inet_terms {
 namespace {
 
-static_assert(kV4Type == INET_IP_ADDRESS_V4);
-static_assert(kV6Type == INET_IP_ADDRESS_V6);
+static_assert(std::to_underlying(Family::V4) == INET_IP_ADDRESS_V4);
+static_assert(std::to_underlying(Family::V6) == INET_IP_ADDRESS_V6);
 static_assert(kV4Bits == IPV4_DEFAULT_MASK);
 static_assert(kV6Bits == IPV6_DEFAULT_MASK);
 
@@ -63,10 +65,10 @@ irs::bstring ToBString(const uint8_t* data, size_t size) {
   return irs::bstring{reinterpret_cast<const irs::byte_type*>(data), size};
 }
 
-std::string Format(bool v6, const uint8_t* address, uint32_t mask) {
+std::string Format(Family family, const uint8_t* address, uint32_t mask) {
   INET_IPAddress inet;
-  inet.type = v6 ? INET_IP_ADDRESS_V6 : INET_IP_ADDRESS_V4;
-  if (v6) {
+  inet.type = family == Family::V6 ? INET_IP_ADDRESS_V6 : INET_IP_ADDRESS_V4;
+  if (family == Family::V6) {
     inet.address.upper = absl::big_endian::Load64(address);
     inet.address.lower = absl::big_endian::Load64(address + sizeof(uint64_t));
   } else {
@@ -80,17 +82,21 @@ std::string Format(bool v6, const uint8_t* address, uint32_t mask) {
 }
 
 std::optional<Inet> FromSortKey(std::string_view key) {
-  const bool v6 = key.size() == LongExactSize(true);
-  if (!v6 && key.size() != LongExactSize(false)) {
+  const auto family =
+    key.size() == LongExactSize(Family::V6) ? Family::V6 : Family::V4;
+  if (key.size() != LongExactSize(family)) {
     return std::nullopt;
   }
   const auto* data = reinterpret_cast<const uint8_t*>(key.data());
-  if (data[0] != (v6 ? kV6Type : kV4Type)) {
+  if (data[0] != std::to_underlying(family)) {
     return std::nullopt;
   }
-  const auto* mask = data + kTagSize + Width(v6);
-  Inet value{.v6 = v6, .mask = absl::big_endian::Load16(mask)};
-  std::memcpy(value.address.data(), mask + kMaskSize, Width(v6));
+  const auto* mask = data + kTagSize + Width(family);
+  Inet value{.family = family, .mask = absl::big_endian::Load16(mask)};
+  if (value.mask > MaxBits(family)) {
+    return std::nullopt;
+  }
+  std::memcpy(value.address.data(), mask + kMaskSize, Width(family));
   return value;
 }
 
@@ -103,14 +109,19 @@ class EncodedTerms {
  public:
   explicit EncodedTerms(const Inet& value) {
     const auto* address = value.address.data();
-    const uint64_t upper =
-      value.v6 ? absl::big_endian::Load64(address) : uint64_t{0};
-    const uint64_t lower =
-      value.v6 ? absl::big_endian::Load64(address + sizeof(uint64_t))
-               : absl::big_endian::Load32(address);
+    uint64_t upper = 0;
+    uint64_t lower = 0;
+    switch (value.family) {
+      case Family::V4:
+        lower = absl::big_endian::Load32(address);
+        break;
+      case Family::V6:
+        upper = absl::big_endian::Load64(address);
+        lower = absl::big_endian::Load64(address + sizeof(uint64_t));
+        break;
+    }
     auto* bytes = _bytes;
-    _count = WriteTerms(value.v6 ? kV6Type : kV4Type, upper, lower, value.mask,
-                        _terms, bytes);
+    _count = WriteTerms(value.family, upper, lower, value.mask, _terms, bytes);
   }
 
   EncodedTerms(const EncodedTerms&) = delete;
@@ -122,34 +133,37 @@ class EncodedTerms {
   }
 
  private:
-  duckdb::string_t _terms[kMaxTermsPerValue];
+  duckdb::string_t _terms[kMaxTerms];
   uint8_t _bytes[kV6LongTermBytes];
   uint32_t _count = 0;
 };
 
-Inet NetworkValue(bool v6, const Bytes& network, uint32_t mask) {
-  return {.v6 = v6, .mask = static_cast<uint16_t>(mask), .address = network};
+Inet NetworkValue(Family family, const Bytes& network, uint32_t mask) {
+  return {
+    .family = family, .mask = static_cast<uint16_t>(mask), .address = network};
 }
 
 }  // namespace
 
-std::optional<Inet> FromAddress(uint8_t ip_type, uint64_t upper, uint64_t lower,
+std::optional<Inet> FromAddress(Family family, uint64_t upper, uint64_t lower,
                                 uint16_t mask) {
-  Inet value;
-  value.mask = mask;
-  if (ip_type == kV4Type) {
-    if (upper != 0 || lower > std::numeric_limits<uint32_t>::max()) {
-      return std::nullopt;
-    }
-    absl::big_endian::Store32(value.address.data(),
-                              static_cast<uint32_t>(lower));
-    return value;
-  }
-  if (ip_type == kV6Type) {
-    value.v6 = true;
-    absl::big_endian::Store64(value.address.data(), upper);
-    absl::big_endian::Store64(value.address.data() + sizeof(uint64_t), lower);
-    return value;
+  Inet value{.family = family, .mask = mask};
+  switch (family) {
+    case Family::V4:
+      if (upper != 0 || lower > std::numeric_limits<uint32_t>::max() ||
+          mask > kV4Bits) {
+        return std::nullopt;
+      }
+      absl::big_endian::Store32(value.address.data(),
+                                static_cast<uint32_t>(lower));
+      return value;
+    case Family::V6:
+      if (mask > kV6Bits) {
+        return std::nullopt;
+      }
+      absl::big_endian::Store64(value.address.data(), upper);
+      absl::big_endian::Store64(value.address.data() + sizeof(uint64_t), lower);
+      return value;
   }
   return std::nullopt;
 }
@@ -173,21 +187,22 @@ std::optional<Inet> FromValue(const duckdb::Value& value) {
       return std::nullopt;
     }
   }
-  const auto ip_type = children[pg::kInetIpTypeChild].GetValue<uint8_t>();
+  const auto family =
+    static_cast<Family>(children[pg::kInetIpTypeChild].GetValue<uint8_t>());
   const auto address =
     children[pg::kInetAddressChild].GetValue<duckdb::hugeint_t>();
   auto upper = static_cast<uint64_t>(address.upper);
-  if (ip_type == kV6Type) {
+  if (family == Family::V6) {
     upper ^= pg::kInetV6SortBit;
   }
-  return FromAddress(ip_type, upper, address.lower,
+  return FromAddress(family, upper, address.lower,
                      children[pg::kInetMaskChild].GetValue<uint16_t>());
 }
 
-Inet FamilyMin(bool v6) { return Inet{.v6 = v6}; }
+Inet FamilyMin(Family family) { return Inet{.family = family}; }
 
-Inet FamilyMax(bool v6) {
-  Inet value{.v6 = v6, .mask = std::numeric_limits<uint16_t>::max()};
+Inet FamilyMax(Family family) {
+  Inet value{.family = family, .mask = static_cast<uint16_t>(MaxBits(family))};
   value.address.fill(kAllBits);
   return value;
 }
@@ -200,8 +215,8 @@ Bytes Broadcast(const Inet& value, uint32_t bits) {
   return ApplyHostBits(value, bits, true);
 }
 
-uint32_t MinMaskOf(bool v6, const Bytes& network) {
-  for (uint32_t i = Width(v6); i != 0; --i) {
+uint32_t MinMaskOf(Family family, const Bytes& network) {
+  for (uint32_t i = Width(family); i != 0; --i) {
     if (const auto byte = network[i - 1]) {
       return i * CHAR_BIT - static_cast<uint32_t>(std::countr_zero(byte));
     }
@@ -214,83 +229,84 @@ irs::bstring ExactTermOf(const Inet& value) { return EncodedTerms{value}[0]; }
 std::vector<irs::bstring> GranularTermsOf(const Inet& value) {
   const EncodedTerms encoded{value};
   std::vector<irs::bstring> terms;
-  terms.reserve(1 + LevelCount(value.v6));
-  for (uint32_t i = 0; i <= LevelCount(value.v6); ++i) {
+  terms.reserve(1 + LevelCount(value.family));
+  for (uint32_t i = 0; i <= LevelCount(value.family); ++i) {
     terms.push_back(encoded[i]);
   }
   return terms;
 }
 
-irs::bstring LevelTermOf(bool v6, uint32_t level, const Bytes& network) {
-  return EncodedTerms{NetworkValue(v6, network, MaxBits(v6))}[level];
+irs::bstring LevelTermOf(Family family, uint32_t level, const Bytes& network) {
+  return EncodedTerms{NetworkValue(family, network, MaxBits(family))}[level];
 }
 
-irs::bstring MaskTermOf(bool v6, uint8_t mask) {
+irs::bstring MaskTermOf(Family family, uint8_t mask) {
   duckdb::string_t term;
-  WriteMaskTerm(v6, mask, term);
+  WriteMaskTerm(family, mask, term);
   return ToBString(term);
 }
 
-irs::bstring ExactPrefixOf(bool v6, const Bytes& network) {
-  auto prefix = ExactTermOf(NetworkValue(v6, network, MaxBits(v6)));
-  prefix.resize(kTagSize + Width(v6));
+irs::bstring ExactPrefixOf(Family family, const Bytes& network) {
+  auto prefix = ExactTermOf(NetworkValue(family, network, MaxBits(family)));
+  prefix.resize(kTagSize + Width(family));
   return prefix;
 }
 
-irs::bstring ExactPrefixOf(bool v6, const Bytes& network, uint16_t mask) {
-  auto prefix = ExactTermOf(NetworkValue(v6, network, mask));
-  SDB_ASSERT(prefix.size() == ShortExactSize(v6));
+irs::bstring ExactPrefixOf(Family family, const Bytes& network, uint16_t mask) {
+  auto prefix = ExactTermOf(NetworkValue(family, network, mask));
+  SDB_ASSERT(prefix.size() == ShortExactSize(family));
   return prefix;
 }
 
-irs::bstring ExactUpperOf(bool v6, const Bytes& network) {
-  auto upper = ExactPrefixOf(v6, network);
-  upper.append(LongExactSize(v6) - upper.size(), irs::byte_type{kAllBits});
+irs::bstring ExactUpperOf(Family family, const Bytes& network) {
+  auto upper = ExactPrefixOf(family, network);
+  upper.append(LongExactSize(family) - upper.size(), irs::byte_type{kAllBits});
   return upper;
 }
 
-irs::bstring CoarsestLevelPrefixOf(bool v6) {
-  return irs::bstring(1, LevelTag(v6, LevelCount(v6)));
+irs::bstring CoarsestLevelPrefixOf(Family family) {
+  return irs::bstring(1, LevelTag(family, LevelCount(family)));
 }
 
 std::string Describe(irs::bytes_view term) {
-  if (term.empty() || term[0] < kV4Exact || term[0] > MaskTag(true)) {
+  if (term.empty() || term[0] < kV4Exact || term[0] > MaskTag(Family::V6)) {
     return {};
   }
-  const bool v6 = term[0] >= kV6Exact;
-  const uint8_t base = ExactTag(v6);
-  const auto width = Width(v6);
+  const auto family = term[0] >= kV6Exact ? Family::V6 : Family::V4;
+  const uint8_t base = ExactTag(family);
+  const auto width = Width(family);
   const auto tag = term[0];
-  if (tag == MaskTag(v6) && term.size() == kMaskTermSize) {
+  if (tag == MaskTag(family) && term.size() == kMaskTermSize) {
     return absl::StrCat("/", term[kTagSize]);
   }
   if (term.size() == kTagSize) {
-    return v6 ? "ipv6" : "ipv4";
+    return family == Family::V6 ? "ipv6" : "ipv4";
   }
   const auto* network = term.data() + kTagSize;
-  if (tag > base && tag <= LevelTag(v6, LevelCount(v6))) {
+  if (tag > base && tag <= LevelTag(family, LevelCount(family))) {
     Bytes level_network{};
     std::memcpy(level_network.data(), network,
                 std::min<size_t>(term.size() - kTagSize, width));
-    return Format(v6, level_network.data(), LevelBits(v6, tag - base));
+    return Format(family, level_network.data(), LevelBits(family, tag - base));
   }
   if (tag != base) {
     return {};
   }
   if (term.size() == kTagSize + width) {
-    return Format(v6, network, MaxBits(v6));
+    return Format(family, network, MaxBits(family));
   }
-  if (term.size() != ShortExactSize(v6) && term.size() != LongExactSize(v6)) {
-    return v6 ? "ipv6" : "ipv4";
+  if (term.size() != ShortExactSize(family) &&
+      term.size() != LongExactSize(family)) {
+    return family == Family::V6 ? "ipv6" : "ipv4";
   }
   const auto mask = absl::big_endian::Load16(network + width);
-  if (term.size() == ShortExactSize(v6)) {
-    return Format(v6, network, std::min<uint32_t>(mask, MaxBits(v6)));
+  if (term.size() == ShortExactSize(family)) {
+    return Format(family, network, std::min<uint32_t>(mask, MaxBits(family)));
   }
-  if (mask > MaxBits(v6)) {
-    return Format(v6, network, MaxBits(v6));
+  if (mask > MaxBits(family)) {
+    return Format(family, network, MaxBits(family));
   }
-  return Format(v6, term.data() + ShortExactSize(v6), mask);
+  return Format(family, term.data() + ShortExactSize(family), mask);
 }
 
 }  // namespace sdb::connector::inet_terms

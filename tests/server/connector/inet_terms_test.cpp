@@ -31,19 +31,20 @@ namespace {
 
 inet_terms::Inet Parse(std::string_view text) {
   const auto ip = ipaddress_from_string(text.data(), text.size());
-  const auto value = inet_terms::FromAddress(
-    static_cast<uint8_t>(ip.type), ip.address.upper, ip.address.lower, ip.mask);
+  const auto value =
+    inet_terms::FromAddress(static_cast<inet_terms::Family>(ip.type),
+                            ip.address.upper, ip.address.lower, ip.mask);
   EXPECT_TRUE(value.has_value()) << text;
   return *value;
 }
 
-std::vector<irs::bstring> TermsOf(uint8_t ip_type, uint64_t upper,
+std::vector<irs::bstring> TermsOf(inet_terms::Family family, uint64_t upper,
                                   uint64_t lower, uint16_t mask) {
-  duckdb::string_t slots[inet_terms::kMaxTermsPerValue];
+  duckdb::string_t slots[inet_terms::kMaxTerms];
   uint8_t bytes[inet_terms::kV6LongTermBytes];
   auto* end = bytes;
   const auto count =
-    inet_terms::WriteTerms(ip_type, upper, lower, mask, slots, end);
+    inet_terms::WriteTerms(family, upper, lower, mask, slots, end);
   std::vector<irs::bstring> terms;
   for (uint32_t i = 0; i < count; ++i) {
     const irs::bstring term{
@@ -59,23 +60,24 @@ std::vector<irs::bstring> TermsOf(uint8_t ip_type, uint64_t upper,
 
 std::vector<irs::bstring> TermsOf(std::string_view text) {
   const auto ip = ipaddress_from_string(text.data(), text.size());
-  return TermsOf(static_cast<uint8_t>(ip.type), ip.address.upper,
+  return TermsOf(static_cast<inet_terms::Family>(ip.type), ip.address.upper,
                  ip.address.lower, ip.mask);
 }
 
 size_t TermCount(std::string_view text) { return TermsOf(text).size(); }
 
-void ExpectTermsMatchHelpers(uint8_t ip_type, uint64_t upper, uint64_t lower,
-                             uint16_t mask) {
-  const auto value = inet_terms::FromAddress(ip_type, upper, lower, mask);
+void ExpectTermsMatchHelpers(inet_terms::Family family, uint64_t upper,
+                             uint64_t lower, uint16_t mask) {
+  const auto value = inet_terms::FromAddress(family, upper, lower, mask);
   ASSERT_TRUE(value.has_value());
   auto expected = inet_terms::GranularTermsOf(*value);
   if (mask < value->MaxBits()) {
     expected.push_back(
-      inet_terms::MaskTermOf(value->v6, static_cast<uint8_t>(mask)));
+      inet_terms::MaskTermOf(value->family, static_cast<uint8_t>(mask)));
   }
-  EXPECT_EQ(expected, TermsOf(ip_type, upper, lower, mask))
-    << int{ip_type} << " " << upper << " " << lower << "/" << mask;
+  EXPECT_EQ(expected, TermsOf(family, upper, lower, mask))
+    << int{std::to_underlying(family)} << " " << upper << " " << lower << "/"
+    << mask;
 }
 
 TEST(inet_terms_test, exact_terms_sort_like_postgres) {
@@ -130,8 +132,8 @@ TEST(inet_terms_test, networks_add_a_mask_term) {
 TEST(inet_terms_test, written_terms_match_the_term_helpers) {
   for (const uint64_t address : {uint64_t{0}, uint64_t{0x0A010203},
                                  uint64_t{0x80FF00FF}, uint64_t{0xFFFFFFFF}}) {
-    for (uint16_t mask = 0; mask <= 33; ++mask) {
-      ExpectTermsMatchHelpers(inet_terms::kV4Type, 0, address, mask);
+    for (uint16_t mask = 0; mask <= 32; ++mask) {
+      ExpectTermsMatchHelpers(inet_terms::Family::V4, 0, address, mask);
     }
   }
   const std::pair<uint64_t, uint64_t> v6_addresses[] = {
@@ -140,12 +142,10 @@ TEST(inet_terms_test, written_terms_match_the_term_helpers) {
     {0x8000FFFF0000FFFF, 0xFF00FF00FF00FF00},
     {~uint64_t{0}, ~uint64_t{0}}};
   for (const auto& [upper, lower] : v6_addresses) {
-    for (uint16_t mask = 0; mask <= 129; ++mask) {
-      ExpectTermsMatchHelpers(inet_terms::kV6Type, upper, lower, mask);
+    for (uint16_t mask = 0; mask <= 128; ++mask) {
+      ExpectTermsMatchHelpers(inet_terms::Family::V6, upper, lower, mask);
     }
   }
-  EXPECT_TRUE(TermsOf(0, 0, 1, 32).empty());
-  EXPECT_TRUE(TermsOf(inet_terms::kV4Type, 1, 1, 32).empty());
 }
 
 TEST(inet_terms_test, network_and_broadcast) {
@@ -160,10 +160,21 @@ TEST(inet_terms_test, network_and_broadcast) {
 }
 
 TEST(inet_terms_test, rejects_values_that_are_not_addresses) {
-  EXPECT_FALSE(inet_terms::FromAddress(0, 0, 1, 32).has_value());
-  EXPECT_FALSE(inet_terms::FromAddress(3, 0, 1, 32).has_value());
-  EXPECT_FALSE(inet_terms::FromAddress(1, 1, 1, 32).has_value());
-  EXPECT_FALSE(inet_terms::FromAddress(1, 0, 0x100000000, 32).has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(static_cast<inet_terms::Family>(0), 0, 1, 32)
+      .has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(static_cast<inet_terms::Family>(3), 0, 1, 32)
+      .has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(inet_terms::Family::V4, 1, 1, 32).has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(inet_terms::Family::V4, 0, 0x100000000, 32)
+      .has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(inet_terms::Family::V4, 0, 1, 33).has_value());
+  EXPECT_FALSE(
+    inet_terms::FromAddress(inet_terms::Family::V6, 0, 1, 129).has_value());
 }
 
 TEST(inet_terms_test, describe_renders_terms) {
@@ -171,9 +182,10 @@ TEST(inet_terms_test, describe_renders_terms) {
             inet_terms::Describe(inet_terms::ExactTermOf(Parse("10.0.0.5/8"))));
   EXPECT_EQ("2001:db8::1", inet_terms::Describe(
                              inet_terms::ExactTermOf(Parse("2001:db8::1"))));
-  EXPECT_EQ("/16", inet_terms::Describe(inet_terms::MaskTermOf(false, 16)));
-  EXPECT_EQ("ipv6",
-            inet_terms::Describe(inet_terms::CoarsestLevelPrefixOf(true)));
+  EXPECT_EQ("/16", inet_terms::Describe(
+                     inet_terms::MaskTermOf(inet_terms::Family::V4, 16)));
+  EXPECT_EQ("ipv6", inet_terms::Describe(inet_terms::CoarsestLevelPrefixOf(
+                      inet_terms::Family::V6)));
 }
 
 }  // namespace

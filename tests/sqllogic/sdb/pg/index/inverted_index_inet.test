@@ -248,6 +248,12 @@ n	same
 446	t
 
 query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE inet_sort_key(ip) < '\x010A01000000210A010000'::BLOB) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE inet_sort_key(ip) < '\x010A01000000210A010000'::BLOB) b;
+----
+n	same
+446	t
+
+query
 SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip <= '10.1.2.3/24') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip <= '10.1.2.3/24') b;
 ----
 n	same
@@ -784,3 +790,37 @@ SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, str
 ----
 n	same
 3	t
+
+statement ok
+CREATE TABLE inet_cidr_expr_t (pk INT PRIMARY KEY, ip INET);
+
+statement ok
+CREATE INDEX inet_cidr_expr_idx ON inet_cidr_expr_t USING inverted(pk, ip, (ip::CIDR));
+
+statement ok
+INSERT INTO inet_cidr_expr_t SELECT pk, ip FROM inet_plain_t;
+
+statement ok
+VACUUM (REFRESH_TABLE) inet_cidr_expr_t;
+
+query
+EXPLAIN SELECT pk FROM inet_cidr_expr_idx WHERE ip::CIDR = '10.1.2.0/24';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: inet_cidr_expr_idx   │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: CAST(ip AS cidr) │ │
+│ │ Value: 10.1.2.0/24      │ │
+│ ╰─────────────────────────╯ │
+│ Projections: pk             │
+│ ~391 rows                   │
+╰─────────────────────────────╯
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_cidr_expr_idx WHERE ip::CIDR = '10.1.2.0/24') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip::CIDR = '10.1.2.0/24') b;
+----
+n	same
+1	t

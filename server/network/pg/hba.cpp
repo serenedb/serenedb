@@ -955,7 +955,7 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
     }
     utils::file_utils::ReplaceFile(target, text);
   } catch (const std::exception& e) {
-    return absl::StrCat("could not install hba config file '", target.string(),
+    return absl::StrCat("could not write hba config file '", target.string(),
                         "': ", e.what());
   }
   return std::nullopt;

@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <duckdb/storage/storage_info.hpp>
 #include <span>
 #include <vector>
 
@@ -88,6 +89,8 @@ struct IndexMeta {
   uint64_t gen{index_gen_limits::invalid()};
   uint64_t seg_counter{0};
   std::vector<IndexSegment> segments;
+  duckdb::StorageVersion storage_version{
+    duckdb::StorageVersion::SERENEDB_LATEST};
 };
 
 struct DirectoryMeta {

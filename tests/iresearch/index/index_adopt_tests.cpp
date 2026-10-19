@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -26,6 +29,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -531,6 +535,115 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   ASSERT_EQ(2, synced.size());
   EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
   EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+}
+
+TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
+  constexpr size_t kDocs = 12000;
+  constexpr size_t kRounds = 4;
+  uint64_t tick = 1;
+  {
+    auto trx = _writer->GetBatch();
+    for (size_t i = 0; i != kDocs; ++i) {
+      ASSERT_TRUE(InsertDoc(trx, absl::StrCat("d", i)));
+    }
+    ASSERT_TRUE(trx.Commit(tick));
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  for (size_t round = 0; round != kRounds; ++round) {
+    {
+      auto remover = _writer->GetBatch();
+      for (size_t i = round; i < kDocs; i += 2 * kRounds) {
+        remover.Remove(ByName(absl::StrCat("d", i)));
+        ++tick;
+      }
+      ASSERT_TRUE(remover.Commit(++tick));
+    }
+    _dir->TakeSynced();
+    ASSERT_TRUE(_writer->RefreshCommit());
+
+    const auto snapshot = _writer->GetSnapshot();
+    ASSERT_EQ(1, snapshot.size());
+    const auto& segment = snapshot.Meta().index_meta.segments.front();
+    EXPECT_EQ((round + 1) * kDocs / (2 * kRounds),
+              segment.meta.docs_count - segment.meta.live_docs_count);
+    EXPECT_TRUE(absl::c_none_of(
+      segment.meta.files,
+      [](std::string_view file) { return file.ends_with(".sm"); }))
+      << "round " << round;
+
+    const auto synced = _dir->TakeSynced();
+    ASSERT_EQ(2, synced.size()) << "round " << round;
+    EXPECT_EQ(segment.filename, synced[0]);
+    EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+  }
+}
+
+TEST_F(IndexAdoptTest, FirstCommitAfterUpgradeRewritesMaskedMetas) {
+  if (!irs::AddFailurePointDebugging("search_index_storage_v1")) {
+    GTEST_SKIP() << "needs fault injection";
+  }
+  absl::Cleanup disarm = [] {
+    irs::RemoveFailurePointDebugging("search_index_storage_v1");
+  };
+  uint64_t tick = 1;
+  for (const auto* prefix : {"a", "b"}) {
+    auto trx = _writer->GetBatch();
+    for (size_t i = 0; i != 100; ++i) {
+      ASSERT_TRUE(InsertDoc(trx, absl::StrCat(prefix, i)));
+    }
+    ASSERT_TRUE(trx.Commit(++tick));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  auto remove = [&](std::string_view name) {
+    auto remover = _writer->GetBatch();
+    remover.Remove(ByName(name));
+    tick += 2;
+    ASSERT_TRUE(remover.Commit(tick));
+    ASSERT_TRUE(_writer->RefreshCommit());
+  };
+  remove("a1");
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+  EXPECT_EQ(duckdb::StorageVersion::SERENEDB_V1,
+            _writer->GetSnapshot().Meta().index_meta.storage_version);
+
+  irs::RemoveFailurePointDebugging("search_index_storage_v1");
+  Restart(/*cleanup_on_open=*/true);
+  EXPECT_EQ(duckdb::StorageVersion::SERENEDB_V1,
+            _writer->GetSnapshot().Meta().index_meta.storage_version);
+
+  _dir->TakeSynced();
+  remove("b1");
+  {
+    const auto snapshot = _writer->GetSnapshot();
+    EXPECT_EQ(duckdb::StorageVersion::SERENEDB_LATEST,
+              snapshot.Meta().index_meta.storage_version);
+    std::vector<std::string> expected;
+    for (const auto& segment : snapshot.Meta().index_meta.segments) {
+      ASSERT_NE(nullptr, segment.meta.docs_mask);
+      expected.emplace_back(segment.filename);
+    }
+    auto synced = _dir->TakeSynced();
+    ASSERT_FALSE(synced.empty());
+    EXPECT_TRUE(synced.back().starts_with("pending_segments_"));
+    synced.pop_back();
+    absl::c_sort(expected);
+    absl::c_sort(synced);
+    EXPECT_EQ(expected, synced);
+  }
+
+  remove("b2");
+  {
+    const auto synced = _dir->TakeSynced();
+    ASSERT_EQ(2, synced.size());
+    EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+  }
+
+  Restart(/*cleanup_on_open=*/true);
+  const auto snapshot = _writer->GetSnapshot();
+  EXPECT_EQ(duckdb::StorageVersion::SERENEDB_LATEST,
+            snapshot.Meta().index_meta.storage_version);
+  EXPECT_EQ(197, snapshot.live_docs_count());
 }
 
 // The meta file needs its own ref: the segment reader pins meta.files only, and

@@ -35,6 +35,8 @@ namespace {
 
 using roaring::api::roaring_bitmap_t;
 
+constexpr size_t kFrozenAlignment = 32;
+
 constexpr size_t kSlotBytes =
   sizeof(void*) + sizeof(uint16_t) + sizeof(uint8_t);
 
@@ -161,51 +163,86 @@ MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
 }  // namespace
 
 DocumentMask::DocumentMask(roaring_bitmap_t& set, size_t count) noexcept
-  : _set{set}, _count{count}, _kind{KindOf(_set)} {
+  : _count{count}, _kind{KindOf(set)} {
+  _set.roaring = set;
   roaring::api::roaring_bitmap_init_cleared(&set);
 }
 
-DocumentMask::~DocumentMask() { roaring::api::roaring_bitmap_clear(&_set); }
-
 DocumentMask::DocumentMask(DocumentMask&& other) noexcept
-  : _set{other._set},
+  : _frozen{std::move(other._frozen)},
+    _set{std::move(other._set)},
     _count{std::exchange(other._count, 0)},
-    _kind{std::exchange(other._kind, MaskKind::Runs)} {
-  roaring::api::roaring_bitmap_init_cleared(&other._set);
-}
+    _kind{std::exchange(other._kind, MaskKind::Runs)} {}
 
 DocumentMask& DocumentMask::operator=(DocumentMask&& other) noexcept {
-  if (this != &other) {
-    roaring::api::roaring_bitmap_clear(&_set);
-    _set = other._set;
-    roaring::api::roaring_bitmap_init_cleared(&other._set);
-    _count = std::exchange(other._count, 0);
-    _kind = std::exchange(other._kind, MaskKind::Runs);
-  }
+  _frozen.swap(other._frozen);
+  _set.swap(other._set);
+  std::swap(_count, other._count);
+  std::swap(_kind, other._kind);
   return *this;
 }
 
 bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
-  return lhs._count == rhs._count &&
-         roaring::api::roaring_bitmap_equals(&lhs._set, &rhs._set);
+  return lhs._count == rhs._count && roaring::api::roaring_bitmap_equals(
+                                       &lhs._set.roaring, &rhs._set.roaring);
 }
 
-roaring::Roaring DocumentMask::Compress() const { return CompressSet(_set); }
+DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
+  DocumentMask mask;
+  mask._frozen.reset(
+    static_cast<byte_type*>(roaring_aligned_malloc(kFrozenAlignment, size)));
+  if (!mask._frozen && size != 0) [[unlikely]] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+      ERR_MSG("Failed to allocate a document mask of ", size, " byte(s)"));
+  }
+  auto* buf = mask._frozen.get();
+  in.ReadData(0, buf, size);
+
+  const auto* view = roaring::api::roaring_bitmap_frozen_view(
+    reinterpret_cast<const char*>(buf), size);
+  if (view == nullptr) [[unlikely]] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+      ERR_MSG("Corrupted frozen document mask of ", size, " byte(s)"));
+  }
+  mask._set.roaring = *view;
+
+  const auto& set = mask._set.roaring;
+  mask._count = roaring::api::roaring_bitmap_get_cardinality(&set);
+  if (mask._count == 0 ||
+      roaring::api::roaring_bitmap_minimum(&set) < doc_limits::min() ||
+      doc_limits::eof(roaring::api::roaring_bitmap_maximum(&set)))
+    [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("Invalid document id in a frozen document mask "
+                            "of ",
+                            mask._count, " document(s)"));
+  }
+  mask._kind = KindOf(set);
+  return mask;
+}
+
+roaring::Roaring DocumentMask::Compress() const {
+  return CompressSet(_set.roaring);
+}
 
 bool DocumentMask::Contains(doc_id_t doc) const noexcept {
-  return roaring::api::roaring_bitmap_contains(&_set, doc);
+  return roaring::api::roaring_bitmap_contains(&_set.roaring, doc);
 }
 
-size_t DocumentMask::ByteSize() const noexcept { return ByteSizeOf(_set); }
+size_t DocumentMask::ByteSize() const noexcept {
+  return ByteSizeOf(_set.roaring);
+}
 
 size_t DocumentMask::ByteCapacity() const noexcept {
-  return ByteCapacityOf(_set);
+  return ByteCapacityOf(_set.roaring);
 }
 
 uint64_t DocumentMask::RunsBound() const noexcept {
   uint64_t runs = 0;
-  for (int32_t i = 0; i != _set.high_low_container.size; ++i) {
-    runs += SpansAt(_set, i);
+  for (int32_t i = 0; i != _set.roaring.high_low_container.size; ++i) {
+    runs += SpansAt(_set.roaring, i);
   }
   return runs;
 }
@@ -228,7 +265,7 @@ DocumentMaskBuilder::DocumentMaskBuilder(const roaring_bitmap_t& set,
 }
 
 DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMask& published)
-  : DocumentMaskBuilder{published._set, published._count} {}
+  : DocumentMaskBuilder{published._set.roaring, published._count} {}
 
 DocumentMaskBuilder::~DocumentMaskBuilder() {
   roaring::api::roaring_bitmap_clear(&_set);
@@ -335,7 +372,7 @@ void DocumentMaskBuilder::Merge(const DocumentMask& published) {
   if (published.Empty()) {
     return;
   }
-  roaring::api::roaring_bitmap_or_inplace(&_set, &published._set);
+  roaring::api::roaring_bitmap_or_inplace(&_set, &published._set.roaring);
   _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
 }
 

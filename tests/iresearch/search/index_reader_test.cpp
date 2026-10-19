@@ -315,11 +315,13 @@ TEST(segment_reader_test, segment_reader_has) {
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected,
+                             duckdb::StorageVersion::SERENEDB_LATEST);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename,
+                            duckdb::StorageVersion::SERENEDB_LATEST);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -331,11 +333,13 @@ TEST(segment_reader_test, segment_reader_has) {
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected,
+                             duckdb::StorageVersion::SERENEDB_LATEST);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename,
+                            duckdb::StorageVersion::SERENEDB_LATEST);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -356,11 +360,13 @@ TEST(segment_reader_test, segment_reader_has) {
       return std::make_shared<const irs::DocumentMask>(
         std::move(docs_mask).Finish());
     }();
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected,
+                             duckdb::StorageVersion::SERENEDB_LATEST);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename,
+                            duckdb::StorageVersion::SERENEDB_LATEST);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));
@@ -381,10 +387,12 @@ TEST(segment_reader_test, segment_reader_has) {
       return std::make_shared<const irs::DocumentMask>(
         std::move(docs_mask).Finish());
     }();
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir, filename, expected,
+                             duckdb::StorageVersion::SERENEDB_LATEST);
 
     irs::SegmentMeta meta;
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir, meta, filename,
+                            duckdb::StorageVersion::SERENEDB_LATEST);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));

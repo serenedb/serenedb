@@ -94,7 +94,8 @@ format_utils::Footer ReadLink(IndexInput& in, std::string_view file,
 
 }  // namespace
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
+void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename,
+          duckdb::StorageVersion version) {
   SDB_ASSERT(!IsNull(filename));
 
   std::string_view segment_name;
@@ -135,7 +136,17 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
   std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
 
-  if (mask_size != 0) {
+  if (version > duckdb::StorageVersion::SERENEDB_V1 && mask_size != 0) {
+    if (!parents.empty()) [[unlikely]] {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+        ERR_MSG("Corrupted frozen document mask of '", name,
+                "', it derives from ", parents.size(), " link(s)"));
+    }
+    docs_mask = std::make_shared<const DocumentMask>(
+      DocumentMask::ReadFrozen(*in, mask_size));
+    docs_mask_size = mask_size;
+  } else if (mask_size != 0) {
     auto builder = ReadDocumentMask(*in, mask_size);
     docs_mask_size = mask_size;
 

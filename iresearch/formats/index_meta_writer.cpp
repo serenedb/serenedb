@@ -30,6 +30,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -46,6 +47,13 @@ std::string PendingFileName(uint64_t gen) {
 std::string index_meta::FileName(uint64_t gen) {
   SDB_ASSERT(index_gen_limits::valid(gen));
   return irs::FileName(kPrefix, gen);
+}
+
+duckdb::StorageVersion index_meta::StorageVersionToWrite() {
+  SDB_IF_FAILURE("search_index_storage_v1") {
+    return duckdb::StorageVersion::SERENEDB_V1;
+  }
+  return duckdb::StorageVersion::SERENEDB_LATEST;
 }
 
 bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
@@ -66,7 +74,7 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
       index_meta::kFieldStorageVersion, "storage_version",
-      static_cast<uint64_t>(duckdb::StorageVersion::SERENEDB_LATEST));
+      static_cast<uint64_t>(meta.storage_version));
     meta_out.WriteProperty<uint64_t>(index_meta::kFieldSegCounter,
                                      "seg_counter", meta.seg_counter);
     if (!meta.segments.empty()) {

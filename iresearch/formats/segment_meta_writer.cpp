@@ -22,6 +22,7 @@
 
 #include "iresearch/formats/segment_meta_writer.hpp"
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -38,15 +39,15 @@
 namespace irs::segment_meta {
 namespace {
 
-void WriteDocumentMask(IndexOutput& out, const roaring::Roaring& compressed,
-                       uint64_t size) {
+void WriteDocumentMask(IndexOutput& out, uint64_t size,
+                       absl::FunctionRef<void(char*)> serialize) {
   if (auto* buf = out.Reserve(size); buf != nullptr) {
-    compressed.write(reinterpret_cast<char*>(buf));
+    serialize(reinterpret_cast<char*>(buf));
     return;
   }
   bstring blob;
   irs::utils::StrResize(blob, size);
-  compressed.write(reinterpret_cast<char*>(blob.data()));
+  serialize(reinterpret_cast<char*>(blob.data()));
   out.WriteData(blob.data(), size);
 }
 
@@ -57,71 +58,60 @@ std::string FileName(const SegmentMeta& meta) {
 }
 
 void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
-           const DocumentMaskBuilder* patch, uint64_t parent) {
+           duckdb::StorageVersion version) {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
-  const auto& docs_mask = meta.docs_mask;
+  const auto* docs_mask = meta.docs_mask.get();
   const bool has_mask = docs_mask && !docs_mask->Empty();
 
-  const bool append =
-    has_mask && patch != nullptr && meta.docs_mask_size > kMinChainBytes;
-
-  roaring::Roaring compressed;
-  if (append) {
-    compressed = patch->Compress();
+  const bool frozen = version > duckdb::StorageVersion::SERENEDB_V1;
+  roaring::Roaring portable;
+  uint64_t mask_size = 0;
+  if (has_mask && frozen) {
+    mask_size = docs_mask->FrozenSize();
   } else if (has_mask) {
-    compressed = docs_mask->Compress();
+    portable = docs_mask->Compress();
+    mask_size = portable.getSizeInBytes();
   }
-  const uint64_t mask_size = has_mask ? compressed.getSizeInBytes() : 0;
 
   std::vector<std::string> files;
-  std::vector<uint64_t> parents;
+  files.reserve(meta.files.size());
   for (const auto& file : meta.files) {
     std::string_view name;
     uint64_t link = 0;
-    const bool is_link = ParseFileName(file, kExt, name, link);
-    SDB_ASSERT(!is_link || name == meta.name);
-    if (is_link && append) {
-      parents.push_back(link);
+    if (ParseFileName(file, kExt, name, link)) {
+      SDB_ASSERT(name == meta.name);
+      continue;
     }
-    if (!is_link || append) {
-      files.push_back(file);
-    }
-  }
-  uint64_t chain_bytes = 0;
-  if (append) {
-    SDB_ASSERT(parent < meta.version);
-    parents.push_back(parent);
-    files.emplace_back(irs::FileName(meta.name, parent, kExt));
-    chain_bytes = meta.docs_mask_size;
+    files.push_back(file);
   }
 
   meta_file = FileName(meta);
   auto out = dir.create(meta_file);
 
   if (has_mask) {
-    WriteDocumentMask(*out, compressed, mask_size);
+    WriteDocumentMask(*out, mask_size, [&](char* buf) {
+      if (frozen) {
+        SDB_ASSERT(portable.isEmpty());
+        SDB_ASSERT(docs_mask->FrozenSize() == mask_size);
+        docs_mask->WriteFrozen(buf);
+      } else {
+        SDB_ASSERT(portable.getSizeInBytes() == mask_size);
+        portable.write(buf);
+      }
+    });
   }
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
-    if (!parents.empty()) {
-      meta_out.WriteList(
-        kFieldParents, "parents", parents.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteElement<uint64_t>(parents[i]);
-        });
-    }
-    if (!append) {
-      meta_out.WriteList(
-        kFieldFiles, "files", files.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteElement<std::string>(files[i]);
-        });
-    }
+    meta_out.WriteList(
+      kFieldFiles, "files", files.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteElement<std::string>(files[i]);
+      });
     meta_out.WriteProperty<uint32_t>(kFieldDocsCount, "docs_count",
                                      meta.docs_count);
     meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
@@ -129,8 +119,8 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
   });
 
   meta.files = std::move(files);
-  meta.docs_mask_size = chain_bytes + mask_size;
-  meta.byte_size = size_without_mask + meta.docs_mask_size;
+  meta.docs_mask_size = mask_size;
+  meta.byte_size = size_without_mask + mask_size;
 }
 
 }  // namespace irs::segment_meta

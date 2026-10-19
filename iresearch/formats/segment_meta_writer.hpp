@@ -23,20 +23,18 @@
 #pragma once
 
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <string>
 #include <string_view>
 
 namespace irs {
 
 struct Directory;
-class DocumentMaskBuilder;
 struct SegmentMeta;
 
 namespace segment_meta {
 
 inline constexpr std::string_view kExt = "sm";
-
-inline constexpr size_t kMinChainBytes = 4096;
 
 inline constexpr duckdb::field_id_t kFieldParents = 0;
 inline constexpr duckdb::field_id_t kFieldFiles = 1;
@@ -46,7 +44,7 @@ inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 std::string FileName(const SegmentMeta& meta);
 
 void Write(Directory& dir, std::string& filename, SegmentMeta& meta,
-           const DocumentMaskBuilder* patch = nullptr, uint64_t parent = 0);
+           duckdb::StorageVersion version);
 
 }  // namespace segment_meta
 }  // namespace irs

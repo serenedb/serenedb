@@ -40,10 +40,12 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/storage/single_file_block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <filesystem>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <string>
@@ -227,14 +229,25 @@ DataDirectory::DataDirectory(std::string directory_p)
   : directory{std::move(directory_p)} {}
 
 void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
-  static_assert(
-    duckdb::SERENEDB_VERSION_LOWER == duckdb::StorageVersion::SERENEDB_LATEST,
-    "a file below SERENEDB_LATEST is raised on attach only in memory: "
-    "checkpoint it before anything writes its WAL, so the log does not get "
-    "ahead of the file header");
+  auto version = duckdb::StorageVersion::SERENEDB_LATEST;
+  SDB_IF_FAILURE("serenedb_storage_v1") {
+    version = duckdb::StorageVersion::SERENEDB_V1;
+  }
   options.options["storage_version"] =
-    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
-      duckdb::StorageVersion::SERENEDB_LATEST)};
+    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(version)};
+}
+
+void UpgradeStorageVersion(duckdb::ClientContext& context,
+                           duckdb::AttachedDatabase& db) {
+  auto& storage = db.GetStorageManager();
+  if (db.IsReadOnly() || storage.InMemory() ||
+      storage.GetBlockManager()
+          .Cast<duckdb::SingleFileBlockManager>()
+          .GetFileStorageVersion() >= duckdb::StorageVersion::SERENEDB_LATEST) {
+    return;
+  }
+  context.RunFunctionInTransaction(
+    [&] { db.GetTransactionManager().Checkpoint(context, true); });
 }
 
 std::filesystem::path DataDirectory::EngineDir() const {
@@ -405,6 +418,11 @@ void InitCatalog(std::string_view directory) {
     }
   }
   search::RecoverSearchStorages();
+  for (const auto& db : manager.GetDatabases()) {
+    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
+      UpgradeStorageVersion(context, *db);
+    }
+  }
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();

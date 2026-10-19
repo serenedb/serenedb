@@ -1,0 +1,168 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'serenedb_storage_v1';
+
+
+statement ok
+SET sdb_faults = 'search_index_storage_v1';
+
+
+statement ok
+CREATE DATABASE svu_db;
+
+
+query
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS old
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'svu_db';
+----
+old
+t
+
+
+statement ok
+CREATE TABLE svu_db.public.t (i INTEGER, s TEXT);
+
+
+statement ok
+CREATE INDEX t_idx ON svu_db.public.t USING inverted (i, s)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO svu_db.public.t SELECT i, 'old' FROM range(5000) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+statement ok
+INSERT INTO svu_db.public.t SELECT i, 'old' FROM range(5000, 10000) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+statement ok
+DELETE FROM svu_db.public.t WHERE i % 10 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+statement ok
+DELETE FROM svu_db.public.t WHERE i % 10 = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT (SELECT count(*) FROM svu_db.public.t_idx) AS docs, (SELECT count(*) FROM svu_db.public.t_idx WHERE s @@ 'old') AS old;
+----
+docs	old
+8000	8000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(i) AS sum_i FROM svu_db.public.t;
+----
+n	sum_i
+8000	40004000
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM svu_db.public.t_idx) AS docs, (SELECT count(*) FROM svu_db.public.t_idx WHERE s @@ 'old') AS old;
+----
+docs	old
+8000	8000
+
+
+connection after_crash
+statement ok
+DELETE FROM svu_db.public.t WHERE i % 10 = 2 AND i < 5000;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_upgrade
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(i) AS sum_i FROM svu_db.public.t;
+----
+n	sum_i
+7500	38755500
+
+
+connection after_upgrade
+query
+SELECT (SELECT count(*) FROM svu_db.public.t_idx) AS docs, (SELECT count(*) FROM svu_db.public.t_idx WHERE s @@ 'old') AS old;
+----
+docs	old
+7500	7500
+
+
+connection after_upgrade
+statement ok
+INSERT INTO svu_db.public.t SELECT i, 'new' FROM range(10000, 10100) r(i);
+
+
+connection after_upgrade
+statement ok
+DELETE FROM svu_db.public.t WHERE i % 10 = 3 AND i BETWEEN 5000 AND 9999;
+
+
+connection after_upgrade
+statement ok
+VACUUM (REFRESH_TABLE) svu_db.public.t;
+
+
+connection after_upgrade
+query
+SELECT (SELECT count(*) FROM svu_db.public.t_idx) AS docs, (SELECT count(*) FROM svu_db.public.t_idx WHERE s @@ 'old') AS old, (SELECT count(*) FROM svu_db.public.t_idx WHERE s @@ 'new') AS new;
+----
+docs	old	new
+7100	7000	100
+
+
+connection after_upgrade
+query
+SELECT count(*) AS stale FROM (
+  SELECT i FROM svu_db.public.t_idx WHERE s @@ 'old'
+  EXCEPT
+  SELECT i FROM svu_db.public.t
+) t;
+----
+stale
+0

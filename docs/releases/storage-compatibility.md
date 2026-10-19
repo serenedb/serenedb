@@ -7,7 +7,7 @@ split: page
 
 This page describes which SereneDB releases can read search indexes, meaning inverted indexes and search tables, written by other releases.
 
-- **Newer release, older index:** a release reads indexes written by earlier releases since the last break.
+- **Newer release, older index:** a release reads indexes written by earlier releases since the last break, and upgrades an index with the first change it commits to it. An upgraded index can no longer be opened by the older release.
 - **Older release, newer index:** an older release reads an index written by a newer one as long as the index uses no feature the older release lacks. Otherwise the older release refuses to open it; it never reads it wrongly. A server that refuses an index does not start; its log names the index file and why it cannot be read, and the index files are left as they are.
 - **Breaks:** a release that can't read indexes from earlier releases says so in its release notes, together with the steps to move affected indexes and search tables to it.
 - **Integrity:** every index file records CRC32C checksums. The metadata of each file is verified whenever the file is opened, and a damaged file fails to open instead of returning wrong results.
@@ -16,7 +16,7 @@ Search tables write their changes to the write-ahead log of the database file th
 
 Database files hold the rows of tables. The catalog, meaning the definitions of roles, databases, schemas, tables, text search dictionaries, foreign servers, indexes and sequences, is one log for the whole instance: `engine_v1/catalog.wal` in the data directory, written in the same format as the write-ahead log of a database file. Database files, their write-ahead logs and the catalog log follow these rules:
 
-- **Newer release, older database:** a release opens database files written by earlier releases since the last break, and upgrades them when it writes to them. An upgraded file can no longer be opened by the older release.
+- **Newer release, older database:** a release opens database files written by earlier releases since the last break, and upgrades them when the server starts. An upgraded file can no longer be opened by the older release.
 - **Older release, newer database:** an older release opens a database file written by a newer one as long as the file uses no feature the older release lacks. Otherwise the older release refuses to open it; it never reads it wrongly. A text search dictionary or an index definition that uses an option the older release does not know is refused the same way.
 - **Breaks:** a release that can't open database files from earlier releases says so in its release notes.
 - **Integrity:** every write-ahead log entry records a checksum. An entry cut off by a crash is dropped when the database opens; an intact entry that the release cannot read stops the database from opening instead.

@@ -24,11 +24,14 @@
 #include <iresearch/search/count/live_count.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/with_mask.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/string.hpp>
 #include <optional>
 #include <random>
 #include <roaring/roaring.hh>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -56,6 +59,7 @@ struct Case {
   MaskKind kind;
   bool null = false;
   uint32_t bitset_from = irs::DocumentMaskBuilder::kBitsetFrom;
+  bool frozen = false;
 };
 
 class Reference {
@@ -113,6 +117,21 @@ irs::DocumentMask Build(
   const std::vector<doc_id_t>& docs,
   uint32_t bitset_from = irs::DocumentMaskBuilder::kBitsetFrom) {
   return Builder(docs).Finish(bitset_from);
+}
+
+std::string FrozenBlob(const irs::DocumentMask& mask) {
+  std::string blob(mask.FrozenSize(), 0);
+  mask.WriteFrozen(blob.data());
+  return blob;
+}
+
+irs::DocumentMask ReadFrozen(std::string_view blob) {
+  irs::BytesViewInput in{irs::ViewCast<irs::byte_type>(blob)};
+  return irs::DocumentMask::ReadFrozen(in, blob.size());
+}
+
+irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {
+  return ReadFrozen(FrozenBlob(mask));
 }
 
 MaskKind KindOf(irs::DocumentMaskBuilder mask, uint32_t bitset_from = kArrays) {
@@ -188,6 +207,20 @@ std::vector<Case> Cases() {
   };
 }
 
+std::vector<Case> WithFrozen(std::vector<Case> cases) {
+  const auto count = cases.size();
+  for (size_t i = 0; i != count; ++i) {
+    if (cases[i].null || cases[i].docs.empty()) {
+      continue;
+    }
+    auto frozen = cases[i];
+    frozen.name += "_frozen";
+    frozen.frozen = true;
+    cases.push_back(std::move(frozen));
+  }
+  return cases;
+}
+
 std::vector<doc_id_t> Targets(bool shuffled) {
   std::vector<doc_id_t> targets;
   for (doc_id_t doc = 1; doc <= kLimit + 10; doc += 1 + doc % 7) {
@@ -235,6 +268,9 @@ class DocumentMaskTest : public ::testing::TestWithParam<Case> {
   void SetUp() final {
     const auto& c = GetParam();
     _mask = Build(c.docs, c.bitset_from);
+    if (c.frozen) {
+      _mask = RoundTrip(_mask);
+    }
     _ptr = c.null ? nullptr : &_mask;
     _ref.emplace(c.docs);
   }
@@ -509,7 +545,7 @@ TEST_P(DocumentMaskTest, visit_live_ranges_and_iterator) {
 }
 
 INSTANTIATE_TEST_SUITE_P(document_mask, DocumentMaskTest,
-                         ::testing::ValuesIn(Cases()),
+                         ::testing::ValuesIn(WithFrozen(Cases())),
                          [](const auto& info) { return info.param.name; });
 
 TEST(document_mask_test, kind_is_resolved_on_finish) {
@@ -624,6 +660,47 @@ TEST(document_mask_test, builder_merges_a_published_mask) {
   ASSERT_FALSE(published.Contains(2));
   builder.Merge(Build({}));
   ASSERT_EQ(published.Count() + 2, builder.Count());
+}
+
+TEST(document_mask_test, builder_copies_and_merges_a_frozen_mask) {
+  const auto published = RoundTrip(Build(Every(1, 65536, 3)));
+  irs::DocumentMaskBuilder builder{published};
+  ASSERT_TRUE(builder.Add(2));
+  ASSERT_TRUE(builder.Add(200000));
+  ASSERT_FALSE(published.Contains(2));
+  builder.Merge(published);
+  ASSERT_EQ(published.Count() + 2, builder.Count());
+  const auto mask = std::move(builder).Finish();
+  ASSERT_TRUE(mask.Contains(2));
+  ASSERT_TRUE(mask.Contains(4));
+  ASSERT_TRUE(mask.Contains(200000));
+  ASSERT_FALSE(mask.Contains(5));
+  ASSERT_EQ(mask, RoundTrip(mask));
+}
+
+TEST(document_mask_test, read_frozen_rejects_corruption) {
+  const auto blob = FrozenBlob(Build(Join(
+    {Every(1, 65536, 3), Every(70000, 70100, 1), Every(140000, 140010, 7)})));
+  ASSERT_SQL_ERROR(
+    ReadFrozen(std::string_view{blob}.substr(0, blob.size() - 1)),
+    ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(ReadFrozen(blob + "x"), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(ReadFrozen("garbage!"), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(ReadFrozen(""), ERRCODE_INDEX_CORRUPTED);
+
+  for (const auto doc : {doc_id_t{0}, kEof}) {
+    roaring::Roaring set;
+    set.add(doc);
+    std::string out_of_range(set.getFrozenSizeInBytes(), 0);
+    set.writeFrozen(out_of_range.data());
+    SCOPED_TRACE(doc);
+    ASSERT_SQL_ERROR(ReadFrozen(out_of_range), ERRCODE_INDEX_CORRUPTED);
+  }
+
+  roaring::Roaring empty;
+  std::string no_docs(empty.getFrozenSizeInBytes(), 0);
+  empty.writeFrozen(no_docs.data());
+  ASSERT_SQL_ERROR(ReadFrozen(no_docs), ERRCODE_INDEX_CORRUPTED);
 }
 
 }  // namespace

@@ -20,20 +20,19 @@
 
 #pragma once
 
+#include <roaring/memory.h>
 #include <roaring/roaring.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <roaring/roaring.hh>
 
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-namespace roaring {
-
-class Roaring;
-}
 
 namespace irs {
 
@@ -70,8 +69,6 @@ class DocumentMask final {
     const DocumentMask* _mask = nullptr;
   };
 
-  ~DocumentMask();
-
   DocumentMask(DocumentMask&& other) noexcept;
   DocumentMask& operator=(DocumentMask&& other) noexcept;
   DocumentMask(const DocumentMask&) = delete;
@@ -79,7 +76,13 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
+  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
+
   roaring::Roaring Compress() const;
+
+  size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
+
+  void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
 
   bool Contains(doc_id_t doc) const noexcept;
 
@@ -96,28 +99,36 @@ class DocumentMask final {
   uint64_t RunsBound() const noexcept;
 
   uint32_t ContainerCount() const noexcept {
-    return static_cast<uint32_t>(_set.high_low_container.size);
+    return static_cast<uint32_t>(_set.roaring.high_low_container.size);
   }
 
-  const uint16_t* Keys() const noexcept { return _set.high_low_container.keys; }
+  const uint16_t* Keys() const noexcept {
+    return _set.roaring.high_low_container.keys;
+  }
 
   const uint8_t* Types() const noexcept {
-    return _set.high_low_container.typecodes;
+    return _set.roaring.high_low_container.typecodes;
   }
 
   const void* const* Containers() const noexcept {
     return reinterpret_cast<const void* const*>(
-      _set.high_low_container.containers);
+      _set.roaring.high_low_container.containers);
   }
 
  private:
   friend class DocumentMaskBuilder;
 
+  struct FrozenFree {
+    void operator()(byte_type* p) const noexcept { roaring_aligned_free(p); }
+  };
+
+  DocumentMask() = default;
   DocumentMask(roaring::api::roaring_bitmap_t& set, size_t count) noexcept;
 
-  roaring::api::roaring_bitmap_t _set;
-  size_t _count;
-  MaskKind _kind;
+  std::unique_ptr<byte_type, FrozenFree> _frozen;
+  roaring::Roaring _set;
+  size_t _count = 0;
+  MaskKind _kind = MaskKind::Runs;
 };
 
 class DocumentMaskBuilder final {

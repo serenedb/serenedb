@@ -342,3 +342,148 @@ SELECT 'akb' ILIKE ('a' || chr(8490) || 'b') ESCAPE 'k' AS kelvin, 'AKB' ILIKE (
 ----
 kelvin	kelvin_upper	escaped
 t	t	f
+
+
+statement ok
+CREATE TABLE like_strs AS
+SELECT i AS id,
+       CASE i % 5
+           WHEN 0 THEN 'quick brown fox ' || i
+           WHEN 1 THEN '50% off ' || i
+           WHEN 2 THEN 'lazy_dog ' || i
+           WHEN 3 THEN 'back\slash ' || i
+       END AS s
+FROM generate_series(1, 2100) AS g(i)
+
+
+statement ok
+CREATE TABLE like_rows AS
+SELECT id, s,
+       CASE WHEN id <= 700 THEN '%brown%'
+            WHEN id <= 1400 THEN (CASE id % 2 WHEN 0 THEN '%off%' ELSE '%dog%' END)
+            WHEN id <= 1750 THEN '%#%%'
+            WHEN id <= 2000 THEN '%y_d%'
+       END AS p
+FROM like_strs
+
+
+query
+SELECT p,
+       count(*) FILTER (WHERE s LIKE p) AS "like",
+       count(*) FILTER (WHERE s NOT LIKE p) AS not_like,
+       count(*) FILTER (WHERE s LIKE p ESCAPE '#') AS like_escape,
+       count(*) FILTER (WHERE s NOT LIKE p ESCAPE '#') AS not_like_escape,
+       count(*) FILTER (WHERE s ILIKE upper(p) ESCAPE '#') AS ilike_escape
+FROM like_rows
+GROUP BY p
+ORDER BY p COLLATE "C"
+----
+p	like	not_like	like_escape	not_like_escape	ilike_escape
+%#%%	0	280	70	210	70
+%brown%	140	420	140	420	140
+%dog%	70	210	70	210	70
+%off%	70	210	70	210	70
+%y_d%	50	150	50	150	50
+NULL	0	0	0	0	0
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE '%\%%') AS escaped_percent,
+       count(*) FILTER (WHERE s LIKE '50\% off%') AS anchored,
+       count(*) FILTER (WHERE s LIKE '%\%') AS at_end,
+       count(*) FILTER (WHERE s LIKE '%y\_d%') AS escaped_underscore,
+       count(*) FILTER (WHERE s LIKE 'back\\slash%') AS escaped_backslash,
+       count(*) FILTER (WHERE s LIKE '%\%%' ESCAPE '') AS no_escape,
+       count(*) FILTER (WHERE s LIKE '%50#% off%' ESCAPE '#') AS hash_escape,
+       count(*) FILTER (WHERE s ILIKE '%50#% OFF%' ESCAPE '#') AS ilike_hash_escape,
+       count(*) FILTER (WHERE s NOT LIKE '%#%%' ESCAPE '#') AS not_like_escape
+FROM like_strs
+----
+escaped_percent	anchored	at_end	escaped_underscore	escaped_backslash	no_escape	hash_escape	ilike_hash_escape	not_like_escape
+420	420	0	420	420	420	420	420	1260
+
+
+query
+SELECT count(*) AS n FROM like_strs WHERE s LIKE 'abc\'
+----
+n
+0
+
+
+statement ok
+PREPARE like_param AS SELECT count(*) AS n FROM like_strs WHERE s LIKE $1
+
+
+query
+EXECUTE like_param('%brown%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%\%%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%#%%')
+----
+n
+0
+
+
+query
+EXECUTE like_param('%y\_d%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('back\\slash%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%')
+----
+n
+1680
+
+
+query
+EXECUTE like_param('')
+----
+n
+0
+
+
+statement ok
+DEALLOCATE like_param
+
+
+statement ok
+PREPARE like_escape_param AS SELECT count(*) AS n FROM like_strs WHERE s LIKE $1 ESCAPE $2
+
+
+query
+EXECUTE like_escape_param('%#%%', '#')
+----
+n
+420
+
+
+query
+EXECUTE like_escape_param('%\%%', '')
+----
+n
+420
+
+
+statement ok
+DEALLOCATE like_escape_param

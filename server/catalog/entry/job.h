@@ -23,6 +23,7 @@
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
+#include <duckdb/parser/sql_statement.hpp>
 #include <functional>
 #include <memory>
 #include <string>
@@ -49,7 +50,10 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
 
   const duckdb::JobSchedule& Schedule() const noexcept { return _schedule; }
   bool Suspended() const noexcept { return _suspended; }
-  const std::string& Body() const noexcept { return _body; }
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& Body()
+    const noexcept {
+    return _body;
+  }
   const std::shared_ptr<JobState>& State() const noexcept { return _state; }
 
   void ScheduleAtCommit(duckdb::ClientContext& context) const;
@@ -65,7 +69,7 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
  private:
   duckdb::JobSchedule _schedule;
   bool _suspended;
-  std::string _body;
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _body;
   std::shared_ptr<JobState> _state;
 };
 

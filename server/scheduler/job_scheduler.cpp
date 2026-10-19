@@ -40,7 +40,6 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/main/statement_iterator.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -139,7 +138,9 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
           .name = job.name,
           .oid = job.oid,
           .owner = job.permissions.owner,
-          .body = job.Body()};
+          .body = std::make_shared<
+            const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>(
+            duckdb::CreateJobInfo::CopyBody(job.Body()))};
 }
 
 size_t HistorySize() {
@@ -201,33 +202,33 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
   try {
-    auto statements = context->IterateStatements(job.body);
-    while (statements.Peek()) {
-      auto statement = statements.GetStatementForExecution();
-      if (!statement) {
-        continue;
-      }
-      auto pending = context->Submit(std::move(statement), parameters);
-      if (pending->HasError()) {
-        return pending->GetErrorObject();
-      }
-      {
+    for (const auto& peel : *job.body) {
+      duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
+      statements.push_back(peel->Copy());
+      context->PreprocessStatements(statements);
+      for (auto& statement : statements) {
+        auto pending = context->Submit(std::move(statement), parameters);
+        if (pending->HasError()) {
+          return pending->GetErrorObject();
+        }
+        {
+          absl::MutexLock lock{&state.mutex};
+          if (state.dropped) {
+            return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
+                                     "Interrupted!"};
+          }
+          if (!absl::c_contains(state.contexts, context)) {
+            state.contexts.emplace_back(context);
+          }
+        }
+        pending->Complete();
+        if (pending->HasError()) {
+          return pending->GetErrorObject();
+        }
         absl::MutexLock lock{&state.mutex};
         if (state.dropped) {
-          return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
-                                   "Interrupted!"};
+          return {};
         }
-        if (!absl::c_contains(state.contexts, context)) {
-          state.contexts.emplace_back(context);
-        }
-      }
-      pending->Complete();
-      if (pending->HasError()) {
-        return pending->GetErrorObject();
-      }
-      absl::MutexLock lock{&state.mutex};
-      if (state.dropped) {
-        return {};
       }
     }
   } catch (const std::exception& e) {

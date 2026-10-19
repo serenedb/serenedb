@@ -708,3 +708,24 @@ FROM ilike_unicode
 ----
 per_row	not_per_row
 600	400
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE '_ DUCK%') AS duck,
+       count(*) FILTER (WHERE s LIKE 'Gr__e%') AS grusse,
+       count(*) FILTER (WHERE s LIKE '%br_l_e%') AS brulee,
+       count(*) FILTER (WHERE s LIKE '%_') AS nonempty,
+       count(*) FILTER (WHERE s LIKE '______________') AS fourteen_chars,
+       count(*) FILTER (WHERE s LIKE '%l_e _%') AS mixed
+FROM ilike_unicode
+----
+duck	grusse	brulee	nonempty	fourteen_chars	mixed
+200	200	200	1000	2	200
+
+
+query
+SELECT (SELECT count(*) FROM ilike_unicode WHERE s LIKE '%br_l_e%') AS where_brulee,
+       (SELECT count(*) FROM ilike_unicode WHERE s ILIKE '%BR_L_E%') AS where_ilike
+----
+where_brulee	where_ilike
+200	200

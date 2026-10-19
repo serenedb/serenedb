@@ -150,7 +150,7 @@ std::string KindName(CatalogType type) {
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
-         entry.ParentCatalog().GetAttached().IsReadOnly();
+         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {

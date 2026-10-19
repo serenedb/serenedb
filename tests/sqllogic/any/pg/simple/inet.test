@@ -195,3 +195,16 @@ SELECT 'inet'::regtype AS rt;
 ----
 rt
 inet
+
+query
+SELECT pg_typeof('10.0.0.1'::INET)::oid AS inet_oid, pg_typeof(ARRAY['10.0.0.1'::INET])::oid AS inet_array_oid, 'inet'::regtype::oid AS by_name, 'inet[]'::regtype::oid AS array_by_name;
+----
+inet_oid	inet_array_oid	by_name	array_by_name
+869	1041	869	1041
+
+query
+SELECT oid, typname, typelem, typarray, typinput::oid AS typinput, typoutput::oid AS typoutput, typreceive::oid AS typreceive, typsend::oid AS typsend FROM pg_type WHERE typname IN ('inet', '_inet') ORDER BY oid;
+----
+oid	typname	typelem	typarray	typinput	typoutput	typreceive	typsend
+869	inet	0	1041	910	911	2496	2497
+1041	_inet	869	0	750	751	2400	2401

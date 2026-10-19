@@ -266,3 +266,16 @@ id	net
 
 statement ok
 DROP TABLE cidr_nets;
+
+query
+SELECT pg_typeof('10.0.0.0/8'::CIDR)::oid AS cidr_oid, pg_typeof(ARRAY['10.0.0.0/8'::CIDR])::oid AS cidr_array_oid, 'cidr'::regtype::oid AS by_name, 'cidr[]'::regtype::oid AS array_by_name;
+----
+cidr_oid	cidr_array_oid	by_name	array_by_name
+650	651	650	651
+
+query
+SELECT oid, typname, typelem, typarray, typinput::oid AS typinput, typoutput::oid AS typoutput, typreceive::oid AS typreceive, typsend::oid AS typsend FROM pg_type WHERE typname IN ('cidr', '_cidr') ORDER BY oid;
+----
+oid	typname	typelem	typarray	typinput	typoutput	typreceive	typsend
+650	cidr	0	651	1267	1427	2498	2499
+651	_cidr	650	0	750	751	2400	2401

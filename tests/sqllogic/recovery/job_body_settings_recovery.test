@@ -1,0 +1,203 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE jbsr_log (via TEXT, v TEXT);
+
+
+statement ok
+CREATE TABLE "Jbsr_Q" (via TEXT);
+
+
+statement ok
+CREATE TABLE jbsr_q (via TEXT);
+
+
+statement ok
+CREATE JOB jbsr_checkpointed AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''checkpointed'', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''checkpointed'');';
+
+
+statement ok
+CREATE JOB jbsr_parent AFTER 1 HOUR AS 'CREATE JOB jbsr_child AFTER 1 HOUR AS ''INSERT INTO jbsr_log SELECT ''''child'''', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''''child'''');''';
+
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
+CREATE JOB jbsr_logged AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''logged'', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''logged'');';
+
+
+statement ok
+CREATE JOB jbsr_parent_script AFTER 1 HOUR AS 'CREATE JOB jbsr_child_script AFTER 1 HOUR AS ''INSERT INTO jbsr_log SELECT ''''child script'''', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''''child script'''');''; SELECT 1;';
+
+
+statement ok
+SET integer_division = false;
+
+
+statement ok
+SET regex_match_operator_semantics = 'full';
+
+
+statement ok
+CREATE JOB jbsr_duckdb AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''duckdb'', (7 / 2)::TEXT || '' '' || (''abc'' ~ ''b'')::TEXT; SELECT 1;';
+
+
+statement ok
+RESET integer_division;
+
+
+statement ok
+RESET regex_match_operator_semantics;
+
+
+statement ok
+SET max_expression_depth = 3000;
+
+
+statement ok
+CREATE JOB jbsr_deep_quoted AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''deep quoted'', (1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1)::TEXT';
+
+
+statement ok
+CREATE JOB jbsr_deep_bare AFTER 1 HOUR AS INSERT INTO jbsr_log SELECT 'deep bare', (1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1)::TEXT;
+
+
+statement ok
+RESET max_expression_depth;
+
+
+statement ok
+SET sdb_faults = 'job_info_without_body_parser_options';
+
+
+statement ok
+CREATE JOB jbsr_older AFTER 1 HOUR AS 'INSERT INTO jbsr_log SELECT ''older'', (7 / 2)::TEXT; INSERT INTO Jbsr_Q VALUES (''older'');';
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name FROM sdb_jobs() WHERE starts_with(job_name, 'jbsr_') ORDER BY job_name;
+----
+job_name
+jbsr_checkpointed
+jbsr_deep_bare
+jbsr_deep_quoted
+jbsr_duckdb
+jbsr_logged
+jbsr_older
+jbsr_parent
+jbsr_parent_script
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_checkpointed;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_logged;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_duckdb;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_older;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_parent;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_child;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_parent_script;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_child_script;
+
+
+connection r1
+statement ok
+SET GLOBAL max_expression_depth = 3000;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_deep_quoted;
+
+
+connection r1
+statement ok
+EXECUTE JOB jbsr_deep_bare;
+
+
+connection r1
+statement ok
+SET GLOBAL max_expression_depth = 1000;
+
+
+connection r1
+query
+SELECT via, v FROM jbsr_log ORDER BY via;
+----
+via	v
+checkpointed	3
+child	3
+child script	3
+deep bare	1100
+deep quoted	1100
+duckdb	3.5 false
+logged	3
+older	3.5
+
+
+connection r1
+query
+SELECT via FROM jbsr_q ORDER BY via;
+----
+via
+checkpointed
+child
+child script
+logged
+
+
+connection r1
+query
+SELECT via FROM "Jbsr_Q" ORDER BY via;
+----
+via
+older

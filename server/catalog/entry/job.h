@@ -23,6 +23,7 @@
 #include <duckdb/catalog/job_schedule.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/parsed_data/create_job_info.hpp>
+#include <duckdb/parser/parser_options.hpp>
 #include <duckdb/parser/sql_statement.hpp>
 #include <functional>
 #include <memory>
@@ -70,6 +71,7 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
   duckdb::JobSchedule _schedule;
   bool _suspended;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _body;
+  duckdb::ParserOptions _body_parser_options;
   std::shared_ptr<JobState> _state;
 };
 

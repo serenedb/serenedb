@@ -24,6 +24,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
@@ -42,6 +43,7 @@ JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
     _schedule{info.schedule},
     _suspended{info.suspended},
     _body{duckdb::CreateJobInfo::CopyBody(info.body)},
+    _body_parser_options{info.body_parser_options},
     _state{std::move(state)} {
   comment = info.comment;
   tags = info.tags;
@@ -56,6 +58,10 @@ duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
   info->schedule = _schedule;
   info->suspended = _suspended;
   info->body = duckdb::CreateJobInfo::CopyBody(_body);
+  info->body_parser_options = _body_parser_options;
+  SDB_IF_FAILURE("job_info_without_body_parser_options") {
+    info->body_parser_options = duckdb::ParserOptions::Builtin();
+  }
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;

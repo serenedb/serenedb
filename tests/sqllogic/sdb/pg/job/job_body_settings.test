@@ -1,0 +1,310 @@
+statement ok
+DROP JOB IF EXISTS jbs_bare;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_one;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_script;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_case_bare;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_case_one;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_case_script;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_alias;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_float;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_parent;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_child;
+
+
+statement ok
+DROP JOB IF EXISTS jbs_explain;
+
+
+statement ok
+DROP TABLE IF EXISTS jbs_div;
+
+
+statement ok
+DROP TABLE IF EXISTS "Jbs_Q";
+
+
+statement ok
+DROP TABLE IF EXISTS jbs_q;
+
+
+statement ok
+DROP TABLE IF EXISTS jbs_alias_t;
+
+
+statement ok
+CREATE TABLE jbs_div (via TEXT, v TEXT);
+
+
+statement ok
+INSERT INTO jbs_div SELECT 'client', (7 / 2)::TEXT;
+
+
+statement ok
+CREATE JOB jbs_bare AFTER 1 HOUR AS INSERT INTO jbs_div SELECT 'job', (7 / 2)::TEXT;
+
+
+statement ok
+CREATE JOB jbs_one AFTER 1 HOUR AS $$INSERT INTO jbs_div SELECT 'job', (7 / 2)::TEXT$$;
+
+
+statement ok
+CREATE JOB jbs_script AFTER 1 HOUR AS $$INSERT INTO jbs_div SELECT 'script', (7 / 2)::TEXT; SELECT 1;$$;
+
+
+statement ok
+EXECUTE JOB jbs_bare;
+
+
+statement ok
+EXECUTE JOB jbs_one;
+
+
+statement ok
+EXECUTE JOB jbs_script;
+
+
+query
+SELECT via, v FROM jbs_div ORDER BY via, v;
+----
+via	v
+client	3
+job	3
+job	3
+script	3
+
+
+query
+SELECT count(DISTINCT body) AS bodies, count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jbs_bare', 'jbs_one');
+----
+bodies	jobs
+1	2
+
+
+statement ok
+CREATE TABLE "Jbs_Q" (via TEXT);
+
+
+statement ok
+CREATE TABLE jbs_q (via TEXT);
+
+
+statement ok
+CREATE JOB jbs_case_bare AFTER 1 HOUR AS INSERT INTO Jbs_Q VALUES ('bare');
+
+
+statement ok
+CREATE JOB jbs_case_one AFTER 1 HOUR AS $$INSERT INTO Jbs_Q VALUES ('one')$$;
+
+
+statement ok
+CREATE JOB jbs_case_script AFTER 1 HOUR AS $$INSERT INTO Jbs_Q VALUES ('script'); INSERT INTO "Jbs_Q" VALUES ('script, quoted');$$;
+
+
+statement ok
+EXECUTE JOB jbs_case_bare;
+
+
+statement ok
+EXECUTE JOB jbs_case_one;
+
+
+statement ok
+EXECUTE JOB jbs_case_script;
+
+
+query
+SELECT via FROM jbs_q ORDER BY via;
+----
+via
+bare
+one
+script
+
+
+query
+SELECT via FROM "Jbs_Q" ORDER BY via;
+----
+via
+script, quoted
+
+
+statement ok
+CREATE JOB jbs_parent AFTER 1 HOUR AS $outer$CREATE JOB jbs_child AFTER 1 HOUR AS $inner$INSERT INTO jbs_div SELECT 'child', (7 / 2)::TEXT; INSERT INTO Jbs_Q VALUES ('child');$inner$$outer$;
+
+
+query
+SELECT body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jbs_parent';
+----
+body
+CREATE JOB jbs_child AFTER 1 HOUR AS $inner$INSERT INTO jbs_div SELECT 'child', (7 / 2)::TEXT; INSERT INTO Jbs_Q VALUES ('child');$inner$
+
+
+statement ok
+EXECUTE JOB jbs_parent;
+
+
+statement ok
+EXECUTE JOB jbs_child;
+
+
+query
+SELECT v FROM jbs_div WHERE via = 'child';
+----
+v
+3
+
+
+query
+SELECT count(*) AS rows FROM jbs_q WHERE via = 'child';
+----
+rows
+1
+
+
+statement error
+CREATE JOB jbs_parent_bare AFTER 1 HOUR AS CREATE JOB jbs_child_bare AFTER 1 HOUR AS $$SELECT 1; SELECT 2;$$;
+----
+db error: ERROR: CREATE JOB body cannot create a job whose body is quoted, unless it is quoted: AS $$ ... $$
+
+
+statement error
+CREATE JOB jbs_explain_bare AFTER 1 HOUR AS EXPLAIN CREATE JOB jbs_child_bare AFTER 1 HOUR AS $$SELECT 1; SELECT 2;$$;
+----
+db error: ERROR: CREATE JOB body cannot create a job whose body is quoted, unless it is quoted: AS $$ ... $$
+
+
+statement ok
+CREATE JOB jbs_explain AFTER 1 HOUR AS $outer$EXPLAIN CREATE JOB jbs_child_bare AFTER 1 HOUR AS $inner$SELECT 1; SELECT 2;$inner$$outer$;
+
+
+query
+SELECT body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jbs_explain';
+----
+body
+EXPLAIN CREATE JOB jbs_child_bare AFTER 1 HOUR AS $inner$SELECT 1; SELECT 2;$inner$
+
+
+statement ok
+CREATE JOB jbs_alias AFTER 1 HOUR AS $$CREATE TABLE jbs_alias_t AS SELECT 1 AS MyCol, 2 AS "KeepCase"; SELECT 1;$$;
+
+
+statement ok
+EXECUTE JOB jbs_alias;
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_catalog = current_database() AND table_name = 'jbs_alias_t' ORDER BY ordinal_position;
+----
+column_name
+mycol
+KeepCase
+
+
+statement ok
+SET integer_division = false;
+
+
+statement ok
+CREATE JOB jbs_float AFTER 1 HOUR AS $$INSERT INTO jbs_div SELECT 'float script', (7 / 2)::TEXT; SELECT 1;$$;
+
+
+statement ok
+RESET integer_division;
+
+
+statement ok
+EXECUTE JOB jbs_float;
+
+
+query
+SELECT v FROM jbs_div WHERE via = 'float script';
+----
+v
+3.5
+
+
+statement ok
+DROP JOB jbs_bare;
+
+
+statement ok
+DROP JOB jbs_one;
+
+
+statement ok
+DROP JOB jbs_script;
+
+
+statement ok
+DROP JOB jbs_case_bare;
+
+
+statement ok
+DROP JOB jbs_case_one;
+
+
+statement ok
+DROP JOB jbs_case_script;
+
+
+statement ok
+DROP JOB jbs_alias;
+
+
+statement ok
+DROP JOB jbs_float;
+
+
+statement ok
+DROP JOB jbs_parent;
+
+
+statement ok
+DROP JOB jbs_child;
+
+
+statement ok
+DROP JOB jbs_explain;
+
+
+statement ok
+DROP TABLE jbs_div;
+
+
+statement ok
+DROP TABLE "Jbs_Q";
+
+
+statement ok
+DROP TABLE jbs_q;
+
+
+statement ok
+DROP TABLE jbs_alias_t;

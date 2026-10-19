@@ -115,6 +115,18 @@ DROP JOB IF EXISTS jsb_truncate_gone_scheduled;
 
 
 statement ok
+DROP JOB IF EXISTS jsb_pivot;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_pivoted;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_sales;
+
+
+statement ok
 DROP TABLE IF EXISTS jsb_c;
 
 
@@ -299,6 +311,56 @@ statement error
 CREATE JOB jsb_bare AFTER 1 HOUR AS TRUNCATE jsb_a, jsb_b;
 ----
 db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement ok
+CREATE TABLE jsb_sales (k TEXT, v INT);
+
+
+statement ok
+INSERT INTO jsb_sales VALUES ('a', 1), ('b', 2);
+
+
+statement error
+CREATE JOB jsb_pivot AFTER 1 HOUR AS PIVOT jsb_sales ON k USING sum(v);
+----
+db error: ERROR: PIVOT statements with pivot elements extracted from the data cannot be used in jobs.
+In order to use PIVOT in a job the PIVOT values must be manually specified, e.g.:
+PIVOT ... ON k IN (val1, val2, ...)
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_pivot';
+----
+jobs
+0
+
+
+statement ok
+CREATE JOB jsb_pivot AFTER 1 HOUR AS $$CREATE TABLE jsb_pivoted AS PIVOT jsb_sales ON k USING sum(v)$$;
+
+
+statement ok
+EXECUTE JOB jsb_pivot;
+
+
+query
+SELECT * FROM jsb_pivoted;
+----
+a	b
+1	2
+
+
+statement ok
+DROP JOB jsb_pivot;
+
+
+statement ok
+DROP TABLE jsb_pivoted;
+
+
+statement ok
+DROP TABLE jsb_sales;
 
 
 statement ok

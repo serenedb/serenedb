@@ -23,6 +23,16 @@ for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.pro
 	fi
 done
 
+if [[ -z "${SDB_DRV_PGBACKREST:-}" ]] && ! command -v pgbackrest >/dev/null 2>&1; then
+	pgbackrest_dir="$(mktemp -d)"
+	if (cd "$pgbackrest_dir" && apt-get download pgbackrest=2.59.3-1.pgdg26.04+1 >/dev/null &&
+		dpkg-deb -x pgbackrest_*.deb .); then
+		export SDB_DRV_PGBACKREST="$pgbackrest_dir/usr/bin/pgbackrest"
+	else
+		echo "[python] could not fetch pgbackrest 2.59.3" >&2
+	fi
+fi
+
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"
 
@@ -36,7 +46,7 @@ else
 fi
 drivers=(psycopg3 psycopg2 asyncpg)
 parallel=(test_psql_mode)
-extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions test_backup)
+extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions test_backup test_pgbackrest)
 
 if [[ "${SDB_DRV_EXCLUSIVE:-false}" == "true" ]]; then
 	for name in "${drivers[@]/#/test_}" "${parallel[@]}" "${extras[@]}"; do

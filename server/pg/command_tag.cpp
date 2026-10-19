@@ -33,6 +33,7 @@
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -85,6 +86,20 @@ std::string_view CreateObjectTag(const duckdb::CreateInfo& info) {
   }
 }
 
+std::string_view DiscardTag(duckdb::DiscardTarget target) {
+  switch (target) {
+    case duckdb::DiscardTarget::ALL:
+      return "DISCARD ALL";
+    case duckdb::DiscardTarget::PLANS:
+      return "DISCARD PLANS";
+    case duckdb::DiscardTarget::SEQUENCES:
+      return "DISCARD SEQUENCES";
+    case duckdb::DiscardTarget::TEMP:
+      return "DISCARD TEMP";
+  }
+  return "DISCARD";
+}
+
 std::string_view DropObjectTag(const duckdb::DropInfo& info) {
   using duckdb::CatalogType;
   switch (info.type) {
@@ -129,13 +144,13 @@ CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   auto& exec_stmt = unbound->Cast<duckdb::ExecuteStatement>();
-  auto& client_data = duckdb::ClientData::Get(*context);
-  auto it = client_data.prepared_statements.find(exec_stmt.name);
-  if (it == client_data.prepared_statements.end() || !it->second) {
+  const auto prepared =
+    duckdb::ClientData::GetPreparedStatement(*context, exec_stmt.name);
+  if (!prepared) {
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   using duckdb::StatementType;
-  const auto inner = it->second->statement_type;
+  const auto inner = prepared->statement_type;
   switch (inner) {
     case StatementType::SELECT_STATEMENT:
       return {"SELECT", inner, true};
@@ -243,6 +258,11 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
         const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
         if (drop_stmt.info) {
           if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
+            if (drop_stmt.info->extra_drop_info) {
+              return make(DiscardTag(drop_stmt.info->extra_drop_info
+                                       ->Cast<duckdb::ExtraDropDiscardInfo>()
+                                       .target));
+            }
             return make(drop_stmt.info->GetQualifiedName().Name().empty()
                           ? "DEALLOCATE ALL"
                           : "DEALLOCATE");

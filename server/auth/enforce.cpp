@@ -510,6 +510,15 @@ class Enforcer {
             ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
             ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
         }
+        if (info.type == CatalogType::PREPARED_STATEMENT &&
+            info.extra_drop_info &&
+            info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+              duckdb::DiscardTarget::ALL &&
+            !_context.transaction.IsAutoCommit()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+        }
         if (_enforce) {
           CheckDrop(info);
         }

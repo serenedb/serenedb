@@ -68,6 +68,13 @@ Using the CLI client, the statement is executed as follows.
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_007" />
 
 
+### Declared Parameter Types
+
+`PREPARE name(type, ...)` declares the types of the positional parameters `$1`, `$2`, and so on. `EXECUTE` converts each argument to the declared type and fails when an argument cannot be converted. Declared parameters count toward the arguments `EXECUTE` expects, even when the query does not use them, and `EXECUTE` with a different number of arguments fails. Parameters without a declared type get their type from the query.
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/example_011" />
+
+
 ## Plans
 
 An execution of a prepared statement skips parsing. A statement that reads only [inverted indexes](../indexes/inverted/index.md) and search tables (`storage = 'search'`) also keeps its plan between executions: it is planned again only by the first execution after an index it reads has changed, for example after [a refresh](../indexes/inverted/maintenance.md#visibility-and-the-refresh-model) made new rows searchable, and that execution's plan is kept in turn. A statement that reads a regular table is planned on every execution.
@@ -77,6 +84,23 @@ The values the index takes over are read at execution, so one plan serves them a
 An `EXECUTE` whose values do not have the parameters' types plans the statement again for that execution: `[1, 1]` is an `INTEGER[]` and `2` an `INTEGER`. Declare the parameters with those types or cast the values; client drivers that send typed parameters are not affected.
 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_010" />
+
+
+## Lifetime
+
+A prepared statement belongs to the session that prepared it and lives until it is dropped or the session ends. `PREPARE` and `DEALLOCATE` take effect immediately: `ROLLBACK` does not undo them. A name can be prepared only once; preparing it again fails until the statement is dropped:
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/example_012" />
+
+
+Statements a client prepares through the extended query protocol share these names: `EXECUTE` runs them, `DEALLOCATE` drops them, and `PREPARE` cannot reuse their names.
+
+## Listing Prepared Statements
+
+The `pg_catalog.pg_prepared_statements` view lists the prepared statements of the session: the name, the text that prepared it, when it was prepared, the parameter and result types, and `from_sql`, which is `true` for statements prepared with `PREPARE` and `false` for named statements prepared through the extended query protocol. `generic_plans` and `custom_plans` are always `NULL`.
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/example_013" />
+
 
 ## Dropping Prepared Statements: `DEALLOCATE`
 
@@ -88,4 +112,9 @@ To drop a prepared statement, use the `DEALLOCATE` statement:
 Alternatively, use:
 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_009" />
+
+
+`DEALLOCATE ALL` drops every prepared statement of the session, including the named statements prepared through the extended query protocol. [`DISCARD ALL`](../statements/discard.md) drops them too.
+
+<SqlLogicTest id="sql/query_syntax/prepared_statements/example_014" />
 

@@ -60,6 +60,7 @@
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
+#include "pg/pg_catalog/pg_prepared_statements.h"
 #include "pg/pg_catalog/pg_replication_origin.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -351,6 +352,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
   pg::RegisterReplicationOriginStatus(db);
+  pg::RegisterPreparedStatements(db);
 
   connector::RegisterSearchFunctions(db);
 

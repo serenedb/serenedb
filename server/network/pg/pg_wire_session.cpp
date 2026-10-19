@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
@@ -442,6 +443,11 @@ bool PgWireSession<Kind>::SetupConnection() {
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  auto protocol_statements =
+    duckdb::make_shared_ptr<ProtocolStatements>(_proto.statements);
+  _protocol_statements = protocol_statements.get();
+  _conn->context->registered_state->Insert(kProtocolStatementsKey,
+                                           std::move(protocol_statements));
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -2025,6 +2031,12 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // Named statements are stored only after a successful parse: a syntax error
   // must win over "already exists" and must not define the name.
   if (!statement_name.empty()) {
+    if (duckdb::ClientData::GetPreparedStatement(
+          *_conn->context, duckdb::Identifier{statement_name})) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
+        ERR_MSG("prepared statement \"", statement_name, "\" already exists"));
+    }
     slot = &_proto.statements.Create(statement_name);
   }
   Statement& statement = **slot;
@@ -2945,6 +2957,10 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
   // ~ConnectionContext asserts an empty queue.
+  if (_protocol_statements) {
+    _conn->context->registered_state->Remove(kProtocolStatementsKey);
+    _protocol_statements = nullptr;
+  }
   _proto.Clear();
   if (_connection_ctx) {
     _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
@@ -3062,6 +3078,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     } catch (const std::exception& exception) {
       discard = FunnelError(exception, type);
     }
+    _protocol_statements->ReleaseDeallocated();
     DrainNotices();
     // GUC ParameterStatus is reported only at ReadyForQuery (in
     // CommitAndReportReady), as PG does -- not after each dispatched message --

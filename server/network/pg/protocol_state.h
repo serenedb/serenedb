@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
@@ -591,6 +592,30 @@ class ProtocolState {
     portals.Clear();
     statements.Clear();
   }
+};
+
+inline constexpr const char* kProtocolStatementsKey = "pg_protocol_statements";
+
+duckdb::shared_ptr<duckdb::PreparedStatementData> PreparedData(
+  duckdb::ClientContext& context, const Statement& statement);
+
+class ProtocolStatements final : public duckdb::ClientContextState {
+ public:
+  explicit ProtocolStatements(NamedStore<StatementPtr>& statements)
+    : _statements{statements} {}
+
+  duckdb::shared_ptr<duckdb::PreparedStatementData> GetPreparedStatement(
+    duckdb::ClientContext& context, const duckdb::Identifier& name) final;
+  bool DeallocatePreparedStatement(duckdb::ClientContext& context,
+                                   const duckdb::Identifier& name) final;
+  void DeallocatePreparedStatements(duckdb::ClientContext& context) final;
+
+  const NamedStore<StatementPtr>& Statements() const { return _statements; }
+  void ReleaseDeallocated() { _deallocated.clear(); }
+
+ private:
+  NamedStore<StatementPtr>& _statements;
+  std::vector<StatementPtr> _deallocated;
 };
 
 }  // namespace sdb::network::pg

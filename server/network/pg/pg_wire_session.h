@@ -449,6 +449,7 @@ class PgWireSession
   // Prepared-statement + portal stores (named + anon slots) and the cross-store
   // close cascade; see ProtocolState.
   ProtocolState _proto;
+  ProtocolStatements* _protocol_statements = nullptr;
   // Implicit-transaction state (see ImplicitTxnState): one deferred transaction
   // per Sync-delimited batch, committed at Sync, rolled back inline on error.
   // Optional because it borrows the connection's TransactionContext, which only

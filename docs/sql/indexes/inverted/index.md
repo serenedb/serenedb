@@ -132,7 +132,7 @@ An inverted index is **eventually consistent**: after a write, the new rows beco
 
 ## Limitations
 
-- Indexed expressions cannot contain aggregates, subqueries or volatile functions (e.g. `random()`).
+- Indexed expressions cannot contain aggregates, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
 - `HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed.
 - Composite `ROW(...)` columns are not supported.
 - The same indexed expression cannot be listed twice with different dictionaries.

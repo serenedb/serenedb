@@ -65,6 +65,7 @@ void EmitSignatures(const Entry& entry, BuiltinFunction& row,
 
     row.oid = next_oid++;
     row.return_type = function.GetReturnType();
+    row.stability = function.GetStability();
     FillParameters(function.GetSignature(), row);
     visitor(row);
   }

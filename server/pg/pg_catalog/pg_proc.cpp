@@ -30,6 +30,7 @@
 #include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <span>
 #include <string>
 #include <vector>
@@ -70,6 +71,18 @@ PgProc::Prokind KindOf(duckdb::CatalogType type) {
     default:
       return PgProc::Prokind::Function;
   }
+}
+
+PgProc::Provolatile VolatilityOf(duckdb::FunctionStability stability) {
+  switch (stability) {
+    case duckdb::FunctionStability::CONSISTENT:
+      return PgProc::Provolatile::Immutable;
+    case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
+      return PgProc::Provolatile::Stable;
+    case duckdb::FunctionStability::VOLATILE:
+      return PgProc::Provolatile::Volatile;
+  }
+  SDB_UNREACHABLE();
 }
 
 constexpr uint64_t kNamedArgsNullMask =
@@ -185,7 +198,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       .proleakproof = false,
       .proisstrict = false,
       .proretset = builtin.returns_set,
-      .provolatile = PgProc::Provolatile::Immutable,
+      .provolatile = VolatilityOf(builtin.stability),
       .proparallel = PgProc::Proparallel::Safe,
       .pronargs = pronargs,
       .pronargdefaults = 0,

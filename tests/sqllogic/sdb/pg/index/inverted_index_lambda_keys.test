@@ -144,7 +144,7 @@ statement error
 CREATE INDEX lk_random ON lk USING inverted (
   id, (list_transform(tags, lambda x: x || random()::VARCHAR)) included())
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
 
 
 statement ok
@@ -159,7 +159,8 @@ CREATE INDEX ls_idx ON ls USING inverted (
   (list_reduce(tags, lambda a, b: a || ' ' || b)) lk_dict,
   (list_transform(tags, lambda x: x || ':' || id::VARCHAR)) included(),
   (list_sort(tags)) included(),
-  (json_keys(doc)) included())
+  (json_keys(doc)) included(),
+  (list_aggr(tags, 'string_agg', ',')) included())
 
 
 statement ok
@@ -208,11 +209,12 @@ query
 SELECT id,
        list_transform(tags, lambda x: x || ':' || id::VARCHAR) AS captured,
        list_sort(tags) AS sorted,
-       json_keys(doc) AS keys
+       json_keys(doc) AS keys,
+       list_aggr(tags, 'string_agg', ',') AS joined
 FROM ls_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('fox')
 ----
-id	captured	sorted	keys
-2	{Purple:2,Orange:2}	{Orange,Purple}	{c}
+id	captured	sorted	keys	joined
+2	{Purple:2,Orange:2}	{Orange,Purple}	{c}	Purple,Orange
 
 
 statement ok

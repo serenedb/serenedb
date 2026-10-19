@@ -1,0 +1,294 @@
+statement ok
+DROP JOB IF EXISTS jsb_script;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_failing;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_atomic;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_truncate;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_single;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_pragma;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_once;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_soon;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_log;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_a;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_b;
+
+
+statement ok
+CREATE TABLE jsb_log (step INT, note TEXT);
+
+
+statement ok
+CREATE TABLE jsb_a (v INT);
+
+
+statement ok
+CREATE TABLE jsb_b (v INT);
+
+
+statement ok
+CREATE JOB jsb_script AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'first'); INSERT INTO jsb_log VALUES (2, 'it''s second'); UPDATE jsb_log SET note = upper(note) WHERE step = 1;$$;
+
+
+statement ok
+EXECUTE JOB jsb_script;
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+1	FIRST
+2	it's second
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_script';
+----
+body	sql
+INSERT INTO jsb_log VALUES (1, 'first'); INSERT INTO jsb_log VALUES (2, 'it''s second'); UPDATE jsb_log SET note = upper(note) WHERE step = 1;	CREATE JOB public.jsb_script AFTER INTERVAL '01:00:00' AS 'INSERT INTO jsb_log VALUES (1, ''first''); INSERT INTO jsb_log VALUES (2, ''it''''s second''); UPDATE jsb_log SET note = upper(note) WHERE step = 1;';
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_failing AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'kept'); INSERT INTO jsb_missing VALUES (2); INSERT INTO jsb_log VALUES (3, 'not run');$$;
+
+
+statement error
+EXECUTE JOB jsb_failing;
+----
+db error: ERROR: Table with name jsb_missing does not exist!
+Did you mean "jsb_log"?
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+1	kept
+
+
+query
+SELECT last_status, run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_failing';
+----
+last_status	run_count	failure_count
+failed	1	1
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_atomic AFTER 1 HOUR AS $$BEGIN; INSERT INTO jsb_log VALUES (1, 'rolled back'); INSERT INTO jsb_missing VALUES (2); COMMIT;$$;
+
+
+statement error
+EXECUTE JOB jsb_atomic;
+----
+db error: ERROR: Table with name jsb_missing does not exist!
+Did you mean "jsb_log"?
+
+
+query
+SELECT count(*) AS logged FROM jsb_log;
+----
+logged
+0
+
+
+statement ok
+INSERT INTO jsb_a VALUES (1), (2);
+
+
+statement ok
+INSERT INTO jsb_b VALUES (3);
+
+
+statement ok
+CREATE JOB jsb_truncate AFTER 1 HOUR AS $$TRUNCATE jsb_a, jsb_b$$;
+
+
+statement ok
+EXECUTE JOB jsb_truncate;
+
+
+query
+SELECT (SELECT count(*) FROM jsb_a) AS a, (SELECT count(*) FROM jsb_b) AS b;
+----
+a	b
+0	0
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_truncate';
+----
+body	sql
+TRUNCATE jsb_a, jsb_b	CREATE JOB public.jsb_truncate AFTER INTERVAL '01:00:00' AS 'TRUNCATE jsb_a, jsb_b';
+
+
+statement error
+CREATE JOB jsb_bare AFTER 1 HOUR AS TRUNCATE jsb_a, jsb_b;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement ok
+CREATE JOB jsb_single AFTER 1 HOUR AS $$ select 1; $$;
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_single';
+----
+body	sql
+SELECT 1	CREATE JOB public.jsb_single AFTER INTERVAL '01:00:00' AS SELECT 1;
+
+
+statement error
+CREATE JOB jsb_empty AFTER 1 HOUR AS $$ ; $$;
+----
+db error: ERROR: CREATE JOB body cannot be empty
+
+
+statement error
+CREATE JOB jsb_param AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES ($1, 'p')$$;
+----
+db error: ERROR: CREATE JOB cannot have parameters
+
+
+statement error
+CREATE JOB jsb_typo AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'a'); SELEC 2;$$;
+----
+db error: ERROR: syntax error at or near "2"
+
+
+statement error
+CREATE JOB jsb_commit AFTER 1 HOUR AS $$COMMIT$$;
+----
+db error: ERROR: CREATE JOB body cannot be a transaction statement
+
+
+statement ok
+CREATE JOB jsb_pragma AFTER 1 HOUR AS PRAGMA show_tables;
+
+
+statement ok
+EXECUTE JOB jsb_pragma;
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_once AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (10, 'once'); DROP JOB jsb_once; INSERT INTO jsb_log VALUES (11, 'after the drop');$$;
+
+
+statement ok
+EXECUTE JOB jsb_once;
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+10	once
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_once';
+----
+jobs
+0
+
+
+statement ok
+CREATE JOB jsb_soon AFTER 1 SECOND AS $$BEGIN; INSERT INTO jsb_log VALUES (20, 'scheduled'); DROP JOB jsb_soon; COMMIT;$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
+----
+jobs
+0
+
+
+query
+SELECT step, note FROM jsb_log WHERE step = 20;
+----
+step	note
+20	scheduled
+
+
+query
+SELECT trigger, success, error IS NULL AS no_error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
+----
+trigger	success	no_error
+schedule	t	t
+
+
+statement ok
+DROP JOB jsb_script;
+
+
+statement ok
+DROP JOB jsb_failing;
+
+
+statement ok
+DROP JOB jsb_atomic;
+
+
+statement ok
+DROP JOB jsb_truncate;
+
+
+statement ok
+DROP JOB jsb_single;
+
+
+statement ok
+DROP JOB jsb_pragma;
+
+
+statement ok
+DROP TABLE jsb_log;
+
+
+statement ok
+DROP TABLE jsb_a;
+
+
+statement ok
+DROP TABLE jsb_b;

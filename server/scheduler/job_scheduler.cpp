@@ -20,6 +20,7 @@
 
 #include "scheduler/job_scheduler.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
@@ -39,6 +40,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/statement_iterator.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -131,14 +133,13 @@ duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
 }
 
 JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
-  return {
-    .database_oid = job.ParentCatalog().GetOid(),
-    .catalog = job.ParentCatalog().GetName(),
-    .schema = job.schema_info,
-    .name = job.name,
-    .oid = job.oid,
-    .owner = job.permissions.owner,
-    .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
+  return {.database_oid = job.ParentCatalog().GetOid(),
+          .catalog = job.ParentCatalog().GetName(),
+          .schema = job.schema_info,
+          .name = job.name,
+          .oid = job.oid,
+          .owner = job.permissions.owner,
+          .body = job.Body()};
 }
 
 size_t HistorySize() {
@@ -199,20 +200,40 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   }
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
-  auto pending = context->Submit(job.body->Copy(), parameters);
-  if (pending->HasError()) {
-    return pending->GetErrorObject();
-  }
-  {
-    absl::MutexLock lock{&state.mutex};
-    if (state.dropped) {
-      return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
-                               "Interrupted!"};
+  try {
+    auto statements = context->IterateStatements(job.body);
+    while (statements.Peek()) {
+      auto statement = statements.GetStatementForExecution();
+      if (!statement) {
+        continue;
+      }
+      auto pending = context->Submit(std::move(statement), parameters);
+      if (pending->HasError()) {
+        return pending->GetErrorObject();
+      }
+      {
+        absl::MutexLock lock{&state.mutex};
+        if (state.dropped) {
+          return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
+                                   "Interrupted!"};
+        }
+        if (!absl::c_contains(state.contexts, context)) {
+          state.contexts.emplace_back(context);
+        }
+      }
+      pending->Complete();
+      if (pending->HasError()) {
+        return pending->GetErrorObject();
+      }
+      absl::MutexLock lock{&state.mutex};
+      if (state.dropped) {
+        return {};
+      }
     }
-    state.contexts.emplace_back(context);
+  } catch (const std::exception& e) {
+    return duckdb::ErrorData{e};
   }
-  pending->Complete();
-  return pending->HasError() ? pending->GetErrorObject() : duckdb::ErrorData{};
+  return {};
 }
 
 }  // namespace

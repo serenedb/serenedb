@@ -39,7 +39,6 @@
 namespace duckdb {
 
 class ClientContext;
-class SQLStatement;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -80,7 +79,7 @@ struct JobDefinition {
   duckdb::Identifier name;
   duckdb::idx_t oid = 0;
   duckdb::idx_t owner = 0;
-  std::shared_ptr<duckdb::SQLStatement> body;
+  std::string body;
 };
 
 struct JobState {

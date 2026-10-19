@@ -226,6 +226,37 @@ SELECT schedule FROM sdb_jobs() WHERE job_name = 'doc_ping';
 schedule
 EVERY INTERVAL '00:01:00'
 
+# DOCS_TEST: example_009
+
+statement ok
+DROP JOB IF EXISTS doc_once;
+
+statement ok
+DROP TABLE IF EXISTS doc_notes;
+
+statement ok
+CREATE TABLE doc_notes (note TEXT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_once AFTER 1 SECOND AS $$
+    INSERT INTO doc_notes VALUES ('ran once');
+    DROP JOB doc_once;
+$$;
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'doc_once';
+----
+jobs
+0
+
+query
+SELECT note FROM doc_notes;
+----
+note
+ran once
+
 # DOCS_TEST_END
 
 statement ok
@@ -260,3 +291,6 @@ REVOKE CREATE ON SCHEMA public FROM doc_job_owner;
 
 statement ok
 DROP ROLE doc_job_owner;
+
+statement ok
+DROP TABLE doc_notes;

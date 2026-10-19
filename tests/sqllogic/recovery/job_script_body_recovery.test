@@ -1,0 +1,78 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE jsbr_log (step INT, note TEXT);
+
+
+statement ok
+CREATE TABLE jsbr_a (v INT);
+
+
+statement ok
+CREATE TABLE jsbr_b (v INT);
+
+
+statement ok
+INSERT INTO jsbr_a VALUES (1);
+
+
+statement ok
+INSERT INTO jsbr_b VALUES (2);
+
+
+statement ok
+CREATE JOB jsbr_script AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (1, ''first''); TRUNCATE jsbr_a, jsbr_b; INSERT INTO jsbr_log VALUES (2, ''second'');';
+
+
+statement ok
+CREATE JOB jsbr_once AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (3, ''once''); DROP JOB jsbr_once;';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jsbr_') ORDER BY job_name;
+----
+job_name	body
+jsbr_once	INSERT INTO jsbr_log VALUES (3, 'once'); DROP JOB jsbr_once;
+jsbr_script	INSERT INTO jsbr_log VALUES (1, 'first'); TRUNCATE jsbr_a, jsbr_b; INSERT INTO jsbr_log VALUES (2, 'second');
+
+
+connection r1
+statement ok
+EXECUTE JOB jsbr_script;
+
+
+connection r1
+statement ok
+EXECUTE JOB jsbr_once;
+
+
+connection r1
+query
+SELECT step, note FROM jsbr_log ORDER BY step;
+----
+step	note
+1	first
+2	second
+3	once
+
+
+connection r1
+query
+SELECT (SELECT count(*) FROM jsbr_a) AS a, (SELECT count(*) FROM jsbr_b) AS b, (SELECT count(*) FROM sdb_jobs() WHERE job_name = 'jsbr_once') AS once;
+----
+a	b	once
+0	0	0

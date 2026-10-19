@@ -1902,6 +1902,169 @@ def test_txn_error_in_explicit(conn):
     assert _pt_count(conn) == 0
 
 
+def _abort_block_by_missing_statement(conn):
+    conn.bind("missing_portal", "no_such_statement")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["26000"]
+    assert statuses(m) == ["E"]
+
+
+def test_suspended_portal_in_aborted_block_is_25p02(conn):
+    # In an aborted block every Execute but COMMIT/ROLLBACK fails with 25P02,
+    # also of a portal suspended before the error: it may not resume.
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    conn.parse("aborted_s1", "SELECT i FROM generate_series(0, 5) AS t(i)")
+    conn.bind("aborted_p1", "aborted_s1")
+    conn.execute("aborted_p1", 2)
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == []
+    assert "s" in types(m)
+    assert len(rows(m)) == 2
+    _abort_block_by_missing_statement(conn)
+    conn.execute("aborted_p1")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["25P02"]
+    assert rows(m) == []
+    assert statuses(m) == ["E"]
+    conn.parse("aborted_rollback", "ROLLBACK")
+    conn.bind("aborted_p3", "aborted_rollback")
+    conn.execute("aborted_p3")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == []
+    assert statuses(m) == ["I"]
+    assert tags(m) == [b"ROLLBACK\x00"]
+
+
+@pytest.mark.parametrize(
+    "query, sqlstate",
+    [
+        ("SELECT 42", "25P02"),
+        ("COPY aborted_t TO STDOUT", "25P02"),
+        ("TRUNCATE aborted_t, aborted_t2", "25P02"),
+        ("COMMIT", "25P02"),
+        ("ROLLBACK", "25P02"),
+        ("", None),
+    ],
+)
+def test_portal_bound_before_abort(conn, query, sqlstate):
+    # A portal bound before the block aborted may not start either, whatever it
+    # holds, unless it is the empty query.
+    conn.run_ok("drop table if exists aborted_t")
+    conn.run_ok("drop table if exists aborted_t2")
+    conn.run_ok("create table aborted_t(a int)")
+    conn.run_ok("create table aborted_t2(a int)")
+    try:
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        conn.parse("aborted_s2", query)
+        conn.bind("aborted_p2", "aborted_s2")
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == []
+        _abort_block_by_missing_statement(conn)
+        conn.execute("aborted_p2")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert sqlstates(m) == ([sqlstate] if sqlstate else []), errors(m)
+        assert rows(m) == []
+        assert tags(m) == []
+        assert ("I" in types(m)) == (query == "")
+        assert statuses(m) == ["E"]
+    finally:
+        conn.run("ROLLBACK")
+        conn.run_ok("drop table if exists aborted_t")
+        conn.run_ok("drop table if exists aborted_t2")
+
+
+@pytest.mark.parametrize("query", ["COMMIT", "ROLLBACK"])
+def test_portal_bound_after_abort_ends_the_block(conn, query):
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    _abort_block_by_missing_statement(conn)
+    conn.parse("aborted_end", query)
+    conn.bind("aborted_pe", "aborted_end")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == []
+    _abort_block_by_missing_statement(conn)
+    conn.execute("aborted_pe")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == [], errors(m)
+    assert tags(m) == [b"ROLLBACK\x00"]
+    assert statuses(m) == ["I"]
+
+
+def test_finished_portal_in_aborted_block_is_25p02(conn):
+    conn.run_ok("drop table if exists aborted_t")
+    conn.run_ok("create table aborted_t(a int)")
+    try:
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        conn.parse("aborted_ins", "INSERT INTO aborted_t VALUES (1)")
+        conn.bind("aborted_pi", "aborted_ins")
+        conn.execute("aborted_pi")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert tags(m) == [b"INSERT 0 1\x00"], errors(m)
+        _abort_block_by_missing_statement(conn)
+        conn.execute("aborted_pi")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert sqlstates(m) == ["25P02"]
+        assert statuses(m) == ["E"]
+    finally:
+        conn.run("ROLLBACK")
+        conn.run_ok("drop table if exists aborted_t")
+
+
+def test_suspended_portal_after_query_error_is_25p02(conn):
+    try:
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        conn.parse("aborted_s4", "SELECT i FROM generate_series(0, 5) AS t(i)")
+        conn.bind("aborted_p4", "aborted_s4")
+        conn.execute("aborted_p4", 2)
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert len(rows(m)) == 2 and "s" in types(m), errors(m)
+        m = conn.run("SELECT 'x'::int")
+        assert sqlstates(m) == ["22P02"]
+        assert statuses(m) == ["E"]
+        conn.execute("aborted_p4")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert sqlstates(m) == ["25P02"]
+        assert rows(m) == []
+        assert statuses(m) == ["E"]
+    finally:
+        conn.run("ROLLBACK")
+
+
+@pytest.mark.parametrize(
+    "query, sqlstate",
+    [
+        ("SELECT 42", "25P02"),
+        ("", "25P02"),
+        ("COMMIT", None),
+        ("ROLLBACK", None),
+    ],
+)
+def test_bind_in_aborted_block(conn, query, sqlstate):
+    try:
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        conn.parse("aborted_s5", query)
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == []
+        _abort_block_by_missing_statement(conn)
+        conn.bind("aborted_p5", "aborted_s5")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert sqlstates(m) == ([sqlstate] if sqlstate else []), errors(m)
+        assert ("2" in types(m)) == (sqlstate is None)
+        assert statuses(m) == ["E"]
+    finally:
+        conn.run("ROLLBACK")
+
+
 def test_bind_result_format_count_mismatch(conn):
     # N>1 result format codes that don't match the column count -> 08P01 before
     # BindComplete (mirrors PG PortalSetResultFormat).

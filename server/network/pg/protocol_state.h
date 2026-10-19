@@ -308,6 +308,7 @@ struct Portal {
   PlanPtr plan;
   BindInfo bind_info;
   PortalExecution exec;
+  bool bound_after_abort = false;
 };
 
 inline bool IsCommit(const duckdb::SQLStatement& statement) {
@@ -358,6 +359,10 @@ class ImplicitTxnState {
   // the COMMIT/ROLLBACK that ends it.
   bool GuardNotAborted(const duckdb::SQLStatement& statement) const {
     return StatusByte() != 'E' || IsTransactionExit(statement);
+  }
+  bool GuardNotAborted(const Statement& statement) const {
+    const auto* unbound = statement.Unbound();
+    return StatusByte() != 'E' || (unbound && IsTransactionExit(*unbound));
   }
 
   // Mark the active (explicit) block aborted so it reads 'E' and later

@@ -2271,10 +2271,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   }
   // Aborted transaction block: reject the Bind (no BindComplete) unless the
   // bound statement is COMMIT/ROLLBACK.
-  const auto* unbound = statement.Unbound();
-  const bool is_txn_exit = statement.GetKind() == Statement::Kind::Prepared &&
-                           unbound && IsTransactionExit(*unbound);
-  if (_txn_state->StatusByte() == 'E' && !is_txn_exit) {
+  if (!_txn_state->GuardNotAborted(statement)) {
     ThrowAbortedTransaction();
   }
 
@@ -2302,6 +2299,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     portal.bind_info = ParseBindVars(payload, statement, statement_name);
   }
   portal.plan = statement.Plan();
+  portal.bound_after_abort = _txn_state->StatusByte() == 'E';
   bound = true;
 
   WriteEmptyFrame(this->_send, PQ_MSG_BIND_COMPLETE);
@@ -2452,11 +2450,16 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                     ERR_MSG("portal \"", portal_name, "\" does not exist"));
   }
+  const auto kind = portal.stmt->GetKind();
+  if (_txn_state->StatusByte() == 'E' && kind != Statement::Kind::Empty &&
+      !portal.bound_after_abort) {
+    ThrowAbortedTransaction();
+  }
   if (portal.exec.state == PortalState::Done) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("portal \"", portal_name, "\" cannot be run"));
   }
-  switch (portal.stmt->GetKind()) {
+  switch (kind) {
     case Statement::Kind::Unbound:
       SDB_UNREACHABLE();
     case Statement::Kind::Empty:

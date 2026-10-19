@@ -2091,6 +2091,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   if (extracted.size() == 1) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
+    _connection_ctx->RefreshCatalogEpoch();
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
     const duckdb::Identifier alias{statement_name};
     auto prepared = _conn->Prepare(std::move(extracted[0]),

@@ -28,6 +28,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <optional>
@@ -62,6 +63,7 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
+  static constexpr const char* kReadOnlyStorageType = "serenedb_readonly";
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
@@ -71,7 +73,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return _directory;
   }
 
-  std::string GetCatalogType() final { return kStorageType; }
+  std::string GetCatalogType() final;
 
   duckdb::SqlCompatibility Compatibility() const final {
     return duckdb::SqlCompatibility::POSTGRES;
@@ -82,6 +84,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return _detached.load(std::memory_order_acquire);
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
+  void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -129,20 +132,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::unique_ptr<duckdb::StandardEntry> MakeJobEntry(
     duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
     duckdb::CreateJobInfo& info) final;
-
-  duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
-    duckdb::ClientContext& context, duckdb::idx_t id);
-
-  duckdb::optional_ptr<duckdb::CatalogEntry> FindEntryById(
-    duckdb::optional_ptr<duckdb::ClientContext> context,
-    duckdb::CatalogType type, duckdb::idx_t id);
-
-  template<typename T>
-  duckdb::optional_ptr<T> FindIn(
-    duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::idx_t id) {
-    auto entry = FindEntryById(context, T::Type, id);
-    return entry ? &entry->template Cast<T>() : nullptr;
-  }
 
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
@@ -209,6 +198,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
+  duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
   std::atomic_bool _detached{false};
 };
 
@@ -222,5 +212,10 @@ void ForEachSearchStorage(
 
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
   SereneDBCatalog& catalog);
+duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
+  duckdb::ClientContext& context);
+
+duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
+  duckdb::ClientContext& context);
 
 }  // namespace sdb::catalog

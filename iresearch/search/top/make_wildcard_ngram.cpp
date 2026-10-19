@@ -29,12 +29,7 @@ namespace irs::top {
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx) {
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  const auto record = query.Stats(ScoredOf(ctx));
-  const auto value = irs::detail::AllDocsScore(
-    query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
-                                            .stats = record.stats,
-                                            .fetcher = &ctx.fetcher,
-                                            .boost = query.Boost()});
+  const auto value = irs::detail::AllDocsScoreOf(query, ScoredOf(ctx));
   if (ctx.table != nullptr) {
     return irs::detail::MakeWildcardNGram<FilteredConstantWalk, Root::ptr>(
       query, 0, ctx.table, value);

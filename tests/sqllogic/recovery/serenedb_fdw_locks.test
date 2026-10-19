@@ -1,0 +1,261 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfl_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO postgres.public.sfl_docs VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfl_copy && mkdir $__TEST_DIR__/sfl_copy && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfl_copy/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfl_copy/catalog.wal
+
+
+system ok
+rm -f $__TEST_DIR__/sfl_owner.locked $__TEST_DIR__/sfl_owner.release
+
+system async ok
+python3 -c "import fcntl,os,sys,time; f=open(sys.argv[1],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" $__TEST_DIR__/sfl_copy/5/data.db $__TEST_DIR__/sfl_owner.locked $__TEST_DIR__/sfl_owner.release
+
+system ok
+for i in $(seq 1 400); do [ -f $__TEST_DIR__/sfl_owner.locked ] && exit 0; sleep 0.05; done; exit 1
+
+statement error
+CREATE SERVER sfl_owned FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held in <slt:ignore>
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfl_owned';
+----
+n
+0
+
+system ok
+touch $__TEST_DIR__/sfl_owner.release
+
+wait
+
+
+system ok
+rm -f $__TEST_DIR__/sfl_log.locked $__TEST_DIR__/sfl_log.release
+
+system async ok
+python3 -c "import fcntl,os,sys,time; f=open(sys.argv[1],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" $__TEST_DIR__/sfl_copy/catalog.wal $__TEST_DIR__/sfl_log.locked $__TEST_DIR__/sfl_log.release
+
+system ok
+for i in $(seq 1 400); do [ -f $__TEST_DIR__/sfl_log.locked ] && exit 0; sleep 0.05; done; exit 1
+
+statement error
+CREATE SERVER sfl_logged FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>/catalog.wal": Conflicting lock is held in <slt:ignore>
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+touch $__TEST_DIR__/sfl_log.release
+
+wait
+
+
+statement ok
+CREATE SERVER sfl_copy FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+query
+SELECT count(*) AS n FROM sfl_copy.public.sfl_docs;
+----
+n
+2
+
+statement ok
+DROP SERVER sfl_copy;
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+
+system ok
+rm -rf $__TEST_DIR__/sfl_linked && mkdir $__TEST_DIR__/sfl_linked && cp -al ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfl_linked/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfl_linked/catalog.wal
+
+statement error
+CREATE SERVER sfl_linked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_linked/5');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/5/data.db
+
+statement error
+ATTACH '${SDB_DATADIR}/engine_v1/5/data.db' AS sfl_own_ro (READ_ONLY);
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": <slt:ignore>
+
+
+statement error
+ATTACH '${SDB_DATADIR}/engine_v1/5/data.db' AS sfl_own_rw;
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": <slt:ignore>
+
+
+statement error
+CREATE SERVER sfl_own_fdw FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/5/data.db', read_only 'true');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": <slt:ignore>
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/5/data.db
+
+statement ok
+INSERT INTO postgres.public.sfl_docs VALUES (3, 'gamma');
+
+statement ok
+CHECKPOINT postgres;
+
+query
+SELECT count(*) AS n FROM postgres.public.sfl_docs;
+----
+n
+3
+
+
+system ok
+rm -rf $__TEST_DIR__/sfl_named && mkdir $__TEST_DIR__/sfl_named && cp -r $__TEST_DIR__/sfl_copy/5 $__TEST_DIR__/sfl_named/shop && cp $__TEST_DIR__/sfl_copy/catalog.wal $__TEST_DIR__/sfl_named/catalog.wal
+
+statement error
+CREATE SERVER sfl_named FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_named/shop');
+----
+db error: ERROR: "<slt:ignore>" is not a SereneDB database directory: its name is not a database oid
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_named/shop/data.db
+
+
+system ok
+rm -rf $__TEST_DIR__/sfl_link && ln -s $__TEST_DIR__/sfl_copy $__TEST_DIR__/sfl_link
+
+statement ok
+CREATE SERVER sfl_first FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_copy/5');
+
+statement ok
+CREATE SERVER sfl_second FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_link/5');
+
+query
+SELECT (SELECT count(*) FROM sfl_first.public.sfl_docs) AS first, (SELECT count(*) FROM sfl_second.public.sfl_docs) AS second;
+----
+first	second
+2	2
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+statement ok
+DROP SERVER sfl_first;
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+query
+SELECT count(*) AS n FROM sfl_second.public.sfl_docs;
+----
+n
+2
+
+statement ok
+DROP SERVER sfl_second;
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/5/data.db
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_copy/catalog.wal
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfl_%';
+----
+n
+0
+
+
+system ok
+rm -rf ${SDB_DATADIR}/engine_v1/4000000 && cp -r ${SDB_DATADIR}/engine_v1/5 ${SDB_DATADIR}/engine_v1/4000000
+
+statement error
+CREATE SERVER sfl_leftover FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/4000000');
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>/catalog.wal": Conflicting lock is held by another open of this file
+
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/4000000/data.db
+
+system ok
+rm -rf ${SDB_DATADIR}/engine_v1/4000000
+
+
+system ok
+stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal > $__TEST_DIR__/sfl_log.inode
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+statement ok
+CREATE TABLE postgres.public.sfl_compacted (x INT);
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+system ok
+[ "$(stat -c %i ${SDB_DATADIR}/engine_v1/catalog.wal)" != "$(cat $__TEST_DIR__/sfl_log.inode)" ]
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/catalog.wal
+
+
+connection restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection restart
+statement error
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM postgres.public.sfl_docs;
+----
+n
+3
+
+system ok
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_RDLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]!=fcntl.F_UNLCK else 1)" ${SDB_DATADIR}/engine_v1/catalog.wal

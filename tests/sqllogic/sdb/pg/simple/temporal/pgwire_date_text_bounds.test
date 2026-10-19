@@ -1,0 +1,13 @@
+skipif pg-wire-extended
+statement ok
+SELECT array_agg(DATE '0001-01-01' - 1000000000) AS a FROM range(4500);
+
+skipif pg-wire-extended
+statement ok
+SELECT DATE '0001-01-01' - 1000000000 AS d FROM range(4500);
+
+query
+SELECT 1 AS alive;
+----
+alive
+1

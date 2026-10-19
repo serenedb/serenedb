@@ -22,10 +22,11 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
-#include <simdjson.h>
 
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/arena_allocator.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -34,10 +35,10 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/json_leaf.hpp>
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
@@ -110,6 +111,10 @@ class SearchSinkInsertBaseImpl {
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
+
+  void SwitchExpressionImpl(irs::field_id field_id,
+                            const duckdb::LogicalType& type,
+                            const duckdb::Vector& vec, duckdb::idx_t count);
 
   void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
                       const duckdb::Vector& vec, duckdb::idx_t count);
@@ -213,6 +218,7 @@ class SearchSinkInsertBaseImpl {
                          duckdb::idx_t array_size);
 
   void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
+  void RejectJsonComposites(const duckdb::Vector& vec, duckdb::idx_t count);
 
   irs::ColumnWriter* EnsureColumnWriter(irs::field_id field_id,
                                         const duckdb::LogicalType& type);
@@ -262,8 +268,8 @@ class SearchSinkInsertBaseImpl {
   PkPolicy _pk_policy;
 
   JsonExpressionFields _json_fields;
-  simdjson::ondemand::parser _json_parser;
-  std::string _json_buffer;
+  duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
+  irs::JsonLeafReader _json_reader{_json_strings};
 
   class StoreAppender final : public irs::StoreSink {
    public:
@@ -343,7 +349,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchExpression(const ExpressionDescriptor& expr_desc,
                         const duckdb::Vector& vec, duckdb::idx_t count) final {
-    SwitchFieldImpl(expr_desc.field_id, expr_desc.type, vec, count);
+    SwitchExpressionImpl(expr_desc.field_id, expr_desc.type, vec, count);
     return false;
   }
 

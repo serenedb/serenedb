@@ -20,21 +20,30 @@
 
 #include "connector/functions/math.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_format.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/common/vector_operations/ternary_executor.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/function/scalar/date_bucket_rewrite.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression_binder.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <random>
+#include <type_traits>
 
 namespace sdb::connector {
 namespace {
@@ -332,6 +341,224 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+template<typename T>
+bool ClampGreater(T left, T right) {
+  if constexpr (std::is_floating_point_v<T>) {
+    return ((left > right) | (left != left)) & (right == right);
+  } else {
+    return duckdb::GreaterThan::Operation(left, right);
+  }
+}
+
+template<typename T>
+T ClampBetween(T value, T min, T max) {
+  const auto lower = ClampGreater(min, value) ? min : value;
+  return ClampGreater(lower, max) ? max : lower;
+}
+
+[[noreturn]] void ThrowClampBounds() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("clamp minimum cannot be greater than maximum"));
+}
+
+template<typename T>
+bool TryClampConstantBounds(duckdb::DataChunk& args, duckdb::Vector& result) {
+  auto& value = args.data[0];
+  auto& min = args.data[1];
+  auto& max = args.data[2];
+  if (value.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+      min.GetVectorType() != duckdb::VectorType::CONSTANT_VECTOR ||
+      max.GetVectorType() != duckdb::VectorType::CONSTANT_VECTOR ||
+      duckdb::ConstantVector::IsNull(min) ||
+      duckdb::ConstantVector::IsNull(max)) {
+    return false;
+  }
+  const auto min_value = duckdb::ConstantVector::GetData<T>(min)[0];
+  const auto max_value = duckdb::ConstantVector::GetData<T>(max)[0];
+  if (ClampGreater(min_value, max_value)) {
+    return false;
+  }
+  const auto count = args.size();
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  if (result.size() != count) {
+    duckdb::FlatVector::SetSize(result, count);
+  }
+  auto& mask = duckdb::FlatVector::ValidityMutable(result);
+  mask.Reset(count);
+  mask.Combine(duckdb::FlatVector::Validity(value), count);
+  const auto* value_data = duckdb::FlatVector::GetData<T>(value);
+  auto* result_data = duckdb::FlatVector::GetDataMutable<T>(result);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    result_data[i] = ClampBetween(value_data[i], min_value, max_value);
+  }
+  return true;
+}
+
+template<typename T>
+void ClampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
+  if constexpr (!std::is_same_v<T, duckdb::string_t>) {
+    if (TryClampConstantBounds<T>(args, result)) {
+      return;
+    }
+  }
+  duckdb::TernaryExecutor::Execute<T, T, T, T>(
+    args.data[0], args.data[1], args.data[2], result,
+    [](T value, T min, T max) {
+      if (ClampGreater(min, max)) {
+        ThrowClampBounds();
+      }
+      return ClampBetween(value, min, max);
+    });
+  if constexpr (std::is_same_v<T, duckdb::string_t>) {
+    for (auto& input : args.data) {
+      duckdb::StringVector::AddHeapReference(result, input);
+    }
+  }
+}
+
+struct ClampSortKeyState final : duckdb::FunctionLocalState {
+  ClampSortKeyState() {
+    keys.Initialize(duckdb::Allocator::DefaultAllocator(),
+                    {duckdb::LogicalType::BLOB, duckdb::LogicalType::BLOB,
+                     duckdb::LogicalType::BLOB});
+  }
+
+  duckdb::DataChunk keys;
+  duckdb::OrderModifiers modifiers{duckdb::OrderType::ASCENDING,
+                                   duckdb::OrderByNullType::NULLS_LAST};
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> ClampSortKeyInit(
+  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  return duckdb::make_uniq<ClampSortKeyState>();
+}
+
+void ClampSortKeyFunction(duckdb::DataChunk& args,
+                          duckdb::ExpressionState& state,
+                          duckdb::Vector& result) {
+  auto& local = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<ClampSortKeyState>();
+  local.keys.Reset();
+  auto result_type = duckdb::VectorType::CONSTANT_VECTOR;
+  std::array<duckdb::UnifiedVectorFormat, 3> formats;
+  for (duckdb::idx_t c = 0; c < formats.size(); ++c) {
+    if (args.data[c].GetVectorType() != duckdb::VectorType::CONSTANT_VECTOR) {
+      result_type = duckdb::VectorType::FLAT_VECTOR;
+    }
+    args.data[c].ToUnifiedFormat(formats[c]);
+    duckdb::CreateSortKeyHelpers::CreateSortKey(args.data[c], local.modifiers,
+                                                local.keys.data[c]);
+  }
+  auto value_keys = local.keys.data[0].Values<duckdb::string_t>();
+  auto min_keys = local.keys.data[1].Values<duckdb::string_t>();
+  auto max_keys = local.keys.data[2].Values<duckdb::string_t>();
+  auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto valid = absl::c_all_of(formats, [&](const auto& format) {
+      return format.validity.RowIsValid(format.sel->get_index(row));
+    });
+    if (!valid) {
+      result_mask.SetInvalid(row);
+      continue;
+    }
+    const auto min = min_keys[row].GetValue();
+    const auto max = max_keys[row].GetValue();
+    if (ClampGreater(min, max)) {
+      ThrowClampBounds();
+    }
+    duckdb::CreateSortKeyHelpers::DecodeSortKey(
+      ClampBetween(value_keys[row].GetValue(), min, max), result, row,
+      local.modifiers);
+  }
+  result.SetVectorType(result_type);
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> ClampBind(
+  duckdb::BindScalarFunctionInput& input) {
+  auto& context = input.GetClientContext();
+  auto& arguments = input.GetArguments();
+  auto type = duckdb::ExpressionBinder::GetExpressionReturnType(*arguments[0]);
+  for (duckdb::idx_t i = 1; i < arguments.size(); ++i) {
+    const auto arg_type =
+      duckdb::ExpressionBinder::GetExpressionReturnType(*arguments[i]);
+    if (!duckdb::LogicalType::TryGetMaxLogicalType(context, type, arg_type,
+                                                   type)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG("clamp types ", type.ToString(), " and ",
+                              arg_type.ToString(), " cannot be matched"));
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::UNKNOWN:
+      throw duckdb::ParameterNotResolvedException();
+    case duckdb::LogicalTypeId::INTEGER_LITERAL:
+      type = duckdb::IntegerLiteral::GetType(type);
+      break;
+    case duckdb::LogicalTypeId::STRING_LITERAL:
+      type = duckdb::LogicalType::VARCHAR;
+      break;
+    default:
+      break;
+  }
+  auto& function = input.GetBoundFunction();
+  for (auto& arg : function.GetArguments()) {
+    arg = type;
+  }
+  function.SetReturnType(type);
+  const auto physical_type = type.id() == duckdb::LogicalTypeId::TIME_TZ
+                               ? duckdb::PhysicalType::INVALID
+                               : type.InternalType();
+  switch (physical_type) {
+    case duckdb::PhysicalType::BOOL:
+    case duckdb::PhysicalType::INT8:
+      function.SetFunctionCallback(ClampFunction<int8_t>);
+      break;
+    case duckdb::PhysicalType::INT16:
+      function.SetFunctionCallback(ClampFunction<int16_t>);
+      break;
+    case duckdb::PhysicalType::INT32:
+      function.SetFunctionCallback(ClampFunction<int32_t>);
+      break;
+    case duckdb::PhysicalType::INT64:
+      function.SetFunctionCallback(ClampFunction<int64_t>);
+      break;
+    case duckdb::PhysicalType::INT128:
+      function.SetFunctionCallback(ClampFunction<duckdb::hugeint_t>);
+      break;
+    case duckdb::PhysicalType::UINT8:
+      function.SetFunctionCallback(ClampFunction<uint8_t>);
+      break;
+    case duckdb::PhysicalType::UINT16:
+      function.SetFunctionCallback(ClampFunction<uint16_t>);
+      break;
+    case duckdb::PhysicalType::UINT32:
+      function.SetFunctionCallback(ClampFunction<uint32_t>);
+      break;
+    case duckdb::PhysicalType::UINT64:
+      function.SetFunctionCallback(ClampFunction<uint64_t>);
+      break;
+    case duckdb::PhysicalType::UINT128:
+      function.SetFunctionCallback(ClampFunction<duckdb::uhugeint_t>);
+      break;
+    case duckdb::PhysicalType::FLOAT:
+      function.SetFunctionCallback(ClampFunction<float>);
+      break;
+    case duckdb::PhysicalType::DOUBLE:
+      function.SetFunctionCallback(ClampFunction<double>);
+      break;
+    case duckdb::PhysicalType::VARCHAR:
+      function.SetFunctionCallback(ClampFunction<duckdb::string_t>);
+      break;
+    default:
+      function.SetFunctionCallback(ClampSortKeyFunction);
+      function.SetInitStateCallback(ClampSortKeyInit);
+      break;
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
@@ -440,6 +667,18 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::DOUBLE,
       RandomNormalFunction};
     func.SetVolatile();
+    loader.RegisterFunction(func);
+  }
+
+  {
+    duckdb::ScalarFunction func{
+      "clamp",
+      {duckdb::LogicalType::ANY, duckdb::LogicalType::ANY,
+       duckdb::LogicalType::ANY},
+      duckdb::LogicalType::ANY,
+      nullptr,
+      ClampBind};
+    func.SetFallible();
     loader.RegisterFunction(func);
   }
 }

@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -157,8 +158,8 @@ Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return MakeAllScored(query.Segment(), ctx, query.Stats(ctx), merge,
-                       query.Boost());
+  return MakeAllScored(query.Segment(), merge,
+                       detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
@@ -168,6 +169,16 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return MakeWildcardNGramScored(query, ctx, merge);
+}
+
+Node::ptr Make(const ApproxQuery& query) {
+  return query.Approx().PlanFill({}, ScoreMergeType::Noop);
+}
+
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  return detail::MakeApprox<WalkConstantScored, Node::ptr>(
+    query, 0, merge, *ctx.fetcher, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::fill

@@ -46,6 +46,7 @@ namespace {
 using sdb::pg::CopyBatch;
 using sdb::pg::CopyBatchBuilder;
 using sdb::pg::CopyBatchFormat;
+using sdb::pg::CopyBatchLease;
 using sdb::pg::CopyInBatches;
 using sdb::pg::CopyTake;
 using sdb::pg::kCopyWakeBacklog;
@@ -303,13 +304,13 @@ TEST(PgCopyInBatches, NextReadsInOrderUntilFinish) {
   }
   queue.Finish();
   for (uint64_t i = 0; i < 3; ++i) {
-    auto* batch = queue.Next();
-    ASSERT_NE(batch, nullptr);
+    auto batch = queue.Next();
+    ASSERT_TRUE(batch);
     EXPECT_EQ(batch->seq, i);
     EXPECT_EQ(Join(*batch), std::to_string(i));
-    queue.Done(batch->seq);
   }
-  EXPECT_EQ(queue.Next(), nullptr);
+  EXPECT_FALSE(queue.Next());
+  EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
 TEST(PgCopyInBatches, TakeHandsOutBatches) {
@@ -319,7 +320,7 @@ TEST(PgCopyInBatches, TakeHandsOutBatches) {
   }
   queue.Finish();
   auto input = NoInput();
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(input, 3, taken), CopyTake::Batches);
   ASSERT_EQ(taken.size(), 3);
   ASSERT_EQ(queue.Take(input, 3, taken), CopyTake::Batches);
@@ -329,9 +330,9 @@ TEST(PgCopyInBatches, TakeHandsOutBatches) {
   }
   EXPECT_EQ(queue.Take(input, 3, taken), CopyTake::End);
   EXPECT_FALSE(queue.TryTake(1, taken));
-  for (auto* batch : taken) {
-    queue.Done(batch->seq);
-  }
+  EXPECT_EQ(queue.RetainedBytes(), 5);
+  taken.clear();
+  EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
 struct BlockingInput {
@@ -351,7 +352,7 @@ struct BlockingInput {
 TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
   CopyInBatches queue;
   BlockingInput consumer;
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
             CopyTake::Blocked);
   for (size_t i = 0; i < kCopyWakeBacklog; ++i) {
@@ -363,41 +364,37 @@ TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
   EXPECT_EQ(taken.size(), kCopyWakeBacklog);
   queue.Finish();
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
-  for (auto* batch : taken) {
-    queue.Done(batch->seq);
-  }
 }
 
 TEST(PgCopyInBatches, FinishWakesParkedTaskForFewBatches) {
   CopyInBatches queue;
   BlockingInput consumer;
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
   queue.Push(MakeBatch("0"), {});
   queue.Finish();
   consumer.signal->Await();
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
-  queue.Done(taken.front()->seq);
 }
 
 TEST(PgCopyInBatches, FlushWakesParkedTaskForFewBatches) {
   CopyInBatches queue;
   BlockingInput consumer;
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
   queue.Push(MakeBatch("0"), {});
   queue.Flush();
   consumer.signal->Await();
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
-  queue.Done(taken.front()->seq);
+  taken.clear();
   queue.Finish();
 }
 
 TEST(PgCopyInBatches, FullQueueWakesParkedTasks) {
   CopyInBatches queue{2};
   BlockingInput consumer;
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
   queue.Push(MakeBatch("0"), {});
   queue.Push(MakeBatch("1"), {});
@@ -405,9 +402,7 @@ TEST(PgCopyInBatches, FullQueueWakesParkedTasks) {
   consumer.signal->Await();
   ASSERT_EQ(queue.Take(consumer.input, 2, taken), CopyTake::Batches);
   EXPECT_EQ(taken.size(), 2);
-  for (auto* batch : taken) {
-    queue.Done(batch->seq);
-  }
+  taken.clear();
   queue.Finish();
 }
 
@@ -417,12 +412,12 @@ TEST(PgCopyInBatches, RetainedBytesCountUntilBatchesAreFreedInOrder) {
   queue.Push(MakeBatch("de"), {});
   EXPECT_EQ(queue.RetainedBytes(), 5);
   auto input = NoInput();
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   ASSERT_EQ(queue.Take(input, 2, taken), CopyTake::Batches);
   EXPECT_EQ(queue.RetainedBytes(), 5);
-  queue.Done(taken[1]->seq);
+  taken[1].Reset();
   EXPECT_EQ(queue.RetainedBytes(), 5);
-  queue.Done(taken[0]->seq);
+  taken[0].Reset();
   EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
@@ -431,7 +426,7 @@ TEST(PgCopyInBatches, FailRethrowsToConsumers) {
   queue.Push(MakeBatch("0"), {});
   queue.Fail(std::make_exception_ptr(std::runtime_error{"boom"}));
   EXPECT_THROW(queue.Next(), std::runtime_error);
-  std::vector<CopyBatch*> taken;
+  std::vector<CopyBatchLease> taken;
   EXPECT_THROW(queue.TryTake(1, taken), std::runtime_error);
 }
 
@@ -440,8 +435,43 @@ TEST(PgCopyInBatches, AbortEndsConsumersAndDropsPushes) {
   queue.Abort();
   EXPECT_TRUE(queue.Aborted());
   queue.Push(MakeBatch("0"), {});
-  EXPECT_EQ(queue.Next(), nullptr);
+  EXPECT_FALSE(queue.Next());
   EXPECT_FALSE(queue.NeedSpace());
+  EXPECT_EQ(queue.RetainedBytes(), 0);
+}
+
+TEST(PgCopyInBatches, AbortDropsBatchesNobodyTook) {
+  CopyInBatches queue;
+  queue.Push(MakeBatch("abc"), {});
+  queue.Push(MakeBatch("de"), {});
+  queue.Push(MakeBatch("f"), {});
+  auto taken = queue.Next();
+  ASSERT_TRUE(taken);
+  queue.Abort();
+  EXPECT_EQ(queue.RetainedBytes(), 3);
+  EXPECT_FALSE(queue.Next());
+  std::vector<CopyBatchLease> more;
+  auto input = NoInput();
+  EXPECT_EQ(queue.Take(input, 2, more), CopyTake::End);
+  taken.Reset();
+  EXPECT_EQ(queue.RetainedBytes(), 0);
+}
+
+TEST(PgCopyInBatches, DroppedLeaseMarksItsBatchDone) {
+  CopyInBatches queue;
+  queue.Push(MakeBatch("abc"), {});
+  queue.Push(MakeBatch("de"), {});
+  auto input = NoInput();
+  std::vector<CopyBatchLease> run;
+  ASSERT_EQ(queue.Take(input, 2, run), CopyTake::Batches);
+  auto moved = std::move(run[0]);
+  EXPECT_FALSE(run[0]);
+  run.clear();
+  EXPECT_EQ(queue.RetainedBytes(), 5);
+  {
+    auto last = std::move(moved);
+  }
+  EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
 TEST(PgCopyInBatches, NeedSpaceUntilBatchesAreDone) {
@@ -450,21 +480,21 @@ TEST(PgCopyInBatches, NeedSpaceUntilBatchesAreDone) {
   queue.Push(MakeBatch("0"), {});
   queue.Push(MakeBatch("1"), {});
   EXPECT_TRUE(queue.NeedSpace());
-  auto* first = queue.Next();
-  ASSERT_NE(first, nullptr);
+  auto first = queue.Next();
+  ASSERT_TRUE(first);
   EXPECT_TRUE(queue.NeedSpace());
-  queue.Done(first->seq);
+  first.Reset();
   EXPECT_FALSE(queue.NeedSpace());
 }
 
 TEST(PgCopyInBatches, NextBlocksUntilPush) {
   CopyInBatches queue;
   std::thread consumer{[&] {
-    auto* batch = queue.Next();
-    ASSERT_NE(batch, nullptr);
+    auto batch = queue.Next();
+    ASSERT_TRUE(batch);
     EXPECT_EQ(Join(*batch), "late");
-    queue.Done(batch->seq);
-    EXPECT_EQ(queue.Next(), nullptr);
+    batch.Reset();
+    EXPECT_FALSE(queue.Next());
   }};
   std::this_thread::yield();
   queue.Push(MakeBatch("late"), {});
@@ -497,16 +527,16 @@ TEST(PgCopyInBatches, ParallelConsumersSeeEveryBatchOnce) {
     for (size_t c = 0; c < kConsumers; ++c) {
       consumers.emplace_back([&, c] {
         auto input = NoInput();
-        std::vector<CopyBatch*> taken;
+        std::vector<CopyBatchLease> taken;
         for (;;) {
           taken.clear();
           if (queue.Take(input, 1 + c, taken) != CopyTake::Batches) {
             return;
           }
-          for (auto* batch : taken) {
+          for (auto& batch : taken) {
             EXPECT_EQ(Join(*batch), std::to_string(batch->seq));
             seen[c].emplace_back(batch->seq);
-            queue.Done(batch->seq);
+            batch.Reset();
           }
         }
       });

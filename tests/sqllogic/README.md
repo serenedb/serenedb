@@ -43,6 +43,51 @@ Example:
 ./tests/sqllogic/run.sh --single-port 7777 --test 'tests/sqllogic/sdb/pg/simple_any/setop.test' --debug true
 ```
 
+## Generated Tests
+
+A test of thousands of similar cases isn't committed: `run.sh` writes it before
+every run. Each `generators/<path>.py` prints the test that `run.sh` saves as
+`<path>.gen.test`, so `generators/sdb/pg/index/phrase_deferred_matrix.py`
+produces `sdb/pg/index/phrase_deferred_matrix.gen.test`. `.gitignore` ignores
+every `*.gen.test`; edit the generator, not its output.
+
+A generator builds its test with `sqllogic_gen.Test`, which writes the header,
+the setup statements and the checks:
+
+```python
+from sqllogic_gen import Test, lit
+
+t = Test("Deferred wildcard checks agree with the table itself.", seed=11)
+t.dictionary("wdm_kw3", "generate_wildcard_ngrams(keyword(), 3)")
+t.table("wdm", "id INTEGER PRIMARY KEY, msg VARCHAR")
+t.insert("wdm", (f"({i}, '{lit(word)}')" for i, word in enumerate(words)))
+t.index("wdm_kw3_idx", "wdm", "id, msg wdm_kw3")
+t.refresh("wdm")
+t.section("Whole values.")
+for pred, truth in predicates:
+    t.same_rows(f"SELECT id FROM wdm_kw3_idx WHERE {pred}",
+                f"SELECT id FROM wdm WHERE {truth}")
+t.write()
+```
+
+`same_rows(actual, expected)` checks that two queries return the same rows and
+records how many they return; `same_scores(actual, expected)` checks that two
+queries give each `id` the same `s`. `t.rng` is seeded with `seed`, so a
+generator writes the same cases on every run.
+
+Where only the server knows the answer, such as a row count, a generator prints
+`<recorded>`. `run.sh` fills those cells from `generators/<path>.recorded`, and
+`run.sh --override` records them there, as values or, for a query that fails,
+as its exact error, which the test then expects in the block form. A value is
+keyed by a hash of its query's SQL, with `.2`, `.3` for repeats of the same SQL,
+and shows the start of that SQL, so a review sees which query changed. Adding,
+removing or reordering queries adds or removes only their lines; a query with no
+recorded value keeps `<recorded>` and fails until `run.sh --override` records
+it. A query that fails where the `.recorded` file has values or another error is
+recorded only with `SDB_RECORD_NEW_ERRORS=1` set; without it `--override` lists
+those queries and leaves the file unchanged. Query plans go into a committed
+test next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
+
 ## Recovery Tests
 
 Recovery tests intentionally crash serened (via `SET sdb_faults = '...'`) and

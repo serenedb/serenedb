@@ -85,6 +85,14 @@ jobs:
       contents: read
 
     steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+
       - name: Set build flags
         run: |
           # Hardcoded release configuration
@@ -113,7 +121,7 @@ jobs:
           # Parse BUILD_CONFIG overrides
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
           if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
-            echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+            echo "$BUILD_CONFIG" | docker run --rm -i --label "serenedb.owner=$SDB_DOCKER_OWNER" ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
           fi
 
           git config --global --add safe.directory '*'
@@ -134,6 +142,7 @@ jobs:
           DOCKER_USER="$(id -u):$(id -g)"
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
           docker run --rm \
+            --label "serenedb.owner=$SDB_DOCKER_OWNER" \
             --user "$DOCKER_USER" \
             -e HOME=/serenedb \
             -e CCACHE_DIR=/.ccache \
@@ -192,3 +201,7 @@ jobs:
             install.log
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

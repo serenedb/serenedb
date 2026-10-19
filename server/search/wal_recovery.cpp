@@ -30,7 +30,6 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -73,6 +72,29 @@ struct FinishReplayTask final : duckdb::BaseExecutorTask {
   absl::AnyInvocable<void()> finish;
 };
 
+/*
+std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
+  std::vector<duckdb::reference<catalog::SereneDBCatalog>> catalogs;
+  for (const auto& database :
+       duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+         .GetDatabases()) {
+    auto& catalog = database->GetCatalog();
+    if (catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
+      catalogs.emplace_back(catalog.Cast<catalog::SereneDBCatalog>());
+    }
+  }
+  return catalogs;
+}
+
+std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
+InvertedIndexEntries() {
+  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
+  for (auto& db : catalog::SereneDBDatabases()) {
+    indexes.append_range(catalog::InvertedIndexEntries(catalog.get()));
+  }
+  return indexes;
+}
+*/
 std::optional<BoundIndexHandle> BoundIndexOf(
   catalog::InvertedIndexEntry& entry) {
   for (auto index : entry.info->info->GetIndexes().IndexEntries()) {

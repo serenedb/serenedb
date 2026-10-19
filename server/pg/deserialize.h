@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -31,6 +33,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <tz_calendar.hpp>
 #include <vector>
 
@@ -64,8 +67,8 @@ void FillDeserializeContext(duckdb::ClientContext& client,
 // straight into a duckdb::Value (ValueSink) -- no per-param scratch Vector.
 //
 // The store primitives split into three groups: Fixed<T> covers every type
-// Value::CreateValue maps faithfully (all the numerics, temporals, hugeints and
-// string_t); Varchar handles plain text; and the type-specific Blob/Uuid/Bit/
+// Value::CreateValue maps faithfully (all the numerics, temporals and
+// hugeints); Varchar handles plain text; and the type-specific Blob/Uuid/Bit/
 // Decimal/Enum exist only because CreateValue would build the wrong Value for
 // them. SetNull writes a NULL slot (nested children only).
 //
@@ -83,6 +86,7 @@ struct VectorSink {
 
   template<typename T>
   void Fixed(T v) {
+    static_assert(!std::is_same_v<T, duckdb::string_t>);
     duckdb::FlatVector::GetDataMutable<T>(vec)[row] = v;
   }
 
@@ -92,8 +96,11 @@ struct VectorSink {
   }
 
   void Blob(duckdb::string_t v) {
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] = v;
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddStringOrBlob(vec, v);
   }
+
+  bool ByteaText(std::string_view text);
 
   // `bits` is the "0101" bit-char form; the cast packs it into the bitstring.
   bool Bit(std::string_view bits) {
@@ -146,6 +153,8 @@ struct ValueSink {
                               v.GetSize());
   }
 
+  bool ByteaText(std::string_view text);
+
   // The bitstring cast needs a Vector for its heap; bind BIT is rare, so pack
   // through a one-slot scratch and lift out the Value rather than duplicating
   // the bit-packing logic non-throwing here.
@@ -179,6 +188,28 @@ struct ValueSink {
 
   void SetNull() { out = duckdb::Value(type); }
 };
+
+enum class ByteaTextError : uint8_t {
+  None,
+  InvalidHexDigit,
+  OddHexDigits,
+  InvalidEscape,
+};
+
+struct ByteaTextDecoded {
+  size_t size = 0;
+  ByteaTextError error = ByteaTextError::None;
+  size_t error_pos = 0;
+};
+
+inline size_t ByteaTextCapacity(std::string_view input) noexcept {
+  // Worst case: every 2 chars = 1 byte
+  return input.starts_with("\\x") ? (input.size() - 2) / 2 : input.size();
+}
+
+// PG-compatible byteain. Handles \x hex format (whitespace between pairs
+// ignored) and PG escape format (\\ and \NNN octal).
+ByteaTextDecoded DecodeByteaText(std::string_view input, char* out) noexcept;
 
 template<typename Sink>
 using DeserializationFunction = bool (*)(DeserializeContext& context,

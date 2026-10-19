@@ -28,7 +28,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O; a session or transaction value caps the async threads its queries use.
+async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
@@ -122,7 +122,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -143,7 +143,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
@@ -174,6 +174,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
@@ -269,14 +270,13 @@ s3_url_style	vhost	S3 URL style
 s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	Deprecated setting. Throw an error when a scalar subquery returns more than one row. This will become the default behavior. When disabled, an arbitrary row is returned instead.
-scheduler_process_partial	on	Partially process tasks before rescheduling. Enabling this allows for more scheduler fairness between separate queries.
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests run on DuckDB's async I/O threads (async_threads) and on the threads that evaluate the calls. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests are sent by async tasks (async_threads) and by the threads that evaluate the calls. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.
@@ -374,7 +374,7 @@ arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear nativ
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
 arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8.
 asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join.
-async_threads	<slt:ignore>	The number of total async threads used by the system for tasks like I/O; a session or transaction value caps the async threads its queries use.
+async_threads	<slt:ignore>	The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query.
 auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
 auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading. Falls back to custom_extension_repository, if not specified.
@@ -468,7 +468,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -489,7 +489,7 @@ fsync_mode	STANDARD	How to synchronize database file changes to stable storage (
 gcs_user_project	NULL	GCS billing project for Requester Pays
 geometry_always_xy	NULL	ignore the defined axis order of coordinate reference systems and always treat them as (easting, northing) instead of e.g. (latitude, longitude)
 geometry_minimum_shredding_size	30000	Minimum size of a row group to enable GEOMETRY shredding. Set to -1 to disable shredding entirely. Defaults to 1/4th of a row group.
-hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (unix trust + SCRAM for TCP). Server-global.
+hba	(empty)	Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. An un-removable local + loopback trust rule is force-prepended so a bad ruleset cannot lock you out; an empty value restores the default (SCRAM for every role). Server-global.
 hf_max_per_page	0	Debug option to limit number of items returned in list requests
 home_directory	(empty)	Sets the home directory of the database instance.
 http_client_pool_capacity	<slt:ignore>	HTTP client pool capacity derived from CPU and async thread counts unless explicitly set
@@ -520,6 +520,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
@@ -615,14 +616,13 @@ s3_url_style	vhost	S3 URL style
 s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	Deprecated setting. Throw an error when a scalar subquery returns more than one row. This will become the default behavior. When disabled, an arbitrary row is returned instead.
-scheduler_process_partial	on	Partially process tasks before rescheduling. Enabling this allows for more scheduler fairness between separate queries.
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ai_allow_insecure_endpoint	off	When false, AI functions refuse a secret whose base_url sends requests over plain http:// to a host other than localhost, 127.0.0.0/8 or ::1, because the prompts and the API key would travel unencrypted. Default: false.
 sdb_ai_embedding_default_secret	(empty)	Name of the openai secret used by ai_embed and ai_similarity when the call does not pass secret_name. Default: '' (no default).
 sdb_ai_embedding_max_batch_size	100	Maximum number of texts ai_embed and ai_similarity send in one embeddings request. Default: 100.
 sdb_ai_max_api_calls_per_query	0	Maximum number of AI provider requests a single query may send. 0 = unlimited. Default: 0.
-sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests run on DuckDB's async I/O threads (async_threads) and on the threads that evaluate the calls. Default: 16.
+sdb_ai_max_concurrent_requests	16	Maximum number of AI provider requests a query has in flight, across all of its AI calls and threads. Requests are sent by async tasks (async_threads) and by the threads that evaluate the calls. Default: 16.
 sdb_ai_max_output_tokens_per_query	0	Maximum number of output tokens, as reported by the provider, a single query may consume; checked before each request, so requests already in flight may exceed it. 0 = unlimited. Default: 0.
 sdb_ai_max_retries	3	How many times an AI provider request is retried after a connection error or HTTP 408, 429, 5xx or 529. Default: 3.
 sdb_ai_request_timeout	120	Timeout of a single AI provider request, in seconds. Default: 120.

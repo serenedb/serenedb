@@ -23,17 +23,19 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <memory>
+#include <span>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "connector/column_id.h"
 
-namespace duckdb {
-
-class ClientContext;
-
-}  // namespace duckdb
 namespace sdb::connector {
+
+std::vector<ColumnId> KeyColumnIds(const duckdb::CatalogEntry& relation,
+                                   std::span<const duckdb::column_t> columns);
 
 // The runtime config of a fresh CREATE INDEX, from the entry duckdb built out
 // of the statement plus the binder's output: the bound key expressions and,

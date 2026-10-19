@@ -347,7 +347,9 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
   if (!strategy.positions) {
     return nullptr;
   }
-  if (auto plan = cover ? irs::ShingleCover(shingles, phrase) : std::nullopt) {
+  if (auto plan = cover
+                    ? irs::ShingleCover(shingles, phrase, strategy.positions)
+                    : std::nullopt) {
     return MakeLoweredPhrase(std::move(*plan));
   }
   phrase.set_word_separator(shingles.Separator());

@@ -2678,8 +2678,8 @@ absl::Status MakeSearchFilter(
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   irs::containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  static constinit SettingRef gLevenshteinMaxTerms{"sdb_levenshtein_max_terms"};
-  const auto levenshtein_max_terms = gLevenshteinMaxTerms.Int(context);
+  const auto levenshtein_max_terms =
+    GetIntSetting(context, "sdb_levenshtein_max_terms");
 
   FilterContext ctx{
     .negated = false,

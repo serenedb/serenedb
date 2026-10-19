@@ -138,7 +138,7 @@ class ScanBarrier {
 
   void Release(duckdb::TableFunctionInput& input);
 
-  bool Park(duckdb::TableFunctionInput& input);
+  bool Park(duckdb::TableFunctionInput& input, duckdb::ClientContext& context);
 
   void Resume() const noexcept;
 
@@ -196,7 +196,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
-  std::vector<duckdb::unique_ptr<duckdb::TableFilter>> verify_filters;
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
   duckdb::shared_ptr<duckdb::DynamicFilterData> order_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
@@ -268,6 +267,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::atomic_uint32_t published{0};
     ScanBarrier merge_barrier;
     std::atomic_bool merge_taken{false};
+    bool shared_fetch = false;
 
     struct FetchUnit {
       uint32_t seg;

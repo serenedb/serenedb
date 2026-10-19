@@ -37,9 +37,17 @@ The `EXPLAIN` statement supports additional settings that can be used to control
 
 <SqlLogicTest id="cookbook/meta/explain/example_004" />
 
-`all` shows both the physical and optimized plans.
+`all` shows the unoptimized logical plan, the optimized logical plan and the physical plan, each after a line with its name (`logical_plan`, `logical_opt`, `physical_plan`).
 
 <SqlLogicTest id="cookbook/meta/explain/example_005" />
+
+## Output Formats
+
+`EXPLAIN (FORMAT name)` picks how the plan is rendered: `text` (the default tree of boxes), `compact` (one operator per line, for programs and AI agents that read plans), `json`, `yaml`, `html`, `graphviz` or `mermaid`.
+
+<SqlLogicTest id="cookbook/meta/explain/example_006" />
+
+Over the PostgreSQL protocol `EXPLAIN` returns a single `QUERY PLAN` column, as PostgreSQL does. A `text` or `compact` plan comes back one row per line; the other formats come back one row per plan that holds the whole document, so a client can parse a `json` plan as it is.
 
 ## See Also
 

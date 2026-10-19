@@ -96,7 +96,8 @@ std::optional<bstring> ShingleTerm(const analysis::ShingleTokenizer& tokenizer,
 }
 
 std::optional<ByPhraseOptions> ShingleCover(
-  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase) {
+  const analysis::ShingleTokenizer& tokenizer, const ByPhraseOptions& phrase,
+  bool positions) {
   if (phrase.slop() != 0) {
     return std::nullopt;
   }
@@ -135,15 +136,24 @@ std::optional<ByPhraseOptions> ShingleCover(
         count = 1;
       }
       if (i != 0) {
-        offs_min = offs_max = static_cast<PosAttr::value_t>(start - prev);
+        offs_min = offs_max =
+          positions ? static_cast<PosAttr::value_t>(start - prev) : 1;
       }
-      cover.push_back<ByTermOptions>(offs_min, offs_max).term =
-        Join(tokenizer.Separator(), words.subspan(start, count));
+      auto term = Join(tokenizer.Separator(), words.subspan(start, count));
+      if (positions || count == 1) {
+        cover.push_back<ByTermOptions>(offs_min, offs_max).term =
+          std::move(term);
+      } else {
+        auto& shingle = cover.push_back<ShingleOptions>(offs_min, offs_max);
+        shingle.term = std::move(term);
+        shingle.words.assign(words.begin() + i, words.begin() + start + count);
+      }
       shingled |= count > 1;
       prev = start;
       i = start + count;
     }
-    lag = static_cast<PosAttr::value_t>(words.size() - 1 - prev);
+    lag =
+      positions ? static_cast<PosAttr::value_t>(words.size() - 1 - prev) : 0;
     run.clear();
     return true;
   };

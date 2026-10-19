@@ -68,7 +68,7 @@ A job never runs twice at the same time unless it is `CONCURRENT`. If an `EVERY`
 
 <SqlLogicTest id="sql/statements/create_job/index/example_008" />
 
-Scheduled runs execute on the server's background thread pool (`--background_threads`), the pool that also runs index maintenance, so a long job does not hold a client session.
+Scheduled runs execute in the background, like index maintenance, so a long job does not hold a client session.
 
 `SUSPENDED` creates the job paused.
 

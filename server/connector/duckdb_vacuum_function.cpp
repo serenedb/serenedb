@@ -501,13 +501,11 @@ void DispatchInverted(duckdb::ClientContext& context,
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      static constinit SettingRef gTargetSegments{
-        "sdb_compact_target_segments"};
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(gTargetSegments.Int(context),
-                                  [&] { return context.IsInterrupted(); });
+      const auto status = action == Action::Refresh
+                            ? search->VacuumRefresh()
+                            : search->VacuumCompact(GetIntSetting(
+                                context, "sdb_compact_target_segments"),
+                              [&] { return context.IsInterrupted(); });
       if (!status.ok()) {
         context.InterruptCheck();
         THROW_SQL_ERROR(
@@ -649,6 +647,13 @@ void VacuumExecute(duckdb::ClientContext& context,
   }
 
   auto target = ResolveName(context, bind_data, verb->scope);
+  if (needs_name &&
+      LookupDatabase(context, target.database).GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+      ERR_MSG("cannot run VACUUM (", bind_data.option, ") on database \"",
+              target.database, "\": it is attached read-only"));
+  }
 
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(

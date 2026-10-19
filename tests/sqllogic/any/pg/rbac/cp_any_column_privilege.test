@@ -1,7 +1,5 @@
-# has_any_column_privilege must reflect the actual table-level privilege (a role
-# has "any column" privilege iff it holds the table privilege, since serenedb has
-# no column-level grants). It was a permissive stub that always returned true.
-# PG-identical.
+# has_any_column_privilege holds when the role has the table privilege or a
+# column-level grant of it on at least one column. PG-identical.
 
 statement ok
 DROP TABLE IF EXISTS acp_kostya;
@@ -52,6 +50,71 @@ SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS se
 ----
 sel
 f
+
+
+statement ok
+GRANT SELECT (payload) ON acp_kostya TO acp_vedernikoff;
+
+
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS sel,
+       has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'INSERT') AS ins,
+       has_table_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS tbl;
+----
+sel	ins	tbl
+t	f	f
+
+
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT, INSERT') AS any_list,
+       has_column_privilege('acp_vedernikoff', 'acp_kostya', 'payload', 'SELECT, INSERT') AS col_list,
+       has_column_privilege('acp_vedernikoff', 'acp_kostya', 'payload', 'INSERT, UPDATE') AS col_none;
+----
+any_list	col_list	col_none
+t	t	f
+
+
+statement ok
+GRANT UPDATE (id) ON acp_kostya TO acp_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'UPDATE WITH GRANT OPTION') AS any_upd,
+       has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT WITH GRANT OPTION') AS any_sel,
+       has_column_privilege('acp_vedernikoff', 'acp_kostya', 'id', 'UPDATE WITH GRANT OPTION') AS id_upd,
+       has_column_privilege('acp_vedernikoff', 'acp_kostya', 'payload', 'UPDATE WITH GRANT OPTION') AS payload_upd;
+----
+any_upd	any_sel	id_upd	payload_upd
+t	f	t	f
+
+
+statement ok
+REVOKE UPDATE (id) ON acp_kostya FROM acp_vedernikoff;
+
+
+statement ok
+ALTER ROLE acp_vedernikoff PASSWORD 'acp_vedernikoff_pw';
+
+
+connection c_acp user=acp_vedernikoff password=acp_vedernikoff_pw
+query
+SELECT has_any_column_privilege('acp_kostya', 'SELECT') AS by_name,
+       has_any_column_privilege('acp_kostya'::regclass, 'SELECT') AS by_oid;
+----
+by_name	by_oid
+t	t
+
+
+connection c_acp user=acp_vedernikoff password=acp_vedernikoff_pw
+query
+SELECT table_name FROM information_schema.tables WHERE table_name = 'acp_kostya';
+----
+table_name
+acp_kostya
+
+
+statement ok
+REVOKE SELECT (payload) ON acp_kostya FROM acp_vedernikoff;
 
 
 # Current-user 2-arg form: the owning superuser holds everything.

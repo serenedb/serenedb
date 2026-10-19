@@ -785,6 +785,7 @@ struct RegexpLocalState final : duckdb::FunctionLocalState {
 re2::RE2::Options OwnedRegexOptions() {
   re2::RE2::Options options{re2::RE2::Quiet};
   options.set_thread_safe(false);
+  options.set_valid_utf8(true);
   return options;
 }
 

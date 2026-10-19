@@ -32,6 +32,223 @@ id	b_null	len	hex
 
 
 statement ok
+CREATE TABLE ctb_text (id INTEGER, v VARCHAR);
+
+
+statement ok
+INSERT INTO ctb_text VALUES
+  (1, 'abc\001'),
+  (2, 'a\\b'),
+  (3, '\134'),
+  (4, 'abcdefghijklmnop\001'),
+  (5, '\x000102030405060708090a0b0c0d0e0f'),
+  (6, 'abcdefghijklmnopqrstuvwxyz'),
+  (7, 'ab' || chr(9) || 'cdefghijklmnop'),
+  (8, 'zz' || chr(9) || 'yyyyyyyyyyyyyyy');
+
+
+statement count 8
+COPY ctb_text TO '${__TEST_DIR__}/copy_text_bytea_escape.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctb_escape (id INTEGER, b BYTEA);
+
+
+statement count 8
+COPY ctb_escape FROM '${__TEST_DIR__}/copy_text_bytea_escape.txt' (FORMAT text);
+
+
+query
+SELECT id, octet_length(b) AS len, encode(b, 'hex') AS hex FROM ctb_escape ORDER BY id;
+----
+id	len	hex
+1	4	61626301
+2	3	615c62
+3	1	5c
+4	17	6162636465666768696a6b6c6d6e6f7001
+5	16	000102030405060708090a0b0c0d0e0f
+6	26	6162636465666768696a6b6c6d6e6f707172737475767778797a
+7	17	616209636465666768696a6b6c6d6e6f70
+8	18	7a7a09797979797979797979797979797979
+
+
+statement ok
+CREATE TABLE ctb_bad (id INTEGER, v VARCHAR);
+
+
+statement ok
+INSERT INTO ctb_bad VALUES (1, 'a\9b');
+
+
+statement count 1
+COPY ctb_bad TO '${__TEST_DIR__}/copy_text_bytea_bad.txt' (FORMAT text);
+
+
+statement error (invalid input syntax for type bytea|invalid input for column 2)
+COPY ctb_escape FROM '${__TEST_DIR__}/copy_text_bytea_bad.txt' (FORMAT text);
+
+
+statement ok
+DELETE FROM ctb_bad;
+
+
+statement ok
+INSERT INTO ctb_bad VALUES (1, '\xzz');
+
+
+statement count 1
+COPY ctb_bad TO '${__TEST_DIR__}/copy_text_bytea_bad_hex.txt' (FORMAT text);
+
+
+statement error (invalid hexadecimal digit|invalid input for column 2)
+COPY ctb_escape FROM '${__TEST_DIR__}/copy_text_bytea_bad_hex.txt' (FORMAT text);
+
+
+statement ok
+DELETE FROM ctb_bad;
+
+
+statement ok
+INSERT INTO ctb_bad VALUES (1, '\x0');
+
+
+statement count 1
+COPY ctb_bad TO '${__TEST_DIR__}/copy_text_bytea_bad_odd.txt' (FORMAT text);
+
+
+statement error (invalid hexadecimal data: odd number of digits|invalid input for column 2)
+COPY ctb_escape FROM '${__TEST_DIR__}/copy_text_bytea_bad_odd.txt' (FORMAT text);
+
+
+statement ok
+DROP TABLE ctb_bad;
+
+
+statement ok
+DROP TABLE ctb_escape;
+
+
+statement ok
+DROP TABLE ctb_text;
+
+
+statement ok
+CREATE TABLE ctb_many_src (id INTEGER, b BYTEA);
+
+
+statement ok
+INSERT INTO ctb_many_src SELECT i, decode(substr(repeat(md5(i::text), 7), 1, 2 * (i % 100 + 1)), 'hex') FROM generate_series(0, 19999) AS t(i);
+
+
+statement count 20000
+COPY ctb_many_src TO '${__TEST_DIR__}/copy_text_bytea_many.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctb_many_dst (id INTEGER, b BYTEA);
+
+
+statement count 20000
+COPY ctb_many_dst FROM '${__TEST_DIR__}/copy_text_bytea_many.txt' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, sum(octet_length(d.b)) AS bytes, count(*) FILTER (WHERE d.b IS DISTINCT FROM s.b) AS mismatched FROM ctb_many_src s JOIN ctb_many_dst d USING (id);
+----
+n	bytes	mismatched
+20000	1010000	0
+
+
+statement ok
+CREATE TABLE ctb_many_text (id INTEGER, v VARCHAR);
+
+
+statement ok
+INSERT INTO ctb_many_text SELECT i, CASE WHEN i % 2 = 0 THEN repeat(chr((97 + i % 26)::int), i % 100 + 1) ELSE repeat(chr((97 + i % 26)::int), i % 50 + 1) || repeat('\001', i % 50 + 1) END FROM generate_series(0, 19999) AS t(i);
+
+
+statement count 20000
+COPY ctb_many_text TO '${__TEST_DIR__}/copy_text_bytea_many_text.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctb_many_plain (id INTEGER, b BYTEA);
+
+
+statement count 20000
+COPY ctb_many_plain FROM '${__TEST_DIR__}/copy_text_bytea_many_text.txt' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, sum(octet_length(p.b)) AS bytes, count(*) FILTER (WHERE p.b IS DISTINCT FROM t.v::bytea) AS mismatched FROM ctb_many_text t JOIN ctb_many_plain p USING (id);
+----
+n	bytes	mismatched
+20000	1020000	0
+
+
+statement ok
+CREATE TABLE ctb_arr_src (id INTEGER, a BYTEA[]);
+
+
+statement ok
+INSERT INTO ctb_arr_src VALUES (1, ARRAY['\x000102030405060708090a0b0c0d0e0f'::bytea, 'abcdefghijklmnop\001'::bytea, NULL, ''::bytea]), (2, ARRAY['\x41'::bytea, 'q\\r'::bytea]), (3, ARRAY[]::bytea[]), (4, NULL);
+
+
+statement count 4
+COPY ctb_arr_src TO '${__TEST_DIR__}/copy_text_bytea_array.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE ctb_arr_dst (id INTEGER, a BYTEA[]);
+
+
+statement count 4
+COPY ctb_arr_dst FROM '${__TEST_DIR__}/copy_text_bytea_array.txt' (FORMAT text);
+
+
+query
+SELECT id, encode(a[1], 'hex') AS e1, encode(a[2], 'hex') AS e2, a[3] IS NULL AS e3_null, encode(a[4], 'hex') AS e4 FROM ctb_arr_dst ORDER BY id;
+----
+id	e1	e2	e3_null	e4
+1	000102030405060708090a0b0c0d0e0f	6162636465666768696a6b6c6d6e6f7001	t	(empty)
+2	41	715c72	t	NULL
+3	NULL	NULL	t	NULL
+4	NULL	NULL	t	NULL
+
+
+query
+SELECT count(*) AS mismatched FROM ctb_arr_src s JOIN ctb_arr_dst d USING (id) WHERE s.a IS DISTINCT FROM d.a;
+----
+mismatched
+0
+
+
+statement ok
+DROP TABLE ctb_arr_dst;
+
+
+statement ok
+DROP TABLE ctb_arr_src;
+
+
+statement ok
+DROP TABLE ctb_many_plain;
+
+
+statement ok
+DROP TABLE ctb_many_text;
+
+
+statement ok
+DROP TABLE ctb_many_dst;
+
+
+statement ok
+DROP TABLE ctb_many_src;
+
+
+statement ok
 DROP TABLE ctb_dst;
 
 

@@ -660,6 +660,42 @@ SELECT id FROM json_text_idx WHERE (content->'v') @@ ts_phrase('quick brown fox'
 id
 2
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_text_nopos AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency);
+
+statement ok
+CREATE INDEX json_text_stored_idx ON json_text USING inverted(
+    id, (content->'v') en_text_nopos, (content->'v') included());
+
+statement ok
+VACUUM (REFRESH_TABLE) json_text;
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ websearch_to_tsquery('quick-brown');
+----
+id
+2
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ ts_phrase('quick brown fox');
+----
+id
+2
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ ts_phrase('brown quick');
+----
+id
+
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v')::BLOB @@ websearch_to_tsquery('quick-brown');
+----
+id
+2
+
 
 
 # --- Same expression listed twice with different tokenizers is rejected.
@@ -987,3 +1023,201 @@ SELECT id, big FROM jp_inc3_idx WHERE doc->>'host' = 'y' ORDER BY id;
 ----
 id	big
 2	2000
+
+statement ok
+CREATE TABLE jbare (id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+INSERT INTO jbare VALUES (1, '{"a":"quick brown"}'), (2, '"plain text"');
+
+statement ok
+CREATE INDEX jbare_idx ON jbare USING inverted(id, doc);
+
+statement ok
+INSERT INTO jbare VALUES (3, '{"b":"late object"}'), (4, '"late plain"'), (5, '[1, 2]');
+
+statement ok
+VACUUM (REFRESH_TABLE) jbare;
+
+query
+SELECT id FROM jbare_idx ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"a":"quick brown"}' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"b":"late object"}' ORDER BY id;
+----
+id
+3
+
+statement ok
+UPDATE jbare SET doc = '{"c":"updated"}' WHERE id = 2;
+
+statement ok
+UPDATE jbare SET doc = '{"b":"changed"}' WHERE id = 3;
+
+statement ok
+CREATE INDEX jbare_part_idx ON jbare USING inverted(id, doc) WHERE id % 2 = 0;
+
+statement ok
+INSERT INTO jbare VALUES (6, '{"d":"partial"}'), (7, '{"d":"odd"}'), (8, '"partial plain"');
+
+statement ok
+VACUUM (REFRESH_TABLE) jbare;
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"c":"updated"}' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"b":"changed"}' ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"b":"late object"}' ORDER BY id;
+----
+id
+
+query
+SELECT id FROM jbare_idx WHERE doc @@ '{"d":"odd"}' ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM jbare_part_idx ORDER BY id;
+----
+id
+2
+4
+6
+8
+
+query
+SELECT id FROM jbare_part_idx WHERE doc @@ '{"c":"updated"}' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM jbare_part_idx WHERE doc @@ '{"d":"partial"}' ORDER BY id;
+----
+id
+6
+
+query
+SELECT id FROM jbare_part_idx WHERE doc @@ '{"d":"odd"}' ORDER BY id;
+----
+id
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jorder_words AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jorder_kw AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE jorder (id INTEGER PRIMARY KEY, tag TEXT, doc JSON);
+
+statement ok
+CREATE INDEX jorder_idx ON jorder USING inverted (id, (doc->>'k') jorder_words, (doc->>'k') included(), doc, tag jorder_words, (doc->'a') jorder_kw);
+
+statement ok
+INSERT INTO jorder VALUES (1, 'red apple', '{"k":"alpha beta","a":"x"}'), (2, 'green pear', '{"k":"gamma","a":7}'), (3, 'red cherry', '{"k":"beta delta","a":true}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jorder;
+
+query
+SELECT id FROM jorder_idx WHERE (doc->>'k') @@ 'beta' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM jorder_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM jorder_idx WHERE doc @@ '{"k":"gamma","a":7}' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM jorder_idx WHERE (doc->'a')::int = 7 ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM jorder_idx WHERE (doc->'a')::bool = true ORDER BY id;
+----
+id
+3
+
+query
+SELECT id, doc->>'k' AS k FROM jorder_idx ORDER BY id;
+----
+id	k
+1	alpha beta
+2	gamma
+3	beta delta
+
+statement ok
+DROP TABLE jorder;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jorder_words;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jorder_kw;
+
+statement ok
+CREATE TABLE jmix (id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+CREATE INDEX jmix_idx ON jmix USING inverted(id, doc, (doc->'a'));
+
+statement ok
+INSERT INTO jmix VALUES (1, '{"a":"x"}');
+
+statement error
+INSERT INTO jmix VALUES (2, '{"a":{"b":1}}');
+----
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+VACUUM (REFRESH_TABLE) jmix;
+
+query
+SELECT id FROM jmix_idx ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE jmix;
+
+statement ok
+DROP TABLE jbare;

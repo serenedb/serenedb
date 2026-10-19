@@ -34,7 +34,7 @@ class ForwardSink final : public snappy::Sink {
  public:
   explicit ForwardSink(DecodeSink sink) : _sink{sink} {}
 
-  void Append(const char* bytes, size_t n) override {
+  void Append(const char* bytes, size_t n) noexcept override {
     if (_error) {
       return;
     }

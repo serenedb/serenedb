@@ -249,7 +249,20 @@ target_include_directories(
 sdb_update_module(${GIT_EXECUTABLE} "re2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(RE2_USE_ICU ON CACHE BOOL "" FORCE)
 set(RE2_INSTALL OFF CACHE BOOL "" FORCE)
+set(RE2_TEST ${SDB_GTEST} CACHE BOOL "" FORCE)
+if(SDB_GTEST)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake "")
+    enable_testing()
+endif()
 add_subdirectory(re2)
+if(SDB_GTEST)
+    get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
+    list(FILTER re2_targets INCLUDE REGEX "_test$")
+    foreach(target ${re2_targets})
+        target_link_libraries(${target} PRIVATE icu_extension)
+    endforeach()
+    add_custom_target(re2-tests DEPENDS ${re2_targets})
+endif()
 
 ################################################################################
 ### tcmalloc library

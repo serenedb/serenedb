@@ -1,0 +1,267 @@
+statement ok
+CREATE TABLE acu (a int, b int, s varchar)
+
+
+statement count 5000
+INSERT INTO acu SELECT g, CASE WHEN g % 10 = 0 THEN NULL ELSE g END, 'short' FROM generate_series(1, 5000) g
+
+
+statement ok
+ALTER TABLE acu ADD COLUMN r float8 DEFAULT random() NOT NULL
+
+
+query
+SELECT count(*) AS n, count(r) AS filled, count(*) FILTER (WHERE r >= 0 AND r < 1) AS in_range FROM acu
+----
+n	filled	in_range
+5000	5000	5000
+
+
+statement ok
+CREATE SEQUENCE acu_seq
+
+
+statement ok
+ALTER TABLE acu ADD COLUMN n bigint DEFAULT nextval('acu_seq') NOT NULL
+
+
+query
+SELECT min(n) AS lo, max(n) AS hi, count(DISTINCT n) AS distinct_n FROM acu
+----
+lo	hi	distinct_n
+1	5000	5000
+
+
+statement ok
+BEGIN
+
+
+statement count 500
+UPDATE acu SET b = 0 WHERE b IS NULL
+
+
+statement ok
+ALTER TABLE acu ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT count(*) FILTER (WHERE b = 0) AS zeros, count(*) FILTER (WHERE b IS NULL) AS nulls FROM acu
+----
+zeros	nulls
+500	0
+
+
+statement error (null value in column "b" of relation "acu" violates not-null constraint|NOT NULL constraint failed)
+INSERT INTO acu (a, b) VALUES (0, NULL)
+
+
+statement ok
+ALTER TABLE acu ALTER COLUMN b DROP NOT NULL
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = NULL WHERE a = 4999
+
+
+statement error (column "b" of relation "acu" contains null values|NOT NULL constraint failed)
+ALTER TABLE acu ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = NULL WHERE a = 1
+
+
+statement error (column "b" of relation "acu" contains null values|NOT NULL constraint failed)
+ALTER TABLE acu ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = NULL WHERE a = 2500
+
+
+statement count 1
+UPDATE acu SET b = 2500 WHERE a = 2500
+
+
+statement ok
+ALTER TABLE acu ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = NULL WHERE a = 3000
+
+
+statement count 1
+DELETE FROM acu WHERE a = 3000
+
+
+statement ok
+ALTER TABLE acu ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE a = 3000) AS kept FROM acu
+----
+n	kept
+5000	1
+
+
+statement count 1
+INSERT INTO acu (a, b) VALUES (-1, NULL)
+
+
+statement count 1
+DELETE FROM acu WHERE a = -1
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = -1 WHERE a = 17
+
+
+statement error (?i)check constraint
+ALTER TABLE acu ADD CONSTRAINT acu_b_nonneg CHECK (b >= 0)
+
+
+statement ok
+ROLLBACK
+
+
+statement count 1
+UPDATE acu SET b = -1 WHERE a = 17
+
+
+statement error (?i)check constraint
+ALTER TABLE acu ADD CONSTRAINT acu_b_nonneg CHECK (b >= 0)
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acu SET b = 17 WHERE a = 17
+
+
+statement ok
+ALTER TABLE acu ADD CONSTRAINT acu_b_nonneg CHECK (b >= 0)
+
+
+statement ok
+COMMIT
+
+
+statement error (?i)check constraint
+INSERT INTO acu (a, b) VALUES (0, -5)
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'acu'::regclass AND contype = 'c'
+----
+conname
+acu_b_nonneg
+
+
+statement ok
+BEGIN
+
+
+statement count 5000
+UPDATE acu SET s = repeat('x', 30)
+
+
+statement count 1
+UPDATE acu SET s = repeat('y', 29) WHERE a = 4321
+
+
+statement error (?i)check constraint
+ALTER TABLE acu ADD CONSTRAINT acu_s_long CHECK (length(s) = 30)
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+BEGIN
+
+
+statement count 5000
+UPDATE acu SET s = repeat('x', 30)
+
+
+statement ok
+ALTER TABLE acu ADD CONSTRAINT acu_s_long CHECK (length(s) = 30)
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT count(*) FILTER (WHERE length(s) = 30) AS long_strings FROM acu
+----
+long_strings
+5000
+
+
+statement ok
+BEGIN
+
+
+statement count 5000
+UPDATE acu SET a = a + 0
+
+
+statement ok
+ALTER TABLE acu ADD COLUMN later float8 DEFAULT random() NOT NULL
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT count(later) AS filled FROM acu
+----
+filled
+5000

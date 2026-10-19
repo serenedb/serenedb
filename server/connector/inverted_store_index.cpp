@@ -237,7 +237,8 @@ struct InvertedStoreIndex::ReplaySlot {
 
 struct InvertedStoreIndex::ReplaySession {
   ReplaySession(InvertedStoreIndex& index, duckdb::ClientContext& context)
-    : executor{duckdb::TaskScheduler::GetScheduler(index.db.GetDatabase())},
+    : context{context},
+      executor{duckdb::TaskScheduler::GetScheduler(index.db.GetDatabase())},
       delete_trx{index.NewTransaction()},
       delete_writer{delete_trx} {
     auto& storage_manager = index.db.GetStorageManager();
@@ -267,6 +268,7 @@ struct InvertedStoreIndex::ReplaySession {
     }
   }
 
+  duckdb::ClientContext& context;
   uint64_t durable_offset = 0;
   duckdb::TaskExecutor executor;
   std::vector<std::unique_ptr<ReplaySlot>> slots;
@@ -348,6 +350,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
             duckdb::row_t row_start)
     : BaseExecutorTask{executor},
       transaction{transaction},
+      context{context},
       columns{columns},
       targets{std::move(targets)},
       results(this->targets.size()),
@@ -384,8 +387,8 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
     duckdb::VectorOperations::GenerateSequence(row_ids, size, row, 1);
     for (size_t t = 0; t < targets.size(); ++t) {
       duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
-      const auto fed = targets[t].index->Evaluate(view, row_ids, results[t],
-                                                  rows, executors[t].get());
+      const auto fed = targets[t].index->Evaluate(
+        context, view, row_ids, results[t], rows, executors[t].get());
       targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
                              results[t], rows, fed);
     }
@@ -396,6 +399,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
   std::string TaskType() const final { return "InvertedIndexRangeFeed"; }
 
   duckdb::DuckTransaction& transaction;
+  duckdb::ClientContext& context;
   const duckdb::vector<duckdb::StorageIndex>& columns;
   std::vector<Target> targets;
   duckdb::TableScanState state;
@@ -454,8 +458,9 @@ irs::IndexWriter::Transaction InvertedStoreIndex::NewTransaction() {
 }
 
 duckdb::idx_t InvertedStoreIndex::Evaluate(
-  duckdb::DataChunk& chunk, duckdb::Vector& row_ids, duckdb::DataChunk& results,
-  duckdb::Vector& rows, duckdb::ExpressionExecutor* executor) {
+  duckdb::ClientContext& context, duckdb::DataChunk& chunk,
+  duckdb::Vector& row_ids, duckdb::DataChunk& results, duckdb::Vector& rows,
+  duckdb::ExpressionExecutor* executor) {
   const auto total = chunk.size();
   rows.Reference(row_ids);
   if (bound_expressions.empty()) {
@@ -469,7 +474,7 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
   if (executor) {
     executor->Execute(chunk, results);
   } else {
-    ExecuteExpressions(chunk, results);
+    ExecuteExpressions(context, chunk, results);
   }
   if (!_has_predicate) {
     return total;
@@ -654,7 +659,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   }
   duckdb::DataChunk results;
   duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
-  const auto count = Evaluate(chunk, row_ids, results, rows);
+  const auto count = Evaluate(session->context, chunk, row_ids, results, rows);
   auto& slot = *session->slots[session->next++ % session->slots.size()];
   Enqueue(session->executor, slot.queue, CopyInsert(results, rows, count));
 }
@@ -719,7 +724,8 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   }
   duckdb::DataChunk results;
   duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
-  const auto count = Evaluate(chunk, row_ids, results, rows);
+  const auto count =
+    Evaluate(conn->GetClientContext(), chunk, row_ids, results, rows);
   const auto slots = conn->IndexSlots(_index_id);
   duckdb::idx_t prepared = 0;
   while (prepared < slots.size() && slots[prepared].writer) {

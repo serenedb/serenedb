@@ -1005,6 +1005,31 @@ def test_copy_from_stdin_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_ext")
 
 
+def test_copy_from_stdin_quoted_upper_case_format(conn):
+    conn.run_ok("drop table if exists smoke_copy_fmt_case")
+    conn.run_ok("create table smoke_copy_fmt_case(a int, b text)")
+    try:
+        conn.send("Q", _cstr("copy smoke_copy_fmt_case from stdin (format 'TEXT')"))
+        assert conn.read_msg()[0] == "G"
+        conn.send("d", b"1\tone\n2\ttw")
+        conn.send("d", b"o\n")
+        conn.send("c")
+        m = conn.drain_to_ready()
+        assert any(b"COPY 2" in t for t in tags(m)), errors(m)
+
+        conn.send("Q", _cstr("copy smoke_copy_fmt_case from stdin (format 'CSV')"))
+        assert conn.read_msg()[0] == "G"
+        conn.send("d", b'3,""\n')
+        conn.send("c")
+        m = conn.drain_to_ready()
+        assert any(b"COPY 1" in t for t in tags(m)), errors(m)
+
+        m = conn.run("select string_agg(a || ':' || coalesce(b, 'NULL'), ' ' order by a) from smoke_copy_fmt_case")
+        assert first_field(m) == b"1:one 2:two 3:", rows(m)
+    finally:
+        conn.run_ok("drop table if exists smoke_copy_fmt_case")
+
+
 @pytest.mark.exclusive
 def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the

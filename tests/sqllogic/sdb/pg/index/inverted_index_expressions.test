@@ -734,13 +734,13 @@ db error: ERROR: aggregate functions are not allowed in index expressions
 statement error
 CREATE INDEX bad_volatile ON bad USING inverted(id, (random()));
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
 
 
 statement error
 CREATE INDEX bad_volatile_col ON bad USING inverted(id, (a + random()));
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
 
 
 statement error
@@ -759,27 +759,87 @@ db error: ERROR: indexed expression must reference at least one base table colum
 statement error
 CREATE INDEX bad_inc_volatile ON bad USING inverted(id, (a + random()) included());
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
 
 
 statement error
 CREATE INDEX bad_inc_now ON bad USING inverted(id, (now()) included());
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "now" is not immutable.
 
 
 statement error
 CREATE INDEX bad_inc_setting ON bad USING inverted(
     id, (a::VARCHAR || current_setting('application_name', true)) included());
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "current_setting" is not immutable.
+
+
+statement error
+CREATE INDEX bad_inc_setting_name ON bad USING inverted(
+    id, (a::VARCHAR || current_setting('application_name')) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "current_setting" is not immutable.
 
 
 statement error
 CREATE INDEX bad_inc_set_config ON bad USING inverted(
     id, (set_config('application_name', a::VARCHAR, true)) included());
 ----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "set_config" is not immutable.
+
+
+# A key can't read the session or the catalog either, and the table keeps
+# taking rows.
+statement error
+CREATE INDEX bad_inc_user ON bad USING inverted(id, (a::VARCHAR || current_user) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "current_user" is not immutable.
+
+
+statement error
+CREATE INDEX bad_inc_pid ON bad USING inverted(id, (a + pg_backend_pid()) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "pg_backend_pid" is not immutable.
+
+
+statement error
+CREATE INDEX bad_inc_type ON bad USING inverted(id, (format_type(a::OID, NULL::INT)) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "format_type" is not immutable.
+
+
+statement error
+CREATE INDEX bad_inc_privilege ON bad USING inverted(
+    id, (a::VARCHAR || has_table_privilege(a::OID, 'SELECT')::VARCHAR) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "has_table_privilege" is not immutable.
+
+
+# A call with constant arguments is computed while the key is bound, so the
+# error can't name it.
+statement error
+CREATE INDEX bad_inc_privilege_const ON bad USING inverted(
+    id, (a::VARCHAR || has_table_privilege('bad', 'SELECT')::VARCHAR) included());
+----
 db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
+CREATE INDEX bad_inc_size ON bad USING inverted(id, (a + pg_relation_size('bad')) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "pg_relation_size" is not immutable.
+
+
+statement ok
+INSERT INTO bad VALUES (1, 2, 3)
+
+
+query
+SELECT id, a, b FROM bad
+----
+id	a	b
+1	2	3
 
 
 statement error
@@ -804,7 +864,7 @@ statement error
 CREATE INDEX bad_inc_stacked ON bad USING inverted(
     id, (a::VARCHAR || random()::VARCHAR) verbatim_dict, (a::VARCHAR || random()::VARCHAR) included());
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
 
 
 # --- Unsupported return types are rejected gracefully --------------------

@@ -1,0 +1,78 @@
+statement ok
+CREATE TABLE acsl (v int)
+
+
+statement count 2
+INSERT INTO acsl VALUES (1), (2)
+
+
+statement error
+ALTER TABLE acsl ADD COLUMN id serial PRIMARY KEY
+----
+db error: ERROR: Cannot create index with outstanding updates
+
+
+statement error
+ALTER TABLE acsl ADD COLUMN u bigserial UNIQUE
+----
+db error: ERROR: Cannot create index with outstanding updates
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'acsl' ORDER BY ordinal_position
+----
+column_name
+v
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname LIKE 'acsl%' AND relkind = 'S'
+----
+sequences
+0
+
+
+statement ok
+CREATE TEMP SEQUENCE acss_id_seq START 100
+
+
+statement ok
+CREATE TABLE acss (v int)
+
+
+statement count 1
+INSERT INTO acss VALUES (1)
+
+
+statement ok
+ALTER TABLE acss ADD COLUMN id serial
+
+
+statement count 1
+INSERT INTO acss (v) VALUES (2)
+
+
+query
+SELECT v, id FROM acss ORDER BY v
+----
+v	id
+1	1
+2	2
+
+
+query
+SELECT pg_get_serial_sequence('acss', 'id') AS seq
+----
+seq
+public.acss_id_seq1
+
+
+statement ok
+CREATE TABLE acss2 (id serial, v int)
+
+
+query
+SELECT pg_get_serial_sequence('acss2', 'id') AS seq
+----
+seq
+public.acss2_id_seq

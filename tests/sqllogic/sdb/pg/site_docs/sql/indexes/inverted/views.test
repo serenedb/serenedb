@@ -168,14 +168,6 @@ jobs
 statement ok
 ALTER INDEX app_logs_auto_idx SET (reindex_interval = 60000);
 
-statement error
-DROP JOB app_logs_auto_idx;
-----
-db error: ERROR: Cannot drop entry "app_logs_auto_idx" because there are entries that depend on it.
-index "app_logs_auto_idx" depends on job "app_logs_auto_idx".
-Use DROP...CASCADE to drop all dependents.
-
-
 statement ok
 ALTER INDEX app_logs_auto_idx RENAME TO app_logs_search_idx;
 
@@ -193,3 +185,17 @@ SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name LIKE 'app_logs%';
 ----
 jobs
 0
+
+statement ok
+ALTER INDEX app_logs_search_idx SET (reindex_interval = 60000);
+
+statement ok
+DROP JOB app_logs_search_idx;
+
+query
+SELECT
+    (SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'app_logs%') AS jobs,
+    (SELECT count(*) FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'app_logs_search_idx') AS indexes;
+----
+jobs	indexes
+0	1

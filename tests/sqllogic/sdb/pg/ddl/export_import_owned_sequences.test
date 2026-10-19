@@ -54,6 +54,18 @@ ALTER SEQUENCE released OWNED BY NONE;
 
 
 statement ok
+CREATE TABLE drawers (a INT, b INT);
+
+
+statement ok
+CREATE SEQUENCE drawn OWNED BY drawers.b;
+
+
+statement ok
+ALTER TABLE drawers ALTER COLUMN a SET DEFAULT nextval('drawn');
+
+
+statement ok
 CREATE SEQUENCE free;
 
 
@@ -74,17 +86,19 @@ INSERT INTO owners (c) VALUES (1), (2);
 
 
 query
-SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner
+SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner, a.attname AS column
 FROM pg_depend d
 JOIN pg_class c ON c.oid = d.objid
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
 WHERE d.deptype = 'a' AND c.relkind = 'S'
 ORDER BY 1;
 ----
-sequence	owner
-altered_owned	owners
-created_owned	owners
-eios.serials_big_seq	eios.serials
-eios.serials_id_seq	eios.serials
+sequence	owner	column
+altered_owned	owners	d
+created_owned	owners	c
+drawn	drawers	b
+eios.serials_big_seq	eios.serials	big
+eios.serials_id_seq	eios.serials	id
 
 
 statement ok
@@ -105,6 +119,7 @@ ALTER SEQUENCE eios.serials_big_seq OWNED BY serials.big;
 ALTER SEQUENCE eios.serials_id_seq OWNED BY serials.id;
 ALTER SEQUENCE public.altered_owned OWNED BY owners.d;
 ALTER SEQUENCE public.created_owned OWNED BY owners.c;
+ALTER SEQUENCE public.drawn OWNED BY drawers.b;
 
 
 query
@@ -129,17 +144,26 @@ IMPORT DATABASE '${__TEST_DIR__}/eios';
 
 
 query
-SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner
+SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner, a.attname AS column
 FROM pg_depend d
 JOIN pg_class c ON c.oid = d.objid
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
 WHERE d.deptype = 'a' AND c.relkind = 'S'
 ORDER BY 1;
 ----
-sequence	owner
-altered_owned	owners
-created_owned	owners
-eios.serials_big_seq	eios.serials
-eios.serials_id_seq	eios.serials
+sequence	owner	column
+altered_owned	owners	d
+created_owned	owners	c
+drawn	drawers	b
+eios.serials_big_seq	eios.serials	big
+eios.serials_id_seq	eios.serials	id
+
+
+query
+SELECT pg_get_serial_sequence('drawers', 'a') AS a, pg_get_serial_sequence('drawers', 'b') AS b;
+----
+a	b
+NULL	public.drawn
 
 
 query
@@ -194,6 +218,10 @@ statement ok
 DROP TABLE owners;
 
 
+statement ok
+DROP TABLE drawers;
+
+
 query
 SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
 ----
@@ -212,6 +240,10 @@ DROP TABLE eios.serials;
 
 statement ok
 DROP TABLE owners;
+
+
+statement ok
+DROP TABLE drawers;
 
 
 query

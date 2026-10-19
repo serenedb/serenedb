@@ -392,3 +392,14 @@ statement error
 SELECT inet_merge('10.1.2.3'::inet, '::1'::inet);
 ----
 db error: ERROR: cannot merge addresses from different families
+
+
+statement ok
+CREATE FUNCTION inet_host_and_mask(a inet) RETURNS text LANGUAGE sql AS $$ SELECT host(a) || '/' || masklen(a) $$;
+
+
+query
+SELECT inet_host_and_mask('10.0.0.1/24'::inet) AS v4, inet_host_and_mask('2001:db8::1/64'::inet) AS v6;
+----
+v4	v6
+10.0.0.1/24	2001:db8::1/64

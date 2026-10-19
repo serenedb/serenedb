@@ -25,6 +25,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -121,6 +122,7 @@ class Config {
   // Bind -- which runs between statements -- see the DDL just performed.
   uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
   void RefreshCatalogEpoch() noexcept;
+  void RefreshCatalogEpoch(duckdb::MetaTransaction& transaction) noexcept;
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;

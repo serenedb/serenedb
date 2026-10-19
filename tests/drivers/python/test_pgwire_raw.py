@@ -2517,3 +2517,74 @@ def test_replanned_protocol_statement_keeps_its_name(conn):
     assert all_fields(m) == [b"{integer,text}"], all_fields(m)
     assert not errors(_simple(conn, "EXECUTE ns_replanned"))
     _drop(conn, "ns_replan")
+
+
+def test_simple_query_ddl_replans_a_protocol_statement(conn):
+    _drop(conn, "ns_simple_ddl")
+    assert not errors(_simple(conn, "CREATE TABLE ns_simple_ddl(a int4)"))
+    _parse_ok(conn, "ns_simple", "SELECT * FROM ns_simple_ddl")
+    assert not errors(_simple(conn, "ALTER TABLE ns_simple_ddl ADD COLUMN b text"))
+    conn.describe("S", "ns_simple")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["a", "b"]
+    _drop(conn, "ns_simple_ddl")
+
+
+def test_deallocate_drops_unprepared_protocol_statements(conn):
+    _drop(conn, "ns_unprep")
+    assert not errors(_simple(conn, "CREATE TABLE ns_unprep(a int4)"))
+    _parse_ok(conn, "ns_copy_in", "COPY ns_unprep FROM STDIN")
+    _parse_ok(conn, "ns_copy_out", "COPY ns_unprep TO STDOUT")
+    _parse_ok(conn, "ns_empty", "")
+    _parse_ok(
+        conn,
+        "ns_compound",
+        "ALTER TABLE ns_unprep ADD COLUMN r float8 DEFAULT random()",
+    )
+    m = _simple(
+        conn,
+        "SELECT name, statement, parameter_types, result_types"
+        " FROM pg_prepared_statements WHERE NOT from_sql ORDER BY name",
+    )
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [
+        [
+            b"ns_compound",
+            b"ALTER TABLE ns_unprep ADD COLUMN r float8 DEFAULT random()",
+            b"{}",
+            None,
+        ],
+        [b"ns_copy_in", b"COPY ns_unprep FROM STDIN", b"{}", None],
+        [b"ns_copy_out", b"COPY ns_unprep TO STDOUT", b"{}", None],
+        [b"ns_empty", b"", b"{}", None],
+    ]
+    assert sqlstates(_simple(conn, "PREPARE ns_copy_in AS SELECT 1")) == ["42P05"]
+    assert sqlstates(_simple(conn, "EXECUTE ns_copy_out")) == ["0A000"]
+    m = _simple(conn, "DEALLOCATE ns_copy_in")
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"DEALLOCATE\x00"], tags(m)
+    assert _bind_sqlstates(conn, "ns_copy_in") == ["26000"]
+    assert not errors(_simple(conn, "DEALLOCATE ALL"))
+    for name in ("ns_copy_out", "ns_empty", "ns_compound"):
+        assert _bind_sqlstates(conn, name) == ["26000"], name
+    _parse_ok(conn, "ns_empty", "")
+    assert not errors(_simple(conn, "DISCARD ALL"))
+    assert _bind_sqlstates(conn, "ns_empty") == ["26000"]
+    _drop(conn, "ns_unprep")
+
+
+def test_deallocate_all_releases_protocol_statements(conn):
+    handles = (
+        "SELECT count(*) FROM duckdb_prepared_statements()"
+        " WHERE name LIKE 'duckdb_prepare_internal_%'"
+    )
+    _parse_ok(conn, "ns_release_a", "select 1")
+    _parse_ok(conn, "ns_release_b", "select 2")
+    assert all_fields(_simple(conn, handles)) == [b"2"]
+    assert not errors(_simple(conn, "DEALLOCATE ALL"))
+    assert all_fields(_simple(conn, handles)) == [b"0"]
+    _parse_ok(conn, "ns_release_c", "select 3")
+    assert not errors(conn.run("DEALLOCATE ALL"))
+    assert all_fields(_simple(conn, handles)) == [b"1"]

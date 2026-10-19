@@ -33,6 +33,8 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -151,6 +153,14 @@ struct CopyKind {
   CopyDir dir = CopyDir::None;
   CopyFormat format = CopyFormat::Other;
 };
+
+bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::DROP_STATEMENT) {
+    return false;
+  }
+  const auto& info = statement.Cast<duckdb::DropStatement>().info;
+  return info && info->type == duckdb::CatalogType::PREPARED_STATEMENT;
+}
 
 // Classified from the parsed statement BEFORE Prepare -- the CSV sniff opens
 // /dev/stdin during Prepare, so the bridge must already be live by then.
@@ -1447,6 +1457,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     // DataRow (a plan error then lands after T, which is postgres's
     // mid-stream error behavior).
     const auto stmt_type = statement->type;
+    const bool deallocates = DeallocatesPreparedStatements(*statement);
     const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
                        ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
                        : sdb::pg::BuildCommandTag(*statement, *_conn->context);
@@ -1457,6 +1468,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       co_await DriveStatementToResult(std::move(statement), pending, wire);
     commit_block_if_last(is_last, stmt_type);
     DrainNotices();
+    if (deallocates) {
+      ReleaseDeallocated();
+    }
     const auto return_type = result->GetStatementProperties().return_type;
     if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
       WriteCommandComplete(this->_send, tag,
@@ -2039,6 +2053,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   Statement& statement = **slot;
   if (extracted.empty()) {
     // Empty query string is legal: Execute replies EmptyQueryResponse.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.MakeEmpty();
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -2050,6 +2065,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // stream at Execute (the wire collector for binary/text, DuckDB's writer
     // for csv/json/parquet/...), rather than running as a plain Prepared
     // statement.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCopy(std::move(extracted[0]));
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -2094,6 +2110,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // them now -- before the ADD COLUMN has run -- fails "Referenced update
     // column ... not found". They are prepared and run in sequence at Execute,
     // inside the session's implicit block (ExecuteCompound).
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCompound(std::move(extracted));
   }
   WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
@@ -2228,6 +2245,32 @@ void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
          .prepared_statements.contains(name)) {
     named.erase(it);
   }
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::ReleaseDeallocated() {
+  const auto& statements =
+    duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  absl::erase_if(_proto.statements.Named(), [&](const auto& entry) {
+    return !entry.second->Alias().empty() && !statements.contains(entry.first);
+  });
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::RegisterUnprepared(
+  Statement& statement, std::string_view name, std::string_view query,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body) {
+  if (name.empty()) {
+    return;
+  }
+  auto unbound = duckdb::make_uniq<duckdb::MultiStatement>();
+  for (const auto& part : body) {
+    unbound->statements.push_back(part->Copy());
+  }
+  unbound->query = query;
+  _conn->context->RegisterPreparedStatement(duckdb::Identifier{name},
+                                            std::move(unbound));
+  statement.SetAlias(name);
 }
 
 template<SocketKind Kind>
@@ -2544,6 +2587,10 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
         WriteCommandTag(prepared, *result, return_type);
       }
       exec.state = PortalState::Exhausted;
+      if (const auto* unbound = portal.stmt->Unbound();
+          unbound && DeallocatesPreparedStatements(*unbound)) {
+        ReleaseDeallocated();
+      }
       if (prepared.GetStatementType() ==
           duckdb::StatementType::TRANSACTION_STATEMENT) {
         // COMMIT/ROLLBACK closes the block and drops the portals it owned

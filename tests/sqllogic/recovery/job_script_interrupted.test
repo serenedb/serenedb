@@ -122,3 +122,115 @@ step
 10
 20
 21
+
+
+connection default
+statement ok
+DELETE FROM jsi_log;
+
+
+connection default
+statement ok
+CREATE JOB jsi_altered AFTER 1 HOUR AS 'INSERT INTO jsi_log VALUES (30); INSERT INTO jsi_log VALUES (31);';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_job_after_statement';
+
+
+connection runner
+statement async ok
+EXECUTE JOB jsi_altered;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_after_statement:parked';
+
+
+connection default
+statement ok
+ALTER JOB jsi_altered SUSPEND;
+
+
+connection default
+statement ok
+ALTER JOB jsi_altered RENAME TO jsi_altered_renamed;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_job_after_statement:release';
+
+
+connection runner
+wait
+
+
+connection default
+query
+SELECT step FROM jsi_log ORDER BY step;
+----
+step
+30
+31
+
+
+connection default
+query
+SELECT job_name, suspended FROM sdb_jobs() WHERE starts_with(job_name, 'jsi_altered');
+----
+job_name	suspended
+jsi_altered_renamed	t
+
+
+connection default
+statement ok
+DELETE FROM jsi_log;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_job_after_statement';
+
+
+connection default
+statement ok
+CREATE JOB jsi_scheduled AFTER 1 SECOND AS 'INSERT INTO jsi_log VALUES (40); INSERT INTO jsi_log VALUES (41);';
+
+
+connection default
+statement ok retry 80 backoff 250ms
+SET sdb_faults = '-pause_job_after_statement:parked';
+
+
+connection default
+statement ok
+DROP JOB jsi_scheduled;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_job_after_statement:release';
+
+
+connection default
+query ok retry 80 backoff 250ms
+SELECT trigger, success, error FROM sdb_job_runs() WHERE job_name = 'jsi_scheduled';
+----
+trigger	success	error
+schedule	f	Interrupted!
+
+
+connection default
+statement ok
+RESET sdb_faults;
+
+
+connection default
+query
+SELECT step FROM jsi_log ORDER BY step;
+----
+step
+40

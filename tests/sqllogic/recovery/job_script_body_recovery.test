@@ -49,6 +49,30 @@ statement ok
 CREATE JOB jsbr_every EVERY 1 SECOND AS 'BEGIN; INSERT INTO jsbr_ticks VALUES (''a''); INSERT INTO jsbr_ticks VALUES (''b''); COMMIT;';
 
 
+statement ok
+CREATE JOB jsbr_selfish AFTER 1 HOUR AS 'ALTER JOB jsbr_selfish RENAME TO jsbr_selfish_renamed; ALTER JOB jsbr_selfish_renamed SUSPEND; INSERT INTO jsbr_log VALUES (6, ''selfish'');';
+
+
+statement ok
+EXECUTE JOB jsbr_selfish;
+
+
+statement ok
+CREATE JOB jsbr_reborn AFTER 1 HOUR AS 'BEGIN; DROP JOB jsbr_reborn; CREATE JOB jsbr_reborn AFTER 2 HOURS AS SELECT 2; COMMIT;';
+
+
+statement ok
+EXECUTE JOB jsbr_reborn;
+
+
+statement ok
+CREATE JOB jsbr_gone AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (7, ''gone''); DROP JOB jsbr_gone;';
+
+
+statement ok
+EXECUTE JOB jsbr_gone;
+
+
 query ok retry 80 backoff 250ms
 SELECT count(*) >= 2 AS ticked FROM jsbr_ticks;
 ----
@@ -72,7 +96,18 @@ job_name	body
 jsbr_checkpointed	INSERT INTO jsbr_log VALUES (4, 'checkpointed'); TRUNCATE jsbr_a, jsbr_b;
 jsbr_every	BEGIN; INSERT INTO jsbr_ticks VALUES ('a'); INSERT INTO jsbr_ticks VALUES ('b'); COMMIT;
 jsbr_once	INSERT INTO jsbr_log VALUES (3, 'once'); DROP JOB jsbr_once;
+jsbr_reborn	SELECT 2
 jsbr_script	INSERT INTO jsbr_log VALUES (1, 'first'); TRUNCATE jsbr_a, jsbr_b; INSERT INTO jsbr_log VALUES (2, 'second');
+jsbr_selfish_renamed	ALTER JOB jsbr_selfish RENAME TO jsbr_selfish_renamed; ALTER JOB jsbr_selfish_renamed SUSPEND; INSERT INTO jsbr_log VALUES (6, 'selfish');
+
+
+connection r1
+query
+SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE job_name IN ('jsbr_reborn', 'jsbr_selfish_renamed') ORDER BY job_name;
+----
+job_name	schedule	suspended
+jsbr_reborn	AFTER INTERVAL '02:00:00'	f
+jsbr_selfish_renamed	AFTER INTERVAL '01:00:00'	t
 
 
 connection r1
@@ -138,6 +173,8 @@ step	note
 2	second
 3	once
 4	checkpointed
+6	selfish
+7	gone
 
 
 connection r1

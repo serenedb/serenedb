@@ -1,0 +1,198 @@
+statement ok
+CREATE TABLE jsd_log (v INTEGER);
+
+
+statement ok
+CREATE JOB jsd_self AFTER 1 HOUR AS DROP JOB jsd_self;
+
+
+statement ok
+EXECUTE JOB jsd_self;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsd_self';
+----
+jobs
+0
+
+
+query
+SELECT trigger, success, error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsd_self';
+----
+trigger	success	error
+manual	t	NULL
+
+
+statement ok
+CREATE JOB jsd_cascade AFTER 1 HOUR AS DROP JOB IF EXISTS jsd_cascade CASCADE;
+
+
+statement ok
+EXECUTE JOB jsd_cascade;
+
+
+statement ok
+CREATE SCHEMA jsd_outer;
+
+
+statement ok
+CREATE SCHEMA jsd_outer.jsd_inner;
+
+
+statement ok
+CREATE JOB jsd_outer.jsd_inner.jsd_nested AFTER 1 HOUR AS DROP JOB jsd_outer.jsd_inner.jsd_nested;
+
+
+statement ok
+EXECUTE JOB jsd_outer.jsd_inner.jsd_nested;
+
+
+statement ok
+CREATE SCHEMA jsd_schema;
+
+
+statement ok
+CREATE JOB jsd_schema.jsd_in_schema AFTER 1 HOUR AS DROP SCHEMA jsd_schema CASCADE;
+
+
+statement ok
+EXECUTE JOB jsd_schema.jsd_in_schema;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jsd_cascade', 'jsd_nested', 'jsd_in_schema');
+----
+jobs
+0
+
+
+query
+SELECT count(*) AS schemas FROM duckdb_schemas() WHERE database_name = current_database() AND schema_name = 'jsd_schema';
+----
+schemas
+0
+
+
+statement ok
+CREATE JOB jsd_replace AFTER 1 HOUR AS CREATE OR REPLACE JOB jsd_replace AFTER 2 HOURS AS INSERT INTO jsd_log VALUES (2);
+
+
+statement ok
+EXECUTE JOB jsd_replace;
+
+
+query
+SELECT body, schedule, run_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsd_replace';
+----
+body	schedule	run_count
+INSERT INTO jsd_log (VALUES (2))	AFTER INTERVAL '02:00:00'	0
+
+
+statement ok
+EXECUTE JOB jsd_replace;
+
+
+query
+SELECT v FROM jsd_log;
+----
+v
+2
+
+
+statement ok
+CREATE JOB jsd_suspend AFTER 1 HOUR AS ALTER JOB jsd_suspend SUSPEND;
+
+
+statement ok
+EXECUTE JOB jsd_suspend;
+
+
+statement ok
+CREATE JOB jsd_rename AFTER 1 HOUR AS ALTER JOB jsd_rename RENAME TO jsd_renamed;
+
+
+statement ok
+EXECUTE JOB jsd_rename;
+
+
+statement ok
+CREATE JOB jsd_reschedule AFTER 1 HOUR AS ALTER JOB jsd_reschedule SET SCHEDULE AFTER 2 HOURS;
+
+
+statement ok
+EXECUTE JOB jsd_reschedule;
+
+
+query
+SELECT job_name, schedule, suspended, run_count, last_status
+FROM sdb_jobs()
+WHERE database_name = current_database() AND job_name IN ('jsd_suspend', 'jsd_rename', 'jsd_renamed', 'jsd_reschedule')
+ORDER BY 1;
+----
+job_name	schedule	suspended	run_count	last_status
+jsd_renamed	AFTER INTERVAL '01:00:00'	f	1	success
+jsd_reschedule	AFTER INTERVAL '02:00:00'	f	1	success
+jsd_suspend	AFTER INTERVAL '01:00:00'	t	1	success
+
+
+statement ok
+CREATE JOB jsd_after AFTER 1 SECOND AS DROP JOB jsd_after;
+
+
+statement ok
+CREATE JOB jsd_every EVERY 1 SECOND AS DROP JOB jsd_every;
+
+
+statement ok
+CREATE JOB jsd_concurrent EVERY 1 SECOND CONCURRENT AS DROP JOB IF EXISTS jsd_concurrent;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every', 'jsd_concurrent');
+----
+jobs
+0
+
+
+query
+SELECT job_name, trigger, count(*) AS runs, bool_and(success) AS succeeded
+FROM sdb_job_runs()
+WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every')
+GROUP BY ALL
+ORDER BY 1;
+----
+job_name	trigger	runs	succeeded
+jsd_after	schedule	1	t
+jsd_every	schedule	1	t
+
+
+query
+SELECT bool_or(success) AS succeeded FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsd_concurrent';
+----
+succeeded
+t
+
+
+statement ok
+DROP JOB jsd_replace;
+
+
+statement ok
+DROP JOB jsd_suspend;
+
+
+statement ok
+DROP JOB jsd_renamed;
+
+
+statement ok
+DROP JOB jsd_reschedule;
+
+
+statement ok
+DROP SCHEMA jsd_outer CASCADE;
+
+
+statement ok
+DROP TABLE jsd_log;

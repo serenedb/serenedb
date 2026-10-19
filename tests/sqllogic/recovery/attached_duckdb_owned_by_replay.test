@@ -1,0 +1,98 @@
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/adobr.duckdb' AS adobr;
+
+
+statement ok
+CREATE SCHEMA adobr.a;
+
+
+statement ok
+CREATE SCHEMA adobr.a.b;
+
+
+statement ok
+CREATE SCHEMA adobr.b;
+
+
+statement ok
+CREATE TABLE adobr.b.t (id INTEGER);
+
+
+statement ok
+CREATE TABLE adobr.a.b.t (id INTEGER);
+
+
+statement ok
+CREATE SEQUENCE adobr.a.b.by_alter;
+
+
+statement ok
+USE adobr;
+
+
+statement ok
+ALTER SEQUENCE a.b.by_alter OWNED BY b.t;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+CREATE SEQUENCE adobr.a.b.by_create OWNED BY adobr.b.t;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_restart
+statement ok
+ATTACH '${__TEST_DIR__}/adobr.duckdb' AS adobr;
+
+
+connection after_restart
+statement ok
+DROP TABLE adobr.a.b.t;
+
+
+connection after_restart
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'adobr' ORDER BY 1;
+----
+sequence_name
+by_alter
+by_create
+
+
+connection after_restart
+statement ok
+DROP TABLE adobr.b.t;
+
+
+connection after_restart
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = 'adobr';
+----
+sequences
+0
+
+
+connection after_restart
+statement ok
+DETACH adobr;

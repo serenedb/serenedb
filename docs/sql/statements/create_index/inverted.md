@@ -48,7 +48,7 @@ The trailing `WITH (...)` clause sets index-level options.
 | :--- | :--- | :--- |
 | `refresh_interval` | `1000` | Background refresh interval in milliseconds; `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
-| `cleanup_interval_step` | `1` | Commit ticks between cleanup passes; `0` disables it |
+| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore; `0` disables the periodic passes, leaving cleanup to background compaction |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 

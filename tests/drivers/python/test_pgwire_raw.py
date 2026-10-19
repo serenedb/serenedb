@@ -2575,6 +2575,27 @@ def test_deallocate_drops_unprepared_protocol_statements(conn):
     _drop(conn, "ns_unprep")
 
 
+def test_prepared_statement_names_are_case_sensitive(conn):
+    _parse_ok(conn, "ns_case", "select 1")
+    _parse_ok(conn, "NS_CASE", "select 2")
+    for sql, value in (("EXECUTE Ns_Case", b"1"), ('EXECUTE "NS_CASE"', b"2")):
+        m = _simple(conn, sql)
+        assert not errors(m), (sql, errors(m))
+        assert rows(m) and rows(m)[0].endswith(value), (sql, rows(m))
+    _parse_ok(conn, "MixedCase", "select 3")
+    assert sqlstates(_simple(conn, "EXECUTE mixedcase")) == ["26000"]
+
+
+def test_sequence_sqlstates(conn):
+    assert not errors(_simple(conn, "DROP SEQUENCE IF EXISTS ns_seq"))
+    assert not errors(_simple(conn, "CREATE SEQUENCE ns_seq MAXVALUE 2"))
+    assert sqlstates(_simple(conn, "SELECT currval('ns_seq')")) == ["55000"]
+    assert not errors(_simple(conn, "SELECT nextval('ns_seq'), nextval('ns_seq')"))
+    assert sqlstates(_simple(conn, "SELECT nextval('ns_seq')")) == ["2200H"]
+    assert sqlstates(_simple(conn, "SELECT setval('ns_seq', 5)")) == ["22003"]
+    assert not errors(_simple(conn, "DROP SEQUENCE ns_seq"))
+
+
 def test_deallocate_all_releases_protocol_statements(conn):
     handles = (
         "SELECT count(*) FROM duckdb_prepared_statements()"

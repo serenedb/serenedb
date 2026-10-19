@@ -63,10 +63,16 @@ duckdb::Value ParameterTypes(duckdb::PreparedStatementData& data) {
   std::vector<uint64_t> oids(parameters.size(),
                              static_cast<uint64_t>(PgTypeOID::kUnknown));
   for (const auto& [identifier, index] : parameters) {
+    if (index < 1 || index > oids.size()) {
+      continue;
+    }
     duckdb::LogicalType type;
-    if (index >= 1 && index <= oids.size() &&
-        data.TryGetType(identifier, type)) {
+    if (data.TryGetType(identifier, type)) {
       oids[index - 1] = Type2Oid(type);
+    } else if (const auto hint =
+                 data.parameter_type_hints.find(identifier.GetIdentifierName());
+               hint != data.parameter_type_hints.end()) {
+      oids[index - 1] = Type2Oid(hint->second);
     }
   }
   return TypeArray(oids);

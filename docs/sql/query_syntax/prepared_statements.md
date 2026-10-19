@@ -86,6 +86,8 @@ An `EXECUTE` whose values do not have the parameters' types plans the statement 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_010" />
 
 
+When a change to a table a statement reads changes the statement's result columns, for example a column added to the table of a `SELECT *`, `EXECUTE` fails with `cached plan must not change result type` (SQLSTATE `0A000`); prepare the statement again. A statement whose parameter types are only known from the arguments of each `EXECUTE` is not affected.
+
 ## Lifetime
 
 A prepared statement belongs to the session that prepared it and lives until it is dropped or the session ends. `PREPARE` and `DEALLOCATE` take effect immediately: `ROLLBACK` does not undo them. A name can be prepared only once; preparing it again fails until the statement is dropped:
@@ -93,7 +95,9 @@ A prepared statement belongs to the session that prepared it and lives until it 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_012" />
 
 
-Statements a client prepares through the extended query protocol share these names: `EXECUTE` runs them, `DEALLOCATE` drops them, and `PREPARE` cannot reuse their names.
+Names follow the rules for identifiers: an unquoted name is folded to lower case and a quoted name keeps its case, so `foo`, `FOO` and `"foo"` name one statement and `"Foo"` another.
+
+Statements a client prepares through the extended query protocol share these names, exactly as the client sends them: `EXECUTE` runs them, `DEALLOCATE` drops them, and `PREPARE` cannot reuse their names. `EXECUTE` fails with SQLSTATE `0A000` for such a statement when it is a `COPY ... FROM STDIN`, a `COPY ... TO STDOUT`, an empty query, or an `ALTER TABLE ... ADD COLUMN` whose default is volatile.
 
 ## Listing Prepared Statements
 

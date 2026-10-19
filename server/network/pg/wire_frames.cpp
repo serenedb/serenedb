@@ -206,6 +206,17 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     }
     return ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION;
   }
+  if (error.Type() == duckdb::ExceptionType::SEQUENCE) {
+    if (subtype == "NOT_YET_DEFINED") {
+      return ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE;
+    }
+    if (subtype == "LIMIT_REACHED") {
+      return ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED;
+    }
+    if (subtype == "OUT_OF_BOUNDS") {
+      return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+    }
+  }
   return DuckExceptionToErrcode(error.Type());
 }
 

@@ -348,3 +348,76 @@ SELECT count(*) AS n FROM pg_prepared_statements WHERE from_sql;
 ----
 n
 0
+
+
+statement ok
+PREPARE "CaseName" AS SELECT 1 AS r;
+
+
+statement error (?i).*prepared statement "casename" does not exist.*
+EXECUTE casename;
+
+
+query
+EXECUTE "CaseName";
+----
+r
+1
+
+
+statement ok
+PREPARE casename AS SELECT 2 AS r;
+
+
+query
+EXECUTE CASENAME;
+----
+r
+2
+
+
+statement ok
+DEALLOCATE "CaseName";
+
+
+statement ok
+DEALLOCATE casename;
+
+
+statement ok
+PREPARE declared_unused(int, text) AS SELECT $1 AS r;
+
+
+query
+SELECT array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name = 'declared_unused';
+----
+parameter_types
+integer,text
+
+
+statement ok
+DEALLOCATE declared_unused;
+
+
+statement ok
+CREATE TABLE prep_shape(a int);
+
+
+statement ok
+PREPARE prep_shape_star AS SELECT * FROM prep_shape;
+
+
+statement ok
+ALTER TABLE prep_shape ADD COLUMN b text;
+
+
+statement error (?i).*cached plan must not change result type.*
+EXECUTE prep_shape_star;
+
+
+statement ok
+DEALLOCATE prep_shape_star;
+
+
+statement ok
+DROP TABLE prep_shape;

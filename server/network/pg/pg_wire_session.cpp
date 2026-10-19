@@ -1870,10 +1870,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             guarded([&] { builder.Finish(); });
             co_await publish();
             eod = true;
-            if (!failed) {
-              closed = true;
-              batches.Finish();
-            }
           }
         }
         this->_recv.Consume(take);
@@ -1891,9 +1887,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
           builder.Finish();
         });
         co_await publish();
-        if (!failed) {
-          batches.Finish();
-        }
+      }
+      if (!failed && !batches.Aborted()) {
+        batches.Finish();
       }
       closed = true;
       co_return {};

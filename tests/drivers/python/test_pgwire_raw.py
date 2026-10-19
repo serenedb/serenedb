@@ -1492,6 +1492,81 @@ def test_copy_text_eod_marker_mid_stream(conn):
         conn.run_ok("drop table if exists smoke_eod")
 
 
+def test_copy_text_frame_after_eod_marker_is_dropped(conn):
+    conn.run_ok("drop table if exists smoke_eod_after")
+    conn.run_ok("create table smoke_eod_after(a int)")
+    try:
+        conn.send("Q", _cstr("copy smoke_eod_after from stdin"))
+        assert conn.read_msg()[0] == "G"
+        conn.send("d", b"1\n")
+        conn.send("d", b"\\.\n")
+        conn.send("d", b"not an int\n")
+        conn.send("c")
+        m = conn.drain_to_ready()
+        assert tags(m) == [b"COPY 1\x00"], errors(m)
+        m = conn.run("select string_agg(a::varchar, ',') from smoke_eod_after")
+        assert first_field(m) == b"1", rows(m)
+    finally:
+        conn.run_ok("drop table if exists smoke_eod_after")
+
+
+def _binary_ints(*values):
+    return (
+        PGCOPY_SIGNATURE
+        + struct.pack("!ii", 0, 0)
+        + b"".join(struct.pack("!hii", 1, 4, v) for v in values)
+        + b"\xff\xff"
+    )
+
+
+_EOD_INPUTS = [("", b"1\n2\n\\.\n"), (" (format binary)", _binary_ints(1, 2))]
+
+
+@pytest.mark.parametrize("options, data", _EOD_INPUTS, ids=["text", "binary"])
+def test_copy_fail_after_eod_marker_fails_the_copy(conn, options, data):
+    # After the end-of-data marker ("\." in text, the -1 trailer in binary) the
+    # COPY still waits for CopyDone, so a CopyFail that follows fails it with
+    # 57014 and loads nothing.
+    conn.run_ok("drop table if exists smoke_eod_fail")
+    conn.run_ok("create table smoke_eod_fail(a int)")
+    try:
+        conn.send("Q", _cstr(f"copy smoke_eod_fail from stdin{options}"))
+        assert conn.read_msg()[0] == "G"
+        conn.send("d", data)
+        time.sleep(0.5)
+        conn.send("f", _cstr("client gave up"))
+        m = conn.drain_to_ready()
+        assert sqlstates(m) == ["57014"], (tags(m), errors(m))
+        assert tags(m) == []
+        assert first_field(conn.run("select count(*) from smoke_eod_fail")) == b"0"
+    finally:
+        conn.run_ok("drop table if exists smoke_eod_fail")
+
+
+@pytest.mark.parametrize("options, data", _EOD_INPUTS, ids=["text", "binary"])
+def test_copy_disconnect_after_eod_marker_loads_nothing(conn, options, data):
+    # A client that sends the end-of-data marker and disconnects before CopyDone
+    # loads nothing.
+    conn.run_ok("drop table if exists smoke_eod_eof")
+    conn.run_ok("create table smoke_eod_eof(a int)")
+    c = WireConn()
+    try:
+        c.send("Q", _cstr(f"copy smoke_eod_eof from stdin{options}"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", data)
+        time.sleep(0.5)
+        c.sock.close()
+        deadline = time.time() + 10
+        while first_field(conn.run(
+                "select count(*) from pg_stat_activity "
+                "where query like 'copy smoke_eod_eof%'")) != b"0":
+            assert time.time() < deadline, "COPY session survived disconnect"
+            time.sleep(0.1)
+        assert first_field(conn.run("select count(*) from smoke_eod_eof")) == b"0"
+    finally:
+        conn.run_ok("drop table if exists smoke_eod_eof")
+
+
 def test_copy_text_eod_marker_split_across_frames(conn):
     # The "\.\n" marker is split across two CopyData frames ("\" ends the first,
     # ".\n" starts the second). The scanner must bridge the split and still treat

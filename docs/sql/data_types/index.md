@@ -9,9 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The table below shows all the built-in general-purpose data types. The alternatives listed in the aliases column can be used to refer to these types as well, however, note that the aliases are not part of the SQL standard and hence might not be accepted by other database engines.
 
-`SMALLSERIAL`, `SERIAL` and `BIGSERIAL` are not aliases: each declares the corresponding
-integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to
-the next value of that sequence.
+`SMALLSERIAL`, `SERIAL` and `BIGSERIAL`, also written `SERIAL2`, `SERIAL4` and `SERIAL8`, are not aliases: each declares the corresponding integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to the next value of that sequence, so the column can't also declare `NULL` or a `DEFAULT`. They declare columns only, in [`CREATE TABLE`](../statements/create_table/index.md) or [`ALTER TABLE ... ADD COLUMN`](../statements/alter_table/index.md#add-column), and can't be used as a type anywhere else, such as in a cast. The sequence is named `⟨table⟩_⟨column⟩_seq`, with a number appended when that name is taken, and `pg_get_serial_sequence('⟨table⟩', '⟨column⟩')` returns it. It belongs to the table's owner, gets the owner's default privileges for sequences, changes owner only with the table through `ALTER TABLE ... OWNER TO`, and is dropped with the column or the table.
 
 | Name                       | Aliases                            | Description                                                                                                |
 | :------------------------- | :--------------------------------- | :--------------------------------------------------------------------------------------------------------- |

@@ -80,7 +80,9 @@ struct JobDefinition {
   duckdb::Identifier name;
   duckdb::idx_t oid = 0;
   duckdb::idx_t owner = 0;
-  std::shared_ptr<duckdb::SQLStatement> body;
+  std::shared_ptr<
+    const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>
+    body;
 };
 
 struct JobState {

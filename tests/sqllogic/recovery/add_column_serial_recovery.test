@@ -1,0 +1,217 @@
+control substitution on
+
+statement ok
+CREATE TABLE acsr (v int)
+
+
+statement ok
+INSERT INTO acsr SELECT g FROM generate_series(1, 3000) g
+
+
+statement ok
+ALTER TABLE acsr ADD COLUMN id serial
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE acsr ADD COLUMN big bigserial
+
+
+statement ok
+INSERT INTO acsr (v) VALUES (3001)
+
+
+statement ok
+COMMIT
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE acsr ADD COLUMN gone serial
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+CREATE SCHEMA acsr_sch
+
+
+statement ok
+CREATE TABLE acsr_sch.t (v int)
+
+
+statement ok
+INSERT INTO acsr_sch.t VALUES (1), (2)
+
+
+statement ok
+CREATE SEQUENCE acsr_sch.t_id_seq
+
+
+statement ok
+ALTER TABLE acsr_sch.t ADD COLUMN id smallserial
+
+
+statement ok
+ALTER TABLE acsr_sch.t ADD COLUMN dropped serial
+
+
+statement ok
+ALTER TABLE acsr_sch.t DROP COLUMN dropped
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi, count(*) FILTER (WHERE big = id) AS same FROM acsr
+----
+n	ids	lo	hi	same
+3001	3001	1	3001	3001
+
+
+connection after_crash
+query
+SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'acsr' ORDER BY ordinal_position
+----
+column_name	is_nullable
+v	YES
+id	NO
+big	NO
+
+
+connection after_crash
+query
+SELECT pg_get_serial_sequence('acsr', 'id') AS id_seq, pg_get_serial_sequence('acsr', 'big') AS big_seq,
+       pg_get_serial_sequence('acsr_sch.t', 'id') AS sch_seq
+----
+id_seq	big_seq	sch_seq
+public.acsr_id_seq	public.acsr_big_seq	acsr_sch.t_id_seq1
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relkind = 'S' AND relname IN ('acsr_id_seq', 'acsr_big_seq', 'acsr_gone_seq', 't_id_seq', 't_id_seq1', 't_dropped_seq') ORDER BY relname
+----
+relname
+acsr_big_seq
+acsr_id_seq
+t_id_seq
+t_id_seq1
+
+
+connection after_crash
+statement ok
+INSERT INTO acsr (v) VALUES (3002)
+
+
+connection after_crash
+query
+SELECT id > 3001 AS id_past, big > 3001 AS big_past FROM acsr WHERE v = 3002
+----
+id_past	big_past
+t	t
+
+
+connection after_crash
+statement ok
+INSERT INTO acsr_sch.t (v) VALUES (3)
+
+
+connection after_crash
+query
+SELECT v, id FROM acsr_sch.t WHERE v <= 2 ORDER BY v
+----
+v	id
+1	1
+2	2
+
+
+connection after_crash
+query
+SELECT id > 2 AS past FROM acsr_sch.t WHERE v = 3
+----
+past
+t
+
+
+connection after_crash
+statement ok
+CREATE ROLE acsr_heir
+
+
+connection after_crash
+statement error
+ALTER SEQUENCE acsr_id_seq OWNER TO acsr_heir
+----
+db error: ERROR: cannot change owner of sequence "acsr_id_seq"
+DETAIL: Sequence "acsr_id_seq" is linked to table "acsr".
+
+
+connection after_crash
+statement ok
+CHECKPOINT
+
+
+connection after_crash
+statement ok
+ALTER TABLE acsr DROP COLUMN big
+
+
+connection after_crash
+statement ok
+ALTER TABLE acsr ADD COLUMN later bigserial
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relkind = 'S' AND relname LIKE 'acsr%' ORDER BY relname
+----
+relname
+acsr_id_seq
+acsr_later_seq
+
+
+connection after_second_crash
+query
+SELECT count(*) AS n, count(DISTINCT later) AS laters, min(later) AS lo, max(later) AS hi FROM acsr
+----
+n	laters	lo	hi
+3002	3002	1	3002
+
+
+connection after_second_crash
+statement ok
+DROP TABLE acsr
+
+
+connection after_second_crash
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relkind = 'S' AND relname LIKE 'acsr%'
+----
+sequences
+0

@@ -168,7 +168,9 @@ void JobsExecute(duckdb::ClientContext& context,
     output.SetValue(col++, count, Count(status.run_count));
     output.SetValue(col++, count, Count(status.failure_count));
     output.SetValue(col++, count, job.comment);
-    output.SetValue(col++, count, duckdb::Value{job.Body().ToString()});
+    output.SetValue(
+      col++, count,
+      duckdb::Value{duckdb::CreateJobInfo::BodyToString(job.Body())});
     output.SetValue(col++, count, duckdb::Value{job.ToSQL()});
     ++count;
   }

@@ -24,6 +24,7 @@
 
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/function/function.hpp>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,7 @@ struct BuiltinFunction {
   duckdb::CatalogType kind = duckdb::CatalogType::INVALID;
   duckdb::LogicalType return_type;
   std::vector<duckdb::LogicalType> parameter_types;
+  duckdb::FunctionStability stability = duckdb::FunctionStability::CONSISTENT;
   bool returns_set = false;
   bool has_varargs = false;
 };

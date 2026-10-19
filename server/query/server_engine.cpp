@@ -200,22 +200,6 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::YESORNO(),
       nullptr,
     },
-    // pseudo-types for SERIAL types.
-    {
-      "serial",
-      sdb::pg::SERIAL(),
-      nullptr,
-    },
-    {
-      "bigserial",
-      sdb::pg::BIGSERIAL(),
-      nullptr,
-    },
-    {
-      "smallserial",
-      sdb::pg::SMALLSERIAL(),
-      nullptr,
-    },
     // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
     {
       "void",

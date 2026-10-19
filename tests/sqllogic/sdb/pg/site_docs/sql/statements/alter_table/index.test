@@ -490,3 +490,38 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
 ----
 tgname	tgenabled
 orders_audited	A
+
+# DOCS_TEST: add_column_serial
+
+statement ok
+DROP TABLE IF EXISTS tickets;
+
+statement ok
+CREATE TABLE tickets (title VARCHAR);
+
+statement ok
+INSERT INTO tickets VALUES ('first'), ('second');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE tickets ADD COLUMN id SERIAL;
+
+statement ok
+INSERT INTO tickets (title) VALUES ('third');
+
+query
+SELECT id, title
+FROM tickets
+ORDER BY id;
+----
+id	title
+1	first
+2	second
+3	third
+
+query
+SELECT pg_get_serial_sequence('tickets', 'id') AS sequence;
+----
+sequence
+public.tickets_id_seq

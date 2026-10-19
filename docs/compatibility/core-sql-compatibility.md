@@ -33,7 +33,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 ### Table Modification (ALTER TABLE)
 | Feature            | Support State | Details                                                      |
 |--------------------|---------------|--------------------------------------------------------------|
-| ADD COLUMN         | Yes           |  |
+| ADD COLUMN         | Yes           | A serial column can't declare `PRIMARY KEY` or `UNIQUE` on a table that already has rows |
 | DROP COLUMN        | Yes           |  |
 | ADD CHECK          | Yes           |                                                              |
 | ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |
@@ -825,6 +825,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | Feature                            | Support State | Details |
 |------------------------------------|---------------|---------|
 | pg_get_constraintdef               | Yes           | `CHECK` expressions are printed in SereneDB's form (for example `!=` and no casts) |
+| pg_get_serial_sequence             | Yes           |  |
 | pg_get_indexdef                    | Yes           | The access method is `secondary` or `inverted`. An inverted index shows its column dictionaries and options, `INCLUDE` columns and settings; ordering (`DESC`, `NULLS FIRST`) is not stored, so it is not shown |
 | pg_get_viewdef                     | Yes           | The view's query in SereneDB's one-line form |
 | pg_get_ruledef                     | Yes           | The `_RETURN` rule of a view, around the same query text |

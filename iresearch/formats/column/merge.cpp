@@ -122,17 +122,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     }
     auto& slot = windows[w];
     if (!slot) {
-      slot.emplace();
-      slot->reserve(STANDARD_VECTOR_SIZE);
+      slot.emplace(STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack);
       const auto first_doc = static_cast<doc_id_t>(pos + doc_limits::min());
-      VisitLiveRanges(
-        reader.docs_mask(), first_doc,
-        static_cast<doc_id_t>(first_doc + STANDARD_VECTOR_SIZE),
-        [&](doc_id_t first, doc_id_t last) {
-          for (auto doc = first; doc != last; ++doc) {
-            slot->push_back(static_cast<duckdb::sel_t>(doc - first_doc));
-          }
-        });
+      slot->resize(MakeGenericDocsMask(reader.docs_mask())
+                     .FillLive(first_doc, STANDARD_VECTOR_SIZE, slot->data()));
     }
     return *slot;
   };

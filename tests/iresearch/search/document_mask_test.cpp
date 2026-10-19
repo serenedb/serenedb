@@ -436,7 +436,8 @@ TEST_P(DocumentMaskTest, windows_match_reference) {
         ASSERT_EQ(was && masked ? 0.f : 1.f, scores[offset]) << doc;
       }
 
-      std::vector<uint32_t> offsets(irs::detail::kWindowDocs);
+      std::vector<uint32_t> offsets(irs::detail::kWindowDocs +
+                                    irs::doc_limits::kDocsSlack);
       const auto count = live.FillLive(min, max - min, offsets.data());
       std::vector<uint32_t> expected;
       for (auto doc = min; doc < max; ++doc) {
@@ -517,27 +518,7 @@ TEST_P(DocumentMaskTest, live_nodes_match_reference) {
   });
 }
 
-TEST_P(DocumentMaskTest, visit_live_ranges_and_iterator) {
-  for (const auto [begin, end] : {std::pair<doc_id_t, doc_id_t>{1, kLimit + 1},
-                                  {65530, 65545},
-                                  {100, 101},
-                                  {131000, 210500}}) {
-    std::vector<bool> seen(end - begin, false);
-    doc_id_t last = 0;
-    irs::VisitLiveRanges(_ptr, begin, end, [&](doc_id_t first, doc_id_t stop) {
-      ASSERT_LE(last, first);
-      ASSERT_LT(first, stop);
-      ASSERT_LE(stop, end);
-      for (auto doc = first; doc < stop; ++doc) {
-        seen[doc - begin] = true;
-      }
-      last = stop;
-    });
-    for (auto doc = begin; doc < end; ++doc) {
-      ASSERT_EQ(!_ref->Masked(doc), seen[doc - begin]) << doc;
-    }
-  }
-
+TEST_P(DocumentMaskTest, iterator_matches_reference) {
   const irs::DocumentMask::Iterator it{_ptr};
   for (const auto target : Targets(false)) {
     ASSERT_EQ(_ref->Masked(target), it.Contains(target)) << target;

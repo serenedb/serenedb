@@ -24,6 +24,8 @@
 #include <cstdint>
 #include <map>
 #include <random>
+#include <roaring/memory.h>
+#include <roaring/roaring.h>
 #include <vector>
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
@@ -191,6 +193,115 @@ void BmCountMasked(benchmark::State& state) {
   });
 }
 
+const irs::DocumentMask& PatternMask(int64_t pattern) {
+  static std::map<int64_t, irs::DocumentMask> gCache;
+  if (const auto it = gCache.find(pattern); it != gCache.end()) {
+    return it->second;
+  }
+  std::mt19937_64 rng{static_cast<uint64_t>(pattern)};
+  std::bernoulli_distribution half{0.5};
+  std::bernoulli_distribution sparse{1.0 / 64};
+  std::bernoulli_distribution rare{8.0 / 65536};
+  const auto masked = [&](doc_id_t doc) {
+    switch (pattern) {
+      case 0:
+        return doc % 2 == 0;
+      case 1:
+        return half(rng);
+      case 2:
+        return sparse(rng);
+      case 3:
+        return doc % 128 < 64;
+      case 4:
+        return rare(rng);
+      default:
+        return doc % 16384 < 1000;
+    }
+  };
+  irs::DocumentMaskBuilder mask;
+  for (auto doc = kBegin; doc < kEnd; ++doc) {
+    if (masked(doc)) {
+      mask.Add(doc);
+    }
+  }
+  return gCache.emplace(pattern, std::move(mask).Finish()).first->second;
+}
+
+benchmark::Counter PerId(uint64_t ids) {
+  return benchmark::Counter(static_cast<double>(ids),
+                            benchmark::Counter::kIsIterationInvariantRate |
+                              benchmark::Counter::kInvert);
+}
+
+class FrozenView {
+ public:
+  explicit FrozenView(const irs::DocumentMask& mask)
+    : _size{mask.FrozenSize()},
+      _buf{static_cast<char*>(roaring_aligned_malloc(32, _size))} {
+    mask.WriteFrozen(_buf);
+    _set = roaring::api::roaring_bitmap_frozen_view(_buf, _size);
+  }
+  ~FrozenView() {
+    roaring::api::roaring_bitmap_free(_set);
+    roaring_aligned_free(_buf);
+  }
+
+  const roaring::api::roaring_bitmap_t* Set() const noexcept { return _set; }
+
+ private:
+  size_t _size;
+  char* _buf;
+  const roaring::api::roaring_bitmap_t* _set = nullptr;
+};
+
+void BmFillLive(benchmark::State& state) {
+  const auto& mask = PatternMask(state.range(0));
+  std::vector<uint32_t> live(irs::detail::kWindowDocs +
+                             irs::doc_limits::kDocsSlack);
+  uint64_t ids = 0;
+  for (auto _ : state) {
+    auto docs_mask = irs::MakeGenericDocsMask(&mask);
+    ids = 0;
+    for (auto window = kBegin; window < kEnd;
+         window += irs::detail::kWindowDocs) {
+      ids += docs_mask.FillLive(window, irs::detail::kWindowDocs, live.data());
+      benchmark::DoNotOptimize(live.data());
+      benchmark::ClobberMemory();
+    }
+  }
+  state.counters["ns/id"] = PerId(ids);
+}
+
+void BmRoaringRead(benchmark::State& state) {
+  const FrozenView view{PatternMask(state.range(0))};
+  std::vector<uint32_t> deleted(irs::detail::kWindowDocs);
+  uint64_t ids = 0;
+  for (auto _ : state) {
+    roaring::api::roaring_uint32_iterator_t it;
+    roaring::api::roaring_iterator_init(view.Set(), &it);
+    ids = 0;
+    while (const auto read = roaring::api::roaring_uint32_iterator_read(
+             &it, deleted.data(), irs::detail::kWindowDocs)) {
+      ids += read;
+      benchmark::DoNotOptimize(deleted.data());
+      benchmark::ClobberMemory();
+    }
+  }
+  state.counters["ns/id"] = PerId(ids);
+}
+
+void BmRoaringToArray(benchmark::State& state) {
+  const FrozenView view{PatternMask(state.range(0))};
+  const auto ids = roaring::api::roaring_bitmap_get_cardinality(view.Set());
+  std::vector<uint32_t> deleted(ids);
+  for (auto _ : state) {
+    roaring::api::roaring_bitmap_to_uint32_array(view.Set(), deleted.data());
+    benchmark::DoNotOptimize(deleted.data());
+    benchmark::ClobberMemory();
+  }
+  state.counters["ns/id"] = PerId(ids);
+}
+
 void PerChunk(benchmark::internal::Benchmark* bench) {
   for (const int64_t n : {16, 32, 64, 128, 256, 512, 1024, 2048, 4096}) {
     for (const int64_t layout : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
@@ -213,5 +324,8 @@ BENCHMARK(BmWindowRemove)->Apply(PerChunk);
 BENCHMARK(BmCandidates)->Apply(PerChunkAndStride);
 BENCHMARK(BmFilterBlock)->Apply(PerChunkAndStride);
 BENCHMARK(BmCountMasked)->Apply(PerChunkAndStride);
+BENCHMARK(BmFillLive)->DenseRange(0, 5);
+BENCHMARK(BmRoaringRead)->DenseRange(0, 5);
+BENCHMARK(BmRoaringToArray)->DenseRange(0, 5);
 
 }  // namespace

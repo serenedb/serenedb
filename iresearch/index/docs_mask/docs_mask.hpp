@@ -304,12 +304,4 @@ inline doc_id_t LiveEnd(const SubReader& segment) noexcept {
   return static_cast<doc_id_t>(doc_limits::min() + segment.docs_count());
 }
 
-template<typename Fn>
-void VisitLiveRanges(const DocumentMask* mask, doc_id_t begin, doc_id_t end,
-                     Fn&& fn) {
-  ResolveDocsMask(mask, [&]<DocsMaskType Mask>(Mask docs_mask) {
-    docs_mask.VisitLiveRanges(begin, end, fn);
-  });
-}
-
 }  // namespace irs

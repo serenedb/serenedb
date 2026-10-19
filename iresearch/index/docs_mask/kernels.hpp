@@ -23,11 +23,13 @@
 #include <roaring/bitset_util.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -50,6 +52,29 @@ IRS_FORCE_INLINE void ApplyRange(uint64_t* IRS_RESTRICT words, uint32_t first,
   } else {
     roaring::internal::bitset_set_range(words, first, last);
   }
+}
+
+inline IRS_FORCE_INLINE uint32_t* Sequence(uint32_t first, uint32_t count,
+                                           uint32_t* IRS_RESTRICT out) noexcept {
+  for (uint32_t i = 0; i != count; ++i) {
+    out[i] = first + i;
+  }
+  return out + count;
+}
+
+inline IRS_FORCE_INLINE uint32_t* LiveWord(uint32_t offset, uint64_t live,
+                                           uint32_t* IRS_RESTRICT out) noexcept {
+  if (live == ~uint64_t{0}) {
+    return Sequence(offset, 64, out);
+  }
+#ifdef __AVX2__
+  return MaterializeWord(offset, live, out);
+#else
+  for (; live != 0; live &= live - 1) {
+    *out++ = offset + static_cast<uint32_t>(std::countr_zero(live));
+  }
+  return out;
+#endif
 }
 
 template<bool kAndNot>

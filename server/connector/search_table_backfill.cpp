@@ -75,7 +75,8 @@ struct RowSource {
   duckdb::idx_t rowid_slot = 0;
   duckdb::DataChunk chunk;
   irs::ColFilterStateCache filter_states;
-  duckdb::SelectionVector live{STANDARD_VECTOR_SIZE};
+  duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
+                               irs::doc_limits::kDocsSlack};
 };
 
 // In place: RowSource owns a DataChunk and a selection vector, neither
@@ -110,6 +111,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
   const bool has_mask = sub.docs_mask() != nullptr;
+  auto mask = irs::MakeGenericDocsMask(sub.docs_mask());
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
@@ -123,16 +125,9 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetCardinality(produced);
     if (has_mask) {
-      duckdb::idx_t keep = 0;
-      const auto first_doc =
-        static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
-      irs::VisitLiveRanges(sub.docs_mask(), first_doc,
-                           static_cast<irs::doc_id_t>(first_doc + produced),
-                           [&](irs::doc_id_t first, irs::doc_id_t last) {
-                             for (auto doc = first; doc != last; ++doc) {
-                               source.live.set_index(keep++, doc - first_doc);
-                             }
-                           });
+      const duckdb::idx_t keep =
+        mask.FillLive(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()),
+                      static_cast<uint32_t>(produced), source.live.data());
       if (keep == 0) {
         continue;
       }

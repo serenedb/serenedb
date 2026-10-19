@@ -93,6 +93,26 @@ class BitsetChunk {
     ApplyWords<kAndNot>(_bits->words, kChunkWords, base, lo, hi, min, max, dst);
   }
 
+  IRS_FORCE_INLINE uint32_t* FillLive(uint64_t base, uint64_t lo, uint64_t hi,
+                                      doc_id_t min,
+                                      uint32_t* IRS_RESTRICT out) const noexcept {
+    const auto* words = _bits->words;
+    const auto first = static_cast<uint32_t>(lo - base);
+    const auto last = static_cast<uint32_t>(hi - base);
+    const auto shift = static_cast<uint32_t>(base - min);
+    auto w = first / 64;
+    auto head = ~uint64_t{0} << (first % 64);
+    for (const auto stop = last / 64; w < stop; ++w) {
+      out = LiveWord(shift + w * 64, ~words[w] & head, out);
+      head = ~uint64_t{0};
+    }
+    if (const auto rest = last % 64; rest != 0) {
+      out = LiveWord(shift + w * 64,
+                     ~words[w] & head & (~uint64_t{0} >> (64 - rest)), out);
+    }
+    return out;
+  }
+
   IRS_FORCE_INLINE uint64_t Count(uint32_t first,
                                   uint32_t last) const noexcept {
     if (first >= last) {
@@ -154,6 +174,23 @@ class ArrayChunk {
       docs_mask::Apply<kAndNot>(dst[word], bits);
     }
     _pos = i;
+  }
+
+  IRS_FORCE_INLINE uint32_t* FillLive(uint64_t base, uint64_t lo, uint64_t hi,
+                                      doc_id_t min,
+                                      uint32_t* IRS_RESTRICT out) noexcept {
+    const auto* values = _values;
+    const auto size = _size;
+    auto next = static_cast<uint32_t>(lo - base);
+    auto i = Seek(next);
+    const auto stop = static_cast<uint32_t>(hi - base);
+    const auto shift = static_cast<uint32_t>(base - min);
+    for (; i < size && values[i] < stop; ++i) {
+      out = Sequence(shift + next, values[i] - next, out);
+      next = values[i] + 1U;
+    }
+    _pos = i;
+    return Sequence(shift + next, stop - next, out);
   }
 
   IRS_FORCE_INLINE uint64_t Count(uint32_t first,
@@ -238,6 +275,31 @@ class RunChunk {
       --pos;
     }
     _pos = pos;
+  }
+
+  IRS_FORCE_INLINE uint32_t* FillLive(uint64_t base, uint64_t lo, uint64_t hi,
+                                      doc_id_t min,
+                                      uint32_t* IRS_RESTRICT out) noexcept {
+    const auto* runs = _runs;
+    const auto size = _size;
+    auto next = static_cast<uint32_t>(lo - base);
+    auto pos = Seek(next);
+    const auto stop = static_cast<uint32_t>(hi - base);
+    const auto shift = static_cast<uint32_t>(base - min);
+    for (; pos < size && runs[pos].value < stop; ++pos) {
+      if (runs[pos].value > next) {
+        out = Sequence(shift + next, runs[pos].value - next, out);
+      }
+      next = std::max(next, End(runs[pos]));
+    }
+    if (pos != 0 && End(runs[pos - 1]) > stop) {
+      --pos;
+    }
+    _pos = pos;
+    if (next < stop) {
+      out = Sequence(shift + next, stop - next, out);
+    }
+    return out;
   }
 
   IRS_FORCE_INLINE uint64_t Count(uint32_t first,
@@ -330,6 +392,21 @@ class MixedChunk {
         return _array.Apply<kAndNot>(base, lo, hi, min, max, dst);
       case RunChunk::kType:
         return _run.Apply<kAndNot>(base, lo, hi, min, max, dst);
+      default:
+        SDB_UNREACHABLE();
+    }
+  }
+
+  IRS_FORCE_INLINE uint32_t* FillLive(uint64_t base, uint64_t lo, uint64_t hi,
+                                      doc_id_t min,
+                                      uint32_t* IRS_RESTRICT out) noexcept {
+    switch (_type) {
+      case BitsetChunk::kType:
+        return _bitset.FillLive(base, lo, hi, min, out);
+      case ArrayChunk::kType:
+        return _array.FillLive(base, lo, hi, min, out);
+      case RunChunk::kType:
+        return _run.FillLive(base, lo, hi, min, out);
       default:
         SDB_UNREACHABLE();
     }
@@ -491,6 +568,43 @@ class Chunked : public DocsMaskBase<Derived> {
                                    static_cast<uint32_t>(hi - base));
     }
     return total;
+  }
+
+  uint32_t FillLive(doc_id_t min, uint32_t count,
+                    uint32_t* IRS_RESTRICT out) noexcept {
+    SDB_ASSERT(count != 0);
+    SDB_ASSERT(count <= detail::kWindowDocs);
+    const auto max = uint64_t{min} + count;
+    auto* const begin = out;
+    uint64_t next = min;
+    const auto chunks = _layout.Count();
+    auto i = Locate(min);
+    if constexpr (!kSingle) {
+      _cursor.from = static_cast<doc_id_t>(max);
+    }
+    for (; i < chunks; ++i) {
+      Select(i);
+      const auto base = uint64_t{_layout.KeyAt(i)} << kChunkShift;
+      if (base >= max) {
+        break;
+      }
+      if (base > next) {
+        out = Sequence(static_cast<uint32_t>(next - min),
+                       static_cast<uint32_t>(base - next), out);
+        next = base;
+      }
+      const auto hi = std::min<uint64_t>(max, base + kChunkDocs);
+      out = _cursor.chunk.FillLive(base, next, hi, min, out);
+      next = hi;
+      if (hi == max) {
+        break;
+      }
+    }
+    if (next < max) {
+      out = Sequence(static_cast<uint32_t>(next - min),
+                     static_cast<uint32_t>(max - next), out);
+    }
+    return static_cast<uint32_t>(out - begin);
   }
 
  protected:

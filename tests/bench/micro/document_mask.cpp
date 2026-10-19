@@ -34,6 +34,7 @@
 #include <roaring/roaring.hh>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -42,7 +43,9 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace {
 
@@ -1043,34 +1046,35 @@ void BmFootprint(benchmark::State& state) {
 BENCHMARK(BmFootprint)->Name("Footprint/all")->Apply(FootprintArgs);
 
 std::string SerializeMask(const irs::DocumentMask& mask) {
-  const auto compressed = mask.Compress();
-  std::string out;
-  out.resize(compressed.getSizeInBytes(true));
-  compressed.write(out.data(), true);
+  std::string out(mask.FrozenSize(), '\0');
+  mask.WriteFrozen(out.data());
   return out;
 }
 
-void BmSerializeCompress(benchmark::State& state) {
+void BmSerializeFrozen(benchmark::State& state) {
   const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
+  std::string blob(mask.Set().FrozenSize(), '\0');
 
   for (auto _ : state) {
-    auto compressed = mask.Set().Compress();
-    benchmark::DoNotOptimize(compressed.cardinality());
+    mask.Set().WriteFrozen(blob.data());
+    benchmark::DoNotOptimize(blob.data());
+    benchmark::ClobberMemory();
   }
 
-  const auto blob = SerializeMask(mask.Set());
   state.counters["bitset_bytes"] = static_cast<double>(mask.Bytes());
   state.counters["serialized_bytes"] = static_cast<double>(blob.size());
 }
 
-BENCHMARK(BmSerializeCompress)->Name("Serialize/compress")->Apply(RatioShape);
+BENCHMARK(BmSerializeFrozen)->Name("Serialize/frozen")->Apply(RatioShape);
 
-void BmDeserializeRead(benchmark::State& state) {
+void BmDeserializeFrozen(benchmark::State& state) {
   const DocumentMaskArm mask{Deleted(state.range(0), state.range(1))};
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    auto restored = irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
+    irs::BytesViewInput in{
+      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    auto restored = irs::DocumentMask::ReadFrozen(in, blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }
 
@@ -1078,7 +1082,7 @@ void BmDeserializeRead(benchmark::State& state) {
   state.counters["bitset_bytes"] = static_cast<double>(mask.Bytes());
 }
 
-BENCHMARK(BmDeserializeRead)->Name("Deserialize/read")->Apply(RatioShape);
+BENCHMARK(BmDeserializeFrozen)->Name("Deserialize/frozen")->Apply(RatioShape);
 
 void BmMaterializeToBitset(benchmark::State& state) {
   const auto& deleted = Deleted(state.range(0), state.range(1));
@@ -1101,43 +1105,6 @@ void BmMaterializeToBitset(benchmark::State& state) {
 BENCHMARK(BmMaterializeToBitset)
   ->Name("Materialize/to_bitset")
   ->Apply(RatioShape);
-
-void ChainArgs(benchmark::internal::Benchmark* b) {
-  b->ArgsProduct(
-     {{10, 50, 200, 500, 990}, {kUniform, kClustered, kTail}, {1, 2, 4, 8}})
-    ->ArgNames({"per_mille", "shape", "files"});
-}
-
-void BmChainFold(benchmark::State& state) {
-  const auto files = static_cast<size_t>(state.range(2));
-  const auto& deleted = Deleted(state.range(0), state.range(1));
-
-  std::vector<std::vector<doc_id_t>> parts(files);
-  for (size_t i = 0; i != deleted.size(); ++i) {
-    parts[i % files].push_back(deleted[i]);
-  }
-
-  std::vector<std::string> blobs;
-  blobs.reserve(files);
-  size_t total = 0;
-  for (const auto& part : parts) {
-    blobs.emplace_back(SerializeMask(MakeMask(part)));
-    total += blobs.back().size();
-  }
-
-  for (auto _ : state) {
-    irs::DocumentMaskBuilder builder;
-    for (const auto& blob : blobs) {
-      builder.Merge(irs::DocumentMaskBuilder::Read(blob.data(), blob.size()));
-    }
-    const auto mask = std::move(builder).Finish();
-    benchmark::DoNotOptimize(mask.Count());
-  }
-
-  state.counters["serialized_bytes"] = static_cast<double>(total);
-}
-
-BENCHMARK(BmChainFold)->Name("ChainFold/read_merge")->Apply(ChainArgs);
 
 constexpr size_t kScaleProbes = 65536;
 

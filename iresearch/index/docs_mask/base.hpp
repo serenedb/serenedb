@@ -125,25 +125,6 @@ class DocsMaskBase {
     }
   }
 
-  uint32_t FillLive(doc_id_t min, uint32_t count,
-                    uint32_t* IRS_RESTRICT out) noexcept {
-    SDB_ASSERT(count != 0);
-    SDB_ASSERT(count <= detail::kWindowDocs);
-    if (Self().Probe(min) >= min + count) {
-      for (uint32_t i = 0; i != count; ++i) {
-        out[i] = i;
-      }
-      return count;
-    }
-    uint64_t dead[detail::kWindowWords];
-    const auto used = DeadWords<true>(min, min + count, dead);
-    auto* const begin = out;
-    for (uint32_t w = 0; w != used; ++w) {
-      out = MaterializeWord(w * 64, ~dead[w], out);
-    }
-    return static_cast<uint32_t>(out - begin);
-  }
-
   template<bool kPadTail>
   size_t DeadWords(doc_id_t min, doc_id_t max,
                    uint64_t* IRS_RESTRICT dead) noexcept {
@@ -156,20 +137,6 @@ class DocsMaskBase {
       }
     }
     return count;
-  }
-
-  template<typename Fn>
-  void VisitLiveRanges(doc_id_t begin, doc_id_t end, Fn&& fn) {
-    for (auto doc = begin; doc < end;) {
-      const auto masked = SpanProbe(doc);
-      if (doc < masked) {
-        fn(doc, std::min(masked, end));
-      }
-      if (masked >= end) {
-        return;
-      }
-      doc = _hi;
-    }
   }
 
  private:

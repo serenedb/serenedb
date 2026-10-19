@@ -835,19 +835,22 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
-  VisitLiveRanges(donor.reader->docs_mask(), doc_limits::min(),
-                  static_cast<doc_id_t>(src_rows + doc_limits::min()),
-                  [&](doc_id_t first, doc_id_t last) {
-                    const auto base = donor.out_base + rank;
-                    const auto count = last - first;
-                    if (base + count <= rows) {
-                      auto* out = remap.data() + (first - doc_limits::min());
-                      for (doc_id_t i = 0; i != count; ++i) {
-                        out[i] = static_cast<uint32_t>(base + i);
-                      }
-                    }
-                    rank += count;
-                  });
+  auto mask = MakeGenericDocsMask(donor.reader->docs_mask());
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  const auto end = static_cast<doc_id_t>(src_rows + doc_limits::min());
+  for (auto window = doc_limits::min(); window < end;) {
+    const auto count = std::min(end - window, detail::kWindowDocs);
+    const auto alive = mask.FillLive(window, count, live);
+    const auto base = donor.out_base + rank;
+    if (base + alive <= rows) {
+      auto* out = remap.data() + (window - doc_limits::min());
+      for (uint32_t i = 0; i != alive; ++i) {
+        out[live[i]] = static_cast<uint32_t>(base + i);
+      }
+    }
+    rank += alive;
+    window += count;
+  }
   if (donor.out_base + rank > rows || rank != donor.alive) {
     co_return false;
   }

@@ -1007,7 +1007,7 @@ void CheckInterleaved(Mask docs_mask, const std::vector<bool>& masked,
   constexpr irs::doc_id_t kWindow = 64 * kBits;
   std::mt19937_64 rng{seed};
   std::vector<uint64_t> words(64);
-  std::vector<uint32_t> live(kWindow);
+  std::vector<uint32_t> live(kWindow + irs::doc_limits::kDocsSlack);
   auto min = irs::doc_limits::min();
   while (min < kInterleavedEnd) {
     const auto max = min + kWindow;

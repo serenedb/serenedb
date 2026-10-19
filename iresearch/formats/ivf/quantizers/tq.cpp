@@ -361,7 +361,6 @@ float FillInt8Seg(const TurboQuantLayout& lay, const TurboQuantCentroids& tc,
   }
   return scale_c;
 }
-
 int32_t TurboQuantDot1(const uint8_t* code, const TurboQuantInt8Seg& seg,
                        const int8_t* q) noexcept {
   const int32_t ones_sum = BitPlaneSum(code, seg.bytes, q);

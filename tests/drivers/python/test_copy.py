@@ -134,6 +134,39 @@ def test_copy_binary_round_trip(conn: psycopg.Connection,
         _drop(conn, dest)
 
 
+@pytest.mark.parametrize("fmt", ["TEXT", "BINARY"])
+def test_copy_to_stdout_rows(conn: psycopg.Connection, table_name: str,
+                             fmt: str) -> None:
+    width = 600_000
+    with conn.cursor() as cur:
+        with cur.copy(
+            f"COPY (SELECT i, repeat(chr((97 + i)::INTEGER), {width}) AS s "
+            f"FROM range(8) t(i) ORDER BY i) TO STDOUT (FORMAT {fmt})"
+        ) as cp:
+            cp.set_types(["int8", "text"])
+            assert list(cp.rows()) == [(i, chr(97 + i) * width)
+                                       for i in range(8)]
+        with cur.copy(
+            f"COPY (SELECT 1::BIGINT AS i WHERE false) TO STDOUT (FORMAT {fmt})"
+        ) as cp:
+            cp.set_types(["int8"])
+            assert list(cp.rows()) == []
+        cur.execute(f'CREATE TABLE public."{table_name}" AS '
+                    f"SELECT i::BIGINT AS i FROM range(500000) t(i)")
+        try:
+            for preserve in ("true", "false"):
+                cur.execute(
+                    f"SET SESSION preserve_insertion_order = {preserve}")
+                with cur.copy(
+                    f'COPY public."{table_name}" TO STDOUT (FORMAT {fmt})'
+                ) as cp:
+                    cp.set_types(["int8"])
+                    assert sorted(row[0] for row in cp.rows()) == list(
+                        range(500000))
+        finally:
+            _drop(conn, table_name)
+
+
 # Matches PostgreSQL (verified vs PG 16): text never emits a header; csv emits
 # one only with the HEADER option (PG defaults csv HEADER off).
 @pytest.mark.parametrize(

@@ -1,0 +1,16 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE cte_limit_t AS SELECT range AS i FROM range(2000000)
+
+query
+WITH d AS MATERIALIZED (SELECT i FROM cte_limit_t)
+SELECT (SELECT sum(i) FROM d) AS total,
+       (SELECT sum(i) FROM (
+           SELECT i FROM d WHERE CASE WHEN i < 122880 THEN length(repeat(i::VARCHAR, 20000)) > 0 ELSE true END LIMIT 5000)) AS first_rows
+----
+total	first_rows
+1999999000000	12497500
+
+statement ok
+DROP TABLE cte_limit_t

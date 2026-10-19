@@ -20,7 +20,7 @@ if [[ -z "${VANILLA_DUCKDB:-}" ]]; then
 	VANILLA_DUCKDB="$WORKSPACE/$BUILD_DIR/duckdb-$VANILLA_DUCKDB_TAG/duckdb"
 	if [[ ! -x "$VANILLA_DUCKDB" ]]; then
 		mkdir -p "$(dirname "$VANILLA_DUCKDB")"
-		container=$(docker create "duckdb/duckdb:$VANILLA_DUCKDB_TAG") || exit 1
+		container=$(docker create ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "duckdb/duckdb:$VANILLA_DUCKDB_TAG") || exit 1
 		docker cp "$container:/duckdb" "$VANILLA_DUCKDB" >/dev/null
 		copied=$?
 		docker rm "$container" >/dev/null

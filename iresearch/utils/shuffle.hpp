@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,30 +15,23 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "server/utils/uniform_character.h"
+#pragma once
 
-#include <absl/algorithm/container.h>
+#include <absl/random/distributions.h>
 
-#include "iresearch/utils/string_utils.hpp"
-#include "server/utils/random_generator.h"
+#include <iterator>
+#include <utility>
 
-namespace sdb::random {
+namespace irs {
 
-char UniformCharacter::randomChar() const {
-  size_t r = random::Interval(static_cast<uint32_t>(_characters.size() - 1));
-  return _characters[r];
-}
-
-std::string UniformCharacter::random(size_t length) const {
-  std::string buffer;
-  irs::utils::StrResize(buffer, length);
-  for (auto& c : buffer) {
-    c = randomChar();
+template<typename Index>
+void Shuffle(auto& values, auto& rng) {
+  for (auto i = static_cast<Index>(std::size(values)); i > 1; --i) {
+    std::swap(values[i - 1], values[absl::Uniform<Index>(rng, 0, i)]);
   }
-  return buffer;
 }
 
-}  // namespace sdb::random
+}  // namespace irs

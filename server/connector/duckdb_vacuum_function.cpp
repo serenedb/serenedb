@@ -52,6 +52,7 @@
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -256,14 +257,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     }
     return !context.IsInterrupted();
   };
-  auto& engine = search::GetSearchEngine();
-  const bool slot = engine.TryAcquireCompaction();
-  absl::Cleanup release_slot = [&engine, slot] {
-    if (slot) {
-      engine.ReleaseCompaction();
-    }
-  };
-  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
+  const search::ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
 
   search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (size_t pass = 0; pass < 8; ++pass) {
@@ -503,12 +498,10 @@ void DispatchInverted(duckdb::ClientContext& context,
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      static constinit SettingRef gTargetSegments{
-        "sdb_compact_target_segments"};
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(gTargetSegments.Int(context));
+      const auto status = action == Action::Refresh
+                            ? search->VacuumRefresh()
+                            : search->VacuumCompact(GetIntSetting(
+                                context, "sdb_compact_target_segments"));
       if (!status.ok()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),

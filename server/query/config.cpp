@@ -34,6 +34,7 @@
 #include <duckdb/main/settings.hpp>
 #include <duckdb/main/valid_checker.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -52,6 +53,19 @@ T GetEnumValue(std::string_view value) noexcept {
   const auto r = magic_enum::enum_cast<T>(value, magic_enum::case_insensitive);
   SDB_ASSERT(r, "enum value is not validated");
   return *r;
+}
+
+uint64_t CommittedCatalogEpoch(duckdb::AttachedDatabase& database,
+                               uint64_t epoch) {
+  auto& transaction_manager = duckdb::TransactionManager::Get(database);
+  if (!transaction_manager.IsDuckTransactionManager()) {
+    return epoch;
+  }
+  auto& manager = transaction_manager.Cast<duckdb::DuckTransactionManager>();
+  if (manager.GetLastCommittedCatalogVersion() == epoch) {
+    return epoch;
+  }
+  return manager.GetDurableSnapshot().catalog_version;
 }
 
 }  // namespace
@@ -106,8 +120,7 @@ void Config::RefreshCatalogEpoch() noexcept try {
   // Read off the transaction this session already has for that database, never
   // by starting one: a transaction captures its snapshot when it starts, and
   // REPEATABLE READ takes that snapshot at the first statement that reads data
-  // -- not at BEGIN, and not because a plan wanted to know a version. With no
-  // transaction there is nothing to sample and nothing bound against it either.
+  // -- not at BEGIN, and not because a plan wanted to know a version.
   if (!_client_ctx.transaction.HasActiveTransaction()) {
     return;
   }
@@ -120,14 +133,25 @@ void Config::RefreshCatalogEpoch() noexcept try {
   }
   auto transaction =
     duckdb::MetaTransaction::Get(_client_ctx).TryGetTransaction(*database);
-  if (!transaction) {
-    return;
+  if (transaction) {
+    _catalog_epoch =
+      transaction->Cast<duckdb::DuckTransaction>().catalog_version;
+  } else {
+    _catalog_epoch = CommittedCatalogEpoch(*database, _catalog_epoch);
   }
-  _catalog_epoch = transaction->Cast<duckdb::DuckTransaction>().catalog_version;
 } catch (const std::exception&) {
   // Teardown, or a session whose database is gone: the epoch it last saw is as
   // good as it gets, and a plan bound against it re-binds on the next statement
   // that has a transaction to check it through.
+}
+
+void Config::RefreshCatalogEpoch(
+  duckdb::MetaTransaction& transaction) noexcept {
+  auto database = transaction.GetReferencedDatabase(
+    duckdb::DatabaseManager::TryGetDefaultDatabase(_client_ctx));
+  if (database) {
+    _catalog_epoch = CommittedCatalogEpoch(*database, _catalog_epoch);
+  }
 }
 
 void Config::OnSet(std::string_view name, bool is_local,

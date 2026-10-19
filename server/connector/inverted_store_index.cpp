@@ -42,6 +42,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
+#include <duckdb/storage/table/row_group_segment_tree.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -548,6 +549,7 @@ void InvertedStoreIndex::Enqueue(duckdb::TaskExecutor& executor,
     }
     task->Execute(duckdb::TaskExecutionMode::PROCESS_ALL);
   }
+  duckdb::TaskScheduler::BlockingScope blocking;
   absl::MutexLock lock{&queue.mutex};
   queue.mutex.Await(absl::Condition(&queue, &FeedQueue::NotFull));
 }
@@ -821,15 +823,19 @@ bool InvertedStoreIndex::AppendLocal(
   }
   const auto count = source.GetTotalRows();
   auto& context = conn->GetClientContext();
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                context.GetSchedulerAccount()};
+  const auto base = static_cast<duckdb::idx_t>(duckdb::MAX_ROW_ID);
+  const auto row_groups = source.GetRowGroups();
+  const auto vector_start = [&](duckdb::idx_t row) {
+    const auto group = row_groups->GetSegment(base + row)->GetRowStart() - base;
+    return row - (row - group) % STANDARD_VECTOR_SIZE;
+  };
   const auto ranges = std::max<duckdb::idx_t>(2, slots - 1);
   for (duckdb::idx_t k = 0; k < ranges; ++k) {
-    auto begin = k * count / ranges;
-    auto end = (k + 1) * count / ranges;
-    begin -= begin % STANDARD_VECTOR_SIZE;
-    if (k + 1 != ranges) {
-      end -= end % STANDARD_VECTOR_SIZE;
-    }
+    const auto begin = vector_start(k * count / ranges);
+    const auto end =
+      k + 1 == ranges ? count : vector_start((k + 1) * count / ranges);
     if (end <= begin) {
       continue;
     }

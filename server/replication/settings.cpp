@@ -31,8 +31,9 @@ namespace sdb::replication {
 namespace {
 
 duckdb::Value Global(std::string_view name) {
-  return SettingRef{name}.Global(
-    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()));
+  return GetGlobalSetting(
+    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()),
+    name);
 }
 
 int64_t Millis(std::string_view name) {

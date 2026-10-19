@@ -735,7 +735,8 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    ManagedVector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
-                   const IndexFieldOptions* field_options) {
+                   const IndexFieldOptions* field_options,
+                   HnswBases* hnsw_bases) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
     sources.push_back(MergeSource{
@@ -746,6 +747,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
   }
   col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
   col_writer->SetFieldOptions(field_options);
+  col_writer->SetHnswBases(hnsw_bases);
 }
 
 }  // namespace
@@ -786,7 +788,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options);
+                _field_options, _hnsw_bases);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =

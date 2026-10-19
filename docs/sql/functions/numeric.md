@@ -40,6 +40,12 @@ When both operands are integers, `//` performs integer division (`5 // 2 = 2`) a
 
 <SqlLogicTest id="sql/functions/numeric/division_by_zero" />
 
+### Integer Overflow
+
+Integer `+`, `-`, `*` and unary minus fail with an overflow error when the result does not fit the type. After `SET integer_overflow = 'wrap'` they keep the low bits of the result instead, the two's complement wraparound of machine arithmetic and of ClickHouse; `RESET integer_overflow` restores the error. Casts and division are always checked:
+
+<SqlLogicTest id="sql/functions/numeric/integer_overflow" />
+
 ### Supported Types
 
 The modulo, bitwise, negation, and factorial operators work only on integral data types,
@@ -65,6 +71,7 @@ The table below shows the available mathematical functions.
 | [`cbrt(x)`](#cbrtx)                                                    | Returns the cube root of the number.                                                                                                                                                           |
 | [`ceil(x)`](#ceilx)                                                    | Rounds the number up.                                                                                                                                                                          |
 | [`ceiling(x)`](#ceilingx)                                              | Rounds the number up. Alias of `ceil`.                                                                                                                                                         |
+| [`clamp(x, min, max)`](#clampx-min-max)                                | Limits `x` to the range from `min` to `max`.                                                                                                                                                   |
 | [`cos(x)`](#cosx)                                                      | Computes the cosine of `x`.                                                                                                                                                                    |
 | [`cot(x)`](#cotx)                                                      | Computes the cotangent of `x`.                                                                                                                                                                 |
 | [`degrees(x)`](#degreesx)                                              | Converts radians to degrees.                                                                                                                                                                   |
@@ -200,6 +207,12 @@ Rounds the number up.
 Rounds the number up. Alias of `ceil`.
 
 <SqlLogicTest id="sql/functions/numeric/ceiling" />
+
+#### `clamp(x, min, max)`
+
+Returns `min` if `x` is smaller than `min`, `max` if `x` is larger than `max`, and `x` otherwise. The arguments are converted to their common type, so `clamp` works on any ordered type: numbers, strings, dates, intervals, lists. The result is NULL if any argument is NULL, and it is an error if `min` is larger than `max`. As in comparisons, NaN is larger than every other number.
+
+<SqlLogicTest id="sql/functions/numeric/clamp" />
 
 #### `cos(x)`
 

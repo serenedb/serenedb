@@ -55,10 +55,13 @@ if ! test -f "$DRIVERS_DIR/$COMPOSE_FILE"; then
 	exit 255
 fi
 
-# Reap orphans from earlier interrupted runs before bringing the stack up.
+# Reap orphans from earlier interrupted runs before bringing the stack up; CI
+# jobs remove their runner's containers by owner label instead.
 # See scripts/reap_stale_docker_orphans.sh for the full rationale.
-source "$DRIVERS_DIR/../../scripts/reap_stale_docker_orphans.sh"
-reap_stale_docker_orphans
+if [[ -z "${SDB_DOCKER_OWNER:-}" ]]; then
+	source "$DRIVERS_DIR/../../scripts/reap_stale_docker_orphans.sh"
+	reap_stale_docker_orphans
+fi
 
 cleanup() {
 	docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans

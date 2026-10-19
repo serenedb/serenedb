@@ -32,7 +32,7 @@ One inverted index can serve several kinds of search, each documented on its own
 | You want to… | Use | Page |
 |---|---|---|
 | Match natural-language text, rank by relevance | Full-text search (`@@`, BM25) | [Full-Text Search](./full-text-search.md) · [Ranking](./ranking.md) |
-| Find nearest vectors / semantic similarity | Vector / ANN search (IVF) | [Vector Search](./vector-search.md) |
+| Find nearest vectors / semantic similarity | Vector / ANN search (IVF, HNSW) | [Vector Search](./vector-search.md) |
 | Combine a lexical signal with a vector signal | Hybrid search | [Hybrid Search](./hybrid-search.md) |
 | Query points, shapes and distances | Geospatial search (`ST_*`) | [Geospatial Search](./geospatial-search.md) |
 | Match exact values, ids, tags, enums | Verbatim columns + range predicates | [Full-Text Search](./full-text-search.md#range-queries) |
@@ -60,7 +60,7 @@ Each indexed column carries its **own operator class** — the `column [dictiona
 - a column with a **dictionary** is analyzed into tokens (full-text);
 - a column with **no dictionary** is indexed verbatim — one token per value — giving exact, case-sensitive matching, ideal for ids, tags and enum-like categories;
 - a numeric or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
-- a `FLOAT[N]` column with `ivf (...)` is indexed for [vector search](./vector-search.md), and a `JSON`/`GEOMETRY` column with a geo dictionary for [geospatial search](./geospatial-search.md).
+- a `FLOAT[N]` column with `ivf (...)` or `hnsw (...)` is indexed for [vector search](./vector-search.md), and a `JSON`/`GEOMETRY` column with a geo dictionary for [geospatial search](./geospatial-search.md).
 
 The example below puts an analyzed column (`name`) and a verbatim column (`category`) in one index:
 

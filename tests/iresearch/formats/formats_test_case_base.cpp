@@ -742,7 +742,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir(), "segment_name"};
+    irs::IdxReader idx{dir(), "segment_name", nullptr};
     irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(

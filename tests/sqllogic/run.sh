@@ -147,6 +147,10 @@ POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
 CLICKHOUSE_LOG_FILE=""
 CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
+OWNER_LABEL=()
+if [[ -n "${SDB_DOCKER_OWNER:-}" ]]; then
+	OWNER_LABEL=(--label "serenedb.owner=$SDB_DOCKER_OWNER")
+fi
 TEST_NETWORK=""
 OWNED_TEST_NETWORK=""
 cancel_pid=""
@@ -233,7 +237,7 @@ report_failed_container() {
 		echo "       Container already gone; no image left to run the dmesg probe from." >&2
 		return 0
 	fi
-	if ! dmesg_out=$(docker run --rm --cap-add SYSLOG --entrypoint dmesg "$image" 2>/dev/null); then
+	if ! dmesg_out=$(docker run --rm "${OWNER_LABEL[@]}" --cap-add SYSLOG --entrypoint dmesg "$image" 2>/dev/null); then
 		echo "       ${image} ships no dmesg; cannot say whether the host OOM killer fired." >&2
 		return 0
 	fi
@@ -253,7 +257,7 @@ ensure_test_network() {
 	fi
 	local net="${SHARED_TEST_NETWORK:-$1-serenedb-test-net-$$}" error=""
 	if ! docker network inspect "$net" >/dev/null 2>&1 &&
-		! error=$(docker network create "$net" 2>&1 >/dev/null) &&
+		! error=$(docker network create "${OWNER_LABEL[@]}" "$net" 2>&1 >/dev/null) &&
 		! docker network inspect "$net" >/dev/null 2>&1; then
 		echo "ERROR: cannot create docker network $net: $error" >&2
 		exit 1
@@ -436,6 +440,7 @@ launch_s3() {
 	echo "Starting MinIO (host=$MINIO_HOST)..."
 	docker run -d \
 		--name "$MINIO_CONTAINER_NAME" \
+		"${OWNER_LABEL[@]}" \
 		"${network_args[@]}" \
 		-e "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
@@ -479,7 +484,7 @@ launch_azure() {
 	export AZURITE_BLOB_CONTAINER="testcont"
 
 	local host port
-	local docker_args=(-d --name "$AZURITE_CONTAINER_NAME")
+	local docker_args=(-d --name "$AZURITE_CONTAINER_NAME" "${OWNER_LABEL[@]}")
 	# Compose mode: reached by container name on the shared network; local
 	# mode: default bridge + a published port.
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -554,6 +559,7 @@ launch_iceberg_rest() {
 	local docker_args=(
 		-d
 		--name "$ICEBERG_REST_CONTAINER_NAME"
+		"${OWNER_LABEL[@]}"
 	)
 	# Join the same docker network as MinIO so the catalog reaches it by
 	# container name. In compose mode that's COMPOSE_NETWORK (the consumer is
@@ -697,6 +703,7 @@ launch_ollama() {
 	echo "Starting Ollama (host=$OLLAMA_HOST)..."
 	docker run -d \
 		--name "$OLLAMA_CONTAINER_NAME" \
+		"${OWNER_LABEL[@]}" \
 		"${network_args[@]}" \
 		"$OLLAMA_IMAGE"
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
@@ -750,6 +757,7 @@ launch_kev() {
 	echo "Starting Kev (host=$KEV_HOST)..."
 	docker run -d \
 		--name "$KEV_CONTAINER_NAME" \
+		"${OWNER_LABEL[@]}" \
 		"${network_args[@]}" \
 		"$KEV_IMAGE"
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
@@ -809,6 +817,7 @@ launch_postgres() {
 	echo "Starting postgres (host=$PGHOST)..."
 	docker run -d \
 		--name "$POSTGRES_CONTAINER_NAME" \
+		"${OWNER_LABEL[@]}" \
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
@@ -886,6 +895,7 @@ launch_clickhouse() {
 	# POSTGRES_HOST_AUTH_METHOD=trust -- no mounted config override needed.
 	docker run -d \
 		--name "$CLICKHOUSE_CONTAINER_NAME" \
+		"${OWNER_LABEL[@]}" \
 		"${network_args[@]}" \
 		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
 		--health-cmd 'clickhouse-client --query "SELECT 1"' \

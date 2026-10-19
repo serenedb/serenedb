@@ -1,0 +1,58 @@
+statement error
+SELECT 9223372036854775807::BIGINT + 1;
+----
+db error: ERROR: Overflow in addition of INT64 (9223372036854775807 + 1)!
+
+
+statement error
+SELECT -x FROM (VALUES ('-9223372036854775808'::BIGINT)) t(x);
+----
+db error: ERROR: Overflow in negation of numeric value!
+
+
+statement ok
+SET integer_overflow = 'wrap';
+
+query
+SHOW integer_overflow;
+----
+integer_overflow
+wrap
+
+
+query
+SELECT 9223372036854775807::BIGINT + 1 AS a, '-9223372036854775808'::BIGINT - 1 AS b, 4294967296::BIGINT * 4294967296 AS c, 127::TINYINT + 1::TINYINT AS d, 0::UBIGINT - 1::UBIGINT AS e;
+----
+a	b	c	d	e
+-9223372036854775808	9223372036854775807	0	-128	18446744073709551615
+
+
+query
+SELECT (170141183460469231731687303715884105727::HUGEINT + 1)::VARCHAR AS h;
+----
+h
+-170141183460469231731687303715884105728
+
+
+query
+SELECT -x AS n FROM (VALUES ('-9223372036854775808'::BIGINT), (5::BIGINT)) t(x);
+----
+n
+-9223372036854775808
+-5
+
+
+query
+SELECT sum((i * 6364136223846793005 + 1442695040888963407) % 2147483648) AS s FROM range(100000) t(i);
+----
+s
+825339984
+
+
+statement ok
+RESET integer_overflow;
+
+statement error
+SELECT i * 9223372036854775807 FROM range(3) t(i);
+----
+db error: ERROR: Overflow in multiplication of INT64 (2 * 9223372036854775807)!

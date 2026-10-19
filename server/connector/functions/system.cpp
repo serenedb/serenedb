@@ -371,6 +371,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
   auto* result_ptr =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  std::optional<duckdb::idx_t> last_found;
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto name_value = names[row];
     auto ok_value = oks[row];
@@ -379,11 +380,17 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
       continue;
     }
     const bool missing_ok = ok_value.GetValue();
-    const auto key = name_value.GetValue().GetString();
+    const auto name = name_value.GetValue();
+    if (last_found && names[*last_found].GetValue() == name) {
+      result_ptr[row] = result_ptr[*last_found];
+      continue;
+    }
+    const auto key = name.GetString();
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
       result_ptr[row] =
         duckdb::StringVector::AddString(result, value.ToString());
+      last_found = row;
       continue;
     }
     if (missing_ok) {
@@ -1946,6 +1953,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::VARCHAR,
       SetConfigFunction};
     func.SetStability(duckdb::FunctionStability::VOLATILE);
+    func.SetRequiresOrderedExecution(true);
     loader.RegisterFunction(func);
   }
 

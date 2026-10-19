@@ -19,8 +19,10 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/config.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
+#include <pthread.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +31,7 @@
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -53,11 +56,15 @@
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
-ABSL_FLAG(bool, remap_executable, true,
+ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE_DEFAULT,
           "Copy the server's machine code into anonymous huge-page memory at "
-          "startup and pre-read its read-only data, so the first queries after "
-          "a cold start pay no code page faults. Turn off when profiling with "
-          "perf, which symbolizes only file-backed code.");
+          "startup, so the first queries after a cold start pay no code page "
+          "faults and the code runs from huge pages. Off, the machine code is "
+          "locked in memory instead, or pre-read where locking is not "
+          "permitted, and perf can symbolize it, which it cannot for "
+          "anonymous code. Read-only data is pre-read either way. On by "
+          "default in Release and MinSizeRel builds, the ones that omit frame "
+          "pointers, and off in the others.");
 
 namespace {
 
@@ -65,6 +72,18 @@ using namespace sdb;
 using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+
+void SetSanitizerThreadStackSize() {
+#if defined(__GLIBC__) &&                  \
+  (defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
+   defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER))
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, size_t{64} << 20);
+  pthread_setattr_default_np(&attr);
+  pthread_attr_destroy(&attr);
+#endif
+}
 
 int RunServer(int argc, char** argv) {
   try {
@@ -88,11 +107,7 @@ int RunServer(int argc, char** argv) {
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. The non-obvious edge: the search loops run ON
-    // the background pool, so SearchEngine::stop() must join them (it sets
-    // _stopping and Waits the loop Futures, which resume on the still-live
-    // pool) BEFORE BackgroundScheduler::stop() tears that pool down -- else a
-    // loop is stranded mid-resume. search.stop() does not destroy the engine
+    // NOT the reverse of startup. search.stop() does not destroy the engine
     // (its dtor runs at end of scope), so drop tasks draining on the pool
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
@@ -211,6 +226,8 @@ int RunSubcommand(int argc, char* argv[],
 extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
+  irs::CheckCpuFeatures(argv[0]);
+  SetSanitizerThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
@@ -235,9 +252,8 @@ int main(int argc, char* argv[]) {
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
-  const auto remap = absl::GetFlag(FLAGS_remap_executable)
-                       ? irs::RemapExecutable()
-                       : irs::ExecutableRemap{.skipped = "disabled"};
+  const auto remap =
+    irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
@@ -246,10 +262,10 @@ int main(int argc, char* argv[]) {
   sdb::app::InitProcess(argv[0]);
   SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
             " MB of machine code remapped into anonymous huge-page memory, ",
-            remap.populated >> 20, " MB of read-only mappings pre-read",
+            remap.locked >> 20, " MB locked, ", remap.populated >> 20,
+            " MB pre-read",
             remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
-  sdb::app::ShutdownGlobals();
 
   engine.Shutdown();
   return rc;

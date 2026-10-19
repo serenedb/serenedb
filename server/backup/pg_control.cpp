@@ -38,7 +38,6 @@
 #include <string>
 #include <system_error>
 
-#include "catalog/database_directory.h"
 #include "utils/file_utils.h"
 
 namespace sdb::backup {
@@ -50,6 +49,8 @@ constexpr size_t kPgControlFileSize = 8192;
 constexpr int32_t kDbInProduction = 6;
 constexpr int32_t kWalLevelReplica = 1;
 constexpr uint32_t kBlockSize = 8192;
+// PostgreSQL's FirstNormalUnloggedLSN, which initdb and pg_resetwal write.
+constexpr uint64_t kFirstNormalUnloggedLsn = 1000;
 
 struct PgCheckPoint {
   uint64_t redo;
@@ -135,6 +136,7 @@ PgControlData MakeControl(const ControlState& state) {
   data.checkpoint_copy.full_page_writes = true;
   data.checkpoint_copy.wal_level = kWalLevelReplica;
   data.checkpoint_copy.time = now;
+  data.unlogged_lsn = kFirstNormalUnloggedLsn;
   data.wal_level = kWalLevelReplica;
   data.max_connections = 100;
   data.max_worker_processes = 8;

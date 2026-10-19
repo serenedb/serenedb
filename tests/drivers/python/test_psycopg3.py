@@ -690,7 +690,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 100000000000) g(i)"
+                    "select count(*) from generate_series(1, 200000000000) g(i)"
                 )
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:

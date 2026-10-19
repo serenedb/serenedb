@@ -33,7 +33,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 ### Table Modification (ALTER TABLE)
 | Feature            | Support State | Details                                                      |
 |--------------------|---------------|--------------------------------------------------------------|
-| ADD COLUMN         | Yes           |  |
+| ADD COLUMN         | Yes           | A serial column can't declare `PRIMARY KEY` or `UNIQUE` on a table that already has rows |
 | DROP COLUMN        | Yes           |  |
 | ADD CHECK          | Yes           |                                                              |
 | ADD CONSTRAINT     | Yes           | `CHECK`, `UNIQUE` and `PRIMARY KEY` constraints; not `FOREIGN KEY` |

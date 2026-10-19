@@ -235,6 +235,57 @@ heir
 t
 
 
+statement ok
+ALTER TABLE sso_t ADD COLUMN added serial
+
+
+query
+SELECT pg_get_userbyid(relowner) = 'sso_owner' AS owned, has_sequence_privilege('sso_reader', 'sso_t_added_seq', 'USAGE') AS reader_usage
+FROM pg_class WHERE relname = 'sso_t_added_seq'
+----
+owned	reader_usage
+t	t
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_t_added_seq RESTART 50
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER TABLE sso_t ADD COLUMN mine bigserial
+
+
+query
+SELECT pg_get_userbyid(relowner) = 'sso_owner' AS owned, has_sequence_privilege('sso_reader', 'sso_t_mine_seq', 'USAGE') AS reader_usage
+FROM pg_class WHERE relname = 'sso_t_mine_seq'
+----
+owned	reader_usage
+t	t
+
+
+statement error
+ALTER SEQUENCE sso_t_added_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_added_seq"
+DETAIL: Sequence "sso_t_added_seq" is linked to table "sso_t".
+
+
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER TABLE sso_t ADD COLUMN theirs serial
+----
+db error: ERROR: must be owner of table sso_t
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'sso_t_theirs_seq'
+----
+sequences
+0
+
+
 connection sso user=sso_owner password=sso_pw
 statement ok
 INSERT INTO sso_t (v) VALUES (2)
@@ -242,11 +293,11 @@ INSERT INTO sso_t (v) VALUES (2)
 
 connection sso user=sso_owner password=sso_pw
 query
-SELECT id, big, v FROM sso_t ORDER BY v
+SELECT id, big, v, added, mine FROM sso_t ORDER BY v
 ----
-id	big	v
-10	101	1
-11	102	2
+id	big	v	added	mine
+10	101	1	1	1
+11	102	2	50	2
 
 
 statement ok
@@ -255,13 +306,15 @@ ALTER TABLE sso_t OWNER TO sso_heir
 
 query
 SELECT relname, pg_get_userbyid(relowner) = 'sso_heir' AS owned
-FROM pg_class WHERE relname IN ('sso_t', 'sso_t_id_seq', 'sso_t_big_seq', 'sso_explicit') ORDER BY relname
+FROM pg_class WHERE relname IN ('sso_t', 'sso_t_id_seq', 'sso_t_big_seq', 'sso_t_added_seq', 'sso_t_mine_seq', 'sso_explicit') ORDER BY relname
 ----
 relname	owned
 sso_explicit	t
 sso_t	t
+sso_t_added_seq	t
 sso_t_big_seq	t
 sso_t_id_seq	t
+sso_t_mine_seq	t
 
 
 statement ok
@@ -292,7 +345,7 @@ DROP TABLE sso_t
 
 
 query
-SELECT relname FROM pg_class WHERE relname IN ('sso_t_id_seq', 'sso_t_big_seq', 'sso_explicit', 'sso_later') ORDER BY relname
+SELECT relname FROM pg_class WHERE relname IN ('sso_t_id_seq', 'sso_t_big_seq', 'sso_t_added_seq', 'sso_t_mine_seq', 'sso_explicit', 'sso_later') ORDER BY relname
 ----
 relname
 sso_later

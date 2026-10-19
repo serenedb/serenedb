@@ -43,6 +43,7 @@
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
@@ -470,7 +471,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        Stamp(*create.info, DefaultObjType(op.type), create.schema);
+        Stamp(*create.info, DefaultObjType(op.type), create.schema,
+              OwnerFor(*create.info));
         if (_enforce) {
           RequireSchemaCreate(*create.schema);
           CheckReplace(*create.info);
@@ -1609,6 +1611,21 @@ class Enforcer {
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
     Stamp(info, objtype, schema, _caller);
+  }
+
+  duckdb::idx_t OwnerFor(const duckdb::CreateInfo& info) {
+    if (info.type != CatalogType::SEQUENCE_ENTRY) {
+      return _caller;
+    }
+    const auto& sequence = info.Cast<duckdb::CreateSequenceInfo>();
+    if (!sequence.serial) {
+      return _caller;
+    }
+    const auto table =
+      FindEntry(CatalogType::TABLE_ENTRY,
+                duckdb::QualifiedName::FromPath(
+                  {sequence.owned_by.begin(), sequence.owned_by.end() - 1}));
+    return table ? table->permissions.owner : _caller;
   }
 
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,

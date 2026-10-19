@@ -1,0 +1,144 @@
+control substitution on
+
+statement ok
+CREATE TABLE rf (pk INTEGER PRIMARY KEY, emb FLOAT[4], i8 TINYINT,
+  i16 SMALLINT, i32 INTEGER, i64 BIGINT, x32 INTEGER, x64 BIGINT);
+
+statement ok
+CREATE INDEX rf_idx ON rf
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (i8, i16, i32, i64, x32, x64);
+
+statement ok
+INSERT INTO rf SELECT i,
+  [(i % 97)::FLOAT, (i % 89)::FLOAT, (i % 83)::FLOAT, (i % 79)::FLOAT]::FLOAT[4],
+  CASE WHEN i % 11 = 0 THEN NULL ELSE ((i * 37) % 256 - 128)::TINYINT END,
+  CASE WHEN i % 13 = 0 THEN NULL ELSE ((i * 7919) % 65536 - 32768)::SMALLINT END,
+  CASE WHEN i % 17 = 0 THEN NULL ELSE ((i * 104729) % 2000001 - 1000000)::INTEGER END,
+  CASE WHEN i % 19 = 0 THEN NULL ELSE (i::BIGINT * 1000003 % 4000000007 - 2000000000) END,
+  CASE WHEN i % 23 = 0 THEN NULL
+       WHEN i % 1000 = 1 THEN -2147483648
+       WHEN i % 1000 = 2 THEN 2147483647
+       ELSE ((i * 104729) % 2000001 - 1000000)::INTEGER END,
+  CASE WHEN i % 29 = 0 THEN NULL
+       WHEN i % 1000 = 3 THEN -9223372036854775808
+       WHEN i % 1000 = 4 THEN 9223372036854775807
+       ELSE (i::BIGINT * 1000003 % 4000000007 - 2000000000) END
+  FROM range(30000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rf;
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+WITH w AS (SELECT pk FROM rf_idx WHERE i32 BETWEEN -100000 AND 100000
+           ORDER BY emb <-> [10, 20, 30, 40]::FLOAT[4] LIMIT 25),
+     p AS (SELECT pk FROM rf WHERE i32 BETWEEN -100000 AND 100000
+           ORDER BY emb <-> [10, 20, 30, 40]::FLOAT[4], pk LIMIT 25)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM rf_idx WHERE i16 BETWEEN -1000 AND 20000
+           ORDER BY emb <-> [50, 1, 70, 3]::FLOAT[4] LIMIT 40),
+     p AS (SELECT pk FROM rf WHERE i16 BETWEEN -1000 AND 20000
+           ORDER BY emb <-> [50, 1, 70, 3]::FLOAT[4], pk LIMIT 40)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM rf_idx WHERE i8 < 0 AND i8 > -40
+           ORDER BY emb <-> [5, 6, 7, 8]::FLOAT[4] LIMIT 30),
+     p AS (SELECT pk FROM rf WHERE i8 < 0 AND i8 > -40
+           ORDER BY emb <-> [5, 6, 7, 8]::FLOAT[4], pk LIMIT 30)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM rf_idx WHERE i64 BETWEEN -1500000000 AND 0
+           ORDER BY emb <-> [60, 60, 60, 60]::FLOAT[4] LIMIT 30),
+     p AS (SELECT pk FROM rf WHERE i64 BETWEEN -1500000000 AND 0
+           ORDER BY emb <-> [60, 60, 60, 60]::FLOAT[4], pk LIMIT 30)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM rf_idx WHERE x32 > -2147483648
+  ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 100000) w;
+----
+count
+28667
+
+query
+SELECT COUNT(*) FROM rf WHERE x32 > -2147483648;
+----
+count
+28667
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM rf_idx WHERE x32 < 2147483647
+  ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 100000) w;
+----
+count
+28667
+
+query
+SELECT COUNT(*) FROM rf WHERE x32 < 2147483647;
+----
+count
+28667
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM rf_idx WHERE x64 >= -9223372036854775808
+  ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 100000) w;
+----
+count
+28965
+
+query
+SELECT COUNT(*) FROM rf WHERE x64 >= -9223372036854775808;
+----
+count
+28965
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM rf_idx WHERE x64 < 9223372036854775807
+  ORDER BY emb <-> [1, 2, 3, 4]::FLOAT[4] LIMIT 100000) w;
+----
+count
+28936
+
+query
+SELECT COUNT(*) FROM rf WHERE x64 < 9223372036854775807;
+----
+count
+28936
+
+query
+SELECT COUNT(*) FROM rf_idx WHERE i16 <= -30000;
+----
+count
+1173
+
+query
+SELECT COUNT(*) FROM rf WHERE i16 <= -30000;
+----
+count
+1173
+
+statement ok
+RESET sdb_hnsw_filter_mode;

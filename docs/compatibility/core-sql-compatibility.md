@@ -260,7 +260,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | trunc            | Yes           |                                                                         |
 | width_bucket     | Yes           |                                                                         |
 | random           | Yes           |                                                                         |
-| random_normal    | No            |                                                                         |
+| random_normal    | Yes           |                                                                         |
 | setseed          | Yes           |                                                                         |
 | acos             | Yes           |                                                                         |
 | acosd            | Yes           |                                                                         |
@@ -393,7 +393,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | regexp_like               | Yes           |                                                     |
 | regexp_match              | Yes           |                                                     |
 | regexp_matches            | Partial       |                                                     |
-| regexp_replace            | Partial       | Currently not supporting replacing N’th match       |
+| regexp_replace            | Partial       | Currently not supporting replacing N'th match       |
 | regexp_split_to_array     | Yes           |                                                     |
 | regexp_split_to_table     | Yes           |                                                     |
 | regexp_substr             | Yes           |                                                     |
@@ -452,7 +452,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 
 #### Geometric
 
-PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`, `circle`) and their operators/functions are not supported. SereneDB instead provides spatial data through a built-in `GEOMETRY` type and `ST_*` functions (`ST_Point`, `ST_Intersects`, `ST_Contains`, `ST_Distance`, …). See [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
+PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`, `circle`) and their operators/functions are not supported. SereneDB instead provides spatial data through a built-in `GEOMETRY` type and `ST_*` functions (`ST_Point`, `ST_Intersects`, `ST_Contains`, `ST_Distance`, ...). See [Spatial Functions](../sql/functions/geometry.md) and the [GEOMETRY type](../sql/data_types/geometry.md).
 | Feature        | Support State | Details |
 |----------------|---------------|---------|
 | +              | No            |         |
@@ -598,7 +598,7 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 
 #### JSON
 
-The PostgreSQL-named JSON functions below are largely unsupported. SereneDB instead provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions — `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
+The PostgreSQL-named JSON functions below are largely unsupported. SereneDB instead provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
 
 Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable.
 
@@ -878,7 +878,7 @@ SereneDB instead performs an enforced cast and completes the query, returning th
 ### Implicit Casting on Equality Checks
 
 SereneDB performs implicit casting on equality checks, e.g., converting strings to numeric and boolean values.
-Therefore, there are several instances where PostgreSQL throws an error while SereneDB successfully computes the result. Each expression below is evaluated on both engines — the PostgreSQL column runs it on an attached PostgreSQL via `postgres_query`, the SereneDB column evaluates it locally:
+Therefore, there are several instances where PostgreSQL throws an error while SereneDB successfully computes the result. Each expression below is evaluated on both engines -- the PostgreSQL column runs it on an attached PostgreSQL via `postgres_query`, the SereneDB column evaluates it locally:
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_001" />
 
@@ -922,7 +922,7 @@ To reclaim space, use the `CHECKPOINT` statement or compact the database by crea
 
 ### Strings
 
-SereneDB escapes characters such as `'` when it serializes strings inside nested data structures — for example, casting a list that contains a quote to text:
+SereneDB escapes characters such as `'` when it serializes strings inside nested data structures -- for example, casting a list that contains a quote to text:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_010" />
 

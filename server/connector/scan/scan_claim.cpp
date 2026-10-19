@@ -455,9 +455,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     });
   }
 
+  const auto where = g.ClaimedWhere();
   const bool constant_count = g.shape == ScanShape::Count &&
-                              g.col_filters.empty() && bind.search.filter &&
-                              ConstantCount(*bind.search.filter);
+                              g.col_filters.empty() && where &&
+                              ConstantCount(*where);
   uint64_t parallel = 0;
   uint64_t rgs = 0;
   auto run_end = g.live_segments;

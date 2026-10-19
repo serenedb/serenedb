@@ -49,6 +49,7 @@
 #include "connector/offsets_collector.hpp"
 #include "connector/scan/col_filter_verify.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_plan.h"
 
 namespace irs {
 
@@ -156,8 +157,13 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
+  search::InvertedIndexSnapshotPtr snapshot;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
+  std::optional<size_t> top_k;
+  size_t top_offset = 0;
+  bool empty_answer = false;
+  std::optional<VectorScorerOptions> owned_vector_scorer;
 
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
@@ -193,9 +199,14 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     duckdb::LogicalType type;
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
     std::vector<std::string_view> extract_path;
+    std::vector<irs::field_id> row_fields;
+    std::vector<duckdb::LogicalType> row_types;
+    std::span<const std::shared_ptr<const irs::Filter>> row_leaves;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
+  std::vector<duckdb::unique_ptr<duckdb::TableFilter>> deferred_filters;
+  std::vector<DeferredCheck> deferred_checks;
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
   duckdb::shared_ptr<duckdb::DynamicFilterData> order_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
@@ -203,6 +214,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
+  std::shared_ptr<const irs::Filter> owned_where;
+  std::vector<std::shared_ptr<irs::Scorer>> owned_where_scorers;
   std::unique_ptr<irs::Scorer> scorer_obj;
   bool needs_terms = false;
   std::vector<irs::QueryBuilder::ptr> queries;
@@ -275,7 +288,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
       uint32_t count;
     };
     std::vector<irs::ScoreDoc> answer;
-    std::vector<uint32_t> answer_rank;
+    std::span<const irs::ScoreDoc> ranked;
+    uint32_t verify_first = std::numeric_limits<uint32_t>::max();
     std::vector<FetchUnit> fetch_units;
     std::atomic_uint32_t next_fetch_unit{0};
     std::atomic_uint32_t fetch_done{0};
@@ -290,6 +304,9 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t MaxThreads() const final { return workers; }
 
   const ScanBindData& Bind() const noexcept { return *scan; }
+  std::shared_ptr<const irs::Filter> ClaimedWhere() const {
+    return scan->plan_cache.deferred ? owned_where : scan->search.filter;
+  }
   SegmentWork& Segment(uint32_t seg) noexcept { return segments[seg]; }
   UnitRows RowsOf(const ScanUnit& unit) const noexcept;
   irs::DocRange RangeOf(const ScanUnit& unit) const noexcept;
@@ -361,6 +378,12 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 
 struct TopKLocalState final : public ScanLocalState, FetchLocalState {
   std::span<irs::ScoreDoc> hit_slice;
+  bool per_segment_rescore = false;
+  std::atomic<irs::score_t> segment_kth_score{
+    std::numeric_limits<irs::score_t>::lowest()};
+  std::vector<irs::ScoreDoc> answer;
+  size_t answer_size = 0;
+  uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   irs::ColumnArgsFetcher score_fetcher;
   std::optional<irs::LoserScoreCollector> collector;
   ColFilterVerify col_verify;
@@ -392,7 +415,8 @@ bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out);
+                               irs::ColFilterClassification& out,
+                               bool prepare_leaves);
 
 irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,

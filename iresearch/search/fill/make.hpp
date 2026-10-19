@@ -44,6 +44,7 @@ Node::ptr Make(const TokenPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
+inline Node::ptr Make(const ExactVectorQuery&) { return {}; }
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
 Node::ptr Make(const BooleanQuery& query);
@@ -75,6 +76,10 @@ inline Node::ptr Make(const HnswQuery&, const detail::ScoredCtx&,
   return {};
 }
 inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&,
+                      ScoreMergeType) {
+  return {};
+}
+inline Node::ptr Make(const ExactVectorQuery&, const detail::ScoredCtx&,
                       ScoreMergeType) {
   return {};
 }

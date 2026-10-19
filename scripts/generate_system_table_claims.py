@@ -131,6 +131,9 @@ INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
 
 statement ok
 CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub WITH (connect = false, slot_name = NONE)
+
+statement ok
+PREPARE stc_prep AS SELECT 1
 """
 
 TEARDOWN = """statement ok

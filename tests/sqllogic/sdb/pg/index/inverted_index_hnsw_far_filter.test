@@ -1,0 +1,59 @@
+control substitution on
+
+statement ok
+CREATE TABLE ff (pk INTEGER PRIMARY KEY, emb FLOAT[128], side VARCHAR);
+
+statement ok
+CREATE INDEX ff_idx ON ff
+  USING inverted(pk, side, emb hnsw (metric = 'l2', quant = 'none', m = 16));
+
+statement ok
+INSERT INTO ff SELECT i,
+  list_transform(range(128), j -> ((CASE WHEN i < 1500 THEN 0 ELSE 10 END)
+    + (((i * 1103515245 + j * 12345 + 6789) % 1000003)::DOUBLE / 1000003 - 0.5)
+    )::FLOAT)::FLOAT[128],
+  CASE WHEN i < 1500 THEN 'near' ELSE 'far' END
+  FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ff;
+
+statement ok
+SET sdb_hnsw_ef_search = 64;
+
+query
+WITH w AS (SELECT pk FROM ff_idx WHERE side = 'far'
+           ORDER BY emb <-> list_transform(range(128), j -> 0.1::FLOAT)::FLOAT[128]
+           LIMIT 10),
+     p AS (SELECT pk FROM ff WHERE side = 'far'
+           ORDER BY emb <-> list_transform(range(128), j -> 0.1::FLOAT)::FLOAT[128]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ff_idx WHERE side = 'near'
+           ORDER BY emb <-> list_transform(range(128), j -> 9.9::FLOAT)::FLOAT[128]
+           LIMIT 10),
+     p AS (SELECT pk FROM ff WHERE side = 'near'
+           ORDER BY emb <-> list_transform(range(128), j -> 9.9::FLOAT)::FLOAT[128]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM ff_idx WHERE side = 'far'
+  ORDER BY emb <-> list_transform(range(128), j -> 0.1::FLOAT)::FLOAT[128]
+  LIMIT 10) w WHERE pk < 1500;
+----
+count
+0
+
+statement ok
+RESET sdb_hnsw_ef_search;

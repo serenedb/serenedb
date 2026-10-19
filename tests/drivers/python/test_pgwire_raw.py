@@ -2359,3 +2359,253 @@ def test_binary_fixed_size_array_parameter_of_the_wrong_length(conn):
     conn.sync()
     m = conn.drain_to_ready()
     assert sqlstates(m) == ["22P03"], errors(m)
+
+
+def _simple(conn, sql):
+    conn.send("Q", _cstr(sql))
+    return conn.drain_to_ready()
+
+
+def _parse_ok(conn, name, query, oids=()):
+    conn.parse(name, query, oids)
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+
+
+def _bind_sqlstates(conn, name):
+    conn.bind("", name)
+    conn.sync()
+    return sqlstates(conn.drain_to_ready())
+
+
+def test_sql_deallocate_drops_protocol_statement(conn):
+    _parse_ok(conn, "ns_dealloc", "select 1")
+    m = _simple(conn, "DEALLOCATE ns_dealloc")
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"DEALLOCATE\x00"], tags(m)
+    assert _bind_sqlstates(conn, "ns_dealloc") == ["26000"]
+    _parse_ok(conn, "ns_dealloc", "select 2")
+
+
+def test_extended_deallocate_drops_protocol_statement(conn):
+    _parse_ok(conn, "ns_ext_dealloc", "select 1")
+    m = conn.run("DEALLOCATE ns_ext_dealloc")
+    assert not errors(m), errors(m)
+    assert _bind_sqlstates(conn, "ns_ext_dealloc") == ["26000"]
+
+
+def test_deallocate_all_drops_protocol_statements(conn):
+    _parse_ok(conn, "ns_all_a", "select 1")
+    _parse_ok(conn, "ns_all_b", "select 2")
+    m = _simple(conn, "DEALLOCATE ALL")
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"DEALLOCATE ALL\x00"], tags(m)
+    assert _bind_sqlstates(conn, "ns_all_a") == ["26000"]
+    assert _bind_sqlstates(conn, "ns_all_b") == ["26000"]
+    conn.parse("ns_all_a", "select 3")
+    conn.bind("", "ns_all_a")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"3"), rows(m)
+
+
+def test_extended_deallocate_all_keeps_a_bound_portal(conn):
+    conn.parse("ns_cursor", "select * from generate_series(1, 5)")
+    conn.bind("ns_portal", "ns_cursor")
+    conn.parse("", "DEALLOCATE ALL")
+    conn.bind("", "")
+    conn.execute("")
+    conn.execute("ns_portal")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert len(rows(m)) == 5, rows(m)
+    assert _bind_sqlstates(conn, "ns_cursor") == ["26000"]
+
+
+def test_discard_all_drops_protocol_statements(conn):
+    _parse_ok(conn, "ns_discard", "select 1")
+    m = _simple(conn, "DISCARD ALL")
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"DISCARD ALL\x00"], tags(m)
+    assert _bind_sqlstates(conn, "ns_discard") == ["26000"]
+
+
+def test_discard_plans_keeps_protocol_statements(conn):
+    _parse_ok(conn, "ns_plans", "select 5")
+    for target in ("PLANS", "SEQUENCES", "TEMP"):
+        m = _simple(conn, f"DISCARD {target}")
+        assert not errors(m), errors(m)
+        assert tags(m) == [f"DISCARD {target}".encode() + b"\x00"], tags(m)
+    conn.bind("", "ns_plans")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"5"), rows(m)
+
+
+def test_discard_all_in_a_transaction_block_is_25001(conn):
+    assert not errors(_simple(conn, "BEGIN"))
+    assert sqlstates(_simple(conn, "DISCARD ALL")) == ["25001"]
+    assert not errors(_simple(conn, "ROLLBACK"))
+    assert sqlstates(_simple(conn, "SELECT 1; DISCARD ALL")) == ["25001"]
+    assert not errors(_simple(conn, "DISCARD ALL"))
+    assert not errors(conn.run("DISCARD ALL"))
+
+
+def test_sql_execute_runs_protocol_statement(conn):
+    _parse_ok(conn, "ns_exec", "select $1::int4 + 1", oids=(23,))
+    m = _simple(conn, "EXECUTE ns_exec(41)")
+    assert not errors(m), errors(m)
+    assert rows(m) and rows(m)[0].endswith(b"42"), rows(m)
+    assert tags(m) == [b"SELECT 1\x00"], tags(m)
+
+
+def test_protocol_and_sql_statements_share_names(conn):
+    assert not errors(_simple(conn, "PREPARE ns_shared_sql AS SELECT 1"))
+    conn.parse("ns_shared_sql", "select 2")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["42P05"]
+    _parse_ok(conn, "ns_shared_proto", "select 3")
+    assert sqlstates(_simple(conn, "PREPARE ns_shared_proto AS SELECT 4")) == ["42P05"]
+
+
+def test_prepared_statement_sqlstates(conn):
+    assert sqlstates(_simple(conn, "EXECUTE ns_missing")) == ["26000"]
+    assert sqlstates(_simple(conn, "DEALLOCATE ns_missing")) == ["26000"]
+    assert not errors(_simple(conn, "PREPARE ns_twice AS SELECT 1"))
+    assert sqlstates(_simple(conn, "PREPARE ns_twice AS SELECT 2")) == ["42P05"]
+
+
+def test_pg_prepared_statements_lists_protocol_statements(conn):
+    _parse_ok(conn, "ns_listed", "select $1::int4", oids=(23,))
+    _parse_ok(conn, "", "select 9")
+    m = _simple(
+        conn,
+        "SELECT statement, parameter_types, result_types, from_sql"
+        " FROM pg_prepared_statements WHERE NOT from_sql",
+    )
+    assert not errors(m), errors(m)
+    assert len(rows(m)) == 1, rows(m)
+    assert all_fields(m) == [b"select $1::int4", b"{integer}", b"{integer}", b"f"]
+
+
+def test_close_drops_protocol_statement_name(conn):
+    _parse_ok(conn, "ns_closed", "select 1")
+    conn.send("C", b"S" + _cstr("ns_closed"))
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+    assert sqlstates(_simple(conn, "EXECUTE ns_closed")) == ["26000"]
+    assert not errors(_simple(conn, "PREPARE ns_closed AS SELECT 2"))
+
+
+def test_replanned_protocol_statement_keeps_its_name(conn):
+    _drop(conn, "ns_replan")
+    assert not errors(_simple(conn, "CREATE TABLE ns_replan(a int4)"))
+    _parse_ok(conn, "ns_replanned", "SELECT * FROM ns_replan")
+    assert not errors(conn.run("ALTER TABLE ns_replan ADD COLUMN b text"))
+    assert _bind_sqlstates(conn, "ns_replanned") == []
+    m = _simple(
+        conn,
+        "SELECT result_types FROM pg_prepared_statements"
+        " WHERE name = 'ns_replanned'",
+    )
+    assert all_fields(m) == [b"{integer,text}"], all_fields(m)
+    assert not errors(_simple(conn, "EXECUTE ns_replanned"))
+    _drop(conn, "ns_replan")
+
+
+def test_simple_query_ddl_replans_a_protocol_statement(conn):
+    _drop(conn, "ns_simple_ddl")
+    assert not errors(_simple(conn, "CREATE TABLE ns_simple_ddl(a int4)"))
+    _parse_ok(conn, "ns_simple", "SELECT * FROM ns_simple_ddl")
+    assert not errors(_simple(conn, "ALTER TABLE ns_simple_ddl ADD COLUMN b text"))
+    conn.describe("S", "ns_simple")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["a", "b"]
+    _drop(conn, "ns_simple_ddl")
+
+
+def test_deallocate_drops_unprepared_protocol_statements(conn):
+    _drop(conn, "ns_unprep")
+    assert not errors(_simple(conn, "CREATE TABLE ns_unprep(a int4)"))
+    _parse_ok(conn, "ns_copy_in", "COPY ns_unprep FROM STDIN")
+    _parse_ok(conn, "ns_copy_out", "COPY ns_unprep TO STDOUT")
+    _parse_ok(conn, "ns_empty", "")
+    _parse_ok(
+        conn,
+        "ns_compound",
+        "ALTER TABLE ns_unprep ADD COLUMN r float8 DEFAULT random()",
+    )
+    m = _simple(
+        conn,
+        "SELECT name, statement, parameter_types, result_types"
+        " FROM pg_prepared_statements WHERE NOT from_sql ORDER BY name",
+    )
+    assert not errors(m), errors(m)
+    assert [_data_row(r) for r in rows(m)] == [
+        [
+            b"ns_compound",
+            b"ALTER TABLE ns_unprep ADD COLUMN r float8 DEFAULT random()",
+            b"{}",
+            None,
+        ],
+        [b"ns_copy_in", b"COPY ns_unprep FROM STDIN", b"{}", None],
+        [b"ns_copy_out", b"COPY ns_unprep TO STDOUT", b"{}", None],
+        [b"ns_empty", b"", b"{}", None],
+    ]
+    assert sqlstates(_simple(conn, "PREPARE ns_copy_in AS SELECT 1")) == ["42P05"]
+    assert sqlstates(_simple(conn, "EXECUTE ns_copy_out")) == ["0A000"]
+    m = _simple(conn, "DEALLOCATE ns_copy_in")
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"DEALLOCATE\x00"], tags(m)
+    assert _bind_sqlstates(conn, "ns_copy_in") == ["26000"]
+    assert not errors(_simple(conn, "DEALLOCATE ALL"))
+    for name in ("ns_copy_out", "ns_empty", "ns_compound"):
+        assert _bind_sqlstates(conn, name) == ["26000"], name
+    _parse_ok(conn, "ns_empty", "")
+    assert not errors(_simple(conn, "DISCARD ALL"))
+    assert _bind_sqlstates(conn, "ns_empty") == ["26000"]
+    _drop(conn, "ns_unprep")
+
+
+def test_prepared_statement_names_are_case_sensitive(conn):
+    _parse_ok(conn, "ns_case", "select 1")
+    _parse_ok(conn, "NS_CASE", "select 2")
+    for sql, value in (("EXECUTE Ns_Case", b"1"), ('EXECUTE "NS_CASE"', b"2")):
+        m = _simple(conn, sql)
+        assert not errors(m), (sql, errors(m))
+        assert rows(m) and rows(m)[0].endswith(value), (sql, rows(m))
+    _parse_ok(conn, "MixedCase", "select 3")
+    assert sqlstates(_simple(conn, "EXECUTE mixedcase")) == ["26000"]
+
+
+def test_sequence_sqlstates(conn):
+    assert not errors(_simple(conn, "DROP SEQUENCE IF EXISTS ns_seq"))
+    assert not errors(_simple(conn, "CREATE SEQUENCE ns_seq MAXVALUE 2"))
+    assert sqlstates(_simple(conn, "SELECT currval('ns_seq')")) == ["55000"]
+    assert not errors(_simple(conn, "SELECT nextval('ns_seq'), nextval('ns_seq')"))
+    assert sqlstates(_simple(conn, "SELECT nextval('ns_seq')")) == ["2200H"]
+    assert sqlstates(_simple(conn, "SELECT setval('ns_seq', 5)")) == ["22003"]
+    assert not errors(_simple(conn, "DROP SEQUENCE ns_seq"))
+
+
+def test_deallocate_all_releases_protocol_statements(conn):
+    handles = (
+        "SELECT count(*) FROM duckdb_prepared_statements()"
+        " WHERE name LIKE 'duckdb_prepare_internal_%'"
+    )
+    _parse_ok(conn, "ns_release_a", "select 1")
+    _parse_ok(conn, "ns_release_b", "select 2")
+    assert all_fields(_simple(conn, handles)) == [b"2"]
+    assert not errors(_simple(conn, "DEALLOCATE ALL"))
+    assert all_fields(_simple(conn, handles)) == [b"0"]
+    _parse_ok(conn, "ns_release_c", "select 3")
+    assert not errors(conn.run("DEALLOCATE ALL"))
+    assert all_fields(_simple(conn, handles)) == [b"1"]

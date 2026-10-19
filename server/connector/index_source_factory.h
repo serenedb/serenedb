@@ -28,6 +28,7 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "search/inverted_index_storage.h"
 namespace duckdb {
 
 class ClientContext;
@@ -39,6 +40,7 @@ struct ScanBindData;
 
 std::unique_ptr<irs::IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const ScanBindData& bind_data,
+  const search::InvertedIndexSnapshot& snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids,

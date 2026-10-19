@@ -33,6 +33,7 @@ target_sources(
         pg_catalog/pg_trigger.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp
+        pg_catalog/pg_prepared_statements.cpp
         pg_catalog/pg_replication_origin.cpp
         pg_catalog/pg_subscription.cpp
         pg_catalog/pg_subscription_rel.cpp

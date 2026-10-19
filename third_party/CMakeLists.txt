@@ -324,9 +324,10 @@ set(USE_OPENMP 0 CACHE BOOL "" FORCE)
 set(USE_LOCKING 1 CACHE BOOL "" FORCE)
 set(NO_WARMUP 1 CACHE BOOL "" FORCE)
 set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
-set(NO_LAPACK 1 CACHE BOOL "" FORCE)
-set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
-set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
+set(NO_LAPACK 0 CACHE BOOL "" FORCE)
+set(C_LAPACK 1 CACHE BOOL "" FORCE)
+set(BUILD_SINGLE 1 CACHE BOOL "" FORCE)
+set(NO_CBLAS 1 CACHE BOOL "" FORCE)
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
 if(SDB_SANITIZE MATCHES "^Memory")
     message(
@@ -364,6 +365,16 @@ if(ARCH_AMD64 AND DYNAMIC_ARCH)
 endif()
 
 ################################################################################
+### pcg, header-only, vendored by duckdb
+################################################################################
+add_library(pcg INTERFACE)
+target_include_directories(
+    pcg
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/pcg
+)
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
@@ -381,6 +392,7 @@ target_compile_options(
         -Wno-sign-compare
         -Wno-suggest-destructor-override
 )
+target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
 ## snowball stemmer

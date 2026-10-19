@@ -23,11 +23,18 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/execution/operator/helper/physical_limit.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/bound_result_modifier.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -69,11 +76,132 @@ void ClassifySegments(ScanGlobalState& g) {
   irs::ColFilterStateCache init_states;
   irs::ColFilterClassification cls;
   for (uint32_t si = 0; si < g.total_segments; ++si) {
-    ClassifySegmentColFilters((*g.reader)[si], g, init_states, cls);
+    ClassifySegmentColFilters((*g.reader)[si], g, init_states, cls, false);
     if (!cls.segment_dead) {
       g.segment_order.push_back(si);
     }
   }
+}
+
+std::optional<uint64_t> EvaluateLimitValue(duckdb::ClientContext& context,
+                                           const duckdb::Expression& expr) {
+  const auto value =
+    duckdb::ExpressionExecutor::EvaluateScalar(context, expr, true);
+  if (value.IsNull()) {
+    return std::nullopt;
+  }
+  const auto n = value.GetValue<duckdb::idx_t>();
+  if (n > duckdb::PhysicalLimit::MAX_LIMIT_VALUE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("Max value ", n, " for LIMIT/OFFSET is ",
+                            duckdb::PhysicalLimit::MAX_LIMIT_VALUE));
+  }
+  return n;
+}
+
+void EvaluateTopK(duckdb::ClientContext& context, const ScanBindData& ss,
+                  ScanGlobalState& g) {
+  const auto limit = EvaluateLimitValue(context, *ss.score.top_k_expr);
+  const uint64_t offset =
+    ss.score.top_offset_expr
+      ? EvaluateLimitValue(context, *ss.score.top_offset_expr).value_or(0)
+      : 0;
+  constexpr uint64_t kMaxTopK = std::numeric_limits<uint32_t>::max();
+  if (!ss.score.top_n_consumed) {
+    if (limit && *limit != 0 && *limit + offset <= kMaxTopK) {
+      g.top_k = *limit + offset;
+    }
+    return;
+  }
+  const uint64_t live = g.reader->live_docs_count();
+  if ((limit && *limit == 0) || offset >= live) {
+    g.empty_answer = true;
+    g.top_k = 1;
+    return;
+  }
+  g.top_k = std::min({limit ? *limit + offset : kMaxTopK, live, kMaxTopK});
+  g.top_offset = offset;
+}
+
+bool SameLimit(const duckdb::BoundLimitNode& node,
+               const duckdb::Expression* expr) {
+  switch (node.Type()) {
+    case duckdb::LimitNodeType::UNSET:
+      return !expr;
+    case duckdb::LimitNodeType::CONSTANT_VALUE:
+      return expr &&
+             expr->Equals(duckdb::BoundConstantExpression{duckdb::Value::BIGINT(
+               static_cast<int64_t>(node.GetConstantValue()))});
+    case duckdb::LimitNodeType::EXPRESSION_VALUE:
+      return expr && expr->Equals(node.GetValueExpression());
+    default:
+      return false;
+  }
+}
+
+std::vector<float> EvaluateQueryVector(duckdb::ClientContext& context,
+                                       const VectorScorerOptions& vs) {
+  const auto target =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vs.dims);
+  const auto bad = [&](const char* what) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("the query vector of a vector search ", what));
+  };
+  duckdb::Vector evaluated{vs.query_expr->GetReturnType(), 1};
+  {
+    duckdb::ExpressionExecutor executor{context, *vs.query_expr};
+    executor.ExecuteExpression(evaluated);
+  }
+  duckdb::Vector casted{target, 1};
+  std::string error;
+  if (!duckdb::VectorOperations::TryCast(context, evaluated, casted, 1,
+                                         &error)) {
+    bad(absl::StrCat("is not a ", target.ToString(), ": ", error).c_str());
+  }
+  casted.Flatten(1);
+  if (!duckdb::FlatVector::Validity(casted).RowIsValid(0)) {
+    bad("is NULL");
+  }
+  auto& child = duckdb::ArrayVector::GetEntry(casted);
+  child.Flatten(vs.dims);
+  if (!duckdb::FlatVector::Validity(child).CheckAllValid(vs.dims)) {
+    bad("holds NULL");
+  }
+  const auto* data = duckdb::FlatVector::GetData<float>(child);
+  return std::vector<float>{data, data + vs.dims};
+}
+
+const VectorScorerOptions& PrepareVectorScorer(
+  ScanGlobalState& state, duckdb::ClientContext& context,
+  const VectorScorerOptions& planned) {
+  auto& vs = state.owned_vector_scorer.emplace(planned);
+  RefreshVectorKnobs(vs, context);
+  if (vs.query_expr) {
+    vs.query_vector = EvaluateQueryVector(context, vs);
+  }
+  SDB_ENSURE(!vs.query_vector.empty(),
+             "a vector search has a query vector to search for");
+  if (state.top_k) {
+    if (vs.kind == irs::AnnKind::Hnsw) {
+      bool chosen_here = false;
+      const auto factor = AnnOversample(context, vs, chosen_here);
+      const auto k = static_cast<double>(*state.top_k);
+      const double share = SegmentBeamShare(k, state.total_segments);
+      const double seg_pool = OversamplePool(factor, share);
+      vs.min_ef = ClampCandidates(seg_pool > 0.0 ? seg_pool : share, k,
+                                  state.reader->live_docs_count());
+    }
+    vs.top_k = static_cast<uint32_t>(*state.top_k);
+  } else if (vs.radius == std::numeric_limits<float>::max()) {
+    vs.exact = true;
+  }
+  if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
+    vs.ef_search =
+      std::max(vs.ef_construction,
+               state.top_k ? static_cast<uint32_t>(*state.top_k) : uint32_t{1});
+  }
+  state.vector_scorer = &vs;
+  return vs;
 }
 
 }  // namespace
@@ -93,9 +221,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
-  state->reader = &ss.search.snapshot->reader;
-  state->total_segments = ss.search.snapshot->reader.size();
+  state->snapshot = ss.Snapshot(context);
+  const auto& snapshot = *state->snapshot;
+  state->reader = &snapshot.reader;
+  state->total_segments = snapshot.reader.size();
+  if (ss.plan_cache.deferred) {
+    ApplyDeferredClaim(*state, context, ss);
+  }
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
+  state->top_k = ss.score.top_k;
+  state->top_offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;
+  if (!state->top_k && ss.score.top_k_expr) {
+    EvaluateTopK(context, ss, *state);
+  }
+  if (state->top_k) {
+    state->top_k = std::min<uint64_t>(
+      {*state->top_k, std::max<uint64_t>(state->reader->live_docs_count(), 1),
+       std::numeric_limits<uint32_t>::max()});
+  }
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
@@ -160,25 +303,19 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
                 "fast-path source (read_parquet/csv/json/...)"));
     }
   }
+  const auto where = state->ClaimedWhere();
   if (ss.score.vector) {
-    auto vs = *ss.score.vector;
-    if (vs.quant != irs::VectorQuantization::None && ss.score.top_k) {
-      vs.min_ef = GetDoubleSetting(context, "sdb_rerank_factor") *
-                  static_cast<uint32_t>(*ss.score.top_k);
-    }
-    state->owned_filter =
-      MakeVectorFilter(vs, ss.search.filter, vs.EffectiveRadius());
+    const auto& vs = PrepareVectorScorer(*state, context, *ss.score.vector);
+    state->owned_filter = MakeVectorFilter(vs, where, vs.EffectiveRadius());
     state->filter = state->owned_filter.get();
   } else {
-    state->filter =
-      ss.search.filter ? ss.search.filter.get() : &MatchAllFilter();
+    state->filter = where ? where.get() : &MatchAllFilter();
   }
   state->queries.resize(state->total_segments);
 
   ClassifySegments(*state);
 
-  state->splittable =
-    !ss.score.vector && !(ss.search.filter && HasNested(*ss.search.filter));
+  state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
     BuildClaimPlan(*state, context);
@@ -291,6 +428,9 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& g = data.global_state->Cast<ScanGlobalState>();
+  if (g.empty_answer) {
+    return;
+  }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
   if (base.parked_on) {
@@ -354,8 +494,8 @@ void IResearchSetScanOrder(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->row_limit.IsValid() ||
-      !options->single_order_key) {
+  if (!bind_data || !options || !options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
     return;
   }
   if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
@@ -375,32 +515,55 @@ void IResearchSetScanOrder(
     }
     return;
   }
-  if (bd.score.top_k) {
+  if (bd.score.HasTopK()) {
     return;
   }
+  const auto take_limit = [&] {
+    if (options->row_limit.IsValid()) {
+      bd.score.top_k = options->row_limit.GetIndex();
+    } else {
+      bd.score.top_k_expr = options->row_limit_expression;
+      bd.score.top_offset_expr = options->row_offset_expression;
+    }
+  };
   if (bd.score.text) {
     if (options->order_type != duckdb::OrderType::DESCENDING) {
       return;
     }
-    bd.score.top_k = options->row_limit.GetIndex();
+    take_limit();
     return;
   }
   if (bd.score.vector) {
     if (options->order_type != bd.score.vector->natural_order) {
       return;
     }
-    bd.score.top_k = options->row_limit.GetIndex();
+    take_limit();
   }
 }
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
-                          duckdb::FunctionData& bind_data, duckdb::idx_t limit,
-                          duckdb::idx_t offset) {
+                          duckdb::FunctionData& bind_data,
+                          const duckdb::BoundLimitNode& limit,
+                          const duckdb::BoundLimitNode& offset) {
   auto& bd = bind_data.Cast<ScanBindData>();
-  if (!bd.score.top_k || *bd.score.top_k != limit + offset) {
-    return false;
+  if (bd.score.top_k_expr) {
+    if (!SameLimit(limit, bd.score.top_k_expr.get()) ||
+        !SameLimit(offset, bd.score.top_offset_expr.get())) {
+      return false;
+    }
+  } else {
+    if (limit.Type() != duckdb::LimitNodeType::CONSTANT_VALUE ||
+        offset.Type() == duckdb::LimitNodeType::EXPRESSION_VALUE) {
+      return false;
+    }
+    const auto skip = offset.Type() == duckdb::LimitNodeType::CONSTANT_VALUE
+                        ? offset.GetConstantValue()
+                        : duckdb::idx_t{0};
+    if (!bd.score.top_k || *bd.score.top_k != limit.GetConstantValue() + skip) {
+      return false;
+    }
+    bd.score.top_offset = skip;
   }
-  bd.score.top_offset = offset;
   bd.score.top_n_consumed = true;
   return true;
 }

@@ -777,7 +777,7 @@ TEST_P(Format10TestCase, ires336) {
   irs::SegmentMeta meta;
   meta.name = segment_name;
 
-  irs::IdxReader idx_reader{*dir, segment_name};
+  irs::IdxReader idx_reader{*dir, segment_name, nullptr};
   irs::burst_trie::FieldReader fr_obj{irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(

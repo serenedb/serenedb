@@ -21,6 +21,8 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -127,6 +129,7 @@ void SearchTable::OpenWriter(bool in_memory) {
   _absent = opened.absent;
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
@@ -461,19 +464,23 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments,
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
+  const ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets(target);
+    std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot = _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
+      buckets.resize(target);
       for (size_t i = 0; i < snapshot.size(); ++i) {
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
+    absl::Status status;
     bool merged = false;
-    for (auto& names : buckets) {
+    for (const auto& names : buckets) {
       const irs::CompactionPolicy bucket =
         [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
                  const irs::CompactingSegments& busy) {
@@ -486,21 +493,26 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments,
           }
         };
       bool empty = false;
-      auto res =
-        CompactUnsafe(bucket, progress, empty, field_options.get()).res;
+      const auto compact = [&] {
+        return irs::GetBlocking(CompactUnsafeAsync(bucket, progress, empty,
+                                                   field_options.get(), env))
+          .res;
+      };
+      auto res = compact();
       while (absl::IsUnavailable(res)) {
         if (!GetSearchEngine().Maintenance().WaitOpen(cancelled)) {
           return absl::CancelledError("compaction cancelled");
         }
-        res = CompactUnsafe(bucket, progress, empty, field_options.get()).res;
-      }
-      if (!res.ok()) {
-        return res;
+        res = compact();
       }
       if (cancelled()) {
         return absl::CancelledError("compaction cancelled");
       }
-      merged |= !empty;
+      status.Update(res);
+      merged = merged || !empty;
+    }
+    if (!status.ok()) {
+      return status;
     }
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;

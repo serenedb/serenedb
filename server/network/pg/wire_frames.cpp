@@ -154,6 +154,10 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (kind == "Type") {
       return dup ? ERRCODE_DUPLICATE_OBJECT : ERRCODE_UNDEFINED_OBJECT;
     }
+    if (kind == "prepared statement") {
+      return dup ? ERRCODE_DUPLICATE_PSTATEMENT
+                 : ERRCODE_INVALID_SQL_STATEMENT_NAME;
+    }
     if (kind == "configuration parameter") {
       // Unknown GUC -- DuckDB throws CatalogException::MissingEntry(
       // "configuration parameter", ...) for SET / RESET / current_setting. PG
@@ -166,6 +170,10 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (error.Type() == duckdb::ExceptionType::BINDER) {
     if (subtype == "NO_MATCHING_FUNCTION") {
       return ERRCODE_UNDEFINED_FUNCTION;
+    }
+    if (const auto kind_it = extra.find("type");
+        kind_it != extra.end() && kind_it->second == "prepared statement") {
+      return ERRCODE_INVALID_SQL_STATEMENT_NAME;
     }
     if (subtype == "UNSUPPORTED") {
       return ERRCODE_FEATURE_NOT_SUPPORTED;
@@ -197,6 +205,17 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
       return ERRCODE_UNIQUE_VIOLATION;
     }
     return ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION;
+  }
+  if (error.Type() == duckdb::ExceptionType::SEQUENCE) {
+    if (subtype == "NOT_YET_DEFINED") {
+      return ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE;
+    }
+    if (subtype == "LIMIT_REACHED") {
+      return ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED;
+    }
+    if (subtype == "OUT_OF_BOUNDS") {
+      return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+    }
   }
   return DuckExceptionToErrcode(error.Type());
 }

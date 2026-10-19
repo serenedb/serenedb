@@ -39,6 +39,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
@@ -578,6 +579,20 @@ struct FilterPrinter {
       node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ByVectorExact>::id()) {
+      const auto& f = downCast<const ByVectorExact>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Vector Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Radius"] =
+        absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      node.attributes["Exact"] = "brute force over the stored vectors";
       if (o.inner) {
         node.children.push_back(Build(*o.inner));
       }

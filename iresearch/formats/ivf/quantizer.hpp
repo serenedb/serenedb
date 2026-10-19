@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -45,6 +47,9 @@ struct PayloadBlockSetting {
   }
 };
 
+using TrainFanout =
+  absl::FunctionRef<void(size_t, absl::FunctionRef<void(size_t)>)>;
+
 class QuantizerWriter {
  public:
   static constexpr size_t kTrainStreaming = std::numeric_limits<size_t>::max();
@@ -54,6 +59,11 @@ class QuantizerWriter {
   virtual size_t TrainSamples(size_t /*rows*/) const noexcept { return 0; }
 
   virtual void Train(const float* vecs, size_t n) = 0;
+
+  virtual void TrainParallel(const float* vecs, size_t n,
+                             TrainFanout /*fanout*/) {
+    Train(vecs, n);
+  }
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
@@ -74,6 +84,8 @@ class QuantizerWriter {
     return nullptr;
   }
 
+  virtual uint32_t EncodeWidth() const noexcept { return 1; }
+
   virtual void Finish(IndexOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
@@ -81,6 +93,14 @@ class QuantizerWriter {
   virtual void Serialize(DataOutput& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
+};
+
+struct QuantizerLevelBound {
+  uint32_t width = 0;
+  uint32_t query_step = 0;
+  std::span<const float> query;
+  const float* rows = nullptr;
+  uint32_t row_stride = 0;
 };
 
 class QuantizerReader {
@@ -94,6 +114,14 @@ class QuantizerReader {
   virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
                                std::span<const uint32_t> ids, score_t threshold,
                                score_t* out);
+
+  virtual bool ComputeGatheredBounded(const byte_type* /*base*/,
+                                      uint32_t /*record_size*/,
+                                      std::span<const uint32_t> /*ids*/,
+                                      const QuantizerLevelBound& /*bound*/,
+                                      score_t /*threshold*/, score_t* /*out*/) {
+    return false;
+  }
 
   virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
     return false;
@@ -127,6 +155,17 @@ class QuantizerCodebook
   virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
 };
 
+class QuantizerCodeBound {
+ public:
+  virtual ~QuantizerCodeBound() = default;
+
+  virtual void Score(const byte_type* base, uint32_t record_size,
+                     std::span<const uint32_t> ids, score_t* out) const = 0;
+
+  virtual void Bounds(std::span<const score_t> scores, score_t* lower,
+                      score_t* upper) const noexcept = 0;
+};
+
 // Query-independent, deserialized quantizer statistics. Parsed once from the
 // on-disk stats blob and shared across queries; binds a query into a
 // QuantizerCodebook via MakeCodebook.
@@ -136,18 +175,36 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
   virtual VectorQuantization Kind() const noexcept = 0;
   virtual std::shared_ptr<const QuantizerCodebook> MakeCodebook(
     std::span<const float> query) const = 0;
+
+  virtual std::shared_ptr<const QuantizerCodebook> MakeBuildCodebook(
+    std::span<const float> query) const {
+    return MakeCodebook(query);
+  }
+
+  virtual std::shared_ptr<const QuantizerCodebook> MakeRangeCodebook(
+    std::span<const float> query) const {
+    return MakeCodebook(query);
+  }
+
+  virtual std::shared_ptr<const QuantizerCodeBound> MakeCodeBound(
+    std::span<const float> /*query*/, VectorMetric /*metric*/) const {
+    return nullptr;
+  }
+
+  virtual std::span<const byte_type> CodebookKey() const noexcept { return {}; }
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
   return quant == VectorQuantization::PQ ||
-         quant == VectorQuantization::RaBitQ || quant == VectorQuantization::TQ;
+         quant == VectorQuantization::RaBitQ ||
+         quant == VectorQuantization::TQ || quant == VectorQuantization::OSQ;
 }
 
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
-  VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
-  uint32_t pq_niter, uint32_t nb_bits, bool row_major = false);
+  const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
+  uint32_t pq_niter = 0, bool row_major = false);
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,

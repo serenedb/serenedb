@@ -189,6 +189,9 @@ statement ok
 ALTER TABLE mt_s SET (compaction_interval = 0, refresh_interval = 0)
 
 
+sleep 1s
+
+
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
@@ -218,6 +221,9 @@ statement ok
 ALTER TABLE mt_s SET (refresh_interval = 0)
 
 
+sleep 1s
+
+
 statement ok
 INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
@@ -245,6 +251,9 @@ count
 
 statement ok
 ALTER TABLE mt_s SET (refresh_interval = 0)
+
+
+sleep 1s
 
 
 statement ok
@@ -434,6 +443,9 @@ statement ok
 ALTER INDEX mt_t_idx SET (compaction_interval = 0, refresh_interval = 0)
 
 
+sleep 1s
+
+
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(101, 110) s(i)
 
@@ -463,6 +475,9 @@ statement ok
 ALTER INDEX mt_t_idx SET (refresh_interval = 0)
 
 
+sleep 1s
+
+
 statement ok
 INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(111, 120) s(i)
 
@@ -490,6 +505,9 @@ count
 
 statement ok
 ALTER INDEX mt_t_idx SET (refresh_interval = 0)
+
+
+sleep 1s
 
 
 statement ok

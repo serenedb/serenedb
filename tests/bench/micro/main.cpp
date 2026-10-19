@@ -23,6 +23,7 @@
 
 #include <cstdio>
 #include <functional>
+#include <iresearch/utils/cpu_features.hpp>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,7 @@ namespace benchmark::internal {
 }  // namespace benchmark::internal
 
 int main(int argc, char** argv) {
+  irs::CheckCpuFeatures(argv[0]);
   ::benchmark::MaybeReenterWithoutASLR(argc, argv);
   auto& modules = sdb::bench::GetModules();
   std::string_view self{argv[0]};

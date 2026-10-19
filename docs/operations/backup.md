@@ -6,7 +6,7 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-SereneDB takes a consistent backup of a running server with the PostgreSQL functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you copy the whole data directory with any file copy tool, or let [pgBackRest](#pgbackrest) do it. The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after.
+SereneDB takes a consistent backup of a running server with the PostgreSQL functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you copy the whole data directory with any file copy tool, or let [pgBackRest](#pgbackrest) do it. The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after. On storage with crash-consistent snapshots, a [volume snapshot](#volume-snapshots) of the running server is a backup too.
 
 ## Taking a backup
 
@@ -35,7 +35,7 @@ Only one backup runs at a time. A second `pg_backup_start` fails with `a backup 
 At startup the server sees `backup_label`, brings the copy to the state it had when `pg_backup_start` returned, and renames the label to `backup_label.old`. If the server stops while doing so, start it again: the restore resumes.
 
 <DocCallout type="attention">
-Never start a copy without its `backup_label`. The server cannot tell such a copy apart from a data directory that crashed, and may refuse to start or start on inconsistent data.
+Never start a file-by-file copy without its `backup_label`. Its files were copied at different moments, the server cannot tell such a copy apart from a data directory that crashed, and it may refuse to start or start on inconsistent data. [Volume snapshots](#volume-snapshots) are taken at one moment and need no label.
 </DocCallout>
 
 ## Functions
@@ -58,6 +58,7 @@ Differences from PostgreSQL:
 - `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
 - Both functions require a superuser. `pg_backup_start` also requires a PostgreSQL-protocol connection.
+- The positions they return, and the ones in the backup label, are not positions in SereneDB's write-ahead logs. They only increase, and exist so that PostgreSQL backup tools can work with SereneDB. Do not compare them with other positions, such as the ones subscriptions report.
 
 ## During a backup
 
@@ -98,6 +99,22 @@ A restored server starts with every [subscription](../sql/statements/create_subs
 ## Databases with a failed checkpoint
 
 When a checkpoint of a database has failed since the server started, `pg_backup_start` still succeeds, but sends a warning naming that database and logs it. After a restore, that database recovers as it does after a crash. Check it before relying on the backup, or restart the server and take the backup again.
+
+## Volume snapshots
+
+When the data directory lives on storage that takes crash-consistent snapshots, a snapshot of the running server's volume is a backup. A crash-consistent snapshot holds every write the volume had completed at that moment, the same state the volume would be in after a power failure, and SereneDB recovers from it at startup the way it recovers from a crash. No `backup_label` is needed: start the server on a volume restored from the snapshot.
+
+The major clouds take such snapshots of their block storage:
+
+- AWS: EBS snapshots, and multi-volume snapshots of all the volumes of an instance.
+- Google Cloud: persistent disk snapshots, and machine images for the disks of a VM.
+- Azure: managed disk snapshots, and crash-consistent VM restore points for the disks of a VM.
+
+Storage arrays and filesystems with point-in-time snapshots (LVM, ZFS, btrfs) work the same way.
+
+Keep the whole data directory on one volume. If it spans several, snapshot all of them in one crash-consistent operation, such as the provider's multi-volume snapshot; snapshots of the volumes taken one after another do not form a consistent backup.
+
+Taking the snapshot between `pg_backup_start` and `pg_backup_stop` is still advised: while a backup runs, the server checkpoints nothing and removes no files, so the snapshot catches the data directory with fewer changes in progress. Such a snapshot can also be restored to the moment `pg_backup_start` returned, by writing the `labelfile` from `pg_backup_stop` as `backup_label` before starting the server, as in [Restoring](#restoring).
 
 ## pgBackRest
 

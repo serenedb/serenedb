@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <faiss/utils/distances.h>
 #include <faiss/utils/fp16.h>
 #include <immintrin.h>
@@ -60,9 +80,9 @@ float HalfDot2(const uint16_t* row, const float* q, uint32_t d) {
   __m256 acc1 = _mm256_setzero_ps();
   uint32_t i = 0;
   for (; i + 16 <= d; i += 16) {
-    acc0 = _mm256_fmadd_ps(
-      _mm256_cvtph_ps(_mm_loadu_si128(reinterpret_cast<const __m128i*>(row + i))),
-      _mm256_loadu_ps(q + i), acc0);
+    acc0 = _mm256_fmadd_ps(_mm256_cvtph_ps(_mm_loadu_si128(
+                             reinterpret_cast<const __m128i*>(row + i))),
+                           _mm256_loadu_ps(q + i), acc0);
     acc1 = _mm256_fmadd_ps(_mm256_cvtph_ps(_mm_loadu_si128(
                              reinterpret_cast<const __m128i*>(row + i + 8))),
                            _mm256_loadu_ps(q + i + 8), acc1);
@@ -138,8 +158,8 @@ void HalfRotate(const float*, const float* q, float* out, uint32_t d) {
 std::vector<int8_t> gByte;
 std::vector<float> gScale;
 
-__attribute__((target("avx512f,avx512bw,avx512vl"))) __m512 Widen512(
-  const int8_t* p) {
+__attribute__((target("avx512f,avx512bw,avx512vl"))) __m512
+Widen512(const int8_t* p) {
   return _mm512_cvtepi32_ps(
     _mm512_cvtepi8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p))));
 }
@@ -177,7 +197,8 @@ ByteDotVnni(const int8_t* row, const int16_t* q, uint32_t d) {
     acc0 = _mm512_dpwssd_epi32(acc0, r0, _mm512_loadu_si512(q + i));
     acc1 = _mm512_dpwssd_epi32(acc1, r1, _mm512_loadu_si512(q + i + 32));
   }
-  return static_cast<float>(_mm512_reduce_add_epi32(_mm512_add_epi32(acc0, acc1)));
+  return static_cast<float>(
+    _mm512_reduce_add_epi32(_mm512_add_epi32(acc0, acc1)));
 }
 
 float ByteDot256(const int8_t* row, const float* q, uint32_t d) {
@@ -192,7 +213,8 @@ float ByteDot256(const int8_t* row, const float* q, uint32_t d) {
   uint32_t i = 0;
   for (; i + 32 <= d; i += 32) {
     acc0 = _mm256_fmadd_ps(widen(row + i), _mm256_loadu_ps(q + i), acc0);
-    acc1 = _mm256_fmadd_ps(widen(row + i + 8), _mm256_loadu_ps(q + i + 8), acc1);
+    acc1 =
+      _mm256_fmadd_ps(widen(row + i + 8), _mm256_loadu_ps(q + i + 8), acc1);
     acc2 =
       _mm256_fmadd_ps(widen(row + i + 16), _mm256_loadu_ps(q + i + 16), acc2);
     acc3 =
@@ -224,8 +246,8 @@ __attribute__((target("avxvnni"))) float ByteDotVnni256(const int8_t* row,
       _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q + i + 16)));
   }
   const __m256i s = _mm256_add_epi32(acc0, acc1);
-  __m128i h = _mm_add_epi32(_mm256_castsi256_si128(s),
-                            _mm256_extracti128_si256(s, 1));
+  __m128i h =
+    _mm_add_epi32(_mm256_castsi256_si128(s), _mm256_extracti128_si256(s, 1));
   h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0x4E));
   h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0xB1));
   return static_cast<float>(_mm_cvtsi128_si32(h));
@@ -244,12 +266,13 @@ float ByteDotMadd256(const int8_t* row, const int16_t* q, uint32_t d) {
       acc0, _mm256_madd_epi16(
               r0, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q + i))));
     acc1 = _mm256_add_epi32(
-      acc1, _mm256_madd_epi16(r1, _mm256_loadu_si256(
-                                    reinterpret_cast<const __m256i*>(q + i + 16))));
+      acc1,
+      _mm256_madd_epi16(
+        r1, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(q + i + 16))));
   }
   const __m256i s = _mm256_add_epi32(acc0, acc1);
-  __m128i h = _mm_add_epi32(_mm256_castsi256_si128(s),
-                            _mm256_extracti128_si256(s, 1));
+  __m128i h =
+    _mm_add_epi32(_mm256_castsi256_si128(s), _mm256_extracti128_si256(s, 1));
   h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0x4E));
   h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0xB1));
   return static_cast<float>(_mm_cvtsi128_si32(h));
@@ -317,8 +340,8 @@ void ByteRotateVnni(const float*, const float* q, float* out, uint32_t d) {
   }
   const float inv = 1.f / s;
   for (uint32_t i = 0; i < d; ++i) {
-    out[i] =
-      gScale[i] * inv * ByteDotVnni(gByte.data() + size_t{i} * d, tQ16.data(), d);
+    out[i] = gScale[i] * inv *
+             ByteDotVnni(gByte.data() + size_t{i} * d, tQ16.data(), d);
   }
 }
 
@@ -372,7 +395,8 @@ double Run(Fn fn, const std::vector<float>& a, uint32_t d, size_t threads,
 }
 
 int Main(int argc, char** argv) {
-  const uint32_t d = argc > 1 ? static_cast<uint32_t>(std::atoi(argv[1])) : 3072;
+  const uint32_t d =
+    argc > 1 ? static_cast<uint32_t>(std::atoi(argv[1])) : 3072;
   if (argc > 2) {
     const size_t n = static_cast<size_t>(std::atoi(argv[2]));
     std::vector<float> x(n * d);

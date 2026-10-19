@@ -1,15 +1,34 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb.hpp>
 #include <filesystem>
 #include <map>
 #include <random>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <duckdb.hpp>
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -39,8 +58,8 @@ struct Spec {
 
 const std::vector<Spec>& Specs() {
   static const std::vector<Spec> specs{
-    {"uncompressed", "uncompressed",
-     "CASE WHEN i % 3 = 0 THEN NULL ELSE i END", duckdb::LogicalType::BIGINT},
+    {"uncompressed", "uncompressed", "CASE WHEN i % 3 = 0 THEN NULL ELSE i END",
+     duckdb::LogicalType::BIGINT},
     {"bitpacking_for", "bitpacking", "(hash(i) % 1000)::BIGINT",
      duckdb::LogicalType::BIGINT},
     {"bitpacking_delta_for", "bitpacking", "i * 3 + i % 7",
@@ -67,19 +86,17 @@ struct FetchTable {
       con(db) {
     Check(con.Query(std::string{"SET force_compression = '"} +
                     spec.compression + "'"));
-    Check(con.Query(std::string{"CREATE TABLE t AS SELECT "} +
-                    spec.expression + " AS v FROM range(" +
-                    std::to_string(kRows) + ") t(i)"));
+    Check(con.Query(std::string{"CREATE TABLE t AS SELECT "} + spec.expression +
+                    " AS v FROM range(" + std::to_string(kRows) + ") t(i)"));
     Check(con.Query("CHECKPOINT"));
     con.BeginTransaction();
     auto& context = *con.context;
     auto& catalog = duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context));
     auto& entry = catalog.GetEntry<duckdb::TableCatalogEntry>(
-      context,
-      duckdb::QualifiedName(catalog.GetName(),
-                            duckdb::Identifier::DefaultSchema(),
-                            duckdb::Identifier("t")));
+      context, duckdb::QualifiedName(catalog.GetName(),
+                                     duckdb::Identifier::DefaultSchema(),
+                                     duckdb::Identifier("t")));
     storage = &entry.GetStorage();
     transaction = &duckdb::DuckTransaction::Get(context, catalog);
   }
@@ -106,7 +123,11 @@ FetchTable& TableOf(const Spec& spec) {
   return *table;
 }
 
-enum class Pattern { Random, Stride, Dense };
+enum class Pattern {
+  Random,
+  Stride,
+  Dense,
+};
 
 const std::vector<duckdb::row_t>& Rows(Pattern pattern, size_t batch) {
   static std::map<std::pair<Pattern, size_t>, std::vector<duckdb::row_t>> cache;
@@ -197,11 +218,11 @@ static int Main(int argc, char** argv) {
           });
       }
     }
-    benchmark::RegisterBenchmark(
-      std::string{spec.name} + "/random_fresh/16",
-      [&spec](benchmark::State& state) {
-        Fetch(state, spec, Pattern::Random, 16, true);
-      });
+    benchmark::RegisterBenchmark(std::string{spec.name} + "/random_fresh/16",
+                                 [&spec](benchmark::State& state) {
+                                   Fetch(state, spec, Pattern::Random, 16,
+                                         true);
+                                 });
   }
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();

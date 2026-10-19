@@ -1,21 +1,41 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <absl/strings/str_split.h>
+#include <faiss/impl/ProductQuantizer.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
-#include <bit>
-#include <numbers>
-#include <random>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <faiss/impl/ProductQuantizer.h>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <limits>
+#include <numbers>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -38,7 +58,8 @@ std::vector<float> ReadF32(const std::string& path, size_t count) {
 
 template<typename F>
 void ParallelFor(size_t n, F&& f) {
-  const size_t threads = std::max<size_t>(1, std::thread::hardware_concurrency());
+  const size_t threads =
+    std::max<size_t>(1, std::thread::hardware_concurrency());
   std::atomic<size_t> next{0};
   std::vector<std::thread> pool;
   for (size_t t = 0; t < threads; ++t) {
@@ -74,8 +95,9 @@ std::vector<uint32_t> TopIds(const std::vector<float>& scores, size_t k) {
     ids[i] = i;
   }
   k = std::min(k, ids.size());
-  std::partial_sort(ids.begin(), ids.begin() + k, ids.end(),
-                    [&](uint32_t a, uint32_t b) { return scores[a] > scores[b]; });
+  std::partial_sort(
+    ids.begin(), ids.begin() + k, ids.end(),
+    [&](uint32_t a, uint32_t b) { return scores[a] > scores[b]; });
   ids.resize(k);
   return ids;
 }
@@ -112,10 +134,10 @@ const std::vector<float>& LloydMax(uint32_t bits) {
   static const std::vector<float> b2{-1.5104f, -0.4528f, 0.4528f, 1.5104f};
   static const std::vector<float> b3{-2.1520f, -1.3439f, -0.7560f, -0.2451f,
                                      0.2451f,  0.7560f,  1.3439f,  2.1520f};
-  static const std::vector<float> b4{
-    -2.7326f, -2.0690f, -1.6181f, -1.2562f, -0.9424f, -0.6568f,
-    -0.3881f, -0.1284f, 0.1284f,  0.3881f,  0.6568f,  0.9424f,
-    1.2562f,  1.6181f,  2.0690f,  2.7326f};
+  static const std::vector<float> b4{-2.7326f, -2.0690f, -1.6181f, -1.2562f,
+                                     -0.9424f, -0.6568f, -0.3881f, -0.1284f,
+                                     0.1284f,  0.3881f,  0.6568f,  0.9424f,
+                                     1.2562f,  1.6181f,  2.0690f,  2.7326f};
   switch (bits) {
     case 1:
       return b1;
@@ -365,7 +387,8 @@ T ParseNumber(std::string_view s) {
 
 Config ParseConfig(std::string_view s) {
   std::vector<std::string> parts = absl::StrSplit(s, ':');
-  Config c{.name = std::string{s}, .quant = VectorQuantization::None,
+  Config c{.name = std::string{s},
+           .quant = VectorQuantization::None,
            .nb_bits = parts.size() > 1 ? ParseNumber<uint32_t>(parts[1]) : 0};
   const auto& k = parts[0];
   if (k == "pq8") {
@@ -377,32 +400,52 @@ Config ParseConfig(std::string_view s) {
     c.ref = true;
     for (size_t i = 1; i < parts.size(); ++i) {
       const auto& p = parts[i];
-      if (i == 1) c.ref_opts.bits = ParseNumber<uint32_t>(p);
-      else if (p == "hd" || p == "q4" || p == "hd3") c.ref_opts.rot = p;
-      else if (p == "nocenter") c.ref_opts.center = false;
-      else if (p == "noec") c.ref_opts.ec = false;
-      else if (p == "unbiased" || p == "renorm") c.ref_opts.est = p;
-      else if (p == "cq") c.ref_opts.cq = true;
-      else if (p.starts_with("q")) c.ref_opts.qbits = ParseNumber<uint32_t>(std::string_view{p}.substr(1));
+      if (i == 1) {
+        c.ref_opts.bits = ParseNumber<uint32_t>(p);
+      } else if (p == "hd" || p == "q4" || p == "hd3") {
+        c.ref_opts.rot = p;
+      } else if (p == "nocenter") {
+        c.ref_opts.center = false;
+      } else if (p == "noec") {
+        c.ref_opts.ec = false;
+      } else if (p == "unbiased" || p == "renorm") {
+        c.ref_opts.est = p;
+      } else if (p == "cq") {
+        c.ref_opts.cq = true;
+      } else if (p.starts_with("q")) {
+        c.ref_opts.qbits = ParseNumber<uint32_t>(std::string_view{p}.substr(1));
+      }
     }
     return c;
   }
-  if (k == "sq8") c.quant = VectorQuantization::SQ8;
-  else if (k == "sq4") c.quant = VectorQuantization::SQ4;
-  else if (k == "usq8") c.quant = VectorQuantization::USQ8;
-  else if (k == "usq4") c.quant = VectorQuantization::USQ4;
-  else if (k == "tq") c.quant = VectorQuantization::TQ;
-  else if (k == "rabitq") c.quant = VectorQuantization::RaBitQ;
-  else if (k == "pq") c.quant = VectorQuantization::PQ;
-  else if (k == "fp16") c.quant = VectorQuantization::FP16;
-  else if (k == "bf16") c.quant = VectorQuantization::BF16;
-  else if (k == "bq") {
+  if (k == "sq8") {
+    c.quant = VectorQuantization::SQ8;
+  } else if (k == "sq4") {
+    c.quant = VectorQuantization::SQ4;
+  } else if (k == "usq8") {
+    c.quant = VectorQuantization::USQ8;
+  } else if (k == "usq4") {
+    c.quant = VectorQuantization::USQ4;
+  } else if (k == "tq") {
+    c.quant = VectorQuantization::TQ;
+  } else if (k == "rabitq") {
+    c.quant = VectorQuantization::RaBitQ;
+  } else if (k == "pq") {
+    c.quant = VectorQuantization::PQ;
+  } else if (k == "fp16") {
+    c.quant = VectorQuantization::FP16;
+  } else if (k == "bf16") {
+    c.quant = VectorQuantization::BF16;
+  } else if (k == "bq") {
     c.quant = VectorQuantization::BQ;
-    if (parts.size() > 2) c.query_bits = ParseNumber<uint32_t>(parts[2]);
-  }
-  else if (k == "osq") {
+    if (parts.size() > 2) {
+      c.query_bits = ParseNumber<uint32_t>(parts[2]);
+    }
+  } else if (k == "osq") {
     c.quant = VectorQuantization::OSQ;
-    if (parts.size() > 2) c.query_bits = ParseNumber<uint32_t>(parts[2]);
+    if (parts.size() > 2) {
+      c.query_bits = ParseNumber<uint32_t>(parts[2]);
+    }
   }
   return c;
 }
@@ -465,7 +508,8 @@ int Main(int argc, char** argv) {
       for (size_t qi = 0; qi < nq; ++qi) {
         h += hits[qi][pi];
       }
-      std::printf("   %.4f", static_cast<double>(h) / static_cast<double>(nq * kK));
+      std::printf("   %.4f",
+                  static_cast<double>(h) / static_cast<double>(nq * kK));
     }
     std::printf("  %8.2f\n", ns);
     std::fflush(stdout);
@@ -491,7 +535,8 @@ int Main(int argc, char** argv) {
       pq.train(tn, base.data());
       std::vector<uint8_t> codes(n * pq.code_size);
       pq.compute_codes(base.data(), codes.data(), n);
-      std::vector<std::vector<size_t>> hits(nq, std::vector<size_t>(pools.size()));
+      std::vector<std::vector<size_t>> hits(nq,
+                                            std::vector<size_t>(pools.size()));
       ParallelFor(nq, [&](size_t qi) {
         const float* q = queries.data() + qi * d;
         std::vector<float> lut(pq.M * pq.ksub);
@@ -525,7 +570,8 @@ int Main(int argc, char** argv) {
           tq.Encode(base.data() + i * d, recs.data() + i * stride);
         }
       });
-      std::vector<std::vector<size_t>> hits(nq, std::vector<size_t>(pools.size()));
+      std::vector<std::vector<size_t>> hits(nq,
+                                            std::vector<size_t>(pools.size()));
       ParallelFor(nq, [&](size_t qi) {
         std::vector<float> s(n);
         tq.Score(queries.data() + qi * d, recs.data(), n, l2, s.data());
@@ -556,8 +602,10 @@ int Main(int argc, char** argv) {
     } else if (const size_t t = writer->TrainSamples(n); t != 0) {
       const auto t0 = std::chrono::steady_clock::now();
       writer->Train(base.data(), t);
-      std::fprintf(stderr, "%s train %zu rows: %.2fs\n", cfg.name.c_str(), t,
-                   std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+      std::fprintf(
+        stderr, "%s train %zu rows: %.2fs\n", cfg.name.c_str(), t,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+          .count());
     }
     std::vector<float> centroid;
     if (QuantizerNeedsCentroid(cfg.quant)) {
@@ -592,7 +640,8 @@ int Main(int argc, char** argv) {
     const bstring blob = framed.substr(sizeof(uint64_t));
     auto stats = MakeQuantizerStats(cfg.quant, d, blob, metric, true);
 
-    std::vector<std::vector<size_t>> hits(nq, std::vector<size_t>(pools.size()));
+    std::vector<std::vector<size_t>> hits(nq,
+                                          std::vector<size_t>(pools.size()));
     std::atomic<uint64_t> score_ns{0};
     ParallelFor(nq, [&](size_t qi) {
       const std::span<const float> q{queries.data() + qi * d, d};
@@ -633,18 +682,20 @@ int Main(int argc, char** argv) {
         }
         const auto t0 = std::chrono::steady_clock::now();
         for (size_t b = 0; b < kBatches; ++b) {
-          reader->ComputeGathered(codes.data(), record_size,
-                                  {all.data() + b * 32, 32},
-                                  std::numeric_limits<score_t>::lowest(),
-                                  out.data());
+          reader->ComputeGathered(
+            codes.data(), record_size, {all.data() + b * 32, 32},
+            std::numeric_limits<score_t>::lowest(), out.data());
         }
         const auto t1 = std::chrono::steady_clock::now();
         total += static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+          std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0)
+            .count());
       }
-      gather_ns = static_cast<double>(total) / static_cast<double>(kQ * kBatches * 32);
-      std::fprintf(stderr, "%s setup %.2f us/query\n", cfg.name.c_str(),
-                   static_cast<double>(setup) / static_cast<double>(kQ) / 1000.0);
+      gather_ns =
+        static_cast<double>(total) / static_cast<double>(kQ * kBatches * 32);
+      std::fprintf(
+        stderr, "%s setup %.2f us/query\n", cfg.name.c_str(),
+        static_cast<double>(setup) / static_cast<double>(kQ) / 1000.0);
     }
     report(cfg.name, record_size, hits, gather_ns);
   }

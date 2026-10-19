@@ -125,10 +125,13 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
 }
 
 int32_t OwningColumn(const duckdb::TableCatalogEntry& table,
-                     const duckdb::Identifier& sequence) {
+                     const duckdb::SequenceCatalogEntry& sequence) {
+  const auto& owner = sequence.owner_column;
   for (const auto& column : table.GetColumns().Logical()) {
-    if (column.HasDefaultValue() &&
-        NamesSequence(column.DefaultValue(), sequence)) {
+    if (owner.IsValid()
+          ? owner.GetIndex() == column.CatalogOid()
+          : column.HasDefaultValue() &&
+              NamesSequence(column.DefaultValue(), sequence.name)) {
       return static_cast<int32_t>(column.Logical().index + 1);
     }
   }
@@ -246,9 +249,10 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
           }
         } else if (object->type == SEQUENCE_ENTRY) {
           if (owned_by) {
-            emit(Oid{PgClass::kId}, object->oid, 0, Oid{PgClass::kId},
-                 table.oid, OwningColumn(table, object->name),
-                 PgDepend::Deptype::Auto);
+            emit(
+              Oid{PgClass::kId}, object->oid, 0, Oid{PgClass::kId}, table.oid,
+              OwningColumn(table, object->Cast<duckdb::SequenceCatalogEntry>()),
+              PgDepend::Deptype::Auto);
           }
           for (const auto& column : table.GetColumns().Logical()) {
             if (column.HasDefaultValue() &&

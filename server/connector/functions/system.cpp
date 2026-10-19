@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -1996,8 +1997,12 @@ bool SerialSequenceOf(duckdb::ClientContext& context,
       continue;
     }
     const auto& schema = candidate.ParentSchema(transaction);
-    if (!duckdb::Binder::DefaultNamesSequence(
-          *column, schema.GetQualifiedName(candidate.name), equals)) {
+    const auto& owner =
+      candidate.Cast<duckdb::SequenceCatalogEntry>().owner_column;
+    if (owner.IsValid()
+          ? owner.GetIndex() != column->CatalogOid()
+          : !duckdb::Binder::DefaultNamesSequence(
+              *column, schema.GetQualifiedName(candidate.name), equals)) {
       continue;
     }
     sequence =

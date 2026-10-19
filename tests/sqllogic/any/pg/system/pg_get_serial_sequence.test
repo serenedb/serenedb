@@ -296,3 +296,84 @@ SELECT id FROM gss_empty
 ----
 id
 1
+
+
+# The sequence is the one OWNED BY the column, whatever the defaults call.
+statement ok
+CREATE TABLE gss_owned (a serial, b int, c int)
+
+
+statement ok
+CREATE SEQUENCE gss_owned_c OWNED BY gss_owned.c
+
+
+statement ok
+ALTER TABLE gss_owned ALTER b SET DEFAULT nextval('gss_owned_a_seq')
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'a') AS a,
+       pg_get_serial_sequence('gss_owned', 'b') AS b,
+       pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+a	b	c
+public.gss_owned_a_seq	NULL	public.gss_owned_c
+
+
+statement ok
+ALTER TABLE gss_owned RENAME a TO r
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'r') AS r
+----
+r
+public.gss_owned_a_seq
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER SEQUENCE gss_owned_c OWNED BY gss_owned.b
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'b') AS b, pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+b	c
+public.gss_owned_c	NULL
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'b') AS b, pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+b	c
+NULL	public.gss_owned_c
+
+
+query
+SELECT s.relname, d.refobjsubid, d.deptype
+FROM pg_depend d JOIN pg_class s ON s.oid = d.objid
+WHERE d.refobjid = 'gss_owned'::regclass AND s.relkind = 'S'
+ORDER BY 1
+----
+relname	refobjsubid	deptype
+gss_owned_a_seq	1	a
+gss_owned_c	3	a
+
+
+statement ok
+ALTER SEQUENCE gss_owned_c OWNED BY NONE
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+c
+NULL

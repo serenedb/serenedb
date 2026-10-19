@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/types/string_type.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/shared.hpp>
 #include <iresearch/utils/string.hpp>
@@ -34,12 +35,8 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
-namespace duckdb {
-
-class Value;
-
-}  // namespace duckdb
 namespace sdb::connector::inet_terms {
 
 // Index terms of one INET/CIDR value. Integers are big-endian; addresses are
@@ -138,8 +135,6 @@ constexpr uint32_t LevelTermSize(Family family, uint32_t level) noexcept {
   return kTagSize + LevelBits(family, level) / CHAR_BIT;
 }
 
-inline constexpr size_t kMaxTermSize = LongExactSize(Family::V6);
-
 inline constexpr uint32_t kV6FirstInlineLevel = 3;
 
 static_assert(LongExactSize(Family::V4) <= duckdb::string_t::INLINE_LENGTH);
@@ -165,9 +160,6 @@ struct Inet {
   Family family = Family::V4;
   uint16_t mask = 0;
   Bytes address{};
-
-  uint32_t Width() const noexcept { return inet_terms::Width(family); }
-  uint32_t MaxBits() const noexcept { return inet_terms::MaxBits(family); }
 };
 
 std::optional<Inet> FromAddress(Family family, uint64_t upper, uint64_t lower,
@@ -182,6 +174,17 @@ Bytes Broadcast(const Inet& value, uint32_t bits);
 uint32_t MinMaskOf(Family family, const Bytes& network);
 
 irs::bstring ExactTermOf(const Inet& value);
+irs::bstring FirstExactTermOf(Family family, const Bytes& network);
+irs::bstring LastExactTermOf(Family family, const Bytes& network);
+
+struct NetworkPiece {
+  uint32_t level;
+  Bytes first;
+  Bytes last;
+};
+
+std::vector<NetworkPiece> SplitNetworks(Family family, const Bytes& first,
+                                        const Bytes& last);
 irs::bstring LevelTermOf(Family family, uint32_t level, const Bytes& network);
 irs::bstring MaskTermOf(Family family, uint8_t mask);
 irs::bstring ExactPrefixOf(Family family, const Bytes& network);

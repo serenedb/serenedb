@@ -1076,7 +1076,7 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
     duckdb::BoundBetweenExpression::UpperInclusive(between);
   if (!ctx.negated) {
     if (const auto* column = FindInetColumn(ctx, between_input)) {
-      return FromInetBetween(filter, *column, between);
+      return FromInetBetween(filter, ctx, *column, between);
     }
   }
   const auto* lower_val = TryGetConstant(between_lower);

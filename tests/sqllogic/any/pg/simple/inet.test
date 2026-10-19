@@ -125,6 +125,29 @@ id
 
 
 query
+SELECT to_json('10.0.0.1'::INET) AS host, to_json('2001:db8::1/64'::INET) AS net6, to_json('10.0.0.0/8'::CIDR) AS cidr, to_json('10.0.0.1/32'::CIDR) AS cidr32, to_json(ARRAY['10.0.0.1'::INET, NULL]) AS arr, row_to_json(ROW('10.0.0.1'::INET)) AS rec;
+----
+host	net6	cidr	cidr32	arr	rec
+"10.0.0.1"	"2001:db8::1/64"	"10.0.0.0/8"	"10.0.0.1/32"	["10.0.0.1",null]	{"f1":"10.0.0.1"}
+
+
+query
+SELECT id, to_json(ip) AS j FROM inet_values ORDER BY id;
+----
+id	j
+1	"10.0.0.1"
+2	"2001:db8::1/64"
+3	"192.168.1.0/24"
+
+
+query
+SELECT '10.0.0.5/8'::INET IN ('10.0.0.0/8'::INET) AS a, '10.0.0.5/8'::INET IN ('10.0.0.0/8'::INET, '10.0.0.5/8') AS b, '10.0.0.5/8'::INET NOT IN ('10.0.0.5/8'::INET) AS c;
+----
+a	b	c
+f	t	f
+
+
+query
 SELECT ARRAY['1.2.3.4'::INET, '5.6.7.8/30'::INET] AS arr;
 ----
 arr

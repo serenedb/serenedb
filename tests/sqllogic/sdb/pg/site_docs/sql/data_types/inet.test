@@ -92,10 +92,15 @@ id	name
 # DOCS_TEST_BODY
 
 query
-SELECT '{"ip_type": 1, "address": 167772161, "mask": 8}'::JSON::INET AS valid, '{"ip_type": 1, "address": null, "mask": 8}'::JSON::INET AS null_field, TRY_CAST('{"ip_type": 7, "address": 1, "mask": 8}'::JSON AS INET) AS try_invalid;
+SELECT
+  '{"ip_type": 1, "address": 167772161, "mask": 8}'::JSON::INET AS valid,
+  '{"ip_type": 1, "address": null, "mask": 8}'::JSON::INET AS null_field,
+  TRY_CAST('{"ip_type": 7, "address": 1, "mask": 8}'::JSON AS INET) AS try_invalid,
+  to_json('2001:db8::1/64'::INET) AS json,
+  '"10.0.0.0/8"'::JSON::INET AS json_string;
 ----
-valid	null_field	try_invalid
-10.0.0.1/8	NULL	NULL
+valid	null_field	try_invalid	json	json_string
+10.0.0.1/8	NULL	NULL	"2001:db8::1/64"	10.0.0.0/8
 
 statement error
 SELECT '{"ip_type": 7, "address": 1, "mask": 8}'::JSON::INET;

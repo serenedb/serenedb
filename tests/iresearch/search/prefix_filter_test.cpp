@@ -21,7 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
+#include <cstdint>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/term_predicate.hpp>
@@ -29,6 +32,8 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <random>
+#include <vector>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -617,6 +622,179 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
     collect(tests::PreparedFilter::CollectMode::NoCollector);
   ASSERT_FALSE(without_collector.empty());
   ASSERT_EQ(with_collector, without_collector);
+}
+
+inline constexpr irs::field_id kNetworkId = tests::FieldIdFor("network");
+
+void AppendBigEndian(irs::bstring& out, uint64_t value, size_t bytes) {
+  for (size_t i = bytes; i != 0; --i) {
+    out.push_back(static_cast<irs::byte_type>(value >> ((i - 1) * 8)));
+  }
+}
+
+uint32_t NetworkOf(uint32_t address, uint32_t mask) {
+  return mask == 0 ? 0 : address & ~((uint32_t{1} << (32 - mask)) - 1);
+}
+
+irs::bstring ExactTerm(uint32_t network, uint32_t mask) {
+  irs::bstring term{0x40};
+  AppendBigEndian(term, network, 4);
+  AppendBigEndian(term, mask, 2);
+  return term;
+}
+
+// One row of a column whose values are written as several terms of one
+// field: an exact term, one term per coarser level, and a mask term.
+std::vector<irs::bstring> NetworkTerms(uint32_t address, uint32_t mask) {
+  const auto network = NetworkOf(address, mask);
+  std::vector<irs::bstring> terms{ExactTerm(network, mask)};
+  if (address != network) {
+    AppendBigEndian(terms.back(), address, 4);
+  }
+  for (size_t level = 1; level <= 3; ++level) {
+    irs::bstring term{static_cast<irs::byte_type>(0x40 + level)};
+    AppendBigEndian(term, network >> (8 * level), 4 - level);
+    terms.push_back(std::move(term));
+  }
+  if (mask < 32) {
+    terms.push_back(irs::bstring{0x48, static_cast<irs::byte_type>(mask)});
+  }
+  return terms;
+}
+
+class TermsDocGenerator final : public tests::DocGeneratorBase {
+ public:
+  explicit TermsDocGenerator(
+    const std::vector<std::vector<irs::bstring>>& rows) {
+    _docs.reserve(rows.size());
+    for (const auto& row : rows) {
+      auto& doc = _docs.emplace_back();
+      for (const auto& term : row) {
+        auto field = std::make_shared<tests::BinaryField>();
+        field->Name("network");
+        field->id = kNetworkId;
+        field->value(term);
+        doc.insert(field, true, false);
+      }
+    }
+  }
+
+  const tests::Document* next() final {
+    return _next < _docs.size() ? &_docs[_next++] : nullptr;
+  }
+
+  void reset() final { _next = 0; }
+
+ private:
+  std::vector<tests::Document> _docs;
+  size_t _next = 0;
+};
+
+TEST_P(PrefixFilterTestCase, by_prefixes_matches_every_prefix_of_a_network) {
+  std::mt19937 random{3};
+  std::vector<std::vector<irs::bstring>> rows;
+  for (size_t i = 0; i < 3000; ++i) {
+    const uint32_t address = random() % 4 == 0
+                               ? (random() % 2 == 0 ? 0xFFFFFFFF : 0xFEFFFFFF)
+                               : static_cast<uint32_t>(random());
+    rows.push_back(NetworkTerms(address, random() % 33));
+  }
+  {
+    TermsDocGenerator gen{rows};
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  std::mt19937 targets{7};
+  for (size_t i = 0; i < 100; ++i) {
+    const uint32_t address = i % 3 == 0 ? 0xFE000000 : targets();
+    const uint32_t bits = targets() % 33;
+    std::vector<irs::bstring> prefixes;
+    for (uint32_t mask = 0; mask <= bits; ++mask) {
+      prefixes.push_back(ExactTerm(NetworkOf(address, mask), mask));
+    }
+    Docs expected;
+    for (size_t row = 0; row < rows.size(); ++row) {
+      const bool matches = absl::c_any_of(rows[row], [&](const auto& term) {
+        return absl::c_any_of(prefixes, [&](const auto& prefix) {
+          return irs::bytes_view{term}.starts_with(prefix);
+        });
+      });
+      if (matches) {
+        expected.push_back(irs::doc_limits::min() + row);
+      }
+    }
+    irs::ByPrefixes q;
+    *q.mutable_field_id() = kNetworkId;
+    q.mutable_options()->SetPrefixes(std::move(prefixes));
+    SCOPED_TRACE(testing::Message() << "target " << address << "/" << bits);
+    CheckQuery(q, expected, rdr);
+    if (HasFatalFailure() || HasNonfatalFailure()) {
+      return;
+    }
+  }
+}
+
+TEST_P(PrefixFilterTestCase, seek_ge_after_seek_ge_lands_on_the_lower_bound) {
+  std::mt19937 random{3};
+  std::vector<std::vector<irs::bstring>> rows;
+  std::vector<irs::bstring> all;
+  for (size_t i = 0; i < 3000; ++i) {
+    const uint32_t address = random() % 4 == 0
+                               ? (random() % 2 == 0 ? 0xFFFFFFFF : 0xFEFFFFFF)
+                               : static_cast<uint32_t>(random());
+    rows.push_back(NetworkTerms(address, random() % 33));
+    all.insert(all.end(), rows.back().begin(), rows.back().end());
+  }
+  absl::c_sort(all);
+  all.erase(std::unique(all.begin(), all.end()), all.end());
+  {
+    TermsDocGenerator gen{rows};
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  ASSERT_EQ(1, rdr.size());
+  const auto* field = rdr[0].field(kNetworkId);
+  ASSERT_NE(nullptr, field);
+
+  std::mt19937 pick{11};
+  const auto near = [&](size_t index) {
+    auto target = all[index];
+    switch (pick() % 3) {
+      case 0:
+        target.resize(1 + pick() % target.size());
+        break;
+      case 1:
+        target.push_back(0);
+        break;
+      default:
+        break;
+    }
+    return target;
+  };
+  for (size_t i = 0; i < 20000; ++i) {
+    const size_t first = pick() % all.size();
+    auto from = near(first);
+    auto to = near(first + pick() % (all.size() - first));
+    if (to < from) {
+      std::swap(from, to);
+    }
+    auto it = field->iterator();
+    for (const auto& target : {from, to}) {
+      const auto expected = std::lower_bound(all.begin(), all.end(), target);
+      const auto result = it->seek_ge(target);
+      if (expected == all.end()) {
+        ASSERT_EQ(irs::SeekResult::End, result) << i;
+        break;
+      }
+      ASSERT_NE(irs::SeekResult::End, result) << i;
+      ASSERT_EQ(irs::bytes_view{*expected}, it->value()) << i;
+      ASSERT_EQ(*expected == target ? irs::SeekResult::Found
+                                    : irs::SeekResult::NotFound,
+                result)
+        << i;
+    }
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

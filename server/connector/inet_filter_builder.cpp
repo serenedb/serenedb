@@ -21,9 +21,7 @@
 #include "connector/inet_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/numeric/int128.h>
 
-#include <climits>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -153,74 +151,13 @@ struct InetBound {
   irs::BoundType type = irs::BoundType::Inclusive;
 };
 
-using NetworkBits = absl::uint128;
-
-NetworkBits ToBits(inet_terms::Family family, const inet_terms::Bytes& bytes) {
-  NetworkBits bits = 0;
-  for (uint32_t i = 0; i < inet_terms::Width(family); ++i) {
-    bits = (bits << CHAR_BIT) | bytes[i];
+BoolTarget Boosted(BoolTarget target, irs::score_t boost) {
+  if (boost == irs::kNoBoost) {
+    return target;
   }
-  return bits;
-}
-
-inet_terms::Bytes ToBytes(inet_terms::Family family, NetworkBits bits) {
-  inet_terms::Bytes bytes{};
-  for (uint32_t i = inet_terms::Width(family); i != 0; --i) {
-    bytes[i - 1] = static_cast<uint8_t>(bits & 0xFF);
-    bits >>= CHAR_BIT;
-  }
-  return bytes;
-}
-
-struct NetworkPiece {
-  uint32_t level;
-  NetworkBits first;
-  NetworkBits last;
-};
-
-std::vector<NetworkPiece> SplitNetworks(inet_terms::Family family,
-                                        NetworkBits first, NetworkBits last) {
-  const uint32_t step =
-    inet_terms::MaxBits(family) - inet_terms::LevelBits(family, 1);
-  std::vector<NetworkPiece> pieces;
-  for (uint32_t level = 0;; ++level) {
-    if (level == inet_terms::LevelCount(family)) {
-      pieces.push_back({level, first, last});
-      return pieces;
-    }
-    const uint32_t shift = level * step;
-    const NetworkBits mask = ((NetworkBits{1} << step) - 1) << shift;
-    const NetworkBits bucket = NetworkBits{1} << (shift + step);
-    const bool has_head = (first & mask) != 0;
-    const bool has_tail = (last & mask) != mask;
-    const NetworkBits next_first = (has_head ? first + bucket : first) & ~mask;
-    const NetworkBits next_last = (has_tail ? last - bucket : last) & ~mask;
-    if (next_first > next_last || next_first < first || next_last > last) {
-      pieces.push_back({level, first, last});
-      return pieces;
-    }
-    if (has_head) {
-      pieces.push_back({level, first, first | mask});
-    }
-    if (has_tail) {
-      pieces.push_back({level, last & ~mask, last});
-    }
-    first = next_first;
-    last = next_last;
-  }
-}
-
-irs::bstring FirstExactTermOf(inet_terms::Family family,
-                              const inet_terms::Bytes& network) {
-  return inet_terms::ExactPrefixOf(
-    family, network,
-    static_cast<uint16_t>(inet_terms::MinMaskOf(family, network)));
-}
-
-irs::bstring LastExactTermOf(inet_terms::Family family,
-                             const inet_terms::Bytes& network) {
-  return inet_terms::ExactPrefixOf(
-    family, network, static_cast<uint16_t>(inet_terms::MaxBits(family)));
+  const auto group = AddGroup(target, irs::Occur::Must);
+  group.node->SetBoost(boost);
+  return group;
 }
 
 irs::BoundType Flip(irs::BoundType type) {
@@ -233,19 +170,16 @@ void AddFamilyRange(BoolTarget target, const SearchColumnInfo& column,
   SDB_ASSERT(min.value.family == max.value.family);
   const auto family = min.value.family;
   const auto field = column.field_id;
-  const auto first_network = inet_terms::Network(min.value, min.value.mask);
-  const auto last_network = inet_terms::Network(max.value, max.value.mask);
-  const auto first = ToBits(family, first_network);
-  const auto last = ToBits(family, last_network);
+  const auto first = inet_terms::Network(min.value, min.value.mask);
+  const auto last = inet_terms::Network(max.value, max.value.mask);
   if (first > last) {
     AddFilter<irs::Empty>(target);
     return;
   }
-  auto pieces = SplitNetworks(family, first, last);
-  absl::c_sort(pieces, [](const NetworkPiece& lhs, const NetworkPiece& rhs) {
-    return lhs.first < rhs.first;
-  });
-  const auto exact = [](const NetworkPiece& piece) { return piece.level == 0; };
+  const auto pieces = inet_terms::SplitNetworks(family, first, last);
+  const auto exact = [](const inet_terms::NetworkPiece& piece) {
+    return piece.level == 0;
+  };
   const bool exact_first = absl::c_any_of(pieces, [&](const auto& piece) {
     return exact(piece) && piece.first == first;
   });
@@ -256,35 +190,34 @@ void AddFamilyRange(BoolTarget target, const SearchColumnInfo& column,
   const auto max_term = inet_terms::ExactTermOf(max.value);
   const bool exclude_head =
     !exact_first && (min.type == irs::BoundType::Exclusive ||
-                     min_term != FirstExactTermOf(family, first_network));
+                     min_term != inet_terms::FirstExactTermOf(family, first));
   const bool exclude_tail =
     !exact_last && (max.type == irs::BoundType::Exclusive ||
-                    max_term != LastExactTermOf(family, last_network));
+                    max_term != inet_terms::LastExactTermOf(family, last));
 
   const auto group =
     exclude_head || exclude_tail ? AddGroup(target, irs::Occur::Must) : target;
   const auto pieces_target =
     pieces.size() == 1 ? group : AddGroup(group, irs::Occur::Should);
   for (const auto& piece : pieces) {
-    const auto piece_first = ToBytes(family, piece.first);
-    const auto piece_last = ToBytes(family, piece.last);
     if (exact(piece)) {
       const bool clip_first = piece.first == first;
       const bool clip_last = piece.last == last;
       AddByteRange(
         pieces_target, field,
-        clip_first ? min_term : FirstExactTermOf(family, piece_first),
+        clip_first ? min_term
+                   : inet_terms::FirstExactTermOf(family, piece.first),
         clip_first ? min.type : irs::BoundType::Inclusive,
-        clip_last ? max_term : LastExactTermOf(family, piece_last),
+        clip_last ? max_term : inet_terms::LastExactTermOf(family, piece.last),
         clip_last ? max.type : irs::BoundType::Inclusive);
     } else if (piece.first == piece.last) {
       AddTerm(pieces_target, field,
-              inet_terms::LevelTermOf(family, piece.level, piece_first),
+              inet_terms::LevelTermOf(family, piece.level, piece.first),
               irs::kNoBoost, &irs::ForceConstScore());
     } else {
       AddByteRange(pieces_target, field,
-                   inet_terms::LevelTermOf(family, piece.level, piece_first),
-                   inet_terms::LevelTermOf(family, piece.level, piece_last));
+                   inet_terms::LevelTermOf(family, piece.level, piece.first),
+                   inet_terms::LevelTermOf(family, piece.level, piece.last));
     }
   }
   if (pieces.size() != 1) {
@@ -292,12 +225,12 @@ void AddFamilyRange(BoolTarget target, const SearchColumnInfo& column,
   }
   if (exclude_head) {
     AddByteRange({group.node, irs::Occur::MustNot}, field,
-                 FirstExactTermOf(family, first_network),
+                 inet_terms::FirstExactTermOf(family, first),
                  irs::BoundType::Inclusive, min_term, Flip(min.type));
   }
   if (exclude_tail) {
     AddByteRange({group.node, irs::Occur::MustNot}, field, max_term,
-                 Flip(max.type), LastExactTermOf(family, last_network),
+                 Flip(max.type), inet_terms::LastExactTermOf(family, last),
                  irs::BoundType::Inclusive);
   }
 }
@@ -494,11 +427,12 @@ absl::Status FromInetComparison(BoolTarget filter, const FilterContext& ctx,
   if (!value) {
     return Unsupported();
   }
-  AddComparison(filter, *operands.column, *value, op);
+  AddComparison(Boosted(filter, ctx.boost), *operands.column, *value, op);
   return absl::OkStatus();
 }
 
-absl::Status FromInetBetween(BoolTarget filter, const SearchColumnInfo& column,
+absl::Status FromInetBetween(BoolTarget filter, const FilterContext& ctx,
+                             const SearchColumnInfo& column,
                              const duckdb::BoundFunctionExpression& between) {
   const auto* lower =
     FindInetConstant(duckdb::BoundBetweenExpression::LowerBound(between));
@@ -520,7 +454,7 @@ absl::Status FromInetBetween(BoolTarget filter, const SearchColumnInfo& column,
     return inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
   };
   AddRange(
-    filter, column,
+    Boosted(filter, ctx.boost), column,
     InetBound{.value = *min,
               .type = bound_type(
                 duckdb::BoundBetweenExpression::LowerInclusive(between))},
@@ -575,7 +509,7 @@ absl::Status FromInetNetworkOp(BoolTarget filter, const FilterContext& ctx,
     return Unsupported();
   }
   const auto& column = *predicate.column;
-  const auto target = MaybeNegated(filter, ctx, column);
+  const auto target = Boosted(MaybeNegated(filter, ctx, column), ctx.boost);
   switch (predicate.op) {
     case InetNetworkOp::ContainedBy:
       AddContainedBy(target, column, *value);

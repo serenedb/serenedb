@@ -50,7 +50,9 @@ An [inverted index](../indexes/inverted/index.md) over an `INET` column answers 
 
 ## Conversion
 
-A string converts to `INET` when it is a valid address, as in PostgreSQL. A `STRUCT`, row, `JSON` or `VARIANT` value converts when its fields `ip_type` (`1` for IPv4, `2` for IPv6), `address` and `mask` form a valid address. If one of these fields is `NULL`, the result is `NULL`. Any other invalid value is an error; `TRY_CAST` returns `NULL` instead.
+A string converts to `INET` when it is a valid address, as in PostgreSQL, and so does a `JSON` or `VARIANT` string. A `STRUCT`, row, `JSON` object or `VARIANT` object converts when its fields `ip_type` (`1` for IPv4, `2` for IPv6), `address` and `mask` form a valid address. `address` is the value as stored, which for IPv6 has its top bit flipped, so an `INET` converted to such a `STRUCT` converts back unchanged. If one of these fields is `NULL`, the result is `NULL`. Any other invalid value is an error; `TRY_CAST` returns `NULL` instead.
+
+`to_json`, `row_to_json`, `json_build_object` and a cast to `JSON` write an `INET` or `CIDR` value as a JSON string of its text, as in PostgreSQL.
 
 <SqlLogicTest id="sql/data_types/inet/example_007" />
 

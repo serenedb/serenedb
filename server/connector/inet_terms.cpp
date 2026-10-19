@@ -20,7 +20,9 @@
 
 #include "connector/inet_terms.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
+#include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -28,6 +30,7 @@
 #include <cstring>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <duckdb/inet/inet_type.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <utility>
 
@@ -40,13 +43,15 @@ static_assert(std::to_underlying(Family::V4) == INET_IP_ADDRESS_V4);
 static_assert(std::to_underlying(Family::V6) == INET_IP_ADDRESS_V6);
 static_assert(kV4Bits == IPV4_DEFAULT_MASK);
 static_assert(kV6Bits == IPV6_DEFAULT_MASK);
+static_assert(LongExactSize(Family::V4) == duckdb::INET_SORT_KEY_V4_SIZE);
+static_assert(LongExactSize(Family::V6) == duckdb::INET_SORT_KEY_V6_SIZE);
 
 constexpr uint8_t kAllBits = std::numeric_limits<uint8_t>::max();
 constexpr size_t kMaxTextSize = 64;
 
 Bytes ApplyHostBits(const Inet& value, uint32_t bits, bool set) {
   Bytes out = value.address;
-  for (uint32_t i = 0; i < value.Width(); ++i) {
+  for (uint32_t i = 0; i < Width(value.family); ++i) {
     const uint32_t first = i * CHAR_BIT;
     if (first + CHAR_BIT <= bits) {
       continue;
@@ -143,6 +148,25 @@ Inet NetworkValue(Family family, const Bytes& network, uint32_t mask) {
     .family = family, .mask = static_cast<uint16_t>(mask), .address = network};
 }
 
+using NetworkBits = absl::uint128;
+
+NetworkBits ToBits(Family family, const Bytes& bytes) {
+  NetworkBits bits = 0;
+  for (uint32_t i = 0; i < Width(family); ++i) {
+    bits = (bits << CHAR_BIT) | bytes[i];
+  }
+  return bits;
+}
+
+Bytes ToBytes(Family family, NetworkBits bits) {
+  Bytes bytes{};
+  for (uint32_t i = Width(family); i != 0; --i) {
+    bytes[i - 1] = static_cast<uint8_t>(bits & kAllBits);
+    bits >>= CHAR_BIT;
+  }
+  return bytes;
+}
+
 }  // namespace
 
 std::optional<Inet> FromAddress(Family family, uint64_t upper, uint64_t lower,
@@ -225,6 +249,56 @@ uint32_t MinMaskOf(Family family, const Bytes& network) {
 }
 
 irs::bstring ExactTermOf(const Inet& value) { return EncodedTerms{value}[0]; }
+
+irs::bstring FirstExactTermOf(Family family, const Bytes& network) {
+  return ExactPrefixOf(family, network,
+                       static_cast<uint16_t>(MinMaskOf(family, network)));
+}
+
+irs::bstring LastExactTermOf(Family family, const Bytes& network) {
+  return ExactPrefixOf(family, network, static_cast<uint16_t>(MaxBits(family)));
+}
+
+std::vector<NetworkPiece> SplitNetworks(Family family, const Bytes& first,
+                                        const Bytes& last) {
+  auto lo = ToBits(family, first);
+  auto hi = ToBits(family, last);
+  SDB_ASSERT(lo <= hi);
+  const uint32_t step = MaxBits(family) - LevelBits(family, 1);
+  std::vector<NetworkPiece> pieces;
+  const auto add = [&](uint32_t level, NetworkBits from, NetworkBits to) {
+    pieces.push_back({level, ToBytes(family, from), ToBytes(family, to)});
+  };
+  for (uint32_t level = 0;; ++level) {
+    if (level == LevelCount(family)) {
+      add(level, lo, hi);
+      break;
+    }
+    const uint32_t shift = level * step;
+    const NetworkBits mask = ((NetworkBits{1} << step) - 1) << shift;
+    const NetworkBits bucket = NetworkBits{1} << (shift + step);
+    const bool has_head = (lo & mask) != 0;
+    const bool has_tail = (hi & mask) != mask;
+    const NetworkBits next_lo = (has_head ? lo + bucket : lo) & ~mask;
+    const NetworkBits next_hi = (has_tail ? hi - bucket : hi) & ~mask;
+    if (next_lo > next_hi || next_lo < lo || next_hi > hi) {
+      add(level, lo, hi);
+      break;
+    }
+    if (has_head) {
+      add(level, lo, lo | mask);
+    }
+    if (has_tail) {
+      add(level, hi & ~mask, hi);
+    }
+    lo = next_lo;
+    hi = next_hi;
+  }
+  absl::c_sort(pieces, [](const NetworkPiece& lhs, const NetworkPiece& rhs) {
+    return lhs.first < rhs.first;
+  });
+  return pieces;
+}
 
 irs::bstring LevelTermOf(Family family, uint32_t level, const Bytes& network) {
   return EncodedTerms{NetworkValue(family, network, MaxBits(family))}[level];

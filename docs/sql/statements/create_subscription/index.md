@@ -141,6 +141,10 @@ Local tables are not created for you. Create every published table locally befor
 SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat_subscription;
 ```
 
+## Restoring from a backup
+
+A server restored from a [backup](../../../operations/backup.md) starts with every subscription disabled and logs a warning for each one, because the publisher's replication slot has moved past the restored position and the original server may still be using it. Check that the slot can still provide what the restored server needs, or create a new slot and resynchronize, then run `ALTER SUBSCRIPTION ... ENABLE`. The subscription stays disabled across restarts until then.
+
 ## Limitations
 
 - Prepared transactions (`two_phase`) are not replicated as such; they are applied when they commit.

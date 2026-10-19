@@ -107,6 +107,22 @@ DROP ROLE IF EXISTS jsb_worker;
 
 
 statement ok
+DROP JOB IF EXISTS jsb_truncate_gone;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_truncate_gone_scheduled;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_c;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_d;
+
+
+statement ok
 DROP TABLE IF EXISTS jsb_log;
 
 
@@ -232,6 +248,51 @@ SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() 
 ----
 body	sql
 TRUNCATE jsb_a, jsb_b	CREATE JOB public.jsb_truncate AFTER INTERVAL '01:00:00' AS 'TRUNCATE jsb_a, jsb_b';
+
+
+statement ok
+CREATE TABLE jsb_c (v INT);
+
+
+statement ok
+CREATE TABLE jsb_d (v INT);
+
+
+statement ok
+CREATE JOB jsb_truncate_gone AFTER 1 HOUR AS $$TRUNCATE jsb_c, jsb_d$$;
+
+
+statement ok
+DROP TABLE jsb_d;
+
+
+statement error
+EXECUTE JOB jsb_truncate_gone;
+----
+db error: ERROR: Table with name jsb_d does not exist!<slt:ignore>
+
+
+statement ok
+CREATE JOB jsb_truncate_gone_scheduled AFTER 1 SECOND AS $$TRUNCATE jsb_c, jsb_d$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT trigger, success, error LIKE '%jsb_d%' AS names_table FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsb_truncate_gone_scheduled' LIMIT 1;
+----
+trigger	success	names_table
+schedule	f	t
+
+
+statement ok
+DROP JOB jsb_truncate_gone_scheduled;
+
+
+statement ok
+DROP JOB jsb_truncate_gone;
+
+
+statement ok
+DROP TABLE jsb_c;
 
 
 statement error

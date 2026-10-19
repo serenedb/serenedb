@@ -20,7 +20,6 @@
 
 #include "scheduler/job_scheduler.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
@@ -162,6 +161,11 @@ void ForAllJobs(
   }
 }
 
+bool Dropped(JobState& state) {
+  absl::MutexLock lock{&state.mutex};
+  return state.dropped;
+}
+
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                            duckdb::optional_ptr<duckdb::ClientContext> caller,
                            duckdb::shared_ptr<duckdb::ClientContext>& context) {
@@ -200,43 +204,34 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
   }
+  {
+    absl::MutexLock lock{&state.mutex};
+    state.contexts.emplace_back(context);
+  }
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
-  try {
-    for (const auto& peel : *job.body) {
-      duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
-      statements.push_back(peel->Copy());
+  for (const auto& peel : *job.body) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
+    statements.push_back(peel->Copy());
+    try {
       context->PreprocessStatements(statements);
-      for (auto& statement : statements) {
-        {
-          absl::MutexLock lock{&state.mutex};
-          if (state.dropped) {
-            return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
-                                     "Interrupted!"};
-          }
-          if (!absl::c_contains(state.contexts, context)) {
-            state.contexts.emplace_back(context);
-          }
-        }
-        auto pending = context->Submit(std::move(statement), parameters);
-        if (pending->HasError()) {
-          return pending->GetErrorObject();
-        }
-        pending->Complete();
-        if (pending->HasError()) {
-          return pending->GetErrorObject();
-        }
-        {
-          absl::MutexLock lock{&state.mutex};
-          if (state.dropped) {
-            return {};
-          }
-        }
-        SDB_PARK_ONCE_ON_FAILURE("pause_job_after_statement");
-      }
+    } catch (const std::exception& e) {
+      return duckdb::ErrorData{e};
     }
-  } catch (const std::exception& e) {
-    return duckdb::ErrorData{e};
+    for (auto& statement : statements) {
+      if (Dropped(state)) {
+        return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
+                                 "Interrupted!"};
+      }
+      auto result = context->Query(std::move(statement), parameters);
+      if (result->HasError()) {
+        return result->GetErrorObject();
+      }
+      if (Dropped(state)) {
+        return {};
+      }
+      SDB_PARK_ONCE_ON_FAILURE("pause_job_after_statement");
+    }
   }
   return {};
 }

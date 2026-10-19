@@ -93,9 +93,9 @@ class BitsetChunk {
     ApplyWords<kAndNot>(_bits->words, kChunkWords, base, lo, hi, min, max, dst);
   }
 
-  IRS_FORCE_INLINE uint32_t* FillLive(uint64_t base, uint64_t lo, uint64_t hi,
-                                      doc_id_t min,
-                                      uint32_t* IRS_RESTRICT out) const noexcept {
+  IRS_FORCE_INLINE uint32_t* FillLive(
+    uint64_t base, uint64_t lo, uint64_t hi, doc_id_t min,
+    uint32_t* IRS_RESTRICT out) const noexcept {
     const auto* words = _bits->words;
     const auto first = static_cast<uint32_t>(lo - base);
     const auto last = static_cast<uint32_t>(hi - base);

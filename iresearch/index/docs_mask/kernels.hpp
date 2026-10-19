@@ -54,16 +54,16 @@ IRS_FORCE_INLINE void ApplyRange(uint64_t* IRS_RESTRICT words, uint32_t first,
   }
 }
 
-inline IRS_FORCE_INLINE uint32_t* Sequence(uint32_t first, uint32_t count,
-                                           uint32_t* IRS_RESTRICT out) noexcept {
+inline IRS_FORCE_INLINE uint32_t* Sequence(
+  uint32_t first, uint32_t count, uint32_t* IRS_RESTRICT out) noexcept {
   for (uint32_t i = 0; i != count; ++i) {
     out[i] = first + i;
   }
   return out + count;
 }
 
-inline IRS_FORCE_INLINE uint32_t* LiveWord(uint32_t offset, uint64_t live,
-                                           uint32_t* IRS_RESTRICT out) noexcept {
+inline IRS_FORCE_INLINE uint32_t* LiveWord(
+  uint32_t offset, uint64_t live, uint32_t* IRS_RESTRICT out) noexcept {
   if (live == ~uint64_t{0}) {
     return Sequence(offset, 64, out);
   }

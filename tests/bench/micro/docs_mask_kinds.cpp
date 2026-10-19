@@ -19,13 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
+#include <roaring/memory.h>
+#include <roaring/roaring.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <map>
 #include <random>
-#include <roaring/memory.h>
-#include <roaring/roaring.h>
 #include <vector>
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"

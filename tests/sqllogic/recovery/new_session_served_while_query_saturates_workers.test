@@ -8,14 +8,14 @@ INSERT INTO saturate SELECT i FROM range(12000000) t(i);
 
 connection busy
 statement ok
-SET statement_timeout = '5s';
+SET statement_timeout = '60s';
 
 
 connection busy
 statement async error
 SELECT count(*) FROM saturate a, (SELECT i FROM range(1000000) t(i)) b WHERE (a.i + b.i) % 1000003 = 7;
 ----
-db error: ERROR: canceling statement due to statement timeout
+db error: ERROR: canceling statement due to user request
 
 
 connection default
@@ -40,6 +40,15 @@ SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE
 ----
 n
 1
+
+
+connection default
+query
+SELECT bool_and(pg_cancel_backend(pid)) AS canceled FROM pg_stat_activity
+WHERE state = 'active' AND query LIKE 'SELECT count(*) FROM saturate a%';
+----
+canceled
+t
 
 
 connection busy

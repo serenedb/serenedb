@@ -149,3 +149,196 @@ SELECT 'admin_1' ILIKE 'admin\_%' AS a, 'adminx1' ILIKE 'admin\_%' AS b
 ----
 a	b
 t	f
+
+
+statement ok
+CREATE TABLE ilike_names (id INT, s VARCHAR)
+
+
+statement ok
+INSERT INTO ilike_names VALUES (1, 'ABC'), (2, 'abc'), (3, 'xyz'), (4, 'a%'), (5, 'A%'), (6, 'ax%'), (7, 'aXb'), (8, 'axb')
+
+
+query
+SELECT 'ABC' ILIKE 'A\BC' AS upper, 'abc' ILIKE 'A\BC' AS lower, 'ABC' NOT ILIKE 'A\BC' AS negated
+----
+upper	lower	negated
+t	t	f
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE 'A\BC' ORDER BY id
+----
+id
+1
+2
+
+
+query
+SELECT id FROM ilike_names WHERE s NOT ILIKE 'A\BC' ORDER BY id
+----
+id
+3
+4
+5
+6
+7
+8
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE '\A%' ORDER BY id
+----
+id
+1
+2
+4
+5
+6
+7
+8
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE 'A\BC' ESCAPE '\' ORDER BY id
+----
+id
+1
+2
+
+
+query
+SELECT 'a%' ILIKE 'aX%' ESCAPE 'X' AS lower, 'A%' ILIKE 'aX%' ESCAPE 'X' AS upper, 'ax%' ILIKE 'aX%' ESCAPE 'X' AS escaped
+----
+lower	upper	escaped
+t	t	f
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE 'aX%' ESCAPE 'X' ORDER BY id
+----
+id
+4
+5
+
+
+query
+SELECT id FROM ilike_names WHERE s NOT ILIKE 'aX%' ESCAPE 'X' ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+8
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE 'axb' ESCAPE 'X' ORDER BY id
+----
+id
+7
+8
+
+
+query
+SELECT id FROM ilike_names WHERE s ILIKE 'aXXb' ESCAPE 'X' ORDER BY id
+----
+id
+7
+8
+
+
+query
+SELECT id, s ILIKE p ESCAPE 'X' AS m, s NOT ILIKE p ESCAPE 'X' AS n
+FROM (VALUES (1, 'a%', 'aX%'), (2, 'A%', 'aX%'), (3, 'ax%', 'aX%'), (4, 'aXb', 'axb'), (5, 'axb', 'aXXb')) t(id, s, p)
+ORDER BY id
+----
+id	m	n
+1	t	f
+2	t	f
+3	f	t
+4	t	f
+5	t	f
+
+
+statement error (?i)like pattern must not end with escape character
+SELECT 'abc' ILIKE 'abX' ESCAPE 'X'
+
+
+statement ok
+CREATE TABLE ilike_strs AS
+SELECT i AS id,
+       CASE i % 4
+           WHEN 0 THEN 'The Quick Brown Fox ' || i
+           WHEN 2 THEN 'the quick brown fox_' || i
+           WHEN 3 THEN 'ÄPFEL UND BİRNEN ' || i
+       END AS s
+FROM generate_series(1, 2100) AS g(i)
+
+
+statement ok
+CREATE TABLE ilike_patterns AS
+SELECT b.base * 10 + r.n AS id, b.base, b.p || repeat('%', r.n) AS p, b.e
+FROM (VALUES (0, '%QUICK BROWN%', '\'), (1, '%fox\_%', '\'), (2, '%äpfel und birnen%', '\'), (3, 'THE QUICK BROWN FOX _1%', '\'), (4, '%foxX_%', 'X'), (5, '%FOX%', ''), (6, '%X%', 'x'), (7, NULL, '\'), (8, '%fox#_%', '#'), (9, '%fox_%', 'z')) AS b(base, p, e),
+     generate_series(0, 9) AS r(n)
+
+
+query
+SELECT p.base,
+       count(*) FILTER (WHERE s.s ILIKE p.p) AS ilike,
+       count(*) FILTER (WHERE s.s NOT ILIKE p.p) AS not_ilike,
+       count(*) FILTER (WHERE s.s ILIKE p.p ESCAPE p.e) AS ilike_escape,
+       count(*) FILTER (WHERE s.s NOT ILIKE p.p ESCAPE p.e) AS not_ilike_escape
+FROM ilike_strs AS s, ilike_patterns AS p
+GROUP BY p.base
+ORDER BY p.base
+----
+base	ilike	not_ilike	ilike_escape	not_ilike_escape
+0	10500	5250	10500	5250
+1	5250	10500	5250	10500
+2	5250	10500	5250	10500
+3	440	15310	440	15310
+4	0	15750	5250	10500
+5	10500	5250	10500	5250
+6	10500	5250	10500	5250
+7	0	0	0	0
+8	0	15750	5250	10500
+9	10500	5250	10500	5250
+
+
+query
+SELECT p.base,
+       count(*) FILTER (WHERE s.s ILIKE p.p) AS ilike,
+       count(*) FILTER (WHERE s.s ILIKE p.p ESCAPE p.e) AS ilike_escape
+FROM ilike_strs AS s
+JOIN ilike_patterns AS p ON p.id = s.id % 100
+GROUP BY p.base
+ORDER BY p.base
+----
+base	ilike	ilike_escape
+0	105	105
+1	63	63
+2	42	42
+3	2	2
+4	0	42
+5	105	105
+6	105	105
+7	0	0
+8	0	42
+9	105	105
+
+
+query
+SELECT 'A%B\c' ILIKE 'a#%b\C' ESCAPE '#' AS escaped, 'A_B\c' ILIKE 'a#%b\C' ESCAPE '#' AS literal
+----
+escaped	literal
+t	f
+
+
+query
+SELECT 'akb' ILIKE ('a' || chr(8490) || 'b') ESCAPE 'k' AS kelvin, 'AKB' ILIKE ('a' || chr(8490) || 'b') ESCAPE 'k' AS kelvin_upper, 'ab' ILIKE ('a' || chr(8490) || 'b') ESCAPE 'k' AS escaped
+----
+kelvin	kelvin_upper	escaped
+t	t	f

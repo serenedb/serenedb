@@ -104,7 +104,8 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
     _sort{options.sort != nullptr && !options.sort->Empty() ? options.sort
-                                                            : nullptr} {}
+                                                            : nullptr},
+    _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra,
@@ -247,6 +248,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
     _col_writer->StageAll();
   }
   _col_writer->SetFieldOptions(active);
+  _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());
   _fields.SetFieldOptions(active);
 

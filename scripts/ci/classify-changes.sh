@@ -54,7 +54,7 @@ while IFS= read -r f; do
 	case "$f" in
 	third_party/re2 | third_party/re2/* | third_party/abseil-cpp | third_party/abseil-cpp/* | \
 		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
-		tests/re2/* | cmake/OptimizeForArchitecture.cmake | scripts/ci/steps/041-ci-in-docker-run-re2-tests.bash)
+		third_party/CMakeLists.txt | cmake/OptimizeForArchitecture.cmake | scripts/ci/steps/041-ci-in-docker-run-re2-tests.bash)
 		re2=true
 		;;
 	esac

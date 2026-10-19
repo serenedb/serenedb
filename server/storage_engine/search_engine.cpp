@@ -84,6 +84,31 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
   return env;
 }
 
+namespace {
+
+uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(
+    want, held, SearchEngine::MaxAnnBuildWorkers());
+}
+
+}  // namespace
+
+ManualCompactionSlot::ManualCompactionSlot() noexcept
+  : _held{GetSearchEngine().TryAcquireCompactions(1) == 1} {}
+
+ManualCompactionSlot::~ManualCompactionSlot() {
+  if (_held) {
+    GetSearchEngine().ReleaseCompactions(1);
+  }
+}
+
+const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
+  static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
+                                    .acquire = AnnAcquireAllWorkers,
+                                    .release = AnnReleaseWorkers};
+  return _held ? &env : nullptr;
+}
+
 void SearchEngine::start() {
   const auto threads = static_cast<size_t>(MaxConcurrentCompactions());
   _merge_tasks = std::make_unique<duckdb::TaskScheduler>(

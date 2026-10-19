@@ -90,6 +90,7 @@ set(IResearch_core_sources
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
     ./formats/index/term_parts.cpp
+    ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
     ./formats/hnsw/hnsw_writer.cpp
@@ -98,6 +99,13 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
+    ./formats/ivf/quantizers/bq.cpp
+    ./formats/ivf/quantizers/osq.cpp
+    ./formats/ivf/quantizers/panorama.cpp
+    ./formats/ivf/quantizers/pq.cpp
+    ./formats/ivf/quantizers/rabitq.cpp
+    ./formats/ivf/quantizers/scalar.cpp
+    ./formats/ivf/quantizers/tq.cpp
     ./index/compaction/adjacent_run_policy.cpp
     ./index/compaction/merge_ticket.cpp
     ./index/directory_reader.cpp
@@ -159,6 +167,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_filter.cpp
     ./search/count/make.cpp
     ./search/count/make_hnsw.cpp
+    ./search/count/make_exact.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
@@ -302,6 +311,7 @@ set(IResearch_core_sources
     ./search/fill/make_geo_distance_scored.cpp
     ./search/docs/make.cpp
     ./search/docs/make_hnsw.cpp
+    ./search/docs/make_exact.cpp
     ./search/docs/make_ivf.cpp
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
@@ -323,6 +333,7 @@ set(IResearch_core_sources
     ./search/docs/make_geo_distance.cpp
     ./search/hits/make.cpp
     ./search/hits/make_hnsw.cpp
+    ./search/hits/make_exact.cpp
     ./search/hits/make_ivf.cpp
     ./search/hits/make_posting.cpp
     ./search/hits/make_single_posting.cpp
@@ -345,6 +356,7 @@ set(IResearch_core_sources
     ./search/hits/make_geo_distance.cpp
     ./search/top/make.cpp
     ./search/top/make_hnsw.cpp
+    ./search/top/make_exact.cpp
     ./search/top/make_ivf.cpp
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
@@ -383,6 +395,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_prefix_rules.cpp
     ./search/filters/ngram_similarity_filter.cpp
     ./search/filters/vector_similarity_filter.cpp
+    ./search/filters/vector_exact_filter.cpp
     ./search/queries/hnsw_query.cpp
     ./search/queries/vector_similarity_query.cpp
     ./search/scorers/vector_similarity_scorer.cpp
@@ -425,6 +438,7 @@ set(IResearch_core_sources
     ./utils/application_exit.cpp
     ./utils/async_utils.cpp
     ./utils/bit_packing.cpp
+    ./utils/cpu_features.cpp
     ./utils/crash_handler.cpp
     ./utils/debugging.cpp
     ./utils/duckdb_engine.cpp
@@ -564,6 +578,7 @@ target_link_libraries(
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
+    PUBLIC pcg
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2

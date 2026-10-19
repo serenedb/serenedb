@@ -62,7 +62,8 @@ class MergeWriter : public util::Noncopyable {
         return *db;
       }()},
       _field_options{options.field_options},
-      _sort{options.sort} {}
+      _sort{options.sort},
+      _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -93,6 +94,7 @@ class MergeWriter : public util::Noncopyable {
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
   const SortSpec* _sort = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
   MergeProfile _profile;
 };
 

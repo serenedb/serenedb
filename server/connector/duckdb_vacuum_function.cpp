@@ -325,7 +325,9 @@ void CompactInvertedStorage(Action action,
   };
   const auto lease =
     search::GetSearchEngine().Merges().TakeOver(inverted.MergeRelation());
-  const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
+  const search::ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env_ptr =
+    slot.AnnEnv() ? slot.AnnEnv() : &search::AnnBuildEnv();
 
   search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
   for (auto more = true; more;) {

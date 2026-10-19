@@ -110,7 +110,7 @@ struct MergePlan::State {
   State(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
         ScorerPtr scorer, duckdb::DatabaseInstance& db,
         const IndexFieldOptions* field_options, const MergeProgress& progress,
-        const AnnBuildEnv* env, const SortSpec* sort)
+        const AnnBuildEnv* env, const SortSpec* sort, HnswBases* hnsw_bases)
     : col_dir{dir},
       idx_dir{dir},
       doc_map{doc_map},
@@ -123,6 +123,7 @@ struct MergePlan::State {
       }},
       env{env},
       sort{sort != nullptr && !sort->Empty() ? sort : nullptr},
+      hnsw_bases{hnsw_bases},
       postings{doc_map.size(), this->progress, this->sort != nullptr} {}
 
   const MergeOrder* Order() const noexcept {
@@ -521,6 +522,7 @@ struct MergePlan::State {
   MergeProgress progress;
   const AnnBuildEnv* env;
   const SortSpec* sort;
+  HnswBases* hnsw_bases;
   size_t threads = 1;
   duckdb::TaskScheduler* scheduler = nullptr;
   std::chrono::steady_clock::time_point started =
@@ -555,9 +557,10 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
                      ScorerPtr scorer, duckdb::DatabaseInstance& db,
                      const IndexFieldOptions* field_options,
                      const MergeProgress& progress, const AnnBuildEnv* env,
-                     const SortSpec* sort)
+                     const SortSpec* sort, HnswBases* hnsw_bases)
   : _state{std::make_unique<State>(dir, doc_map, segment, scorer, db,
-                                   field_options, progress, env, sort)} {}
+                                   field_options, progress, env, sort,
+                                   hnsw_bases)} {}
 
 MergePlan::~MergePlan() = default;
 
@@ -632,6 +635,7 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
   s.col_writer = std::make_unique<ColWriter>(s.col_dir, s.segment.name, s.db,
                                              WriteTier::Merge);
   s.col_writer->SetFieldOptions(s.field_options);
+  s.col_writer->SetHnswBases(s.hnsw_bases);
   s.columns =
     std::make_unique<ColumnMerger>(s.sources, s.field_options, s.Order());
   s.norms.emplace(s.sources, s.doc_map.get_allocator().Manager(), s.Order());

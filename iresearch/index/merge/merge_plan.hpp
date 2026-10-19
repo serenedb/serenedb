@@ -27,6 +27,7 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_profile.hpp"
@@ -76,7 +77,7 @@ class MergePlan {
             ScorerPtr scorer, duckdb::DatabaseInstance& db,
             const IndexFieldOptions* field_options,
             const MergeProgress& progress, const AnnBuildEnv* env,
-            const SortSpec* sort = nullptr);
+            const SortSpec* sort = nullptr, HnswBases* hnsw_bases = nullptr);
   ~MergePlan();
 
   MergePlan(const MergePlan&) = delete;

@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 
+#include <absl/random/distributions.h>
+
 #include <cmath>
 
 #include "iresearch/store/data_input.hpp"
@@ -55,23 +57,25 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   _graph._m0 = 2 * _graph._m;
   _graph._levels.assign(nodes, 0);
   _graph._offsets.clear();
-  _graph._neighbors.clear();
+  _graph._base.clear();
+  _graph._upper.clear();
   _graph._entry = kHnswInvalidNode;
   _graph._max_level = 0;
 }
 
 void HnswGraphWriter::AllocateLinks() {
   auto& levels = _graph._levels;
+  _graph._base.assign(levels.size() * size_t{_graph._m0}, kHnswInvalidNode);
   _graph._offsets.resize(levels.size() + 1);
   uint64_t total = 0;
   for (size_t i = 0; i < levels.size(); ++i) {
     _graph._offsets[i] = total;
-    if (levels[i] != 0) {
-      total += _graph._m0 + static_cast<uint64_t>(levels[i] - 1) * _graph._m;
+    if (levels[i] > 1) {
+      total += static_cast<uint64_t>(levels[i] - 1) * _graph._m;
     }
   }
   _graph._offsets.back() = total;
-  _graph._neighbors.assign(total, kHnswInvalidNode);
+  _graph._upper.assign(total, kHnswInvalidNode);
 
   _proc_offsets.resize(levels.size() + 1);
   uint32_t slots = 0;
@@ -89,7 +93,8 @@ void HnswGraph::Serialize(DataOutput& out) const {
   out.WriteU32(_max_level);
   WriteArray(out, _levels);
   WriteArray(out, _offsets);
-  WriteArray(out, _neighbors);
+  WriteArray(out, _base);
+  WriteArray(out, _upper);
 }
 
 HnswGraph HnswGraph::Deserialize(IndexInput& in) {
@@ -100,20 +105,33 @@ HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   g._max_level = static_cast<uint32_t>(in.ReadI32());
   ReadArray(in, g._levels);
   ReadArray(in, g._offsets);
-  ReadArray(in, g._neighbors);
+  ReadArray(in, g._base);
+  ReadArray(in, g._upper);
   return g;
 }
 
-uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept {
-  rng_state ^= rng_state << 13;
-  rng_state ^= rng_state >> 7;
-  rng_state ^= rng_state << 17;
+uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept {
   const double u =
-    static_cast<double>(rng_state >> 11) / static_cast<double>(1ULL << 53);
+    absl::Uniform<double>(absl::IntervalOpenClosed, rng, 0.0, 1.0);
   const double factor = 1.0 / std::log(static_cast<double>(std::max(m, 2U)));
-  const double sample = -std::log(u > 0.0 ? u : 1e-12) * factor;
+  const double sample = -std::log(u) * factor;
   return std::min(static_cast<uint32_t>(std::lround(sample)) + 1,
                   kHnswMaxLevel);
+}
+
+void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,
+                     float* out) noexcept {
+  float sum = 0.f;
+  for (uint32_t level = (d + width - 1) / width; level-- > first;) {
+    const uint32_t b = level * width;
+    sum += faiss::fvec_norm_L2sqr(v + b, std::min(width, d - b));
+    out[level - first] = std::sqrt(sum);
+  }
+}
+
+void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept {
+  tails[HnswPanoramaLevels(d)] = 0.f;
+  HnswSuffixNorms(q, d, kHnswPanoramaLevel, 0, tails);
 }
 
 }  // namespace irs

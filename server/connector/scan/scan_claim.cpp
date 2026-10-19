@@ -481,9 +481,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     });
   }
 
+  const auto where = g.ClaimedWhere();
   const bool constant_count = g.shape == ScanShape::Count &&
-                              g.col_filters.empty() && bind.search.filter &&
-                              ConstantCount(*bind.search.filter);
+                              g.col_filters.empty() && where &&
+                              ConstantCount(*where);
   irs::ColFilterStateCache states;
   irs::ColFilterClassification cls;
   uint64_t parallel = 0;
@@ -506,7 +507,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       if (const auto* col_reader = sub.GetColReader();
           col_reader && !g.col_filters.empty() && threads > 1 &&
           work.rg_count > threads) {
-        ClassifySegmentColFilters(sub, g, states, cls);
+        ClassifySegmentColFilters(sub, g, states, cls, false);
         irs::LiveRowGroups(*col_reader, cls.active, context, states, docs,
                            g.rg_size, work.live_rgs);
         work.all_live = work.live_rgs.size() == work.rg_count;

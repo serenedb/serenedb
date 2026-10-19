@@ -1,0 +1,34 @@
+control substitution on
+
+statement ok
+SET log_query_path = '${__TEST_DIR__}/log_query_path.log'
+
+
+statement ok
+SELECT 1 AS first_query
+
+
+statement ok
+SET log_query_path = '${__TEST_DIR__}/log_query_path.log'
+
+
+statement ok
+SELECT 2 AS second_query
+
+
+connection other
+statement error
+SET log_query_path = '${__TEST_DIR__}/log_query_path.log'
+----
+db error: ERROR: Could not set lock on file "<slt:ignore>": Conflicting lock is held by another open of this file
+
+
+statement ok
+SET log_query_path = ''
+
+
+query
+SELECT content LIKE '%second_query%' AS logged FROM read_text('${__TEST_DIR__}/log_query_path.log')
+----
+logged
+t

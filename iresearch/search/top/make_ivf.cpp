@@ -38,22 +38,17 @@ class VectorChain : public Root {
       _table{table},
       _boost{score.boost},
       _k{k} {
-    SDB_ASSERT(score.scorer != nullptr);
-    _provider.attr.value = _block;
-    _score = score.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = fetcher,
-      .stats = score.stats,
-      .boost = score.boost,
-    });
+    _score = irs::detail::PrepareBlockScorer(score, segment, field.meta(),
+                                             _provider, _block);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
     SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
     for (size_t i = 0, n = _clusters.size(); i != n; ++i) {
       auto& cluster = _clusters[i];
+      if (_table && i != 0) {
+        _table->Rewind();
+      }
       for (;;) {
         cluster.SetThreshold(Bar(collector));
         if (!cluster.NextRun()) {

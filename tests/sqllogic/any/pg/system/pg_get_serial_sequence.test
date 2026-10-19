@@ -1,0 +1,379 @@
+statement ok
+CREATE TABLE gss_t (id serial PRIMARY KEY, v int, "Id Col" bigserial)
+
+
+query
+SELECT pg_get_serial_sequence('gss_t', 'id') AS id_seq,
+       pg_get_serial_sequence('public.gss_t', 'v') AS plain,
+       pg_get_serial_sequence('gss_t', 'Id Col') AS quoted_column,
+       pg_get_serial_sequence('"gss_t"', 'id') AS quoted_table
+----
+id_seq	plain	quoted_column	quoted_table
+public.gss_t_id_seq	NULL	public."gss_t_Id Col_seq"	public.gss_t_id_seq
+
+
+query
+SELECT pg_catalog.pg_get_serial_sequence('gss_t', 'id') AS seq
+----
+seq
+public.gss_t_id_seq
+
+
+query
+SELECT pg_get_serial_sequence(NULL, 'id') IS NULL AS no_table, pg_get_serial_sequence('gss_t', NULL) IS NULL AS no_column
+----
+no_table	no_column
+t	t
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_t', 'ID')
+----
+db error: ERROR: column "ID" of relation "gss_t" does not exist
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_t', '"id"')
+----
+db error: ERROR: column ""id"" of relation "gss_t" does not exist
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_t', '')
+----
+db error: ERROR: column "" of relation "gss_t" does not exist
+
+
+statement error
+SELECT pg_get_serial_sequence('"GSS_T"', 'id')
+----
+db error: ERROR: relation "GSS_T" does not exist
+
+
+statement error
+SELECT pg_get_serial_sequence('no_such_table', 'id')
+----
+db error: ERROR: relation "no_such_table" does not exist
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_t', 'nosuch')
+----
+db error: ERROR: column "nosuch" of relation "gss_t" does not exist
+
+
+statement ok
+CREATE VIEW gss_v AS SELECT id AS vid, v FROM gss_t
+
+
+query
+SELECT pg_get_serial_sequence('gss_v', 'vid') AS view_column
+----
+view_column
+NULL
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_v', 'nosuch')
+----
+db error: ERROR: column "nosuch" of relation "gss_v" does not exist
+
+
+query
+SELECT pg_get_serial_sequence('gss_t_id_seq', 'last_value') AS sequence_column
+----
+sequence_column
+NULL
+
+
+statement ok
+CREATE TABLE "Gss Lookup" (id serial, v int, added bigserial)
+
+
+query
+SELECT pg_get_serial_sequence('"Gss Lookup"', 'id') AS id_seq,
+       pg_get_serial_sequence('public."Gss Lookup"', 'added') AS added_seq
+----
+id_seq	added_seq
+public."Gss Lookup_id_seq"	public."Gss Lookup_added_seq"
+
+
+statement ok
+CREATE SCHEMA gss_sch
+
+
+statement ok
+CREATE TABLE gss_sch.t (v int, id serial)
+
+
+query
+SELECT pg_get_serial_sequence('gss_sch.t', 'id') AS seq
+----
+seq
+gss_sch.t_id_seq
+
+
+statement ok
+CREATE TABLE gss_dump (id integer NOT NULL, v int)
+
+
+statement ok
+CREATE SEQUENCE gss_dump_id_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1
+
+
+statement ok
+ALTER SEQUENCE gss_dump_id_seq OWNED BY gss_dump.id
+
+
+statement ok
+ALTER TABLE ONLY gss_dump ALTER COLUMN id SET DEFAULT nextval('gss_dump_id_seq'::regclass)
+
+
+query
+SELECT pg_get_serial_sequence('gss_dump', 'id') AS seq
+----
+seq
+public.gss_dump_id_seq
+
+
+query
+SELECT pg_catalog.setval('public.gss_dump_id_seq', 5, true) AS setval
+----
+setval
+5
+
+
+statement count 1
+INSERT INTO gss_dump (v) VALUES (1)
+
+
+query
+SELECT id, v FROM gss_dump
+----
+id	v
+6	1
+
+
+statement ok
+CREATE TABLE gss_ren (v int, id serial)
+
+
+statement ok
+ALTER TABLE gss_ren RENAME COLUMN id TO ident
+
+
+statement ok
+ALTER TABLE gss_ren RENAME TO gss_ren2
+
+
+query
+SELECT pg_get_serial_sequence('gss_ren2', 'ident') AS seq
+----
+seq
+public.gss_ren_id_seq
+
+
+statement ok
+ALTER TABLE gss_t DROP COLUMN "Id Col"
+
+
+statement error
+SELECT pg_get_serial_sequence('gss_t', 'Id Col')
+----
+db error: ERROR: column "Id Col" of relation "gss_t" does not exist
+
+
+query
+SELECT t, pg_get_serial_sequence(t, 'id') AS seq FROM (VALUES ('gss_t'), ('gss_dump'), ('"Gss Lookup"')) AS x(t) ORDER BY t COLLATE "C"
+----
+t	seq
+"Gss Lookup"	public."Gss Lookup_id_seq"
+gss_dump	public.gss_dump_id_seq
+gss_t	public.gss_t_id_seq
+
+
+statement ok
+PREPARE gss_prep AS SELECT pg_get_serial_sequence($1, $2) AS seq
+
+
+query
+EXECUTE gss_prep('gss_t', 'id')
+----
+seq
+public.gss_t_id_seq
+
+
+statement ok
+DEALLOCATE gss_prep
+
+
+query
+SELECT c.relname AS sequence, a.attname AS column_name, d.refobjsubid, d.deptype
+FROM pg_depend d
+JOIN pg_class c ON c.oid = d.objid
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+WHERE d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass AND d.deptype = 'a' AND c.relkind = 'S'
+  AND d.refobjid IN ('gss_t'::regclass, '"Gss Lookup"'::regclass, 'gss_dump'::regclass, 'gss_ren2'::regclass)
+ORDER BY c.relname::text COLLATE "C"
+----
+sequence	column_name	refobjsubid	deptype
+Gss Lookup_added_seq	added	3	a
+Gss Lookup_id_seq	id	1	a
+gss_dump_id_seq	id	1	a
+gss_ren_id_seq	ident	2	a
+gss_t_id_seq	id	1	a
+
+
+query
+SELECT attr.attname, nsp.nspname, seq.relname
+FROM pg_class seq, pg_attribute attr, pg_depend dep, pg_constraint cons, pg_namespace nsp
+WHERE seq.oid = dep.objid AND seq.relkind = 'S' AND attr.attrelid = dep.refobjid AND attr.attnum = dep.refobjsubid
+  AND attr.attrelid = cons.conrelid AND attr.attnum = cons.conkey[1] AND seq.relnamespace = nsp.oid
+  AND cons.contype = 'p' AND dep.classid = 'pg_class'::regclass AND dep.refobjid = '"gss_t"'::regclass
+----
+attname	nspname	relname
+id	public	gss_t_id_seq
+
+
+statement ok
+CREATE TABLE gss_pk (v int, id bigserial PRIMARY KEY)
+
+
+query
+SELECT attr.attname, nsp.nspname, seq.relname
+FROM pg_class seq, pg_attribute attr, pg_depend dep, pg_constraint cons, pg_namespace nsp
+WHERE seq.oid = dep.objid AND seq.relkind = 'S' AND attr.attrelid = dep.refobjid AND attr.attnum = dep.refobjsubid
+  AND attr.attrelid = cons.conrelid AND attr.attnum = cons.conkey[1] AND seq.relnamespace = nsp.oid
+  AND cons.contype = 'p' AND dep.classid = 'pg_class'::regclass AND dep.refobjid = '"gss_pk"'::regclass
+----
+attname	nspname	relname
+id	public	gss_pk_id_seq
+
+
+statement ok
+CREATE TABLE gss_django (id serial, v int)
+
+
+statement count 2
+INSERT INTO gss_django (id, v) VALUES (10, 1), (20, 2)
+
+
+query
+SELECT setval(pg_get_serial_sequence('"gss_django"','id'), coalesce(max("id"), 1), max("id") IS NOT null) AS reset FROM "gss_django"
+----
+reset
+20
+
+
+statement count 1
+INSERT INTO gss_django (v) VALUES (3)
+
+
+query
+SELECT max(id) AS max_id FROM gss_django
+----
+max_id
+21
+
+
+statement ok
+CREATE TABLE gss_empty (id serial, v int)
+
+
+query
+SELECT setval(pg_get_serial_sequence('"gss_empty"','id'), coalesce(max("id"), 1), max("id") IS NOT null) AS reset FROM "gss_empty"
+----
+reset
+1
+
+
+statement count 1
+INSERT INTO gss_empty (v) VALUES (1)
+
+
+query
+SELECT id FROM gss_empty
+----
+id
+1
+
+
+# The sequence is the one OWNED BY the column, whatever the defaults call.
+statement ok
+CREATE TABLE gss_owned (a serial, b int, c int)
+
+
+statement ok
+CREATE SEQUENCE gss_owned_c OWNED BY gss_owned.c
+
+
+statement ok
+ALTER TABLE gss_owned ALTER b SET DEFAULT nextval('gss_owned_a_seq')
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'a') AS a,
+       pg_get_serial_sequence('gss_owned', 'b') AS b,
+       pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+a	b	c
+public.gss_owned_a_seq	NULL	public.gss_owned_c
+
+
+statement ok
+ALTER TABLE gss_owned RENAME a TO r
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'r') AS r
+----
+r
+public.gss_owned_a_seq
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER SEQUENCE gss_owned_c OWNED BY gss_owned.b
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'b') AS b, pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+b	c
+public.gss_owned_c	NULL
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'b') AS b, pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+b	c
+NULL	public.gss_owned_c
+
+
+query
+SELECT s.relname, d.refobjsubid, d.deptype
+FROM pg_depend d JOIN pg_class s ON s.oid = d.objid
+WHERE d.refobjid = 'gss_owned'::regclass AND s.relkind = 'S'
+ORDER BY 1
+----
+relname	refobjsubid	deptype
+gss_owned_a_seq	1	a
+gss_owned_c	3	a
+
+
+statement ok
+ALTER SEQUENCE gss_owned_c OWNED BY NONE
+
+
+query
+SELECT pg_get_serial_sequence('gss_owned', 'c') AS c
+----
+c
+NULL

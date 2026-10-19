@@ -310,7 +310,8 @@ class ColumnReader {
 
   class PointReader {
    public:
-    PointReader(const ColReader& col_reader, const ColumnReader& col);
+    PointReader(const ColReader& col_reader, const ColumnReader& col,
+                bool random_access = false);
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
@@ -320,20 +321,31 @@ class ColumnReader {
     void FetchRows(std::span<const uint64_t> rows, duckdb::Vector& out,
                    duckdb::idx_t out_offset);
 
+    bool ValidRow(uint64_t row, duckdb::Vector& scratch);
+
    protected:
-    duckdb::ColumnSegment& DataBlock(uint64_t row);
-    duckdb::ColumnSegment& ValidityBlock(uint64_t row);
+    struct OpenBlock {
+      std::unique_ptr<duckdb::ColumnSegment> segment;
+      duckdb::ColumnFetchState state;
+      uint64_t bytes = 0;
+      uint64_t last_use = 0;
+    };
+
+    OpenBlock& Block(std::vector<OpenBlock>& blocks, const ColumnReader& reader,
+                     BlockWindow& window, uint64_t row);
+    bool FetchValidity(const ColumnReader& validity, uint64_t row,
+                       duckdb::Vector& out, duckdb::idx_t out_offset);
+    void Evict(uint64_t incoming);
 
     ReadContext _ctx;
     const ColumnReader* _reader;
-    std::unique_ptr<duckdb::ColumnSegment> _block;
-    std::unique_ptr<duckdb::ColumnSegment> _validity_block;
-    duckdb::ColumnFetchState _fetch_state;
-    duckdb::ColumnFetchState _validity_fetch_state;
+    std::vector<OpenBlock> _blocks;
+    std::vector<OpenBlock> _validity_blocks;
+    std::vector<OpenBlock*> _open;
     BlockWindow _window{};
     BlockWindow _validity_window{};
-    size_t _cached_block = static_cast<size_t>(-1);
-    size_t _cached_validity_block = static_cast<size_t>(-1);
+    uint64_t _open_bytes = 0;
+    uint64_t _uses = 0;
     std::vector<duckdb::idx_t> _local;
     std::vector<duckdb::idx_t> _fetched;
     duckdb::SelectionVector _sel{STANDARD_VECTOR_SIZE};

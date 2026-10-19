@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
@@ -49,6 +50,7 @@ struct SegmentWriterOptions {
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
   const SortSpec* sort = nullptr;
+  HnswBases* hnsw_bases = nullptr;
 };
 
 }  // namespace irs

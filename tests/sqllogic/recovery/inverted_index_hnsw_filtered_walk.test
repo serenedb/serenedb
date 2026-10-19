@@ -1,0 +1,64 @@
+hash-threshold 100
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE MACRO walk_vec(i) AS
+  list_transform(range(16), j -> ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
+
+
+statement ok
+CREATE TABLE walk_docs (id INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[16]);
+
+
+statement ok
+INSERT INTO walk_docs SELECT i, i % 2, walk_vec(i) FROM range(20000) t(i);
+
+
+statement ok
+CREATE INDEX walk_docs_l2 ON walk_docs
+  USING inverted(id, grp, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) walk_docs;
+
+
+statement ok
+SET sdb_hnsw_ef_search = 16;
+
+
+statement ok
+SET sdb_faults = 'irs::HnswFilteredScan';
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM walk_docs_l2 WHERE grp = 0 ORDER BY emb <-> walk_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement error
+SELECT id FROM walk_docs_l2 WHERE id BETWEEN 100 AND 119
+ORDER BY emb <-> walk_vec(110) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET sdb_faults = '-irs::HnswFilteredScan';
+
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM walk_docs_l2 WHERE id BETWEEN 100 AND 119
+   ORDER BY emb <-> walk_vec(110) LIMIT 5)
+  EXCEPT (SELECT id FROM walk_docs WHERE id BETWEEN 100 AND 119
+   ORDER BY emb <-> walk_vec(110) LIMIT 5)) t;
+----
+count
+0

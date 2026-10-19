@@ -307,6 +307,11 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       if (ShouldStop()) {
         break;
       }
+      if (auto live = weak.lock();
+          !live || ToDuration(get_interval_ms(*live)) != interval) {
+        stretch = 0;
+        continue;
+      }
       switch (tick(weak)) {
         case LoopTick::kProgress:
           stretch = 0;

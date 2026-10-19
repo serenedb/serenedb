@@ -21,6 +21,8 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -547,6 +549,8 @@ absl::Status SearchTable::VacuumCompact(
     return res;
   }
   const CopyChecker checker{*field_options, scheduler};
+  const ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env = slot.AnnEnv() ? slot.AnnEnv() : &AnnBuildEnv();
   for (auto more = true; more;) {
     const auto plan = PlanMergeRound(
       _writer->GetSnapshot(),
@@ -567,10 +571,12 @@ absl::Status SearchTable::VacuumCompact(
         names.emplace_back(segment.name);
       }
       bool empty = false;
-      if (auto res = CompactUnsafe(ExplicitPolicy(names), progress, empty,
-                                   field_options.get(), MergeOrigin::Vacuum,
-                                   executor, planned.lone)
-                       .res;
+      if (auto res =
+            irs::GetReady(CompactUnsafeAsync(ExplicitPolicy(names), progress,
+                                             empty, field_options.get(), env,
+                                             MergeOrigin::Vacuum, nullptr,
+                                             executor, planned.lone))
+              .res;
           !res.ok()) {
         return res;
       }

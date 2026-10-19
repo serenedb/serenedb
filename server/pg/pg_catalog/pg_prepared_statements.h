@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,26 +15,15 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <cstdlib>
-#include <string>
+#include <duckdb/main/database.hpp>
 
-namespace sdb::random {
+namespace sdb::pg {
 
-class UniformCharacter {
- public:
-  constexpr explicit UniformCharacter(std::string_view characters)
-    : _characters{characters} {}
+void RegisterPreparedStatements(duckdb::DatabaseInstance& db);
 
-  std::string random(size_t length) const;
-  char randomChar() const;
-
- private:
-  const std::string_view _characters;
-};
-
-}  // namespace sdb::random
+}  // namespace sdb::pg

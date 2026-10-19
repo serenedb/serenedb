@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import platform
+import shutil
 import socket
 import subprocess
 import time
@@ -153,3 +155,23 @@ def test_unknown_unix_socket_group(tmp_path: Path) -> None:
                 in server.output()), server.output()
     finally:
         server.stop()
+
+
+def _qemu_x86_64() -> str | None:
+    if platform.machine() != "x86_64":
+        return None
+    return shutil.which("qemu-x86_64") or shutil.which("qemu-x86_64-static")
+
+
+@pytest.mark.skipif(_qemu_x86_64() is None,
+                    reason="needs qemu-x86_64 on an x86-64 host")
+def test_cpu_without_the_build_baseline(tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    result = subprocess.run(
+        [_qemu_x86_64(), "-cpu", "Haswell-noTSX,-f16c", SERENED_BIN,
+         str(datadir)],
+        capture_output=True, text=True, timeout=60)
+    assert result.returncode == 1, result
+    assert result.stderr == "serened cannot run on this CPU: it lacks F16C\n", (
+        result.stderr)
+    assert not datadir.exists()

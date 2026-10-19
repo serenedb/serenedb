@@ -1,0 +1,78 @@
+# An inverted index whose keys use lambdas gets the rows committed before a
+# crash from WAL replay, and the rows inserted after the restart.
+
+control substitution on
+
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1GB';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lr_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE lr (id INTEGER, tags VARCHAR[]);
+
+
+statement ok
+CREATE INDEX lr_idx ON lr USING inverted (
+  id,
+  (list_reduce(tags, lambda a, b: a || ' ' || b)) lr_dict,
+  (list_transform(tags, lambda x: lower(x))) included())
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO lr VALUES (1, ['Red', 'Green']);
+
+
+statement ok
+INSERT INTO lr SELECT g, ['Bulk', 'T' || g] FROM generate_series(2, 40001) g;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO lr VALUES (40002, ['Blue', 'Yellow']);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) lr;
+
+
+connection after_crash
+query
+SELECT count(*) FROM lr_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Bulk');
+----
+count
+40000
+
+
+connection after_crash
+query
+SELECT id, list_transform(tags, lambda x: lower(x)) AS lowered
+FROM lr_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Green');
+----
+id	lowered
+1	{red,green}
+
+
+connection after_crash
+query
+SELECT id, list_transform(tags, lambda x: lower(x)) AS lowered
+FROM lr_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Yellow');
+----
+id	lowered
+40002	{blue,yellow}

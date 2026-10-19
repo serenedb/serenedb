@@ -63,6 +63,7 @@
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
+#include "pg/pg_catalog/pg_prepared_statements.h"
 #include "pg/pg_catalog/pg_replication_origin.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -200,22 +201,6 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
     {
       "yes_or_no",
       sdb::pg::YESORNO(),
-      nullptr,
-    },
-    // pseudo-types for SERIAL types.
-    {
-      "serial",
-      sdb::pg::SERIAL(),
-      nullptr,
-    },
-    {
-      "bigserial",
-      sdb::pg::BIGSERIAL(),
-      nullptr,
-    },
-    {
-      "smallserial",
-      sdb::pg::SMALLSERIAL(),
       nullptr,
     },
     // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
@@ -360,6 +345,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
   pg::RegisterReplicationOriginStatus(db);
+  pg::RegisterPreparedStatements(db);
 
   connector::RegisterSearchFunctions(db);
 

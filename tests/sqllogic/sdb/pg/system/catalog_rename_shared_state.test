@@ -1,13 +1,14 @@
 # Shared state moves with the head version, never with an attempt.
 #
 # A rename makes a new catalog version and, once that version is the head of
-# its chain, mutates what the versions share: a table's storage name and its
-# dependent indexes' text and dependency lists, an index's physical name, a
-# schema's shared name. A rename that loses the write-write conflict never
-# reaches that point, and a rolled-back rename hands the shared state back to
-# the restored version. A dependency created against the old name while the
-# rename is pending fails at whichever commit comes second, the way it does for
-# a DROP.
+# its chain, mutates what the versions share: a table's storage name, an
+# index's physical name, a schema's shared name. The indexes on a renamed table
+# get new versions of their own, so other sessions see the old index
+# definition until the rename commits. A rename that loses the write-write
+# conflict never reaches that point, and a rolled-back rename hands the shared
+# state back to the restored version. A dependency created against the old
+# name while the rename is pending fails at whichever commit comes second, the
+# way it does for a DROP.
 
 
 statement ok
@@ -191,6 +192,69 @@ SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' AND database_nam
 index_name
 i
 i4
+
+
+# A pending column rename reaches the index only in its own transaction.
+statement ok
+CREATE TABLE crs.r (id INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX crs_r_b ON crs.r (b);
+
+connection s1
+statement ok
+BEGIN;
+
+connection s1
+statement ok
+ALTER TABLE crs.r RENAME COLUMN b TO c;
+
+connection s1
+query
+SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+----
+sql
+CREATE INDEX crs_r_b ON crs.r(c);
+
+connection s2
+query
+SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+----
+sql
+CREATE INDEX crs_r_b ON crs.r(b);
+
+connection s1
+statement ok
+ROLLBACK;
+
+connection s2
+query
+SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+----
+sql
+CREATE INDEX crs_r_b ON crs.r(b);
+
+connection s1
+statement ok
+ALTER TABLE crs.r RENAME COLUMN b TO c;
+
+connection s2
+query
+SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+----
+sql
+CREATE INDEX crs_r_b ON crs.r(c);
+
+connection s2
+statement ok
+INSERT INTO crs.r VALUES (1, 10);
+
+connection s2
+query
+SELECT id FROM crs.r WHERE c = 10;
+----
+id
+1
 
 
 statement ok

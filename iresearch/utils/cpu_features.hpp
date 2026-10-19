@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,21 +20,10 @@
 
 #pragma once
 
-#include <cstdint>
+#include <string_view>
 
-namespace sdb::random {
+namespace irs {
 
-void Reset();
-void Ensure();
+void CheckCpuFeatures(std::string_view program);
 
-int16_t Interval(int16_t l, int16_t r);
-int32_t Interval(int32_t l, int32_t r);
-int64_t Interval(int64_t l, int64_t r);
-
-uint16_t Interval(uint16_t r);
-uint32_t Interval(uint32_t r);
-uint64_t Interval(uint64_t r);
-
-uint64_t RandU64();
-
-}  // namespace sdb::random
+}  // namespace irs

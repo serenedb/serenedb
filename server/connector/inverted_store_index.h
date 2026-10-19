@@ -146,7 +146,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                duckdb::Vector& row_ids);
 
   irs::IndexWriter::Transaction NewTransaction();
-  duckdb::idx_t Evaluate(duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+  duckdb::idx_t Evaluate(duckdb::ClientContext& context,
+                         duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
                          duckdb::DataChunk& results, duckdb::Vector& rows,
                          duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,

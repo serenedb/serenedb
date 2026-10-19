@@ -1155,8 +1155,12 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     ConvertToFunction});
 
   // pg_client_encoding() -> name
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction});
+  {
+    duckdb::ScalarFunction func{
+      "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction};
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    loader.RegisterFunction(func);
+  }
 
   // quote_ident(text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{"quote_ident",

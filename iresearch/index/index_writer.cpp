@@ -1327,6 +1327,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     }
   }
 
+  auto hnsw_bases = std::make_unique<HnswBases>();
+  options.reader_options.hnsw_bases = hnsw_bases.get();
   auto reader = [](Directory& dir, DirectoryMeta&& meta,
                    const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
@@ -1352,6 +1354,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   writer->_ann_env = options.ann_env;
   writer->_sort = std::move(options.sort);
   writer->_on_flushed = std::move(options.on_flushed);
+  writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
@@ -2033,6 +2036,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
     .sort = &_sort,
+    .hnsw_bases = _hnsw_bases.get(),
   };
 }
 

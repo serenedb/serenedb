@@ -30,8 +30,11 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -150,6 +153,14 @@ struct CopyKind {
   CopyDir dir = CopyDir::None;
   CopyFormat format = CopyFormat::Other;
 };
+
+bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::DROP_STATEMENT) {
+    return false;
+  }
+  const auto& info = statement.Cast<duckdb::DropStatement>().info;
+  return info && info->type == duckdb::CatalogType::PREPARED_STATEMENT;
+}
 
 // Classified from the parsed statement BEFORE Prepare -- the CSV sniff opens
 // /dev/stdin during Prepare, so the bridge must already be live by then.
@@ -442,6 +453,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -1445,6 +1457,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     // DataRow (a plan error then lands after T, which is postgres's
     // mid-stream error behavior).
     const auto stmt_type = statement->type;
+    const bool deallocates = DeallocatesPreparedStatements(*statement);
     const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
                        ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
                        : sdb::pg::BuildCommandTag(*statement, *_conn->context);
@@ -1455,6 +1468,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       co_await DriveStatementToResult(std::move(statement), pending, wire);
     commit_block_if_last(is_last, stmt_type);
     DrainNotices();
+    if (deallocates) {
+      ReleaseDeallocated();
+    }
     const auto return_type = result->GetStatementProperties().return_type;
     if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
       WriteCommandComplete(this->_send, tag,
@@ -2025,11 +2041,19 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // Named statements are stored only after a successful parse: a syntax error
   // must win over "already exists" and must not define the name.
   if (!statement_name.empty()) {
+    DropDeallocated(statement_name);
+    if (duckdb::ClientData::Get(*_conn->context)
+          .prepared_statements.contains(statement_name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
+        ERR_MSG("prepared statement \"", statement_name, "\" already exists"));
+    }
     slot = &_proto.statements.Create(statement_name);
   }
   Statement& statement = **slot;
   if (extracted.empty()) {
     // Empty query string is legal: Execute replies EmptyQueryResponse.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.MakeEmpty();
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -2041,6 +2065,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // stream at Execute (the wire collector for binary/text, DuckDB's writer
     // for csv/json/parquet/...), rather than running as a plain Prepared
     // statement.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCopy(std::move(extracted[0]));
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -2062,8 +2087,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
+    const duckdb::Identifier alias{statement_name};
     auto prepared = _conn->Prepare(std::move(extracted[0]),
-                                   type_hints.empty() ? nullptr : &type_hints);
+                                   type_hints.empty() ? nullptr : &type_hints,
+                                   statement_name.empty() ? nullptr : &alias);
     if (prepared->HasError()) {
       // A failed prepare must not define the name (the slot is dropped below;
       // the unnamed slot stays Unbound).
@@ -2074,6 +2101,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));
+    statement.SetAlias(statement_name);
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2082,6 +2110,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // them now -- before the ADD COLUMN has run -- fails "Referenced update
     // column ... not found". They are prepared and run in sequence at Execute,
     // inside the session's implicit block (ExecuteCompound).
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCompound(std::move(extracted));
   }
   WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
@@ -2192,7 +2221,56 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
     // (PG's revalidation likewise fails per attempt, not once and for all).
     prepared->GetErrorObject().Throw();
   }
+  if (!stmt.Alias().empty()) {
+    auto& statements =
+      duckdb::ClientData::Get(*_conn->context).prepared_statements;
+    const auto alias = statements.find(stmt.Alias());
+    const auto handle = statements.find(prepared->GetName());
+    if (alias != statements.end() && handle != statements.end()) {
+      alias->second = handle->second;
+    }
+  }
   stmt.SetPrepared(std::move(prepared), epoch);
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
+  if (name.empty()) {
+    return;
+  }
+  auto& named = _proto.statements.Named();
+  const auto it = named.find(name);
+  if (it != named.end() && !it->second->Alias().empty() &&
+      !duckdb::ClientData::Get(*_conn->context)
+         .prepared_statements.contains(name)) {
+    named.erase(it);
+  }
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::ReleaseDeallocated() {
+  const auto& statements =
+    duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  absl::erase_if(_proto.statements.Named(), [&](const auto& entry) {
+    return !entry.second->Alias().empty() && !statements.contains(entry.first);
+  });
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::RegisterUnprepared(
+  Statement& statement, std::string_view name, std::string_view query,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body) {
+  if (name.empty()) {
+    return;
+  }
+  auto unbound = duckdb::make_uniq<duckdb::MultiStatement>();
+  for (const auto& part : body) {
+    unbound->statements.push_back(part->Copy());
+  }
+  unbound->query = query;
+  _conn->context->RegisterPreparedStatement(duckdb::Identifier{name},
+                                            std::move(unbound));
+  statement.SetAlias(name);
 }
 
 template<SocketKind Kind>
@@ -2210,6 +2288,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     payload.substr(portal_end + 1, statement_end - portal_end - 1);
   payload.remove_prefix(statement_end + 1);
 
+  DropDeallocated(statement_name);
   auto& slot = _proto.statements.FindOrThrow(statement_name);
   auto& statement = *slot;
   if (!statement.Bound()) {
@@ -2363,6 +2442,7 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
   const char what = payload.front();
   const std::string_view name = payload.substr(1, name_end - 1);
   if (what == 'S') {
+    DropDeallocated(name);
     DescribeStatement(*_proto.statements.FindOrThrow(name));
   } else if (what == 'P') {
     // Find (not FindOrThrow): the anon slot always exists but an unbound anon
@@ -2507,6 +2587,10 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
         WriteCommandTag(prepared, *result, return_type);
       }
       exec.state = PortalState::Exhausted;
+      if (const auto* unbound = portal.stmt->Unbound();
+          unbound && DeallocatesPreparedStatements(*unbound)) {
+        ReleaseDeallocated();
+      }
       if (prepared.GetStatementType() ==
           duckdb::StatementType::TRANSACTION_STATEMENT) {
         // COMMIT/ROLLBACK closes the block and drops the portals it owned
@@ -2619,6 +2703,9 @@ void PgWireSession<Kind>::HandleClose(std::string_view payload) {
     // portal co-owns its plan via the StatementPtr, so it survives until its
     // own Close or the transaction boundary (PG DEALLOCATE semantics).
     _proto.statements.Drop(name);
+    if (!name.empty()) {
+      duckdb::ClientData::Get(*_conn->context).prepared_statements.erase(name);
+    }
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                     ERR_MSG("invalid Close target"));
@@ -2945,6 +3032,9 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
   // ~ConnectionContext asserts an empty queue.
+  if (_client_state) {
+    _client_state->protocol_state = nullptr;
+  }
   _proto.Clear();
   if (_connection_ctx) {
     _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});

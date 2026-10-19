@@ -288,7 +288,7 @@ TEST(MergeAnnTest, MergeUnitsBuildTheGraphOnAnnWorkers) {
   auto pool = yaclib::MakeFairThreadPool(3);
   std::atomic<uint32_t> held{0};
   std::atomic<uint32_t> shared_builds{0};
-  const auto acquire = [&](uint32_t want) {
+  const auto acquire = [&](uint32_t want, uint32_t) -> uint32_t {
     const auto grant = std::min(want, 4U);
     held += grant;
     shared_builds += grant > 1 ? 1 : 0;

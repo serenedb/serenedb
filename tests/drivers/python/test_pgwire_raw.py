@@ -2492,3 +2492,28 @@ def test_pg_prepared_statements_lists_protocol_statements(conn):
     assert not errors(m), errors(m)
     assert len(rows(m)) == 1, rows(m)
     assert all_fields(m) == [b"select $1::int4", b"{integer}", b"{integer}", b"f"]
+
+
+def test_close_drops_protocol_statement_name(conn):
+    _parse_ok(conn, "ns_closed", "select 1")
+    conn.send("C", b"S" + _cstr("ns_closed"))
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+    assert sqlstates(_simple(conn, "EXECUTE ns_closed")) == ["26000"]
+    assert not errors(_simple(conn, "PREPARE ns_closed AS SELECT 2"))
+
+
+def test_replanned_protocol_statement_keeps_its_name(conn):
+    _drop(conn, "ns_replan")
+    assert not errors(_simple(conn, "CREATE TABLE ns_replan(a int4)"))
+    _parse_ok(conn, "ns_replanned", "SELECT * FROM ns_replan")
+    assert not errors(conn.run("ALTER TABLE ns_replan ADD COLUMN b text"))
+    assert _bind_sqlstates(conn, "ns_replanned") == []
+    m = _simple(
+        conn,
+        "SELECT result_types FROM pg_prepared_statements"
+        " WHERE name = 'ns_replanned'",
+    )
+    assert all_fields(m) == [b"{integer,text}"], all_fields(m)
+    assert not errors(_simple(conn, "EXECUTE ns_replanned"))
+    _drop(conn, "ns_replan")

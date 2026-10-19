@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "network/pg/protocol_state.h"
 #include "pg/pg_types.h"
@@ -106,28 +107,21 @@ duckdb::unique_ptr<duckdb::FunctionData> PreparedStatementsBind(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> PreparedStatementsInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto state = duckdb::make_uniq<PreparedStatementsState>();
+  const auto client =
+    context.registered_state->Get<connector::SereneDBClientState>(
+      connector::kSereneDBClientStateKey);
+  const auto* protocol = client ? client->protocol_state : nullptr;
   for (const auto& [name, data] :
        duckdb::ClientData::Get(context).prepared_statements) {
-    if (!data->internal) {
-      state->rows.push_back({
-        .name = name.GetIdentifierName(),
-        .data = data,
-        .from_sql = true,
-      });
+    if (duckdb::ClientContext::IsPreparedStatementHandle(name)) {
+      continue;
     }
-  }
-  if (auto protocol =
-        context.registered_state->Get<network::pg::ProtocolStatements>(
-          network::pg::kProtocolStatementsKey)) {
-    for (const auto& [name, statement] : protocol->Statements().Named()) {
-      if (auto data = network::pg::PreparedData(context, *statement)) {
-        state->rows.push_back({
-          .name = name,
-          .data = std::move(data),
-          .from_sql = false,
-        });
-      }
-    }
+    state->rows.push_back({
+      .name = name.GetIdentifierName(),
+      .data = data,
+      .from_sql = !protocol || !protocol->statements.Named().contains(
+                                 name.GetIdentifierName()),
+    });
   }
   return state;
 }
@@ -143,7 +137,7 @@ void PreparedStatementsExecute(duckdb::ClientContext& context,
     auto& data = *row.data;
     duckdb::idx_t col = 0;
     output.SetValue(col++, count, duckdb::Value{row.name});
-    output.SetValue(col++, count, duckdb::Value{data.query});
+    output.SetValue(col++, count, duckdb::Value{data.unbound_statement->query});
     output.SetValue(col++, count,
                     duckdb::Value::TIMESTAMPTZ(data.prepare_time));
     output.SetValue(col++, count, ParameterTypes(data));

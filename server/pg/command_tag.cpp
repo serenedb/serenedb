@@ -144,13 +144,13 @@ CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   auto& exec_stmt = unbound->Cast<duckdb::ExecuteStatement>();
-  const auto prepared =
-    duckdb::ClientData::GetPreparedStatement(*context, exec_stmt.name);
-  if (!prepared) {
+  auto& client_data = duckdb::ClientData::Get(*context);
+  auto it = client_data.prepared_statements.find(exec_stmt.name);
+  if (it == client_data.prepared_statements.end() || !it->second) {
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   using duckdb::StatementType;
-  const auto inner = prepared->statement_type;
+  const auto inner = it->second->statement_type;
   switch (inner) {
     case StatementType::SELECT_STATEMENT:
       return {"SELECT", inner, true};
@@ -361,7 +361,7 @@ const duckdb::SQLStatement* UnboundStatement(
   }
   const auto& statements =
     duckdb::ClientData::Get(*context).prepared_statements;
-  const auto it = statements.find(duckdb::Identifier{prepared.GetName()});
+  const auto it = statements.find(prepared.GetName());
   return it != statements.end() && it->second
            ? it->second->unbound_statement.get()
            : nullptr;

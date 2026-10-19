@@ -23,6 +23,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -31,7 +32,9 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
@@ -45,6 +48,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
@@ -70,6 +74,7 @@
 #include "network/cancel_registry.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -1914,6 +1919,119 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
     });
 }
 
+[[noreturn]] void ThrowColumnNotFound(std::string_view column,
+                                      std::string_view relation) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                  ERR_MSG("column \"", column, "\" of relation \"", relation,
+                          "\" does not exist"));
+}
+
+bool ViewHasColumn(duckdb::ClientContext& context,
+                   duckdb::ViewCatalogEntry& view, std::string_view column) {
+  view.BindView(context);
+  const auto info = view.GetColumnInfo();
+  if (!info) {
+    return false;
+  }
+  for (duckdb::idx_t i = 0; i < info->names.size(); ++i) {
+    const auto& name = i < view.aliases.size() && !view.aliases[i].empty()
+                         ? view.aliases[i]
+                         : info->names[i];
+    if (name.GetIdentifierName() == column) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SerialSequenceOf(duckdb::ClientContext& context,
+                      std::string_view table_name, std::string_view column_name,
+                      std::string& sequence) {
+  const auto name = duckdb::QualifiedName::Parse(table_name);
+  const auto relation = name.Name().GetIdentifierName();
+  if (pg::ResolveRelation(context, name) == pg::kInvalidOid) {
+    ThrowRelationNotFound(absl::StrJoin(
+      name.Path(), ".", [](std::string* out, const duckdb::Identifier& part) {
+        out->append(part.GetIdentifierName());
+      }));
+  }
+  auto entry = duckdb::Catalog::GetEntry(
+    context, duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, name},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
+    return false;
+  }
+  if (entry->type == duckdb::CatalogType::VIEW_ENTRY) {
+    if (!ViewHasColumn(context, entry->Cast<duckdb::ViewCatalogEntry>(),
+                       column_name)) {
+      ThrowColumnNotFound(column_name, relation);
+    }
+    return false;
+  }
+  if (entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return false;
+  }
+  const duckdb::ColumnDefinition* column = nullptr;
+  for (const auto& candidate :
+       entry->Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+    if (candidate.Name().GetIdentifierName() == column_name) {
+      column = &candidate;
+      break;
+    }
+  }
+  if (!column) {
+    ThrowColumnNotFound(column_name, relation);
+  }
+  auto& catalog = entry->ParentCatalog();
+  auto dependency_manager = catalog.GetDependencyManager();
+  if (!dependency_manager) {
+    return false;
+  }
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  const duckdb::IdentifierEquality equals(catalog.IsCaseSensitive());
+  for (const auto& owned :
+       dependency_manager->OwnedEntries(transaction, *entry)) {
+    const auto& candidate = owned.get();
+    if (candidate.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
+      continue;
+    }
+    const auto& schema = candidate.ParentSchema(transaction);
+    if (!duckdb::Binder::DefaultNamesSequence(
+          *column, schema.GetQualifiedName(candidate.name), equals)) {
+      continue;
+    }
+    sequence =
+      absl::StrCat(pg::QuoteIdentifier(schema.name.GetIdentifierName()), ".",
+                   pg::QuoteIdentifier(candidate.name.GetIdentifierName()));
+    return true;
+  }
+  return false;
+}
+
+void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState& state,
+                                 duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  const auto tables = args.data[0].Values<duckdb::string_t>();
+  const auto columns = args.data[1].Values<duckdb::string_t>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  std::string sequence;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto table = tables[row];
+    const auto column = columns[row];
+    if (!table.IsValid() || !column.IsValid() ||
+        !SerialSequenceOf(
+          context, {table.GetValue().GetData(), table.GetValue().GetSize()},
+          {column.GetValue().GetData(), column.GetValue().GetSize()},
+          sequence)) {
+      writer.WriteNull();
+      continue;
+    }
+    writer.WriteValue(duckdb::string_t{sequence});
+  }
+}
+
 }  // namespace
 
 void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
@@ -1954,6 +2072,17 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       SetConfigFunction};
     func.SetStability(duckdb::FunctionStability::VOLATILE);
     func.SetRequiresOrderedExecution(true);
+    loader.RegisterFunction(func);
+  }
+
+  {
+    duckdb::ScalarFunction func{
+      "pg_get_serial_sequence",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::VARCHAR,
+      PgGetSerialSequenceFunction};
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    func.SetFallible();
     loader.RegisterFunction(func);
   }
 

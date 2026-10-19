@@ -169,3 +169,41 @@ DROP TABLE pd_t
 
 statement error
 SELECT nextval('public.pd_t_id_seq')
+
+
+statement ok
+CREATE TABLE pd_c (id integer NOT NULL, v text)
+
+
+statement ok
+CREATE SEQUENCE public.pd_c_id_seq AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1
+
+
+statement ok
+ALTER SEQUENCE public.pd_c_id_seq OWNED BY public.pd_c.id
+
+
+statement ok
+ALTER TABLE ONLY public.pd_c ALTER COLUMN id SET DEFAULT nextval('public.pd_c_id_seq'::regclass)
+
+
+query
+SELECT pg_get_serial_sequence('pd_c', 'id') AS seq
+----
+seq
+public.pd_c_id_seq
+
+
+statement ok
+ALTER TABLE pd_c DROP COLUMN id
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'pd_c_id_seq'
+----
+sequences
+0
+
+
+statement ok
+DROP TABLE pd_c

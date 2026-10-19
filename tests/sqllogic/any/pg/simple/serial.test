@@ -596,3 +596,76 @@ INSERT INTO serial_overflow (v) VALUES (2);
 
 statement ok
 DROP TABLE serial_overflow;
+
+
+statement ok
+CREATE TEMP TABLE serial_temp (id serial, big bigserial, v int);
+
+
+statement count 2
+INSERT INTO serial_temp (v) VALUES (1), (2);
+
+
+query
+SELECT id, big, v FROM serial_temp ORDER BY v;
+----
+id	big	v
+1	1	1
+2	2	2
+
+
+query
+SELECT nextval(pg_get_serial_sequence('serial_temp', 'big')) AS next;
+----
+next
+3
+
+
+statement ok
+DROP TABLE serial_temp;
+
+
+statement ok
+CREATE TABLE serial_rel_id_seq (x int);
+
+
+statement ok
+CREATE TABLE serial_rel (id serial, v int);
+
+
+query
+SELECT pg_get_serial_sequence('serial_rel', 'id') AS seq;
+----
+seq
+public.serial_rel_id_seq1
+
+
+statement count 1
+INSERT INTO serial_rel (v) VALUES (1);
+
+
+query
+SELECT id, v FROM serial_rel;
+----
+id	v
+1	1
+
+
+statement ok
+DROP TABLE serial_rel;
+
+
+statement ok
+DROP TABLE serial_rel_id_seq;
+
+
+statement error
+CREATE TABLE serial_null (a serial NULL);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "a" of table "serial_null"
+
+
+statement error
+CREATE TABLE serial_default (a serial DEFAULT 1);
+----
+db error: ERROR: multiple default values specified for column "a" of table "serial_default"

@@ -130,7 +130,7 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 
 Like PostgreSQL, a sequence is logged ahead of the values sessions have taken, but by a step that grows with use: 32 values (or the `CACHE` size, if larger) for a new sequence, then about one sixteenth of the values taken so far, rounded up to a power of two, and at most 4096. When the logged values are half used, `nextval` writes the next position, which is flushed to disk in the background, so a commit usually finds it durable and waits for that flush only if it has not finished yet. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to one and a half steps of values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
 
-A sequence `OWNED BY` a column belongs to the column's table: dropping the table drops it, but dropping only the column does not, unlike in PostgreSQL.
+A sequence `OWNED BY` a column belongs to the column's table: dropping the table drops it, but dropping only the column drops it only while the column's default calls `nextval` on it, and only then does `pg_get_serial_sequence` return it for that column.
 
 While a transaction that restarted or renamed a sequence is open, `nextval` and `setval` on that sequence in other transactions fail with a serialization error (`40001`) instead of waiting for it as in PostgreSQL; a session still hands out the values it has cached. Once that transaction commits, transactions that started before the commit keep getting the error, and later transactions use the restarted or renamed sequence.
 

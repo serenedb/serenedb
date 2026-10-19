@@ -909,7 +909,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
    R"((role_oid) AS COALESCE(
         (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
         ('unknown (OID=' || role_oid || ')')))"},
-  {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
 
   // Recovery status: SereneDB is always a primary (no WAL-replay standby

@@ -102,6 +102,29 @@ id	ip
 
 
 query
+SELECT '10.0.0.1'::INET::TEXT AS host4, '::1'::INET::TEXT AS host6, '10.0.0.1/24'::INET::TEXT AS net4, '10.0.0.1/32'::INET::TEXT AS full4, CAST('10.0.0.1'::INET AS VARCHAR) AS vc, '10.0.0.1'::INET || '' AS cat, 'ip ' || '::1'::INET AS cat6;
+----
+host4	host6	net4	full4	vc	cat	cat6
+10.0.0.1/32	::1/128	10.0.0.1/24	10.0.0.1/32	10.0.0.1/32	10.0.0.1/32	ip ::1/128
+
+
+query
+SELECT id, ip::TEXT AS t FROM inet_values ORDER BY id;
+----
+id	t
+1	10.0.0.1/32
+2	2001:db8::1/64
+3	192.168.1.0/24
+
+
+query
+SELECT id FROM inet_values WHERE ip::TEXT = '10.0.0.1/32';
+----
+id
+1
+
+
+query
 SELECT ARRAY['1.2.3.4'::INET, '5.6.7.8/30'::INET] AS arr;
 ----
 arr

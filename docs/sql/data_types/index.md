@@ -9,9 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The table below shows all the built-in general-purpose data types. The alternatives listed in the aliases column can be used to refer to these types as well, however, note that the aliases are not part of the SQL standard and hence might not be accepted by other database engines.
 
-`SMALLSERIAL`, `SERIAL` and `BIGSERIAL` are not aliases: each declares the corresponding
-integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to
-the next value of that sequence.
+`SMALLSERIAL`, `SERIAL` and `BIGSERIAL` are not aliases: each declares the corresponding integer type, attaches a sequence to the column, makes it `NOT NULL` and defaults it to the next value of that sequence. The sequence belongs to the role that creates the table, gets that role's default privileges for sequences, and changes owner with the table through `ALTER TABLE ... OWNER TO`.
 
 | Name                       | Aliases                            | Description                                                                                                |
 | :------------------------- | :--------------------------------- | :--------------------------------------------------------------------------------------------------------- |

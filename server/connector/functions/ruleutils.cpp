@@ -197,11 +197,12 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
 
 const duckdb::ViewCatalogEntry* UserView(duckdb::ClientContext& context,
                                          uint64_t oid) {
-  const auto* view = EntryByOid<duckdb::ViewCatalogEntry>(
-    context, duckdb::CatalogType::VIEW_ENTRY, oid);
-  if (!view) {
+  const auto relation = pg::RelationByOid(context, oid);
+  if (!relation.entry ||
+      relation.entry->type != duckdb::CatalogType::VIEW_ENTRY) {
     return nullptr;
   }
+  const auto* view = &relation.entry->Cast<duckdb::ViewCatalogEntry>();
   const auto parent = view->ParentSchemaName();
   const auto& schema = parent.GetIdentifierName();
   if (view->internal || schema == irs::StaticStrings::kPgCatalogSchema ||
@@ -427,14 +428,12 @@ IndexShape ShapeOf(const pg::KeyIndex& key) {
 Definition IndexDefinition(duckdb::ClientContext& context, uint64_t oid,
                            int64_t column, bool pretty) {
   std::optional<IndexShape> shape;
-  if (const auto* index = EntryByOid<duckdb::IndexCatalogEntry>(
-        context, duckdb::CatalogType::INDEX_ENTRY, oid)) {
-    shape = ShapeOf(context, *index);
-  } else if (auto database = catalog::DefaultDuckCatalog(context);
-             database && oid != pg::kInvalidOid) {
-    if (const auto key = pg::FindKeyIndex(context, *database, oid); key.table) {
-      shape = ShapeOf(key);
-    }
+  const auto relation = pg::RelationByOid(context, oid);
+  if (relation.entry &&
+      relation.entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+    shape = ShapeOf(context, relation.entry->Cast<duckdb::IndexCatalogEntry>());
+  } else if (relation.key.table) {
+    shape = ShapeOf(relation.key);
   }
   if (!shape || !shape->relation) {
     return std::nullopt;

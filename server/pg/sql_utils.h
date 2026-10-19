@@ -31,6 +31,7 @@
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <string>
 #include <string_view>
@@ -85,6 +86,18 @@ KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
 KeyIndex FindKeyIndex(duckdb::ClientContext& context,
                       duckdb::SchemaCatalogEntry& schema,
                       std::string_view name);
+
+struct Relation {
+  duckdb::CatalogEntry* entry = nullptr;
+  KeyIndex key;
+
+  explicit operator bool() const noexcept { return entry || key.table; }
+};
+
+Relation RelationByName(duckdb::ClientContext& context,
+                        const duckdb::QualifiedName& name);
+
+Relation RelationByOid(duckdb::ClientContext& context, duckdb::idx_t oid);
 
 std::string MacroBody(const duckdb::MacroFunction& macro);
 

@@ -21,16 +21,26 @@
 #include "sql_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/function/table_macro_function.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <vector>
+
+#include "catalog/catalog.h"
+#include "pg/pg_types.h"
+#include "pg/system_catalog.h"
 
 namespace sdb::pg {
 
@@ -178,6 +188,116 @@ KeyIndex FindKeyIndex(duckdb::ClientContext& context,
                             const duckdb::UniqueConstraint& unique) {
                           return ConstraintName(table, unique) == name;
                         });
+}
+
+namespace {
+
+// Tables and views share one duckdb set, so three by-id lookups answer for
+// every relation kind.
+constexpr std::array kRelationSets{duckdb::CatalogType::TABLE_ENTRY,
+                                   duckdb::CatalogType::SEQUENCE_ENTRY,
+                                   duckdb::CatalogType::INDEX_ENTRY};
+
+duckdb::optional_ptr<duckdb::DuckCatalog> TemporaryCatalog(
+  duckdb::ClientContext& context) {
+  auto temporary =
+    duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{TEMP_CATALOG});
+  if (!temporary || !temporary->IsDuckCatalog()) {
+    return nullptr;
+  }
+  return temporary->Cast<duckdb::DuckCatalog>();
+}
+
+duckdb::CatalogEntry* SystemRelationEntry(duckdb::ClientContext& context,
+                                          std::string_view schema,
+                                          std::string_view name) {
+  auto database = catalog::DefaultDuckCatalog(context);
+  if (!database) {
+    return nullptr;
+  }
+  return database
+    ->GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+               duckdb::Identifier{schema}, duckdb::Identifier{name},
+               duckdb::OnEntryNotFound::RETURN_NULL)
+    .get();
+}
+
+}  // namespace
+
+Relation RelationByName(duckdb::ClientContext& context,
+                        const duckdb::QualifiedName& name) {
+  // Every half of the relation namespace, in the order postgres resolves them
+  // -- a table and a view share duckdb's set, so the first lookup covers both.
+  for (const auto type : kRelationSets) {
+    if (auto entry = duckdb::Catalog::GetEntry(
+          context, duckdb::EntryLookupInfo{type, name},
+          duckdb::OnEntryNotFound::RETURN_NULL)) {
+      return {.entry = entry.get()};
+    }
+  }
+  const auto& relation = name.Name().GetIdentifierName();
+  const auto key_index = [&](const duckdb::Identifier& catalog,
+                             const duckdb::Identifier& schema) {
+    auto entry = duckdb::Catalog::GetSchema(
+      context, catalog, schema, duckdb::OnEntryNotFound::RETURN_NULL);
+    return entry ? FindKeyIndex(context, *entry, relation) : KeyIndex{};
+  };
+  if (!name.Schema().empty()) {
+    if (const auto key = key_index(name.Catalog(), name.Schema()); key.table) {
+      return {.key = key};
+    }
+  } else {
+    for (const auto& path :
+         duckdb::ClientData::Get(context).catalog_search_path->Get()) {
+      if (const auto key = key_index(path.GetCatalog(), path.GetSchema());
+          key.table) {
+        return {.key = key};
+      }
+    }
+  }
+  if (!name.Catalog().empty()) {
+    return {};
+  }
+  const auto& schema = name.Schema().GetIdentifierName();
+  if (schema.empty() || schema == irs::StaticStrings::kPgCatalogSchema) {
+    return {.entry = SystemRelationEntry(
+              context, irs::StaticStrings::kPgCatalogSchema, relation)};
+  }
+  if (schema == irs::StaticStrings::kInformationSchema) {
+    return {.entry = SystemRelationEntry(
+              context, irs::StaticStrings::kInformationSchema, relation)};
+  }
+  return {};
+}
+
+Relation RelationByOid(duckdb::ClientContext& context, duckdb::idx_t oid) {
+  if (oid == kInvalidOid) {
+    return {};
+  }
+  std::array catalogs{catalog::DefaultDuckCatalog(context),
+                      TemporaryCatalog(context)};
+  for (auto& searched : catalogs) {
+    if (!searched) {
+      continue;
+    }
+    for (const auto type : kRelationSets) {
+      if (auto entry = searched->FindEntryById(&context, type, oid)) {
+        return {.entry = entry.get()};
+      }
+    }
+  }
+  if (const auto system = FindSystemRelation(oid); !system.name.empty()) {
+    return {.entry = SystemRelationEntry(context, system.schema, system.name)};
+  }
+  for (auto& searched : catalogs) {
+    if (!searched) {
+      continue;
+    }
+    if (const auto key = FindKeyIndex(context, *searched, oid); key.table) {
+      return {.key = key};
+    }
+  }
+  return {};
 }
 
 std::string MacroBody(const duckdb::MacroFunction& macro) {

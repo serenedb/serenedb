@@ -62,6 +62,13 @@ const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 StaticFunction GetSystemFunction(std::string_view schema,
                                  std::string_view name);
 
+struct SystemRelationName {
+  std::string_view schema;
+  std::string_view name;
+};
+
+SystemRelationName FindSystemRelation(duckdb::idx_t oid);
+
 void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor);
 // The builtin views and functions carry the owner and ACL their entries get:

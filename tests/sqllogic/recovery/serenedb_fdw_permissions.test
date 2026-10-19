@@ -11,6 +11,18 @@ statement ok
 INSERT INTO postgres.public.sfp_docs VALUES (1, 'alpha'), (2, 'beta');
 
 statement ok
+CREATE DATABASE sfp_live;
+
+statement ok
+CREATE TABLE sfp_live.public.sfp_secret(id INTEGER, note VARCHAR);
+
+statement ok
+INSERT INTO sfp_live.public.sfp_secret VALUES (1, 'payroll');
+
+statement ok
+CREATE VIEW postgres.public.sfp_secret_v AS SELECT id, note FROM sfp_live.public.sfp_secret;
+
+statement ok
 CHECKPOINT postgres;
 
 system ok
@@ -100,6 +112,81 @@ db error: ERROR: permission denied for table pg_hba_file_rules
 connection default
 statement ok
 DETACH sfp_session;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM sfp_live.public.sfp_secret;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM sfp_snap.public.sfp_secret_v ORDER BY id;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection default
+statement ok
+GRANT SELECT ON sfp_live.public.sfp_secret TO sfp_reader;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT id, note FROM sfp_snap.public.sfp_secret_v ORDER BY id;
+----
+id	note
+1	payroll
+
+connection default
+statement ok
+REVOKE SELECT ON sfp_live.public.sfp_secret FROM sfp_reader;
+
+connection default
+statement ok
+CREATE ROLE sfp_wrapper;
+
+connection default
+statement ok
+GRANT SELECT ON sfp_live.public.sfp_secret TO sfp_wrapper;
+
+connection default
+statement ok
+CREATE VIEW postgres.public.sfp_wrap AS SELECT id, note FROM sfp_snap.public.sfp_secret_v;
+
+connection default
+statement ok
+ALTER VIEW postgres.public.sfp_wrap OWNER TO sfp_wrapper;
+
+connection default
+statement ok
+GRANT SELECT ON postgres.public.sfp_wrap TO sfp_reader;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT id, note FROM postgres.public.sfp_wrap ORDER BY id;
+----
+id	note
+1	payroll
+
+connection default
+statement ok
+REVOKE SELECT ON sfp_live.public.sfp_secret FROM sfp_wrapper;
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT id, note FROM postgres.public.sfp_wrap ORDER BY id;
+----
+db error: ERROR: permission denied for table sfp_secret
+
+
+connection default
+statement ok
+DROP VIEW postgres.public.sfp_wrap;
+
+connection default
+statement ok
+DROP ROLE sfp_wrapper;
 
 connection default
 statement ok

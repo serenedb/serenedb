@@ -621,6 +621,9 @@ class Enforcer {
   duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
     const duckdb::StatementProperties::ViewScope* inner = nullptr;
     for (const auto& scope : _props.view_scopes) {
+      if (Unowned(*scope.view)) {
+        continue;
+      }
       if (scope.begin <= table_index && table_index < scope.end &&
           (!inner || scope.end - scope.begin < inner->end - inner->begin)) {
         inner = &scope;

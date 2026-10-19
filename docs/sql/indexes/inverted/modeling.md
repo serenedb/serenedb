@@ -34,7 +34,7 @@ To store an indexed expression's value in the index, list it a second time with 
 
 An expression whose value depends on the session and not only on its row is always computed from its columns: functions and casts over `TIMESTAMPTZ`, `TIMESTAMPTZ_NS`, `TIMETZ` and `VARIANT` values follow the `TimeZone` setting, and a cast of a `bytea` value to text follows `bytea_output`. A search on such an expression matches the value computed when the row was written.
 
-Indexed expressions must be deterministic and reference at least one column. Aggregates, subqueries and volatile functions are rejected at `CREATE INDEX`:
+Indexed expressions must reference at least one column, and every function they call must return the same result for the same arguments. Aggregates, subqueries, volatile functions such as `random()`, and functions that read the clock, the session or the catalog, such as `now()`, `current_user` or `has_table_privilege()`, are rejected at `CREATE INDEX`, and the error names the function:
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_006" />
 

@@ -854,6 +854,9 @@ void NullResult(duckdb::DataChunk&, duckdb::ExpressionState&,
 }
 
 void Register(duckdb::ExtensionLoader& loader, duckdb::ScalarFunctionSet set) {
+  set.ApplyToFunctions([](duckdb::ScalarFunction& function) {
+    function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+  });
   duckdb::CreateScalarFunctionInfo info{std::move(set)};
   info.SetSchema("pg_catalog");
   info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;

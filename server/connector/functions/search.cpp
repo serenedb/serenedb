@@ -20,6 +20,8 @@
 
 #include "connector/functions/search.h"
 
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -35,6 +37,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
@@ -312,6 +315,22 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
     return {};
   }
   return dict->Acquire(context);
+}
+
+duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
+  duckdb::BindScalarFunctionInput& input, std::string_view name) {
+  const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::TOKENIZER_ENTRY,
+                                       duckdb::QualifiedName::Parse(name)};
+  auto entry =
+    input.HasBinder()
+      ? input.GetBinder().EntryRetriever().GetEntry(
+          lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+      : duckdb::CatalogEntryRetriever{input.GetClientContext()}.GetEntry(
+          lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
+    return nullptr;
+  }
+  return &entry->Cast<catalog::TokenizerCatalogEntry>();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

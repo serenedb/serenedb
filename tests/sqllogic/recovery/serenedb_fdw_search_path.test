@@ -1,0 +1,87 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfsp_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX sfsp_docs_idx ON postgres.public.sfsp_docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO postgres.public.sfsp_docs VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfsp_snap && mkdir $__TEST_DIR__/sfsp_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfsp_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfsp_snap/catalog.wal
+
+statement ok
+CREATE SCHEMA sfsp_s;
+
+statement ok
+CREATE TABLE sfsp_s.sfsp_t(v INTEGER);
+
+statement ok
+INSERT INTO sfsp_s.sfsp_t VALUES (42);
+
+statement ok
+SET search_path = sfsp_s, public;
+
+statement ok
+CREATE SERVER sfsp_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfsp_snap/5');
+
+query
+SHOW search_path;
+----
+search_path
+sfsp_s, public
+
+query
+SELECT v FROM sfsp_t;
+----
+v
+42
+
+statement ok
+ATTACH '${__TEST_DIR__}/sfsp_snap/5' AS sfsp_session (TYPE serenedb, READ_ONLY);
+
+query
+SHOW search_path;
+----
+search_path
+sfsp_s, public
+
+statement ok
+DETACH sfsp_session;
+
+connection restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection restart
+statement error
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET search_path = sfsp_s, public;
+
+connection after_restart
+query
+SELECT id FROM sfsp_snap.public.sfsp_docs_idx WHERE body @@ 'beta';
+----
+id
+2
+
+connection after_restart
+query
+SHOW search_path;
+----
+search_path
+sfsp_s, public
+
+connection after_restart
+statement ok
+DROP SERVER sfsp_snap;

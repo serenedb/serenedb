@@ -123,12 +123,12 @@ add_bench(stemming)
 add_bench(stringzilla_kernels)
 add_bench(vector_distances)
 add_bench(quant_quality)
-add_bench(rot_bench)
 add_bench(table_fetch)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)
     add_bench(ci_fold128)
+    add_bench(rot_bench)
 endif()
 
 set_property(

@@ -49,9 +49,6 @@ faiss::ScalarQuantizer::QuantizerType FaissScalarType(
 
 constexpr size_t kEncodeTile = kFastScanBbs;
 
-constexpr size_t kSq8LevelRows = 64;
-constexpr size_t kSq8LevelRowsAhead = 8;
-
 struct Sq8Levels {
   const float* a;
   uint32_t d;
@@ -70,6 +67,9 @@ struct Sq8LevelRows {
 };
 
 #if defined(__x86_64__) && defined(__AVX2__)
+constexpr size_t kSq8LevelRows = 64;
+constexpr size_t kSq8LevelRowsAhead = 8;
+
 void Sq8FetchLines(const void* from, size_t bytes) noexcept {
   const auto first = reinterpret_cast<uintptr_t>(from) & ~uintptr_t{63};
   const auto last = reinterpret_cast<uintptr_t>(from) + bytes - 1;

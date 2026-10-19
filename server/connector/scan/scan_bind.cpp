@@ -149,7 +149,8 @@ class SnapshotVersion final : public duckdb::PlanDataVersion {
     : _planned{std::move(planned)}, _acquire{std::move(acquire)} {}
 
   bool IsCurrent(duckdb::ClientContext& context) const final {
-    const auto& current = _acquire(context)->reader.GetImpl();
+    const auto snapshot = _acquire(context);
+    const auto& current = snapshot->reader.GetImpl();
     return !_planned.owner_before(current) && !current.owner_before(_planned);
   }
 

@@ -1,8 +1,12 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   # Make the root:root 0755 named volume world-writable before the non-root
   # tests service tries to create its per-test dirs in /test-tmp.
   test-tmp-init:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "0:0"
     volumes:
       - "sdb-test-tmp:/test-tmp"
@@ -10,6 +14,7 @@ services:
 
   postgres:
     image: ${PG_FIXTURE_IMAGE}
+    labels: *owner
     depends_on:
       test-tmp-init:
         condition: service_completed_successfully
@@ -41,6 +46,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
@@ -72,9 +78,13 @@ services:
       '
 
 networks:
+  default:
+    labels: *owner
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+    labels: *owner
 
 volumes:
   sdb-test-tmp:
+    labels: *owner

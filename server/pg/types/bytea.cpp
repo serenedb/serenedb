@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
-#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <bit>
@@ -40,6 +39,7 @@
 #include <string>
 #include <utf8proc_wrapper.hpp>
 
+#include "pg/deserialize.h"
 #include "pg/types/cast.h"
 
 namespace sdb::pg {
@@ -62,76 +62,23 @@ irs::pg::SqlErrorData InvalidByteaSyntax() {
 std::optional<irs::pg::SqlErrorData> ByteaIn(std::string_view input,
                                              duckdb::Vector& result_vec,
                                              duckdb::string_t& bytes) {
-  if (input.starts_with("\\x")) {
-    std::string_view payload{input.begin() + 2, input.end()};
-    auto target =
-      duckdb::StringVector::EmptyString(result_vec, payload.size() / 2);
-    char* out = target.GetDataWriteable();
-
-    for (size_t i = 0; i < payload.size();) {
-      char c = payload[i];
-      if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-        ++i;
-        continue;
-      }
-      const auto h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
-      if (h1 == -1) {
-        return InvalidHexDigit(payload.substr(i));
-      }
-      if (i + 1 >= payload.size()) {
-        return SQL_ERROR_DATA(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("invalid hexadecimal data: odd number of digits"));
-      }
-      const auto h2 =
-        absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
-      if (h2 == -1) {
-        return InvalidHexDigit(payload.substr(i + 1));
-      }
-      *out++ = static_cast<char>((h1 << 4) + h2);
-      i += 2;
-    }
-    auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
-    target.Finalize();
-    bytes = duckdb::StringVector::AddStringOrBlob(
-      result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
-    return std::nullopt;
+  const auto capacity = ByteaTextCapacity(input);
+  auto target = duckdb::StringVector::EmptyString(result_vec, capacity);
+  const auto decoded = DecodeByteaText(input, target.GetDataWriteable());
+  switch (decoded.error) {
+    case ByteaTextError::None:
+      break;
+    case ByteaTextError::InvalidHexDigit:
+      return InvalidHexDigit(input.substr(decoded.error_pos));
+    case ByteaTextError::OddHexDigits:
+      return SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("invalid hexadecimal data: odd number of digits"));
+    case ByteaTextError::InvalidEscape:
+      return InvalidByteaSyntax();
   }
-
-  auto target = duckdb::StringVector::EmptyString(result_vec, input.size());
-  char* out = target.GetDataWriteable();
-
-  for (size_t i = 0; i < input.size();) {
-    char c = input[i];
-    if (c != '\\') {
-      *out++ = c;
-      ++i;
-      continue;
-    }
-    if (i + 1 >= input.size()) {
-      return InvalidByteaSyntax();
-    }
-    if (input[i + 1] == '\\') {
-      *out++ = '\\';
-      i += 2;
-      continue;
-    }
-    if (i + 3 >= input.size()) {
-      return InvalidByteaSyntax();
-    }
-    const char* octal = input.data() + i + 1;
-    unsigned value = 0;
-    const auto res = fast_float::from_chars(octal, octal + 3, value, 8);
-    if (res.ec != std::errc() || res.ptr != octal + 3 || value > 0xFFU) {
-      return InvalidByteaSyntax();
-    }
-    *out++ = static_cast<char>(value);
-    i += 4;
-  }
-  auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
-  target.Finalize();
-  bytes = duckdb::StringVector::AddStringOrBlob(
-    result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
+  target.SetSizeAndFinalize(static_cast<uint32_t>(decoded.size), capacity);
+  bytes = target;
   return std::nullopt;
 }
 

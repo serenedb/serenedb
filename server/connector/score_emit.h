@@ -22,6 +22,8 @@
 
 #include <cmath>
 #include <duckdb/common/enums/order_type.hpp>
+#include <duckdb/planner/expression.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -62,16 +64,26 @@ inline float ApplyScoreEmit(ScoreEmit emit, float score) {
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
+  std::shared_ptr<const duckdb::Expression> query_expr;
+  uint32_t dims = 0;
   irs::VectorMetric metric;
   ScoreEmit score_emit;
   duckdb::OrderType natural_order;
   irs::field_id centroids_id = irs::field_limits::invalid();
   irs::field_id postings_id = irs::field_limits::invalid();
   irs::VectorQuantization quant = irs::VectorQuantization::None;
+  irs::AnnKind kind = irs::AnnKind::Ivf;
   uint32_t nprobe = 1;
-  uint32_t max_search_fanout = 16;
+  uint32_t min_search_fanout = 0;
+  uint32_t max_search_fanout = 0;
   uint32_t ef_search = 0;
+  uint32_t ef_construction = 0;
+  uint32_t posting_size = 0;
   uint32_t min_ef = 0;
+  uint32_t top_k = 0;
+  irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
+  irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
+  bool exact = false;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 

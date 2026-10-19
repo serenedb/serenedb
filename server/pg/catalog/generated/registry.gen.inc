@@ -42,6 +42,7 @@ extern SystemTable gSdbMetrics;
 extern SystemTable gSdbProgress;
 extern SystemTable gSdbSettings;
 extern SystemTable gPgHbaFileRules;
+extern SystemTable gPgPreparedStatement;
 extern SystemTable gPgShowAllSettings;
 constexpr SystemTable* kSystemTables[] = {
   &gInfoColumns,
@@ -88,6 +89,7 @@ constexpr SystemTable* kSystemTables[] = {
 };
 constexpr SystemTable* kSystemTableFunctions[] = {
   &gPgHbaFileRules,
+  &gPgPreparedStatement,
   &gPgShowAllSettings,
 };
 extern const std::string_view kInfoTriggers;

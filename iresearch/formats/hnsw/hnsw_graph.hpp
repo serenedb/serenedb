@@ -26,9 +26,11 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <pcg_random.hpp>
 #include <span>
 #include <vector>
 
@@ -51,36 +53,59 @@ inline constexpr uint32_t kHnswMaxWorkers = 64;
 inline constexpr size_t kHnswInsertGranule = 256;
 inline constexpr uint64_t kHnswTrainSample = 262144;
 inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
-inline constexpr uint32_t kHnswFormatVersion = 1;
+inline constexpr size_t kHnswLinksPerLine = 64 / sizeof(uint32_t);
 inline constexpr uint64_t kHnswBuildSeed = 0x9E3779B97F4A7C15ULL;
 
 class HnswVisited {
  public:
   void Reset(size_t n) {
-    if (_marks.size() < n) {
-      _marks.assign(n, 0);
-      _generation = 0;
+    const size_t words = (n + 63) / 64;
+    if (_words.size() < words) {
+      _words.assign(words, 0);
+      _dirty.clear();
+      return;
     }
     Next();
   }
 
   void Next() noexcept {
-    if (++_generation == 0) {
-      absl::c_fill(_marks, 0);
-      _generation = 1;
+    for (const auto w : _dirty) {
+      _words[w] = 0;
     }
+    _dirty.clear();
   }
 
-  bool TestAndSet(uint32_t id) noexcept {
-    SDB_ASSERT(id < _marks.size());
-    const bool seen = _marks[id] == _generation;
-    _marks[id] = _generation;
-    return seen;
+  bool TestAndSet(uint32_t id) {
+    SDB_ASSERT(id / 64 < _words.size());
+    auto& word = _words[id / 64];
+    const auto bit = uint64_t{1} << (id % 64);
+    if ((word & bit) != 0) {
+      return true;
+    }
+    if (word == 0) {
+      _dirty.push_back(id / 64);
+    }
+    word |= bit;
+    return false;
+  }
+
+  bool Test(uint32_t id) const noexcept {
+    SDB_ASSERT(id / 64 < _words.size());
+    return ((_words[id / 64] >> (id % 64)) & 1) != 0;
+  }
+
+  void Set(uint32_t id) {
+    SDB_ASSERT(id / 64 < _words.size());
+    auto& word = _words[id / 64];
+    if (word == 0) {
+      _dirty.push_back(id / 64);
+    }
+    word |= uint64_t{1} << (id % 64);
   }
 
  private:
-  std::vector<uint16_t> _marks;
-  uint16_t _generation = 0;
+  std::vector<uint64_t> _words;
+  std::vector<uint32_t> _dirty;
 };
 
 struct HnswCandidate {
@@ -104,11 +129,47 @@ struct HnswFrontierOrder {
 
 struct HnswSearchScratch {
   HnswVisited visited;
+  HnswVisited visited_hop2;
   std::vector<HnswCandidate> nearest;
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
+  std::vector<uint32_t> hop;
+  std::vector<uint32_t> bridges;
+  std::vector<uint32_t> hop2;
   std::vector<score_t> scores;
+  uint64_t scored = 0;
+  double admit_share = 1.0;
+  uint64_t admitted = 0;
+  bool two_hop = false;
 };
+
+struct HnswAcceptAll {
+  static constexpr bool kAll = true;
+  bool operator()(uint32_t) const noexcept { return true; }
+};
+
+enum class HnswWalk : uint8_t {
+  Through,
+  Prune,
+  TwoHop,
+  Bridge,
+  Adaptive,
+};
+
+inline constexpr uint64_t kHnswAdaptiveProbe = 32;
+inline constexpr uint64_t kHnswAdaptiveScarcity = 2;
+
+inline bool HnswScarce(uint64_t admitted, uint64_t seen,
+                       double admit_share) noexcept {
+  return static_cast<double>(admitted * kHnswAdaptiveScarcity) <
+         static_cast<double>(seen) * admit_share;
+}
+
+template<HnswWalk Walk>
+inline constexpr bool kHnswHops =
+  Walk == HnswWalk::TwoHop || Walk == HnswWalk::Adaptive;
+
+inline constexpr uint64_t kHnswNoBudget = std::numeric_limits<uint64_t>::max();
 
 class HnswGraph {
  public:
@@ -122,10 +183,14 @@ class HnswGraph {
 
   uint32_t LevelOf(uint32_t node) const noexcept { return _levels[node]; }
 
+  std::span<const uint8_t> Levels() const noexcept { return _levels; }
+
   std::span<const uint32_t> Neighbors(uint32_t node,
                                       uint32_t level) const noexcept {
-    const auto width = level == 0 ? _m0 : _m;
-    return {_neighbors.data() + Base(node, level), width};
+    if (level == 0) {
+      return {_base.data() + size_t{node} * _m0, _m0};
+    }
+    return {_upper.data() + Upper(node, level), _m};
   }
 
   void Serialize(DataOutput& out) const;
@@ -134,14 +199,16 @@ class HnswGraph {
  private:
   friend class HnswGraphWriter;
 
-  uint64_t Base(uint32_t node, uint32_t level) const noexcept {
+  uint64_t Upper(uint32_t node, uint32_t level) const noexcept {
+    SDB_ASSERT(level != 0);
     SDB_ASSERT(level < _levels[node]);
-    return _offsets[node] + (level == 0 ? 0 : _m0 + uint64_t{level - 1} * _m);
+    return _offsets[node] + uint64_t{level - 1} * _m;
   }
 
   std::vector<uint8_t> _levels;
   std::vector<uint64_t> _offsets;
-  std::vector<uint32_t> _neighbors;
+  std::vector<uint32_t> _base;
+  std::vector<uint32_t> _upper;
   uint32_t _entry = kHnswInvalidNode;
   uint32_t _max_level = 0;
   uint32_t _m = kHnswDefaultM;
@@ -191,8 +258,10 @@ class HnswGraphWriter {
   void SetEntryPoint(uint32_t node) noexcept { _graph._entry = node; }
 
   std::span<uint32_t> Neighbors(uint32_t node, uint32_t level) noexcept {
-    const auto width = level == 0 ? _graph._m0 : _graph._m;
-    return {_graph._neighbors.data() + _graph.Base(node, level), width};
+    if (level == 0) {
+      return {_graph._base.data() + size_t{node} * _graph._m0, _graph._m0};
+    }
+    return {_graph._upper.data() + _graph.Upper(node, level), _graph._m};
   }
 
   std::span<const uint32_t> Neighbors(uint32_t node,
@@ -208,7 +277,7 @@ class HnswGraphWriter {
   std::vector<uint8_t> _processed;
 };
 
-uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept;
+uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept;
 
 template<VectorMetric M>
 void HnswComputeDistances(const float* q, const float* base, uint32_t d,
@@ -258,6 +327,154 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
 inline constexpr score_t kHnswNoThreshold =
   std::numeric_limits<score_t>::lowest();
 
+inline constexpr uint32_t kHnswPanoramaLevel = 64;
+inline constexpr uint32_t kHnswPanoramaMinDim = 4 * kHnswPanoramaLevel;
+inline constexpr uint32_t kHnswPanoramaMaxDim = 64 * kHnswPanoramaLevel;
+inline constexpr float kHnswPanoramaSlack = 1e-4f;
+inline constexpr float kHnswPanoramaMargin = 1e-5f;
+
+inline constexpr uint32_t kHnswCodeLevel = 2 * kHnswPanoramaLevel;
+inline constexpr size_t kHnswPanoramaRows = 64;
+inline constexpr size_t kHnswPanoramaRowsAhead = 4;
+
+inline uint32_t HnswPanoramaLevels(uint32_t d) noexcept {
+  return (d + kHnswPanoramaLevel - 1) / kHnswPanoramaLevel;
+}
+
+inline uint32_t HnswCodeTails(uint32_t d) noexcept {
+  return (d + kHnswCodeLevel - 1) / kHnswCodeLevel - 1;
+}
+
+void HnswSuffixNorms(const float* v, uint32_t d, uint32_t width, uint32_t first,
+                     float* out) noexcept;
+
+void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept;
+
+template<VectorMetric M>
+struct HnswPanoramaDist {
+  static constexpr auto kKernel = EffectiveQuantMetric(M);
+
+  const float* base;
+  uint32_t d;
+  const float* q;
+  const float* tails;
+  const float* norms;
+
+  const float* Row(uint32_t id) const noexcept {
+    return base + static_cast<size_t>(id) * d;
+  }
+
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t threshold = kHnswNoThreshold) const noexcept {
+    if (threshold == kHnswNoThreshold) {
+      HnswComputeDistances<M>(q, base, d, ids, out);
+      return;
+    }
+    const score_t bar =
+      threshold - kHnswPanoramaMargin * (1.f + std::abs(threshold));
+    for (size_t first = 0; first < ids.size(); first += kHnswPanoramaRows) {
+      Bounded(
+        ids.subspan(first, std::min(kHnswPanoramaRows, ids.size() - first)),
+        bar, out + first);
+    }
+  }
+
+  score_t One(uint32_t id) const noexcept {
+    score_t s{};
+    Batch({&id, 1}, &s);
+    return s;
+  }
+
+  void Prefetch(uint32_t id) const noexcept {
+    __builtin_prefetch(Row(id), 0, 3);
+    __builtin_prefetch(norms + id, 0, 3);
+  }
+
+  void FetchLevel(const float* x, uint32_t b) const noexcept {
+    if (b >= d) {
+      return;
+    }
+    const auto first = reinterpret_cast<uintptr_t>(x + b) & ~uintptr_t{63};
+    const auto last =
+      reinterpret_cast<uintptr_t>(x + std::min(d, b + kHnswPanoramaLevel) - 1);
+    for (auto line = first; line <= last; line += 64) {
+      __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 3);
+    }
+  }
+
+  void FetchRow(uint32_t id) const noexcept {
+    FetchLevel(Row(id), 0);
+    FetchLevel(Row(id), kHnswPanoramaLevel);
+    __builtin_prefetch(norms + id, 0, 3);
+  }
+
+  void Bounded(std::span<const uint32_t> ids, score_t bar,
+               score_t* out) const noexcept {
+    float acc[kHnswPanoramaRows];
+    float head[kHnswPanoramaRows];
+    uint8_t live[kHnswPanoramaRows];
+    const size_t n = ids.size();
+    for (size_t i = 0; i < n; ++i) {
+      acc[i] = 0.f;
+      head[i] = 0.f;
+      live[i] = static_cast<uint8_t>(i);
+    }
+    for (size_t i = 0; i < std::min(n, kHnswPanoramaRowsAhead); ++i) {
+      FetchRow(ids[i]);
+    }
+    size_t alive = n;
+    for (uint32_t b = 0, level = 1; alive != 0;
+         b += kHnswPanoramaLevel, ++level) {
+      const uint32_t w = std::min(kHnswPanoramaLevel, d - b);
+      size_t kept = 0;
+      for (size_t j = 0; j < alive; ++j) {
+        if (b == 0 && j + kHnswPanoramaRowsAhead < alive) {
+          FetchRow(ids[j + kHnswPanoramaRowsAhead]);
+        }
+        const auto i = live[j];
+        const float* x = Row(ids[i]);
+        float a = acc[i];
+        if constexpr (kKernel == VectorMetric::L2Sqr) {
+          a += faiss::fvec_L2sqr(q + b, x + b, w);
+        } else {
+          a += faiss::fvec_inner_product(q + b, x + b, w);
+        }
+        if (b + w == d) {
+          if constexpr (kKernel == VectorMetric::L2Sqr) {
+            out[i] = -a;
+          } else {
+            out[i] = a;
+          }
+          continue;
+        }
+        const float h = head[i] + faiss::fvec_norm_L2sqr(x + b, w);
+        const float x_norm2 = norms[ids[i]];
+        const float slack = kHnswPanoramaSlack * x_norm2;
+        const float rest = x_norm2 - h;
+        const float qt = tails[level];
+        score_t bound;
+        if constexpr (kKernel == VectorMetric::L2Sqr) {
+          const float lo = std::sqrt(std::max(0.f, rest - slack));
+          const float hi = std::sqrt(std::max(0.f, rest + slack));
+          const float gap = qt < lo ? lo - qt : (qt > hi ? qt - hi : 0.f);
+          bound = -(a + gap * gap);
+        } else {
+          bound = a + qt * std::sqrt(std::max(0.f, rest + slack));
+        }
+        if (bound < bar) {
+          out[i] = kHnswNoThreshold;
+          continue;
+        }
+        FetchLevel(x, b + 2 * kHnswPanoramaLevel);
+        acc[i] = a;
+        head[i] = h;
+        live[kept++] = i;
+      }
+      alive = kept;
+    }
+  }
+};
+
 inline uint32_t HnswLoadLink(const uint32_t& slot) noexcept {
   return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(slot)}.load(
     std::memory_order_acquire);
@@ -265,6 +482,193 @@ inline uint32_t HnswLoadLink(const uint32_t& slot) noexcept {
 
 inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
+}
+
+template<typename Fn>
+IRS_FORCE_INLINE void HnswForEachUnvisited(std::span<const uint32_t> links,
+                                           HnswVisited& visited, Fn&& fn) {
+  for (const auto& link : links) {
+    const auto id = HnswLoadLink(link);
+    if (id == kHnswInvalidNode) {
+      break;
+    }
+    if (!visited.TestAndSet(id)) {
+      fn(id);
+    }
+  }
+}
+
+template<typename Dist>
+IRS_FORCE_INLINE void HnswBatchUnvisited(std::span<const uint32_t> links,
+                                         Dist& dist, HnswSearchScratch& s) {
+  HnswForEachUnvisited(links, s.visited, [&](uint32_t id) {
+    s.batch.push_back(id);
+    dist.Prefetch(id);
+  });
+}
+
+inline IRS_FORCE_INLINE void HnswKeepNearest(
+  std::vector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
+  nearest.push_back(cand);
+  std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+  if (nearest.size() > ef) {
+    std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
+    nearest.pop_back();
+  }
+}
+
+inline void HnswResetSearch(HnswSearchScratch& s) noexcept {
+  s.nearest.clear();
+  s.frontier.clear();
+  s.scored = 0;
+  s.admitted = 0;
+  s.two_hop = false;
+}
+
+template<HnswWalk Walk, typename Dist, typename Accept>
+void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
+                      std::span<const uint32_t> neighbors, HnswSearchScratch& s,
+                      const Accept& accept) {
+  auto& hop = s.hop;
+  hop.clear();
+  HnswForEachUnvisited(neighbors, s.visited,
+                       [&](uint32_t id) { hop.push_back(id); });
+  accept.Prepare(std::span<const uint32_t>{hop});
+  auto& bridges = s.bridges;
+  bridges.clear();
+  for (const auto id : hop) {
+    if (accept(id)) {
+      s.batch.push_back(id);
+      dist.Prefetch(id);
+    } else if constexpr (kHnswHops<Walk>) {
+      bridges.push_back(id);
+    }
+  }
+  if constexpr (kHnswHops<Walk>) {
+    auto& hop2 = s.hop2;
+    hop2.clear();
+    for (const auto id : bridges) {
+      for (const auto& link : graph.Neighbors(id, level)) {
+        const auto w = HnswLoadLink(link);
+        if (w == kHnswInvalidNode) {
+          break;
+        }
+        if (!s.visited.Test(w) && !s.visited_hop2.TestAndSet(w)) {
+          hop2.push_back(w);
+        }
+      }
+    }
+    accept.Prepare(std::span<const uint32_t>{hop2});
+    for (const auto w : hop2) {
+      if (accept(w)) {
+        s.visited.Set(w);
+        s.batch.push_back(w);
+        dist.Prefetch(w);
+      }
+    }
+  }
+}
+
+template<HnswWalk Walk = HnswWalk::Through, typename Dist, typename Accept>
+bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
+                     uint32_t ef, HnswSearchScratch& s, const Accept& accept,
+                     uint64_t budget = kHnswNoBudget) {
+  auto& nearest = s.nearest;
+  auto& frontier = s.frontier;
+
+  while (!frontier.empty()) {
+    std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
+    const auto cur = frontier.back();
+    frontier.pop_back();
+
+    if (nearest.size() >= ef && cur.score < nearest.front().score) {
+      break;
+    }
+    if (!frontier.empty()) {
+      const auto* next = graph.Neighbors(frontier.front().node, level).data();
+      __builtin_prefetch(next, 0, 3);
+      __builtin_prefetch(next + kHnswLinksPerLine, 0, 3);
+    }
+
+    s.batch.clear();
+    const auto neighbors = graph.Neighbors(cur.node, level);
+    const bool through = Walk == HnswWalk::Through ||
+                         (Walk == HnswWalk::Adaptive && !s.two_hop) ||
+                         (Walk == HnswWalk::Bridge && accept(cur.node));
+    if (through) {
+      HnswBatchUnvisited(neighbors, dist, s);
+    } else if constexpr (Walk != HnswWalk::Through && requires {
+                           accept.Prepare(std::span<const uint32_t>{});
+                         }) {
+      HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
+    } else {
+      HnswForEachUnvisited(neighbors, s.visited, [&](uint32_t id) {
+        if (accept(id)) {
+          s.batch.push_back(id);
+          dist.Prefetch(id);
+          return;
+        }
+        if constexpr (kHnswHops<Walk>) {
+          const auto limit = s.batch.size() + neighbors.size();
+          const auto hop = graph.Neighbors(id, level);
+          for (size_t j = 0; j < hop.size() && s.batch.size() < limit; ++j) {
+            const auto w = HnswLoadLink(hop[j]);
+            if (w == kHnswInvalidNode) {
+              break;
+            }
+            if (s.visited.Test(w) || s.visited_hop2.TestAndSet(w)) {
+              continue;
+            }
+            if (accept(w)) {
+              s.visited.Set(w);
+              s.batch.push_back(w);
+              dist.Prefetch(w);
+            }
+          }
+        }
+      });
+    }
+    if (s.batch.empty()) {
+      continue;
+    }
+
+    s.scores.resize(s.batch.size());
+    dist.Batch(s.batch, s.scores.data(),
+               nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
+    s.scored += s.batch.size();
+
+    if constexpr (requires { accept.Prepare(std::span<const uint32_t>{}); }) {
+      accept.Prepare(std::span<const uint32_t>{s.batch});
+    }
+    if constexpr (Walk == HnswWalk::Adaptive) {
+      if (!s.two_hop) {
+        for (const auto id : s.batch) {
+          s.admitted += accept(id) ? 1 : 0;
+        }
+        s.two_hop = s.scored >= kHnswAdaptiveProbe &&
+                    HnswScarce(s.admitted, s.scored, s.admit_share);
+      }
+    }
+
+    for (size_t i = 0; i < s.batch.size(); ++i) {
+      const HnswCandidate cand{s.scores[i], s.batch[i]};
+      if (nearest.size() >= ef && cand.score <= nearest.front().score) {
+        continue;
+      }
+      if ((Walk != HnswWalk::Through && Walk != HnswWalk::Bridge &&
+           Walk != HnswWalk::Adaptive) ||
+          accept(cand.node)) {
+        HnswKeepNearest(nearest, cand, ef);
+      }
+      __builtin_prefetch(graph.Neighbors(cand.node, level).data(), 0, 1);
+      frontier.push_back(cand);
+      std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
+    }
+    if (s.scored > budget) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template<typename Dist>
@@ -275,52 +679,7 @@ void HnswSearchLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
   frontier.assign(nearest.begin(), nearest.end());
   std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   std::make_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-
-  while (!frontier.empty()) {
-    std::pop_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
-    const auto cur = frontier.back();
-    frontier.pop_back();
-
-    if (nearest.size() >= ef && cur.score < nearest.front().score) {
-      break;
-    }
-
-    s.batch.clear();
-    const auto neighbors = graph.Neighbors(cur.node, level);
-    for (size_t i = 0; i < neighbors.size(); ++i) {
-      const auto id = HnswLoadLink(neighbors[i]);
-      if (id == kHnswInvalidNode) {
-        break;
-      }
-      if (s.visited.TestAndSet(id)) {
-        continue;
-      }
-      s.batch.push_back(id);
-      dist.Prefetch(id);
-    }
-    if (s.batch.empty()) {
-      continue;
-    }
-
-    s.scores.resize(s.batch.size());
-    dist.Batch(s.batch, s.scores.data(),
-               nearest.size() >= ef ? nearest.front().score : kHnswNoThreshold);
-
-    for (size_t i = 0; i < s.batch.size(); ++i) {
-      const HnswCandidate cand{s.scores[i], s.batch[i]};
-      if (nearest.size() >= ef && cand.score <= nearest.front().score) {
-        continue;
-      }
-      nearest.push_back(cand);
-      std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-      if (nearest.size() > ef) {
-        std::pop_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
-        nearest.pop_back();
-      }
-      frontier.push_back(cand);
-      std::push_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
-    }
-  }
+  HnswExpandLevel(graph, dist, level, ef, s, HnswAcceptAll{});
 }
 
 template<typename Dist>
@@ -331,18 +690,7 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
     for (bool improved = true; improved;) {
       improved = false;
       s.batch.clear();
-      const auto neighbors = graph.Neighbors(cur.node, level);
-      for (size_t i = 0; i < neighbors.size(); ++i) {
-        const auto id = HnswLoadLink(neighbors[i]);
-        if (id == kHnswInvalidNode) {
-          break;
-        }
-        if (s.visited.TestAndSet(id)) {
-          continue;
-        }
-        s.batch.push_back(id);
-        dist.Prefetch(id);
-      }
+      HnswBatchUnvisited(graph.Neighbors(cur.node, level), dist, s);
       if (s.batch.empty()) {
         break;
       }
@@ -356,6 +704,21 @@ HnswCandidate HnswGreedyDescent(const HnswGraph& graph, Dist& dist,
       }
     }
   }
+  return cur;
+}
+
+template<typename Dist>
+HnswCandidate HnswDescendToBase(const HnswGraph& graph, Dist& dist,
+                                HnswSearchScratch& s) {
+  const uint32_t entry = graph.EntryPoint();
+  const uint32_t entry_top = graph.LevelOf(entry) - 1;
+  s.visited.Reset(graph.Size());
+  HnswCandidate cur{dist.One(entry), entry};
+  if (entry_top > 0) {
+    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
+  }
+  s.visited.Next();
+  s.visited.TestAndSet(cur.node);
   return cur;
 }
 
@@ -380,10 +743,18 @@ struct HnswBuildScratch {
   std::vector<HnswPendingLink> pending;
   std::vector<uint8_t> select_blocked;
   std::vector<uint32_t> select_ids;
+  std::vector<score_t> select_scores;
   std::vector<HnswReverseItem> rev_items;
   std::vector<uint32_t> rev_kept;
+  std::vector<score_t> rev_kept_scores;
   std::vector<uint8_t> rev_kept_processed;
 };
+
+inline bool HnswRedundant(score_t to_selected, score_t candidate,
+                          score_t selected) noexcept {
+  return candidate == selected ? to_selected >= candidate
+                               : to_selected > candidate;
+}
 
 template<typename Dist>
 void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
@@ -392,10 +763,13 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
   out.clear();
   SDB_ASSERT(!sorted.empty() && limit != 0);
   if (dist.CheapPair()) {
+    auto& out_scores = s.select_scores;
+    out_scores.clear();
     for (const auto& cand : sorted) {
       bool keep = true;
-      for (const auto accepted : out) {
-        if (dist.Pair(cand.node, accepted) > cand.score) {
+      for (size_t w = 0; w < out.size(); ++w) {
+        if (HnswRedundant(dist.Pair(cand.node, out[w]), cand.score,
+                          out_scores[w])) {
           keep = false;
           break;
         }
@@ -404,6 +778,7 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
         continue;
       }
       out.push_back(cand.node);
+      out_scores.push_back(cand.score);
       if (out.size() >= limit) {
         break;
       }
@@ -438,7 +813,7 @@ void HnswSelectNeighbors(Dist& dist, std::span<const HnswCandidate> sorted,
       if (blocked[j] != 0) {
         continue;
       }
-      if (scores[k] > sorted[j].score) {
+      if (HnswRedundant(scores[k], sorted[j].score, sorted[i].score)) {
         blocked[j] = 1;
       }
       ++k;
@@ -507,13 +882,16 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   }
   items.push_back(
     {.score = dist.Pair(peer, node), .node = node, .processed = false});
-  absl::c_sort(items, [](const HnswReverseItem& l, const HnswReverseItem& r) {
-    return l.score > r.score;
-  });
+  absl::c_stable_sort(items,
+                      [](const HnswReverseItem& l, const HnswReverseItem& r) {
+                        return l.score > r.score;
+                      });
 
   auto& kept = s.rev_kept;
+  auto& kept_scores = s.rev_kept_scores;
   auto& kept_processed = s.rev_kept_processed;
   kept.clear();
+  kept_scores.clear();
   kept_processed.clear();
   for (const auto& cand : items) {
     bool keep = true;
@@ -521,7 +899,8 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
       if (cand.processed && kept_processed[w] != 0) {
         continue;
       }
-      if (dist.Pair(cand.node, kept[w]) > cand.score) {
+      if (HnswRedundant(dist.Pair(cand.node, kept[w]), cand.score,
+                        kept_scores[w])) {
         keep = false;
         break;
       }
@@ -530,6 +909,7 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
       continue;
     }
     kept.push_back(cand.node);
+    kept_scores.push_back(cand.score);
     kept_processed.push_back(cand.processed ? uint8_t{1} : uint8_t{0});
     if (kept.size() >= links.size()) {
       break;
@@ -595,30 +975,81 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
   }
 }
 
-template<typename Dist>
-void HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
-                    HnswSearchScratch& s) {
-  s.nearest.clear();
+template<HnswWalk Walk = HnswWalk::Through, typename Dist,
+         typename Accept = HnswAcceptAll>
+bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
+                    HnswSearchScratch& s, const Accept& accept = {},
+                    uint64_t budget = kHnswNoBudget) {
+  HnswResetSearch(s);
   if (graph.Empty()) {
-    return;
+    return true;
   }
-  const uint32_t entry = graph.EntryPoint();
-  const uint32_t entry_top = graph.LevelOf(entry) - 1;
-
-  s.visited.Reset(graph.Size());
-  HnswCandidate cur{dist.One(entry), entry};
-  if (entry_top > 0) {
-    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
+  if constexpr (kHnswHops<Walk>) {
+    s.visited_hop2.Reset(graph.Size());
   }
-  s.visited.Next();
-  s.visited.TestAndSet(cur.node);
-  s.nearest.assign(1, cur);
-  HnswSearchLevel(graph, dist, 0, ef, s);
+  const auto cur = HnswDescendToBase(graph, dist, s);
+  s.frontier.assign(1, cur);
+  if (accept(cur.node)) {
+    s.nearest.assign(1, cur);
+  }
+  if constexpr (Walk == HnswWalk::Adaptive) {
+    uint64_t seen = 0;
+    uint64_t admitted = 0;
+    for (const auto& link : graph.Neighbors(cur.node, 0)) {
+      const auto id = HnswLoadLink(link);
+      if (id == kHnswInvalidNode) {
+        break;
+      }
+      ++seen;
+      admitted += accept(id) ? 1 : 0;
+    }
+    s.two_hop = HnswScarce(admitted, seen, s.admit_share);
+  }
+  return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
 }
 
-template<bool Inclusive, typename Dist>
+template<HnswWalk Walk, typename Dist, typename Accept>
+bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
+                        HnswSearchScratch& s, std::span<const uint32_t> seeds,
+                        const Accept& accept, uint64_t budget) {
+  HnswResetSearch(s);
+  s.visited.Reset(graph.Size());
+  if constexpr (kHnswHops<Walk>) {
+    s.visited_hop2.Reset(graph.Size());
+  }
+  s.batch.clear();
+  for (const auto node : seeds) {
+    if (!s.visited.TestAndSet(node)) {
+      s.batch.push_back(node);
+      dist.Prefetch(node);
+    }
+  }
+  if (s.batch.empty()) {
+    return true;
+  }
+  s.scores.resize(s.batch.size());
+  dist.Batch(s.batch, s.scores.data(), kHnswNoThreshold);
+  s.scored += s.batch.size();
+  for (size_t i = 0; i < s.batch.size(); ++i) {
+    const HnswCandidate cand{s.scores[i], s.batch[i]};
+    s.frontier.push_back(cand);
+    if (accept(cand.node)) {
+      s.nearest.push_back(cand);
+    }
+  }
+  std::make_heap(s.frontier.begin(), s.frontier.end(), HnswFrontierOrder{});
+  std::make_heap(s.nearest.begin(), s.nearest.end(), HnswNearestOrder{});
+  while (s.nearest.size() > ef) {
+    std::pop_heap(s.nearest.begin(), s.nearest.end(), HnswNearestOrder{});
+    s.nearest.pop_back();
+  }
+  return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
+}
+
+template<bool Inclusive, typename Dist, typename Accept = HnswAcceptAll>
 void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
-                      size_t max_results, HnswSearchScratch& s) {
+                      size_t max_results, HnswSearchScratch& s,
+                      const Accept& admit = {}) {
   const auto accept = [threshold](score_t score) {
     if constexpr (Inclusive) {
       return score >= threshold;
@@ -632,26 +1063,16 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     found.clear();
     return;
   }
-
-  const uint32_t entry = graph.EntryPoint();
-  const uint32_t entry_top = graph.LevelOf(entry) - 1;
-
-  s.visited.Reset(graph.Size());
-  HnswCandidate cur{dist.One(entry), entry};
-  if (entry_top > 0) {
-    cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
-  }
-
-  s.visited.Next();
-  s.visited.TestAndSet(cur.node);
-  found.assign(1, cur);
+  found.assign(1, HnswDescendToBase(graph, dist, s));
   HnswSearchLevel(graph, dist, 0, kHnswDefaultEfSearch, s);
 
   frontier.assign(found.begin(), found.end());
   std::make_heap(frontier.begin(), frontier.end(), HnswFrontierOrder{});
   found.clear();
+  s.visited.Next();
   for (const auto& seed : frontier) {
-    if (accept(seed.score)) {
+    s.visited.Set(seed.node);
+    if (accept(seed.score) && admit(seed.node)) {
       found.push_back(seed);
     }
   }
@@ -665,18 +1086,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
     }
 
     s.batch.clear();
-    const auto neighbors = graph.Neighbors(node.node, 0);
-    for (size_t i = 0; i < neighbors.size(); ++i) {
-      const auto id = HnswLoadLink(neighbors[i]);
-      if (id == kHnswInvalidNode) {
-        break;
-      }
-      if (s.visited.TestAndSet(id)) {
-        continue;
-      }
-      s.batch.push_back(id);
-      dist.Prefetch(id);
-    }
+    HnswBatchUnvisited(graph.Neighbors(node.node, 0), dist, s);
     if (s.batch.empty()) {
       continue;
     }
@@ -688,7 +1098,7 @@ void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
         continue;
       }
       const HnswCandidate cand{s.scores[i], s.batch[i]};
-      if (accept(s.scores[i])) {
+      if (accept(s.scores[i]) && admit(cand.node)) {
         found.push_back(cand);
       }
       frontier.push_back(cand);

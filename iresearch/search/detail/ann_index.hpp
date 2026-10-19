@@ -22,8 +22,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -32,15 +35,28 @@
 
 namespace irs {
 
+struct AnnExactCodes {
+  std::shared_ptr<const void> owner;
+  std::shared_ptr<const QuantizerCodeBound> bound;
+  const byte_type* codes = nullptr;
+  std::span<const uint8_t> levels;
+  uint32_t record_size = 0;
+};
+
 struct VectorFilterOptions {
   std::vector<float> query;
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;
-  uint32_t max_search_fanout = 16;
+  uint32_t min_search_fanout = 0;
+  uint32_t max_search_fanout = 0;
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
+  uint32_t top_k = 0;
+  uint32_t posting_size = 0;
+  HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
+  HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
@@ -64,13 +80,21 @@ struct AnnIndex {
   virtual QueryBuilder::ptr PrepareKnn(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        const VectorFilterOptions& opts,
-                                       uint32_t effort) const = 0;
+                                       uint32_t effort,
+                                       AnnQueryCache* cache) const = 0;
 
   virtual QueryBuilder::ptr PrepareRange(const SubReader& segment,
                                          const PrepareContext& ctx,
                                          const VectorFilterOptions& opts,
                                          float radius, bool inclusive,
-                                         uint32_t effort) const = 0;
+                                         uint32_t effort,
+                                         AnnQueryCache* cache) const = 0;
+
+  virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
+                                     std::span<const float> /*query*/,
+                                     VectorMetric /*metric*/) const {
+    return {};
+  }
 };
 
 inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,

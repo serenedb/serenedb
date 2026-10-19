@@ -21,8 +21,6 @@
 
 #include "search_engine.h"
 
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
@@ -45,18 +43,12 @@
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
-ABSL_DECLARE_FLAG(uint64_t, background_threads);
-
 namespace sdb::search {
 
 SearchEngine::SearchEngine() { gInstance = this; }
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
-  // The background pool is max(logical/4, 2) threads (--background_threads,
-  // resolved at startup). Merges may use all but one of them -- refresh,
-  // cleanup, and drop are light and interleave on the single spare thread.
-  return std::max<int>(
-    1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+  return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
@@ -65,10 +57,35 @@ uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
 
 const irs::AnnBuildEnv& AnnBuildEnv() {
   static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .executor = &BackgroundScheduler::instance().executor(),
     .acquire = AnnAcquireWorkers,
     .release = AnnReleaseWorkers};
   return env;
+}
+
+namespace {
+
+uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(
+    want, held, SearchEngine::MaxAnnBuildWorkers());
+}
+
+}  // namespace
+
+ManualCompactionSlot::ManualCompactionSlot() noexcept
+  : _held{GetSearchEngine().TryAcquireCompaction()} {}
+
+ManualCompactionSlot::~ManualCompactionSlot() {
+  if (_held) {
+    GetSearchEngine().ReleaseCompaction();
+  }
+}
+
+const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
+  static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
+                                    .acquire = AnnAcquireAllWorkers,
+                                    .release = AnnReleaseWorkers};
+  return _held ? &env : nullptr;
 }
 
 void SearchEngine::start() {

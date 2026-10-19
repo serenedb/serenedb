@@ -81,6 +81,8 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
+  const Session& session, uint64_t oid);
 inline duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
   duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
   duckdb::CatalogType type, const duckdb::Identifier& name) {

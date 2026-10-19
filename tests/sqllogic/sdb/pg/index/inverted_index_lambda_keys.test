@@ -1,0 +1,229 @@
+# Keys and included values of an inverted index may use lambdas (list_transform,
+# list_filter, list_reduce, nested, capturing a column, list_transform([x],
+# ...)[1]), list_sort, json_keys and list_aggr. On a table and on a search table
+# they work for the rows CREATE INDEX finds, for rows a commit adds one at a time
+# and in bulk, and through UPDATE and DELETE, and the index stores what the
+# expression returns in a SELECT.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lk_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE lk (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
+
+
+statement ok
+INSERT INTO lk VALUES
+  (1, 'Hello World', ['Red', 'Green'], '{"a": 1, "b": 2}'),
+  (2, 'Quick Fox', ['Blue', 'skip'], '{"c": 3}')
+
+
+statement ok
+CREATE INDEX lk_idx ON lk USING inverted (
+  id,
+  (list_transform([body], lambda v: lower(v))[1]) lk_dict,
+  (list_reduce(tags, lambda a, b: a || ' ' || b)) lk_dict,
+  (list_transform(tags, lambda x: lower(x))) included(),
+  (list_filter(tags, lambda x: x <> 'skip')) included(),
+  (list_transform(tags, lambda x: x || ':' || id::VARCHAR)) included(),
+  (list_transform([tags], lambda l: list_transform(l, lambda x: upper(x)))[1]) included(),
+  (list_sort(tags)) included(),
+  (json_keys(doc)) included(),
+  (list_aggr(tags, 'string_agg', ',')) included())
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO lk VALUES (3, 'Lazy Dog', ['Yellow'], '{"d": 4}')
+
+
+statement ok
+INSERT INTO lk SELECT i, 'bulk ' || i, ['Tag' || i, 'skip'], '{"n": 1}' FROM range(4, 40004) t(i)
+
+
+statement ok
+UPDATE lk SET tags = ['Purple', 'Orange'] WHERE id = 2
+
+
+statement ok
+DELETE FROM lk WHERE id = 3
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lk
+
+
+query
+SELECT id FROM lk_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Purple')
+----
+id
+2
+
+
+query
+SELECT count(*) FROM lk_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Blue')
+----
+count
+0
+
+
+query
+SELECT count(*) FROM lk_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('dog')
+----
+count
+0
+
+
+query
+SELECT count(*) FROM lk_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('bulk')
+----
+count
+40000
+
+
+query
+SELECT id,
+       list_transform(tags, lambda x: lower(x)) AS lowered,
+       list_filter(tags, lambda x: x <> 'skip') AS kept,
+       list_transform(tags, lambda x: x || ':' || id::VARCHAR) AS captured,
+       list_transform([tags], lambda l: list_transform(l, lambda x: upper(x)))[1] AS upper,
+       list_sort(tags) AS sorted,
+       json_keys(doc) AS keys,
+       list_aggr(tags, 'string_agg', ',') AS joined
+FROM lk_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('hello')
+----
+id	lowered	kept	captured	upper	sorted	keys	joined
+1	{red,green}	{Red,Green}	{Red:1,Green:1}	{RED,GREEN}	{Green,Red}	{a,b}	Red,Green
+
+
+query
+SELECT id,
+       list_transform(tags, lambda x: lower(x)) AS lowered,
+       list_filter(tags, lambda x: x <> 'skip') AS kept,
+       list_transform(tags, lambda x: x || ':' || id::VARCHAR) AS captured,
+       list_transform([tags], lambda l: list_transform(l, lambda x: upper(x)))[1] AS upper,
+       list_sort(tags) AS sorted,
+       json_keys(doc) AS keys,
+       list_aggr(tags, 'string_agg', ',') AS joined
+FROM lk_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('fox')
+----
+id	lowered	kept	captured	upper	sorted	keys	joined
+2	{purple,orange}	{Purple,Orange}	{Purple:2,Orange:2}	{PURPLE,ORANGE}	{Orange,Purple}	{c}	Purple,Orange
+
+
+query
+SELECT id,
+       list_transform(tags, lambda x: lower(x)) AS lowered,
+       list_filter(tags, lambda x: x <> 'skip') AS kept,
+       list_transform(tags, lambda x: x || ':' || id::VARCHAR) AS captured,
+       list_transform([tags], lambda l: list_transform(l, lambda x: upper(x)))[1] AS upper,
+       list_sort(tags) AS sorted,
+       json_keys(doc) AS keys,
+       list_aggr(tags, 'string_agg', ',') AS joined
+FROM lk WHERE id IN (1, 2) ORDER BY id
+----
+id	lowered	kept	captured	upper	sorted	keys	joined
+1	{red,green}	{Red,Green}	{Red:1,Green:1}	{RED,GREEN}	{Green,Red}	{a,b}	Red,Green
+2	{purple,orange}	{Purple,Orange}	{Purple:2,Orange:2}	{PURPLE,ORANGE}	{Orange,Purple}	{c}	Purple,Orange
+
+
+# A constant part of a key that can't be computed fails CREATE INDEX, also next
+# to a lambda.
+statement error
+CREATE INDEX lk_bad ON lk USING inverted (
+  id, (list_concat(list_transform(tags, lambda x: lower(x)), [('abc'::INT)::VARCHAR])) included())
+----
+db error: ERROR: Could not convert string 'abc' to INT32
+
+
+# A lambda whose body is volatile makes the key volatile.
+statement error
+CREATE INDEX lk_random ON lk USING inverted (
+  id, (list_transform(tags, lambda x: x || random()::VARCHAR)) included())
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
+
+
+statement ok
+CREATE TABLE ls (id INTEGER, body VARCHAR, tags VARCHAR[], doc JSON)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX ls_idx ON ls USING inverted (
+  id,
+  (list_transform([body], lambda v: lower(v))[1]) lk_dict,
+  (list_reduce(tags, lambda a, b: a || ' ' || b)) lk_dict,
+  (list_transform(tags, lambda x: x || ':' || id::VARCHAR)) included(),
+  (list_sort(tags)) included(),
+  (json_keys(doc)) included(),
+  (list_aggr(tags, 'string_agg', ',')) included())
+
+
+statement ok
+INSERT INTO ls VALUES (1, 'Hello World', ['Red', 'Green'], '{"a": 1, "b": 2}')
+
+
+statement ok
+INSERT INTO ls VALUES (2, 'Quick Fox', ['Blue', 'skip'], '{"c": 3}'), (3, 'Lazy Dog', ['Yellow'], '{"d": 4}')
+
+
+statement ok
+INSERT INTO ls SELECT i, 'bulk ' || i, ['Tag' || i, 'skip'], '{"n": 1}' FROM range(4, 40004) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ls
+
+
+statement ok
+UPDATE ls SET tags = ['Purple', 'Orange'] WHERE id = 2
+
+
+statement ok
+DELETE FROM ls WHERE id = 3
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ls
+
+
+query
+SELECT id FROM ls_idx WHERE (list_reduce(tags, lambda a, b: a || ' ' || b)) @@ ts_phrase('Purple')
+----
+id
+2
+
+
+query
+SELECT count(*) FROM ls_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('bulk')
+----
+count
+40000
+
+
+query
+SELECT id,
+       list_transform(tags, lambda x: x || ':' || id::VARCHAR) AS captured,
+       list_sort(tags) AS sorted,
+       json_keys(doc) AS keys,
+       list_aggr(tags, 'string_agg', ',') AS joined
+FROM ls_idx WHERE (list_transform([body], lambda v: lower(v))[1]) @@ ts_phrase('fox')
+----
+id	captured	sorted	keys	joined
+2	{Purple:2,Orange:2}	{Orange,Purple}	{c}	Purple,Orange
+
+
+statement ok
+DROP TABLE ls
+
+
+statement ok
+DROP TABLE lk
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY lk_dict

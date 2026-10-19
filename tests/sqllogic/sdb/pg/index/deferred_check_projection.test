@@ -1,0 +1,361 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY dcp_words AS split_text(case := 'lower') WITH (frequency)
+
+statement ok
+CREATE TABLE dcp (id INTEGER PRIMARY KEY, body TEXT, tags VARCHAR[])
+
+statement ok
+INSERT INTO dcp VALUES
+    (1, 'quick brown fox', ['quick brown', 'fox']),
+    (2, 'brown quick fox', ['brown', 'quick fox']),
+    (3, 'the quick brown dog', [NULL, 'quick brown dog']),
+    (4, 'quick and brown', ['quick', 'and brown']),
+    (5, NULL, NULL),
+    (6, 'a quick brown cat', ['a quick brown cat']),
+    (7, 'quick brown', NULL),
+    (8, NULL, ['quick brown'])
+
+statement ok
+CREATE INDEX dcp_idx ON dcp USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags)
+
+statement ok
+VACUUM (REFRESH_TABLE) dcp
+
+query
+SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	body
+1	quick brown fox
+3	the quick brown dog
+6	a quick brown cat
+7	quick brown
+
+query
+EXPLAIN SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: id ASC                         │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: id, body                    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: dcp_idx                           │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ And ────────────────────╮             │
+│ ╰─────────────┬────────────╯             │
+│ ╭─ Terms ─────┴────────────╮             │
+│ │ Field: body(string)      │             │
+│ │ Values: 'brown', 'quick' │             │
+│ ╰──────────────────────────╯             │
+│ Table Filter:                            │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: body(string)                  │ │
+│ │ Parts:                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: body (i), id (l)            │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id, body FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND id % 2 = 1 ORDER BY id
+----
+id	body
+1	quick brown fox
+3	the quick brown dog
+7	quick brown
+
+query
+SELECT body FROM dcp_idx WHERE body @@ ts_phrase('brown fox') ORDER BY body
+----
+body
+quick brown fox
+
+query
+SELECT id, tags FROM dcp_idx WHERE tags @@ ts_phrase('quick brown') ORDER BY id
+----
+id	tags
+1	{"quick brown",fox}
+3	{NULL,"quick brown dog"}
+6	{"a quick brown cat"}
+8	{"quick brown"}
+
+query
+SELECT id, body, tags FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND tags @@ ts_phrase('brown dog') ORDER BY id
+----
+id	body	tags
+3	the quick brown dog	{NULL,"quick brown dog"}
+
+query
+EXPLAIN SELECT id, body, tags FROM dcp_idx WHERE body @@ ts_phrase('quick brown') AND tags @@ ts_phrase('brown dog') ORDER BY id
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────────────────────────────────────────────╮
+│ Order By: id ASC                                                                 │
+│ ~1 row                                                                           │
+╰─────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────┴────────────────────────────────────────╮
+│ Projections: id, body, tags                                                      │
+│ ~1 row                                                                           │
+╰─────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────┴────────────────────────────────────────╮
+│ Index: dcp_idx                                                                   │
+│ Lookup: table                                                                    │
+│ Index Filter:                                                                    │
+│ ╭─ And ────────────────────╮                                                     │
+│ ╰─────────────┬────────────╯                                                     │
+│               ├────────────────────────────╮                                     │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ────┴───────────╮                         │
+│ │ Field: body(string)      │  │ Field: tags            │                         │
+│ │ Values: 'brown', 'quick' │  │ Values: 'brown', 'dog' │                         │
+│ ╰──────────────────────────╯  ╰────────────────────────╯                         │
+│ Table Filter:                                                                    │
+│ ╭─ And ────────────────────────────────╮                                         │
+│ ╰───────────────────┬──────────────────╯                                         │
+│                     ├────────────────────────────────────────╮                   │
+│ ╭─ Phrase ──────────┴──────────────────╮  ╭─ Phrase ─────────┴─────────────────╮ │
+│ │ Field: body(string)                  │  │ Field: tags                        │ │
+│ │ Parts:                               │  │ Parts:                             │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
+│ │ Verify: table filter                 │  │ Verify: table filter               │ │
+│ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
+│ Projections: body (i), tags (i), id (l)                                          │
+│ ~1 row                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+CREATE TABLE dcp_gen AS
+    SELECT g AS id,
+           CASE WHEN g % 97 = 0 THEN NULL
+                ELSE 'w' || (g % 7) || ' w' || (g % 11) || ' w' || (g % 5) || ' w' || (g % 3)
+           END AS body
+    FROM range(1, 30001) t(g)
+
+statement ok
+INSERT INTO dcp_gen SELECT g, NULL FROM range(30001, 30101) t(g)
+
+statement ok
+CREATE INDEX dcp_gen_idx ON dcp_gen USING inverted (id, body dcp_words) INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) dcp_gen
+
+query
+SELECT (SELECT count(*) FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4')) AS matches,
+       (SELECT count(*) FROM dcp_gen WHERE (' ' || body || ' ') LIKE '% w3 w4 %') AS expected
+----
+matches	expected
+926	926
+
+query
+SELECT count(*) FROM (SELECT id, body FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4')) i
+JOIN dcp_gen g USING (id) WHERE i.body IS DISTINCT FROM g.body
+----
+count
+0
+
+query
+SELECT count(*) FROM (SELECT id, body FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4') AND id % 3 <> 0) i
+JOIN dcp_gen g USING (id) WHERE i.body IS DISTINCT FROM g.body
+----
+count
+0
+
+query
+SELECT id, body FROM dcp_gen_idx WHERE body @@ ts_phrase('w3 w4') ORDER BY id LIMIT 4
+----
+id	body
+14	w0 w3 w4 w2
+59	w3 w4 w4 w2
+69	w6 w3 w4 w0
+124	w5 w3 w4 w1
+
+statement ok
+CREATE TABLE dcp_nested AS
+    SELECT g AS id,
+           'w' || (g % 7) || ' w' || (g % 11) AS body,
+           CASE WHEN g % 13 = 0 THEN NULL
+                WHEN g % 17 = 0 THEN []::VARCHAR[]
+                ELSE ['w' || (g % 5) || ' w' || (g % 3), 'x' || (g % 4)]
+           END AS tags,
+           CASE WHEN g % 19 = 0 THEN NULL ELSE {'a': g % 10, 'b': 'w' || (g % 6)} END AS s
+    FROM range(1, 300001) t(g)
+
+statement ok
+CREATE INDEX dcp_nested_idx ON dcp_nested USING inverted (id, body dcp_words, tags dcp_words) INCLUDE (body, tags, s)
+
+statement ok
+VACUUM (REFRESH_TABLE) dcp_nested
+
+query
+SELECT (SELECT count(*) FROM dcp_nested_idx WHERE tags @@ ts_phrase('w1 w2')) AS matches,
+       (SELECT count(*) FROM dcp_nested
+        WHERE id % 5 = 1 AND id % 3 = 2 AND id % 13 <> 0 AND id % 17 <> 0) AS expected,
+       (SELECT count(*) FROM (SELECT id, tags, s FROM dcp_nested_idx WHERE tags @@ ts_phrase('w1 w2')) i
+        JOIN dcp_nested g USING (id)
+        WHERE i.tags IS DISTINCT FROM g.tags OR i.s IS DISTINCT FROM g.s
+           OR NOT (g.id % 5 = 1 AND g.id % 3 = 2 AND g.id % 13 <> 0 AND g.id % 17 <> 0)) AS wrong
+----
+matches	expected	wrong
+17376	17376	0
+
+query
+SELECT (SELECT count(*) FROM dcp_nested_idx WHERE body @@ 'w3' AND tags @@ ts_phrase('w1 w2')) AS matches,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND tags @@ ts_phrase('w1 w2')
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested
+           WHERE (id % 7 = 3 OR id % 11 = 3) AND id % 5 = 1 AND id % 3 = 2 AND id % 13 <> 0 AND id % 17 <> 0)) AS extra,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested
+           WHERE (id % 7 = 3 OR id % 11 = 3) AND id % 5 = 1 AND id % 3 = 2 AND id % 13 <> 0 AND id % 17 <> 0
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND tags @@ ts_phrase('w1 w2'))) AS missing
+----
+matches	extra	missing
+3835	0	0
+
+query
+SELECT (SELECT count(*) FROM dcp_nested_idx WHERE body @@ 'w3' AND len(tags) = 2) AS matches,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND len(tags) = 2
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND len(tags) = 2)) AS extra,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND len(tags) = 2
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND len(tags) = 2)) AS missing
+----
+matches	extra	missing
+57543	0	0
+
+query
+SELECT (SELECT count(*) FROM dcp_nested_idx WHERE body @@ 'w3' AND s IS NOT NULL) AS matches,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND s IS NOT NULL
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND s IS NOT NULL)) AS extra,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND s IS NOT NULL
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND s IS NOT NULL)) AS missing
+----
+matches	extra	missing
+62747	0	0
+
+query
+SELECT (SELECT count(*) FROM dcp_nested_idx WHERE body @@ 'w3' AND s.a > 4) AS matches,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND s.a > 4
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND s.a > 4)) AS extra,
+       (SELECT count(*) FROM (
+           SELECT id, tags, s FROM dcp_nested WHERE (id % 7 = 3 OR id % 11 = 3) AND s.a > 4
+           EXCEPT ALL
+           SELECT id, tags, s FROM dcp_nested_idx WHERE body @@ 'w3' AND s.a > 4)) AS missing
+----
+matches	extra	missing
+31373	0	0
+
+query
+SELECT count(*), sum(len(tags)), sum(len(t2)) FROM (
+    SELECT tags, tags AS t2 FROM dcp_nested_idx WHERE tags @@ ts_phrase('w1 w2') AND len(tags) = 2)
+----
+count	sum	sum
+17376	34752	34752
+
+statement ok
+DROP TABLE dcp_nested
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dcp_shape AS encode_geojson()
+
+statement ok
+CREATE TABLE dcp_geo (id INTEGER PRIMARY KEY, geo JSON)
+
+statement ok
+INSERT INTO dcp_geo
+    SELECT g, '{"type":"Point","coordinates":[' || (37.6 + (g % 100) * 0.0001) || ',' || (55.7 + (g // 100) * 0.0001) || ']}'
+    FROM range(0, 10000) t(g)
+
+statement ok
+CREATE INDEX dcp_geo_idx ON dcp_geo USING inverted (id, geo dcp_shape)
+
+statement ok
+VACUUM (REFRESH_TABLE) dcp_geo
+
+query
+SELECT count(*) FROM dcp_geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+----
+count
+1597
+
+query
+SELECT count(*) FROM dcp_geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+  AND geo::VARCHAR = '{"type":"Point","coordinates":[' || (37.6 + (id % 100) * 0.0001) || ',' || (55.7 + (id // 100) * 0.0001) || ']}'
+----
+count
+1597
+
+query
+EXPLAIN SELECT id, geo FROM dcp_geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: id, geo     │
+│ ~2,000 rows              │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: dcp_geo_idx       │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: geo (i),    │
+│              id (l)      │
+│ ~2,000 rows              │
+╰──────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE geo::VARCHAR = '{"type":"Point","coordinates":[' || (37.6 + (id % 100) * 0.0001) || ',' || (55.7 + (id // 100) * 0.0001) || ']}')
+FROM dcp_geo_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
+  AND id % 3 <> 0
+----
+count	count
+1068	1068
+
+statement ok
+DROP TABLE dcp_geo
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dcp_shape
+
+statement ok
+DROP TABLE dcp_gen
+
+statement ok
+DROP TABLE dcp
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dcp_words

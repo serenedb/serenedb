@@ -43,6 +43,7 @@
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
@@ -159,7 +160,8 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid;
+  return entry.permissions.owner == pg::kInvalidOid ||
+         entry.ParentCatalog().GetAttached().IsReadOnly();
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
@@ -176,6 +178,18 @@ bool IsSchemaMember(CatalogType type) {
     case CatalogType::MACRO_ENTRY:
     case CatalogType::TABLE_MACRO_ENTRY:
     case CatalogType::TYPE_ENTRY:
+    case CatalogType::INDEX_ENTRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool IsRelation(CatalogType type) {
+  switch (type) {
+    case CatalogType::TABLE_ENTRY:
+    case CatalogType::VIEW_ENTRY:
+    case CatalogType::SEQUENCE_ENTRY:
     case CatalogType::INDEX_ENTRY:
       return true;
     default:
@@ -451,6 +465,10 @@ class Enforcer {
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
         RequireUserSchema(create.schema.oid, info);
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
+        for (auto& serial : create.info->serial_sequences) {
+          Stamp(serial.permissions, create.schema.ParentCatalog(),
+                CatalogType::SEQUENCE_ENTRY, &create.schema, _caller);
+        }
         if (_enforce) {
           RequireSchemaCreate(create.schema);
           CheckReplace(info);
@@ -466,7 +484,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         RequireUserSchema(create.schema->oid, *create.info);
-        Stamp(*create.info, DefaultObjType(op.type), create.schema);
+        Stamp(*create.info, DefaultObjType(op.type), create.schema,
+              OwnerFor(*create.info));
         if (_enforce) {
           RequireSchemaCreate(*create.schema);
           CheckReplace(*create.info);
@@ -522,6 +541,15 @@ class Enforcer {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
             ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        }
+        if (info.type == CatalogType::PREPARED_STATEMENT &&
+            info.extra_drop_info &&
+            info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+              duckdb::DiscardTarget::ALL &&
+            !_context.transaction.IsAutoCommit()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
         }
         if (_enforce) {
           CheckDrop(info);
@@ -678,10 +706,17 @@ class Enforcer {
       return;
     }
     const auto& bind = get.bind_data->Cast<connector::ScanBindData>();
-    if (!bind.IsViewBacked() || !bind.relation.inverted_index) {
+    if (!bind.relation.inverted_index) {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
+    if (index.catalog.GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
+      RequireServerUsage(index.catalog.GetName());
+    }
+    if (!bind.IsViewBacked()) {
+      return;
+    }
     auto view =
       index.GetRelation(index.catalog.GetCatalogTransaction(_context));
     if (!view || view->type != CatalogType::VIEW_ENTRY || Unowned(*view)) {
@@ -699,7 +734,8 @@ class Enforcer {
       CheckIndexScan(get);
       return;
     }
-    if (!table->catalog.IsDuckCatalog()) {
+    if (table->catalog.GetCatalogType() !=
+        catalog::SereneDBCatalog::kStorageType) {
       RequireServerUsage(table->catalog.GetName());
     }
     if (Unowned(*table)) {
@@ -1284,10 +1320,22 @@ class Enforcer {
   void ResolveOwner(duckdb::AlterPermissionsInfo& info) {
     auto& entry = ResolveTarget(info);
     info.new_owner_id = RoleSpecId(info.new_owner);
-    if (!_enforce || info.new_owner_id == entry.permissions.owner) {
+    const bool relation = IsRelation(entry.type);
+    if (_enforce && relation) {
+      RequireOwner(entry);
+    }
+    if (info.new_owner_id == entry.permissions.owner) {
       return;
     }
-    RequireOwner(entry);
+    if (entry.type == CatalogType::SEQUENCE_ENTRY) {
+      RefuseOwnedSequence(entry);
+    }
+    if (!_enforce) {
+      return;
+    }
+    if (!relation) {
+      RequireOwner(entry);
+    }
     if (info.new_owner_id != _caller &&
         !_caller_closure.CanSet(info.new_owner_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1300,6 +1348,24 @@ class Enforcer {
                 entry.ParentSchema(_context).permissions, AclMode::Create)) {
       Denied(entry.ParentSchema(_context));
     }
+  }
+
+  void RefuseOwnedSequence(duckdb::CatalogEntry& sequence) {
+    auto& catalog = sequence.ParentCatalog();
+    auto dependency_manager = catalog.GetDependencyManager();
+    if (!dependency_manager) {
+      return;
+    }
+    auto table = dependency_manager->OwnerOf(
+      catalog.GetCatalogTransaction(_context), sequence);
+    if (!table) {
+      return;
+    }
+    const auto& name = sequence.name.GetIdentifierName();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot change owner of sequence \"", name, "\""),
+                    ERR_DETAIL("Sequence \"", name, "\" is linked to table \"",
+                               table->name.GetIdentifierName(), "\"."));
   }
 
   void ResolveDefaultPrivileges(duckdb::AlterPermissionsInfo& info) {
@@ -1561,16 +1627,39 @@ class Enforcer {
     Stamp(info, objtype, schema, _caller);
   }
 
+  duckdb::idx_t OwnerFor(const duckdb::CreateInfo& info) {
+    if (info.type != CatalogType::SEQUENCE_ENTRY) {
+      return _caller;
+    }
+    const auto& sequence = info.Cast<duckdb::CreateSequenceInfo>();
+    if (!sequence.serial) {
+      return _caller;
+    }
+    const auto table =
+      FindEntry(CatalogType::TABLE_ENTRY,
+                duckdb::QualifiedName::FromPath(
+                  {sequence.owned_by.begin(), sequence.owned_by.end() - 1}));
+    return table ? table->permissions.owner : _caller;
+  }
+
   void Stamp(duckdb::CreateInfo& info, CatalogType objtype,
              duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
              duckdb::idx_t owner) {
-    if (!StoresPermissions(
+    Stamp(info.permissions,
           schema ? schema->ParentCatalog()
                  : duckdb::Catalog::GetCatalog(
-                     _context, info.GetQualifiedName().Catalog()))) {
+                     _context, info.GetQualifiedName().Catalog()),
+          objtype, schema, owner);
+  }
+
+  void Stamp(duckdb::Permissions& permissions, duckdb::Catalog& catalog,
+             CatalogType objtype,
+             duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema,
+             duckdb::idx_t owner) {
+    if (!StoresPermissions(catalog)) {
       return;
     }
-    info.permissions.owner = owner;
+    permissions.owner = owner;
     duckdb::vector<duckdb::AclItem> acl;
     const auto apply = [&](const duckdb::Permissions& holder,
                            duckdb::idx_t scope) {
@@ -1599,7 +1688,7 @@ class Enforcer {
       apply(database->permissions, 0);
     }
     if (!acl.empty()) {
-      info.permissions.acl = std::move(acl);
+      permissions.acl = std::move(acl);
     }
   }
 

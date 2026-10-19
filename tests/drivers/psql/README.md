@@ -19,7 +19,7 @@ creates at startup: serened must run with `?api=otel`, as in
     SDB_DRV_HOST=127.0.0.1 SDB_DRV_PORT=5432 SDB_DRV_ENGINE=postgres \
       tests/drivers/psql/run.py --update
 
-    docker rm -f pg-oracle
+    docker rm -fv pg-oracle
 
 Review the diff, commit the updated `tests.test`.
 

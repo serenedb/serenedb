@@ -32,10 +32,10 @@ Release binaries are statically linked and built for a baseline architecture:
 
 | Architecture | Requirement |
 |---|---|
-| **x86-64** | Intel Haswell or newer — SSE 4.2 and AVX2 are required |
+| **x86-64** | Intel Haswell, AMD Excavator or newer: x86-64-v3 (AVX2, BMI1, BMI2, FMA and the rest of the level) with AES and PCLMULQDQ |
 | **ARM64** | ARMv8-A with the CRC32 and cryptography extensions (AWS Graviton, Ampere Altra or newer) |
 
-On an older x86-64 CPU without AVX2 (pre-Haswell) the binary fails to start with an illegal-instruction error. Newer CPUs run faster code paths chosen at runtime: AVX-512 on x86-64 and SVE/SVE2 on ARM64 speed up vector search, matrix math and text analysis. More cores mean faster search and analytics — SereneDB parallelizes queries across the available CPUs.
+On a CPU that does not report one of these extensions, `serened` exits at startup and names what is missing, for example `serened cannot run on this CPU: it lacks AVX2 BMI1 BMI2 F16C FMA LZCNT MOVBE`. A virtual machine, including the one Docker Desktop runs, can hide extensions the host CPU has. A CPU that predates them altogether can instead stop with an illegal-instruction error before the check runs. Newer CPUs run faster code paths chosen at runtime: AVX-512 on x86-64 and SVE/SVE2 on ARM64 speed up vector search, matrix math and text analysis. More cores mean faster search and analytics — SereneDB parallelizes queries across the available CPUs.
 
 ### Memory
 

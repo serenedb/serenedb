@@ -8,7 +8,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 # Phrase and Proximity Search
 
-Search for tokens appearing in a specific order. This allows matching partial or full sentences within indexed text, and — with [slop](#proximity-search-with-slop) — sentences whose wording drifts from the query. Requires `POSITION = true` in the dictionary.
+Search for tokens appearing in a specific order. This allows matching partial or full sentences within indexed text, and — with [slop](#proximity-search-with-slop) — sentences whose wording drifts from the query. Phrases are fastest with `POSITION = true` in the dictionary; without it they need the column's text in the index (see [Phrases without positions](../../sql/indexes/inverted/full-text-search.md#phrases-without-positions)).
 
 See [Setup](./index.md#setup) for the shared dataset used in all examples.
 

@@ -114,7 +114,7 @@ Query plans can point to the root of performance issues. A few general direction
 
 ## Prepared Statements
 
-[Prepared statements](../../sql/query_syntax/prepared_statements.md) can improve performance when running the same query many times, but with different parameters. When a statement is prepared, it completes several of the initial portions of the query execution process (parsing, planning, etc.) and caches their output. When it is executed, those steps can be skipped, improving performance. This is beneficial mostly for repeatedly running small queries (with a runtime of < 100ms) with different sets of parameters.
+[Prepared statements](../../sql/query_syntax/prepared_statements.md) can improve performance when running the same query many times, but with different parameters. Every execution skips parsing, and a statement that reads only inverted indexes and search tables also skips planning while those indexes are unchanged ([Plans](../../sql/query_syntax/prepared_statements.md#plans)). This is beneficial mostly for repeatedly running small queries (with a runtime of < 100ms) with different sets of parameters.
 
 Note that it is not a primary design goal for SereneDB to quickly execute many small queries concurrently. Rather, it is optimized for running larger, less frequent queries.
 

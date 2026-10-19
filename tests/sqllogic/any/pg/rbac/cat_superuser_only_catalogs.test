@@ -6,6 +6,10 @@
 # reading any of them directly is refused with "permission denied for table
 # <name>". serenedb matches this.
 #
+# Contrast: pg_subscription is NOT blanket-restricted on PostgreSQL -- every
+# column but subconninfo is readable (cat_subscription_conninfo.test); and
+# pg_class (the relation catalog) is world-readable. Both stay readable here.
+#
 # Lore: vedernikoff the intern again, denied the sensitive catalogs.
 # Idempotent + self-cleaning; the intern role is file-unique.
 
@@ -58,6 +62,8 @@ SELECT count(*) FROM pg_user_mapping;
 db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
 
 
+# pg_subscription is not blanket-denied: the intern counts its rows, not an
+# error.
 connection c_su_intern user=cat_su_intern password=cat_su_intern_pw
 query
 SELECT count(*) AS visible FROM pg_subscription;

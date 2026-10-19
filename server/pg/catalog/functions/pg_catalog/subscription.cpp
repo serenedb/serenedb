@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "catalog/catalog.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/commands/create_subscription.h"
@@ -66,7 +67,7 @@ void WriteTime(duckdb::VectorWriter<duckdb::timestamp_tz_t>& writer,
 void LoadWorkers(duckdb::ClientContext& context, duckdb::DataChunk& input,
                  std::vector<Worker>& rows) {
   auto* engine = Engine::gInstance;
-  const auto database = SessionCatalog(context);
+  const auto database = catalog::DefaultSereneDBCatalog(context);
   if (!engine || !database) {
     return;
   }

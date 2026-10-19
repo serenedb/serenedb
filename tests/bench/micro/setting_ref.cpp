@@ -36,11 +36,10 @@ duckdb::ClientContext& Context() {
   return *conn->context;
 }
 
-void SettingRefCached(benchmark::State& state) {
-  static constinit sdb::SettingRef gSetting{kName};
+void GetIntSetting(benchmark::State& state) {
   auto& context = Context();
   for (auto _ : state) {
-    benchmark::DoNotOptimize(gSetting.Int(context));
+    benchmark::DoNotOptimize(sdb::GetIntSetting(context, kName));
   }
 }
 
@@ -70,7 +69,7 @@ void TryGetCurrentSetting(benchmark::State& state) {
   }
 }
 
-BENCHMARK(SettingRefCached);
+BENCHMARK(GetIntSetting);
 BENCHMARK(IndexLookupEveryRead);
 BENCHMARK(TryGetCurrentSetting);
 

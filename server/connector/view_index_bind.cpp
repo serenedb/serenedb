@@ -187,7 +187,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
-    expressions.emplace_back(index_binder.Bind(expr));
+    expressions.emplace_back(index_binder.BindKey(expr));
   }
   duckdb::unique_ptr<duckdb::Expression> bound_where;
   if (info->where_clause) {
@@ -303,7 +303,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   expressions.reserve(info->expressions.size());
   for (auto& expr : info->expressions) {
-    expressions.emplace_back(index_binder.Bind(expr));
+    expressions.emplace_back(index_binder.BindKey(expr));
   }
 
   auto& get = plan->Cast<duckdb::LogicalGet>();

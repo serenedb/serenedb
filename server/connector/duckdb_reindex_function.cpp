@@ -333,14 +333,16 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
     if (!chunk || chunk->size() == 0) {
       break;
     }
+    auto files = chunk->data[0].Values<uint64_t>();
+    auto row_numbers = chunk->data[1].Values<int64_t>();
     for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
-      const auto file = chunk->GetValue(0, row);
-      const auto row_number = chunk->GetValue(1, row);
-      if (file.IsNull() || row_number.IsNull()) {
+      const auto file = files[row];
+      const auto row_number = row_numbers[row];
+      if (!file.IsValid() || !row_number.IsValid()) {
         continue;
       }
-      auto pk = primary_key::PkFilePrefix(file.GetValue<uint64_t>());
-      primary_key::AppendSigned(pk, row_number.GetValue<int64_t>());
+      auto pk = primary_key::PkFilePrefix(file.GetValue());
+      primary_key::AppendSigned(pk, row_number.GetValue());
       pks.emplace_back(std::move(pk));
     }
   }
@@ -1083,6 +1085,11 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("index \"", name, "\" does not exist"));
   }
+  if (target.index->catalog.GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+                    ERR_MSG("cannot REINDEX \"", name,
+                            "\": its database is attached read-only"));
+  }
   pg::ProgressMetrics* progress = nullptr;
   if (auto client_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey);
@@ -1214,10 +1221,11 @@ void ReindexPragma(duckdb::ClientContext& context,
 void ReindexByIdPragma(duckdb::ClientContext& context,
                        const duckdb::FunctionParameters& parameters) {
   const auto index_id = parameters.values[0].GetValue<int64_t>();
-  const auto& home =
-    duckdb::ClientData::Get(context).catalog_search_path->GetDefault();
-  auto& catalog = duckdb::Catalog::GetCatalog(context, home.GetCatalog())
-                    .Cast<catalog::SereneDBCatalog>();
+  auto database = catalog::DefaultSereneDBCatalog(context);
+  if (!database) {
+    return;
+  }
+  auto& catalog = *database;
   const auto trx = catalog.GetCatalogTransaction(context);
   auto index = catalog.FindIn<duckdb::DuckIndexEntry>(
     &context, static_cast<duckdb::idx_t>(index_id));

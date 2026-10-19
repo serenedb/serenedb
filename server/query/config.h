@@ -25,6 +25,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -48,32 +49,20 @@ enum class ByteaOutput : uint8_t {
 
 using IsolationLevel = duckdb::TransactionIsolationLevel;
 
-class SettingRef {
- public:
-  explicit constexpr SettingRef(std::string_view name) noexcept : _name{name} {}
+uint32_t GetIntSetting(duckdb::ClientContext& context, std::string_view name);
 
-  uint32_t Int(duckdb::ClientContext& context) const;
+int64_t GetSignedIntSetting(duckdb::ClientContext& context,
+                            std::string_view name);
 
-  double Double(duckdb::ClientContext& context) const;
+double GetDoubleSetting(duckdb::ClientContext& context, std::string_view name);
 
-  bool Bool(duckdb::ClientContext& context) const;
+bool GetBoolSetting(duckdb::ClientContext& context, std::string_view name);
 
-  uint32_t Enum(duckdb::ClientContext& context,
-                std::span<const std::string_view> options) const;
+uint32_t GetEnumSetting(duckdb::ClientContext& context, std::string_view name,
+                        std::span<const std::string_view> options);
 
-  duckdb::Value Global(const duckdb::DBConfig& config) const;
-
- private:
-  struct Slot {
-    const duckdb::DBConfig* config = nullptr;
-    uint64_t index = 0;
-  };
-
-  duckdb::Value Read(duckdb::ClientContext& context) const;
-
-  std::string_view _name;
-  mutable std::atomic<Slot> _slot;
-};
+duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
+                               std::string_view name);
 
 struct PgEnumAlias {
   std::string_view name;
@@ -157,6 +146,7 @@ class Config {
   // Bind -- which runs between statements -- see the DDL just performed.
   uint64_t CatalogEpoch() const noexcept { return _catalog_epoch; }
   void RefreshCatalogEpoch() noexcept;
+  void RefreshCatalogEpoch(duckdb::MetaTransaction& transaction) noexcept;
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;

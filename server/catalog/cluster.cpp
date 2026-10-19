@@ -86,6 +86,7 @@ duckdb::idx_t ClusterCatalog::DefaultSchemaOid() const {
 
 void ClusterCatalog::OpenCatalogLog(
   duckdb::unique_ptr<duckdb::WriteAheadLog> log, bool compactable) {
+  log->Initialize();
   {
     std::lock_guard guard{_log_mutex};
     _catalog_log = std::move(log);
@@ -163,43 +164,41 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
 void ClusterCatalog::CompactCatalogLog() {
   auto& storage = GetAttached().GetStorageManager();
   auto& fs = duckdb::FileSystem::Get(GetAttached());
-  const auto path = _catalog_log->GetPath();
+  const auto path = ClusterLayout(GetAttached()).CatalogLogFile();
   const auto rewrite_path = path + ".rewrite";
   fs.TryRemoveFile(rewrite_path);
-  duckdb::idx_t size = 0;
-  {
-    duckdb::WriteAheadLog rewrite{storage, rewrite_path};
-    duckdb::WriteCatalogEntries(rewrite, *this);
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
-        duckdb::WriteCatalogEntries(rewrite,
-                                    catalog.Cast<duckdb::DuckCatalog>());
-      }
+  auto rewrite =
+    duckdb::make_shared_ptr<duckdb::WriteAheadLog>(storage, rewrite_path);
+  rewrite->Initialize();
+  duckdb::WriteCatalogEntries(*rewrite, *this);
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
+      duckdb::WriteCatalogEntries(*rewrite,
+                                  catalog.Cast<duckdb::DuckCatalog>());
     }
-    duckdb::DatabaseManager::Get(GetDatabase())
-      .RetainPrepared(
-        [&](const duckdb::hugeint_t& txid,
-            const duckdb::vector<std::pair<duckdb::idx_t, duckdb::idx_t>>&
-              participants) {
-          const bool pending =
-            absl::c_any_of(participants, [&](const auto& participant) {
-              return HoldsPreparedBatch(participant.first, participant.second);
-            });
-          if (pending) {
-            rewrite.WriteCommitPrepared(txid, participants);
-          }
-          return pending;
-        });
-    rewrite.Flush();
-    size = rewrite.GetTotalWritten();
   }
+  duckdb::DatabaseManager::Get(GetDatabase())
+    .RetainPrepared(
+      [&](const duckdb::hugeint_t& txid,
+          const duckdb::vector<std::pair<duckdb::idx_t, duckdb::idx_t>>&
+            participants) {
+        const bool pending =
+          absl::c_any_of(participants, [&](const auto& participant) {
+            return HoldsPreparedBatch(participant.first, participant.second);
+          });
+        if (pending) {
+          rewrite->WriteCommitPrepared(txid, participants);
+        }
+        return pending;
+      });
+  rewrite->Flush();
+  const auto size = rewrite->GetTotalWritten();
   fs.MoveFile(rewrite_path, path);
   {
     std::lock_guard guard{_log_mutex};
-    _catalog_log = duckdb::make_shared_ptr<duckdb::WriteAheadLog>(
-      storage, path, size, duckdb::WALInitState::UNINITIALIZED);
+    _catalog_log = std::move(rewrite);
   }
   _live_bytes.store(size, std::memory_order_relaxed);
   try {

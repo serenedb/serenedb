@@ -36,6 +36,7 @@ class ConnectionContext;
 
 namespace sdb::network::pg {
 
+class ProtocolState;
 class WireSinkContext;
 
 }  // namespace sdb::network::pg
@@ -96,6 +97,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // encode-in-Sink wire collector. Shared so the executor's sink state keeps
   // it alive on every error/teardown path.
   std::shared_ptr<network::pg::WireSinkContext> wire_sink;
+
+  const network::pg::ProtocolState* protocol_state = nullptr;
 
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;

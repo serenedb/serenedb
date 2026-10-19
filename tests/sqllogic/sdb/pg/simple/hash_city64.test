@@ -1,0 +1,56 @@
+query
+SELECT hash_city64('🌊') AS wave, hash_city64('') AS empty;
+----
+wave	empty
+15517191736451674290	11160318154034397263
+
+
+query
+SELECT hash_city64(1::INTEGER) AS i, hash_city64(1::BIGINT) AS b, hash_city64(1::UTINYINT) AS u, hash_city64(true) AS t;
+----
+i	b	u	t
+7601041269982238804	5925585971146611297	5161771770385946686	5161771770385946686
+
+
+query
+SELECT hash_city64(1) AS literal, hash_city64(1.5::DOUBLE) AS d, hash_city64(170141183460469231731687303715884105727::HUGEINT) AS h;
+----
+literal	d	h
+7601041269982238804	5499717892237927603	14814574828169639010
+
+
+query
+SELECT hash_city64('ab', 'c') AS ab_c, hash_city64('a', 'bc') AS a_bc, hash_city64(1::INTEGER, 2::INTEGER, 3::INTEGER) AS three;
+----
+ab_c	a_bc	three
+13683559763848405179	362316697745138599	7395472507596390818
+
+
+query
+SELECT i, hash_city64(i) AS h, hash_city64(i, i * 2) AS h2 FROM range(3) t(i) ORDER BY i;
+----
+i	h	h2
+0	1457330246272086660	1601094413320604647
+1	5925585971146611297	5373496561147230636
+2	3353244675891348105	15031639660853334371
+
+
+query
+SELECT x, hash_city64(x) AS h, hash_city64(x, 1::BIGINT) IS NULL AS null_pair FROM (VALUES (1::BIGINT), (NULL)) v(x) ORDER BY x NULLS LAST;
+----
+x	h	null_pair
+1	5925585971146611297	f
+NULL	NULL	t
+
+
+query
+SELECT hash_city64(NULL) IS NULL AS null_literal;
+----
+null_literal
+t
+
+
+statement error
+SELECT hash_city64(DATE '2020-01-01');
+----
+db error: ERROR: hash_city64 does not support type DATE

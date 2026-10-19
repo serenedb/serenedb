@@ -327,4 +327,27 @@ TEST_F(PgSerializeArrayTest, AllArrayFixedNestedIsMultiDim) {
   EXPECT_EQ(LoadBE32(body, 20), 2);  // dim1
 }
 
+TEST_F(PgSerializeArrayTest, NumberArraysRoundTripThroughValueSink) {
+  for (const auto& child :
+       {duckdb::LogicalType::FLOAT, duckdb::LogicalType::DOUBLE}) {
+    duckdb::vector<duckdb::Value> xs;
+    for (int i = 0; i < 300; ++i) {
+      xs.push_back(duckdb::Value::DOUBLE(1.5 * i - 7.25).DefaultCastAs(child));
+    }
+    auto holed = xs;
+    holed[7] = duckdb::Value(child);
+    for (const auto& value :
+         {duckdb::Value::LIST(child, xs), duckdb::Value::ARRAY(child, xs),
+          duckdb::Value::LIST(child, holed),
+          duckdb::Value::ARRAY(child, holed)}) {
+      const auto framed =
+        SerializeOne(value.type(), value, sdb::pg::VarFormat::Binary);
+      EXPECT_EQ(Deserialize(value.type(), framed, sdb::pg::VarFormat::Binary)
+                  .ToString(),
+                value.ToString())
+        << value.type().ToString();
+    }
+  }
+}
+
 }  // namespace

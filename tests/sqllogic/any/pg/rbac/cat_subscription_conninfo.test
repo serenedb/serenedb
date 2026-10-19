@@ -52,6 +52,24 @@ SELECT has_table_privilege('pg_subscription', 'SELECT') AS on_table,
 on_table	on_conninfo	on_name	on_any
 f	f	t	t
 
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT has_table_privilege('pg_subscription', 'SELECT') AS on_table,
+       has_column_privilege('pg_subscription', 'subconninfo', 'SELECT') AS on_conninfo,
+       has_column_privilege('pg_subscription', 'subname', 'SELECT') AS on_name,
+       has_any_column_privilege('pg_subscription', 'SELECT') AS on_any,
+       has_any_column_privilege('pg_subscription', 'SELECT, INSERT') AS on_any_list;
+----
+on_table	on_conninfo	on_name	on_any	on_any_list
+f	f	t	t	t
+
+query
+SELECT has_column_privilege('cat_sub_intern', 'pg_subscription', 14::int2, 'SELECT') AS on_conninfo,
+       has_column_privilege('cat_sub_intern', 'pg_subscription', 4::int2, 'SELECT') AS on_name;
+----
+on_conninfo	on_name
+f	t
+
 connection default
 query
 SELECT array_to_string(relacl, ',') AS relacl FROM pg_class WHERE oid = 'pg_catalog.pg_subscription'::regclass;

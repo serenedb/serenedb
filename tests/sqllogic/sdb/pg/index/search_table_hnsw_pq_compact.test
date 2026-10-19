@@ -1,0 +1,159 @@
+statement ok
+CREATE MACRO pqc_vec(i) AS
+  list_transform(range(16),
+                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+
+statement ok
+CREATE TABLE pqc_l2 (id INTEGER PRIMARY KEY, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX pqc_l2_idx ON pqc_l2
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'pq', pq_m = 16));
+
+statement ok
+CREATE TABLE pqc_ip (id INTEGER PRIMARY KEY, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX pqc_ip_idx ON pqc_ip
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'pq', pq_m = 8));
+
+statement ok
+CREATE TABLE pqc_ref (id INTEGER PRIMARY KEY, emb FLOAT[16]);
+
+statement ok
+INSERT INTO pqc_ref SELECT i, pqc_vec(i) FROM range(15000) t(i);
+
+statement ok
+INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id < 5000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_l2;
+
+statement ok
+INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_l2;
+
+statement ok
+INSERT INTO pqc_l2 SELECT * FROM pqc_ref WHERE id >= 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_l2;
+
+statement ok
+INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id < 5000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_ip;
+
+statement ok
+INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 5000 AND id < 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_ip;
+
+statement ok
+INSERT INTO pqc_ip SELECT * FROM pqc_ref WHERE id >= 10000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pqc_ip;
+
+query
+SELECT count(DISTINCT row_group_id) > 2 AS many
+FROM pragma_storage_info('pqc_l2') WHERE column_name = 'id';
+----
+many
+t
+
+statement ok
+SET sdb_compact_target_segments = 2;
+
+statement ok
+VACUUM (COMPACT_TABLE) pqc_l2;
+
+statement ok
+VACUUM (COMPACT_TABLE) pqc_ip;
+
+statement ok
+RESET sdb_compact_target_segments;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('pqc_l2') WHERE column_name = 'id';
+----
+segments
+2
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('pqc_ip') WHERE column_name = 'id';
+----
+segments
+2
+
+statement ok
+SET sdb_compact_target_segments = 4000000000;
+
+statement ok
+VACUUM (COMPACT_TABLE) pqc_l2;
+
+statement ok
+RESET sdb_compact_target_segments;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('pqc_l2') WHERE column_name = 'id';
+----
+segments
+2
+
+query
+SELECT (SELECT count(*) FROM pqc_l2) AS l2, (SELECT count(*) FROM pqc_ip) AS ip;
+----
+l2	ip
+15000	15000
+
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+statement ok
+SET sdb_ann_oversample = 8;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM pqc_l2 ORDER BY emb <-> pqc_vec(1234.5) LIMIT 10)
+  EXCEPT (SELECT id FROM pqc_ref ORDER BY emb <-> pqc_vec(1234.5) LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM pqc_l2 ORDER BY emb <-> pqc_vec(7777.5) LIMIT 10)
+  EXCEPT (SELECT id FROM pqc_ref ORDER BY emb <-> pqc_vec(7777.5) LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM pqc_ip ORDER BY emb <#> pqc_vec(4321.5) LIMIT 10)
+  EXCEPT (SELECT id FROM pqc_ref ORDER BY emb <#> pqc_vec(4321.5) LIMIT 10)) t;
+----
+count
+0
+
+query
+SELECT id FROM pqc_l2 ORDER BY emb <-> pqc_vec(9000) LIMIT 1;
+----
+id
+9000
+
+statement ok
+RESET sdb_hnsw_ef_search;
+
+statement ok
+RESET sdb_ann_oversample;

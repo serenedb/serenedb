@@ -348,6 +348,11 @@ class PgWireSession
   // Throws whatever a fresh Parse of the same text would throw, so a relation
   // the session has since dropped surfaces as 42P01 instead of stale rows.
   void RevalidatePlan(Statement& stmt);
+  void DropDeallocated(std::string_view name);
+  void ReleaseDeallocated();
+  void RegisterUnprepared(
+    Statement& statement, std::string_view name, std::string_view query,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan);

@@ -790,6 +790,7 @@ size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
 re2::RE2::Options OwnedRegexOptions() {
   re2::RE2::Options options{re2::RE2::Quiet};
   options.set_thread_safe(false);
+  options.set_valid_utf8(true);
   return options;
 }
 
@@ -1907,8 +1908,12 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // pg_client_encoding() -> name
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction});
+  {
+    duckdb::ScalarFunction func{
+      "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction};
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    loader.RegisterFunction(func);
+  }
 
   // quote_ident(text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{"quote_ident",

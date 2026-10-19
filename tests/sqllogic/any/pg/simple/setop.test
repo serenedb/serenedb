@@ -103,3 +103,47 @@ select * from (values(1,2,3))
 column1	column2	column3
 1	2	3
 1	2	3
+
+
+statement ok
+CREATE TABLE setop_nums (x VARCHAR)
+
+
+statement ok
+CREATE TABLE setop_words (x VARCHAR)
+
+
+statement ok
+INSERT INTO setop_nums VALUES ('1'), ('2')
+
+
+statement ok
+INSERT INTO setop_words VALUES ('abc'), ('2')
+
+
+query
+SELECT x FROM setop_nums WHERE x::INT > 0 EXCEPT SELECT x FROM setop_words
+----
+x
+1
+
+
+query
+SELECT x FROM setop_nums WHERE x::INT > 0 EXCEPT ALL SELECT x FROM setop_words
+----
+x
+1
+
+
+query
+SELECT x FROM setop_nums WHERE x::INT > 0 INTERSECT SELECT x FROM setop_words
+----
+x
+2
+
+
+query
+SELECT x FROM setop_words INTERSECT SELECT x FROM setop_nums WHERE x::INT > 0
+----
+x
+2

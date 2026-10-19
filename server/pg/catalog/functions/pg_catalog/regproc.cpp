@@ -1508,11 +1508,8 @@ OutText NamespaceOut(const Session& session, uint64_t oid) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, oid)) {
     return system->name;
   }
-  if (session.database) {
-    if (auto schema =
-          session.database->FindSchemaById(*session.transaction, oid)) {
-      return OutName(schema->name.GetIdentifierName());
-    }
+  if (auto schema = SchemaByOid(session, oid)) {
+    return OutName(schema->name.GetIdentifierName());
   }
   return absl::StrCat(oid);
 }

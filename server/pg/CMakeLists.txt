@@ -23,6 +23,7 @@ target_sources(
         catalog/functions/pg_catalog/sequence.cpp
         catalog/functions/pg_catalog/subscription.cpp
         catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
+        catalog/table_functions/pg_catalog/pg_prepared_statement.cpp
         catalog/table_functions/pg_catalog/pg_show_all_settings.cpp
         catalog/tables/information_schema/columns.cpp
         catalog/tables/information_schema/sql_implementation_info.cpp

@@ -302,6 +302,7 @@ void SereneDBClientState::TransactionCommit(
     progress_source->xact_commit.fetch_add(1, std::memory_order_relaxed);
   }
   _connection_ctx->Commit();
+  _connection_ctx->RefreshCatalogEpoch(transaction);
   if (transaction.ModifiedDatabase()) {
     catalog::ClusterOf(*context.db).MaybeCompactCatalogLog();
   }
@@ -314,6 +315,7 @@ void SereneDBClientState::TransactionRollback(
     progress_source->xact_rollback.fetch_add(1, std::memory_order_relaxed);
   }
   _connection_ctx->Rollback();
+  _connection_ctx->RefreshCatalogEpoch(transaction);
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {

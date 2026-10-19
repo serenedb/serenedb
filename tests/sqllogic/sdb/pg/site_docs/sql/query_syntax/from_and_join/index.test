@@ -485,6 +485,16 @@ id	name	value	ordinality
 1	alpha	10	1
 2	beta	20	2
 
+# DOCS_TEST: range_st
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS n, sum(i) AS s FROM range_st(1, 1000001) t(i);
+----
+n	s
+1000000	500000500000
+
 # DOCS_TEST: example_019
 
 statement ok

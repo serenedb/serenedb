@@ -109,6 +109,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
   return entry;
 }
 
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
+  const Session& session, uint64_t oid) {
+  if (!session.database) {
+    return nullptr;
+  }
+  auto entry =
+    session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
+  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+    return nullptr;
+  }
+  return entry->Cast<duckdb::SchemaCatalogEntry>();
+}
+
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
@@ -402,10 +415,15 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
       }
     }
   }
+  auto& catalog = schema.ParentCatalog();
+  const auto storage = catalog.GetCatalogType();
   const auto snapshot =
-    schema.ParentCatalog().Cast<catalog::SereneDBCatalog>().Snapshot(
-      context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
-                 duckdb::CatalogType::TABLE_ENTRY));
+    storage == catalog::SereneDBCatalog::kStorageType ||
+        storage == catalog::SereneDBCatalog::kReadOnlyStorageType
+      ? catalog.Cast<catalog::SnapshotCatalog>().Snapshot(
+          context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
+                     duckdb::CatalogType::TABLE_ENTRY))
+      : nullptr;
   if (!snapshot) {
     schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);
     return found;

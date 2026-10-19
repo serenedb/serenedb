@@ -103,6 +103,10 @@ std::string Scalar(JsonValue value, std::string_view what) {
       return SqlLiteral(String(value, what));
     case simdjson::ondemand::json_type::number: {
       std::string_view token = value.raw_json_token();
+      if (value.get_number().error() != simdjson::SUCCESS) {
+        Fail(absl::StrCat("malformed number for [", what, "]"),
+             "parsing_exception");
+      }
       while (!token.empty() && (token.back() == ' ' || token.back() == '\n' ||
                                 token.back() == '\t' || token.back() == '\r')) {
         token.remove_suffix(1);

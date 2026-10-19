@@ -58,6 +58,7 @@ constexpr TypeStorage StorageOf(int32_t type) {
     case kInt8:
     case kOid:
     case kRegproc:
+    case kRegtype:
     case kXid:
       return {INT64, true};
     case kFloat4:

@@ -34,17 +34,12 @@
 
 namespace sdb::pg {
 
-duckdb::optional_ptr<catalog::SereneDBCatalog> SessionCatalog(
+duckdb::optional_ptr<duckdb::DuckCatalog> SessionCatalog(
   duckdb::ClientContext& context) {
   if (!connector::GetSereneDBContextPtr(context)) {
     return nullptr;
   }
-  auto& catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-  if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-    return nullptr;
-  }
-  return catalog.Cast<catalog::SereneDBCatalog>();
+  return catalog::DefaultDuckCatalog(context);
 }
 
 Session MakeSession(duckdb::ClientContext* context) {

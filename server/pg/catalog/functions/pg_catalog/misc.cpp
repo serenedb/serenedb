@@ -25,9 +25,12 @@
 #include <cmath>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/types/bit.hpp>
@@ -46,6 +49,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -214,8 +218,15 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
     args, result,
     [&](duckdb::string_t table_name,
         duckdb::string_t column_name) -> duckdb::optional<duckdb::string_t> {
-      auto relation = EntryByOid(
-        session, *RegIn(session, RegKind::Class, AsView(table_name), nullptr));
+      const auto oid =
+        *RegIn(session, RegKind::Class, AsView(table_name), nullptr);
+      auto relation = EntryByOid(session, oid);
+      if (!relation) {
+        relation = duckdb::Catalog::GetCatalog(
+                     context, duckdb::Identifier::TempCatalog())
+                     .Cast<duckdb::DuckCatalog>()
+                     .FindEntryById(&context, CatalogType::TABLE_ENTRY, oid);
+      }
       if (!relation) {
         return duckdb::nullopt;
       }
@@ -242,33 +253,33 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
                   table.name.GetIdentifierName(), "\" does not exist"));
       }
       const auto& column = columns.GetColumn(column_key);
-      if (!column.HasDefaultValue()) {
+      auto& catalog = relation->ParentCatalog();
+      auto dependency_manager = catalog.GetDependencyManager();
+      if (!dependency_manager) {
         return duckdb::nullopt;
       }
-      const auto argument = NextvalArgument(column.DefaultValue());
-      if (!argument) {
-        return duckdb::nullopt;
+      const auto transaction = catalog.GetCatalogTransaction(context);
+      const duckdb::IdentifierEquality equals{catalog.IsCaseSensitive()};
+      for (const auto& owned :
+           dependency_manager->OwnedEntries(transaction, *relation)) {
+        const auto& sequence = owned.get();
+        if (sequence.type != CatalogType::SEQUENCE_ENTRY) {
+          continue;
+        }
+        const auto& schema = sequence.ParentSchema(transaction);
+        const auto& owner =
+          sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
+        if (owner.IsValid()
+              ? owner.GetIndex() != column.CatalogOid()
+              : !duckdb::Binder::DefaultNamesSequence(
+                  column, schema.GetQualifiedName(sequence.name), equals)) {
+          continue;
+        }
+        return duckdb::StringVector::AddString(
+          result, QualifiedOutName(schema.name.GetIdentifierName(),
+                                   sequence.name.GetIdentifierName()));
       }
-      const auto sequence_name = duckdb::QualifiedName::Parse(*argument);
-      const auto& schema_name = sequence_name.Schema().empty()
-                                  ? table.ParentSchema(context).name
-                                  : sequence_name.Schema();
-      auto schema =
-        session.database->GetSchema(*session.transaction, schema_name,
-                                    duckdb::OnEntryNotFound::RETURN_NULL);
-      if (!schema) {
-        return duckdb::nullopt;
-      }
-      auto sequence =
-        schema->LookupEntry(*session.transaction,
-                            duckdb::EntryLookupInfo{CatalogType::SEQUENCE_ENTRY,
-                                                    sequence_name.Name()});
-      if (!sequence) {
-        return duckdb::nullopt;
-      }
-      return duckdb::StringVector::AddString(
-        result, QualifiedOutName(schema->name.GetIdentifierName(),
-                                 sequence->name.GetIdentifierName()));
+      return duckdb::nullopt;
     });
 }
 
@@ -401,6 +412,15 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
   const auto oks = args.data[1].Values<bool>();
   auto writer =
     duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  std::optional<duckdb::idx_t> last_found;
+  std::optional<duckdb::string_t> last_value;
+  const auto write = [&](const std::optional<duckdb::string_t>& value) {
+    if (value) {
+      writer.WriteValue(*value);
+    } else {
+      writer.WriteNull();
+    }
+  };
   for (duckdb::idx_t row = 0; row < args.size(); row++) {
     const auto name = names[row];
     const auto ok = oks[row];
@@ -408,16 +428,20 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
       writer.WriteNull();
       continue;
     }
+    if (last_found && names[*last_found].GetValue() == name.GetValue()) {
+      write(last_value);
+      continue;
+    }
     const auto key = AsView(name.GetValue());
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
       value = duckdb::Settings::FormatDisplayValue(context, value);
-      if (value.IsNull()) {
-        writer.WriteNull();
-      } else {
-        writer.WriteValue(
-          duckdb::StringVector::AddString(result, value.ToString()));
-      }
+      last_found = row;
+      last_value = value.IsNull()
+                     ? std::nullopt
+                     : std::optional{duckdb::StringVector::AddString(
+                         result, value.ToString())};
+      write(last_value);
       continue;
     }
     if (ok.GetValue()) {
@@ -1390,10 +1414,13 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "col_description", CONSISTENT_WITHIN_QUERY, InitSession,
     {duckdb::ScalarFunction{{oid, int4}, text, ColDescriptionFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_get_serial_sequence", CONSISTENT_WITHIN_QUERY,
-    InitSession,
-    {duckdb::ScalarFunction{{text, text}, text, PgGetSerialSequenceFunction}});
+  {
+    duckdb::ScalarFunction function{
+      {text, text}, text, PgGetSerialSequenceFunction};
+    function.SetFallible();
+    RegisterScalar(loader, pg_catalog, "pg_get_serial_sequence",
+                   CONSISTENT_WITHIN_QUERY, InitSession, {function});
+  }
   RegisterScalar(loader, pg_catalog, "pg_relation_is_updatable",
                  CONSISTENT_WITHIN_QUERY, InitSession,
                  {duckdb::ScalarFunction{
@@ -1473,6 +1500,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{
       {text, text, boolean}, text, SetConfigFunction};
     function.SetFallible();
+    function.SetRequiresOrderedExecution(true);
     RegisterScalar(loader, main, "set_config", VOLATILE, nullptr, {function});
   }
 

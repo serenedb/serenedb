@@ -887,6 +887,17 @@ inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"error", kText, 0, false, false, 100, 0, SystemKey::None},
 };
 inline constexpr SystemSql kPgHbaFileRulesSql{kPgHbaFileRulesFunction, "pg_catalog", "pg_hba_file_rules", 0, 0, '\0', '\0', true, 0x0, false, kPgHbaFileRulesColumns};
+inline constexpr SystemSqlColumn kPgPreparedStatementColumns[] = {
+  {"name", kText, 0, false, false, 100, 0, SystemKey::None},
+  {"statement", kText, 0, false, false, 100, 0, SystemKey::None},
+  {"prepare_time", kTimestamptz, 0, false, false, 0, 0, SystemKey::None},
+  {"parameter_types", kRegtypeArray, kRegtype, false, false, 0, 0, SystemKey::None},
+  {"result_types", kRegtypeArray, kRegtype, false, false, 0, 0, SystemKey::None},
+  {"from_sql", kBool, 0, false, false, 0, 0, SystemKey::None},
+  {"generic_plans", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"custom_plans", kInt8, 0, false, false, 0, 0, SystemKey::None},
+};
+inline constexpr SystemSql kPgPreparedStatementSql{kPgPreparedStatementFunction, "pg_catalog", "pg_prepared_statement", 0, 0, '\0', '\0', false, 0x0, false, kPgPreparedStatementColumns};
 inline constexpr SystemSqlColumn kPgShowAllSettingsColumns[] = {
   {"name", kText, 0, false, false, 100, 0, SystemKey::None},
   {"setting", kText, 0, false, false, 100, 0, SystemKey::None},

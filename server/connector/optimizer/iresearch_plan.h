@@ -22,6 +22,10 @@
 
 #include <duckdb/common/vector.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <optional>
+
+#include "connector/scan/scan_bind.h"
+#include "connector/search_filter_builder.hpp"
 
 namespace duckdb {
 
@@ -39,5 +43,15 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
+  duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);
+
+duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
+  duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::Expression> expr);
+
+std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
+  duckdb::ClientContext& context, const connector::ScanBindData& scan,
+  connector::ColumnId col_id, bool column_stored);
 
 }  // namespace sdb::optimizer

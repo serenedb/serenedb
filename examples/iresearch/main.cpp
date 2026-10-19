@@ -21,6 +21,7 @@
 #include <absl/strings/str_format.h>
 
 #include <cstdio>
+#include <iresearch/utils/cpu_features.hpp>
 #include <string_view>
 
 #include "examples.h"
@@ -41,6 +42,7 @@ constexpr Example kExamples[] = {
 }  // namespace
 
 int main(int argc, char** argv) {
+  irs::CheckCpuFeatures(argv[0]);
   if (argc == 2) {
     for (const auto& example : kExamples) {
       if (example.name == argv[1]) {

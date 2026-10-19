@@ -145,3 +145,38 @@ SELECT count(*) AS nulls FROM bdst WHERE maybe IS NULL;
 ----
 nulls
 6666
+
+
+statement ok
+CREATE TABLE csv_case (a INT, b TEXT);
+
+
+statement ok
+INSERT INTO csv_case VALUES (1, ''), (2, NULL);
+
+
+statement ok
+COPY csv_case TO '${__TEST_DIR__}/copy_text_csv_case.csv' (FORMAT 'CSV');
+
+
+query
+SELECT count(*) AS lines FROM read_csv('${__TEST_DIR__}/copy_text_csv_case.csv', header = false, all_varchar = true);
+----
+lines
+2
+
+
+statement ok
+CREATE TABLE csv_case_dst (a INT, b TEXT);
+
+
+statement ok
+COPY csv_case_dst FROM '${__TEST_DIR__}/copy_text_csv_case.csv' (FORMAT 'CSV');
+
+
+query
+SELECT a, b IS NULL AS null_b, length(b) AS len FROM csv_case_dst ORDER BY a;
+----
+a	null_b	len
+1	f	0
+2	t	NULL

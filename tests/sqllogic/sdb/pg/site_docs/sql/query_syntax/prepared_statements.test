@@ -129,6 +129,37 @@ control substitution on
 statement ok
 DEALLOCATE query_person;
 
+# DOCS_TEST: example_010
+
+statement ok
+CREATE TABLE doc (id INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX doc_idx ON doc
+    USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO doc VALUES (1, [0, 0]), (2, [1, 1]), (3, [5, 5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE nearest AS
+    SELECT id
+    FROM doc_idx
+    ORDER BY emb <-> $1::FLOAT[2]
+    LIMIT $2::INTEGER;
+
+query
+EXECUTE nearest([1, 1]::FLOAT[2], 2);
+----
+id
+2
+1
+
 # DOCS_TEST: example_009
 
 statement ok
@@ -141,3 +172,50 @@ PREPARE query_person AS SELECT 1;
 
 statement ok
 DEALLOCATE PREPARE query_person;
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE older_than(BIGINT) AS
+    SELECT name
+    FROM person
+    WHERE age > $1;
+
+query
+EXECUTE older_than('40');
+----
+name
+Bob
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement error
+PREPARE older_than(BIGINT) AS
+    SELECT name
+    FROM person;
+----
+db error: ERROR: prepared statement "older_than" already exists
+
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, array_to_string(parameter_types, ', ') AS parameter_types, from_sql
+FROM pg_prepared_statements
+WHERE name = 'older_than';
+----
+name	parameter_types	from_sql
+older_than	bigint	t
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+statement ok
+DEALLOCATE ALL;

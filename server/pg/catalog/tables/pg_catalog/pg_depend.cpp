@@ -462,15 +462,21 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void Sequence(const duckdb::TableCatalogEntry& table,
                 const duckdb::CatalogEntry& sequence, bool owned_by) {
+    const auto& owner =
+      sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
     int32_t owner_column = 0;
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!HasAttrdef(column) ||
-          !NamesSequence(DefaultExpression(column), sequence.name)) {
-        continue;
+      const bool names =
+        HasAttrdef(column) &&
+        NamesSequence(DefaultExpression(column), sequence.name);
+      if (names) {
+        Depend(kPgAttrdefTable, column.CatalogOid(), 0, kPgClassTable,
+               sequence.oid, 0, 'n');
       }
-      Depend(kPgAttrdefTable, column.CatalogOid(), 0, kPgClassTable,
-             sequence.oid, 0, 'n');
-      owner_column = Attnum(column);
+      if (owner_column == 0 &&
+          (owner.IsValid() ? owner.GetIndex() == column.CatalogOid() : names)) {
+        owner_column = Attnum(column);
+      }
     }
     if (owned_by) {
       Depend(kPgClassTable, sequence.oid, 0, kPgClassTable, table.oid,

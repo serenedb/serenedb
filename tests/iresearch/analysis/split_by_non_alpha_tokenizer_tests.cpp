@@ -134,6 +134,45 @@ Runs AlnumRuns(std::string_view v) {
   return out;
 }
 
+template<bool Wide>
+Runs NonSpaceRunsWithProgress(std::string_view v, size_t stop_at,
+                              size_t& reports) {
+  Runs out;
+  auto on_block = [](size_t, irs::analysis::classify::Block) {};
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  auto progress = [&] { return ++reports != stop_at; };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachNonSpaceRunWide<false>(
+      data, v.size(), on_block, on_run, progress);
+#endif
+  } else {
+    irs::analysis::words::ForEachNonSpaceRun<false>(data, v.size(), on_block,
+                                                    on_run, progress);
+  }
+  return out;
+}
+
+template<bool Wide, bool Letters>
+Runs AlnumRunsWithProgress(std::string_view v, size_t stop_at,
+                           size_t& reports) {
+  Runs out;
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  auto progress = [&] { return ++reports != stop_at; };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachAlnumRunWide<Letters>(data, v.size(), on_run,
+                                                       progress);
+#endif
+  } else {
+    irs::analysis::words::ForEachAlnumRun<Letters>(data, v.size(), on_run,
+                                                   progress);
+  }
+  return out;
+}
+
 bool HasWideKernels() {
 #if defined(__x86_64__)
   return irs::analysis::classify::HasAvx512Bw();
@@ -975,4 +1014,51 @@ TEST(split_by_non_alpha_test, runs_oracle_all_sizes) {
       ASSERT_EQ(ReferenceRuns(v), SplitRuns(v));
     }
   }
+}
+
+TEST(split_by_non_alpha_test, progress_stops_runs_at_a_prefix) {
+  std::string value;
+  for (int i = 0; i != 400; ++i) {
+    value += "w\xC3\xA9rd ab12\xC2\xA0x_y, ";
+  }
+  const auto check = [&](auto full, auto with_progress) {
+    const Runs all = full();
+    size_t reports = 0;
+    EXPECT_EQ(with_progress(0, reports), all);
+    ASSERT_GT(reports, 3U);
+    for (const size_t stop_at : {size_t{1}, size_t{2}, reports / 2}) {
+      size_t calls = 0;
+      const Runs part = with_progress(stop_at, calls);
+      EXPECT_EQ(calls, stop_at);
+      ASSERT_LT(part.size(), all.size());
+      EXPECT_TRUE(std::equal(part.begin(), part.end(), all.begin()));
+    }
+  };
+  check([&] { return NonSpaceRuns<false>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return NonSpaceRunsWithProgress<false>(value, stop_at, reports);
+        });
+  check([&] { return AlnumRuns<false, false>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return AlnumRunsWithProgress<false, false>(value, stop_at, reports);
+        });
+  check([&] { return AlnumRuns<false, true>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return AlnumRunsWithProgress<false, true>(value, stop_at, reports);
+        });
+  if (!HasWideKernels()) {
+    return;
+  }
+  check([&] { return NonSpaceRuns<true>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return NonSpaceRunsWithProgress<true>(value, stop_at, reports);
+        });
+  check([&] { return AlnumRuns<true, false>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return AlnumRunsWithProgress<true, false>(value, stop_at, reports);
+        });
+  check([&] { return AlnumRuns<true, true>(value); },
+        [&](size_t stop_at, size_t& reports) {
+          return AlnumRunsWithProgress<true, true>(value, stop_at, reports);
+        });
 }

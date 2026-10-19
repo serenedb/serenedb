@@ -932,8 +932,7 @@ void RegisterFunctions(Functions& functions) {
 }  // namespace
 
 XmlOption CurrentXmlOption(duckdb::ClientContext& context) {
-  static constinit SettingRef gXmlOption{"xmloption"};
-  const auto option = gXmlOption.Enum(context, kXmlOptions);
+  const auto option = GetEnumSetting(context, "xmloption", kXmlOptions);
   SDB_ASSERT(option < kXmlOptions.size());
   return static_cast<XmlOption>(option);
 }

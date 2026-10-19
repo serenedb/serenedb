@@ -35,6 +35,17 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/misc.hpp"
 
+extern "C" {
+
+int ssyrk_(const char* uplo, const char* trans, const int* n, const int* k,
+           const float* alpha, const float* a, const int* lda,
+           const float* beta, float* c, const int* ldc);
+
+int ssyevd_(const char* jobz, const char* uplo, const int* n, float* a,
+            const int* lda, float* w, float* work, const int* lwork, int* iwork,
+            const int* liwork, int* info);
+}
+
 namespace irs {
 namespace {
 
@@ -113,15 +124,55 @@ std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
 
 faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
   SDB_ASSERT(d);
+  SDB_ASSERT(n != 0);
   const auto dim = static_cast<int>(d);
   faiss::PCAMatrix pca{dim, dim, /*eigen_power=*/0.f,
                        /*random_rotation=*/false};
   pca.have_bias = false;
-  pca.train(static_cast<faiss::idx_t>(n), data);
-  SDB_ASSERT(pca.is_trained);
-  SDB_ASSERT(pca.is_orthonormal);
-  SDB_ASSERT(pca.A.size() == size_t{d} * d);
+  std::vector<double> mean(d);
+  for (size_t i = 0; i < n; ++i) {
+    for (uint32_t j = 0; j < d; ++j) {
+      mean[j] += data[i * d + j];
+    }
+  }
+  const double inv_n = 1.0 / static_cast<double>(n);
+  for (auto& m : mean) {
+    m *= inv_n;
+  }
+  std::vector<float> cov(size_t{d} * d);
+  const int rows = static_cast<int>(n);
+  const auto alpha = static_cast<float>(inv_n);
+  const float beta = 0.f;
+  ssyrk_("U", "N", &dim, &rows, &alpha, data, &dim, &beta, cov.data(), &dim);
+  for (uint32_t c = 0; c < d; ++c) {
+    for (uint32_t r = 0; r <= c; ++r) {
+      cov[size_t{c} * d + r] -= static_cast<float>(mean[r] * mean[c]);
+    }
+  }
+  std::vector<float> eigenvalues(d);
+  int info = 0;
+  int lwork = 1 + 6 * dim + 2 * dim * dim;
+  int liwork = 3 + 5 * dim;
+  std::vector<float> work(static_cast<size_t>(lwork));
+  std::vector<int> iwork(static_cast<size_t>(liwork));
+  ssyevd_("V", "U", &dim, cov.data(), &dim, eigenvalues.data(), work.data(),
+          &lwork, iwork.data(), &liwork, &info);
+  SDB_ENSURE(info == 0, "ssyevd failed: ", info);
+  pca.A.resize(size_t{d} * d);
+  for (uint32_t i = 0; i < d; ++i) {
+    std::copy_n(cov.data() + size_t{d - 1 - i} * d, d,
+                pca.A.data() + size_t{i} * d);
+  }
+  pca.is_trained = true;
+  pca.is_orthonormal = true;
   return pca;
+}
+
+void RotateVector(const float* rotation, const float* in, float* out,
+                  uint32_t d) {
+  for (uint32_t i = 0; i < d; ++i) {
+    out[i] = duckdb::InnerProductOp::Operation(rotation + size_t{i} * d, in, d);
+  }
 }
 
 void NormalizeRows(float* data, size_t n, uint32_t d) {

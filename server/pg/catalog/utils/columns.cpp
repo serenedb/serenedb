@@ -258,7 +258,7 @@ std::optional<std::string_view> NextvalArgument(
     return std::nullopt;
   }
   const auto* argument = &arguments[0].GetExpression();
-  if (argument->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
+  while (argument->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
     argument = &argument->Cast<duckdb::CastExpression>().Child();
   }
   if (argument->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {

@@ -160,10 +160,11 @@ std::optional<double> PgBaseValue(std::string_view unit,
   return number * given->factor / base->factor;
 }
 
-duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
+duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
+                               std::string_view name) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const auto index =
-    config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
+    config.TryGetSettingIndex(duckdb::Identifier{name}, option);
   SDB_ASSERT(index.IsValid());
   duckdb::Value value;
   if (config.user_settings.TryGetSetting(index.GetIndex(), value)) {
@@ -171,48 +172,44 @@ duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
   }
   duckdb::ExtensionOption extension;
   const auto found = config.user_settings.TryGetExtensionOption(
-    duckdb::Identifier{_name}, extension);
+    duckdb::Identifier{name}, extension);
   SDB_ASSERT(found);
   return extension.default_value;
 }
 
-duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
-  auto& config = duckdb::DBConfig::GetConfig(context);
-  auto slot = _slot.load(std::memory_order_relaxed);
-  if (slot.config != &config) [[unlikely]] {
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index =
-      config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
-    SDB_ASSERT(index.IsValid());
-    slot = {.config = &config, .index = index.GetIndex()};
-    _slot.store(slot, std::memory_order_relaxed);
-  }
+namespace {
+
+duckdb::Value GetSetting(duckdb::ClientContext& context,
+                         std::string_view name) {
   duckdb::Value value;
-  auto found = context.config.user_settings.TryGetSetting(config.user_settings,
-                                                          slot.index, value);
-  if (!found) [[unlikely]] {
-    auto res = context.TryGetCurrentSetting(duckdb::Identifier{_name}, value);
-    SDB_ASSERT(res);
-  }
+  auto found = context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
+  SDB_ASSERT(found);
   SDB_ASSERT(!value.IsNull());
   return value;
 }
 
-uint32_t SettingRef::Int(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<uint32_t>();
+}  // namespace
+
+uint32_t GetIntSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<uint32_t>();
 }
 
-double SettingRef::Double(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<double>();
+int64_t GetSignedIntSetting(duckdb::ClientContext& context,
+                            std::string_view name) {
+  return GetSetting(context, name).GetValue<int64_t>();
 }
 
-bool SettingRef::Bool(duckdb::ClientContext& context) const {
-  return Read(context).GetValue<bool>();
+double GetDoubleSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<double>();
 }
 
-uint32_t SettingRef::Enum(duckdb::ClientContext& context,
-                          std::span<const std::string_view> options) const {
-  const auto v = Read(context);
+bool GetBoolSetting(duckdb::ClientContext& context, std::string_view name) {
+  return GetSetting(context, name).GetValue<bool>();
+}
+
+uint32_t GetEnumSetting(duckdb::ClientContext& context, std::string_view name,
+                        std::span<const std::string_view> options) {
+  const auto v = GetSetting(context, name);
   const std::string_view value = duckdb::StringValue::Get(v);
   for (uint32_t i = 0; i != options.size(); ++i) {
     if (absl::EqualsIgnoreCase(value, options[i])) {
@@ -244,6 +241,39 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
       ERR_MSG("invalid value for parameter \"", std::string_view{Name},
               "\": \"", value.ToString(), "\""));
   }
+}
+
+template<irs::utils::detail::FixedString Name>
+void PositiveOrMinusOne(duckdb::ClientContext&, duckdb::SetScope,
+                        duckdb::Value& value) {
+  const auto n = value.GetValue<int32_t>();
+  if (n == 0 || n < -1) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", std::string_view{Name},
+              "\": \"", value.ToString(), "\""));
+  }
+}
+
+template<typename E, irs::utils::detail::FixedString Name>
+void OneOfEnum(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+  const auto mode = value.ToString();
+  if (magic_enum::enum_cast<E>(mode, magic_enum::case_insensitive)) {
+    return;
+  }
+  constexpr auto kNames = magic_enum::enum_names<E>();
+  std::string choices;
+  for (size_t i = 0; i < kNames.size(); ++i) {
+    absl::StrAppend(&choices,
+                    i == 0                   ? ""
+                    : i + 1 == kNames.size() ? " or "
+                                             : ", ",
+                    absl::AsciiStrToLower(kNames[i]));
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("invalid value for parameter \"", std::string_view{Name}, "\": \"",
+            mode, "\" (", choices, ")"));
 }
 
 void NoticeIfNotDefault(duckdb::ClientContext& ctx, std::string_view name,
@@ -673,7 +703,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "string: one rule per line, first match wins, applied to connections "
         "opened after the SET. An un-removable local + loopback trust rule is "
         "force-prepended so a bad ruleset cannot lock you out; an empty value "
-        "restores the default (unix trust + SCRAM for TCP). Server-global.",
+        "restores the default (SCRAM for every role). Server-global.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
           RequireHbaSuperuser(ctx);
@@ -685,7 +715,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         },
         [](duckdb::ClientContext& ctx, duckdb::SetScope) {
           RequireHbaSuperuser(ctx);
-          network::pg::hba::SetHbaFromTextString("");  // RESET => default
+          // RESET => default
+          if (auto err = network::pg::hba::SetHbaFromTextString("")) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
+          }
         },
         duckdb::SetScope::GLOBAL,
       },
@@ -866,8 +899,8 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UINTEGER,
         "Maximum number of AI provider requests a query has in flight, across "
-        "all of its AI calls and threads. Requests run on DuckDB's async I/O "
-        "threads (async_threads) and on the threads that evaluate the calls. "
+        "all of its AI calls and threads. Requests are sent by async tasks "
+        "(async_threads) and by the threads that evaluate the calls. "
         "Default: 16.",
         [] { return duckdb::Value::UINTEGER(16); },
         RejectZero<"sdb_ai_max_concurrent_requests">,
@@ -903,65 +936,107 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ivf_search_nprobe",
       {
         LogicalTypeId::INTEGER,
-        "Number of IVF cluster lists scanned per vector-similarity query. "
-        "Higher values improve recall at the cost of latency. Default 8.",
-        [] { return duckdb::Value::INTEGER(8); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_search_nprobe\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        "Number of IVF cluster lists each segment scans per vector-similarity "
+        "query. Higher values improve recall at the cost of latency. A value "
+        "is used as written. -1 (the default) lets the engine choose per "
+        "segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is "
+        "the segment's rows over the index's posting size, which keeps recall "
+        "near 0.95 at any LIMIT and segment size.",
+        [] { return duckdb::Value::INTEGER(-1); },
+        PositiveOrMinusOne<"sdb_ivf_search_nprobe">,
       },
     },
     {
       "sdb_ivf_max_search_fanout",
       {
         LogicalTypeId::INTEGER,
-        "Maximum number of IVF centroid-tree children expanded per node while "
-        "descending to the probed clusters. Decouples the descent width from "
-        "sdb_ivf_search_nprobe: lower values cut centroid work on deep "
-        "(multi-level) "
-        "trees at some recall cost. The width applies per node and so "
-        "compounds "
-        "over the tree's levels; it is raised when smaller than the width "
-        "whose "
-        "compounded value reaches sdb_ivf_search_nprobe, so the descent can "
-        "always supply "
-        "the requested number of clusters. Default 16.",
-        [] { return duckdb::Value::INTEGER(16); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_max_search_fanout\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        "Upper bound on the beam of the descent through a multi-level IVF "
+        "centroid tree, where each level keeps the beam\'s worth of its "
+        "nearest centroids and scores only their children. The beam follows "
+        "sdb_ivf_search_nprobe as the query resolves it; a narrower one "
+        "scores fewer centroids at some recall cost. Applied after "
+        "sdb_ivf_min_search_fanout. -1 (the default) leaves the beam "
+        "unbounded.",
+        [] { return duckdb::Value::INTEGER(-1); },
+        PositiveOrMinusOne<"sdb_ivf_max_search_fanout">,
+      },
+    },
+    {
+      "sdb_ivf_min_search_fanout",
+      {
+        LogicalTypeId::INTEGER,
+        "Lower bound on the beam of the descent through a multi-level IVF "
+        "centroid tree, where each level keeps the beam\'s worth of its "
+        "nearest centroids and scores only their children. The beam follows "
+        "sdb_ivf_search_nprobe as the query resolves it; a wider one reaches "
+        "clusters a narrow descent misses, and one as wide as the segment\'s "
+        "list count makes the descent exact. -1 (the default) leaves the "
+        "beam unbounded.",
+        [] { return duckdb::Value::INTEGER(-1); },
+        PositiveOrMinusOne<"sdb_ivf_min_search_fanout">,
       },
     },
     {
       "sdb_hnsw_ef_search",
       {
         LogicalTypeId::INTEGER,
-        "Search-time beam width (ef) for HNSW vector indexes. Higher values "
-        "improve recall at the cost of latency. The beam is also the result "
-        "ceiling: a value below the query's LIMIT returns fewer rows than "
-        "asked for. Default 64.",
-        [] { return duckdb::Value::INTEGER(64); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n <= 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_hnsw_ef_search\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        "Search-time beam width (ef) of each segment's HNSW search. Higher "
+        "values improve recall at the cost of latency. A value is used as "
+        "written, floored only at what a segment must return for the query's "
+        "LIMIT. -1 (the default) lets the engine choose: the index's "
+        "ef_construction or the LIMIT, whichever is larger, so an untuned "
+        "query keeps its recall at any LIMIT. With a quantized index every "
+        "hit of the beam is rescored exactly.",
+        [] { return duckdb::Value::INTEGER(-1); },
+        PositiveOrMinusOne<"sdb_hnsw_ef_search">,
+      },
+    },
+    {
+      "sdb_hnsw_filter_mode",
+      {
+        LogicalTypeId::VARCHAR,
+        "How an HNSW vector index answers a query with a WHERE: 'auto' picks "
+        "by the predicate's estimated selectivity, and walks as 'twohop' "
+        "where a vector's code is long enough that crossing a rejected row "
+        "costs less than scoring it; 'scan' scores every row "
+        "the predicate admits; 'walk' walks the graph scoring every "
+        "neighbour and passing through rejected rows; 'prune' walks scoring "
+        "and expanding admitted rows only; 'twohop' walks expanding a "
+        "rejected row's neighbours in its place; 'bridge' walks scoring every "
+        "neighbour but expanding a rejected row into admitted ones only. "
+        "Default 'auto'.",
+        [] { return duckdb::Value{"auto"}; },
+        OneOfEnum<irs::HnswFilterMode, "sdb_hnsw_filter_mode">,
+      },
+    },
+    {
+      "sdb_hnsw_column_filter",
+      {
+        LogicalTypeId::VARCHAR,
+        "How an HNSW graph walk answers a predicate only the columnstore can: "
+        "'fold' evaluates it over the whole segment before the walk; 'read' "
+        "reads the columns of each row the walk reaches; 'auto' reads while "
+        "the walk is expected to reach few enough rows for that to cost less "
+        "than the fold, weighing what one read costs in the columns' "
+        "encodings. Default 'auto'.",
+        [] { return duckdb::Value{"auto"}; },
+        OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
+      },
+    },
+    {
+      "sdb_ann_force_exact",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a vector search (ORDER BY <distance> LIMIT k, or a "
+        "distance "
+        "range) returns the exact answer instead of walking the ANN index, "
+        "split across the "
+        "scan's workers. Every row with a vector is considered; where an hnsw "
+        "index stores 8-bit codes, a row's stored vector is read only if its "
+        "code leaves it a chance at the top k. Default false, which leaves the "
+        "choice to the engine.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
     {
@@ -1003,24 +1078,34 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_rerank_factor",
+      "sdb_ann_oversample",
       {
         LogicalTypeId::DOUBLE,
-        "Multiplier applied to LIMIT k to size the candidate pool re-scored "
-        "with exact distances for a quantized IVF vector-similarity query "
-        "(pool = ceil(sdb_rerank_factor * k)). Higher values improve recall "
-        "at the cost of latency; 0 disables reranking (top-k picked by the "
-        "approximate quantized distance). Fractional values are allowed, but "
-        "a nonzero factor below 1 is rejected because the pool must cover k. "
-        "Default 4. Unquantized (quant = 'none') indexes never rerank, "
-        "regardless of this setting.",
-        [] { return duckdb::Value::DOUBLE(4); },
+        "Oversample for a quantized vector-similarity query, HNSW and IVF "
+        "alike: the search runs on quantized codes and ceil(sdb_ann_oversample "
+        "* k) of each segment\'s candidates are read back at full precision, "
+        "re-ordered, and only then compared against other segments -- a "
+        "quantized score is an estimate and two segments\' estimates are not "
+        "comparable, because each trains its own quantizer. Where the search "
+        "can return fewer candidates than the pool asks for, it is widened to "
+        "hold it: for HNSW that means the beam, since a beam of a hundred "
+        "cannot hand four hundred to the rescorer. 0 disables the rescore: "
+        "the query answers from the codes, which is faster and caps recall at "
+        "whatever the codes can tell apart -- well below 1 for a 4-bit or "
+        "binary quantizer, and worse still across many segments. -1 (the "
+        "default) rescores every quantized index at 1. Fractional "
+        "values are allowed, but a factor between 0 and 1 is rejected because "
+        "the pool must cover k. Unquantized (quant = \'none\') indexes never "
+        "rerank, regardless of this setting, and a query whose pool exists to "
+        "survive a lookup filter keeps that pool either way.",
+        [] { return duckdb::Value::DOUBLE(-1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<double>();
-          if (n < 0.0 || (n > 0.0 && n < 1.0)) {
+          if (!std::isfinite(n) || n < -1.0 || (n > 0.0 && n < 1.0) ||
+              (n < 0.0 && n != -1.0)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
-                                    "\"sdb_rerank_factor\": \"",
+                                    "\"sdb_ann_oversample\": \"",
                                     value.ToString(), "\""));
           }
         },

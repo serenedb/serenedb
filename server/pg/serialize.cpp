@@ -197,10 +197,12 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
     const char c = p[i];
     const size_t run = i - start;
     if (c == '"') {
+      CheckMessageSize(writer.Written() + run + quote_seq_size);
       char* buf = reinterpret_cast<char*>(writer.Alloc(run + quote_seq_size));
       std::memcpy(buf, p + start, run);
       std::memcpy(buf + run, ctx.quote_seq.data(), quote_seq_size);
     } else if (c == '\\') {
+      CheckMessageSize(writer.Written() + run + backslash_count);
       char* buf = reinterpret_cast<char*>(writer.Alloc(run + backslash_count));
       std::memcpy(buf, p + start, run);
       std::memset(buf + run, '\\', backslash_count);
@@ -244,6 +246,7 @@ void EmitEscaped(SerializationContext& ctx, std::string_view s) {
 //   source '"'  -> previous '\\' encoding + previous '"' encoding
 //   source '\\' -> two previous '\\' encodings (count doubles)
 void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
+  CheckMessageSize(size_t{ctx.backslash_count} * 2 + ctx.quote_seq.size());
   q_buf.clear();
   q_buf.append(ctx.backslash_count, '\\');
   q_buf.append(ctx.quote_seq);
@@ -255,6 +258,7 @@ void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
 //   source '"'  -> two previous '"' encodings
 //   source '\\' -> two previous '\\' encodings (count doubles)
 void EnterRecordWrap(SerializationContext& ctx, std::string& q_buf) {
+  CheckMessageSize(size_t{ctx.backslash_count} * 2 + ctx.quote_seq.size() * 2);
   q_buf.clear();
   absl::StrAppend(&q_buf, ctx.quote_seq, ctx.quote_seq);
   ctx.quote_seq = q_buf;
@@ -2713,6 +2717,12 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
 }
 
 }  // namespace
+
+void ThrowMessageTooLarge() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                  ERR_MSG("row exceeds maximum allowed message length (",
+                          kMaxMessageSize, " bytes)"));
+}
 
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();

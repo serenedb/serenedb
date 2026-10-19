@@ -16,7 +16,10 @@ target_sources(
         duckdb_client_state.cpp
         duckdb_subscription.cpp
         scan/col_filter_verify.cpp
-        scan/deferred_verify.cpp
+        scan/deferred_check.cpp
+        scan/geo_check.cpp
+        scan/phrase_check.cpp
+        scan/wildcard_check.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp

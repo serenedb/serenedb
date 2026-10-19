@@ -1,6 +1,10 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   postgres:
     image: ${PG_FIXTURE_IMAGE}
+    labels: *owner
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: postgres
@@ -23,6 +27,7 @@ services:
 
   seaweedfs:
     image: chrislusf/seaweedfs:4.47
+    labels: *owner
     environment:
       - AWS_ACCESS_KEY_ID=admin
       - AWS_SECRET_ACCESS_KEY=password
@@ -32,6 +37,7 @@ services:
 
   s3-init:
     image: amazon/aws-cli:2.36.44
+    labels: *owner
     network_mode: "service:seaweedfs"
     depends_on:
       - seaweedfs
@@ -45,6 +51,7 @@ services:
 
   iceberg-rest:
     image: apache/iceberg-rest-fixture:1.10.1
+    labels: *owner
     network_mode: "service:seaweedfs"
     depends_on:
       s3-init:
@@ -60,11 +67,13 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    labels: *owner
     network_mode: "service:seaweedfs"
     command: ["azurite-blob", "--blobHost", "127.0.0.1", "--skipApiVersionCheck"]
 
   s3:
     image: chrislusf/seaweedfs:4.47
+    labels: *owner
     hostname: duckdb-minio.com
     volumes:
       - "${WORKSPACE}/third_party/duckdb_httpfs/scripts/seaweedfs_s3_config.json:/etc/seaweedfs/s3_config.json:ro"
@@ -81,6 +90,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     network_mode: "service:seaweedfs"
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     group_add:
@@ -106,6 +116,7 @@ services:
       - ICEBERG_FIXTURE_RUNNING=1
       - S3_FIXTURE_RUNNING=1
       - AZURITE_RUNNING=1
+      - SDB_DOCKER_OWNER
     ulimits:
       nofile:
         soft: 16384
@@ -137,3 +148,4 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+    labels: *owner

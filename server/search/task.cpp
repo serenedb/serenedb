@@ -340,6 +340,11 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       if (ShouldStop()) {
         break;
       }
+      if (auto live = weak.lock();
+          !live || ToDuration(get_interval_ms(*live)) != interval) {
+        stretch = 0;
+        continue;
+      }
       switch (tick(weak)) {
         case LoopTick::kProgress:
           stretch = 0;
@@ -436,20 +441,17 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
         if (ShouldStop()) {
           break;
         }
-        bool changed = true;
-        if (auto live = weak.lock()) {
-          changed =
-            ToDuration(live->GetTasksSettings().compaction_interval_msec) !=
-            interval;
-        }
-        if (changed) {
-          backoff = Clock::duration::zero();
-          continue;
-        }
       }
       cascade = false;
 
       co_await yaclib::On(s.executor());
+      if (auto live = weak.lock();
+          !live ||
+          ToDuration(live->GetTasksSettings().compaction_interval_msec) !=
+            interval) {
+        backoff = Clock::duration::zero();
+        continue;
+      }
       auto runs = LaunchCompactionFanout(s, engine, weak);
       if (runs.empty()) {
         // Gate full: every slot is busy elsewhere; wait for one to free up.

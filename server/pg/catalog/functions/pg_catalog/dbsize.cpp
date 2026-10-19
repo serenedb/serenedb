@@ -375,8 +375,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
   const Session& session, int64_t oid) {
-  return session.database->FindSchemaById(*session.transaction,
-                                          static_cast<duckdb::idx_t>(oid));
+  return SchemaByOid(session, static_cast<uint64_t>(oid));
 }
 
 template<typename Key>

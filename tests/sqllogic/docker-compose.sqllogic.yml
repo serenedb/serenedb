@@ -1,9 +1,13 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   # Fresh named volumes are created root:root 0755, so the non-root (user-mapped)
   # services below cannot create their per-test dirs in /test-tmp. This one-shot
   # root service makes the shared scratch world-writable before they start.
   test-tmp-init:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "0:0"
     volumes:
       - "sdb-test-tmp:/test-tmp"
@@ -11,6 +15,7 @@ services:
 
   serenedb-single:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     depends_on:
       test-tmp-init:
@@ -38,6 +43,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
@@ -54,6 +60,7 @@ services:
       - serenedb-single
     environment:
       - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
+      - SDB_DOCKER_OWNER
       - LOG_DIR=/logs
       - RESOURCES
       - HOME=/sqllogic
@@ -84,9 +91,13 @@ services:
       '
 
 networks:
+  default:
+    labels: *owner
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+    labels: *owner
 
 volumes:
   sdb-test-tmp:
+    labels: *owner

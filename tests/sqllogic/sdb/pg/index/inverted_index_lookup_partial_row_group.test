@@ -1,0 +1,51 @@
+statement ok
+CREATE TABLE lprg (id BIGINT, body TEXT);
+
+
+statement ok
+CREATE INDEX lprg_idx ON lprg USING inverted (body);
+
+
+statement ok
+INSERT INTO lprg SELECT i, CASE WHEN i >= 4096 THEN 'orig' ELSE 'other' END FROM range(0, 5000) r(i);
+
+
+statement ok
+INSERT INTO lprg SELECT i, CASE WHEN i < 5100 THEN 'orig' ELSE 'other' END FROM range(5000, 305000) r(i);
+
+
+query
+SELECT row_group_id, max(count) AS row_count
+FROM pragma_storage_info('lprg')
+WHERE column_name = 'id' AND row_group_id < 2
+GROUP BY ALL
+ORDER BY row_group_id;
+----
+row_group_id	row_count
+0	5000
+1	122880
+
+
+statement ok
+VACUUM (REFRESH_INDEX) lprg_idx;
+
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi, sum(id) AS total
+FROM lprg_idx
+WHERE body @@ 'orig';
+----
+n	lo	hi	total
+1004	4096	5099	4615890
+
+
+query
+SELECT id // 100 * 100 AS bucket, count(*) AS n, min(id) AS lo, max(id) AS hi
+FROM lprg_idx
+WHERE body @@ 'orig' AND id >= 4900
+GROUP BY ALL
+ORDER BY bucket;
+----
+bucket	n	lo	hi
+4900	100	4900	4999
+5000	100	5000	5099

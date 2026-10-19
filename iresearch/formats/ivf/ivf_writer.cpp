@@ -26,7 +26,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <random>
+#include <pcg_random.hpp>
 #include <span>
 #include <utility>
 #include <yaclib/async/make.hpp>
@@ -96,7 +96,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
 
   std::vector<float> train;
   size_t train_seen = 0;
-  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
+  pcg32 train_rng{kTrainSeed};
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);
@@ -380,8 +380,7 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
   auto qw = MakeQuantizerWriter(
-    _info.quant.kind, d, EffectiveQuantMetric(_info.metric), _info.quant.pq_m,
-    kDefaultClusterIters, _info.quant.nb_bits);
+    _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());

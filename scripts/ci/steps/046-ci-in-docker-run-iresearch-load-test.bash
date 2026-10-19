@@ -14,6 +14,7 @@ fi
 corpus_real="$(readlink -f "$CORPUS_PATH")"
 
 if ! docker run --rm \
+	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
 	--user "$(id -u):$(id -g)" \
 	-e HOME=/serenedb \
 	--ulimit core=-1 \

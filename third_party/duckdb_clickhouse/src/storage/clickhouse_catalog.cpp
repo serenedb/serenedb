@@ -119,12 +119,11 @@ unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, C
 
 void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	vector<string> schema_names;
 	const string sql = "SELECT name FROM system.databases";
 	try {
 		connection->BeginSelect(context, sql);
-		while (auto block = client.NextBlock()) {
+		while (auto block = connection->NextBlock()) {
 			if (block->GetColumnCount() == 0) {
 				continue;
 			}
@@ -164,12 +163,11 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
                                                                  OnEntryNotFound if_not_found) {
 	auto schema_name = schema_lookup.GetEntryName();
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	bool found = false;
 	auto sql = "SELECT name FROM system.databases WHERE name = " + ClickHouseStringLiteral(schema_name);
 	try {
 		connection->BeginSelect(transaction.context, sql);
-		while (auto block = client.NextBlock()) {
+		while (auto block = connection->NextBlock()) {
 			if (block->GetRowCount() > 0) {
 				found = true;
 			}
@@ -203,14 +201,13 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 
 DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	auto connection = connection_pool->GetConnection();
-	auto &client = connection->GetClient();
 	auto sql =
 	    "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " + ClickHouseStringLiteral(default_schema) +
 	    " AND active";
 	DatabaseSize size;
 	try {
 		connection->BeginSelect(context, sql);
-		while (auto block = client.NextBlock()) {
+		while (auto block = connection->NextBlock()) {
 			if (block->GetColumnCount() == 0 || block->GetRowCount() == 0) {
 				continue;
 			}

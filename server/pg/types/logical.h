@@ -74,9 +74,6 @@ DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
 DECLARE_PG_TYPE(SQLIDENTIFIER,  SqlIdentifier,  "sql_identifier",  VARCHAR)
 DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
 DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
-DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
-DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
-DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
 DECLARE_PG_TYPE(PG_NODE_TREE,   PgNodeTree,     "pg_node_tree",    VARCHAR)
 DECLARE_PG_TYPE(PG_LSN,         PgLsn,          "pg_lsn",          UBIGINT)
 DECLARE_PG_TYPE(MACADDR,        Macaddr,        "macaddr",         UBIGINT)
@@ -109,6 +106,11 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
     return false;
   }
   return kOidLikeAliases.contains(type.GetAlias());
+}
+
+inline bool IsRegLike(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::BIGINT &&
+         type.GetAlias().starts_with("reg");
 }
 
 #undef DECLARE_PG_TYPE

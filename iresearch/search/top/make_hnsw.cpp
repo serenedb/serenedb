@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -39,25 +41,27 @@ namespace {
 class HnswHits : public Root {
  public:
   HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
-           ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
+           ColumnArgsFetcher& fetcher, irs::detail::TableFilter* table,
+           const irs::detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
-      _fetcher{fetcher} {
-    SDB_ASSERT(args.scorer != nullptr);
-    _provider.attr.value = _block;
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = irs::detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+      _fetcher{fetcher},
+      _table{table} {
+    _score = irs::detail::PrepareBlockScorer(
+      args, segment, irs::detail::NoField(), _provider, _block);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
-    SDB_ASSERT(min == doc_limits::min() && doc_limits::eof(max));
-    for (size_t i = 0, total = _hits.size(); i < total;) {
+    const auto by_doc = [](const ScoreDoc& hit, doc_id_t doc) {
+      return hit.doc < doc;
+    };
+    auto lo = absl::c_lower_bound(_hits, min, by_doc);
+    const auto hi = doc_limits::eof(max)
+                      ? _hits.end()
+                      : std::lower_bound(lo, _hits.end(), max, by_doc);
+    const size_t first = static_cast<size_t>(lo - _hits.begin());
+    const size_t total = static_cast<size_t>(hi - _hits.begin());
+    for (size_t i = first; i < total;) {
       const auto n =
         static_cast<uint32_t>(std::min<size_t>(kScoreBlock, total - i));
       for (uint32_t j = 0; j < n; ++j) {
@@ -66,7 +70,8 @@ class HnswHits : public Root {
       }
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
-      collector.AddDocs(_docs, n, _scores);
+      const auto live = _table ? _table->Narrow(_docs, _scores, n) : n;
+      collector.AddDocs(_docs, live, _scores);
       i += n;
     }
   }
@@ -76,6 +81,7 @@ class HnswHits : public Root {
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
+  irs::detail::TableFilter* _table;
   score_t _block[kScoreBlock];
   score_t _scores[kScoreBlock];
   doc_id_t _docs[kScoreBlock];
@@ -84,8 +90,9 @@ class HnswHits : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  HnswRefuseFilter(ctx.table);
-  auto hits = query.RunSearch();
+  auto* const narrow =
+    ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
+  auto hits = query.RunSearch(ctx.table);
   if (hits.empty()) {
     return MakeEmpty();
   }
@@ -95,7 +102,7 @@ Root::ptr Make(const HnswQuery& query, const Context& ctx) {
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return memory::make_managed<HnswHits>(std::move(hits), query.Segment(),
-                                        ctx.fetcher, args);
+                                        ctx.fetcher, narrow, args);
 }
 
 }  // namespace irs::top

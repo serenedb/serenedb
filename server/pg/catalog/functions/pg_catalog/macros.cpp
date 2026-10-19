@@ -50,18 +50,6 @@ constexpr SystemMacro kMacros[] = {
             GROUP BY keyword_name)
       ORDER BY word)"},
 
-  {"pg_catalog", "pg_prepared_statement",
-   R"(() AS TABLE
-      SELECT P.name AS name,
-             P.statement AS statement,
-             NULL::TIMESTAMPTZ AS prepare_time,
-             NULL::BIGINT[] AS parameter_types,
-             NULL::BIGINT[] AS result_types,
-             true AS from_sql,
-             0::BIGINT AS generic_plans,
-             0::BIGINT AS custom_plans
-      FROM sdb_prepared_statements() AS P)"},
-
   {"pg_catalog", "pg_stat_get_activity",
    R"((target_pid) AS TABLE
       SELECT S.datid AS datid,

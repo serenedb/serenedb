@@ -27,8 +27,8 @@
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <optional>

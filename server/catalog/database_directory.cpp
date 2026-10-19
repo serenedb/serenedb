@@ -26,9 +26,9 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cerrno>
-#include <iresearch/utils/assert.hpp>
 #include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <system_error>
 #include <utility>
@@ -52,15 +52,6 @@ struct RemovalGate {
 RemovalGate& Gate() {
   static absl::NoDestructor<RemovalGate> gGate;
   return *gGate;
-}
-
-void RemoveTree(const std::filesystem::path& path) {
-  duckdb::TaskScheduler::BlockingScope blocking;
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
-  }
 }
 
 void RunRemoval(Removal&& removal) {
@@ -108,6 +99,7 @@ void CreateDirectory(const std::filesystem::path& path) {
 }
 
 void RemoveTree(const std::filesystem::path& path) noexcept {
+  duckdb::TaskScheduler::BlockingScope blocking;
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {

@@ -36,7 +36,6 @@ inline constexpr std::string_view kCatalogLog = "catalog.wal";
 
 void CreateDirectory(const std::filesystem::path& path);
 void RemoveTree(const std::filesystem::path& path) noexcept;
-
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 

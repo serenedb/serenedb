@@ -34,8 +34,8 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/pg_lsn.h"
 #include "pg/deserialize.h"
+#include "pg/pg_lsn.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 

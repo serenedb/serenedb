@@ -501,11 +501,12 @@ void DispatchInverted(duckdb::ClientContext& context,
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      const auto status = action == Action::Refresh
-                            ? search->VacuumRefresh()
-                            : search->VacuumCompact(GetIntSetting(
-                                context, "sdb_compact_target_segments"),
-                              [&] { return context.IsInterrupted(); });
+      const auto status =
+        action == Action::Refresh
+          ? search->VacuumRefresh()
+          : search->VacuumCompact(
+              GetIntSetting(context, "sdb_compact_target_segments"),
+              [&] { return context.IsInterrupted(); });
       if (!status.ok()) {
         context.InterruptCheck();
         THROW_SQL_ERROR(

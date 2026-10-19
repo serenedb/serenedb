@@ -3021,6 +3021,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

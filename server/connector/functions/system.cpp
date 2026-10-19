@@ -441,42 +441,91 @@ void PgBackendPidFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
+struct SignalText {
+  std::string_view denied;
+  std::string_view superuser_detail;
+  std::string_view member_detail;
+};
+
+constexpr SignalText kCancelText{
+  .denied = "permission denied to cancel query",
+  .superuser_detail =
+    "Only roles with the SUPERUSER attribute may cancel "
+    "queries of roles with the SUPERUSER attribute.",
+  .member_detail =
+    "Only roles with privileges of the role whose query is "
+    "being canceled or with privileges of the "
+    "\"pg_signal_backend\" role may cancel this query.",
+};
+
+constexpr SignalText kTerminateText{
+  .denied = "permission denied to terminate process",
+  .superuser_detail =
+    "Only roles with the SUPERUSER attribute may terminate "
+    "processes of roles with the SUPERUSER attribute.",
+  .member_detail =
+    "Only roles with privileges of the role whose process is "
+    "being terminated or with privileges of the "
+    "\"pg_signal_backend\" role may terminate this process.",
+};
+
+void CheckSignalAllowed(const auth::RoleGraph& roles,
+                        const auth::RoleClosure& caller, duckdb::idx_t role,
+                        bool terminate) {
+  const auto* node = roles.Find(role);
+  const bool superuser =
+    role == pg::kInvalidOid || (node && node->is_superuser);
+  if (superuser ? caller.is_superuser : caller.MemberOf(role)) {
+    return;
+  }
+  const auto& text = terminate ? kTerminateText : kCancelText;
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE), ERR_MSG(text.denied),
+    ERR_DETAIL(superuser ? text.superuser_detail : text.member_detail));
+}
+
 // Cancel (or, with `terminate`, terminate) each requested backend by pid ->
 // BOOLEAN per row (true if the pid matched a live backend). Shared by
-// pg_cancel_backend and pg_terminate_backend. Authorised by being a session
-// (single superuser), so it matches on the pid half of the cancel key alone,
-// no secret.
+// pg_cancel_backend and pg_terminate_backend; it matches on the pid half of
+// the cancel key alone, no secret.
 void CancelBackendsByPid(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state, duckdb::Vector& result,
                          bool terminate) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
   auto* registry = conn_ctx.GetCancelRegistry();
-  auto pids = args.data[0].Values<int32_t>();
-  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
-  using CancelResult = network::CancelRegistry::CancelResult;
+  const auto roles = auth::RolesOf(&context);
+  const auto caller = auth::ClosureFor(&context, conn_ctx.GetRoleId());
+  const auto pids = args.data[0].Values<int32_t>();
+  auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    auto pid = pids[i];
+    const auto pid = pids[i];
     if (!pid.IsValid()) {
-      validity.SetInvalid(i);
+      out.WriteNull();
       continue;
     }
     const auto target = static_cast<uint32_t>(pid.GetValue());
-    const auto outcome = registry ? registry->CancelByPid(target, terminate)
-                                  : CancelResult::NotFound;
-    out[i] = outcome == CancelResult::Cancelled;
-    if (outcome == CancelResult::Ambiguous) {
+    const auto match = registry ? registry->FindByPid(target)
+                                : network::CancelRegistry::PidMatch{};
+    if (!match.token) {
       // The pid is the high half of a random key, not a unique OS pid; two
       // backends collided on it, so cancelling either could hit the wrong one.
       conn_ctx.AddNotice(SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_WARNING),
         ERR_MSG("PID ", target,
-                " matches more than one backend; not cancelling any")));
-    } else if (outcome == CancelResult::NotFound) {
-      conn_ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_WARNING),
-        ERR_MSG("PID ", target, " is not a PostgreSQL backend process")));
+                match.ambiguous
+                  ? " matches more than one backend; not cancelling any"
+                  : " is not a PostgreSQL backend process")));
+      out.WriteValue(false);
+      continue;
     }
+    CheckSignalAllowed(*roles, *caller, match.token->Role(), terminate);
+    if (terminate) {
+      match.token->Terminate();
+    } else {
+      match.token->Cancel();
+    }
+    out.WriteValue(true);
   }
 }
 

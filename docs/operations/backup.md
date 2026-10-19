@@ -6,7 +6,18 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-SereneDB takes a consistent backup of a running server with the PostgreSQL functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you copy the whole data directory with any file copy tool, or let [pgBackRest](#pgbackrest) do it. The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after. On storage with crash-consistent snapshots, a [volume snapshot](#volume-snapshots) of the running server is a backup too.
+SereneDB provides PostgreSQL compatible low level backup functions `pg_backup_start` and `pg_backup_stop`. Between the two calls you can copy the whole data directory with any file copy tool, or use PostgreSQL compatible backup tool like [pgBackRest](#pgbackrest). The server keeps accepting reads and writes the whole time. The backup contains every transaction that committed before `pg_backup_start` returned and none that committed after. On storage with crash-consistent snapshots, a [volume snapshot](#volume-snapshots) of the running server is a backup too.
+
+Differences from PostgreSQL:
+
+- One backup at a time, owned by the session that started it.
+- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
+- As a consequence of missing WAL archiving - backup tool you use should support taking a backup without
+WAL archiving (most of the tools have a dedicated flag for this)
+- `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
+- Both functions require a superuser.
+- The positions they return, and the ones in the backup label, are not positions in SereneDB's write-ahead logs. They only increase, and exist so that PostgreSQL backup tools can work with SereneDB. Do not compare them with other positions, such as the ones subscriptions report.
+
 
 ## Taking a backup
 
@@ -51,14 +62,6 @@ Arguments can be passed by position or by name:
 <SqlLogicTest id="operations/backup/named" />
 
 <SqlLogicTest id="operations/backup/stop_named" hideResult />
-
-Differences from PostgreSQL:
-
-- One backup at a time, owned by the session that started it.
-- `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
-- `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.
-- Both functions require a superuser. `pg_backup_start` also requires a PostgreSQL-protocol connection.
-- The positions they return, and the ones in the backup label, are not positions in SereneDB's write-ahead logs. They only increase, and exist so that PostgreSQL backup tools can work with SereneDB. Do not compare them with other positions, such as the ones subscriptions report.
 
 ## During a backup
 

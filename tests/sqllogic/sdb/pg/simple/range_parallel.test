@@ -1,0 +1,87 @@
+hash-threshold 100
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(generate_series) AS s FROM generate_series(1, 30000000)
+----
+c	s
+30000000	450000015000000
+
+query
+SELECT count(*) AS c, sum(epoch_us(t) - epoch_us(TIMESTAMP '2024-01-01')) // 1000000 AS s FROM generate_series(TIMESTAMP '2024-01-01', TIMESTAMP '2024-01-01' + INTERVAL '49999999 seconds', INTERVAL '1 second') g(t)
+----
+c	s
+50000000	1249999975000000
+
+statement ok
+CREATE TABLE range_layout AS SELECT range AS v FROM range(300000)
+
+query
+SELECT count(*) AS misordered FROM range_layout WHERE rowid <> v
+----
+misordered
+0
+
+query
+SELECT row_group_id, sum(count) AS row_count FROM pragma_storage_info('range_layout') WHERE column_path = '[0]' GROUP BY ALL ORDER BY ALL
+----
+row_group_id	row_count
+0	122880
+1	122880
+2	54240
+
+statement ok
+DROP TABLE range_layout
+
+query
+WITH d AS MATERIALIZED (SELECT i FROM range(1000000) r(i)) SELECT (SELECT sum(i) FROM d) AS s, (SELECT i FROM d LIMIT 1) AS f
+----
+s	f
+499999500000	0

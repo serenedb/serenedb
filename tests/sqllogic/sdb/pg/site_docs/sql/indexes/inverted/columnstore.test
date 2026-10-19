@@ -28,7 +28,13 @@ CREATE INDEX messages_idx ON messages USING inverted(body events_eng)
 # DOCS_TEST: example_004
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO events SELECT i, 'host-' || (i % 8), 'event ' || i || ' completed' FROM range(5000) t(i);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (REFRESH_TABLE) events;

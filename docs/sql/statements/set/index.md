@@ -62,9 +62,9 @@ Run the queries of one transaction on at most `2` threads:
 
 ### Async threads
 
-`async_threads` takes the same three scopes as `threads`. `SET GLOBAL async_threads` sizes the pool of async threads the whole instance runs its I/O on. A session value (`SET async_threads`, `SET SESSION async_threads`) or a transaction value (`SET LOCAL async_threads`) leaves the pool alone and caps how many async threads the queries of that session or transaction use; `0` runs their I/O without async threads, as a pool of none does. `SHOW async_threads` returns the cap when one is set and the pool size otherwise. `RESET async_threads` drops the session's cap, `RESET GLOBAL async_threads` sizes the pool back to its default.
+`async_threads` caps how many async tasks, such as reads of remote files, a query runs at once. `-1`, the default, picks the cap automatically: four times the number of CPU cores, at most `256`. `0` runs the I/O of a query on the threads that run the query. It takes the same three scopes as `threads`: `SET GLOBAL async_threads` sets the value for every session that has not set its own, and a session value (`SET async_threads`, `SET SESSION async_threads`) or a transaction value (`SET LOCAL async_threads`) sets it for the queries of that session or transaction. `SHOW async_threads` returns the value in effect. `RESET async_threads` drops the session's value, `RESET GLOBAL async_threads` sets the global value back to `-1`.
 
-Run the I/O of one transaction's queries without async threads:
+Run the I/O of one transaction's queries without async tasks:
 
 <SqlLogicTest id="sql/statements/set/index/example_012" />
 

@@ -50,6 +50,11 @@ if [[ -n "$SDB_DUCKDB_MAX_THREADS" ]] && [[ -z "${SLURM_CPUS_ON_NODE:-}" ]]; the
 	export SLURM_CPUS_ON_NODE="$SDB_DUCKDB_MAX_THREADS"
 fi
 
+OWNER_LABEL=()
+if [[ -n "${SDB_DOCKER_OWNER:-}" ]]; then
+	OWNER_LABEL=(--label "serenedb.owner=$SDB_DOCKER_OWNER")
+fi
+
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(
 	[core]="$WORKSPACE/third_party/duckdb"
@@ -173,7 +178,7 @@ PROXY_PIDS=()
 
 cleanup_fixtures() {
 	if [[ -n "$AZURITE_CONTAINER" ]]; then
-		docker rm -f "$AZURITE_CONTAINER" >/dev/null 2>&1 || true
+		docker rm -fv "$AZURITE_CONTAINER" >/dev/null 2>&1 || true
 	fi
 	if [[ ${#PROXY_PIDS[@]} -gt 0 ]]; then
 		kill "${PROXY_PIDS[@]}" 2>/dev/null || true
@@ -290,7 +295,7 @@ generate_iceberg_data() {
 	local generator=("$SCRIPT_DIR/generate_iceberg_data.sh" fixture local)
 	echo "Generating Iceberg test data, log: $REPORTS_DIR/iceberg-data.log"
 	if ! python3 -c 'import pyspark' 2>/dev/null; then
-		generator=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		generator=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${generator[@]}")
 	fi
 	"${generator[@]}" >"$REPORTS_DIR/iceberg-data.log" 2>&1 || {
@@ -374,7 +379,7 @@ provision_s3() {
 	local provision=(python3 "$SCRIPT_DIR/provision_s3.py" "http://$S3_HOST:9000"
 		"${SUITE_DIR[core]}/data" "$1")
 	if ! python3 -c 'import boto3' 2>/dev/null; then
-		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		provision=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		--add-host "$S3_HOST:$(getent hosts "$S3_HOST" | awk '{print $1}')"
 		-v "$WORKSPACE:$WORKSPACE" -v "$1:$1" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}"
 		"${provision[@]}")
@@ -424,7 +429,7 @@ ensure_azurite() {
 	if [[ -z "${AZURITE_RUNNING:-}" ]] && ! curl -s -o /dev/null http://127.0.0.1:10000; then
 		AZURITE_CONTAINER="sdb-azurite-$$"
 		echo "Starting Azurite in docker (127.0.0.1:10000)..."
-		docker run -d --name "$AZURITE_CONTAINER" -p 127.0.0.1:10000:10000 \
+		docker run -d --name "$AZURITE_CONTAINER" "${OWNER_LABEL[@]}" -p 127.0.0.1:10000:10000 \
 			mcr.microsoft.com/azure-storage/azurite:3.37.0 \
 			azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck >/dev/null || return 1
 	fi
@@ -438,7 +443,7 @@ ensure_azurite() {
 	done
 	local provision=(python3 "$SCRIPT_DIR/provision_azurite.py" "$AZURITE_CONNECTION_STRING" "${SUITE_DIR[azure]}/data")
 	if ! python3 -c 'import azure.storage.blob' 2>/dev/null; then
-		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+		provision=(docker run --rm "${OWNER_LABEL[@]}" --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
 		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${provision[@]}")
 	fi
 	"${provision[@]}" >"$REPORTS_DIR/azurite-data.log" 2>&1 || {

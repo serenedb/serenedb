@@ -19,8 +19,10 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/config.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
+#include <pthread.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -66,6 +68,18 @@ using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
+void SetSanitizerThreadStackSize() {
+#if defined(__GLIBC__) &&                  \
+  (defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
+   defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER))
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, size_t{64} << 20);
+  pthread_setattr_default_np(&attr);
+  pthread_attr_destroy(&attr);
+#endif
+}
+
 int RunServer(int argc, char** argv) {
   try {
     irs::CrashHandler::installCrashHandler();
@@ -88,11 +102,7 @@ int RunServer(int argc, char** argv) {
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. The non-obvious edge: the search loops run ON
-    // the background pool, so SearchEngine::stop() must join them (it sets
-    // _stopping and Waits the loop Futures, which resume on the still-live
-    // pool) BEFORE BackgroundScheduler::stop() tears that pool down -- else a
-    // loop is stranded mid-resume. search.stop() does not destroy the engine
+    // NOT the reverse of startup. search.stop() does not destroy the engine
     // (its dtor runs at end of scope), so drop tasks draining on the pool
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
@@ -211,6 +221,7 @@ int RunSubcommand(int argc, char* argv[],
 extern "C" void json_object_seed(size_t seed);
 
 int main(int argc, char* argv[]) {
+  SetSanitizerThreadStackSize();
   json_object_seed(0);
   irs::InitOptimizeRules();
   if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {

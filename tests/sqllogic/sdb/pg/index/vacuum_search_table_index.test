@@ -8,6 +8,10 @@ CREATE INDEX vsi_idx ON vsi USING inverted (body)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO vsi SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
 
 
@@ -24,6 +28,10 @@ segments	docs
 
 statement ok
 INSERT INTO vsi SELECT i, 'dog' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+RESET threads
 
 
 statement ok

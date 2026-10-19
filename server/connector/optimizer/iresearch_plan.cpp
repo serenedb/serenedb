@@ -689,18 +689,15 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
 }
 
 uint32_t ReadSearchNprobe(duckdb::ClientContext& context) {
-  static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
-  return gNprobe.Int(context);
+  return GetIntSetting(context, "sdb_ivf_search_nprobe");
 }
 
 uint32_t ReadMaxSearchFanout(duckdb::ClientContext& context) {
-  static constinit SettingRef gFanout{"sdb_ivf_max_search_fanout"};
-  return gFanout.Int(context);
+  return GetIntSetting(context, "sdb_ivf_max_search_fanout");
 }
 
 uint32_t ReadHnswEfSearch(duckdb::ClientContext& context) {
-  static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
-  return gEfSearch.Int(context);
+  return GetIntSetting(context, "sdb_hnsw_ef_search");
 }
 
 const duckdb::Expression& PeelArrayToListCast(const duckdb::Expression& expr) {

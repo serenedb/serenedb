@@ -169,13 +169,13 @@ A copied text column brings its compression dictionaries along. A merged column 
 
 Every other input is re-encoded as before, so one merged column can mix copied and re-encoded rows. Copying costs little more than reading the blocks, so merges of segments that earlier merges already encoded well take a fraction of the time.
 
-Background compaction runs on the server's background threads (`--background_threads`, see [Command Line Interface](../../../configuration/cli.mdx)) and never on the threads that run queries. Merges may use all of these threads but one, the *merge threads*:
+Background compaction runs on its own *merge threads*, a quarter of the server's logical cores minus one (at least one), and never on the threads that run queries:
 
 - **One queue.** The background merges of all search tables and indexes wait in one queue. The merges that rewrite the fewest bytes for each segment they remove start first, and a merge gains priority the longer it waits.
 - **Small merges.** A merge that rewrites less than 64 MB keeps one merge thread for itself, so it never waits behind large merges.
 - **Large merges.** The limits below keep threads free for merges of other tables:
   - large merges together take at most all merge threads but one;
-  - a single large merge takes about half of the background threads;
+  - a single large merge takes about half of the merge threads;
   - one table or index runs at most half as many large merges at a time as there are merge threads.
 - **Within a table.** A table's merges do not wait for each other, so a long merge does not hold back merges of the table's newer segments.
 - **Failures.** A merge that fails leaves its segments out of the next merges for a while, and that while grows with each failure in a row.
@@ -226,7 +226,7 @@ The trace is a subquery with one row per written segment, its columns matched by
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `threads` | The server's merge threads | Merge threads: on a server, `--background_threads` minus one |
+| `threads` | The server's merge threads | Merge threads: on a server, a quarter of its logical cores minus one |
 | `merge_bytes_per_second` | `16777216` (16 MB) | Bytes one thread merges per second |
 | `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` | The table defaults | The compaction options, as in `CREATE TABLE ... WITH` |
 

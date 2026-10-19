@@ -181,7 +181,6 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
   const auto& merges = _job->plan.merges;
   auto& client = context.client;
   client.InterruptCheck();
-  client.DeadlineCheck();
   if (!state.pinned) {
     state.options = _job->target.PinOptions();
     state.pinned = true;
@@ -208,7 +207,6 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
       search::ExplicitPolicy(names), progress, state.options.field_options,
       search::MergeOrigin::Sql, &executor, planned.lone);
     client.InterruptCheck();
-    client.DeadlineCheck();
     ExecutedMerge executed{
       .outcome = run.error.empty() ? search::OutcomeOf(run.result)
                                    : search::MergeOutcome::Failed,

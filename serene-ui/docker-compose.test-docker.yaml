@@ -1,6 +1,10 @@
+x-owner: &owner
+    serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
     test-database:
         image: postgres:17
+        labels: *owner
         environment:
             POSTGRES_USER: postgres
             POSTGRES_PASSWORD: postgres
@@ -16,6 +20,7 @@ services:
         build:
             context: .
             dockerfile: Dockerfile.test
+        labels: *owner
         container_name: serene-ui
         ports:
             - "3000:3000"
@@ -24,3 +29,7 @@ services:
         depends_on:
             test-database:
                 condition: service_healthy
+
+networks:
+    default:
+        labels: *owner

@@ -8,6 +8,10 @@ WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO opt SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
 
 
@@ -69,6 +73,10 @@ INSERT INTO opt SELECT i, 'fox' FROM generate_series(28673, 32768) s(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+RESET threads
 
 
 query
@@ -322,6 +330,9 @@ CREATE TABLE optv (id INT PRIMARY KEY, body TEXT)
 WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
 
 statement ok
+SET threads = 1
+
+statement ok
 INSERT INTO optv SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
 
 
@@ -348,6 +359,9 @@ INSERT INTO optv SELECT i, 'fox' FROM generate_series(12289, 16384) s(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) optv
+
+statement ok
+RESET threads
 
 
 statement ok
@@ -436,6 +450,10 @@ CREATE INDEX opts_idx ON opts USING inverted (body)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO opts SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
 
 
@@ -449,6 +467,10 @@ INSERT INTO opts SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) opts
+
+
+statement ok
+RESET threads
 
 
 query

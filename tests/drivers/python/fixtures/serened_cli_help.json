@@ -100,16 +100,6 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "background_threads",
-          "flag": "--background_threads",
-          "type": "",
-          "defaultValue": "0",
-          "description": "Number of background worker threads (refresh, cleanup and drop tasks, background merges). Merges may use all but one of them, a single merge at most half. 0 = max(2, logical cores / 4).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "cpu_threads",
           "flag": "--cpu_threads",
           "type": "",

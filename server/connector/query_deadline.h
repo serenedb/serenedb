@@ -20,23 +20,12 @@
 
 #pragma once
 
-#include <chrono>
 #include <duckdb/main/client_context.hpp>
 
 namespace sdb::connector {
 
-inline bool DeadlinePassed(const duckdb::ClientContext& client) noexcept {
-  if (!client.query_deadline.IsValid()) {
-    return false;
-  }
-  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now().time_since_epoch())
-                     .count();
-  return static_cast<duckdb::idx_t>(now) >= client.query_deadline.GetIndex();
-}
-
 inline bool StatementRunning(const duckdb::ClientContext& client) noexcept {
-  return !client.IsInterrupted() && !DeadlinePassed(client);
+  return !client.IsInterrupted() && !client.DeadlinePassed();
 }
 
 }  // namespace sdb::connector

@@ -21,8 +21,6 @@
 
 #include "search_engine.h"
 
-#include <absl/flags/declare.h>
-#include <absl/flags/flag.h>
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
@@ -46,8 +44,6 @@
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
-
-ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
 namespace sdb::search {
 
@@ -73,11 +69,7 @@ size_t SearchEngine::MergeRoundSize() const noexcept {
 }
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
-  // The background pool is max(logical/4, 2) threads (--background_threads,
-  // resolved at startup). Merges may use all but one of them -- refresh,
-  // cleanup, and drop are light and interleave on the single spare thread.
-  return std::max<int>(
-    1, static_cast<int>(absl::GetFlag(FLAGS_background_threads)) - 1);
+  return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
 }
 
 uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
@@ -86,7 +78,7 @@ uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
 
 const irs::AnnBuildEnv& AnnBuildEnv() {
   static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
+    .executor = &BackgroundScheduler::instance().executor(),
     .acquire = AnnAcquireWorkers,
     .release = AnnReleaseWorkers};
   return env;

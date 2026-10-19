@@ -2,6 +2,9 @@ statement ok
 CREATE TABLE pe (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
 
 statement ok
@@ -9,6 +12,9 @@ VACUUM (REFRESH_TABLE) pe;
 
 statement ok
 INSERT INTO pe SELECT i, i % 10, 'v' || i FROM generate_series(10000, 19999) g(i);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (REFRESH_TABLE) pe;

@@ -90,6 +90,9 @@ CREATE TABLE alc (a INTEGER PRIMARY KEY, v TEXT, n INTEGER)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO alc SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok', a FROM range(9000) t(a);
 
 statement ok
@@ -100,6 +103,9 @@ ALTER TABLE alc ALTER COLUMN v SET COMPRESSION dict_zstd(compression_level = 19)
 
 statement ok
 INSERT INTO alc SELECT a, 'event ' || (a % 3000) || ' completed for user ' || (a % 1000) || ' status ok', a FROM range(9000, 18000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (REFRESH_TABLE) alc;

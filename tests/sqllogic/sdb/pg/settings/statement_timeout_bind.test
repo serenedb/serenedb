@@ -1,0 +1,23 @@
+statement ok
+CREATE MACRO stb_twice(x) AS x + x
+
+statement ok
+SET statement_timeout = '200ms'
+
+statement error
+SELECT stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(stb_twice(random())))))))))))))))))))))))))) AS r
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
+statement ok
+RESET statement_timeout
+
+query
+SELECT stb_twice(stb_twice(1)) AS r
+----
+r
+4
+
+statement ok
+DROP MACRO stb_twice

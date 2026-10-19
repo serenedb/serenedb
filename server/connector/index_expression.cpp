@@ -34,6 +34,8 @@
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/optimizer/rule/concat_flattening.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -45,6 +47,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
@@ -78,10 +81,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
+                       duckdb::vector<duckdb::LogicalType> t)
+    : duckdb::ColumnBindingResolver(std::move(b), std::move(t)) {}
   void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
     VisitExpression(&expr);
   }
@@ -94,10 +95,23 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                      stream.GetPosition()};
 }
 
+duckdb::unique_ptr<duckdb::Expression> FlattenConcats(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
+  duckdb::ExpressionRewriter rewriter{context};
+  rewriter.rules.push_back(
+    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
+  select_list.push_back(std::move(expr));
+  duckdb::LogicalProjection projection{duckdb::TableIndex{0},
+                                       std::move(select_list)};
+  rewriter.VisitOperator(projection);
+  return std::move(projection.expressions[0]);
+}
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FoldConstantCasts(expr.Copy(), context);
+  auto copy = FlattenConcats(FoldConstantCasts(expr.Copy(), context), context);
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       e.SetAlias("");

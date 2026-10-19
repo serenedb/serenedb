@@ -338,7 +338,6 @@ void CompactInvertedStorage(Action action,
         merge.policy, tick, empty_compaction, &field_options, env_ptr,
         search::MergeOrigin::Vacuum, nullptr, &executor, merge.lone));
       context.InterruptCheck();
-      context.DeadlineCheck();
       if (!res.ok()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -591,16 +590,14 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else if (action == Action::Cleanup) {
         status = search->CleanupUnsafe().res;
       } else {
-        static constinit SettingRef gTargetSegments{
-          "sdb_compact_target_segments"};
         const bool optimize = action == Action::Optimize;
         status = search->VacuumCompact(
           optimize ? search::MergeMode::Optimize : search::MergeMode::Compact,
-          optimize ? QueryThreads(context) : gTargetSegments.Int(context),
+          optimize ? QueryThreads(context)
+                   : GetIntSetting(context, "sdb_compact_target_segments"),
           duckdb::TaskScheduler::GetScheduler(context),
           [&context] { return StatementRunning(context); }, &executor);
         context.InterruptCheck();
-        context.DeadlineCheck();
       }
       if (!status.ok()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

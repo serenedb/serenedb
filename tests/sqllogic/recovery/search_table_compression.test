@@ -463,6 +463,9 @@ CREATE TABLE obj_auto (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO obj_auto SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000) t(a);
 
 statement ok
@@ -470,6 +473,9 @@ VACUUM (REFRESH_TABLE) obj_auto;
 
 statement ok
 INSERT INTO obj_auto SELECT a, 'host-' || (a % 17), 'event ' || a || ' completed for user ' || (a % 1000) || ' on host-' || (a % 17) || ' status ok latency ' || (a % 500) || ' ms', 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(10000, 20000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (REFRESH_TABLE) obj_auto;

@@ -1684,12 +1684,35 @@ def test_describe_trailing_bytes_rejected(conn):
     assert sqlstates(m) == ["08P01"], (statuses(m), sqlstates(m))
 
 
-def test_empty_database_defaults_to_user():
-    # PG defaults an empty database startup parameter to the user name
-    # (backend_startup.c) and connects; serenedb must not FATAL 3D000.
-    # Verified against PostgreSQL.
+@pytest.fixture(scope="module")
+def startup_database():
+    name = "drv_startup_explicit_database"
+    admin = WireConn()
+    try:
+        admin.run_ok(f"CREATE DATABASE {name}")
+        try:
+            yield name
+        finally:
+            admin.run_ok(f"DROP DATABASE {name}")
+    finally:
+        admin.close()
+
+
+@pytest.mark.parametrize("database", [None, "", "explicit"])
+@pytest.mark.parametrize("extra_count", range(9))
+def test_startup_database_selection(startup_database, database, extra_count):
     kw = conn_kwargs()
-    sock = socket.create_connection((kw["host"], kw["port"]))
+    extra = [
+        ("application_name", "startup_database_selection"),
+        ("client_encoding", "UTF8"),
+        ("DateStyle", "ISO, MDY"),
+        ("TimeZone", "UTC"),
+        ("extra_float_digits", "3"),
+        ("search_path", "public"),
+        ("options", ""),
+        ("replication", "false"),
+    ]
+    sock = socket.create_connection((kw["host"], kw["port"]), timeout=5)
     try:
 
         def recv_exact(n: int) -> bytes:
@@ -1701,17 +1724,37 @@ def test_empty_database_defaults_to_user():
                 buf += chunk
             return buf
 
-        params = _cstr("user") + _cstr(kw["user"]) + _cstr("database") + _cstr("") + b"\0"
+        params = _cstr("user") + _cstr(kw["user"])
+        if database is not None:
+            params += _cstr("database") + _cstr(startup_database if database else "")
+        for key, value in extra[:extra_count]:
+            params += _cstr(key) + _cstr(value)
+        params += b"\0"
         sock.sendall(struct.pack("!II", len(params) + 8, 196608) + params)
         seen = []
         while True:
             t = recv_exact(1).decode()
             (ln,) = struct.unpack("!I", recv_exact(4))
-            recv_exact(ln - 4)
+            body = recv_exact(ln - 4)
             seen.append(t)
+            assert t != "E", errors([(t, body)])
             if t in ("Z", "E"):
                 break
         assert "Z" in seen and "E" not in seen, seen
+        query = _cstr("SELECT current_database(), current_user")
+        sock.sendall(b"Q" + struct.pack("!I", len(query) + 4) + query)
+        result = []
+        while True:
+            t = recv_exact(1).decode()
+            (ln,) = struct.unpack("!I", recv_exact(4))
+            body = recv_exact(ln - 4)
+            assert t != "E", errors([(t, body)])
+            if t == "D":
+                result.append(_data_row(body))
+            if t == "Z":
+                break
+        expected = startup_database if database else kw["user"]
+        assert result == [[expected.encode(), kw["user"].encode()]]
     finally:
         sock.close()
 

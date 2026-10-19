@@ -51,8 +51,6 @@
 namespace sdb::connector {
 namespace {
 
-constinit SettingRef gTargetSegments{"sdb_compact_target_segments"};
-
 MergeTarget ResolveWritable(duckdb::ClientContext& context,
                             std::string_view relation,
                             std::string_view function) {
@@ -161,7 +159,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     mode == search::MergeMode::Optimize
       ? static_cast<uint32_t>(
           duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads())
-      : gTargetSegments.Int(context);
+      : GetIntSetting(context, "sdb_compact_target_segments");
   const search::CopyChecker checker{
     target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
   search::MergeRoundRequest request{

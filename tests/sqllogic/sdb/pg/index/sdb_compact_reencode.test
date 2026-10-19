@@ -8,9 +8,17 @@ WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO reenc
 SELECT i, 'request ' || (i % 50) || ' handled by checkout in ' || (i % 7) || ' ms', [i, i + 1], {'k': i % 3}, [i % 5, i % 7]::INT[2]
 FROM generate_series(1, 8192) s(i)
+
+
+statement ok
+RESET threads
 
 
 statement ok
@@ -194,7 +202,15 @@ CREATE INDEX reenc_idx ON reenc_idx_t USING inverted (body) WITH (row_group_size
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO reenc_idx_t SELECT i, 'fox ' || (i % 10) FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+RESET threads
 
 
 statement ok

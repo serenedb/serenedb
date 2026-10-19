@@ -1182,7 +1182,7 @@ DROP TABLE sdbc_par
 
 
 statement ok
-SET threads = 4
+SET threads = 1
 
 
 statement ok
@@ -1208,6 +1208,10 @@ INSERT INTO sdbc_pipeline_with_postings SELECT i, 'w' || i FROM generate_series(
 
 statement ok
 VACUUM (REFRESH_TABLE) sdbc_pipeline_with_postings
+
+
+statement ok
+SET threads = 4
 
 
 query

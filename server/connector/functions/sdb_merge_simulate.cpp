@@ -303,10 +303,8 @@ class PhysicalMergeSimulate final : public duckdb::PhysicalOperator {
     duckdb::OperatorSinkFinalizeInput& input) const final {
     auto& state = input.global_state.Cast<SimulateGlobalState>();
     state.events =
-      search::SimulateMerges(std::move(state.trace), *_options, [&context] {
-        context.InterruptCheck();
-        context.DeadlineCheck();
-      });
+      search::SimulateMerges(std::move(state.trace), *_options,
+                             [&context] { context.InterruptCheck(); });
     return duckdb::SinkFinalizeType::READY;
   }
 

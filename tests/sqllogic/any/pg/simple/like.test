@@ -487,3 +487,39 @@ n
 
 statement ok
 DEALLOCATE like_escape_param
+
+
+statement ok
+CREATE TABLE ilike_ascii AS
+SELECT i AS id,
+       CASE i % 5
+           WHEN 0 THEN 'The Quick Brown Fox Jumps Over The Lazy Dog ' || i
+           WHEN 1 THEN 'quick_brown ' || i
+           WHEN 2 THEN 'KELVIN kelvin ' || i
+           WHEN 3 THEN 'x'
+       END AS s
+FROM generate_series(1, 2000) AS g(i)
+
+
+query
+SELECT (SELECT count(*) FROM ilike_ascii WHERE s ILIKE chr(8490) || '%') AS kelvin_prefix,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE '%' || chr(304) || '%') AS dotted_i,
+       (SELECT count(*) FROM ilike_ascii WHERE s NOT ILIKE chr(8490) || '%') AS not_kelvin,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%BROWN%' WHEN 1 THEN '%' || chr(8490) || '%' ELSE 'x' END) AS per_row
+----
+kelvin_prefix	dotted_i	not_kelvin	per_row
+400	1200	1200	799
+
+
+query
+SELECT id, s ILIKE chr(8490) || 'ELVIN%' AS kelvin, s ILIKE '%' || chr(304) || '%' AS dotted_i
+FROM ilike_ascii
+WHERE id <= 5
+ORDER BY id
+----
+id	kelvin	dotted_i
+1	f	t
+2	t	t
+3	f	f
+4	NULL	NULL
+5	f	t

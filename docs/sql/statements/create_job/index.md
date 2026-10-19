@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-A **job** is a catalog object that runs one SQL statement on a schedule, inside the server. It lives in a schema next to tables and views, is persisted with the database, and keeps running across restarts until it is suspended or dropped.
+A **job** is a catalog object that runs SQL statements on a schedule, inside the server. It lives in a schema next to tables and views, is persisted with the database, and keeps running across restarts until it is suspended or dropped.
 
 ## Examples
 
@@ -20,7 +20,7 @@ CREATE [ OR REPLACE ] JOB [ IF NOT EXISTS ] name
     { EVERY interval [ OFFSET interval ] [ RANDOMIZE FOR interval ] [ CONCURRENT ]
     | AFTER interval [ RANDOMIZE FOR interval ] }
     [ SUSPENDED ]
-    AS statement
+    AS { statement | 'statements' }
 
 ALTER JOB [ IF EXISTS ] name SUSPEND
 ALTER JOB [ IF EXISTS ] name RESUME
@@ -35,7 +35,11 @@ EXECUTE JOB name
 DROP JOB [ IF EXISTS ] name [ CASCADE | RESTRICT ]
 ```
 
-`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is any single statement except a transaction statement; it cannot use parameters. It is parsed when the job is created, stored as normalized SQL text (the `body` column of `sdb_jobs()`), and bound again on every run, so it always sees the current definition of the objects it references.
+`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is one statement, or a string constant, usually dollar-quoted (`AS $$ ... $$`), that holds any number of statements. It is parsed when the job is created, so a syntax error fails `CREATE JOB`, and it cannot use parameters. One statement is stored as normalized SQL text, the statements of a string as written: the `body` column of `sdb_jobs()` shows them. A transaction statement cannot be the whole body. A statement that runs as several statements, such as `TRUNCATE` of several tables or with `RESTART IDENTITY` or `CASCADE`, `ALTER TABLE ... ADD COLUMN` with `NOT NULL`, `UNIQUE` or `PRIMARY KEY`, or `DROP ROLE` with several roles, has to be in a string: unquoted, `CREATE JOB` fails with `CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$`.
+
+A run executes the body the way a client's query of several statements runs: the statements run in order, each commits on its own unless the body groups them with `BEGIN` and `COMMIT`, and the first one that fails ends the run, leaving the statements before it committed. The body is bound again on every run, so it always sees the current definition of the objects it references. When a statement of the body drops its own job, the run ends there and counts as a success: the statements after it do not run. Dropping or replacing the job from another session cancels the statement that is running, and the run fails without the statements after it. A job can that way run once and remove itself:
+
+<SqlLogicTest id="sql/statements/create_job/index/example_009" />
 
 `EXECUTE JOB name` is shorthand for `CALL execute_job('name')`.
 

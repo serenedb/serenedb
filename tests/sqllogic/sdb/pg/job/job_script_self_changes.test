@@ -1,0 +1,595 @@
+statement ok
+DROP JOB IF EXISTS jss_drop_mid;
+
+
+statement ok
+DROP JOB IF EXISTS jss_drop_if;
+
+
+statement ok
+DROP VIEW IF EXISTS jss_calls_blocked;
+
+
+statement ok
+DROP VIEW IF EXISTS jss_calls_cascade;
+
+
+statement ok
+DROP JOB IF EXISTS jss_blocked;
+
+
+statement ok
+DROP JOB IF EXISTS jss_cascade;
+
+
+statement ok
+DROP JOB IF EXISTS jss_rollback;
+
+
+statement ok
+DROP JOB IF EXISTS jss_reborn;
+
+
+statement ok
+DROP JOB IF EXISTS jss_replace_self;
+
+
+statement ok
+DROP JOB IF EXISTS jss_suspend_self;
+
+
+statement ok
+DROP JOB IF EXISTS jss_rename_self;
+
+
+statement ok
+DROP JOB IF EXISTS jss_renamed_self;
+
+
+statement ok
+DROP JOB IF EXISTS jss_resched_self;
+
+
+statement ok
+DROP JOB IF EXISTS jss_rd;
+
+
+statement ok
+DROP JOB IF EXISTS jss_rd2;
+
+
+statement ok
+DROP JOB IF EXISTS jss_victim;
+
+
+statement ok
+DROP JOB IF EXISTS jss_killer;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jss_space CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jss_outer CASCADE;
+
+
+statement ok
+DROP JOB IF EXISTS jss_recursive;
+
+
+statement ok
+DROP JOB IF EXISTS jss_deep_rec;
+
+
+statement ok
+DROP JOB IF EXISTS jss_fail_txn;
+
+
+statement ok
+DROP JOB IF EXISTS jss_every_once;
+
+
+statement ok
+DROP JOB IF EXISTS jss_concurrent_once;
+
+
+statement ok
+DROP JOB IF EXISTS jss_only;
+
+
+statement ok
+DROP JOB IF EXISTS jss_twice;
+
+
+statement ok
+DROP JOB IF EXISTS jss_spawner;
+
+
+statement ok
+DROP JOB IF EXISTS jss_child_once;
+
+
+statement ok
+DROP JOB IF EXISTS jss_many;
+
+
+statement ok
+DROP TABLE IF EXISTS jss_log;
+
+
+statement ok
+CREATE TABLE jss_log (step INT, note TEXT);
+
+
+statement ok
+CREATE JOB jss_drop_mid AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (1, 'before'); DROP JOB jss_drop_mid; INSERT INTO jss_log VALUES (2, 'after');$$;
+
+
+statement ok
+EXECUTE JOB jss_drop_mid;
+
+
+query
+SELECT step FROM jss_log WHERE step IN (1, 2) ORDER BY step;
+----
+step
+1
+
+
+query
+SELECT (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_drop_mid') AS jobs,
+       (SELECT string_agg(trigger || ' ' || success::TEXT, ',') FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jss_drop_mid') AS runs;
+----
+jobs	runs
+0	manual true
+
+
+statement ok
+CREATE JOB jss_drop_if AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (3, 'before'); DROP JOB IF EXISTS jss_drop_if; INSERT INTO jss_log VALUES (4, 'after');$$;
+
+
+statement ok
+EXECUTE JOB jss_drop_if;
+
+
+query
+SELECT step FROM jss_log WHERE step IN (3, 4) ORDER BY step;
+----
+step
+3
+
+
+statement ok
+CREATE JOB jss_blocked AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (5, 'before'); DROP JOB jss_blocked; INSERT INTO jss_log VALUES (6, 'after');$$;
+
+
+statement ok
+CREATE VIEW jss_calls_blocked AS SELECT * FROM execute_job('jss_blocked');
+
+
+statement error
+EXECUTE JOB jss_blocked;
+----
+db error: ERROR: Cannot drop entry "jss_blocked" because there are entries that depend on it.
+view "jss_calls_blocked" depends on job "jss_blocked".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',' ORDER BY step) FROM jss_log WHERE step IN (5, 6)) AS steps,
+       (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_blocked') AS jobs;
+----
+steps	jobs
+5	1
+
+
+statement ok
+CREATE JOB jss_cascade AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (7, 'before'); DROP JOB jss_cascade CASCADE; INSERT INTO jss_log VALUES (8, 'after');$$;
+
+
+statement ok
+CREATE VIEW jss_calls_cascade AS SELECT * FROM execute_job('jss_cascade');
+
+
+statement ok
+EXECUTE JOB jss_cascade;
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',' ORDER BY step) FROM jss_log WHERE step IN (7, 8)) AS steps,
+       (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_cascade') AS jobs,
+       (SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name = 'jss_calls_cascade') AS views;
+----
+steps	jobs	views
+7	0	0
+
+
+statement ok
+CREATE JOB jss_rollback AFTER 1 HOUR AS $$BEGIN; DROP JOB jss_rollback; ROLLBACK; INSERT INTO jss_log VALUES (9, 'kept running');$$;
+
+
+statement ok
+EXECUTE JOB jss_rollback;
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',') FROM jss_log WHERE step = 9) AS steps,
+       (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_rollback') AS jobs;
+----
+steps	jobs
+9	1
+
+
+statement ok
+CREATE JOB jss_reborn AFTER 1 HOUR AS $$BEGIN; DROP JOB jss_reborn; CREATE JOB jss_reborn AFTER 2 HOURS AS $inner$INSERT INTO jss_log VALUES (11, 'reborn')$inner$; COMMIT; INSERT INTO jss_log VALUES (12, 'after the rebirth');$$;
+
+
+statement ok
+EXECUTE JOB jss_reborn;
+
+
+query
+SELECT body, schedule FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_reborn';
+----
+body	schedule
+INSERT INTO jss_log (VALUES (11, 'reborn'))	AFTER INTERVAL '02:00:00'
+
+
+statement ok
+EXECUTE JOB jss_reborn;
+
+
+query
+SELECT step FROM jss_log WHERE step IN (11, 12) ORDER BY step;
+----
+step
+11
+
+
+statement ok
+CREATE JOB jss_replace_self AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (13, 'before'); CREATE OR REPLACE JOB jss_replace_self AFTER 1 HOUR AS SELECT 1; INSERT INTO jss_log VALUES (14, 'after');$$;
+
+
+statement ok
+EXECUTE JOB jss_replace_self;
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',' ORDER BY step) FROM jss_log WHERE step IN (13, 14)) AS steps, body
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_replace_self';
+----
+steps	body
+13	SELECT 1
+
+
+statement ok
+CREATE JOB jss_suspend_self AFTER 1 HOUR AS $$ALTER JOB jss_suspend_self SUSPEND; INSERT INTO jss_log VALUES (15, 'still running');$$;
+
+
+statement ok
+EXECUTE JOB jss_suspend_self;
+
+
+query
+SELECT (SELECT count(*) FROM jss_log WHERE step = 15) AS inserted, suspended
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_suspend_self';
+----
+inserted	suspended
+1	t
+
+
+statement ok
+CREATE JOB jss_rename_self AFTER 1 HOUR AS $$ALTER JOB jss_rename_self RENAME TO jss_renamed_self; INSERT INTO jss_log VALUES (16, 'renamed');$$;
+
+
+statement ok
+EXECUTE JOB jss_rename_self;
+
+
+query
+SELECT job_name, (SELECT count(*) FROM jss_log WHERE step = 16) AS inserted
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jss_rename_self', 'jss_renamed_self');
+----
+job_name	inserted
+jss_renamed_self	1
+
+
+statement ok
+CREATE JOB jss_resched_self AFTER 1 HOUR AS $$ALTER JOB jss_resched_self SET SCHEDULE EVERY 1 DAY; INSERT INTO jss_log VALUES (17, 'rescheduled');$$;
+
+
+statement ok
+EXECUTE JOB jss_resched_self;
+
+
+query
+SELECT schedule, (SELECT count(*) FROM jss_log WHERE step = 17) AS inserted
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_resched_self';
+----
+schedule	inserted
+EVERY INTERVAL '1 day'	1
+
+
+statement ok
+CREATE JOB jss_rd AFTER 1 HOUR AS $$ALTER JOB jss_rd RENAME TO jss_rd2; DROP JOB jss_rd2; INSERT INTO jss_log VALUES (18, 'after the drop');$$;
+
+
+statement ok
+EXECUTE JOB jss_rd;
+
+
+query
+SELECT (SELECT count(*) FROM jss_log WHERE step = 18) AS inserted,
+       (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jss_rd', 'jss_rd2')) AS jobs;
+----
+inserted	jobs
+0	0
+
+
+statement ok
+CREATE JOB jss_victim AFTER 1 HOUR AS SELECT 1;
+
+
+statement ok
+CREATE JOB jss_killer AFTER 1 HOUR AS $$DROP JOB jss_victim; INSERT INTO jss_log VALUES (19, 'killer goes on');$$;
+
+
+statement ok
+EXECUTE JOB jss_killer;
+
+
+query
+SELECT (SELECT count(*) FROM jss_log WHERE step = 19) AS inserted,
+       (SELECT string_agg(job_name, ',' ORDER BY job_name) FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jss_victim', 'jss_killer')) AS jobs;
+----
+inserted	jobs
+1	jss_killer
+
+
+statement ok
+CREATE SCHEMA jss_space;
+
+
+statement ok
+CREATE JOB jss_space.jss_in_space AFTER 1 HOUR AS $$INSERT INTO public.jss_log VALUES (20, 'in space'); DROP SCHEMA jss_space CASCADE; INSERT INTO public.jss_log VALUES (21, 'after the schema');$$;
+
+
+statement ok
+EXECUTE JOB jss_space.jss_in_space;
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',' ORDER BY step) FROM jss_log WHERE step IN (20, 21)) AS steps,
+       (SELECT count(*) FROM duckdb_schemas() WHERE database_name = current_database() AND schema_name = 'jss_space') AS schemas;
+----
+steps	schemas
+20	0
+
+
+statement ok
+CREATE SCHEMA jss_outer;
+
+
+statement ok
+CREATE SCHEMA jss_outer.jss_inner;
+
+
+statement ok
+CREATE JOB jss_outer.jss_inner.jss_deep AFTER 1 HOUR AS $$INSERT INTO public.jss_log VALUES (22, 'deep'); DROP JOB jss_outer.jss_inner.jss_deep; INSERT INTO public.jss_log VALUES (23, 'deep after');$$;
+
+
+statement ok
+EXECUTE JOB jss_outer.jss_inner.jss_deep;
+
+
+query
+SELECT (SELECT string_agg(step::TEXT, ',' ORDER BY step) FROM jss_log WHERE step IN (22, 23)) AS steps,
+       (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_deep') AS jobs;
+----
+steps	jobs
+22	0
+
+
+statement ok
+CREATE JOB jss_recursive AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (24, 'before'); EXECUTE JOB jss_recursive; INSERT INTO jss_log VALUES (25, 'after');$$;
+
+
+statement error
+EXECUTE JOB jss_recursive;
+----
+db error: ERROR: Job "jss_recursive" is already running
+
+
+query
+SELECT step FROM jss_log WHERE step IN (24, 25) ORDER BY step;
+----
+step
+24
+
+
+statement ok
+CREATE JOB jss_deep_rec EVERY 1 HOUR CONCURRENT AS $$INSERT INTO jss_log VALUES (26, 'level'); EXECUTE JOB jss_deep_rec;$$;
+
+
+statement error
+EXECUTE JOB jss_deep_rec;
+----
+db error: ERROR: Max job depth limit of 16 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.
+
+
+query
+SELECT count(*) AS levels FROM jss_log WHERE step = 26;
+----
+levels
+16
+
+
+statement ok
+CREATE JOB jss_fail_txn AFTER 1 HOUR AS $$BEGIN; DROP JOB jss_fail_txn; INSERT INTO jss_missing VALUES (1); COMMIT;$$;
+
+
+statement error
+EXECUTE JOB jss_fail_txn;
+----
+db error: ERROR: Table with name jss_missing does not exist!
+Did you mean "jss_log"?
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_fail_txn';
+----
+jobs
+1
+
+
+statement ok
+CREATE JOB jss_only AFTER 1 HOUR AS $$DROP JOB jss_only$$;
+
+
+statement ok
+EXECUTE JOB jss_only;
+
+
+statement ok
+CREATE JOB jss_twice AFTER 1 HOUR AS $$DROP JOB jss_twice; DROP JOB jss_twice;$$;
+
+
+statement ok
+EXECUTE JOB jss_twice;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jss_only', 'jss_twice');
+----
+jobs
+0
+
+
+statement ok
+CREATE JOB jss_many AFTER 1 HOUR AS $$INSERT INTO jss_log VALUES (50, 'many'); SELECT 1; INSERT INTO jss_log VALUES (50, 'many'); SELECT * FROM jss_log; INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); INSERT INTO jss_log VALUES (50, 'many'); UPDATE jss_log SET note = 'many done' WHERE step = 50; DROP JOB jss_many;$$;
+
+
+statement ok
+EXECUTE JOB jss_many;
+
+
+query
+SELECT count(*) AS inserted, min(note) AS note FROM jss_log WHERE step = 50;
+----
+inserted	note
+10	many done
+
+
+statement ok
+CREATE JOB jss_every_once EVERY 1 SECOND AS $$INSERT INTO jss_log VALUES (30, 'every'); DROP JOB jss_every_once;$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_every_once';
+----
+jobs
+0
+
+
+query
+SELECT count(*) AS runs FROM jss_log WHERE step = 30;
+----
+runs
+1
+
+
+statement ok
+CREATE JOB jss_concurrent_once EVERY 1 SECOND CONCURRENT AS $$INSERT INTO jss_log VALUES (31, 'concurrent'); DROP JOB IF EXISTS jss_concurrent_once;$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jss_concurrent_once';
+----
+jobs
+0
+
+
+query
+SELECT count(*) >= 1 AS ran FROM jss_log WHERE step = 31;
+----
+ran
+t
+
+
+statement ok
+CREATE JOB jss_spawner AFTER 1 HOUR AS $$CREATE JOB jss_child_once AFTER 1 SECOND AS $c$INSERT INTO jss_log VALUES (40, 'child'); DROP JOB jss_child_once;$c$; DROP JOB jss_spawner;$$;
+
+
+statement ok
+EXECUTE JOB jss_spawner;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jss_spawner', 'jss_child_once');
+----
+jobs
+0
+
+
+query
+SELECT step, note FROM jss_log WHERE step = 40;
+----
+step	note
+40	child
+
+
+statement ok
+DROP VIEW jss_calls_blocked;
+
+
+statement ok
+DROP JOB jss_blocked;
+
+
+statement ok
+DROP JOB jss_rollback;
+
+
+statement ok
+DROP JOB jss_reborn;
+
+
+statement ok
+DROP JOB jss_replace_self;
+
+
+statement ok
+DROP JOB jss_suspend_self;
+
+
+statement ok
+DROP JOB jss_renamed_self;
+
+
+statement ok
+DROP JOB jss_resched_self;
+
+
+statement ok
+DROP JOB jss_killer;
+
+
+statement ok
+DROP JOB jss_recursive;
+
+
+statement ok
+DROP JOB jss_deep_rec;
+
+
+statement ok
+DROP JOB jss_fail_txn;
+
+
+statement ok
+DROP SCHEMA jss_outer CASCADE;
+
+
+statement ok
+DROP TABLE jss_log;

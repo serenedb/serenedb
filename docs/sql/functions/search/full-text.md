@@ -632,6 +632,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `+a` | `a` is required. |
 | `-a` | `a` is excluded. |
 | `a*` | Prefix (wildcard) match. |
+| `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |

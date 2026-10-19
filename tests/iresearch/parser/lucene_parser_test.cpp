@@ -1446,6 +1446,30 @@ TEST_F(LuceneParserTest, FieldQuestionMarkWildcard) {
   AssertWildcard(*Optional().filters[0], kFieldId, "te_m");
 }
 
+TEST_F(LuceneParserTest, WildcardHeadIsLiteral) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "a_?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "a\\__");
+}
+
+TEST_F(LuceneParserTest, WildcardHeadKeepsPercent) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "x%y?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "x\\%y_");
+}
+
+TEST_F(LuceneParserTest, WildcardHeadKeepsBackslash) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "x\\\\y?"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "x\\\\y_");
+}
+
+TEST_F(LuceneParserTest, FnWildcardTermIsLiteral) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:wildcard(a_b)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertWildcard(*Optional().filters[0], kFieldId, "a\\_b");
+}
+
 TEST_F(LuceneParserTest, SuffixQuery) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "*suffix"));
   ASSERT_EQ(1, Optional().size());

@@ -41,7 +41,7 @@ JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
                           info.GetQualifiedName().Name(), info.oid},
     _schedule{info.schedule},
     _suspended{info.suspended},
-    _body{info.body->Copy()},
+    _body{duckdb::CreateJobInfo::CopyBody(info.body)},
     _state{std::move(state)} {
   comment = info.comment;
   tags = info.tags;
@@ -55,7 +55,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
   info->SetQualification(catalog.GetName(), ParentSchemaName());
   info->schedule = _schedule;
   info->suspended = _suspended;
-  info->body = _body->Copy();
+  info->body = duckdb::CreateJobInfo::CopyBody(_body);
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;

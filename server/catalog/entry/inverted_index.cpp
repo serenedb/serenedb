@@ -613,7 +613,7 @@ void InvertedIndexEntry::CreateReindexJob(
   body->info->name = duckdb::Identifier{connector::kReindexByIdPragma};
   body->info->parameters.emplace_back(
     duckdb::ConstantExpression::FromValue(duckdb::Value::BIGINT(oid)));
-  create.body = std::move(body);
+  create.body.push_back(std::move(body));
   create.permissions.owner =
     ParentSchema(transaction)
       .GetEntry(transaction, duckdb::CatalogType::TABLE_ENTRY, GetTableName())

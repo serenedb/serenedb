@@ -50,7 +50,10 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
 
   const duckdb::JobSchedule& Schedule() const noexcept { return _schedule; }
   bool Suspended() const noexcept { return _suspended; }
-  const duckdb::SQLStatement& Body() const noexcept { return *_body; }
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& Body()
+    const noexcept {
+    return _body;
+  }
   const std::shared_ptr<JobState>& State() const noexcept { return _state; }
 
   void ScheduleAtCommit(duckdb::ClientContext& context) const;
@@ -66,7 +69,7 @@ class JobCatalogEntry final : public duckdb::StandardEntry {
  private:
   duckdb::JobSchedule _schedule;
   bool _suspended;
-  duckdb::unique_ptr<duckdb::SQLStatement> _body;
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _body;
   std::shared_ptr<JobState> _state;
 };
 

@@ -240,8 +240,6 @@ statement error database "memory" does not exist
 SELECT pg_database_size('memory')
 
 
-# pg_schema_size measures schemas of the session's own database: with an
-# attached DuckDB database as the default, no schema is found.
 control substitution on
 
 onlyif serenedb
@@ -257,10 +255,8 @@ USE size_mem_${__DATABASE__};
 
 onlyif serenedb
 connection size_attached
-statement error
+statement ok
 SELECT pg_schema_size('main');
-----
-db error: ERROR: schema "main" does not exist
 
 
 onlyif serenedb

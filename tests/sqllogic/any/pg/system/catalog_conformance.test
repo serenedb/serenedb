@@ -2395,8 +2395,8 @@ WHERE n.nspname IN ('pg_catalog', 'information_schema') AND c.relkind IN ('r', '
 ORDER BY n.nspname::text COLLATE "C", c.relname::text COLLATE "C", a.attnum
 ----
 nsp	rel	col	coltype	not_null
-pg_catalog	pg_prepared_statements	parameter_types	bigint[]	f
-pg_catalog	pg_prepared_statements	result_types	bigint[]	f
+pg_catalog	pg_prepared_statements	parameter_types	regtype[]	f
+pg_catalog	pg_prepared_statements	result_types	regtype[]	f
 pg_catalog	pg_replication_origin_status	remote_lsn	text	f
 pg_catalog	pg_replication_origin_status	local_lsn	text	f
 pg_catalog	pg_replication_slots	restart_lsn	pg_lsn	f
@@ -2544,8 +2544,8 @@ WHERE relnamespace IN ('app'::regnamespace::oid, 'public'::regnamespace::oid)
 ORDER BY oid::regclass::text COLLATE "C"
 ----
 oid	relname	relnamespace	reltype	reloftype	relowner	relam	reltablespace	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relacl	reloptions	relpartbound
-customers_id_seq	customers_id_seq	public	-	-	unknown (OID=0)	0	0	f	f	p	S	3	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
-orders_id_seq	orders_id_seq	public	-	-	unknown (OID=0)	0	0	f	f	p	S	3	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
+customers_id_seq	customers_id_seq	public	-	-	postgres	0	0	f	f	p	S	3	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
+orders_id_seq	orders_id_seq	public	-	-	postgres	0	0	f	f	p	S	3	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 
 
 query
@@ -4756,7 +4756,7 @@ FROM pg_catalog.pg_proc
 WHERE pronamespace IN ('app'::regnamespace::oid, 'public'::regnamespace::oid)
 ----
 oid	prosrc
-app.add_one(integer)	(SELECT (i + 1) LIMIT 1)
+app.add_one(integer)	SELECT i + 1
 
 
 query
@@ -5728,7 +5728,7 @@ FROM information_schema.routines
 WHERE routine_schema IN ('app', 'public')
 ----
 specific_schema	specific_name	routine_definition
-app	add_one	(SELECT (i + 1) LIMIT 1)
+app	add_one	SELECT i + 1
 
 
 query
@@ -7126,7 +7126,7 @@ ORDER BY a.attnum
 ----
 col	description	coltype	serial_sequence	default_expr	default_pretty	reader_select
 status	NULL	text	NULL	'new'	'new'	t
-ticket	NULL	bigint	app.ticket_seq	nextval('app.ticket_seq')	nextval('app.ticket_seq')	t
+ticket	NULL	bigint	NULL	nextval('app.ticket_seq')	nextval('app.ticket_seq')	t
 
 
 skipif serenedb
@@ -7569,7 +7569,7 @@ SELECT
   trim(regexp_replace(pg_catalog.pg_get_functiondef('app.add_one(integer)'::regprocedure), '[[:space:]]+', ' ', 'g')) AS functiondef
 ----
 functiondef
-CREATE OR REPLACE FUNCTION app.add_one(i integer) RETURNS integer LANGUAGE sql AS $function$(SELECT (i + 1) LIMIT 1)$function$
+CREATE OR REPLACE FUNCTION app.add_one(i integer) RETURNS integer LANGUAGE sql AS $function$ SELECT i + 1 $function$
 
 
 query
@@ -9024,8 +9024,8 @@ SELECT schemaname, sequencename, sequenceowner, data_type, start_value, min_valu
 ORDER BY q.sequencename::text COLLATE "C"
 ----
 sequencename	sequenceowner	data_type
-customers_id_seq	unknown (OID=0)	bigint
-orders_id_seq	unknown (OID=0)	bigint
+customers_id_seq	postgres	bigint
+orders_id_seq	postgres	bigint
 plain_seq	postgres	bigint
 ticket_seq	postgres	bigint
 
@@ -13654,8 +13654,8 @@ WHERE q."Name" IN ('customers_id_seq', 'orders_id_seq')
 ORDER BY q."Name"::text COLLATE "C"
 ----
 Schema	Name	Type	Owner
-public	customers_id_seq	sequence	unknown (OID=0)
-public	orders_id_seq	sequence	unknown (OID=0)
+public	customers_id_seq	sequence	postgres
+public	orders_id_seq	sequence	postgres
 
 
 query

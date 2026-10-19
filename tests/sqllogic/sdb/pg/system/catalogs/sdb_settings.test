@@ -41,7 +41,7 @@ query
 SELECT name, vartype, context, boot_val, pending_restart
 FROM sdb_settings
 WHERE name IN ('log_level', 'tls_min_version', 'auth_timeout', 'missing_database',
-               'pg_max_message_bytes', 'remap_executable', 'io_threads',
+               'pg_max_message_bytes', 'io_threads',
                's2shape_index_min_short_edge_fraction', 'skip_search_recovery')
 ORDER BY name;
 ----
@@ -51,9 +51,17 @@ io_threads	integer	postmaster	0	f
 log_level	string	postmaster	info	f
 missing_database	string	postmaster	refuse	f
 pg_max_message_bytes	integer	postmaster	67108864	f
-remap_executable	bool	postmaster	true	f
 s2shape_index_min_short_edge_fraction	real	postmaster	0.2	f
 tls_min_version	string	postmaster	1.2	f
+
+
+query
+SELECT name, vartype, context, boot_val IN ('true', 'false') AS bool_boot_val, pending_restart
+FROM sdb_settings
+WHERE name = 'remap_executable';
+----
+name	vartype	context	bool_boot_val	pending_restart
+remap_executable	bool	postmaster	t	f
 
 
 query

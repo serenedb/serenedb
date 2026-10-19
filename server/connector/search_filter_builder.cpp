@@ -1397,8 +1397,8 @@ absl::Status FromFunctionExpression(
   if (TryDispatchGeoFunction(filter, ctx, func)) {
     return absl::OkStatus();
   }
-  if (const auto inet = ResolveInetContainment(ctx, func)) {
-    return FromInetContainment(filter, ctx, *inet);
+  if (const auto inet = ResolveInetNetworkOp(ctx, func)) {
+    return FromInetNetworkOp(filter, ctx, *inet);
   }
 
   char escape_char = '\\';

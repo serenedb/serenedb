@@ -509,14 +509,14 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 #### Network
 | Feature            | Support State | Details |
 |--------------------|---------------|---------|
-| \<\<               | No            |         |
+| \<\<               | Yes           |         |
 | \<\<=              | Yes           |         |
-| >>                 | No            |         |
+| >>                 | Yes           |         |
 | \>\>=              | Yes           |         |
-| &&                 | No            |         |
-| ~                  | No            |         |
-| &                  | No            |         |
-| \|                 | No            |         |
+| &&                 | Yes           |         |
+| ~                  | Yes           |         |
+| &                  | Yes           |         |
+| \|                 | Yes           |         |
 | +                  | Partial       | `inet + integer` works, `integer + inet` does not |
 | -                  | Partial       | `inet - integer` works, `inet - inet` does not |
 | abbrev             | No            |         |

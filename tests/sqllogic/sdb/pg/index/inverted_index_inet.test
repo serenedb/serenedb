@@ -428,6 +428,273 @@ n	same
 141	t
 
 query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '0.0.0.0/0') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '0.0.0.0/0') b;
+----
+n	same
+890	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.0.0.0/7') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.0.0.0/7') b;
+----
+n	same
+355	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.0.0.0/8') b;
+----
+n	same
+176	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.0.0.0/12') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.0.0.0/12') b;
+----
+n	same
+164	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.1.0.0/16') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.1.0.0/16') b;
+----
+n	same
+36	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.1.2.0/24') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.1.2.0/24') b;
+----
+n	same
+16	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.1.2.0/28') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.1.2.0/28') b;
+----
+n	same
+15	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '10.1.2.3/32') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '10.1.2.3/32') b;
+----
+n	same
+0	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '::/0') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '::/0') b;
+----
+n	same
+898	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '2001:db8::/32') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '2001:db8::/32') b;
+----
+n	same
+769	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '2001:db8:1::/100') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '2001:db8:1::/100') b;
+----
+n	same
+167	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '2001:db8:1::/120') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '2001:db8:1::/120') b;
+----
+n	same
+144	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << '2001:db8:1::5') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << '2001:db8:1::5') b;
+----
+n	same
+0	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '10.1.2.3') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '10.1.2.3') b;
+----
+n	same
+143	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '10.1.2.0/24') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '10.1.2.0/24') b;
+----
+n	same
+140	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '10.0.0.0/8') b;
+----
+n	same
+112	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '0.0.0.0/0') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '0.0.0.0/0') b;
+----
+n	same
+0	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '2001:db8:1::5') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '2001:db8:1::5') b;
+----
+n	same
+286	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '2001:db8:1::/64') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '2001:db8:1::/64') b;
+----
+n	same
+209	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '::/0') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '::/0') b;
+----
+n	same
+0	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '10.0.0.0/8') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '10.0.0.0/8') b;
+----
+n	same
+291	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '10.1.2.3') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '10.1.2.3') b;
+----
+n	same
+146	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '10.1.2.0/24') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '10.1.2.0/24') b;
+----
+n	same
+157	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '0.0.0.0/0') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '0.0.0.0/0') b;
+----
+n	same
+906	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '2001:db8:1::/64') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '2001:db8:1::/64') b;
+----
+n	same
+425	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && '2001:db8:1::5') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && '2001:db8:1::5') b;
+----
+n	same
+287	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE '10.0.0.0/8' >> ip) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE '10.0.0.0/8' >> ip) b;
+----
+n	same
+176	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE '10.1.2.3' << ip) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE '10.1.2.3' << ip) b;
+----
+n	same
+143	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE '10.1.0.0/16' && ip) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE '10.1.0.0/16' && ip) b;
+----
+n	same
+171	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE NOT (ip << '10.0.0.0/8')) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE NOT (ip << '10.0.0.0/8')) b;
+----
+n	same
+1633	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE NOT (ip >> '10.1.2.3')) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE NOT (ip >> '10.1.2.3')) b;
+----
+n	same
+1666	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE NOT (ip && '10.1.0.0/16')) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE NOT (ip && '10.1.0.0/16')) b;
+----
+n	same
+1638	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >> '10.1.2.3' AND ip << '10.0.0.0/7') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >> '10.1.2.3' AND ip << '10.0.0.0/7') b;
+----
+n	same
+31	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip << NULL::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip << NULL::INET) b;
+----
+n	same
+0	t
+
+query
+SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip && NULL::INET) a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip && NULL::INET) b;
+----
+n	same
+0	t
+
+query
+EXPLAIN SELECT pk FROM inet_idx WHERE ip << '10.0.0.0/8';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
+│ Index: inet_idx                                                     │
+│ Lookup: table                                                       │
+│ Index Filter:                                                       │
+│ ╭─ Bool ─────────────╮                                              │
+│ ╰──────────┬─────────╯                                              │
+│            ├─────────────────────╮                                  │
+│ ╭─ Must ───┴─────────╮  ╭─ Must Not ──────╮                         │
+│ ╰──────────┬─────────╯  ╰────────┬────────╯                         │
+│ ╭─ Terms ──┴─────────╮           ├──────────────────────╮           │
+│ │ Field: ip(inet)    │  ╭─ Terms ┴────────╮  ╭─ Starts With ──────╮ │
+│ │ Values: 10.0.0.0/8 │  │ Field: ip(inet) │  │ Field: ip(inet)    │ │
+│ ╰────────────────────╯  │ Values: /7      │  │ Prefix: 10.0.0.0/8 │ │
+│                         ╰─────────────────╯  ╰────────────────────╯ │
+│ Projections: pk                                                     │
+│ ~401 rows                                                           │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM inet_idx WHERE ip >> '10.0.0.0/2';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: inet_idx                         │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Starts With Any ───────────────────╮ │
+│ │ Field: ip(inet)                     │ │
+│ │ Prefixes: 2, 0.0.0.0/0 .. 0.0.0.0/1 │ │
+│ ╰─────────────────────────────────────╯ │
+│ Projections: pk                         │
+│ ~401 rows                               │
+╰─────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT pk FROM inet_idx WHERE ip && '10.1.0.0/16';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────╮
+│ Index: inet_idx                                                     │
+│ Lookup: table                                                       │
+│ Index Filter:                                                       │
+│ ╭─ Or ────────────────╮                                             │
+│ ╰──────────┬──────────╯                                             │
+│            ├──────────────────────────────────╮                     │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With Any ──┴───────────────────╮ │
+│ │ Field: ip(inet)     │  │ Field: ip(inet)                        │ │
+│ │ Values: 10.1.0.0/16 │  │ Prefixes: 17, 0.0.0.0/0 .. 10.1.0.0/16 │ │
+│ ╰─────────────────────╯  ╰────────────────────────────────────────╯ │
+│ Projections: pk                                                     │
+│ ~401 rows                                                           │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
 SELECT a.n, a.s IS NOT DISTINCT FROM b.s AS same FROM (SELECT count(*) AS n, string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_idx WHERE ip >>= '9.3.2.6') a, (SELECT string_agg(pk::text, ',' ORDER BY pk) AS s FROM inet_plain_t WHERE ip >>= '9.3.2.6') b;
 ----
 n	same

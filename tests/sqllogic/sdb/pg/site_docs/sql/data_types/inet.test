@@ -117,3 +117,37 @@ statement error
 SELECT '192.168.1.5/24'::CIDR;
 ----
 db error: ERROR: invalid cidr value: "192.168.1.5/24"
+
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+  '10.1.0.0/16'::INET << '10.0.0.0/8'::INET AS inside,
+  '10.0.0.0/8'::INET << '10.0.0.0/8'::INET AS same_network,
+  '10.0.0.0/8'::INET >> '10.1.2.3'::INET AS contains,
+  '10.0.0.0/8'::INET && '10.1.0.0/16'::INET AS overlaps,
+  '10.0.0.0/8'::INET && '11.0.0.0/8'::INET AS disjoint;
+----
+inside	same_network	contains	overlaps	disjoint
+t	f	t	t	f
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+  ~ '10.1.2.3/24'::INET AS inverted,
+  '10.1.2.3/24'::INET & '0.0.255.255/8'::INET AS anded,
+  '10.1.2.3/8'::INET | '0.0.0.255/24'::INET AS ored;
+----
+inverted	anded	ored
+245.254.253.252/24	0.0.2.3/24	10.1.2.255/24
+
+statement error
+SELECT '10.1.2.3'::INET & '::1'::INET;
+----
+db error: ERROR: cannot AND inet values of different sizes

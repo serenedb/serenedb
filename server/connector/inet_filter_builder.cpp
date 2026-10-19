@@ -44,6 +44,9 @@ constexpr std::string_view kContainedByFunction =
   "subnet_contained_by_or_equals";
 constexpr std::string_view kContainsOp = ">>=";
 constexpr std::string_view kContainsFunction = "subnet_contains_or_equals";
+constexpr std::string_view kStrictlyContainedByOp = "<<";
+constexpr std::string_view kStrictlyContainsOp = ">>";
+constexpr std::string_view kOverlapsOp = "&&";
 
 const duckdb::Expression& PeelCidrCast(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr) ||
@@ -74,14 +77,39 @@ const duckdb::Value* FindInetConstant(const duckdb::Expression& expr) {
   return TryGetConstant(PeelSortKey(expr));
 }
 
-std::optional<InetContainmentOp> ContainmentOpOf(std::string_view name) {
+std::optional<InetNetworkOp> NetworkOpOf(std::string_view name) {
   if (name == kContainedByOp || name == kContainedByFunction) {
-    return InetContainmentOp::ContainedBy;
+    return InetNetworkOp::ContainedBy;
   }
   if (name == kContainsOp || name == kContainsFunction) {
-    return InetContainmentOp::Contains;
+    return InetNetworkOp::Contains;
+  }
+  if (name == kStrictlyContainedByOp) {
+    return InetNetworkOp::StrictlyContainedBy;
+  }
+  if (name == kStrictlyContainsOp) {
+    return InetNetworkOp::StrictlyContains;
+  }
+  if (name == kOverlapsOp) {
+    return InetNetworkOp::Overlaps;
   }
   return std::nullopt;
+}
+
+InetNetworkOp SwapNetworkOp(InetNetworkOp op) {
+  switch (op) {
+    case InetNetworkOp::ContainedBy:
+      return InetNetworkOp::Contains;
+    case InetNetworkOp::Contains:
+      return InetNetworkOp::ContainedBy;
+    case InetNetworkOp::StrictlyContainedBy:
+      return InetNetworkOp::StrictlyContains;
+    case InetNetworkOp::StrictlyContains:
+      return InetNetworkOp::StrictlyContainedBy;
+    case InetNetworkOp::Overlaps:
+      return InetNetworkOp::Overlaps;
+  }
+  SDB_UNREACHABLE();
 }
 
 absl::Status Unsupported() {
@@ -201,14 +229,24 @@ void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
   }
 }
 
+void AddStrictlyContainedBy(BoolTarget target, const SearchColumnInfo& column,
+                            const inet_terms::Inet& value) {
+  const auto group = AddGroup(target, irs::Occur::Must);
+  AddContainedBy(group, column, value);
+  AddBytePrefix(
+    {group.node, irs::Occur::MustNot}, column.field_id,
+    inet_terms::ExactPrefixOf(
+      value.family, inet_terms::Network(value, value.mask), value.mask));
+}
+
 void AddContains(BoolTarget target, const SearchColumnInfo& column,
-                 const inet_terms::Inet& value) {
+                 const inet_terms::Inet& value, uint32_t max_mask) {
   auto& filter = AddFilter<irs::ByPrefixes>(target);
   *filter.mutable_field_id() = column.field_id;
   filter.SetScorer(&irs::ForceConstScore());
   std::vector<irs::bstring> prefixes;
-  prefixes.reserve(value.mask + 1);
-  for (uint32_t bits = 0; bits <= value.mask; ++bits) {
+  prefixes.reserve(max_mask + 1);
+  for (uint32_t bits = 0; bits <= max_mask; ++bits) {
     prefixes.push_back(
       inet_terms::ExactPrefixOf(value.family, inet_terms::Network(value, bits),
                                 static_cast<uint16_t>(bits)));
@@ -246,9 +284,9 @@ std::optional<InetOperands> ResolveInetOperands(
   return std::nullopt;
 }
 
-std::optional<InetContainment> ResolveInetContainment(
+std::optional<InetNetworkPredicate> ResolveInetNetworkOp(
   const FilterContext& ctx, const duckdb::BoundFunctionExpression& func) {
-  auto op = ContainmentOpOf(func.Function().GetName().GetIdentifierName());
+  const auto op = NetworkOpOf(func.Function().GetName().GetIdentifierName());
   const auto& args = func.GetChildren();
   if (!op || args.size() != 2) {
     return std::nullopt;
@@ -257,12 +295,11 @@ std::optional<InetContainment> ResolveInetContainment(
   if (!operands) {
     return std::nullopt;
   }
-  if (operands->swapped) {
-    op = *op == InetContainmentOp::ContainedBy ? InetContainmentOp::Contains
-                                               : InetContainmentOp::ContainedBy;
-  }
-  return InetContainment{
-    .column = operands->column, .constant = operands->constant, .op = *op};
+  return InetNetworkPredicate{
+    .column = operands->column,
+    .constant = operands->constant,
+    .op = operands->swapped ? SwapNetworkOp(*op) : *op,
+  };
 }
 
 absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
@@ -337,24 +374,42 @@ absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
-absl::Status FromInetContainment(BoolTarget filter, const FilterContext& ctx,
-                                 const InetContainment& containment) {
-  if (containment.constant->IsNull()) {
+absl::Status FromInetNetworkOp(BoolTarget filter, const FilterContext& ctx,
+                               const InetNetworkPredicate& predicate) {
+  if (predicate.constant->IsNull()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
-  const auto value = inet_terms::FromValue(*containment.constant);
+  const auto value = inet_terms::FromValue(*predicate.constant);
   if (!value) {
     return Unsupported();
   }
-  const auto target = MaybeNegated(filter, ctx, *containment.column);
-  switch (containment.op) {
-    case InetContainmentOp::ContainedBy:
-      AddContainedBy(target, *containment.column, *value);
+  const auto& column = *predicate.column;
+  const auto target = MaybeNegated(filter, ctx, column);
+  switch (predicate.op) {
+    case InetNetworkOp::ContainedBy:
+      AddContainedBy(target, column, *value);
       break;
-    case InetContainmentOp::Contains:
-      AddContains(target, *containment.column, *value);
+    case InetNetworkOp::Contains:
+      AddContains(target, column, *value, value->mask);
       break;
+    case InetNetworkOp::StrictlyContainedBy:
+      AddStrictlyContainedBy(target, column, *value);
+      break;
+    case InetNetworkOp::StrictlyContains:
+      if (value->mask == 0) {
+        AddFilter<irs::Empty>(target);
+      } else {
+        AddContains(target, column, *value, value->mask - 1u);
+      }
+      break;
+    case InetNetworkOp::Overlaps: {
+      const auto group = AddGroup(target, irs::Occur::Should);
+      AddContainedBy(group, column, *value);
+      AddContains(group, column, *value, value->mask);
+      SetMinMatch(*group.node, 1);
+      break;
+    }
   }
   return absl::OkStatus();
 }

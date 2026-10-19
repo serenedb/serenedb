@@ -28,11 +28,19 @@ The same order applies to `<`, `<=`, `>`, `>=`, `BETWEEN`, `ORDER BY`, `min`, `m
 
 <SqlLogicTest id="sql/data_types/inet/example_003" />
 
-The PostgreSQL operators `<<`, `>>`, `&&`, `~`, `&` and `|` are not supported.
+`a << b` and `a >> b` are the strict forms: they are false when `a` and `b` have the same network and netmask. `a && b` is true when either network contains the other or they are equal.
+
+<SqlLogicTest id="sql/data_types/inet/example_009" />
+
+## Bitwise operators
+
+`~ a` inverts every bit of the address and keeps the netmask. `a & b` and `a | b` combine the two addresses bit by bit and take the longer of the two netmasks; both values must be of the same family, otherwise the result is an error. All three return `INET`, also for `CIDR` arguments.
+
+<SqlLogicTest id="sql/data_types/inet/example_010" />
 
 ## Indexing
 
-An [inverted index](../indexes/inverted/index.md) over an `INET` column answers equality, `IN`, comparisons, `BETWEEN`, `<<=` and `>>=`. Index the column without a text search dictionary. An expression that returns `INET`, such as `network(ip)`, can be indexed and searched the same way.
+An [inverted index](../indexes/inverted/index.md) over an `INET` column answers equality, `IN`, comparisons, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`. Index the column without a text search dictionary. An expression that returns `INET`, such as `network(ip)`, can be indexed and searched the same way.
 
 <SqlLogicTest id="sql/data_types/inet/example_005" />
 

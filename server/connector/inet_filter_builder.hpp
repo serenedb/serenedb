@@ -41,15 +41,18 @@ struct InetOperands {
   bool swapped = false;
 };
 
-enum class InetContainmentOp : uint8_t {
+enum class InetNetworkOp : uint8_t {
   ContainedBy,
   Contains,
+  StrictlyContainedBy,
+  StrictlyContains,
+  Overlaps,
 };
 
-struct InetContainment {
+struct InetNetworkPredicate {
   const SearchColumnInfo* column = nullptr;
   const duckdb::Value* constant = nullptr;
-  InetContainmentOp op = InetContainmentOp::ContainedBy;
+  InetNetworkOp op = InetNetworkOp::ContainedBy;
 };
 
 const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
@@ -59,7 +62,7 @@ std::optional<InetOperands> ResolveInetOperands(
   const FilterContext& ctx, const duckdb::Expression& left,
   const duckdb::Expression& right);
 
-std::optional<InetContainment> ResolveInetContainment(
+std::optional<InetNetworkPredicate> ResolveInetNetworkOp(
   const FilterContext& ctx, const duckdb::BoundFunctionExpression& func);
 
 absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
@@ -72,7 +75,7 @@ absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
                         const SearchColumnInfo& column,
                         const duckdb::BoundOperatorExpression& op_expr);
 
-absl::Status FromInetContainment(BoolTarget filter, const FilterContext& ctx,
-                                 const InetContainment& containment);
+absl::Status FromInetNetworkOp(BoolTarget filter, const FilterContext& ctx,
+                               const InetNetworkPredicate& predicate);
 
 }  // namespace sdb::connector

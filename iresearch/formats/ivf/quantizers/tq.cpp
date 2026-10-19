@@ -337,6 +337,7 @@ struct TurboQuantInt8Seg {
   alignas(16) std::array<uint8_t, 16> a8{};
 };
 
+#ifdef __AVX2__
 float FillInt8Seg(const TurboQuantLayout& lay, const TurboQuantCentroids& tc,
                   size_t i, TurboQuantInt8Seg& seg) noexcept {
   const bool uniform = lay.bits_hi == lay.bits_lo;
@@ -360,7 +361,6 @@ float FillInt8Seg(const TurboQuantLayout& lay, const TurboQuantCentroids& tc,
   }
   return scale_c;
 }
-#ifdef __AVX2__
 int32_t TurboQuantDot1(const uint8_t* code, const TurboQuantInt8Seg& seg,
                        const int8_t* q) noexcept {
   const int32_t ones_sum = BitPlaneSum(code, seg.bytes, q);
@@ -986,6 +986,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     _mse_slack = slack / std::sqrt(static_cast<float>(lay.rd));
   }
 
+#ifdef __AVX2__
   void BuildInt8(const TurboQuantLayout& lay, const TurboQuantCentroids& tc) {
     float maxq = 0.f;
     for (uint32_t j = 0; j < lay.rd; ++j) {
@@ -1022,6 +1023,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       q_off += planes * seg.bytes;
     }
   }
+#endif
 
   void BuildQjlLut() {
     const TurboQuantLayout& lay = _stats->Layout();

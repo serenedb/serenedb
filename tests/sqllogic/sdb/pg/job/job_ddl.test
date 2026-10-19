@@ -801,6 +801,33 @@ PIVOT ... ON c IN (val1, val2, ...)
 
 
 statement ok
+INSERT INTO jd_pivot VALUES ('a', 1), ('b', 2);
+
+
+statement ok
+CREATE JOB jd_pivot_quoted AFTER 1 HOUR SUSPENDED AS $$CREATE TABLE jd_pivoted AS PIVOT jd_pivot ON c USING sum(n);$$;
+
+
+statement ok
+EXECUTE JOB jd_pivot_quoted;
+
+
+query
+SELECT * FROM jd_pivoted;
+----
+a	b
+1	2
+
+
+statement ok
+DROP JOB jd_pivot_quoted;
+
+
+statement ok
+DROP TABLE jd_pivoted;
+
+
+statement ok
 DROP TABLE jd_pivot;
 
 

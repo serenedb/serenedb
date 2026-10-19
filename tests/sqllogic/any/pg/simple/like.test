@@ -671,3 +671,40 @@ FROM ilike_growth
 ----
 per_row	contains	not_underscore	per_row_escape
 199	197	0	199
+
+
+statement ok
+CREATE TABLE ilike_unicode AS
+SELECT i AS id,
+       CASE i % 6
+           WHEN 0 THEN 'Grüße aus Köln ' || i
+           WHEN 1 THEN 'İstanbul ' || i
+           WHEN 2 THEN chr(8490) || 'elvin ' || i
+           WHEN 3 THEN 'crème brûlée ' || i
+           WHEN 4 THEN '🦆 DUCK ' || i
+       END AS s
+FROM generate_series(1, 1200) AS g(i)
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%AUS K%') AS aus,
+       count(*) FILTER (WHERE s ILIKE 'istanbul%') AS dotted_i,
+       count(*) FILTER (WHERE s ILIKE 'kelvin%') AS kelvin,
+       count(*) FILTER (WHERE s ILIKE '%BR_L_E%') AS underscores,
+       count(*) FILTER (WHERE s ILIKE '_ duck%') AS duck,
+       count(*) FILTER (WHERE s ILIKE '%k%') AS any_k,
+       count(*) FILTER (WHERE s NOT ILIKE '%e%') AS no_e,
+       count(*) FILTER (WHERE s ILIKE '%Ü%E%') AS unicode_pattern
+FROM ilike_unicode
+----
+aus	dotted_i	kelvin	underscores	duck	any_k	no_e	unicode_pattern
+200	200	200	200	200	600	400	200
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%AUS K%' WHEN 1 THEN '_STANBUL%' ELSE '%' || chr(8490) || '%' END) AS per_row,
+       count(*) FILTER (WHERE s NOT ILIKE CASE id % 3 WHEN 0 THEN '%AUS K%' WHEN 1 THEN '_STANBUL%' ELSE '%' || chr(8490) || '%' END) AS not_per_row
+FROM ilike_unicode
+----
+per_row	not_per_row
+600	400

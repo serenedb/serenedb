@@ -394,3 +394,94 @@ SELECT (SELECT count(*) FROM oor_num_dec) + (SELECT count(*) FROM oor_num_huge)
 ----
 n
 0
+
+statement ok
+CREATE TABLE oor_num_dec38 (a DECIMAL(38, 0));
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\034\000\012\000\011\000\000\000\000\001T\013\007\032$\003\252\022\032\030\301\021\377\020\335\032\245\005\332\377\377' > $__TEST_DIR__/oor_num_wrap.bin
+
+statement error
+COPY oor_num_dec38 FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\034\000\012\000\011\000\000\000\000\001T\013\007\032$\003\252\022\032\030\301\021\377\020\335\032\245\005\257\377\377' > $__TEST_DIR__/oor_num_umax.bin
+
+statement ok
+COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_umax.bin' (FORMAT binary);
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\034\000\012\000\011\000\000\000\000\001T\013\007\032$\003\252\022\032\030\301\021\377\020\335\032\245\005\260\377\377' > $__TEST_DIR__/oor_num_umax1.bin
+
+statement error
+COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_umax1.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\034\000\012\000\011@\000\000\000\000\252\005\203 \232\001\325\011\015\014`\034\207\033\366 \332\026`\377\377' > $__TEST_DIR__/oor_num_hmin.bin
+
+statement ok
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_hmin.bin' (FORMAT binary);
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\034\000\012\000\011@\000\000\000\000\252\005\203 \232\001\325\011\015\014`\034\207\033\366 \332\026a\377\377' > $__TEST_DIR__/oor_num_hmin1.bin
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_hmin1.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\012\000\001\000d\000\000\000\000\000\001\377\377' > $__TEST_DIR__/oor_num_e400.bin
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_e400.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\012\000\001\000\000\000\000\000\000\047\020\377\377' > $__TEST_DIR__/oor_num_group.bin
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_group.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\012\000\001\177\377\000\000\000\000\000\000\377\377' > $__TEST_DIR__/oor_num_zero_weight.bin
+
+statement ok
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_zero_weight.bin' (FORMAT binary);
+
+query
+SELECT 'dec' AS t, a::VARCHAR AS v FROM oor_num_dec
+UNION ALL SELECT 'dec38', a::VARCHAR FROM oor_num_dec38
+UNION ALL SELECT 'huge', a::VARCHAR FROM oor_num_huge
+UNION ALL SELECT 'uhuge', a::VARCHAR FROM oor_num_uhuge
+UNION ALL SELECT 'ubig', a::VARCHAR FROM oor_num_ubig
+ORDER BY t, v;
+----
+t	v
+huge	-170141183460469231731687303715884105728
+huge	0
+uhuge	340282366920938463463374607431768211455

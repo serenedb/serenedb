@@ -797,6 +797,46 @@ def test_binary_numeric_param_rejects_nan_and_infinity(conn):
             conn.run_ok(f"drop table if exists {table}")
 
 
+def test_binary_numeric_param_rejects_out_of_range(conn):
+    huge_min = -(1 << 127)
+    uhuge_max = (1 << 128) - 1
+    tables = {
+        "bin_num_dec38": "decimal(38, 0)",
+        "bin_num_huge": "hugeint",
+        "bin_num_uhuge": "uhugeint",
+    }
+    refused = [
+        ("bin_num_dec38", _pg_numeric_int((1 << 128) + 42)),
+        ("bin_num_huge", _pg_numeric_int((1 << 128) + 42)),
+        ("bin_num_uhuge", _pg_numeric_int((1 << 128) + 42)),
+        ("bin_num_uhuge", _pg_numeric_int(uhuge_max + 1)),
+        ("bin_num_huge", _pg_numeric_int(huge_min - 1)),
+        ("bin_num_huge", _pg_numeric([1], 100)),
+        ("bin_num_huge", _pg_numeric([10000], 0)),
+    ]
+    stored = [
+        ("bin_num_uhuge", _pg_numeric_int(uhuge_max)),
+        ("bin_num_huge", _pg_numeric_int(huge_min)),
+        ("bin_num_huge", _pg_numeric([], 32767)),
+    ]
+    for table, column_type in tables.items():
+        conn.run_ok(f"drop table if exists {table}")
+        conn.run_ok(f"create table {table} (a {column_type})")
+    try:
+        for table, value in refused:
+            m = _bind_insert(conn, table, value)
+            assert sqlstates(m) == ["22P03"], (table, value.hex(), errors(m))
+        for table, value in stored:
+            m = _bind_insert(conn, table, value)
+            assert not errors(m), (table, value.hex(), errors(m))
+        assert _column_text(conn, "bin_num_dec38") == ""
+        assert _column_text(conn, "bin_num_huge") == f"{huge_min},0"
+        assert _column_text(conn, "bin_num_uhuge") == str(uhuge_max)
+    finally:
+        for table in tables:
+            conn.run_ok(f"drop table if exists {table}")
+
+
 def test_float_special_values_text(conn):
     # PG renders float infinity/NaN as Infinity / -Infinity / NaN in text.
     def textval(sql):

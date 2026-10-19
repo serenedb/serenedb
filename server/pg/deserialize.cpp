@@ -489,26 +489,43 @@ bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
   // DECIMAL(38)). The first digit below -scale feeds half-away-from-zero
   // rounding.
   static constexpr int kPow10[] = {1, 10, 100, 1000};
+  constexpr auto kMax = std::numeric_limits<absl::uint128>::max();
+  constexpr auto kMaxTenth =
+    absl::MakeUint128(0x1999999999999999, 0x9999999999999999);
   absl::uint128 acc = 0;
+  const bool checked = 4 * (weight + 1) + scale > 38;
   int round_digit = 0;
   bool have_round = false;
   for (int16_t i = 0; i < ndigits; ++i) {
     const uint16_t group = absl::big_endian::Load16(data.data() + 8 + i * 2);
+    if (group >= 10000) {
+      return false;
+    }
     for (int k = 3; k >= 0; --k) {
       const int target = 4 * (weight - i) + k + scale;
+      const int digit = (group / kPow10[k]) % 10;
       if (target >= 0) {
-        acc = acc * 10 + (group / kPow10[k]) % 10;
+        if (checked && (acc > kMaxTenth || (acc == kMaxTenth && digit > 5))) {
+          return false;
+        }
+        acc = acc * 10 + digit;
       } else if (target == -1 && !have_round) {
-        round_digit = (group / kPow10[k]) % 10;
+        round_digit = digit;
         have_round = true;
       }
     }
   }
   // Trailing zeros when the least significant group digit sits above -scale.
-  for (int z = 4 * (weight - ndigits + 1) + scale; z > 0; --z) {
+  for (int z = 4 * (weight - ndigits + 1) + scale; z > 0 && acc != 0; --z) {
+    if (acc > kMaxTenth) {
+      return false;
+    }
     acc *= 10;
   }
   if (have_round && round_digit >= 5) {
+    if (acc == kMax) {
+      return false;
+    }
     ++acc;
   }
   magnitude = acc;

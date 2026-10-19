@@ -113,6 +113,11 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
   return kOidLikeAliases.contains(type.GetAlias());
 }
 
+inline bool IsRegLike(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::BIGINT &&
+         type.GetAlias().starts_with("reg");
+}
+
 #undef DECLARE_PG_TYPE
 
 inline constexpr std::string_view kCtidAlias = "ctid";

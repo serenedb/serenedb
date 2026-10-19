@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 RESET sdb_faults;
 
@@ -35,7 +37,7 @@ SELECT 1;
 
 
 connection r1
-query ok retry 80 backoff 250ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT schema_name, job_name, schedule FROM sdb_jobs()
 WHERE starts_with(job_name, 'jns_') ORDER BY job_name;
 ----
@@ -68,7 +70,7 @@ SELECT 1;
 
 
 connection r2
-query ok retry 80 backoff 250ms
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT schema_name, job_name FROM sdb_jobs() WHERE starts_with(job_name, 'jns_');
 ----
 schema_name	job_name

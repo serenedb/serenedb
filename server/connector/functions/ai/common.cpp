@@ -57,17 +57,6 @@ namespace {
 constexpr uint64_t kMaxRetryDelayMs = 60'000;
 constexpr size_t kMaxErrorBody = 256;
 
-constinit SettingRef gAllowInsecure{"sdb_ai_allow_insecure_endpoint"};
-constinit SettingRef gConcurrency{"sdb_ai_max_concurrent_requests"};
-constinit SettingRef gEmbeddingBatch{"sdb_ai_embedding_max_batch_size"};
-constinit SettingRef gMaxCalls{"sdb_ai_max_api_calls_per_query"};
-constinit SettingRef gMaxOutputTokens{"sdb_ai_max_output_tokens_per_query"};
-constinit SettingRef gMaxRetries{"sdb_ai_max_retries"};
-constinit SettingRef gRetryDelay{"sdb_ai_retry_initial_delay_ms"};
-constinit SettingRef gTimeout{"sdb_ai_request_timeout"};
-constinit SettingRef gThrowOnError{"sdb_ai_throw_on_error"};
-constinit SettingRef gThrowOnQuota{"sdb_ai_throw_on_quota_exceeded"};
-
 std::string ReadStringSetting(duckdb::ClientContext& context,
                               std::string_view name) {
   duckdb::Value value;
@@ -267,7 +256,8 @@ Endpoint ResolveEndpoint(duckdb::ClientContext& context,
     return std::string{fallback};
   };
   auto base_url = get("base_url", api.base_url);
-  if (IsInsecureEndpoint(base_url) && !gAllowInsecure.Bool(context)) {
+  if (IsInsecureEndpoint(base_url) &&
+      !GetBoolSetting(context, "sdb_ai_allow_insecure_endpoint")) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(fn, ": secret '", name, "' uses the insecure endpoint '",
@@ -402,7 +392,7 @@ struct FetchState {
       work{work},
       out{out},
       scheduler{duckdb::TaskScheduler::GetScheduler(exec.context)},
-      token{scheduler.CreateProducer()} {}
+      token{scheduler.CreateProducer(exec.context.GetSchedulerAccount())} {}
 
   bool Stop() const {
     return stop.load(std::memory_order_relaxed) || exec.context.IsInterrupted();
@@ -464,6 +454,7 @@ struct FetchState {
       if (helpers == 0) {
         return;
       }
+      duckdb::TaskScheduler::BlockingScope blocking;
       mutex.AwaitWithTimeout(absl::Condition(
                                +[](size_t* n) { return *n == 0; }, &helpers),
                              absl::Milliseconds(5));
@@ -810,15 +801,17 @@ AIQuery& AIQuery::Get(duckdb::ClientContext& context) {
 
 void AIQuery::Begin(duckdb::ClientContext& context) {
   settings = {
-    .max_calls = gMaxCalls.Int(context),
-    .max_output_tokens = gMaxOutputTokens.Int(context),
-    .max_retries = gMaxRetries.Int(context),
-    .retry_delay_ms = gRetryDelay.Int(context),
-    .timeout = gTimeout.Int(context),
-    .concurrency = gConcurrency.Int(context),
-    .embedding_batch = gEmbeddingBatch.Int(context),
-    .throw_on_error = gThrowOnError.Bool(context),
-    .throw_on_quota = gThrowOnQuota.Bool(context),
+    .max_calls = GetIntSetting(context, "sdb_ai_max_api_calls_per_query"),
+    .max_output_tokens =
+      GetIntSetting(context, "sdb_ai_max_output_tokens_per_query"),
+    .max_retries = GetIntSetting(context, "sdb_ai_max_retries"),
+    .retry_delay_ms = GetIntSetting(context, "sdb_ai_retry_initial_delay_ms"),
+    .timeout = GetIntSetting(context, "sdb_ai_request_timeout"),
+    .concurrency = GetIntSetting(context, "sdb_ai_max_concurrent_requests"),
+    .embedding_batch =
+      GetIntSetting(context, "sdb_ai_embedding_max_batch_size"),
+    .throw_on_error = GetBoolSetting(context, "sdb_ai_throw_on_error"),
+    .throw_on_quota = GetBoolSetting(context, "sdb_ai_throw_on_quota_exceeded"),
   };
   _calls.store(0, std::memory_order_relaxed);
   _output_tokens.store(0, std::memory_order_relaxed);

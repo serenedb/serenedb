@@ -316,24 +316,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
       WHERE false;
   END;)"},
 
-  {"pg_catalog", "pg_prepared_statement",
-   R"(()
-  RETURNS TABLE( name TEXT,
-                 statement TEXT,
-                 prepare_time TIMESTAMP,
-                 parameter_types BIGINT[],
-                 result_types BIGINT[],
-                 from_sql BOOLEAN,
-                 generic_plans BIGINT,
-                 custom_plans BIGINT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT NULL::TEXT, NULL::TEXT, NULL::TIMESTAMP,
-             NULL::BIGINT[], NULL::BIGINT[],
-             NULL::BOOLEAN, NULL::BIGINT, NULL::BIGINT
-      WHERE false;
-  END;)"},
-
   {"pg_catalog", "pg_show_all_file_settings",
    R"(()
   RETURNS TABLE( sourcefile TEXT,

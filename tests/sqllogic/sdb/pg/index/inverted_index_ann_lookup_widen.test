@@ -1,0 +1,230 @@
+statement ok
+CREATE TABLE lw_hnsw (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, rare INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX lw_hnsw_idx ON lw_hnsw
+  USING inverted(id, label, emb hnsw (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE lw_ivf (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, rare INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX lw_ivf_idx ON lw_ivf
+  USING inverted(id, label, emb ivf (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE lw_flat (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, rare INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX lw_flat_idx ON lw_flat
+  USING inverted(id, label, emb ivf (metric = 'l2', quant = 'none'))
+  INCLUDE (num);
+
+statement ok
+INSERT INTO lw_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
+  i % 1000, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lw_hnsw;
+
+statement ok
+INSERT INTO lw_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
+  i % 1000, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1500, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lw_hnsw;
+
+statement ok
+INSERT INTO lw_ivf SELECT * FROM lw_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) lw_ivf;
+
+statement ok
+INSERT INTO lw_flat SELECT * FROM lw_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) lw_flat;
+
+query
+SELECT id FROM lw_hnsw_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_ivf_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_flat_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_hnsw_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3 OFFSET 2;
+----
+id
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_ivf_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3 OFFSET 2;
+----
+id
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_hnsw_idx WHERE rare = 123
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1123
+2123
+123
+
+query
+SELECT id FROM lw_ivf_idx WHERE rare = 123
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1123
+2123
+123
+
+query
+SELECT id FROM lw_flat_idx WHERE rare = 123
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1123
+2123
+123
+
+query
+SELECT id FROM lw_hnsw_idx WHERE extra = 11
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+
+query
+SELECT id FROM lw_ivf_idx WHERE extra = 11
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+
+query
+SELECT id FROM lw_hnsw_idx WHERE label = 'l7' AND rare > 900
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+id
+1907
+1917
+1927
+1937
+
+query
+SELECT id FROM lw_ivf_idx WHERE num = 47 AND rare < 100
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+id
+1047
+2047
+47
+
+query
+SELECT id, round((emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8])::DOUBLE, 1) AS d
+  FROM lw_ivf_idx WHERE rare = 123
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+id	d
+1123	377.4
+2123	622.6
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT id FROM lw_hnsw_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_ivf_idx WHERE rare = 123
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1123
+2123
+123
+
+query
+SELECT id FROM lw_flat_idx WHERE extra = 11
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+
+statement ok
+RESET sdb_ann_force_exact;
+
+statement ok
+SET sdb_ann_oversample = 0;
+
+query
+SELECT id FROM lw_hnsw_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM lw_ivf_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+statement ok
+RESET sdb_ann_oversample;

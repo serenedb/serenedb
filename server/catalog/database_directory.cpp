@@ -26,6 +26,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -50,6 +51,7 @@ void CreateDirectory(const std::filesystem::path& path) {
 }
 
 void RemoveTree(const std::filesystem::path& path) {
+  duckdb::TaskScheduler::BlockingScope blocking;
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {

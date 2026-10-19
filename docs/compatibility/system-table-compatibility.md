@@ -106,7 +106,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
 | pg_policies | 🟡 | Displays information about policies. |
-| pg_prepared_statements | 🟡 | Lists prepared statements. |
+| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol; `generic_plans` and `custom_plans` are always NULL. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
 | pg_replication_origin_status | 🟢 | Shows each subscription's origin with the publisher position it has durably applied; `local_lsn` is always `0/0`. |

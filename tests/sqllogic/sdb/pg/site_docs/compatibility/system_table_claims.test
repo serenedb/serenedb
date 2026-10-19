@@ -101,6 +101,9 @@ INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
 statement ok
 CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub WITH (connect = false, slot_name = NONE)
 
+statement ok
+PREPARE stc_prep AS SELECT 1
+
 # sys_tables: pg_aggregate (🟢)
 query
 SELECT count(*) > 0 AS populated FROM pg_catalog."pg_aggregate";
@@ -493,9 +496,12 @@ SELECT * FROM pg_catalog."pg_matviews" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_policies" LIMIT 0;
 
-# sys_views: pg_prepared_statements (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_prepared_statements" LIMIT 0;
+# sys_views: pg_prepared_statements (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_prepared_statements";
+----
+populated
+t
 
 # sys_views: pg_prepared_xacts (🟡)
 statement ok

@@ -945,6 +945,8 @@ class DeadRange final : public irs::detail::TableFilter {
 
   irs::doc_id_t Live(irs::doc_id_t doc) final { return Dead(doc) ? _end : doc; }
 
+  bool Foldable() const noexcept final { return true; }
+
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final {
     const uint64_t live = Narrow(base, mask, mask, nullptr, words);

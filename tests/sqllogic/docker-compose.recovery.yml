@@ -1,3 +1,6 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   # recovery/*_chscan.test_slow need a real ClickHouse with the shared fixtures.
   # Unlike the sqllogic kind, this harness has no docker socket, so run.sh cannot
@@ -5,6 +8,7 @@ services:
   # fixtures bind-mount works because compose resolves paths on the host.
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    labels: *owner
     environment:
       - CLICKHOUSE_SKIP_USER_SETUP=1
     volumes:
@@ -21,6 +25,7 @@ services:
 
   postgres:
     image: ${PG_FIXTURE_IMAGE}
+    labels: *owner
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_DB=postgres
@@ -45,6 +50,7 @@ services:
   # when the connection env below is preset.
   minio:
     image: pgsty/minio:latest
+    labels: *owner
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -65,6 +71,7 @@ services:
 
   minio-init:
     image: pgsty/minio:latest
+    labels: *owner
     depends_on:
       minio:
         condition: service_healthy
@@ -75,6 +82,7 @@ services:
 
   iceberg-rest:
     image: apache/iceberg-rest-fixture:1.10.1
+    labels: *owner
     depends_on:
       minio:
         condition: service_healthy
@@ -99,6 +107,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -162,3 +171,7 @@ services:
       - BIGLAKE_PRIVATE_KEY_ID
     working_dir: /sqllogic
     command: ./run_recovery_tests.sh --runner /sqllogictest-rs
+
+networks:
+  default:
+    labels: *owner

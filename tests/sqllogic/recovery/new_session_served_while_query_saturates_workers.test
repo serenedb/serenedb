@@ -1,0 +1,46 @@
+statement ok
+CREATE TABLE saturate (i BIGINT);
+
+
+statement ok
+INSERT INTO saturate SELECT i FROM range(12000000) t(i);
+
+
+connection busy
+statement ok
+SET statement_timeout = '5s';
+
+
+connection busy
+statement async error
+SELECT count(*) FROM saturate a, (SELECT i FROM range(1000000) t(i)) b WHERE (a.i + b.i) % 1000003 = 7;
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
+connection default
+query ok retry 40 backoff 100ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'SELECT count(*) FROM saturate a%';
+----
+n
+1
+
+
+connection fresh
+query
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection fresh
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'SELECT count(*) FROM saturate a%';
+----
+n
+1
+
+
+connection busy
+wait

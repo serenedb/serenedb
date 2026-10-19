@@ -195,6 +195,50 @@ count
 4
 
 
+statement ok
+CREATE TABLE hnsw_rq4 (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_rq4_idx ON hnsw_rq4
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq4'));
+
+
+statement ok
+INSERT INTO hnsw_rq4 VALUES
+  (1, [2, 0, 0]::FLOAT[3]),
+  (2, [6, 0, 0]::FLOAT[3]),
+  (3, [100, 0, 0]::FLOAT[3]),
+  (4, [-20, 0, 0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rq4;
+
+
+query
+SELECT count(*) FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 1;
+----
+count
+0
+
+
+query
+SELECT pk FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 1;
+----
+pk
+
+
+query
+SELECT pk, round(emb <-> [0, 0, 0]::FLOAT[3], 3) AS d FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 3 ORDER BY pk;
+----
+pk	d
+1	2
+
+
 # ============================================================================
 # Strict vs inclusive at an exact boundary.
 #
@@ -303,3 +347,39 @@ SELECT count(*) FROM hnsw_r_null_idx
 ----
 count
 1
+
+
+statement ok
+CREATE TABLE hnsw_r_grid (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX hnsw_r_grid_idx ON hnsw_r_grid
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO hnsw_r_grid SELECT x * 100 + y, [x, y]::FLOAT[2]
+  FROM range(60) a(x), range(60) b(y);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r_grid;
+
+
+query
+SELECT count(*) FROM hnsw_r_grid_idx
+  WHERE emb <-> [30.5, 30.5]::FLOAT[2] < 10;
+----
+count
+316
+
+
+query
+SELECT count(*) FROM (
+  (SELECT pk FROM hnsw_r_grid WHERE emb <-> [30.5, 30.5]::FLOAT[2] < 10)
+  EXCEPT (SELECT pk FROM hnsw_r_grid_idx
+    WHERE emb <-> [30.5, 30.5]::FLOAT[2] < 10)) t;
+----
+count
+0

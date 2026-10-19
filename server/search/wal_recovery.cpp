@@ -30,7 +30,6 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -90,19 +89,7 @@ std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
 InvertedIndexEntries() {
   std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
   for (auto& catalog : SereneDBCatalogs()) {
-    std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-    catalog.get().ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
-      schemas.emplace_back(schema);
-    });
-    for (auto& schema : schemas) {
-      schema.get().Scan(
-        duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-          if (connector::IsInvertedIndex(
-                entry.Cast<duckdb::IndexCatalogEntry>())) {
-            indexes.emplace_back(entry.Cast<catalog::InvertedIndexEntry>());
-          }
-        });
-    }
+    indexes.append_range(catalog::InvertedIndexEntries(catalog.get()));
   }
   return indexes;
 }

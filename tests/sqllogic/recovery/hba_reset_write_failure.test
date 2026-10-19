@@ -1,0 +1,29 @@
+statement ok
+CREATE ROLE hbw_kuzya LOGIN PASSWORD 'kuzya_pw';
+
+statement ok
+SET hba = 'host all all 0.0.0.0/0 reject';
+
+statement ok
+SET sdb_faults = 'hba_config_write_fails';
+
+statement error
+RESET hba;
+----
+db error: ERROR: could not write hba config file '<slt:ignore>': intentional debug error
+
+
+statement ok
+SET sdb_faults = '-hba_config_write_fails';
+
+query
+SELECT current_setting('hba') = 'host all all 0.0.0.0/0 reject' AS kept;
+----
+kept
+t
+
+connection c_rejected user=hbw_kuzya password=kuzya_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: no pg_hba.conf entry for host, user "hbw_kuzya"<slt:ignore>

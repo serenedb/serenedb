@@ -1,0 +1,80 @@
+statement ok
+CREATE TABLE ivf_fill (id INTEGER PRIMARY KEY, emb FLOAT[3], cat VARCHAR,
+  price INTEGER);
+
+statement ok
+INSERT INTO ivf_fill SELECT i, [cos(i), sin(i), (i % 100) / 100.0]::FLOAT[3],
+  CASE WHEN i % 2 = 0 THEN 'a' ELSE 'b' END, i % 100
+FROM range(5000) t(i);
+
+statement ok
+CREATE INDEX ivf_fill_idx ON ivf_fill
+  USING inverted(id, cat, emb ivf (metric = 'l2')) INCLUDE (price);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_fill;
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_fill_idx ORDER BY emb <-> [1, 0, 0.5] LIMIT 100000);
+----
+count
+5000
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_fill_idx WHERE cat = 'a'
+  ORDER BY emb <-> [1, 0, 0.5] LIMIT 3000);
+----
+count
+2500
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_fill_idx WHERE price = 7
+  ORDER BY emb <-> [1, 0, 0.5] LIMIT 100);
+----
+count
+50
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM ivf_fill WHERE price = 7
+   ORDER BY emb <-> [1, 0, 0.5]::FLOAT[3] LIMIT 40)
+  EXCEPT (SELECT id FROM ivf_fill_idx WHERE price = 7
+   ORDER BY emb <-> [1, 0, 0.5] LIMIT 40)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_fill_idx WHERE cat = 'a' AND id < 40
+  ORDER BY emb <-> [1, 0, 0.5] LIMIT 30);
+----
+count
+20
+
+statement ok
+SET sdb_ivf_search_nprobe = 1;
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_fill_idx WHERE price < 3
+  ORDER BY emb <-> [1, 0, 0.5] LIMIT 120);
+----
+count
+120
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM ivf_fill WHERE price < 3
+   ORDER BY emb <-> [1, 0, 0.5]::FLOAT[3] LIMIT 120)
+  EXCEPT (SELECT id FROM ivf_fill_idx WHERE price < 3
+   ORDER BY emb <-> [1, 0, 0.5] LIMIT 120)) t;
+----
+count
+0
+
+statement ok
+RESET sdb_ivf_search_nprobe;

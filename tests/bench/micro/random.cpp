@@ -31,6 +31,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -45,6 +46,82 @@
 #endif
 
 namespace {
+
+class Xorshift64 {
+ public:
+  using result_type = uint64_t;
+
+  static constexpr result_type min() noexcept { return 0; }
+  static constexpr result_type max() noexcept {
+    return std::numeric_limits<result_type>::max();
+  }
+
+  explicit Xorshift64(uint64_t seed) noexcept : _state{seed | 1} {}
+
+  result_type operator()() noexcept {
+    _state ^= _state << 13;
+    _state ^= _state >> 7;
+    _state ^= _state << 17;
+    return _state;
+  }
+
+ private:
+  uint64_t _state;
+};
+
+class SplitMix64 {
+ public:
+  using result_type = uint64_t;
+
+  static constexpr result_type min() noexcept { return 0; }
+  static constexpr result_type max() noexcept {
+    return std::numeric_limits<result_type>::max();
+  }
+
+  explicit SplitMix64(uint64_t seed) noexcept : _state{seed} {}
+
+  result_type operator()() noexcept {
+    uint64_t z = (_state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+  }
+
+ private:
+  uint64_t _state;
+};
+
+class Xoshiro256StarStar {
+ public:
+  using result_type = uint64_t;
+
+  static constexpr result_type min() noexcept { return 0; }
+  static constexpr result_type max() noexcept {
+    return std::numeric_limits<result_type>::max();
+  }
+
+  explicit Xoshiro256StarStar(uint64_t seed) noexcept {
+    SplitMix64 init{seed};
+    for (auto& word : _state) {
+      word = init();
+    }
+  }
+
+  result_type operator()() noexcept {
+    const uint64_t result = std::rotl(_state[1] * 5, 7) * 9;
+    const uint64_t t = _state[1] << 17;
+    _state[2] ^= _state[0];
+    _state[3] ^= _state[1];
+    _state[1] ^= _state[2];
+    _state[0] ^= _state[3];
+    _state[2] ^= t;
+    _state[3] = std::rotl(_state[3], 45);
+    return result;
+  }
+
+ private:
+  uint64_t _state[4];
+};
 
 // Seed data to avoid reading random_device() for benchmarks.
 constexpr uint32_t kSeedData[] = {
@@ -103,7 +180,11 @@ Engine MakeEngine() {
   constexpr bool kUseDefaultInitialization =
     std::is_same_v<SSeq, DefaultConstructorSeedSeq>;
   if constexpr (kUseDefaultInitialization) {
-    return Engine();
+    if constexpr (std::is_default_constructible_v<Engine>) {
+      return Engine();
+    } else {
+      return Engine(kSeedData[0]);
+    }
   } else {
     // Otherwise, use the provided seed sequence.
     SSeq seq(std::begin(kSeedData), std::end(kSeedData));
@@ -159,6 +240,34 @@ void BmShuffleReuse(benchmark::State& state) {
   auto rng = MakeEngine<Engine>();
   while (state.KeepRunningBatch(Elems)) {
     std::shuffle(std::begin(v), std::end(v), rng);
+  }
+}
+
+template<typename Engine, size_t Elems>
+void BmAbslShuffle(benchmark::State& state) {
+  std::vector<uint32_t> v(Elems);
+  auto rng = MakeEngine<Engine>();
+  while (state.KeepRunningBatch(Elems)) {
+    for (size_t i = Elems - 1; i > 0; --i) {
+      std::swap(v[i], v[absl::Uniform<size_t>(rng, 0, i + 1)]);
+    }
+  }
+}
+
+template<typename Engine, bool Absl>
+void BmReservoir(benchmark::State& state) {
+  constexpr uint64_t kFirst = uint64_t{1} << 16;
+  constexpr uint64_t kLast = uint64_t{1} << 24;
+  auto rng = MakeEngine<Engine>();
+  uint64_t seen = kFirst;
+  for (auto _ : state) {
+    if constexpr (Absl) {
+      benchmark::DoNotOptimize(absl::Uniform<uint64_t>(rng, 0, seen));
+    } else {
+      benchmark::DoNotOptimize(
+        std::uniform_int_distribution<uint64_t>{0, seen - 1}(rng));
+    }
+    seen = seen + 1 == kLast ? kFirst : seen + 1;
   }
 }
 
@@ -243,11 +352,26 @@ void BmThread(benchmark::State& state) {
 // floor(log(1-X) / log(1-p))
 
 // Normal benchmark suite
-#define BM_BASIC(Engine)                                                       \
+#define BM_SEED_SEQ(Engine)                                    \
+  BENCHMARK_TEMPLATE(BmConstruct, Engine, PrecompiledSeedSeq); \
+  BENCHMARK_TEMPLATE(BmConstruct, Engine, std::seed_seq)
+
+#define BM_BASIC(Engine) \
+  BM_SEED_SEQ(Engine);   \
+  BM_CORE(Engine)
+
+#define BM_CORE(Engine)                                                        \
   BENCHMARK_TEMPLATE(BmConstruct, Engine, DefaultConstructorSeedSeq);          \
-  BENCHMARK_TEMPLATE(BmConstruct, Engine, PrecompiledSeedSeq);                 \
-  BENCHMARK_TEMPLATE(BmConstruct, Engine, std::seed_seq);                      \
   BENCHMARK_TEMPLATE(BmDirect, Engine);                                        \
+  BENCHMARK_TEMPLATE(BmAbslShuffle, Engine, 1000);                             \
+  BENCHMARK_TEMPLATE(BmReservoir, Engine, false);                              \
+  BENCHMARK_TEMPLATE(BmReservoir, Engine, true);                               \
+  BENCHMARK_TEMPLATE(BmDist, Engine, std::normal_distribution<double>);        \
+  BENCHMARK_TEMPLATE(BmDist, Engine, absl::gaussian_distribution<double>);     \
+  BENCHMARK_TEMPLATE(BmBernoulli, Engine, std::bernoulli_distribution,         \
+                     257305);                                                  \
+  BENCHMARK_TEMPLATE(BmBernoulli, Engine, absl::bernoulli_distribution,        \
+                     257305);                                                  \
   BENCHMARK_TEMPLATE(BmShuffle, Engine, 10);                                   \
   BENCHMARK_TEMPLATE(BmShuffle, Engine, 100);                                  \
   BENCHMARK_TEMPLATE(BmShuffle, Engine, 1000);                                 \
@@ -300,8 +424,6 @@ void BmThread(benchmark::State& state) {
   BENCHMARK_TEMPLATE(BmSmall, Engine,                                          \
                      absl::uniform_real_distribution<double>);                 \
   /* -------------- Other -----------------------*/                            \
-  BENCHMARK_TEMPLATE(BmDist, Engine, std::normal_distribution<double>);        \
-  BENCHMARK_TEMPLATE(BmDist, Engine, absl::gaussian_distribution<double>);     \
   BENCHMARK_TEMPLATE(BmDist, Engine, std::exponential_distribution<double>);   \
   BENCHMARK_TEMPLATE(BmDist, Engine, absl::exponential_distribution<double>);  \
   BENCHMARK_TEMPLATE(BmPoisson, Engine, std::poisson_distribution<int64_t>,    \
@@ -323,10 +445,6 @@ void BmThread(benchmark::State& state) {
   BENCHMARK_TEMPLATE(BmDist, Engine, std::geometric_distribution<int64_t>);    \
   BENCHMARK_TEMPLATE(BmZipf, Engine, absl::zipf_distribution<uint64_t>);       \
   BENCHMARK_TEMPLATE(BmZipf, Engine, absl::zipf_distribution<uint64_t>, 2, 3); \
-  BENCHMARK_TEMPLATE(BmBernoulli, Engine, std::bernoulli_distribution,         \
-                     257305);                                                  \
-  BENCHMARK_TEMPLATE(BmBernoulli, Engine, absl::bernoulli_distribution,        \
-                     257305);                                                  \
   BENCHMARK_TEMPLATE(BmBeta, Engine, absl::beta_distribution<double>, 65, 41); \
   BENCHMARK_TEMPLATE(BmBeta, Engine, absl::beta_distribution<double>, 99,      \
                      330);                                                     \
@@ -388,11 +506,25 @@ BM_COPY(absl_rand64_fast);
 BM_THREAD(absl_rand64_fast);
 BM_EXTENDED(absl_rand64_fast);
 
+BM_BASIC(absl_rand32_fast);
+BM_BASIC(std::mt19937);
+BM_BASIC(std::minstd_rand);
+BM_CORE(Xorshift64);
+BM_CORE(SplitMix64);
+BM_CORE(Xoshiro256StarStar);
+
 #ifdef USE_PCG_RANDOM
 BM_BASIC(pcg64);
 BM_COPY(pcg64);
 BM_THREAD(pcg64);
 BM_EXTENDED(pcg64);
+
+BM_BASIC(pcg32);
+BM_COPY(pcg32);
+BM_EXTENDED(pcg32);
+BM_BASIC(pcg32_fast);
+BM_BASIC(pcg_engines::setseq_dxsm_64_32);
+BM_BASIC(pcg_engines::cm_setseq_dxsm_128_64);
 
 /*
 BM_BASIC(pcg64_oneseq);

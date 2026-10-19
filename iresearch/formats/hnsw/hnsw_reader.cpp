@@ -26,6 +26,8 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -36,10 +38,10 @@
 namespace irs {
 namespace {
 
-std::vector<float> NormalizedQuery(const VectorFilterOptions& opts,
-                                   uint32_t d) {
-  std::vector<float> q{opts.query.begin(), opts.query.end()};
-  if (opts.metric == VectorMetric::Cosine) {
+std::vector<float> NormalizedQuery(std::span<const float> query,
+                                   VectorMetric metric, uint32_t d) {
+  std::vector<float> q{query.begin(), query.end()};
+  if (metric == VectorMetric::Cosine) {
     std::vector<float> normalized(q.size());
     duckdb::L2NormalizeOp::Operation(q.data(), normalized.data(), d);
     q = std::move(normalized);
@@ -51,13 +53,13 @@ std::vector<float> NormalizedQuery(const VectorFilterOptions& opts,
 
 HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
   HnswHeader h;
-  h.version = static_cast<uint32_t>(in.ReadI32());
   h.d = static_cast<uint32_t>(in.ReadI32());
   h.metric = static_cast<VectorMetric>(in.ReadI32());
   h.quant = static_cast<VectorQuantization>(in.ReadI32());
   h.ef_construction = static_cast<uint32_t>(in.ReadI32());
   h.record_size = static_cast<uint32_t>(in.ReadI32());
   h.rows = static_cast<uint64_t>(in.ReadI64());
+  h.rotated = in.ReadByte() != 0;
   return h;
 }
 
@@ -72,11 +74,26 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     IRS_IGNORE(ReadHeader(*in));
     auto data = std::make_shared<HnswData>();
     data->graph = HnswGraph::Deserialize(*in);
+    const auto read_floats = [&](std::vector<float>& out, size_t count) {
+      out.resize(count);
+      if (count != 0) {
+        in->ReadData(reinterpret_cast<byte_type*>(out.data()),
+                     count * sizeof(float));
+      }
+    };
+    const auto read_rotation = [&] {
+      std::vector<float> rotation;
+      read_floats(rotation, size_t{_header.d} * _header.d);
+      data->rotation =
+        _bases
+          ? _bases->Share(_field, std::move(rotation))
+          : std::make_shared<const std::vector<float>>(std::move(rotation));
+    };
     if (_header.quant == VectorQuantization::None) {
-      data->vectors.resize(static_cast<size_t>(_header.rows) * _header.d);
-      if (!data->vectors.empty()) {
-        in->ReadData(reinterpret_cast<byte_type*>(data->vectors.data()),
-                     data->vectors.size() * sizeof(float));
+      read_floats(data->vectors, static_cast<size_t>(_header.rows) * _header.d);
+      if (_header.rotated) {
+        read_rotation();
+        read_floats(data->norms, static_cast<size_t>(_header.rows));
       }
     } else {
       const auto stats_size = static_cast<size_t>(in->ReadI64());
@@ -92,14 +109,19 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
         return;
       }
       if (QuantizerNeedsCentroid(_header.quant)) {
-        data->centroid.resize(_header.d);
-        in->ReadData(reinterpret_cast<byte_type*>(data->centroid.data()),
-                     data->centroid.size() * sizeof(float));
+        read_floats(data->centroid, _header.d);
       }
       data->codes.resize(static_cast<size_t>(_header.rows) *
                          _header.record_size);
       if (!data->codes.empty()) {
         in->ReadData(data->codes.data(), data->codes.size());
+      }
+      if (_header.rotated) {
+        read_rotation();
+        data->byte_rotation = _bases ? _bases->Bytes(data->rotation)
+                                     : MakeByteBasis(*data->rotation);
+        read_floats(data->tails, static_cast<size_t>(_header.rows) *
+                                   HnswCodeTails(_header.d));
       }
     }
     _data = std::move(data);
@@ -110,33 +132,31 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
 QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
                                         const PrepareContext& ctx,
                                         const VectorFilterOptions& opts,
-                                        uint32_t /*effort*/) const {
-  SDB_ASSERT(opts.query.size() == _header.d);
-  if (Empty()) {
-    return QueryBuilder::Empty();
-  }
-  auto data = Load(segment);
-  if (!data || data->graph.Empty()) {
-    return QueryBuilder::Empty();
-  }
-  auto query = NormalizedQuery(opts, _header.d);
-  auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
-  SDB_ASSERT(!data->stats || codebook);
+                                        uint32_t /*effort*/,
+                                        AnnQueryCache* cache) const {
   SDB_ASSERT(opts.ef_search != 0);
-  const auto ef = std::max(opts.ef_search, opts.min_ef);
-  auto built = memory::make_tracked<HnswQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
-    opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
-    /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost);
-  built->SetStats(ctx.Record());
-  return built;
+  return PrepareSearch(segment, ctx, opts,
+                       {.ef = std::max(opts.ef_search, opts.min_ef)}, cache);
 }
 
 QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const VectorFilterOptions& opts,
                                           float radius, bool inclusive,
-                                          uint32_t /*effort*/) const {
+                                          uint32_t /*effort*/,
+                                          AnnQueryCache* cache) const {
+  return PrepareSearch(segment, ctx, opts,
+                       {.threshold = RadiusThreshold(opts.metric, radius),
+                        .max_results = static_cast<size_t>(_header.rows),
+                        .inclusive = inclusive},
+                       cache);
+}
+
+QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
+                                           const PrepareContext& ctx,
+                                           const VectorFilterOptions& opts,
+                                           HnswSearchLimits limits,
+                                           AnnQueryCache* cache) const {
   SDB_ASSERT(opts.query.size() == _header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
@@ -145,18 +165,45 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
-  auto query = NormalizedQuery(opts, _header.d);
-  auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
-  SDB_ASSERT(!data->stats || codebook);
-  const bool angular = opts.metric == VectorMetric::InnerProduct ||
-                       opts.metric == VectorMetric::Cosine;
-  const score_t threshold = angular ? radius : -radius;
+  QueryBuilder::ptr inner;
+  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+    return QueryBuilder::Empty();
+  }
   auto built = memory::make_tracked<HnswQuery>(
-    ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
-    opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
-    static_cast<size_t>(_header.rows), inclusive, ctx.boost);
+    ctx.memory, segment, std::move(data), opts, _header.record_size, limits,
+    ctx.boost, std::move(inner), cache);
   built->SetStats(ctx.Record());
   return built;
+}
+
+AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
+                                      std::span<const float> query,
+                                      VectorMetric metric) const {
+  if (Empty() || query.size() != _header.d ||
+      (metric == VectorMetric::Cosine) !=
+        (_header.metric == VectorMetric::Cosine)) {
+    return {};
+  }
+  auto data = Load(segment);
+  if (!data || !data->stats || data->codes.empty()) {
+    return {};
+  }
+  const auto normalized = NormalizedQuery(query, metric, _header.d);
+  const auto panorama =
+    data->rotation
+      ? RotateQuery(nullptr, data->rotation, data->byte_rotation, normalized)
+      : nullptr;
+  auto bound = data->stats->MakeCodeBound(
+    panorama ? panorama->rotated : normalized, metric);
+  if (!bound) {
+    return {};
+  }
+  AnnExactCodes codes{.bound = std::move(bound),
+                      .codes = data->codes.data(),
+                      .levels = data->graph.Levels(),
+                      .record_size = _header.record_size};
+  codes.owner = std::move(data);
+  return codes;
 }
 
 }  // namespace irs

@@ -1,0 +1,118 @@
+control substitution on
+
+statement ok
+CREATE TABLE cbb_src (id INTEGER, b BYTEA);
+
+
+statement ok
+INSERT INTO cbb_src VALUES (1, '\x41'::BYTEA), (2, '\x000102030405060708090a0b0c0d0e0f10111213'::BYTEA), (3, ''::BYTEA), (4, NULL);
+
+
+statement count 4
+COPY cbb_src TO '${__TEST_DIR__}/copy_binary_bytea.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbb_dst (id INTEGER, b BYTEA);
+
+
+statement count 4
+COPY cbb_dst FROM '${__TEST_DIR__}/copy_binary_bytea.bin' (FORMAT binary);
+
+
+query
+SELECT id, octet_length(b) AS len, encode(b, 'hex') AS hex FROM cbb_dst ORDER BY id;
+----
+id	len	hex
+1	1	41
+2	20	000102030405060708090a0b0c0d0e0f10111213
+3	0	(empty)
+4	NULL	NULL
+
+
+statement ok
+CREATE TABLE cbb_many_src (id INTEGER, b BYTEA);
+
+
+statement ok
+INSERT INTO cbb_many_src SELECT i, decode(substr(repeat(md5(i::text), 7), 1, 2 * (i % 100 + 1)), 'hex') FROM generate_series(0, 19999) AS t(i);
+
+
+statement count 20000
+COPY cbb_many_src TO '${__TEST_DIR__}/copy_binary_bytea_many.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbb_many_dst (id INTEGER, b BYTEA);
+
+
+statement count 20000
+COPY cbb_many_dst FROM '${__TEST_DIR__}/copy_binary_bytea_many.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(octet_length(d.b)) AS bytes, count(*) FILTER (WHERE d.b IS DISTINCT FROM s.b) AS mismatched FROM cbb_many_src s JOIN cbb_many_dst d USING (id);
+----
+n	bytes	mismatched
+20000	1010000	0
+
+
+statement ok
+CREATE TABLE cbb_arr_src (id INTEGER, a BYTEA[]);
+
+
+statement ok
+INSERT INTO cbb_arr_src VALUES (1, ARRAY['\x000102030405060708090a0b0c0d0e0f'::bytea, 'abcdefghijklmnop\001'::bytea, NULL, ''::bytea]), (2, ARRAY['\x41'::bytea, 'q\\r'::bytea]), (3, ARRAY[]::bytea[]), (4, NULL);
+
+
+statement count 4
+COPY cbb_arr_src TO '${__TEST_DIR__}/copy_binary_bytea_array.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbb_arr_dst (id INTEGER, a BYTEA[]);
+
+
+statement count 4
+COPY cbb_arr_dst FROM '${__TEST_DIR__}/copy_binary_bytea_array.bin' (FORMAT binary);
+
+
+query
+SELECT id, encode(a[1], 'hex') AS e1, encode(a[2], 'hex') AS e2, a[3] IS NULL AS e3_null, encode(a[4], 'hex') AS e4 FROM cbb_arr_dst ORDER BY id;
+----
+id	e1	e2	e3_null	e4
+1	000102030405060708090a0b0c0d0e0f	6162636465666768696a6b6c6d6e6f7001	t	(empty)
+2	41	715c72	t	NULL
+3	NULL	NULL	t	NULL
+4	NULL	NULL	t	NULL
+
+
+query
+SELECT count(*) AS mismatched FROM cbb_arr_src s JOIN cbb_arr_dst d USING (id) WHERE s.a IS DISTINCT FROM d.a;
+----
+mismatched
+0
+
+
+statement ok
+DROP TABLE cbb_arr_dst;
+
+
+statement ok
+DROP TABLE cbb_arr_src;
+
+
+statement ok
+DROP TABLE cbb_many_dst;
+
+
+statement ok
+DROP TABLE cbb_many_src;
+
+
+statement ok
+DROP TABLE cbb_dst;
+
+
+statement ok
+DROP TABLE cbb_src;

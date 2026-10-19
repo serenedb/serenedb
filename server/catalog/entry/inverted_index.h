@@ -23,6 +23,7 @@
 #include <array>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
@@ -303,5 +304,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
 };
+
+std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
+  duckdb::DuckCatalog& catalog);
 
 }  // namespace sdb::catalog

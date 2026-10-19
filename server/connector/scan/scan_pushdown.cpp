@@ -42,7 +42,10 @@ duckdb::TableFilterPushdown HandleScoreFilter(ScanBindData& bind,
                                               duckdb::TableFilter& filter) {
   auto& expr_filter =
     duckdb::ExpressionFilter::GetExpressionFilter(filter, "HandleScoreFilter");
-  if (!bind.search.deferred.empty() && expr_filter.expr->CanThrow()) {
+  const bool deferred_checks =
+    !bind.search.deferred.empty() ||
+    (bind.plan_cache.deferred && bind.DefersChecks());
+  if (deferred_checks && expr_filter.expr->CanThrow()) {
     return duckdb::TableFilterPushdown::Reject;
   }
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;

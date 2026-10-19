@@ -70,7 +70,7 @@ seng_up() {
 	local cpuset=()
 	[[ -n "${SENG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${SENG_CPUSET}")
 
-	docker rm -f "${SENG_NAME}" >/dev/null 2>&1 || true
+	docker rm -fv "${SENG_NAME}" >/dev/null 2>&1 || true
 	SENG_CONTAINER=""
 	SENG_PID=""
 
@@ -116,7 +116,7 @@ seng_up() {
 seng_down() {
 	if [[ -n "${SENG_CONTAINER}" ]]; then
 		docker logs "${SENG_CONTAINER}" >"/tmp/${USER}-cs-bench-${SENG_CONTAINER}.log" 2>&1 || true
-		docker rm -f "${SENG_CONTAINER}" >/dev/null 2>&1 || true
+		docker rm -fv "${SENG_CONTAINER}" >/dev/null 2>&1 || true
 		SENG_CONTAINER=""
 	elif [[ -n "${SENG_PID}" ]]; then
 		kill -9 "${SENG_PID}" 2>/dev/null || true

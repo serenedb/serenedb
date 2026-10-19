@@ -44,7 +44,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
   while (NextLiveUnit(g, l)) {
     const auto& unit = l.unit;
     const auto& sub = (*g.reader)[unit.seg];
-    if (unit.whole && l.seg_cls.active.empty() && !g.Bind().search.filter &&
+    if (unit.whole && l.seg_cls.active.empty() && !g.ClaimedWhere() &&
         !g.vector_scorer) {
       l.local_count += sub.live_docs_count();
     } else {

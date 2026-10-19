@@ -30,10 +30,18 @@
 
 namespace irs::detail {
 
+enum class PointRead : uint8_t {
+  None,
+  Row,
+  Vector,
+};
+
 struct TableFilter {
   virtual ~TableFilter() = default;
 
   virtual doc_id_t Live(doc_id_t doc) = 0;
+
+  virtual bool Foldable() const noexcept = 0;
 
   virtual uint64_t CountAndClear(doc_id_t base, uint64_t* mask,
                                  uint32_t words) = 0;
@@ -42,6 +50,15 @@ struct TableFilter {
 
   virtual uint32_t Narrow(doc_id_t base, const uint64_t* in, uint64_t* out,
                           score_t* scores, uint32_t words) = 0;
+
+  virtual void Rewind() {}
+
+  virtual PointRead PointReads() const noexcept { return PointRead::None; }
+
+  virtual bool Admits(doc_id_t doc) {
+    Rewind();
+    return Narrow(&doc, nullptr, 1) == 1;
+  }
 };
 
 template<typename Table>

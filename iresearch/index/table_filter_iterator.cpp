@@ -29,16 +29,167 @@
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+namespace {
+
+constexpr uint32_t kPointHeapFetches = 1024;
+
+bool AllWordsSet(const uint64_t* words, duckdb::idx_t count) noexcept {
+  for (duckdb::idx_t w = 0; w < count; ++w) {
+    if (words[w] != ~uint64_t{0}) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsColumnRef(const duckdb::Expression& expr) {
+  return expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF &&
+         expr.Cast<duckdb::BoundReferenceExpression>().Index() == 0;
+}
+
+bool IsDenseType(duckdb::PhysicalType type) {
+  switch (type) {
+    case duckdb::PhysicalType::INT8:
+    case duckdb::PhysicalType::INT16:
+    case duckdb::PhysicalType::INT32:
+    case duckdb::PhysicalType::INT64:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool NarrowRange(const duckdb::Expression& expr, duckdb::PhysicalType type,
+                 int64_t& lo, int64_t& hi) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+    if (expr.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_AND) {
+      return false;
+    }
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      if (!NarrowRange(*child, type, lo, hi)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    return false;
+  }
+  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto* column = &duckdb::BoundComparisonExpression::Left(cmp);
+  const auto* constant = &duckdb::BoundComparisonExpression::Right(cmp);
+  auto op = expr.GetExpressionType();
+  if (!IsColumnRef(*column)) {
+    std::swap(column, constant);
+    op = duckdb::FlipComparisonExpression(op);
+  }
+  if (!IsColumnRef(*column) || constant->GetExpressionClass() !=
+                                 duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return false;
+  }
+  const auto& value =
+    constant->Cast<duckdb::BoundConstantExpression>().GetValue();
+  if (value.IsNull() || value.type().InternalType() != type) {
+    return false;
+  }
+  const auto c = value.GetValue<int64_t>();
+  switch (op) {
+    case duckdb::ExpressionType::COMPARE_EQUAL:
+      lo = std::max(lo, c);
+      hi = std::min(hi, c);
+      return true;
+    case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+      lo = std::max(lo, c);
+      return true;
+    case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+      hi = std::min(hi, c);
+      return true;
+    case duckdb::ExpressionType::COMPARE_GREATERTHAN:
+      if (c == std::numeric_limits<int64_t>::max()) {
+        lo = c;
+        hi = c - 1;
+        return true;
+      }
+      lo = std::max(lo, c + 1);
+      return true;
+    case duckdb::ExpressionType::COMPARE_LESSTHAN:
+      if (c == std::numeric_limits<int64_t>::min()) {
+        lo = c + 1;
+        hi = c;
+        return true;
+      }
+      hi = std::min(hi, c - 1);
+      return true;
+    default:
+      return false;
+  }
+}
+
+template<typename T>
+duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
+                          int64_t lo, int64_t hi, uint64_t* words) {
+  using U = std::make_unsigned_t<T>;
+  const auto n_words = (count + 63) / 64;
+  if (lo > hi || lo > std::numeric_limits<T>::max() ||
+      hi < std::numeric_limits<T>::min()) {
+    std::fill_n(words, n_words, uint64_t{0});
+    return 0;
+  }
+  const auto base = static_cast<U>(
+    static_cast<T>(std::max<int64_t>(lo, std::numeric_limits<T>::min())));
+  const auto span =
+    static_cast<U>(static_cast<U>(static_cast<T>(
+                     std::min<int64_t>(hi, std::numeric_limits<T>::max()))) -
+                   base);
+  const auto* data = duckdb::FlatVector::GetData<T>(values);
+  const auto* validity = duckdb::FlatVector::Validity(values).GetData();
+  duckdb::idx_t total = 0;
+  for (duckdb::idx_t w = 0; w < n_words; ++w) {
+    const auto first = w * 64;
+    const auto m = std::min<duckdb::idx_t>(64, count - first);
+    uint64_t bits = 0;
+    for (duckdb::idx_t j = 0; j < m; ++j) {
+      const auto shifted =
+        static_cast<U>(static_cast<U>(data[first + j]) - base);
+      bits |= uint64_t{shifted <= span} << j;
+    }
+    if (validity) {
+      bits &= validity[w];
+    }
+    words[w] &= bits;
+    total += static_cast<duckdb::idx_t>(std::popcount(words[w]));
+  }
+  return total;
+}
+
+}  // namespace
+
+ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
+  : _query{filter.PrepareSegment(segment, {})} {
+  if (QueryBuilder::IsEmpty(*_query)) {
+    return;
+  }
+  _set = std::make_unique<detail::LazyBitset>(detail::MakeDocSet(
+    _query.get(), static_cast<doc_id_t>(segment.docs_count())));
+}
+
+bool ColFilterLeaf::Contains(doc_id_t doc) {
+  return _set && doc < _set->End() && _set->Contains(doc);
+}
 
 duckdb::TableFilterState& ColFilterStateCache::State(
   duckdb::ClientContext& context, const duckdb::TableFilter& filter) {
@@ -60,6 +211,30 @@ irs::ColumnReader::VectorScratch& ColFilterStateCache::Scratch(
   return *e.scratch;
 }
 
+duckdb::DataChunk& ColFilterStateCache::Chunk(
+  duckdb::ClientContext& context, const duckdb::TableFilter& filter,
+  std::span<const duckdb::LogicalType> types) {
+  auto& e = Find(filter);
+  if (!e.chunk) {
+    e.chunk = std::make_unique<duckdb::DataChunk>();
+    e.chunk->Initialize(
+      context, duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()});
+  }
+  return *e.chunk;
+}
+
+std::span<ColFilterLeaf> ColFilterStateCache::Leaves(
+  const duckdb::TableFilter& filter, const SubReader& segment,
+  std::span<const std::shared_ptr<const Filter>> leaves) {
+  auto& e = Find(filter);
+  e.leaves.clear();
+  e.leaves.reserve(leaves.size());
+  for (const auto& leaf : leaves) {
+    e.leaves.emplace_back(*leaf, segment);
+  }
+  return e.leaves;
+}
+
 ColFilterStateCache::Entry& ColFilterStateCache::Find(
   const duckdb::TableFilter& filter) {
   for (auto& e : _entries) {
@@ -77,10 +252,26 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
                           ColFilterStateCache& states) {
   _context = &context;
   _states = &states;
+  _col_reader = &col_reader;
   _cols.clear();
+  _rows.clear();
   _cols.reserve(specs.size());
   for (const auto& spec : specs) {
     if (spec.is_score) {
+      continue;
+    }
+    if (!spec.row_fields.empty()) {
+      auto& row = _rows.emplace_back();
+      row.state = &states.State(context, *spec.filter);
+      row.chunk = &states.Chunk(context, *spec.filter, spec.row_types);
+      for (const auto field : spec.row_fields) {
+        const auto* column = col_reader.Column(field);
+        row.readers.push_back(column);
+        row.scans.push_back(column ? column->InitScan(ctx)
+                                   : irs::ColumnReader::ScanState{});
+      }
+      row.points.resize(row.readers.size());
+      row.leaves = spec.row_leaves;
       continue;
     }
     const auto* column = col_reader.Column(spec.field);
@@ -158,7 +349,7 @@ void ColFilterChain::FinishBind() {
       c.gathered.Initialize(STANDARD_VECTOR_SIZE);
     }
   }
-  if (!_cols.empty() && !_sel_data) {
+  if (!Empty() && !_sel_data) {
     _sel_data =
       duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
@@ -178,6 +369,103 @@ void ColFilterChain::FinishBind() {
   } else {
     _adaptive.reset();
   }
+  _dense.reset();
+  if (_rows.empty() && _cols.size() == 1) {
+    const auto& c = _cols.front();
+    const auto type = c.reader->Type().InternalType();
+    if (!c.nested && !c.list_like && !c.row_gather && !c.extract &&
+        !c.is_dynamic && c.output_slots.empty() &&
+        c.null_check == NullCheckKind::None && IsDenseType(type)) {
+      DenseRange range{.type = type};
+      if (NarrowRange(*c.expr->expr, type, range.lo, range.hi)) {
+        _dense = range;
+      }
+    }
+  }
+}
+
+template<bool Keep>
+duckdb::idx_t ColFilterChain::DenseMask(
+  irs::doc_id_t base, std::conditional_t<Keep, const uint64_t*, uint64_t*> in,
+  duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
+  uint64_t* mask = nullptr;
+  if constexpr (Keep) {
+    if (in != out) {
+      std::copy_n(in, words, out);
+    }
+    mask = out;
+  } else {
+    mask = in;
+  }
+  auto& f = _cols.front();
+  const auto first = static_cast<uint64_t>(base) - irs::doc_limits::min();
+  const auto end =
+    std::min<uint64_t>(first + uint64_t{words} * 64, f.reader->RowCount());
+  if (end <= first) {
+    std::fill_n(mask, words, uint64_t{0});
+    return 0;
+  }
+  const auto cur = f.reader->GatherCursor(f.scan);
+  SDB_ASSERT(first >= cur, "DenseMask requires ascending rows");
+  if (first > cur) {
+    f.reader->Skip(f.scan, first - cur);
+  }
+  duckdb::idx_t total = 0;
+  for (uint64_t row = first; row < end;) {
+    const auto n = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, end - row));
+    auto* chunk = mask + (row - first) / 64;
+    const auto chunk_words = (n + 63) / 64;
+    if (row >= f.checked.end || row < f.checked.begin) {
+      f.checked = f.reader->Locate(row, f.checked);
+      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      f.verdict = f.expr->CheckStatistics(stats, *f.state);
+    }
+    const auto z = row + n <= f.checked.end
+                     ? f.verdict
+                     : duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+    duckdb::idx_t kept = 0;
+    if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
+        z == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+      f.reader->Skip(f.scan, n);
+      std::fill_n(chunk, chunk_words, uint64_t{0});
+    } else if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
+      f.reader->Skip(f.scan, n);
+      if (const auto tail = n % 64; tail != 0) {
+        chunk[chunk_words - 1] &= (uint64_t{1} << tail) - 1;
+      }
+      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
+        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
+      }
+    } else {
+      auto& values = f.scratch->Reset();
+      f.reader->Scan(f.scan, values, n);
+      values.Flatten(n);
+      switch (_dense->type) {
+        case duckdb::PhysicalType::INT8:
+          kept = KeepInRange<int8_t>(values, n, _dense->lo, _dense->hi, chunk);
+          break;
+        case duckdb::PhysicalType::INT16:
+          kept = KeepInRange<int16_t>(values, n, _dense->lo, _dense->hi, chunk);
+          break;
+        case duckdb::PhysicalType::INT32:
+          kept = KeepInRange<int32_t>(values, n, _dense->lo, _dense->hi, chunk);
+          break;
+        default:
+          kept = KeepInRange<int64_t>(values, n, _dense->lo, _dense->hi, chunk);
+          break;
+      }
+    }
+    if constexpr (!Keep) {
+      std::fill_n(chunk, chunk_words, uint64_t{0});
+    }
+    total += kept;
+    row += n;
+  }
+  if (const auto filled = (end - first + 63) / 64; filled < words) {
+    std::fill_n(mask + filled, words - filled, uint64_t{0});
+  }
+  return total;
 }
 
 duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
@@ -275,13 +563,87 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
   if (_adaptive) {
     _adaptive->EndFilter(timing);
   }
+  return _rows.empty() ? survivors : FilterRows(anchor, span, sel, survivors);
+}
+
+IRS_FORCE_INLINE duckdb::idx_t ColFilterChain::EvaluateRow(Row& row,
+                                                           duckdb::idx_t count,
+                                                           const auto& doc_of) {
+  auto& chunk = *row.chunk;
+  for (size_t l = 0; l < row.leaves.size(); ++l) {
+    auto writer = duckdb::FlatVector::Writer<bool>(
+      chunk.data[row.readers.size() + l], count);
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      writer.WriteValue(row.leaves[l].Contains(doc_of(k)));
+    }
+  }
+  chunk.SetCardinality(count);
+  auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
+  return executor.SelectExpression(chunk, _row_sel);
+}
+
+duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
+                                         duckdb::SelectionVector& sel,
+                                         duckdb::idx_t survivors) {
+  for (auto& row : _rows) {
+    if (survivors == 0) {
+      break;
+    }
+    auto& chunk = *row.chunk;
+    chunk.Reset();
+    for (size_t j = 0; j < row.readers.size(); ++j) {
+      auto& vector = chunk.data[j];
+      const auto* reader = row.readers[j];
+      if (!reader) {
+        duckdb::FlatVector::ValidityMutable(vector).SetAllInvalid(survivors);
+      } else if (span <= STANDARD_VECTOR_SIZE) {
+        reader->GatherDense(row.scans[j], anchor, sel, survivors, span, vector);
+      } else {
+        reader->GatherScatter(row.scans[j], anchor, sel, survivors, vector, 0);
+      }
+    }
+    const auto approved = EvaluateRow(row, survivors, [&](duckdb::idx_t k) {
+      return static_cast<doc_id_t>(anchor + sel.get_index(k)) +
+             doc_limits::min();
+    });
+    for (duckdb::idx_t k = 0; k < approved; ++k) {
+      sel.set_index(k, sel.get_index(_row_sel.get_index(k)));
+    }
+    survivors = approved;
+  }
   return survivors;
+}
+
+bool ColFilterChain::AdmitRows(uint64_t row) {
+  for (auto& r : _rows) {
+    auto& chunk = *r.chunk;
+    chunk.Reset();
+    for (size_t j = 0; j < r.readers.size(); ++j) {
+      auto& vector = chunk.data[j];
+      const auto* reader = r.readers[j];
+      if (!reader) {
+        duckdb::FlatVector::SetNull(vector, 0, true);
+        continue;
+      }
+      if (!r.points[j]) {
+        r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
+          *_col_reader, *reader);
+      }
+      r.points[j]->FetchRow(row, vector, 0);
+    }
+    if (EvaluateRow(r, 1, [&](duckdb::idx_t) {
+          return static_cast<doc_id_t>(row) + doc_limits::min();
+        }) == 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
                                          irs::score_t* scores,
                                          duckdb::idx_t n) {
-  if (_cols.empty() || n == 0) {
+  if (Empty() || n == 0) {
     return n;
   }
   const auto* const window_col = WindowColumn();
@@ -316,11 +678,75 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
   return w;
 }
 
+detail::PointRead ColFilterChain::PointReads() const noexcept {
+  const auto zstd = [](const irs::ColumnReader& reader) {
+    return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
+      return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
+    });
+  };
+  auto read = detail::PointRead::Row;
+  for (const auto& c : _cols) {
+    if (c.nested) {
+      return detail::PointRead::None;
+    }
+    if (zstd(*c.reader)) {
+      read = detail::PointRead::Vector;
+    }
+  }
+  for (const auto& r : _rows) {
+    for (const auto* reader : r.readers) {
+      if (reader && zstd(*reader)) {
+        read = detail::PointRead::Vector;
+      }
+    }
+  }
+  return read;
+}
+
+bool ColFilterChain::AdmitRow(uint64_t row) {
+  SDB_ASSERT(_col_reader);
+  for (auto& f : _cols) {
+    if (!f.point) {
+      f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
+                                                                 *f.reader);
+      f.point_scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
+      f.point_heap =
+        !duckdb::TypeIsConstantSize(f.reader->Type().InternalType());
+      auto& executor =
+        f.state->Cast<duckdb::ExpressionFilterState>().fast_executor;
+      if (executor && executor->FiltersValues()) {
+        f.point_filter = executor.get();
+      }
+    }
+    auto* value = &f.point_scratch->vector;
+    if (f.point_heap && ++f.point_heap_fetches == kPointHeapFetches) {
+      f.point_heap_fetches = 0;
+      value = &f.point_scratch->Reset();
+    }
+    const bool valid = f.point->FetchRow(row, *value, 0);
+    if (f.point_filter) {
+      if (!f.point_filter->FilterValue(duckdb::FlatVector::GetData(*value),
+                                       valid)) {
+        return false;
+      }
+      continue;
+    }
+    duckdb::SelectionVector sel;
+    duckdb::idx_t approved = 1;
+    duckdb::ColumnSegment::FilterSelection(sel, *value, *f.state, 1, approved);
+    if (approved == 0) {
+      return false;
+    }
+  }
+  return _rows.empty() || AdmitRows(row);
+}
+
 template<bool Keep>
 duckdb::idx_t ColFilterChain::WalkMask(
   irs::doc_id_t base, std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
   duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
-  SDB_ASSERT(!_cols.empty());
+  SDB_ASSERT(!Empty());
   duckdb::idx_t total = 0;
   const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
@@ -381,6 +807,24 @@ duckdb::idx_t ColFilterChain::WalkMask(
     uint64_t last = off;
     bool more = true;
     for (;;) {
+      if (word == ~uint64_t{0}) {
+        const uint64_t first = (w - 1) * 64;
+        if (first + 64 <= limit && first + 64 - off <= STANDARD_VECTOR_SIZE) {
+          auto* const sel = _sel.data() + run;
+          const auto rel = static_cast<uint32_t>(first - off);
+          for (uint32_t i = 0; i < 64; ++i) {
+            sel[i] = rel + i;
+          }
+          run += 64;
+          last = first + 63;
+          word = 0;
+          if (!load()) {
+            more = false;
+            break;
+          }
+          continue;
+        }
+      }
       const auto b = bit();
       if (b >= limit || b - off >= STANDARD_VECTOR_SIZE) {
         break;
@@ -413,13 +857,16 @@ duckdb::idx_t ColFilterChain::CountMask(irs::doc_id_t base, uint64_t* mask,
                                         duckdb::idx_t words) {
   // A count reaches the chain only with columns bound: nothing else can rule
   // a document out, so an empty chain would not have been passed at all.
-  SDB_ASSERT(!_cols.empty());
+  SDB_ASSERT(!Empty());
+  if (_dense && AllWordsSet(mask, words)) {
+    return DenseMask<false>(base, mask, words, {});
+  }
   return WalkMask<false>(base, mask, words, {});
 }
 
 duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
                                          uint64_t* out, duckdb::idx_t words) {
-  if (_cols.empty()) {
+  if (Empty()) {
     // Only the computed-score filter is bound, and it has already cleared its
     // own bits; what is left is the answer.
     SDB_ASSERT(in == out);
@@ -428,6 +875,9 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
       total += static_cast<duckdb::idx_t>(std::popcount(in[w]));
     }
     return total;
+  }
+  if (_dense && AllWordsSet(in, words)) {
+    return DenseMask<true>(base, in, words, out);
   }
   return WalkMask<true>(base, in, words, out);
 }
@@ -438,6 +888,13 @@ void ColFilterChain::Rewind(irs::ReadContext& ctx) {
     if (f.extract) {
       f.extract->Bind(*f.reader, ctx, f.extract_path, *f.extract_type,
                       _context);
+    }
+  }
+  for (auto& r : _rows) {
+    for (size_t j = 0; j < r.readers.size(); ++j) {
+      if (r.readers[j]) {
+        r.scans[j] = r.readers[j]->InitScan(ctx);
+      }
     }
   }
 }

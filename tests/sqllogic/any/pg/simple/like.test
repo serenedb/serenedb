@@ -729,3 +729,40 @@ SELECT (SELECT count(*) FROM ilike_unicode WHERE s LIKE '%br_l_e%') AS where_bru
 ----
 where_brulee	where_ilike
 200	200
+
+
+statement ok
+CREATE TABLE like_rewrites AS
+SELECT * FROM (VALUES (1, 'a%b'), (2, 'a_b'), (3, 'a\b'), (4, 'ab'), (5, 'a_bc'), (6, '50% off'), (7, 'x50%y'), (8, '%'), (9, 'za\b'), (10, 'a#b')) AS t(id, s)
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE 'a\%b') AS literal_percent,
+       count(*) FILTER (WHERE s LIKE 'a\_b%') AS escaped_prefix,
+       count(*) FILTER (WHERE s LIKE '%a\\b') AS escaped_suffix,
+       count(*) FILTER (WHERE s LIKE '%50\%%') AS escaped_contains,
+       count(*) FILTER (WHERE s LIKE 'a#_b%' ESCAPE '#') AS escape_prefix,
+       count(*) FILTER (WHERE s LIKE '%a\b' ESCAPE '') AS no_escape,
+       count(*) FILTER (WHERE s NOT LIKE 'a\_b%') AS not_prefix,
+       count(*) FILTER (WHERE s LIKE '\a\b') AS escaped_letters
+FROM like_rewrites
+----
+literal_percent	escaped_prefix	escaped_suffix	escaped_contains	escape_prefix	no_escape	not_prefix	escaped_letters
+1	2	2	2	2	2	8	1
+
+
+query
+SELECT id FROM like_rewrites WHERE s LIKE 'a#_b%' ESCAPE '#' ORDER BY id
+----
+id
+2
+5
+
+
+query
+SELECT id FROM like_rewrites WHERE s LIKE '%50\%%' OR s LIKE '\%' ORDER BY id
+----
+id
+6
+7
+8

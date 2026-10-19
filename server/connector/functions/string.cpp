@@ -1010,6 +1010,11 @@ std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
   return result;
 }
 
+bool LikePatternEndsWithEscape(std::string_view pattern) {
+  const auto escapes_begin = pattern.find_last_not_of('\\') + 1;
+  return (pattern.size() - escapes_begin) % 2 == 1;
+}
+
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 

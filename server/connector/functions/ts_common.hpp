@@ -290,6 +290,8 @@ struct RegexpArgs {
 };
 RegexpArgs ParseRegexpArgs(const duckdb::BoundFunctionExpression& func);
 
+void CheckLikePattern(std::string_view pattern);
+
 // ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.
 // `synthesised` collects any temporary expressions the unpacker

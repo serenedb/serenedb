@@ -1446,6 +1446,10 @@ absl::Status FromFunctionExpression(
 
       if (builder == &BuildTSLike) {
         pattern = LikeEscapePattern(pattern, escape_char);
+        if (LikePatternEndsWithEscape(pattern)) {
+          return absl::InvalidArgumentError(
+            "LIKE pattern must not end with escape character");
+        }
         validator = &IsLikeCompatibleAnalyzer;
       }
 

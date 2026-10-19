@@ -204,6 +204,8 @@ duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
 duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   duckdb::ClientContext& context);
 
+bool IsSereneDB(duckdb::Catalog& catalog);
+
 void ThrowIfReadOnly(const duckdb::Catalog& catalog, const auto&... command) {
   if (catalog.GetAttached().IsReadOnly()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),

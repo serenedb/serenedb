@@ -140,20 +140,6 @@ inline bool IsExtended(char type) {
   }
 }
 
-// COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /
-// STDOUT to /dev/stdin / /dev/stdout; a COPY to/from a real file classifies as
-// None (it runs through the normal Prepare/Execute path).
-enum class CopyDir : uint8_t {
-  None,
-  FromStdin,
-  ToStdout,
-};
-
-struct CopyKind {
-  CopyDir dir = CopyDir::None;
-  CopyFormat format = CopyFormat::Other;
-};
-
 bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
   if (statement.type != duckdb::StatementType::DROP_STATEMENT) {
     return false;
@@ -1431,22 +1417,10 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
         statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       _txn_state->Arm();
     }
-    const auto copy = ClassifyCopy(*statement);
-    if (copy.dir == CopyDir::FromStdin) {
-      // Returns pinned to _ioexec; remaining statements just continue
-      // inline-first from there.
-      co_await RunCopyFromStdin(std::move(statement));
-      continue;
-    }
-    if (copy.dir == CopyDir::ToStdout) {
-      if (IsNativeCopyFormat(copy.format)) {
-        // Inner query through the wire collector (parallel + PGCOPY/text
-        // framing), instead of the single-threaded CopyFunction.
-        co_await RunCopyToStdout(std::move(statement), copy.format);
-      } else {
-        // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
-        co_await RunCopyToStdoutViaFormat(std::move(statement), copy.format);
-      }
+    if (const auto copy = ClassifyCopy(*statement); copy.dir != CopyDir::None) {
+      // A COPY FROM STDIN returns pinned to _ioexec; remaining statements just
+      // continue inline-first from there.
+      co_await RunCopy(std::move(statement), copy);
       continue;
     }
     // Bind and execution share one duckdb query lifecycle (one transaction):
@@ -2328,7 +2302,6 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     portal.bind_info = ParseBindVars(payload, statement, statement_name);
   }
   portal.plan = statement.Plan();
-  portal.epoch = statement.BindEpoch();
   bound = true;
 
   WriteEmptyFrame(this->_send, PQ_MSG_BIND_COMPLETE);
@@ -2479,26 +2452,34 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                     ERR_MSG("portal is not bound"));
   }
+  if (portal.exec.state == PortalState::Done) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("portal \"", portal_name, "\" cannot be run"));
+  }
   switch (portal.stmt->GetKind()) {
     case Statement::Kind::Unbound:
-      // Never bound, or a deferred COPY a prior Execute already consumed.
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
-                      ERR_MSG("portal is not bound"));
+      SDB_UNREACHABLE();
     case Statement::Kind::Empty:
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       co_return {};
-    case Statement::Kind::Copy:
-      co_await RunDeferredCopy(portal);
+    case Statement::Kind::Copy: {
+      portal.exec.state = PortalState::Done;
+      auto statement = portal.stmt->GetCopy().Copy();
+      const auto copy = ClassifyCopy(*statement);
+      co_await RunCopy(std::move(statement), copy);
       co_return {};
+    }
     case Statement::Kind::Prepared:
+      if (portal.exec.state == PortalState::Unstarted) {
+        PlanPortal(portal);
+      }
       co_await ExecutePrepared(portal, max_rows);
       co_return {};
     case Statement::Kind::Compound:
       // The first Execute prepares + runs the leading sub-statements in order
       // and prepares the last against the now-updated catalog
       // (ExecuteCompound); ExecutePrepared then drives that last one --
-      // emitting the single CommandComplete and honoring max_rows -- and a
-      // re-Execute reaches it too.
+      // emitting the single CommandComplete and honoring max_rows.
       if (portal.exec.state == PortalState::Unstarted) {
         co_await ExecuteCompound(portal);
       }
@@ -2508,48 +2489,45 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
 }
 
 template<SocketKind Kind>
-yaclib::Task<> PgWireSession<Kind>::RunDeferredCopy(Portal& portal) {
-  // Consume the stashed COPY (the plan reverts to Unbound) so a stray
-  // re-Execute or a second portal bound to it gets a clean "not bound" rather
-  // than a re-run.
-  auto deferred = portal.stmt->TakeCopy();
-  const auto copy = ClassifyCopy(*deferred);
-  if (copy.dir == CopyDir::ToStdout) {
-    if (IsNativeCopyFormat(copy.format)) {
-      co_await RunCopyToStdout(std::move(deferred), copy.format);
-    } else {
-      // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
-      co_await RunCopyToStdoutViaFormat(std::move(deferred), copy.format);
-    }
-  } else {
+yaclib::Task<> PgWireSession<Kind>::RunCopy(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyKind copy) {
+  if (copy.dir == CopyDir::FromStdin) {
     // COPY FROM STDIN: RunCopyFromStdin brings the feeder live before the
     // sniff.
-    co_await RunCopyFromStdin(std::move(deferred));
+    co_await RunCopyFromStdin(std::move(statement));
+  } else if (IsNativeCopyFormat(copy.format)) {
+    // Inner query through the wire collector (parallel + PGCOPY/text
+    // framing), instead of the single-threaded CopyFunction.
+    co_await RunCopyToStdout(std::move(statement), copy.format);
+  } else {
+    // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
+    co_await RunCopyToStdoutViaFormat(std::move(statement), copy.format);
   }
   co_return {};
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::PlanPortal(Portal& portal) {
+  // A statement can be Bound and Executed either side of a DDL of this
+  // session's own, so the portal's plan is revalidated here too, not only at
+  // Bind. Nothing to re-plan once the portal is driving: the pipeline is
+  // already running against the plan it started with.
+  RevalidatePlan(*portal.stmt);
+  portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan());
+  if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
+    // PG's plancache guard (fixed_result): a re-plan changed the row type
+    // away from the one the client was last told, and it has not asked
+    // again -- it would decode these rows against a descriptor that no
+    // longer holds.
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cached plan must not change result type"));
+  }
 }
 
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
                                                     uint64_t max_rows) {
   auto& exec = portal.exec;
-  if (exec.state == PortalState::Unstarted) {
-    // A statement can be Bound and Executed either side of a DDL of this
-    // session's own, so the portal's plan is revalidated here too, not only at
-    // Bind. Nothing to re-plan once the portal is driving: the pipeline is
-    // already running against the plan it started with.
-    RevalidatePlan(*portal.stmt);
-    portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan());
-    portal.epoch = portal.stmt->BindEpoch();
-    if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
-      // PG's plancache guard (fixed_result): a re-plan changed the row type
-      // away from the one the client was last told, and it has not asked
-      // again -- it would decode these rows against a descriptor that no
-      // longer holds.
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("cached plan must not change result type"));
-    }
-  }
   auto& prepared = *portal.plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
 
@@ -2586,7 +2564,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
       } else {
         WriteCommandTag(prepared, *result, return_type);
       }
-      exec.state = PortalState::Exhausted;
+      exec.state = PortalState::Done;
       if (const auto* unbound = portal.stmt->Unbound();
           unbound && DeallocatesPreparedStatements(*unbound)) {
         ReleaseDeallocated();
@@ -2671,18 +2649,17 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   // sub-statement is prepared here too (catalog now final) and installed for
   // ExecutePrepared, which emits the one CommandComplete.
   _txn_state->Arm();
-  auto& body = portal.stmt->GetCompound();
+  const auto& body = portal.stmt->GetCompound();
   duckdb::vector<duckdb::Value> no_params;
   for (duckdb::idx_t i = 0; i + 1 < body.size(); ++i) {
-    auto prepared = _conn->Prepare(std::move(body[i]));
+    auto prepared = _conn->Prepare(body[i]->Copy());
     ThrowIfError(*prepared);
     ClosingPending pending;
     co_await DriveToResult(*prepared, no_params, pending, nullptr);
   }
-  const auto bind_epoch = _connection_ctx->CatalogEpoch();
-  auto last = _conn->Prepare(std::move(body.back()));
+  auto last = _conn->Prepare(body.back()->Copy());
   ThrowIfError(*last);
-  portal.stmt->SetCompoundResult(std::move(last), bind_epoch);
+  portal.plan = std::move(last);
   co_return {};
 }
 

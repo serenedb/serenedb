@@ -754,3 +754,28 @@ def test_discard_all_drops_driver_prepared_statements():
         c.execute("DISCARD ALL", prepare=False)
         assert _protocol_statements(c) == []
         assert c.execute("SELECT %s::INTEGER", (6,)).fetchone() == (6,)
+
+
+def test_prepared_multi_statement_command_runs_every_execute():
+    # A command the parser expands into several statements runs on every
+    # Execute of its prepared statement, not only on the first.
+    a, b = "prep_multi_a", "prep_multi_b"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{a}"')
+        c.execute(f'DROP TABLE IF EXISTS "{b}"')
+        c.execute(f'CREATE TABLE "{a}" (x INT)')
+        c.execute(f'CREATE TABLE "{b}" (y INT)')
+        try:
+            for attempt in range(3):
+                for truncate in (f'TRUNCATE "{a}", "{b}"',
+                                 f'TRUNCATE "{a}", "{b}" RESTART IDENTITY'):
+                    c.execute(f'INSERT INTO "{a}" VALUES (1)')
+                    c.execute(f'INSERT INTO "{b}" VALUES (2)')
+                    c.execute(truncate, prepare=True)
+                    counts = c.execute(
+                        f'SELECT (SELECT count(*) FROM "{a}"), '
+                        f'(SELECT count(*) FROM "{b}")').fetchone()
+                    assert counts == (0, 0), (attempt, truncate)
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{a}"')
+            c.execute(f'DROP TABLE IF EXISTS "{b}"')

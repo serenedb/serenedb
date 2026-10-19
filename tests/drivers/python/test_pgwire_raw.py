@@ -1234,6 +1234,85 @@ def test_copy_to_stdout_binary_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_tobin_ext")
 
 
+def test_prepared_copy_runs_on_every_execute(conn):
+    conn.sock.settimeout(10)
+    conn.run_ok("drop table if exists t_copy_rerun")
+    conn.run_ok("create table t_copy_rerun(a int)")
+    try:
+        conn.run_ok("insert into t_copy_rerun values (1), (2)")
+        conn.parse("copy_rerun_out", "copy t_copy_rerun to stdout")
+        conn.parse("", "copy t_copy_rerun to stdout")
+        conn.sync()
+        assert not errors(conn.drain_to_ready())
+        for stmt in ("copy_rerun_out", "copy_rerun_out", "", ""):
+            conn.bind("", stmt)
+            conn.execute("")
+            conn.sync()
+            m = conn.drain_to_ready()
+            assert tags(m) == [b"COPY 2\0"], errors(m)
+            body = b"".join(p for t, p in m if t == "d")
+            assert sorted(body.splitlines()) == [b"1", b"2"], body
+        conn.parse("copy_rerun_in", "copy t_copy_rerun from stdin")
+        conn.sync()
+        assert not errors(conn.drain_to_ready())
+        for value in (b"3\n", b"4\n"):
+            conn.bind("", "copy_rerun_in")
+            conn.execute("")
+            assert [conn.read_msg()[0], conn.read_msg()[0]] == ["2", "G"]
+            conn.send("d", value)
+            conn.send("c")
+            conn.sync()
+            m = conn.drain_to_ready()
+            assert tags(m) == [b"COPY 1\0"], errors(m)
+        m = conn.run("select string_agg(a::varchar, ',' order by a) from t_copy_rerun")
+        assert first_field(m) == b"1,2,3,4", rows(m)
+    finally:
+        conn.run_ok("drop table if exists t_copy_rerun")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "copy t_portal_done to stdout",
+        "insert into t_portal_done values (3)",
+        "truncate t_portal_done, t_portal_done2",
+    ],
+)
+def test_finished_command_portal_cannot_run_again(conn, query):
+    conn.run_ok("drop table if exists t_portal_done")
+    conn.run_ok("drop table if exists t_portal_done2")
+    conn.run_ok("create table t_portal_done(a int)")
+    conn.run_ok("create table t_portal_done2(a int)")
+    try:
+        conn.run_ok("insert into t_portal_done values (1), (2)")
+        conn.parse("", query)
+        conn.bind("p", "")
+        conn.execute("p")
+        conn.execute("p")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert len(tags(m)) == 1, tags(m)
+        assert [(e["C"], e["M"]) for e in errors(m)] == [
+            ("55000", 'portal "p" cannot be run')
+        ]
+        m = conn.run("select count(*) from t_portal_done")
+        assert first_field(m) == b"2", rows(m)
+    finally:
+        conn.run_ok("drop table if exists t_portal_done")
+        conn.run_ok("drop table if exists t_portal_done2")
+
+
+def test_drained_query_portal_runs_again_empty(conn):
+    conn.parse("", "select 1")
+    conn.bind("p", "")
+    conn.execute("p")
+    conn.execute("p")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert tags(m) == [b"SELECT 1\0", b"SELECT 0\0"], tags(m)
+
+
 def test_copy_binary_round_trip_extended(conn):
     # Full binary COPY both directions over the EXTENDED protocol: TO STDOUT
     # (FORMAT BINARY) produces the PGCOPY stream and FROM STDIN (FORMAT BINARY)

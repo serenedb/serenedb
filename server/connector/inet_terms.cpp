@@ -226,16 +226,6 @@ uint32_t MinMaskOf(Family family, const Bytes& network) {
 
 irs::bstring ExactTermOf(const Inet& value) { return EncodedTerms{value}[0]; }
 
-std::vector<irs::bstring> GranularTermsOf(const Inet& value) {
-  const EncodedTerms encoded{value};
-  std::vector<irs::bstring> terms;
-  terms.reserve(1 + LevelCount(value.family));
-  for (uint32_t i = 0; i <= LevelCount(value.family); ++i) {
-    terms.push_back(encoded[i]);
-  }
-  return terms;
-}
-
 irs::bstring LevelTermOf(Family family, uint32_t level, const Bytes& network) {
   return EncodedTerms{NetworkValue(family, network, MaxBits(family))}[level];
 }

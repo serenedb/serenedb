@@ -34,7 +34,6 @@
 #include <limits>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace duckdb {
 
@@ -183,7 +182,6 @@ Bytes Broadcast(const Inet& value, uint32_t bits);
 uint32_t MinMaskOf(Family family, const Bytes& network);
 
 irs::bstring ExactTermOf(const Inet& value);
-std::vector<irs::bstring> GranularTermsOf(const Inet& value);
 irs::bstring LevelTermOf(Family family, uint32_t level, const Bytes& network);
 irs::bstring MaskTermOf(Family family, uint8_t mask);
 irs::bstring ExactPrefixOf(Family family, const Bytes& network);

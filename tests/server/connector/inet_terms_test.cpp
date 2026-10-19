@@ -66,11 +66,21 @@ std::vector<irs::bstring> TermsOf(std::string_view text) {
 
 size_t TermCount(std::string_view text) { return TermsOf(text).size(); }
 
+std::vector<irs::bstring> ExactAndLevelTermsOf(const inet_terms::Inet& value) {
+  std::vector<irs::bstring> terms{inet_terms::ExactTermOf(value)};
+  const auto network = inet_terms::Network(value, value.mask);
+  for (uint32_t level = 1; level <= inet_terms::LevelCount(value.family);
+       ++level) {
+    terms.push_back(inet_terms::LevelTermOf(value.family, level, network));
+  }
+  return terms;
+}
+
 void ExpectTermsMatchHelpers(inet_terms::Family family, uint64_t upper,
                              uint64_t lower, uint16_t mask) {
   const auto value = inet_terms::FromAddress(family, upper, lower, mask);
   ASSERT_TRUE(value.has_value());
-  auto expected = inet_terms::GranularTermsOf(*value);
+  auto expected = ExactAndLevelTermsOf(*value);
   if (mask < value->MaxBits()) {
     expected.push_back(
       inet_terms::MaskTermOf(value->family, static_cast<uint8_t>(mask)));
@@ -113,7 +123,7 @@ TEST(inet_terms_test, equal_values_share_the_exact_term) {
 
 TEST(inet_terms_test, levels_are_prefixes_of_the_exact_term) {
   const auto value = Parse("10.1.2.3/20");
-  const auto terms = inet_terms::GranularTermsOf(value);
+  const auto terms = ExactAndLevelTermsOf(value);
   ASSERT_EQ(4, terms.size());
   for (size_t i = 1; i < terms.size(); ++i) {
     EXPECT_EQ(terms[0].substr(1, terms[i].size() - 1), terms[i].substr(1));

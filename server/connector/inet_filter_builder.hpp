@@ -71,6 +71,11 @@ absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
 absl::Status FromInetComparison(BoolTarget filter, const FilterContext& ctx,
                                 const InetOperands& operands, ComparisonOp op);
 
+// That's required because IPv4 and IPv6 comparable,
+// so AndRangeMergeRule cannot merge them
+absl::Status FromInetBetween(BoolTarget filter, const SearchColumnInfo& column,
+                             const duckdb::BoundFunctionExpression& between);
+
 absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
                         const SearchColumnInfo& column,
                         const duckdb::BoundOperatorExpression& op_expr);

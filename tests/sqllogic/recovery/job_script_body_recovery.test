@@ -18,6 +18,10 @@ CREATE TABLE jsbr_b (v INT);
 
 
 statement ok
+CREATE TABLE jsbr_ticks (part TEXT);
+
+
+statement ok
 INSERT INTO jsbr_a VALUES (1);
 
 
@@ -26,11 +30,30 @@ INSERT INTO jsbr_b VALUES (2);
 
 
 statement ok
+CREATE JOB jsbr_checkpointed AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (4, ''checkpointed''); TRUNCATE jsbr_a, jsbr_b;';
+
+
+statement ok
+FORCE CHECKPOINT;
+
+
+statement ok
 CREATE JOB jsbr_script AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (1, ''first''); TRUNCATE jsbr_a, jsbr_b; INSERT INTO jsbr_log VALUES (2, ''second'');';
 
 
 statement ok
 CREATE JOB jsbr_once AFTER 1 HOUR AS 'INSERT INTO jsbr_log VALUES (3, ''once''); DROP JOB jsbr_once;';
+
+
+statement ok
+CREATE JOB jsbr_every EVERY 1 SECOND AS 'BEGIN; INSERT INTO jsbr_ticks VALUES (''a''); INSERT INTO jsbr_ticks VALUES (''b''); COMMIT;';
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 2 AS ticked FROM jsbr_ticks;
+----
+ticked
+t
 
 
 statement ok
@@ -46,13 +69,59 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jsbr_') ORDER BY job_name;
 ----
 job_name	body
+jsbr_checkpointed	INSERT INTO jsbr_log VALUES (4, 'checkpointed'); TRUNCATE jsbr_a, jsbr_b;
+jsbr_every	BEGIN; INSERT INTO jsbr_ticks VALUES ('a'); INSERT INTO jsbr_ticks VALUES ('b'); COMMIT;
 jsbr_once	INSERT INTO jsbr_log VALUES (3, 'once'); DROP JOB jsbr_once;
 jsbr_script	INSERT INTO jsbr_log VALUES (1, 'first'); TRUNCATE jsbr_a, jsbr_b; INSERT INTO jsbr_log VALUES (2, 'second');
 
 
 connection r1
 statement ok
+CREATE TABLE jsbr_before AS SELECT count(*) AS n FROM jsbr_ticks;
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT (SELECT count(*) FROM jsbr_ticks) > (SELECT n FROM jsbr_before) AS resumed;
+----
+resumed
+t
+
+
+connection r1
+statement ok
+ALTER JOB jsbr_every SUSPEND;
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT running FROM sdb_jobs() WHERE job_name = 'jsbr_every';
+----
+running
+f
+
+
+connection r1
+query
+SELECT count(*) FILTER (WHERE part = 'a') = count(*) FILTER (WHERE part = 'b') AS paired FROM jsbr_ticks;
+----
+paired
+t
+
+
+connection r1
+statement ok
 EXECUTE JOB jsbr_script;
+
+
+connection r1
+statement ok
+INSERT INTO jsbr_a VALUES (5);
+
+
+connection r1
+statement ok
+EXECUTE JOB jsbr_checkpointed;
 
 
 connection r1
@@ -68,6 +137,7 @@ step	note
 1	first
 2	second
 3	once
+4	checkpointed
 
 
 connection r1

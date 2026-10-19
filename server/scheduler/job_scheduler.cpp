@@ -41,6 +41,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -207,10 +208,6 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       statements.push_back(peel->Copy());
       context->PreprocessStatements(statements);
       for (auto& statement : statements) {
-        auto pending = context->Submit(std::move(statement), parameters);
-        if (pending->HasError()) {
-          return pending->GetErrorObject();
-        }
         {
           absl::MutexLock lock{&state.mutex};
           if (state.dropped) {
@@ -221,14 +218,21 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
             state.contexts.emplace_back(context);
           }
         }
+        auto pending = context->Submit(std::move(statement), parameters);
+        if (pending->HasError()) {
+          return pending->GetErrorObject();
+        }
         pending->Complete();
         if (pending->HasError()) {
           return pending->GetErrorObject();
         }
-        absl::MutexLock lock{&state.mutex};
-        if (state.dropped) {
-          return {};
+        {
+          absl::MutexLock lock{&state.mutex};
+          if (state.dropped) {
+            return {};
+          }
         }
+        SDB_PARK_ONCE_ON_FAILURE("pause_job_after_statement");
       }
     }
   } catch (const std::exception& e) {

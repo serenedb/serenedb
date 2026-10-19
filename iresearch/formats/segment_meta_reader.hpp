@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include <duckdb/storage/storage_info.hpp>
 #include <string_view>
 
 namespace irs {
@@ -32,8 +31,7 @@ struct SegmentMeta;
 
 namespace segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename,
-          duckdb::StorageVersion version);
+void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
 
 }  // namespace segment_meta
 }  // namespace irs

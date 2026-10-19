@@ -6,7 +6,7 @@ CREATE DATABASE sv_db;
 
 
 query
-SELECT tags::VARCHAR LIKE '%serenedb_v2%' AS tagged
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS tagged
   FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
 ----
 tagged
@@ -92,7 +92,7 @@ n	sum_i	max_len
 
 connection after_restart
 query
-SELECT tags::VARCHAR LIKE '%serenedb_v2%' AS kept_version
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS kept_version
   FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_db';
 ----
 kept_version

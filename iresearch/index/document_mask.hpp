@@ -78,8 +78,6 @@ class DocumentMask final {
 
   static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
 
-  roaring::Roaring Compress() const;
-
   size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
 
   void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
@@ -144,10 +142,6 @@ class DocumentMaskBuilder final {
   DocumentMaskBuilder& operator=(DocumentMaskBuilder&& other) noexcept;
   DocumentMaskBuilder(const DocumentMaskBuilder& other);
   DocumentMaskBuilder& operator=(const DocumentMaskBuilder& other);
-
-  static DocumentMaskBuilder Read(const char* buf, size_t size);
-
-  roaring::Roaring Compress() const;
 
   bool Contains(doc_id_t doc) const noexcept;
 

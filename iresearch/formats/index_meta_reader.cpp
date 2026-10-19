@@ -64,17 +64,12 @@ bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
   return index_gen_limits::valid(max_gen);
 }
 
-struct FileHeader {
-  uint64_t seg_counter = 0;
-  duckdb::StorageVersion storage_version = duckdb::StorageVersion::INVALID;
-};
-
-FileHeader ReadFile(const Directory& dir, std::string_view filename,
-                    MetaPayloadReader& payload,
-                    std::vector<IndexSegment>* segments) {
+uint64_t ReadFile(const Directory& dir, std::string_view filename,
+                  MetaPayloadReader& payload,
+                  std::vector<IndexSegment>* segments) {
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
-  FileHeader header;
+  uint64_t cnt = 0;
   format_utils::ReadFooter(
     *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       const auto version =
@@ -86,9 +81,7 @@ FileHeader ReadFile(const Directory& dir, std::string_view filename,
           ERR_MSG("Index meta '", filename, "' has storage version ", version,
                   " and cannot be read: ", error));
       }
-      header.storage_version = static_cast<duckdb::StorageVersion>(version);
-      header.seg_counter =
-        meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
+      cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
       meta_in.ReadOptionalList(
         kFieldSegments, "segments",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -110,7 +103,7 @@ FileHeader ReadFile(const Directory& dir, std::string_view filename,
           payload(obj);
         });
     });
-  return header;
+  return cnt;
 }
 
 }  // namespace
@@ -140,17 +133,15 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
   SDB_ASSERT(index_gen_limits::valid(gen));
 
   std::vector<IndexSegment> segments;
-  const auto header = ReadFile(dir, filename, payload, &segments);
+  const auto cnt = ReadFile(dir, filename, payload, &segments);
 
   for (auto& segment : segments) {
-    segment_meta::Read(dir, segment.meta, segment.filename,
-                       header.storage_version);
+    segment_meta::Read(dir, segment.meta, segment.filename);
   }
 
   meta.gen = gen;
-  meta.seg_counter = header.seg_counter;
+  meta.seg_counter = cnt;
   meta.segments = std::move(segments);
-  meta.storage_version = header.storage_version;
 }
 
 void ReadPayload(const Directory& dir, std::string_view filename,

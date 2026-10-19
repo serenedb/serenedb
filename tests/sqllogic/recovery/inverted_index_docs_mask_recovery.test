@@ -35,9 +35,6 @@ num_live_docs	20000
 num_segments	1
 
 statement ok
-SET sdb_faults = 'search_index_storage_v1';
-
-statement ok
 DELETE FROM dmf WHERE grp < 60;
 
 statement ok
@@ -48,9 +45,6 @@ DELETE FROM dmf WHERE grp = 60;
 
 statement ok
 VACUUM (REFRESH_TABLE) dmf;
-
-statement ok
-RESET sdb_faults;
 
 query
 SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
@@ -127,14 +121,14 @@ statement error connection closed
 SELECT 1;
 
 
-connection after_frozen
+connection after_second_crash
 query ok retry 60 backoff $BACKOFF_DURATION
 SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
 ----
 count
 7400
 
-connection after_frozen
+connection after_second_crash
 query
 SELECT metric, value FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
@@ -146,7 +140,7 @@ num_docs	20000
 num_live_docs	7400
 num_segments	1
 
-connection after_frozen
+connection after_second_crash
 query
 SELECT count(*) FROM (
   SELECT id FROM dmf_idx WHERE txt @@ ts_like('alpha')
@@ -157,7 +151,7 @@ SELECT count(*) FROM (
 count
 0
 
-connection after_frozen
+connection after_second_crash
 query
 SELECT count(*) FROM (
   SELECT id FROM dmf
@@ -168,15 +162,15 @@ SELECT count(*) FROM (
 count
 0
 
-connection after_frozen
+connection after_second_crash
 statement ok
 DELETE FROM dmf WHERE grp = 63;
 
-connection after_frozen
+connection after_second_crash
 statement ok
 VACUUM (REFRESH_TABLE) dmf;
 
-connection after_frozen
+connection after_second_crash
 query
 SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
 ----

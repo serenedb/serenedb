@@ -56,19 +56,6 @@ size_t ByteCapacityOf(const roaring_bitmap_t& set) noexcept {
          size_t(set.high_low_container.allocation_size) * kSlotBytes;
 }
 
-roaring::Roaring CompressSet(const roaring_bitmap_t& set) {
-  roaring::Roaring out;
-  if (!roaring::api::roaring_bitmap_overwrite(&out.roaring, &set))
-    [[unlikely]] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                    ERR_MSG("Failed to allocate a copy of the document mask"));
-  }
-  roaring::api::roaring_bitmap_repair_after_lazy(&out.roaring);
-  out.runOptimize();
-  out.shrinkToFit();
-  return out;
-}
-
 uint64_t SpansAt(const roaring_bitmap_t& set, int32_t i) noexcept {
   const auto& ra = set.high_low_container;
   const auto* container = ra.containers[i];
@@ -223,10 +210,6 @@ DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
   return mask;
 }
 
-roaring::Roaring DocumentMask::Compress() const {
-  return CompressSet(_set.roaring);
-}
-
 bool DocumentMask::Contains(doc_id_t doc) const noexcept {
   return roaring::api::roaring_bitmap_contains(&_set.roaring, doc);
 }
@@ -293,39 +276,6 @@ DocumentMaskBuilder::DocumentMaskBuilder(const DocumentMaskBuilder& other)
 DocumentMaskBuilder& DocumentMaskBuilder::operator=(
   const DocumentMaskBuilder& other) {
   return *this = DocumentMaskBuilder{other};
-}
-
-DocumentMaskBuilder DocumentMaskBuilder::Read(const char* buf, size_t size) {
-  auto compressed = [&] {
-    try {
-      return roaring::Roaring::readSafe(buf, size);
-    } catch (const std::exception& e) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-        ERR_MSG("Corrupted document mask of ", size, " byte(s): ", e.what()));
-    }
-  }();
-
-  DocumentMaskBuilder mask;
-  if (!compressed.isEmpty()) {
-    const auto max = compressed.maximum();
-
-    if (compressed.minimum() < doc_limits::min() || doc_limits::eof(max))
-      [[unlikely]] {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                      ERR_MSG("Invalid document id in a document mask, [",
-                              compressed.minimum(), ", ", max, "]"));
-    }
-
-    mask._count = compressed.cardinality();
-    mask._set = compressed.roaring;
-    roaring::api::roaring_bitmap_init_cleared(&compressed.roaring);
-  }
-  return mask;
-}
-
-roaring::Roaring DocumentMaskBuilder::Compress() const {
-  return CompressSet(_set);
 }
 
 bool DocumentMaskBuilder::Contains(doc_id_t doc) const noexcept {

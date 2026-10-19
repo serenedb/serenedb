@@ -588,14 +588,6 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   const auto clustered_mask = std::move(clustered).Finish();
   ASSERT_EQ(MaskKind::Bitsets, clustered_mask.Kind());
   ASSERT_EQ(1970, clustered_mask.Count());
-  const auto clustered_blob = clustered_mask.Compress();
-  std::string clustered_bytes(clustered_blob.getSizeInBytes(true), '\0');
-  clustered_blob.write(clustered_bytes.data(), true);
-  const auto clustered_read = irs::DocumentMaskBuilder::Read(
-                                clustered_bytes.data(), clustered_bytes.size())
-                                .Finish(kArrays);
-  ASSERT_TRUE(clustered_read == clustered_mask);
-  ASSERT_EQ(MaskKind::Runs, clustered_read.Kind());
 
   irs::DocumentMaskBuilder sparse;
   for (doc_id_t doc = 1; doc < 300000; doc += 1000) {
@@ -604,17 +596,6 @@ TEST(document_mask_test, kind_is_resolved_on_finish) {
   ASSERT_EQ(MaskKind::Arrays, KindOf(sparse));
   const auto sparse_mask = std::move(sparse).Finish();
   ASSERT_EQ(MaskKind::Bitsets, sparse_mask.Kind());
-  const auto compressed = sparse_mask.Compress();
-  std::string blob(compressed.getSizeInBytes(true), '\0');
-  compressed.write(blob.data(), true);
-  auto restored = irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
-  for (doc_id_t doc = 1; doc < 300000; doc += 1000) {
-    ASSERT_TRUE(restored.Contains(doc));
-  }
-  ASSERT_EQ(MaskKind::Arrays, KindOf(restored));
-  const auto restored_mask = std::move(restored).Finish();
-  ASSERT_TRUE(restored_mask == sparse_mask);
-  ASSERT_EQ(MaskKind::Bitsets, restored_mask.Kind());
 
   irs::DocumentMaskBuilder arrays;
   for (doc_id_t doc = 1; doc < 1000; ++doc) {

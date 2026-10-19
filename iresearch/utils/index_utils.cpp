@@ -27,7 +27,6 @@
 #include <set>
 #include <utility>
 
-#include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 
@@ -442,8 +441,7 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,
                        bool increment_version) {
   PrepareFlush(segment, increment_version);
-  segment_meta::Write(dir, segment.filename, segment.meta,
-                      index_meta::StorageVersionToWrite());
+  segment_meta::Write(dir, segment.filename, segment.meta);
 }
 
 }  // namespace irs::index_utils

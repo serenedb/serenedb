@@ -35,11 +35,14 @@
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
+#include <iresearch/utils/string.hpp>
 #include <random>
 #include <roaring/roaring.hh>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -1126,20 +1129,21 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
   auto mask = MakeMask(docs);
 
   const auto round_trip = [](const irs::DocumentMask& source) {
-    const auto compressed = source.Compress();
-    std::string blob(compressed.getSizeInBytes(true), '\0');
-    compressed.write(blob.data(), true);
-    return irs::DocumentMaskBuilder::Read(blob.data(), blob.size());
+    std::string blob(source.FrozenSize(), '\0');
+    source.WriteFrozen(blob.data());
+    irs::BytesViewInput in{
+      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    return irs::DocumentMask::ReadFrozen(in, blob.size());
   };
 
-  auto restored = round_trip(mask);
+  const auto restored = round_trip(mask);
   ASSERT_EQ(mask.Count(), restored.Count());
   for (const auto doc : docs) {
     ASSERT_TRUE(restored.Contains(doc)) << doc;
   }
   ASSERT_FALSE(restored.Contains(2));
   ASSERT_FALSE(restored.Contains(250100));
-  ASSERT_TRUE(std::move(restored).Finish() == mask);
+  ASSERT_TRUE(restored == mask);
 
   irs::DocumentMaskBuilder builder{mask};
   ASSERT_TRUE(builder.Add(2));
@@ -1153,7 +1157,7 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
 
   const auto copy = irs::DocumentMaskBuilder{mutated}.Finish();
   ASSERT_TRUE(copy == mutated);
-  const auto again = round_trip(copy).Finish();
+  const auto again = round_trip(copy);
   ASSERT_TRUE(again == mutated);
   ASSERT_EQ(mutated.Count(), again.Count());
 }

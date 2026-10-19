@@ -52,8 +52,6 @@ inline constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
 
 std::string FileName(uint64_t gen);
 
-duckdb::StorageVersion StorageVersionToWrite();
-
 }  // namespace index_meta
 
 struct SourcePosition {

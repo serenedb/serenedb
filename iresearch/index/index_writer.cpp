@@ -37,7 +37,6 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
-#include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/file_names.hpp"
@@ -484,35 +483,33 @@ PublishResult UpdateExisting(
       RemoveFromSegment(deleted_docs, *query, existing_segment);
     }
 
-    const size_t num_removals = deleted_docs.Count();
-    if (num_removals != 0 &&
-        existing_segment.live_docs_count() == num_removals) {
-      deleted_docs.Clear();
-      result.modified = true;
-      continue;
-    }
-    if (num_removals == 0 && (!index_segment.meta.docs_mask ||
-                              committed_meta.index_meta.storage_version ==
-                                duckdb::StorageVersion::SERENEDB_LATEST)) {
-      result.segments.emplace_back(index_segment, existing_segment, Sync::None);
-      continue;
-    }
+    // Write docs_mask if masks added
+    if (const size_t num_removals = deleted_docs.Count(); num_removals) {
+      if (existing_segment.live_docs_count() == num_removals) {
+        deleted_docs.Clear();
+        result.modified = true;
+        continue;
+      }
 
-    IndexSegment segment{.meta = index_segment.meta};
-    if (num_removals != 0) {
+      // Append removals
+      IndexSegment segment{.meta = index_segment.meta};
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMask(existing_segment);
         docs_mask.Merge(deleted_docs);
         return std::make_shared<const DocumentMask>(
           std::move(docs_mask).Finish());
       }();
-      deleted_docs.Clear();
-    }
 
-    index_utils::FlushIndexSegment(dir, segment, true);
-    auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
-    result.segments.emplace_back(std::move(segment),
-                                 SegmentReader{std::move(reader)}, Sync::Meta);
+      // Write with new mask
+      index_utils::FlushIndexSegment(dir, segment, true);
+      deleted_docs.Clear();
+      auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
+
+      result.segments.emplace_back(
+        std::move(segment), SegmentReader{std::move(reader)}, Sync::Meta);
+    } else {
+      result.segments.emplace_back(index_segment, existing_segment, Sync::None);
+    }
   }
   return result;
 }
@@ -1679,8 +1676,7 @@ void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,
                                const SourcePosition& position) {
   IndexSegment segment;
   segment.filename = meta_file;
-  segment_meta::Read(_dir, segment.meta, meta_file,
-                     duckdb::StorageVersion::SERENEDB_LATEST);
+  segment_meta::Read(_dir, segment.meta, meta_file);
   if (segment.meta.live_docs_count == 0) {
     return;  // Nothing to adopt
   }
@@ -1758,8 +1754,7 @@ void IndexWriter::ReplaceSegments(
   for (const auto meta_file : adopted_metas) {
     Adopted entry;
     entry.segment.filename = meta_file;
-    segment_meta::Read(_dir, entry.segment.meta, meta_file,
-                       duckdb::StorageVersion::SERENEDB_LATEST);
+    segment_meta::Read(_dir, entry.segment.meta, meta_file);
     if (entry.segment.meta.live_docs_count == 0) {
       continue;  // nothing to adopt; the sources are still replaced
     }
@@ -2027,7 +2022,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                   std::make_move_iterator(flushed.segments.end()));
 
   IndexMeta pending_meta;
-  pending_meta.storage_version = index_meta::StorageVersionToWrite();
   pending_meta.segments.reserve(segments.size());
   std::vector<SegmentReader> readers;
   readers.reserve(segments.size());

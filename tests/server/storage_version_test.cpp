@@ -31,7 +31,6 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
@@ -140,34 +139,6 @@ void ReplaceCompressionMethod(const std::string& path,
   out.write(data.data(), static_cast<std::streamsize>(data.size()));
 }
 
-duckdb::StorageVersion FileStorageVersion(const std::string& path) {
-  constexpr auto kSize = duckdb::Storage::FILE_HEADER_SIZE;
-  constexpr auto kChecksum = sizeof(uint64_t);
-  std::ifstream file{path, std::ios::binary};
-  EXPECT_TRUE(file);
-  std::array<char, kSize> block;
-  file.read(block.data(), kSize);
-  duckdb::MemoryStream main_stream{
-    reinterpret_cast<duckdb::data_ptr_t>(block.data() + kChecksum),
-    kSize - kChecksum};
-  const auto main_header = duckdb::MainHeader::Read(main_stream);
-  uint64_t iteration = 0;
-  auto version = duckdb::StorageVersion::INVALID;
-  for (const auto offset : {kSize, 2 * kSize}) {
-    file.seekg(static_cast<std::streamoff>(offset));
-    file.read(block.data(), kSize);
-    duckdb::MemoryStream in{
-      reinterpret_cast<duckdb::data_ptr_t>(block.data() + kChecksum),
-      kSize - kChecksum};
-    const auto header = duckdb::DatabaseHeader::Read(main_header, in);
-    if (header.iteration >= iteration) {
-      iteration = header.iteration;
-      version = header.storage_compatibility;
-    }
-  }
-  return version;
-}
-
 void AppendWalEntry(const std::string& path, const duckdb::MemoryStream& entry,
                     uint64_t claimed_size) {
   const uint64_t size = entry.GetPosition();
@@ -266,35 +237,6 @@ TEST_F(StorageVersionTest, NewerSereneDBVersionIsRefused) {
   EXPECT_NE(error.find("The file was created with a newer storage version"),
             std::string::npos)
     << error;
-}
-
-TEST_F(StorageVersionTest, UpgradeRaisesAnOlderSereneDBFile) {
-  const auto path = File("older.db");
-  duckdb::DBConfig config;
-  RegisterOwned(config);
-  duckdb::DuckDB db{nullptr, &config};
-  duckdb::Connection con{db};
-  ASSERT_EQ(Exec(con, AttachSereneDBFile(path)), "");
-  ASSERT_EQ(Exec(con, "CREATE TABLE f.t AS SELECT 42 AS i"), "");
-  ASSERT_EQ(Exec(con, "DETACH f"), "");
-  SetStorageVersion(path, duckdb::StorageVersion::SERENEDB_V1);
-  ASSERT_EQ(duckdb::StorageVersion::SERENEDB_V1, FileStorageVersion(path));
-
-  ASSERT_EQ(Exec(con, absl::StrCat("ATTACH '", path,
-                                   "' AS f (TYPE sdb_owned, READ_ONLY)")),
-            "");
-  auto& manager = duckdb::DatabaseManager::Get(*con.context);
-  sdb::catalog::UpgradeStorageVersion(*con.context, *manager.GetDatabase("f"));
-  ASSERT_EQ(Exec(con, "DETACH f"), "");
-  EXPECT_EQ(duckdb::StorageVersion::SERENEDB_V1, FileStorageVersion(path));
-
-  ASSERT_EQ(Exec(con, AttachSereneDBFile(path)), "");
-  sdb::catalog::UpgradeStorageVersion(*con.context, *manager.GetDatabase("f"));
-  ASSERT_EQ(Exec(con, "DETACH f"), "");
-  EXPECT_EQ(duckdb::StorageVersion::SERENEDB_LATEST, FileStorageVersion(path));
-
-  ASSERT_EQ(Exec(con, AttachSereneDBFile(path)), "");
-  EXPECT_EQ(Scalar(con, "SELECT i FROM f.t"), "42");
 }
 
 TEST_F(StorageVersionTest, UnknownCompressionMethodFailsOnlyTheQuery) {

@@ -711,49 +711,50 @@ db error: ERROR: <slt:ignore>CREATE JOB cannot have parameters<slt:ignore>
 statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing, jd_other;
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
 statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing RESTART IDENTITY;
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
 statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN c INT NOT NULL DEFAULT 0;
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
 statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN r DOUBLE DEFAULT random();
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
 statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS DROP ROLE jd_role_a, jd_role_b;
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
 
 
-statement error
-CREATE JOB jd_invalid AFTER 1 HOUR AS IMPORT DATABASE 'jd_missing_dir';
+statement ok
+CREATE JOB jd_show_tables AFTER 1 HOUR SUSPENDED AS PRAGMA show_tables;
+
+
+statement ok
+EXECUTE JOB jd_show_tables;
+
+
+query
+SELECT body, run_count, last_status FROM sdb_jobs() WHERE job_name = 'jd_show_tables';
 ----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as other statements
+body	run_count	last_status
+PRAGMA show_tables;	1	success
 
 
-statement error
-CREATE JOB jd_invalid AFTER 1 HOUR AS COPY FROM DATABASE jd_missing_a TO jd_missing_b;
-----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as other statements
-
-
-statement error
-CREATE JOB jd_invalid AFTER 1 HOUR AS PRAGMA show_tables;
-----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as other statements
+statement ok
+DROP JOB jd_show_tables;
 
 
 statement error
@@ -766,12 +767,6 @@ statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS EXPLAIN ANALYZE BEGIN TRANSACTION;
 ----
 db error: ERROR: CREATE JOB body cannot be a transaction statement
-
-
-statement error
-CREATE JOB jd_invalid AFTER 1 HOUR AS EXPLAIN PRAGMA show_tables;
-----
-db error: ERROR: CREATE JOB body cannot be a statement that runs as other statements
 
 
 statement ok

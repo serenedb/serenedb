@@ -464,7 +464,7 @@ struct IntervalBin {
 // `scale`) plus a sign flag; the inverse of WriteAsNumericBinary. The wire is
 // base-10000 digit groups, most significant first, at power-of-10000 `weight`.
 // uint128 holds the full range -- a signed int128 cannot represent 2^127, the
-// magnitude of HUGEINT's minimum. false on NaN or malformed.
+// magnitude of HUGEINT's minimum. false on NaN, infinity or malformed.
 bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
                         absl::uint128& magnitude) {
   if (data.size() < 8) {
@@ -475,7 +475,8 @@ bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
   const auto weight =
     static_cast<int16_t>(absl::big_endian::Load16(data.data() + 2));
   const uint16_t sign = absl::big_endian::Load16(data.data() + 4);
-  if (sign == 0xC000) {  // NaN has no integer/decimal representation
+  // NaN and infinities have no integer/decimal representation
+  if (sign != 0x0000 && sign != 0x4000) {
     return false;
   }
   negative = sign == 0x4000;

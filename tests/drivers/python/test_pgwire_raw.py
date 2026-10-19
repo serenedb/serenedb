@@ -740,6 +740,63 @@ def test_hugeint_min_numeric_binary(conn):
         assert _decode_pg_numeric(all_fields(m)[0]) == v, v
 
 
+def _pg_numeric(groups, weight, sign=0x0000):
+    return struct.pack("!hhHH", len(groups), weight, sign, 0) + b"".join(
+        struct.pack("!H", g) for g in groups
+    )
+
+
+def _pg_numeric_int(v):
+    groups = []
+    rest = abs(v)
+    while rest:
+        groups.insert(0, rest % 10000)
+        rest //= 10000
+    return _pg_numeric(groups, len(groups) - 1, 0x4000 if v < 0 else 0x0000)
+
+
+def _bind_insert(conn, table, value):
+    conn.parse("", f"insert into {table} values ($1)")
+    conn.bind("", "", params=(value,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    return conn.drain_to_ready()
+
+
+def _column_text(conn, table):
+    conn.send(
+        "Q",
+        _cstr(
+            f"select coalesce(string_agg(a::varchar, ',' order by a), '') "
+            f"from {table}"
+        ),
+    )
+    return first_field(conn.drain_to_ready()).decode()
+
+
+def test_binary_numeric_param_rejects_nan_and_infinity(conn):
+    tables = {
+        "bin_num_dec": ("decimal(10, 2)", "42.00"),
+        "bin_num_huge": ("hugeint", "42"),
+        "bin_num_uhuge": ("uhugeint", "42"),
+        "bin_num_ubig": ("ubigint", "42"),
+    }
+    for table, (column_type, _) in tables.items():
+        conn.run_ok(f"drop table if exists {table}")
+        conn.run_ok(f"create table {table} (a {column_type})")
+    try:
+        for table, (_, stored) in tables.items():
+            for sign in (0xD000, 0xF000, 0xC000, 0x1234):
+                m = _bind_insert(conn, table, _pg_numeric([], 0, sign))
+                assert sqlstates(m) == ["22P03"], (table, hex(sign), errors(m))
+            m = _bind_insert(conn, table, _pg_numeric_int(42))
+            assert not errors(m), (table, errors(m))
+            assert _column_text(conn, table) == stored, table
+    finally:
+        for table in tables:
+            conn.run_ok(f"drop table if exists {table}")
+
+
 def test_float_special_values_text(conn):
     # PG renders float infinity/NaN as Infinity / -Infinity / NaN in text.
     def textval(sql):

@@ -339,3 +339,58 @@ usmall	65535
 utiny	0
 utiny	255
 wide_dec	999999999999999999.99
+
+statement ok
+CREATE TABLE oor_num_dec (a DECIMAL(10, 2));
+
+statement ok
+CREATE TABLE oor_num_huge (a HUGEINT);
+
+statement ok
+CREATE TABLE oor_num_uhuge (a UHUGEINT);
+
+statement ok
+CREATE TABLE oor_num_ubig (a UBIGINT);
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\010\000\000\000\000\320\000\000\000\377\377' > $__TEST_DIR__/oor_num_inf.bin
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\010\000\000\000\000\360\000\000\000\377\377' > $__TEST_DIR__/oor_num_ninf.bin
+
+statement error
+COPY oor_num_dec FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_dec FROM '${__TEST_DIR__}/oor_num_ninf.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_ninf.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement error
+COPY oor_num_ubig FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+query
+SELECT (SELECT count(*) FROM oor_num_dec) + (SELECT count(*) FROM oor_num_huge)
+  + (SELECT count(*) FROM oor_num_uhuge) + (SELECT count(*) FROM oor_num_ubig) AS n;
+----
+n
+0

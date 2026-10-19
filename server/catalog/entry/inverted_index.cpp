@@ -535,7 +535,7 @@ duckdb::Identifier InvertedIndexEntry::GetTableName() const {
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   duckdb::CatalogTransaction transaction, duckdb::AlterInfo& info) {
   if (info.type != duckdb::AlterType::ALTER_INDEX) {
-    return duckdb::CatalogEntry::AlterEntry(transaction, info);
+    return duckdb::DuckIndexEntry::AlterEntry(transaction, info);
   }
   auto& index_alter = info.Cast<duckdb::AlterIndexInfo>();
   auto& context = transaction.GetContext();

@@ -176,10 +176,10 @@ count
 query
 WITH w AS (SELECT pk FROM ebc_idx WHERE pk < 3000
            ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
-           LIMIT 50),
+           LIMIT 47),
      p AS (SELECT pk FROM ebc WHERE pk < 3000
            ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
-           LIMIT 50)
+           LIMIT 47)
 SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
                       UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
 ----

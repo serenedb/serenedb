@@ -74,12 +74,14 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
+#include "inet_filter_builder.hpp"
 #include "query/config.h"
 #include "search/scorer_options.h"
 
@@ -218,22 +220,6 @@ absl::Status SetupTermClause(irs::TermClause& clause,
 }
 
 namespace {
-
-ComparisonOp InvertComparisonOp(ComparisonOp op) {
-  switch (op) {
-    case ComparisonOp::Le:
-      return ComparisonOp::Gt;
-    case ComparisonOp::Ge:
-      return ComparisonOp::Lt;
-    case ComparisonOp::Gt:
-      return ComparisonOp::Le;
-    case ComparisonOp::Lt:
-      return ComparisonOp::Ge;
-    case ComparisonOp::None:
-      return ComparisonOp::None;
-  }
-  SDB_UNREACHABLE();
-}
 
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
@@ -786,6 +772,9 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
       return absl::OkStatus();
     }
   }
+  if (const auto inet = ResolveInetOperands(ctx, left_expr, right_expr)) {
+    return FromInetEquality(filter, ctx, *inet, not_equal);
+  }
 
   // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
   // claimed by the index: the cast is peeled and routed to the numeric-
@@ -961,6 +950,9 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
                             const duckdb::Expression& value_expr,
                             ComparisonOp op) {
+  if (const auto inet = ResolveInetOperands(ctx, field_expr, value_expr)) {
+    return FromInetComparison(filter, ctx, *inet, op);
+  }
   if (ctx.negated) {
     op = InvertComparisonOp(op);
   }
@@ -1082,6 +1074,11 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
     duckdb::BoundBetweenExpression::LowerInclusive(between);
   const bool upper_inclusive =
     duckdb::BoundBetweenExpression::UpperInclusive(between);
+  if (!ctx.negated) {
+    if (const auto* column = FindInetColumn(ctx, between_input)) {
+      return FromInetBetween(filter, ctx, *column, between);
+    }
+  }
   const auto* lower_val = TryGetConstant(between_lower);
   const auto* upper_val = TryGetConstant(between_upper);
   if (!lower_val || !upper_val) {
@@ -1138,6 +1135,9 @@ template<bool GenericVersion>
 absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
                     const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.GetChildren().size() >= 2);
+  if (const auto* column = FindInetColumn(ctx, *op_expr.GetChildren()[0])) {
+    return FromInetIn(filter, ctx, *column, op_expr);
+  }
 
   const auto* column_info =
     FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
@@ -1401,6 +1401,9 @@ absl::Status FromFunctionExpression(
   }
   if (TryDispatchGeoFunction(filter, ctx, func)) {
     return absl::OkStatus();
+  }
+  if (const auto inet = ResolveInetNetworkOp(ctx, func)) {
+    return FromInetNetworkOp(filter, ctx, *inet);
   }
 
   char escape_char = '\\';
@@ -2317,20 +2320,26 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
   }
 
-  if (matched_unwrapped && unwrapped.override_type &&
-      unwrapped.override_type->id() != info->logical_type.id()) {
-    if (IsNumericTypeId(unwrapped.override_type->id())) {
-      if (!irs::field_limits::valid(info->numeric_field_id)) {
+  if (matched_unwrapped && unwrapped.override_type) {
+    const auto& cast_type = *unwrapped.override_type;
+    if (pg::IsInetOrCidr(cast_type) || pg::IsInetOrCidr(info->logical_type)) {
+      if (cast_type != info->logical_type) {
         return nullptr;
       }
-      // Numeric field id is set up -> it's json leaf
-      info->logical_type = duckdb::LogicalType::DOUBLE;
-    } else {
-      info->logical_type = *unwrapped.override_type;
+    } else if (cast_type.id() != info->logical_type.id()) {
+      if (IsNumericTypeId(cast_type.id())) {
+        if (!irs::field_limits::valid(info->numeric_field_id)) {
+          return nullptr;
+        }
+        // Numeric field id is set up -> it's json leaf
+        info->logical_type = duckdb::LogicalType::DOUBLE;
+      } else {
+        info->logical_type = cast_type;
+      }
     }
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type.id()))) {
+  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type))) {
     return nullptr;
   }
   info->field_id = PickPerKindFieldId(*info, info->logical_type.id());

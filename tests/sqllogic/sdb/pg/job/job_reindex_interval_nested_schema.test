@@ -1,0 +1,85 @@
+control substitution on
+
+
+system ok
+rm -rf $__TEST_DIR__/jrins_glob && mkdir -p $__TEST_DIR__/jrins_glob
+
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/jrins_glob/f1.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE SCHEMA jrins_outer;
+
+
+statement ok
+CREATE SCHEMA jrins_outer.jrins_inner;
+
+
+statement ok
+CREATE SCHEMA jrins_inner;
+
+
+statement ok
+CREATE VIEW ${__DATABASE__}.jrins_outer.jrins_inner.v AS SELECT * FROM read_parquet('${__TEST_DIR__}/jrins_glob/f*.parquet');
+
+
+statement ok
+CREATE INDEX jrins_idx ON ${__DATABASE__}.jrins_outer.jrins_inner.v USING inverted (id, body) WITH (reindex_interval = 3600000);
+
+
+query
+SELECT schema_name, job_name, schedule FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+schema_name	job_name	schedule
+jrins_inner	jrins_idx	AFTER INTERVAL '01:00:00'
+
+
+statement ok
+ALTER INDEX ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx SET (reindex_interval = 600000);
+
+
+query
+SELECT schema_name, job_name, schedule FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+schema_name	job_name	schedule
+jrins_inner	jrins_idx	AFTER INTERVAL '00:10:00'
+
+
+statement ok
+ALTER INDEX ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx SET (reindex_interval = 0);
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database();
+----
+jobs
+0
+
+
+statement ok
+ALTER INDEX ${__DATABASE__}.jrins_outer.jrins_inner.jrins_idx SET (reindex_interval = 900000);
+
+
+query
+SELECT schema_name, job_name, schedule FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+schema_name	job_name	schedule
+jrins_inner	jrins_idx	AFTER INTERVAL '00:15:00'
+
+
+statement ok
+DROP SCHEMA jrins_outer CASCADE;
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database();
+----
+jobs
+0
+
+
+statement ok
+DROP SCHEMA jrins_inner CASCADE;

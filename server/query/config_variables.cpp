@@ -1163,10 +1163,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       kCleanupIntervalStepSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Number of commit ticks between background unreferenced-file cleanup "
-        "passes for newly created inverted indexes and search tables. WITH "
-        "(cleanup_interval_step = ...) overrides it per index or table. 0 "
-        "disables cleanup. Default: 1.",
+        "Number of automatic refreshes between background unreferenced-file "
+        "cleanup passes for newly created inverted indexes and search tables. "
+        "WITH (cleanup_interval_step = ...) overrides it per index or table. "
+        "0 disables the periodic passes: cleanup then follows only background "
+        "compaction and, on a search table, VACUUM. Default: 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -1190,10 +1191,9 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::UBIGINT,
         "In-memory bytes an inverted-index or search-table segment writer "
         "fills before rolling over to a new on-disk segment (also the CREATE "
-        "INDEX backfill commit cadence, and half of it is the write buffer a "
-        "serial search-table statement fills before it starts feeding the "
-        "index as it goes). Per-object WITH (segment_memory_max = ...) "
-        "overrides. Default 268435456 (256MB).",
+        "INDEX backfill commit cadence). Per-object WITH (segment_memory_max "
+        "= ...) overrides. A serial write to a search table also buffers up "
+        "to checkpoint_threshold of rows. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.segment_memory_max);

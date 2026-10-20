@@ -581,6 +581,38 @@ def test_bytea_text_param_decodes_input_syntax(conn):
     assert sqlstates(conn.drain_to_ready()) == ["22P02"]
 
 
+def test_inet_binary_param_and_result_roundtrip(conn):
+    v6 = bytes([3, 64, 0, 16]) + bytes.fromhex("20010db8000000000000000000000001")
+    conn.parse("", "select $1::inet", oids=(869,))
+    conn.bind("", "", params=(v6,), formats=(1,), result_format=1)
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    (row,) = rows(m)
+    ncols, length = struct.unpack("!hi", row[:6])
+    assert ncols == 1 and row[6 : 6 + length] == v6
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        bytes([9, 24, 0, 4, 10, 0, 0, 1]),
+        bytes([2, 33, 0, 4, 10, 0, 0, 1]),
+        bytes([3, 24, 0, 4, 10, 0, 0, 1]),
+        bytes([2, 24, 0, 4, 10, 0, 0]),
+    ],
+    ids=["family", "bits", "length", "truncated"],
+)
+def test_inet_binary_param_rejects_malformed(conn, value):
+    conn.parse("", "select $1::inet", oids=(869,))
+    conn.bind("", "", params=(value,), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P03"], errors(m)
+
+
 def test_bytea_binary_param_keeps_its_bytes(conn):
     for value in (b"", bytes(range(12)), bytes(range(13)),
                   bytes(range(256)) * 40):

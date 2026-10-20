@@ -525,3 +525,21 @@ SELECT pg_get_serial_sequence('tickets', 'id') AS sequence;
 ----
 sequence
 public.tickets_id_seq
+
+# DOCS_TEST: search_table_triggers
+
+statement ok
+DROP TABLE IF EXISTS events_audit;
+
+statement ok
+CREATE TABLE events_audit (id INTEGER);
+
+statement ok
+CREATE TRIGGER events_audited AFTER INSERT ON events FOR EACH ROW INSERT INTO events_audit VALUES (NEW.id);
+
+# DOCS_TEST_BODY
+
+statement error
+ALTER TABLE events ENABLE REPLICA TRIGGER events_audited;
+----
+db error: ERROR: this ALTER TABLE on a search-backed table is not yet supported

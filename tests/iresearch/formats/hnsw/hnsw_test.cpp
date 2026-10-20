@@ -1313,6 +1313,68 @@ TEST(HnswWalkTest, AdaptiveCrossesOverWhereThePredicateAdmitsNothingNearby) {
     << "adaptive " << found_adaptive << " twohop " << found_two_hop;
 }
 
+TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
+  constexpr uint32_t kD = 8;
+  constexpr uint32_t kHalf = 1500;
+  constexpr uint32_t kNodes = 2 * kHalf;
+  constexpr uint32_t kM = irs::kHnswDefaultM;
+  constexpr size_t kK = 60;
+  std::vector<float> pts(size_t{kNodes} * kD, 0.f);
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    pts[size_t{i} * kD] = static_cast<float>(i < kHalf ? kHalf + i : i - kHalf);
+  }
+  irs::HnswGraphWriter writer;
+  writer.Reset(kNodes, kM);
+  pcg32 levels{irs::kHnswBuildSeed};
+  uint32_t entry = 0;
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    writer.SetLevel(i, irs::HnswRandomLevel(levels, kM));
+    if (writer.LevelOf(i) > writer.LevelOf(entry)) {
+      entry = i;
+    }
+  }
+  writer.AllocateLinks();
+  writer.SetEntryPoint(entry);
+  WalkDist build{.pts = &pts, .d = kD};
+  irs::HnswBuildScratch scratch;
+  scratch.search.visited.Reset(kNodes);
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    if (i != entry) {
+      build.SetQuery(i);
+      irs::HnswInsert(writer, i, build, irs::kHnswDefaultEfConstruction,
+                      scratch);
+    }
+  }
+  const auto& graph = writer.Graph();
+
+  std::vector<float> query(kD, 0.f);
+  WalkDist dist{.pts = &pts, .d = kD, .q = query.data()};
+  irs::HnswSearchScratch s;
+  for (const float at : {1500.4f, 1499.6f, 1200.4f, 2200.4f, 10.4f}) {
+    query[0] = at;
+    irs::HnswSearchTopK(graph, dist, irs::kHnswDefaultEfSearch, s);
+    std::vector<irs::HnswCandidate> nearest = s.nearest;
+    std::ranges::sort(
+      nearest, [](const auto& l, const auto& r) { return l.score > r.score; });
+    nearest.resize(std::min(nearest.size(), kK));
+    std::vector<std::pair<irs::score_t, uint32_t>> truth;
+    for (uint32_t n = 0; n < kNodes; ++n) {
+      truth.emplace_back(dist.One(n), n);
+    }
+    std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
+                      std::greater<>{});
+    truth.resize(kK);
+    size_t hit = 0;
+    for (const auto& c : nearest) {
+      hit += std::ranges::any_of(
+               truth, [&](const auto& t) { return t.second == c.node; })
+               ? 1
+               : 0;
+    }
+    EXPECT_EQ(hit, kK) << "query " << at;
+  }
+}
+
 class HnswBuildWorkersTest
   : public ::testing::TestWithParam<irs::AnnInfo::Quantizer> {};
 

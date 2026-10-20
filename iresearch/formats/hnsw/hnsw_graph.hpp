@@ -940,10 +940,12 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
 
   s.pending.clear();
   const uint32_t start = std::min(top, entry_top);
+  s.search.nearest.assign(1, cur);
   for (uint32_t level = start + 1; level-- > 0;) {
     s.search.visited.Next();
-    s.search.visited.TestAndSet(cur.node);
-    s.search.nearest.assign(1, cur);
+    for (const auto& seed : s.search.nearest) {
+      s.search.visited.TestAndSet(seed.node);
+    }
     HnswSearchLevel(graph.Graph(), dist, level, ef_construction, s.search);
 
     auto& found = s.search.nearest;
@@ -966,8 +968,6 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
     for (const auto peer : s.selected) {
       s.pending.push_back({.peer = peer, .level = level});
     }
-
-    cur = found.front();
   }
 
   for (const auto& [peer, level] : s.pending) {

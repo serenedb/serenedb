@@ -45,6 +45,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -834,19 +835,23 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
-  auto it_mask = donor.reader->MaskedDocs();
-  for (size_t r = 0; r < src_rows; ++r) {
-    const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (it_mask.Contains(doc)) {
-      continue;
+  auto mask = MakeGenericDocsMask(donor.reader->docs_mask());
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  const auto end = static_cast<doc_id_t>(src_rows + doc_limits::min());
+  for (auto window = doc_limits::min(); window < end;) {
+    const auto count = std::min(end - window, detail::kWindowDocs);
+    const auto alive = mask.FillLive(window, count, live);
+    const auto base = donor.out_base + rank;
+    if (base + alive <= rows) {
+      auto* out = remap.data() + (window - doc_limits::min());
+      for (uint32_t i = 0; i != alive; ++i) {
+        out[live[i]] = static_cast<uint32_t>(base + i);
+      }
     }
-    if (donor.out_base + rank >= rows) {
-      co_return false;
-    }
-    remap[r] = static_cast<uint32_t>(donor.out_base + rank);
-    ++rank;
+    rank += alive;
+    window += count;
   }
-  if (rank != donor.alive) {
+  if (donor.out_base + rank > rows || rank != donor.alive) {
     co_return false;
   }
 

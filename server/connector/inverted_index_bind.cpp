@@ -1022,6 +1022,19 @@ void ValidateInvertedIndexKey(std::string_view label,
       ERR_MSG("Unknown built-in opclass '", opclass.name, "' on '", label,
               "' (known: ", DescribeKnownOpclassTypes(), ")"));
   }
+  if (pg::IsInetOrCidr(type)) {
+    if (!opclass.name.empty()) {
+      const auto& type_name = type.GetAlias();
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                      ERR_MSG("Column '", label, "' has type ", type_name,
+                              " and can not use the "
+                              "text search dictionary '",
+                              opclass.name, "'"),
+                      ERR_HINT("Index an ", type_name,
+                               " column without an opclass: (", label, ")"));
+    }
+    return;
+  }
   ValidateTermDictKey(label, type, opclass.name);
 }
 

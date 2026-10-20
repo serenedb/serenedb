@@ -218,7 +218,7 @@ To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... TO` statemen
 
 ## `COPY FROM DATABASE ... TO`
 
-The `COPY FROM DATABASE ... TO` statement copies the entire content from one attached database to another attached database. This includes the schema, including constraints, indexes, sequences, macros and the data itself.
+The `COPY FROM DATABASE ... TO` statement copies the entire content from one attached database to another attached database. This includes the schema, including constraints, indexes, sequences, macros and the data itself. [Jobs](../create_job/index.md) are not copied.
 
 <SqlLogicTest id="sql/statements/copy/copy_database_full/example_037" />
 

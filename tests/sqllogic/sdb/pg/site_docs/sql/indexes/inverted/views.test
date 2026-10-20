@@ -160,3 +160,42 @@ SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'app_logs_auto_idx';
 ----
 jobs
 0
+
+# DOCS_TEST: reindex_interval_job
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER INDEX app_logs_auto_idx SET (reindex_interval = 60000);
+
+statement ok
+ALTER INDEX app_logs_auto_idx RENAME TO app_logs_search_idx;
+
+query
+SELECT job_name, schedule FROM sdb_jobs() WHERE job_name LIKE 'app_logs%';
+----
+job_name	schedule
+app_logs_auto_idx	AFTER INTERVAL '00:01:00'
+
+statement ok
+ALTER INDEX app_logs_search_idx RESET (reindex_interval);
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name LIKE 'app_logs%';
+----
+jobs
+0
+
+statement ok
+ALTER INDEX app_logs_search_idx SET (reindex_interval = 60000);
+
+statement ok
+DROP JOB app_logs_search_idx;
+
+query
+SELECT
+    (SELECT count(*) FROM sdb_jobs() WHERE job_name LIKE 'app_logs%') AS jobs,
+    (SELECT count(*) FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'app_logs_search_idx') AS indexes;
+----
+jobs	indexes
+0	1

@@ -134,11 +134,8 @@ class BooleanSparse {
           continue;
         }
       }
-      if constexpr (kExcludes) {
-        if (detail::IsExcluded(_excludes, doc)) {
-          doc = _lead.Next();
-          continue;
-        }
+      if (detail::SkipExcluded(_excludes, _lead, doc)) {
+        continue;
       }
       break;
     }

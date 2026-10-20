@@ -1,0 +1,821 @@
+statement ok
+DROP JOB IF EXISTS jsb_script;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_failing;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_atomic;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_truncate;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_single;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_pragma;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_once;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_soon;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_every;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_commented;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_tagged;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_parent;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_child;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_lazy;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_path;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_split;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_worker_job;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_boom;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_caller;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_callee;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_renamed;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_ticks;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_made;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jsb_space CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS jsb_role_x;
+
+
+statement ok
+DROP ROLE IF EXISTS jsb_role_y;
+
+
+statement ok
+DROP ROLE IF EXISTS jsb_worker;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_truncate_gone;
+
+
+statement ok
+DROP JOB IF EXISTS jsb_truncate_gone_scheduled;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_c;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_d;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_log;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_a;
+
+
+statement ok
+DROP TABLE IF EXISTS jsb_b;
+
+
+statement ok
+CREATE TABLE jsb_log (step INT, note TEXT);
+
+
+statement ok
+CREATE TABLE jsb_a (v INT);
+
+
+statement ok
+CREATE TABLE jsb_b (v INT);
+
+
+statement ok
+CREATE JOB jsb_script AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'first'); INSERT INTO jsb_log VALUES (2, 'it''s second'); UPDATE jsb_log SET note = upper(note) WHERE step = 1;$$;
+
+
+statement ok
+EXECUTE JOB jsb_script;
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+1	FIRST
+2	it's second
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_script';
+----
+body	sql
+INSERT INTO jsb_log VALUES (1, 'first'); INSERT INTO jsb_log VALUES (2, 'it''s second'); UPDATE jsb_log SET note = upper(note) WHERE step = 1;	CREATE JOB public.jsb_script AFTER INTERVAL '01:00:00' AS 'INSERT INTO jsb_log VALUES (1, ''first''); INSERT INTO jsb_log VALUES (2, ''it''''s second''); UPDATE jsb_log SET note = upper(note) WHERE step = 1;';
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_failing AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'kept'); INSERT INTO jsb_missing VALUES (2); INSERT INTO jsb_log VALUES (3, 'not run');$$;
+
+
+statement error
+EXECUTE JOB jsb_failing;
+----
+db error: ERROR: Table with name jsb_missing does not exist!
+Did you mean "jsb_log"?
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+1	kept
+
+
+query
+SELECT last_status, run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_failing';
+----
+last_status	run_count	failure_count
+failed	1	1
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_atomic AFTER 1 HOUR AS $$BEGIN; INSERT INTO jsb_log VALUES (1, 'rolled back'); INSERT INTO jsb_missing VALUES (2); COMMIT;$$;
+
+
+statement error
+EXECUTE JOB jsb_atomic;
+----
+db error: ERROR: Table with name jsb_missing does not exist!
+Did you mean "jsb_log"?
+
+
+query
+SELECT count(*) AS logged FROM jsb_log;
+----
+logged
+0
+
+
+statement ok
+INSERT INTO jsb_a VALUES (1), (2);
+
+
+statement ok
+INSERT INTO jsb_b VALUES (3);
+
+
+statement ok
+CREATE JOB jsb_truncate AFTER 1 HOUR AS $$TRUNCATE jsb_a, jsb_b$$;
+
+
+statement ok
+EXECUTE JOB jsb_truncate;
+
+
+query
+SELECT (SELECT count(*) FROM jsb_a) AS a, (SELECT count(*) FROM jsb_b) AS b;
+----
+a	b
+0	0
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_truncate';
+----
+body	sql
+TRUNCATE jsb_a, jsb_b	CREATE JOB public.jsb_truncate AFTER INTERVAL '01:00:00' AS 'TRUNCATE jsb_a, jsb_b';
+
+
+statement ok
+CREATE TABLE jsb_c (v INT);
+
+
+statement ok
+CREATE TABLE jsb_d (v INT);
+
+
+statement ok
+CREATE JOB jsb_truncate_gone AFTER 1 HOUR AS $$TRUNCATE jsb_c, jsb_d$$;
+
+
+statement ok
+DROP TABLE jsb_d;
+
+
+statement error
+EXECUTE JOB jsb_truncate_gone;
+----
+db error: ERROR: Table with name jsb_d does not exist!<slt:ignore>
+
+
+statement ok
+CREATE JOB jsb_truncate_gone_scheduled AFTER 1 SECOND AS $$TRUNCATE jsb_c, jsb_d$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT trigger, success, error LIKE '%jsb_d%' AS names_table FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsb_truncate_gone_scheduled' LIMIT 1;
+----
+trigger	success	names_table
+schedule	f	t
+
+
+statement ok
+DROP JOB jsb_truncate_gone_scheduled;
+
+
+statement ok
+DROP JOB jsb_truncate_gone;
+
+
+statement ok
+DROP TABLE jsb_c;
+
+
+statement error
+CREATE JOB jsb_bare AFTER 1 HOUR AS TRUNCATE jsb_a, jsb_b;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement ok
+CREATE JOB jsb_single AFTER 1 HOUR AS $$ select 1; $$;
+
+
+query
+SELECT body, replace(sql, current_database() || '.', '') AS sql FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_single';
+----
+body	sql
+SELECT 1	CREATE JOB public.jsb_single AFTER INTERVAL '01:00:00' AS SELECT 1;
+
+
+statement error
+CREATE JOB jsb_empty AFTER 1 HOUR AS $$ ; $$;
+----
+db error: ERROR: CREATE JOB body cannot be empty
+
+
+statement error
+CREATE JOB jsb_param AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES ($1, 'p')$$;
+----
+db error: ERROR: CREATE JOB cannot have parameters
+
+
+statement error
+CREATE JOB jsb_typo AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (1, 'a'); SELEC 2;$$;
+----
+db error: ERROR: syntax error at or near "2"
+
+
+statement error
+CREATE JOB jsb_commit AFTER 1 HOUR AS $$COMMIT$$;
+----
+db error: ERROR: CREATE JOB body cannot be a transaction statement
+
+
+statement ok
+CREATE JOB jsb_pragma AFTER 1 HOUR AS PRAGMA show_tables;
+
+
+statement ok
+EXECUTE JOB jsb_pragma;
+
+
+statement ok
+DELETE FROM jsb_log;
+
+
+statement ok
+CREATE JOB jsb_once AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (10, 'once'); DROP JOB jsb_once; INSERT INTO jsb_log VALUES (11, 'after the drop');$$;
+
+
+statement ok
+EXECUTE JOB jsb_once;
+
+
+query
+SELECT step, note FROM jsb_log ORDER BY step;
+----
+step	note
+10	once
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_once';
+----
+jobs
+0
+
+
+statement ok
+CREATE JOB jsb_soon AFTER 1 SECOND AS $$BEGIN; INSERT INTO jsb_log VALUES (20, 'scheduled'); DROP JOB jsb_soon; COMMIT;$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
+----
+jobs
+0
+
+
+query
+SELECT step, note FROM jsb_log WHERE step = 20;
+----
+step	note
+20	scheduled
+
+
+query
+SELECT trigger, success, error IS NULL AS no_error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsb_soon';
+----
+trigger	success	no_error
+schedule	t	t
+
+
+statement ok
+CREATE OR REPLACE JOB jsb_script AFTER 1 HOUR AS SELECT 42;
+
+
+query
+SELECT body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_script';
+----
+body
+SELECT 42
+
+
+statement ok
+CREATE OR REPLACE JOB jsb_script AFTER 1 HOUR AS $$SELECT 1; SELECT 2;$$;
+
+
+statement ok
+ALTER JOB jsb_script RENAME TO jsb_renamed;
+
+
+statement ok
+ALTER JOB jsb_renamed SET SCHEDULE EVERY 1 DAY;
+
+
+statement ok
+ALTER JOB jsb_renamed SUSPEND;
+
+
+query
+SELECT body, schedule, suspended FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_renamed';
+----
+body	schedule	suspended
+SELECT 1; SELECT 2;	EVERY INTERVAL '1 day'	t
+
+
+statement ok
+ALTER JOB jsb_renamed RENAME TO jsb_script;
+
+
+statement ok
+CREATE JOB IF NOT EXISTS jsb_single AFTER 1 HOUR AS $$SELECT 3; SELECT 4;$$;
+
+
+query
+SELECT body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_single';
+----
+body
+SELECT 1
+
+
+statement ok
+CREATE TABLE jsb_ticks (part TEXT);
+
+
+statement ok
+CREATE JOB jsb_every EVERY 1 SECOND AS $$INSERT INTO jsb_ticks VALUES ('a'); INSERT INTO jsb_ticks VALUES ('b');$$;
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 4 AS ticked FROM jsb_ticks;
+----
+ticked
+t
+
+
+statement ok
+ALTER JOB jsb_every SUSPEND;
+
+
+query ok retry 80 backoff 250ms
+SELECT running FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_every';
+----
+running
+f
+
+
+query
+SELECT count(*) FILTER (WHERE part = 'a') = count(*) FILTER (WHERE part = 'b') AS paired, failure_count
+FROM jsb_ticks, sdb_jobs()
+WHERE database_name = current_database() AND job_name = 'jsb_every'
+GROUP BY failure_count;
+----
+paired	failure_count
+t	0
+
+
+statement ok
+CREATE JOB jsb_commented AFTER 1 HOUR AS $$
+-- the first step
+INSERT INTO jsb_log VALUES (40, 'commented');
+/* the second step */
+INSERT INTO jsb_log VALUES (41, 'commented');
+$$;
+
+
+statement ok
+EXECUTE JOB jsb_commented;
+
+
+query
+SELECT step FROM jsb_log WHERE note = 'commented' ORDER BY step;
+----
+step
+40
+41
+
+
+query
+SELECT trim(replace(body, chr(10), ' ')) AS body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_commented';
+----
+body
+INSERT INTO jsb_log VALUES (40, 'commented'); /* the second step */ INSERT INTO jsb_log VALUES (41, 'commented');
+
+
+statement ok
+CREATE JOB jsb_tagged AFTER 1 HOUR AS $body$INSERT INTO jsb_log VALUES (50, '$$ inside');$body$;
+
+
+statement ok
+EXECUTE JOB jsb_tagged;
+
+
+query
+SELECT note FROM jsb_log WHERE step = 50;
+----
+note
+$$ inside
+
+
+statement ok
+CREATE JOB jsb_parent AFTER 1 HOUR AS $outer$CREATE JOB jsb_child AFTER 1 HOUR AS $inner$SELECT 1; SELECT 2;$inner$;$outer$;
+
+
+statement ok
+EXECUTE JOB jsb_parent;
+
+
+query
+SELECT job_name, body FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_child';
+----
+job_name	body
+jsb_child	SELECT 1; SELECT 2;
+
+
+statement ok
+EXECUTE JOB jsb_child;
+
+
+statement ok
+CREATE JOB jsb_lazy AFTER 1 HOUR AS $$CREATE TABLE jsb_made AS SELECT 7 AS v; PRAGMA table_info('jsb_made'); DROP TABLE jsb_made;$$;
+
+
+statement ok
+EXECUTE JOB jsb_lazy;
+
+
+statement ok
+EXECUTE JOB jsb_lazy;
+
+
+query
+SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_lazy';
+----
+run_count	failure_count
+2	0
+
+
+statement ok
+CREATE SCHEMA jsb_space;
+
+
+statement ok
+CREATE TABLE jsb_space.jsb_spaced (v INT);
+
+
+statement ok
+CREATE JOB jsb_path AFTER 1 HOUR AS $$SET search_path = jsb_space; INSERT INTO jsb_spaced VALUES (1);$$;
+
+
+statement ok
+EXECUTE JOB jsb_path;
+
+
+query
+SELECT count(*) AS n FROM jsb_space.jsb_spaced;
+----
+n
+1
+
+
+statement ok
+INSERT INTO jsb_a VALUES (9);
+
+
+statement ok
+CREATE ROLE jsb_role_x;
+
+
+statement ok
+CREATE ROLE jsb_role_y;
+
+
+statement ok
+CREATE JOB jsb_split AFTER 1 HOUR AS $$ALTER TABLE jsb_a ADD COLUMN w INT NOT NULL DEFAULT 5; DROP ROLE jsb_role_x, jsb_role_y;$$;
+
+
+statement ok
+EXECUTE JOB jsb_split;
+
+
+query
+SELECT v, w FROM jsb_a;
+----
+v	w
+9	5
+
+
+query
+SELECT count(*) AS roles FROM pg_roles WHERE rolname IN ('jsb_role_x', 'jsb_role_y');
+----
+roles
+0
+
+
+statement ok
+CREATE ROLE jsb_worker;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO jsb_worker;
+
+
+statement ok
+GRANT INSERT ON jsb_log TO jsb_worker;
+
+
+statement ok
+SET ROLE jsb_worker;
+
+
+statement ok
+CREATE JOB jsb_worker_job AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (60, 'worker'); DELETE FROM jsb_log;$$;
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+EXECUTE JOB jsb_worker_job;
+----
+db error: ERROR: permission denied for table jsb_log
+
+
+query
+SELECT step, note FROM jsb_log WHERE step = 60;
+----
+step	note
+60	worker
+
+
+statement ok
+CREATE JOB jsb_boom AFTER 1 HOUR AS $$SELECT error('boom'); INSERT INTO jsb_log VALUES (80, 'never');$$;
+
+
+statement error
+EXECUTE JOB jsb_boom;
+----
+db error: ERROR: boom
+
+
+query
+SELECT (SELECT count(*) FROM jsb_log WHERE step = 80) AS inserted, last_error FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsb_boom';
+----
+inserted	last_error
+0	boom
+
+
+statement ok
+CREATE JOB jsb_callee AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (91, 'callee');$$;
+
+
+statement ok
+CREATE JOB jsb_caller AFTER 1 HOUR AS $$INSERT INTO jsb_log VALUES (90, 'caller'); EXECUTE JOB jsb_callee; INSERT INTO jsb_log VALUES (92, 'caller again');$$;
+
+
+statement ok
+EXECUTE JOB jsb_caller;
+
+
+query
+SELECT step, note FROM jsb_log WHERE step BETWEEN 90 AND 92 ORDER BY step;
+----
+step	note
+90	caller
+91	callee
+92	caller again
+
+
+statement error
+CREATE JOB jsb_named AFTER 1 HOUR AS $$SELECT $name$$;
+----
+db error: ERROR: CREATE JOB cannot have parameters
+
+
+statement error
+CREATE JOB jsb_question AFTER 1 HOUR AS $$SELECT ?$$;
+----
+db error: ERROR: CREATE JOB cannot have parameters
+
+
+statement error
+CREATE JOB jsb_comment_only AFTER 1 HOUR AS $$-- nothing to run$$;
+----
+db error: ERROR: CREATE JOB body cannot be empty
+
+
+statement error
+CREATE JOB jsb_empty_string AFTER 1 HOUR AS '';
+----
+db error: ERROR: CREATE JOB body cannot be empty
+
+
+statement ok
+DROP JOB jsb_every;
+
+
+statement ok
+DROP JOB jsb_commented;
+
+
+statement ok
+DROP JOB jsb_tagged;
+
+
+statement ok
+DROP JOB jsb_parent;
+
+
+statement ok
+DROP JOB jsb_child;
+
+
+statement ok
+DROP JOB jsb_lazy;
+
+
+statement ok
+DROP JOB jsb_path;
+
+
+statement ok
+DROP JOB jsb_split;
+
+
+statement ok
+DROP JOB jsb_worker_job;
+
+
+statement ok
+DROP JOB jsb_boom;
+
+
+statement ok
+DROP JOB jsb_caller;
+
+
+statement ok
+DROP JOB jsb_callee;
+
+
+statement ok
+REVOKE INSERT ON jsb_log FROM jsb_worker;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM jsb_worker;
+
+
+statement ok
+DROP ROLE jsb_worker;
+
+
+statement ok
+DROP TABLE jsb_ticks;
+
+
+statement ok
+DROP SCHEMA jsb_space CASCADE;
+
+
+statement ok
+DROP JOB jsb_script;
+
+
+statement ok
+DROP JOB jsb_failing;
+
+
+statement ok
+DROP JOB jsb_atomic;
+
+
+statement ok
+DROP JOB jsb_truncate;
+
+
+statement ok
+DROP JOB jsb_single;
+
+
+statement ok
+DROP JOB jsb_pragma;
+
+
+statement ok
+DROP TABLE jsb_log;
+
+
+statement ok
+DROP TABLE jsb_a;
+
+
+statement ok
+DROP TABLE jsb_b;

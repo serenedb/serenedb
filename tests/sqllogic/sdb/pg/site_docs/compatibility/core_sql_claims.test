@@ -383,7 +383,7 @@ statement ok
 DROP TABLE types_cv2;
 
 # types: cidr
-statement error
+statement ok
 SELECT NULL::cidr;
 
 # types: circle
@@ -1698,7 +1698,7 @@ statement error
 SELECT polygon(box '((0,0),(2,2))');
 
 # op_net: <<
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' << inet '192.168.1.0/24';
 
 # op_net: <<=
@@ -1706,7 +1706,7 @@ statement ok
 SELECT inet '192.168.1.5/24' <<= inet '192.168.1.0/24';
 
 # op_net: >>
-statement error
+statement ok
 SELECT inet '192.168.1.0/24' >> inet '192.168.1.5/24';
 
 # op_net: >>=
@@ -1714,19 +1714,19 @@ statement ok
 SELECT inet '192.168.1.0/24' >>= inet '192.168.1.0/24';
 
 # op_net: &&
-statement error
+statement ok
 SELECT inet '192.168.1.0/24' && inet '192.168.1.5/24';
 
 # op_net: ~
-statement error
+statement ok
 SELECT ~ inet '192.168.1.5/24';
 
 # op_net: &
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' & inet '0.0.0.255';
 
 # op_net: |
-statement error
+statement ok
 SELECT inet '192.168.1.5/24' | inet '0.0.0.255';
 
 # op_net: +

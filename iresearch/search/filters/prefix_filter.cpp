@@ -22,6 +22,12 @@
 
 #include "prefix_filter.hpp"
 
+#include <absl/algorithm/container.h>
+
+#include <iterator>
+#include <span>
+#include <vector>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -59,7 +65,73 @@ class ByPrefixIterator : public WrappedTermIterator {
   bool _started{false};
 };
 
+class ByPrefixesIterator : public WrappedTermIterator {
+ public:
+  ByPrefixesIterator(const TermReader& reader,
+                     std::span<const bstring> prefixes)
+    : WrappedTermIterator{reader.iterator()}, _prefixes{prefixes} {}
+
+  bool next() final {
+    if (_started) {
+      if (!_impl->next()) {
+        return false;
+      }
+    } else {
+      _started = true;
+      if (_prefixes.empty() ||
+          SeekResult::End == _impl->seek_ge(_prefixes.front())) {
+        return false;
+      }
+    }
+    while (true) {
+      const auto term = _impl->value();
+      const bytes_view prefix = _prefixes[_current];
+      if (term.starts_with(prefix)) {
+        return true;
+      }
+      if (term < prefix) {
+        if (SeekResult::End == _impl->seek_ge(prefix)) {
+          return false;
+        }
+      } else if (++_current == _prefixes.size()) {
+        return false;
+      }
+    }
+  }
+
+ private:
+  std::span<const bstring> _prefixes;
+  size_t _current{0};
+  bool _started{false};
+};
+
+struct PrefixesAcceptor {
+  std::span<const bstring> prefixes;
+
+  bool operator()(bytes_view term) const noexcept {
+    const auto it = absl::c_upper_bound(
+      prefixes, term, [](bytes_view lhs, bytes_view rhs) { return lhs < rhs; });
+    return it != prefixes.begin() && term.starts_with(*std::prev(it));
+  }
+};
+
 }  // namespace
+
+void ByPrefixesFilterOptions::SetPrefixes(std::vector<bstring> prefixes) {
+  absl::c_sort(prefixes);
+  size_t kept = 0;
+  for (size_t i = 0; i < prefixes.size(); ++i) {
+    if (kept != 0 && bytes_view{prefixes[i]}.starts_with(prefixes[kept - 1])) {
+      continue;
+    }
+    if (kept != i) {
+      prefixes[kept] = std::move(prefixes[i]);
+    }
+    ++kept;
+  }
+  prefixes.resize(kept);
+  _prefixes = std::move(prefixes);
+}
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
@@ -114,6 +186,45 @@ TermPredicate::ptr ByPrefix::CompileTermPredicate() const {
 TermIterator::ptr ByPrefix::CompileTermIterator(
   const TermReader& reader) const {
   return memory::make_managed<ByPrefixIterator>(reader, options().term);
+}
+
+QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
+                                             const PrepareContext& ctx) const {
+  const auto* reader = segment.field(field_id());
+  if (!reader) {
+    return QueryBuilder::Empty();
+  }
+  auto sub_ctx = ctx;
+  sub_ctx.boost *= GetBoost();
+  auto query = memory::make_tracked<MultiTermQuery>(
+    sub_ctx.memory, segment, sub_ctx.memory, sub_ctx.boost,
+    ScoreMergeType::Sum);
+  MultiTermVisitor mtv{sub_ctx, query->State(), *reader};
+  ByPrefixesIterator terms{*reader, options().Prefixes()};
+  if (!terms.next()) {
+    return QueryBuilder::Empty();
+  }
+  mtv.Prepare(segment, *reader, terms.GetImpl());
+  VisitTerms(terms, mtv);
+  return MultiTermQuery::Finish(std::move(query), sub_ctx);
+}
+
+PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
+                                                    StatsArena& stats,
+                                                    uint32_t threads) const {
+  if (!ScoresPerDoc(scorer)) {
+    return std::make_unique<AllCollector>(scorer, stats);
+  }
+  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+}
+
+TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {
+  return MakeTermPredicate(PrefixesAcceptor{options().Prefixes()});
+}
+
+TermIterator::ptr ByPrefixes::CompileTermIterator(
+  const TermReader& reader) const {
+  return memory::make_managed<ByPrefixesIterator>(reader, options().Prefixes());
 }
 
 }  // namespace irs

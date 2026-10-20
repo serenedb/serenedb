@@ -51,6 +51,10 @@ TEST(subtract_disjunction_gate, balanced_pair_folds) {
   ASSERT_FALSE(irs::detail::SubtractsDisjunction(23938, 263792, kWikiDocs));
 }
 
+TEST(subtract_disjunction_gate, near_the_boundary_folds) {
+  ASSERT_FALSE(irs::detail::SubtractsDisjunction(10705, 187602, kWikiDocs));
+}
+
 TEST(subtract_disjunction_gate, dense_partner_costs_its_words) {
   ASSERT_TRUE(irs::detail::SubtractsDisjunction(1000, 4168066, kWikiDocs));
   ASSERT_FALSE(irs::detail::SubtractsDisjunction(31486, 4168066, kWikiDocs));
@@ -58,8 +62,20 @@ TEST(subtract_disjunction_gate, dense_partner_costs_its_words) {
 }
 
 TEST(subtract_disjunction_gate, skewed_pair_subtracts) {
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(1, 1000, 1000));
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(100, 30000, 100000));
+  ASSERT_TRUE(irs::detail::SubtractsDisjunction(1, 1000, 100000));
+  ASSERT_TRUE(irs::detail::SubtractsDisjunction(100, 300000, kWikiDocs));
+}
+
+TEST(subtract_conjunction_gate, two_common_terms_subtract) {
+  ASSERT_TRUE(irs::detail::SubtractsConjunction(82685, 94693, kWikiDocs));
+  ASSERT_TRUE(irs::detail::SubtractsConjunction(104806, 215507, kWikiDocs));
+  ASSERT_TRUE(irs::detail::SubtractsConjunction(52686, 55391, kWikiDocs));
+}
+
+TEST(subtract_conjunction_gate, rare_term_probes) {
+  ASSERT_FALSE(irs::detail::SubtractsConjunction(43, 82685, kWikiDocs));
+  ASSERT_FALSE(irs::detail::SubtractsConjunction(304, 280493, kWikiDocs));
+  ASSERT_FALSE(irs::detail::SubtractsConjunction(162, 4168066, kWikiDocs));
 }
 
 inline constexpr irs::field_id kBodyId = 1;
@@ -96,12 +112,20 @@ uint64_t UnionOf(std::string_view a, std::string_view b) {
   return count;
 }
 
+uint64_t IntersectionOf(std::string_view a, std::string_view b) {
+  uint64_t count = 0;
+  for (doc_id_t i = 0; i != kDocs; ++i) {
+    count += i % Every(a) == 0 && i % Every(b) == 0;
+  }
+  return count;
+}
+
 irs::TermClause Clause(std::string_view value) {
   return {.field = kBodyId,
           .term = irs::bstring{irs::ViewCast<irs::byte_type>(value)}};
 }
 
-class CountDisjunctionTest : public tests::IndexTestBase {
+class CountSubtractTest : public tests::IndexTestBase {
  protected:
   void Build() {
     auto writer = open_writer(irs::kOmCreate);
@@ -146,7 +170,7 @@ class CountDisjunctionTest : public tests::IndexTestBase {
     ASSERT_EQ(expected, parts + split->Finish());
   }
 
-  void CheckPair(std::string_view a, std::string_view b) {
+  void CheckUnion(std::string_view a, std::string_view b) {
     SCOPED_TRACE(absl::StrCat(a, " ", b));
     const auto expected = UnionOf(a, b);
     {
@@ -164,28 +188,54 @@ class CountDisjunctionTest : public tests::IndexTestBase {
       CheckCount(filter, kDocs - expected);
     }
   }
+
+  void CheckIntersection(std::string_view a, std::string_view b) {
+    SCOPED_TRACE(absl::StrCat("+", a, " +", b));
+    irs::BooleanFilter filter;
+    filter.Add(Clause(a), irs::Occur::Must);
+    filter.Add(Clause(b), irs::Occur::Must);
+    CheckCount(filter, IntersectionOf(a, b));
+  }
 };
 
-TEST_P(CountDisjunctionTest, counts_on_both_sides_of_the_gate) {
+TEST_P(CountSubtractTest, disjunctions_count_on_both_sides_of_the_gate) {
   Build();
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(DocsWith("rare"),
+  ASSERT_TRUE(irs::detail::SubtractsDisjunction(DocsWith("rarer"),
                                                 DocsWith("half"), kDocs));
   ASSERT_TRUE(irs::detail::SubtractsDisjunction(DocsWith("rarer"),
                                                 DocsWith("eleven"), kDocs));
+  ASSERT_FALSE(irs::detail::SubtractsDisjunction(DocsWith("rare"),
+                                                 DocsWith("half"), kDocs));
   ASSERT_FALSE(irs::detail::SubtractsDisjunction(DocsWith("seventeen"),
                                                  DocsWith("thirteen"), kDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(DocsWith("eleven"),
-                                                 DocsWith("half"), kDocs));
-  CheckPair("rare", "half");
-  CheckPair("rarer", "eleven");
-  CheckPair("thirteen", "seventeen");
-  CheckPair("eleven", "half");
-  CheckPair("rare", "rarer");
+  CheckUnion("rarer", "half");
+  CheckUnion("rarer", "eleven");
+  CheckUnion("rare", "half");
+  CheckUnion("thirteen", "seventeen");
+  CheckUnion("eleven", "half");
+  CheckUnion("rare", "rarer");
 }
 
-INSTANTIATE_TEST_SUITE_P(count_disjunction_test, CountDisjunctionTest,
+TEST_P(CountSubtractTest, conjunctions_count_on_both_sides_of_the_gate) {
+  Build();
+  ASSERT_TRUE(irs::detail::SubtractsConjunction(DocsWith("eleven"),
+                                                DocsWith("half"), kDocs));
+  ASSERT_TRUE(irs::detail::SubtractsConjunction(DocsWith("seventeen"),
+                                                DocsWith("thirteen"), kDocs));
+  ASSERT_FALSE(irs::detail::SubtractsConjunction(DocsWith("rare"),
+                                                 DocsWith("half"), kDocs));
+  ASSERT_FALSE(irs::detail::SubtractsConjunction(DocsWith("rarer"),
+                                                 DocsWith("eleven"), kDocs));
+  CheckIntersection("eleven", "half");
+  CheckIntersection("thirteen", "seventeen");
+  CheckIntersection("rare", "half");
+  CheckIntersection("rarer", "eleven");
+  CheckIntersection("rare", "rarer");
+}
+
+INSTANTIATE_TEST_SUITE_P(count_subtract_test, CountSubtractTest,
                          ::testing::Combine(::testing::Values(
                            &tests::Directory<&tests::MemoryDirectory>)),
-                         CountDisjunctionTest::to_string);
+                         CountSubtractTest::to_string);
 
 }  // namespace

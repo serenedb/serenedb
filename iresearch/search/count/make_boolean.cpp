@@ -76,7 +76,8 @@ Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
         should_filters.empty() && must_filters.empty() &&
         must_terms.size() == 2 &&
         detail::SubtractsConjunction(
-          RarestOf(must_terms), static_cast<doc_id_t>(segment.docs_count()))) {
+          RarestOf(must_terms), DensestOf(must_terms),
+          static_cast<doc_id_t>(segment.docs_count()))) {
       if (auto subtracted =
             MakeSubtractConjunction(must_terms, must_filters, segment, ctx)) {
         return subtracted;

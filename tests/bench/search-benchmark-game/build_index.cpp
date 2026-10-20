@@ -32,7 +32,7 @@
 #include "index_builder.h"
 #include "insert_field.hpp"
 
-static int Main(int argc, const char* argv[]) {
+int main(int argc, const char* argv[]) {
   size_t threads = 1;
   if (argc > 1 && (!absl::SimpleAtoi(argv[1], &threads) || threads == 0)) {
     absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
@@ -107,6 +107,3 @@ static int Main(int argc, const char* argv[]) {
   irs::DuckDBEngine::Instance().Shutdown();
   return exit_code;
 }
-
-[[maybe_unused]] static const bool kMain =
-  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

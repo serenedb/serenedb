@@ -85,7 +85,7 @@ class OrderedNormInput {
     : _reader{reader}, _mask{source.reader->MaskedDocs()} {}
 
   uint32_t Next() {
-    if (_reader == nullptr) {
+    if (!_reader) {
       return 0;
     }
     while (_at == _values.size()) {
@@ -200,7 +200,7 @@ LiveNormStats ComputeLiveNormStats(field_id id,
 void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
                      std::span<const MergeSource> sources,
                      const MergeOrder* order) {
-  if (order != nullptr) {
+  if (order) {
     MergeOrderedNormColumn(col_writer, id, out_id, sources, *order);
     return;
   }

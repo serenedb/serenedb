@@ -819,10 +819,10 @@ inline PostingsWriter::Bases PostingsWriter::Append(IndexInput* doc,
     .pay = _pay_out ? _pay_out->Position() : 0,
   };
   const auto copy = [](IndexInput* in, IndexOutput* out) {
-    if (in == nullptr) {
+    if (!in) {
       return;
     }
-    SDB_ASSERT(out != nullptr);
+    SDB_ASSERT(out);
     constexpr uint64_t kChunk = uint64_t{1} << 16;
     auto buffer = std::make_unique_for_overwrite<byte_type[]>(kChunk);
     const auto length = in->Length();

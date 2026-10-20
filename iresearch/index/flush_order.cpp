@@ -53,7 +53,7 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
   duckdb::vector<duckdb::BoundOrderByNode> orders;
   for (const auto& key : spec.keys) {
     auto* column = columns.StagedColumn(key.column);
-    if (column == nullptr) {
+    if (!column) {
       continue;
     }
     column->PadNullsTo(rows);

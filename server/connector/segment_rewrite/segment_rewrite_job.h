@@ -40,8 +40,8 @@ struct SegmentRewriteJob {
 
 struct ExecutedMerge {
   search::MergeOutcome outcome = search::MergeOutcome::Running;
-  irs::MergeStats stats{};
-  std::string error{};
+  irs::MergeStats stats;
+  std::string error;
 };
 
 std::vector<std::string> SegmentRewriteColumnNames();

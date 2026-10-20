@@ -141,7 +141,7 @@ class BlobEncoder {
     }
     const auto entry_count =
       p.entries.size() + (p.shape == Shape::Dedup ? 1 : 0);
-    Header h{};
+    Header h;
     LayOut(
       h, _spans.size(),
       duckdb::BitpackingPrimitives::GetRequiredSize(

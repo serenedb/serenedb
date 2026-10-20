@@ -293,8 +293,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     const auto& type = extract ? *spec.extract_type : reader->Type();
     const bool list_like = type.id() == duckdb::LogicalTypeId::LIST ||
                            type.id() == duckdb::LogicalTypeId::MAP;
-    const bool nested =
-      spec.row_gather || extract != nullptr || type.IsNested();
+    const bool nested = spec.row_gather || extract || type.IsNested();
     _cols.push_back(Col{
       .reader = reader,
       .field = spec.field,

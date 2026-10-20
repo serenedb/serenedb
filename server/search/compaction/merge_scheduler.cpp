@@ -66,7 +66,7 @@ class MergeScheduler::Start {
   Start& operator=(Start&&) = delete;
 
   ~Start() {
-    if (_entry != nullptr) {
+    if (_entry) {
       _scheduler->Finish(*_entry, MergeOutcome::Cancelled, {});
     }
   }

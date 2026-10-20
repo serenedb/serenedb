@@ -489,7 +489,7 @@ class IndexWriter : private util::Noncopyable {
     }
     ~CompactionFloorGuard() { Release(); }
 
-    bool Held() const noexcept { return _writer != nullptr && !_pending; }
+    bool Held() const noexcept { return _writer && !_pending; }
     uint64_t Floor() const noexcept { return _floor; }
 
    private:

@@ -49,7 +49,7 @@ inline constexpr uint64_t kOptimizeRowGroups = 4;
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept;
 
 struct PlannedSegment {
-  std::string name{};
+  std::string name;
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
@@ -57,8 +57,8 @@ struct PlannedSegment {
 };
 
 struct PlannedMerge {
-  std::string reason{};
-  std::vector<PlannedSegment> inputs{};
+  std::string reason;
+  std::vector<PlannedSegment> inputs;
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
@@ -74,16 +74,16 @@ struct PlannedMerge {
 };
 
 struct SkippedSegment {
-  std::string name{};
-  std::string reason{};
+  std::string name;
+  std::string reason;
 };
 
 struct MergeRoundPlan {
   MergeMode mode = MergeMode::Background;
   uint64_t segments = 0;
-  std::vector<PlannedMerge> merges{};
-  std::vector<SkippedSegment> skipped{};
-  std::vector<std::string> notes{};
+  std::vector<PlannedMerge> merges;
+  std::vector<SkippedSegment> skipped;
+  std::vector<std::string> notes;
   bool partial = false;
 };
 
@@ -96,7 +96,7 @@ struct MergeRoundRequest {
   uint32_t row_group_size = 0;
   size_t inputs_max = std::numeric_limits<size_t>::max();
   bool single_output = false;
-  std::span<const std::string> segments{};
+  std::span<const std::string> segments;
   const CopyChecker* copy_check = nullptr;
 };
 

@@ -84,10 +84,10 @@ struct MergeRecord {
   MergeLane lane = MergeLane::Big;
   double score = 0;
   size_t threads = 0;
-  irs::MergeStats stats{};
+  irs::MergeStats stats;
   uint64_t output_live_docs = 0;
   irs::SegmentRange rowids;
-  std::string error{};
+  std::string error;
 
   bool Queued() const noexcept { return started_us == 0; }
   uint64_t EstimatedBytes() const noexcept;

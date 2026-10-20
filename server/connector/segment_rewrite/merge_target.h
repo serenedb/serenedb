@@ -48,8 +48,8 @@ class SearchTable;
 namespace sdb::connector {
 
 struct MergeRun {
-  irs::CompactionResult result{};
-  std::string error{};
+  irs::CompactionResult result;
+  std::string error;
 };
 
 class MergeTarget {
@@ -61,7 +61,7 @@ class MergeTarget {
   const std::string& Database() const noexcept { return _database; }
   bool ReadOnly() const noexcept { return _read_only; }
   uint64_t RelationId() const noexcept { return _relation_id; }
-  bool IsIndex() const noexcept { return _index != nullptr; }
+  bool IsIndex() const noexcept { return static_cast<bool>(_index); }
   bool Sorted() const noexcept;
   uint32_t RowGroupSize() const noexcept { return _options->row_group_size; }
   const irs::IndexFieldOptions& FieldOptions() const noexcept {

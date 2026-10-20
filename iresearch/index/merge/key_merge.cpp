@@ -56,16 +56,16 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
     : _cs{reader.GetColReader()} {
     for (const auto& key : keys) {
       auto& column = *_columns.emplace_back(std::make_unique<Column>(key.type));
-      column.reader = _cs != nullptr ? _cs->Column(key.id) : nullptr;
+      column.reader = _cs ? _cs->Column(key.id) : nullptr;
     }
   }
 
   void Read(duckdb::idx_t begin, duckdb::idx_t count,
-            duckdb::DataChunk& keys) override {
+            duckdb::DataChunk& keys) final {
     for (size_t c = 0; c != _columns.size(); ++c) {
       auto& column = *_columns[c];
       auto& out = keys.data[c];
-      if (column.reader == nullptr || begin >= column.reader->RowCount()) {
+      if (!column.reader || begin >= column.reader->RowCount()) {
         out.Reference(duckdb::Value{column.type}, duckdb::count_t{count});
         continue;
       }
@@ -137,10 +137,9 @@ class SegmentKeys final : public duckdb::PresortedMergeInput {
   SegmentKeys(const SubReader& reader, std::span<const KeyColumn> keys)
     : _reader{reader}, _keys{keys} {}
 
-  duckdb::idx_t Count() const override { return _reader.docs_count(); }
+  duckdb::idx_t Count() const final { return _reader.docs_count(); }
 
-  duckdb::unique_ptr<duckdb::PresortedMergeReader> CreateReader()
-    const override {
+  duckdb::unique_ptr<duckdb::PresortedMergeReader> CreateReader() const final {
     return duckdb::make_uniq<SegmentKeyReader>(_reader, _keys);
   }
 
@@ -255,8 +254,8 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   for (const auto& key : s.spec.keys) {
     for (const auto& input : s.doc_map) {
       const auto* cs = input.reader->GetColReader();
-      const auto* col = cs != nullptr ? cs->Column(key.column) : nullptr;
-      if (col == nullptr) {
+      const auto* col = cs ? cs->Column(key.column) : nullptr;
+      if (!col) {
         continue;
       }
       s.keys.push_back({.id = key.column, .type = col->Type()});
@@ -295,7 +294,7 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   }
   s.merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
     std::move(types), std::move(modifiers), std::move(inputs));
-  if (scheduler != nullptr) {
+  if (scheduler) {
     s.merge->Partition(partitions, false, *scheduler, threads);
   } else {
     s.merge->Partition(partitions);
@@ -303,7 +302,9 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   s.PlanParts();
 }
 
-bool KeyOrder::Pending() const noexcept { return _state->merge != nullptr; }
+bool KeyOrder::Pending() const noexcept {
+  return static_cast<bool>(_state->merge);
+}
 
 duckdb::shared_ptr<duckdb::PresortedMerge> KeyOrder::KeyMerge() const noexcept {
   return _state->merge;

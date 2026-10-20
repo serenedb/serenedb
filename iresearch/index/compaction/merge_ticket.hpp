@@ -44,7 +44,7 @@ class MergeTicket {
   MergeTicket& operator=(MergeTicket&& other) noexcept;
   ~MergeTicket();
 
-  explicit operator bool() const noexcept { return _state != nullptr; }
+  explicit operator bool() const noexcept { return static_cast<bool>(_state); }
 
   CompactionView Candidates() const noexcept;
   bool Revoked() const noexcept;

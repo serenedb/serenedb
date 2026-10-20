@@ -110,14 +110,14 @@ class MergeStepClock {
 };
 
 struct MergeStats {
-  std::vector<std::string> inputs{};
+  std::vector<std::string> inputs;
   uint64_t input_docs = 0;
   uint64_t input_live_docs = 0;
   uint64_t input_bytes = 0;
-  std::string output{};
+  std::string output;
   uint64_t output_docs = 0;
   uint64_t output_bytes = 0;
-  MergeProfile profile{};
+  MergeProfile profile;
 };
 
 }  // namespace irs

@@ -78,13 +78,12 @@ class OrderedInputNormReader : public NormReader {
     const auto row = doc - doc_limits::min();
     const auto input = _inputs[row];
     const auto* column = _columns[input];
-    if (column == nullptr) {
+    if (!column) {
       return 0;
     }
     const auto source = _sources[row];
     const auto*& region = _regions[input];
-    if (region == nullptr || source < region->first_doc ||
-        source >= region->end_doc) {
+    if (!region || source < region->first_doc || source >= region->end_doc) {
       region = &column->Locate(source);
     }
     return ReadOne(*region, source);
@@ -262,8 +261,7 @@ class InputNormReader : public NormReader {
 
   const NormRegion& RegionOf(size_t i, doc_id_t source) noexcept {
     const auto* region = _regions[i];
-    if (region == nullptr || source < region->first_doc ||
-        source >= region->end_doc) {
+    if (!region || source < region->first_doc || source >= region->end_doc) {
       region = &_columns[i]->Locate(source);
       _regions[i] = region;
     }
@@ -332,7 +330,7 @@ void InputNormProvider::AddField(field_id column, field_id field, uint64_t sum,
 }
 
 void InputNormProvider::MapDocs() const {
-  if (_order != nullptr) {
+  if (_order) {
     _sources.resize(_order->Rows());
     for (const auto& input : _inputs) {
       const auto& id_map = input.source->remap->id_map;
@@ -369,7 +367,7 @@ NormReader::ptr InputNormProvider::norms(field_id column) const {
   for (const auto& input : _inputs) {
     columns.emplace_back(SourceNormColumn(*input.source, it->second.field));
   }
-  if (_order != nullptr) {
+  if (_order) {
     return memory::make_managed<OrderedInputNormReader>(
       *_order, _sources, std::move(columns), it->second.avg);
   }

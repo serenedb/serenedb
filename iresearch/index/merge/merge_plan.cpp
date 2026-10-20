@@ -124,9 +124,9 @@ struct MergePlan::State {
         return !aborted.load(std::memory_order_relaxed) && (!outer || outer());
       }},
       env{env},
-      sort{sort != nullptr && !sort->Empty() ? sort : nullptr},
+      sort{sort && !sort->Empty() ? sort : nullptr},
       hnsw_bases{hnsw_bases},
-      postings{doc_map.size(), this->progress, this->sort != nullptr} {}
+      postings{doc_map.size(), this->progress, static_cast<bool>(this->sort)} {}
 
   const MergeOrder* Order() const noexcept {
     return key_order ? &key_order->Order() : nullptr;
@@ -403,7 +403,7 @@ struct MergePlan::State {
       uint64_t terms = 0;
       for (const auto& input : doc_map) {
         const auto* reader = input.reader->field(id);
-        if (reader == nullptr) {
+        if (!reader) {
           continue;
         }
         terms += reader->size();
@@ -423,7 +423,7 @@ struct MergePlan::State {
         }
       }
       auto& range = term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
-        id, props, std::move(inputs), sort != nullptr, progress));
+        id, props, std::move(inputs), static_cast<bool>(sort), progress));
       range->Partition(
         parts,
         {.norms = &*norms, .scorer = scorer, .doc_count = segment.docs_count},

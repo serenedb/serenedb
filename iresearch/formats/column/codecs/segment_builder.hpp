@@ -71,6 +71,11 @@ void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
 
 class DedupScratch {
  public:
+  struct LocalCode {
+    uint32_t local;
+    bool fresh;
+  };
+
   void Begin(size_t entries) {
     if (_slots.size() != entries) {
       _slots.assign(entries, Slot{});
@@ -78,7 +83,7 @@ class DedupScratch {
     ++_epoch;
   }
 
-  std::pair<uint32_t, bool> Local(uint32_t code, uint32_t next) noexcept {
+  LocalCode Local(uint32_t code, uint32_t next) noexcept {
     auto& slot = _slots[code - 1];
     if (slot.epoch == _epoch) {
       return {slot.local, false};
@@ -195,6 +200,11 @@ class SegmentBuilder {
   uint32_t MaxLen() const noexcept { return _max_len; }
 
  private:
+  struct SortKey {
+    uint64_t prefix;
+    uint32_t entry;
+  };
+
   template<typename Leaf>
   IRS_FORCE_INLINE void AddRow(Leaf& leaf, uint64_t row) {
     const auto code = _acc.codes[row];
@@ -273,7 +283,7 @@ class SegmentBuilder {
   uint64_t _nulls = 0;
   uint64_t _input = 0;
 
-  std::vector<std::pair<uint64_t, uint32_t>> _order;
+  std::vector<SortKey> _order;
   std::vector<uint32_t> _remap;
   std::vector<std::string_view> _sorted;
   std::vector<uint32_t> _lengths;

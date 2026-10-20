@@ -186,7 +186,7 @@ void SortedPostings::NextPositions(uint32_t* pos, uint32_t* offs_start,
     const auto take = static_cast<uint32_t>(std::min<uint64_t>(n, _left));
     _iterators[_current].it->NextPositions(pos, offs_start, offs_len, take);
     pos += take;
-    if (offs_start != nullptr) {
+    if (offs_start) {
       offs_start += take;
       offs_len += take;
     }

@@ -1395,8 +1395,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
       relation.Cast<duckdb::TableCatalogEntry>().GetColumns().GetColumn(
         order.expression->Cast<duckdb::ColumnRefExpression>().GetColumnName());
     const auto id = static_cast<irs::field_id>(TableColumnId(column));
-    SDB_ASSERT(config->FindEntry(id) != nullptr &&
-               config->FindEntry(id)->IsStored());
+    SDB_ASSERT(config->FindEntry(id) && config->FindEntry(id)->IsStored());
     config->sort.keys.push_back(
       {.column = id,
        .descending = order.type == duckdb::OrderType::DESCENDING,

@@ -38,7 +38,7 @@ struct ColumnCopyCheck {
   irs::field_id column = irs::field_limits::invalid();
   uint64_t rows = 0;
   uint64_t bytes = 0;
-  std::optional<uint64_t> reencoded_bytes{};
+  std::optional<uint64_t> reencoded_bytes;
   bool codec_changed = false;
 
   bool Saves() const noexcept;

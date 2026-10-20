@@ -110,7 +110,7 @@ void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
     absl::c_sort(keys);
     keys.erase(std::ranges::unique(keys).begin(), keys.end());
     auto* lookup = LookupOf(removal->key_column);
-    if (lookup == nullptr) {
+    if (!lookup) {
       lookup = &_lookups.emplace_back(Lookup{.column = removal->key_column});
     }
     lookup->keys.insert(lookup->keys.end(), keys.begin(), keys.end());
@@ -147,7 +147,7 @@ std::span<const doc_id_t> DocRemovalResolver::Docs(const DocRemoval& removal,
     return positional;
   }
   auto* lookup = LookupOf(removal.key_column);
-  SDB_ASSERT(lookup != nullptr);
+  SDB_ASSERT(lookup);
   const auto hits = Resolve(*lookup, segment);
   if (hits.empty()) {
     return positional;

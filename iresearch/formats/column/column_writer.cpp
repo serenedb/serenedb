@@ -106,7 +106,7 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, ColBlockSink& blocks,
                     std::vector<ColumnBlockMeta>& sink) {
   const std::string_view part{reinterpret_cast<const char*>(bytes),
-                              bytes != nullptr ? segment_size : 0};
+                              bytes ? segment_size : 0};
   CaptureBlock(segment.GetDatabase(), segment.GetCompressionFunction(),
                segment.GetStats().Copy(), segment.count.load(),
                std::span<const std::string_view>{&part, 1}, blocks, sink);

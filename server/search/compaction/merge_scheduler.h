@@ -107,7 +107,9 @@ class MergeScheduler {
     Lease& operator=(Lease&& other) noexcept;
     ~Lease();
 
-    explicit operator bool() const noexcept { return _scheduler != nullptr; }
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(_scheduler);
+    }
 
    private:
     friend class MergeScheduler;

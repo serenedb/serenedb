@@ -73,7 +73,7 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 size_t SegmentWriter::memory_active() const noexcept {
   return _docs_context.MemoryActive() + _docs_mask.ByteSize() +
          _fields.MemoryActive() +
-         (_sort != nullptr && _col_writer ? _col_writer->StagedBytes() : 0);
+         (_sort && _col_writer ? _col_writer->StagedBytes() : 0);
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
@@ -103,8 +103,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _sort{options.sort != nullptr && !options.sort->Empty() ? options.sort
-                                                            : nullptr},
+    _sort{options.sort && !options.sort->Empty() ? options.sort : nullptr},
     _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
@@ -138,7 +137,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask,
   if (_col_writer) {
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
-    if (_sort != nullptr) {
+    if (_sort) {
       order =
         MakeDocOrder(FlushOrder(_db, *_sort, *_col_writer, buffered_docs()));
       _col_writer->Commit(buffered_docs(), [] { return true; }, order.new2old);
@@ -244,7 +243,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
-  if (_sort != nullptr) {
+  if (_sort) {
     _col_writer->StageAll();
   }
   _col_writer->SetFieldOptions(active);

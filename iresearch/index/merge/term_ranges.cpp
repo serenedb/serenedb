@@ -251,7 +251,7 @@ void TermRangeMerge::Partition(size_t parts, const Target& target,
                                duckdb::TaskScheduler* scheduler,
                                size_t threads) {
   _target = target;
-  if (scheduler != nullptr) {
+  if (scheduler) {
     _merge->Partition(parts, true, *scheduler, threads);
   } else {
     _merge->Partition(parts, true);

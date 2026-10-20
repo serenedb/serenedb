@@ -138,18 +138,17 @@ void SegmentBuilder::SortEntries() {
   for (uint32_t i = 0; i < n; ++i) {
     _order[i] = {PrefixKey(_entries[i], common), i};
   }
-  absl::c_sort(_order, [&](const std::pair<uint64_t, uint32_t>& a,
-                           const std::pair<uint64_t, uint32_t>& b) {
-    if (a.first != b.first) {
-      return a.first < b.first;
+  absl::c_sort(_order, [&](const SortKey& a, const SortKey& b) {
+    if (a.prefix != b.prefix) {
+      return a.prefix < b.prefix;
     }
-    return _entries[a.second] < _entries[b.second];
+    return _entries[a.entry] < _entries[b.entry];
   });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);
   for (uint32_t pos = 0; pos < n; ++pos) {
-    _remap[_order[pos].second + 1] = pos + 1;
-    _sorted[pos] = _entries[_order[pos].second];
+    _remap[_order[pos].entry + 1] = pos + 1;
+    _sorted[pos] = _entries[_order[pos].entry];
   }
   _entries.swap(_sorted);
   for (auto& code : _codes) {

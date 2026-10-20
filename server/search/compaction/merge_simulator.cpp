@@ -21,6 +21,7 @@
 #include "search/compaction/merge_simulator.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/btree_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -29,7 +30,6 @@
 #include <map>
 #include <memory>
 #include <queue>
-#include <set>
 #include <tuple>
 #include <utility>
 #include <yaclib/async/contract.hpp>
@@ -91,7 +91,7 @@ struct Relation {
   uint64_t id = 0;
   std::shared_ptr<MergeScheduler::Relation> handle;
   std::vector<Segment> segments;
-  std::set<std::string, std::less<>> reserved;
+  absl::btree_set<std::string> reserved;
   uint64_t next_segment = 1;
   uint64_t planned_generation = 0;
 };

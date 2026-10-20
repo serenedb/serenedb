@@ -367,10 +367,10 @@ class SegmentWriter {
       const auto code = _acc.codes[row];
       uint32_t local = 0;
       if (code != 0) {
-        bool fresh = false;
-        std::tie(local, fresh) =
+        const auto mapped =
           _dedup.Local(code, static_cast<uint32_t>(p.entries.size()) + 1);
-        if (fresh) {
+        local = mapped.local;
+        if (mapped.fresh) {
           Append(_acc.entries[code - 1]);
         }
       }

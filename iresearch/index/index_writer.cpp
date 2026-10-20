@@ -529,7 +529,8 @@ AddIncomingResult AddIncoming(
 
     const CompactionView candidates{incoming.compaction_ctx.candidates};
 
-    const auto pending_compaction = incoming.compaction_ctx.pending.has_value();
+    const auto pending_compaction =
+      static_cast<bool>(incoming.compaction_ctx.pending);
 
     if (pending_compaction) {
       // Pending compaction request
@@ -2285,7 +2286,7 @@ void IndexWriter::Finish() {
   // noexcept part!
   {
     std::lock_guard lock{_compacting.lock};
-    if (auto* ctx = _pending_state.ctx.get(); ctx != nullptr) {
+    if (auto* ctx = _pending_state.ctx.get()) {
       Cleanup(*ctx);
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_before_reader_swap");

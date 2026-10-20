@@ -179,7 +179,7 @@ void NormColumnWriter::CloseRegion() {
 
 void NormColumnWriter::Begin(const NormLayout& layout, uint64_t rows,
                              uint32_t max) {
-  if (layout.bits != 0 && _blocks == nullptr) {
+  if (layout.bits != 0 && !_blocks) {
     _blocks = &_open();
   }
   _open_region = true;

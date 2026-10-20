@@ -452,7 +452,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void ColumnTypes(const duckdb::TableCatalogEntry& table,
                    const duckdb::CatalogEntry& type) {
     for (const auto& column : table.GetColumns().Logical()) {
-      const auto oid = Type2Oid(column.Type());
+      const auto oid = CatalogTypeOid(column.Type());
       if (oid == type.oid || oid == TypeArrayOid(type.oid)) {
         Depend(kPgClassTable, table.oid, Attnum(column), kPgTypeTable, oid, 0,
                'n');

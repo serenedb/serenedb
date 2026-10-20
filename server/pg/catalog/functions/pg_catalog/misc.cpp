@@ -615,7 +615,7 @@ void CountNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
   const auto oid =
-    static_cast<int64_t>(Type2Oid(input.children[0]->GetReturnType()));
+    static_cast<int64_t>(CatalogTypeOid(input.children[0]->GetReturnType()));
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::BIGINT(oid).WithType(REGTYPE()));
 }
@@ -781,8 +781,8 @@ duckdb::unique_ptr<duckdb::Expression> BindPgCollationFor(
     if (oid == kInvalidOid) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                       ERR_MSG("collations are not supported by type ",
-                              pg::AsView(FormatTypeOut(session, Type2Oid(type),
-                                                       std::nullopt))));
+                              pg::AsView(FormatTypeOut(
+                                session, CatalogTypeOid(type), std::nullopt))));
     }
     collation =
       duckdb::Value{std::string{RegOut(session, RegKind::Collation, oid)}};

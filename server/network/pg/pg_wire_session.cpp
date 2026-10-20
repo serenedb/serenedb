@@ -2380,8 +2380,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
       continue;
     }
     oids.emplace_back(
-      sdb::pg::Logical2Pg(ResolveExpectedType(prepared, stmt.TypeHints(), i))
-        .oid);
+      sdb::pg::Type2Oid(ResolveExpectedType(prepared, stmt.TypeHints(), i)));
   }
   WriteParameterDescription(this->_send, oids);
 

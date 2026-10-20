@@ -94,7 +94,7 @@ duckdb::idx_t PgProcOid(const BuiltinFunction& function) {
 }
 
 duckdb::idx_t TypeOid(const duckdb::LogicalType& type) {
-  return type.IsComplete() ? Type2Oid(type) : kUnknown;
+  return type.IsComplete() ? CatalogTypeOid(type) : kUnknown;
 }
 
 std::vector<duckdb::idx_t> ArgTypes(

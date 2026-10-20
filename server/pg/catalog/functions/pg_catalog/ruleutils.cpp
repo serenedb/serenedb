@@ -492,7 +492,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
 
 std::string_view FormatType(const Session& session,
                             const duckdb::LogicalType& type) {
-  return RegOut(session, RegKind::Type, Type2Oid(type));
+  return RegOut(session, RegKind::Type, CatalogTypeOid(type));
 }
 
 const duckdb::ParsedExpression* ParameterDefault(

@@ -126,7 +126,7 @@ duckdb::BoundCastInfo CannotCast(duckdb::BindCastInput& input,
                                  const duckdb::LogicalType& target) {
   const auto session = MakeSession(input.context.get());
   const auto name = [&](const duckdb::LogicalType& type) {
-    return FormatTypeOut(session, Type2Oid(type), std::nullopt);
+    return FormatTypeOut(session, CatalogTypeOid(type), std::nullopt);
   };
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANNOT_COERCE),
                   ERR_MSG("cannot cast type ", AsView(name(source)), " to ",

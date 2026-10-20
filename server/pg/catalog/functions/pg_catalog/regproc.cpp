@@ -1082,7 +1082,7 @@ std::vector<duckdb::idx_t> MacroArgs(const duckdb::MacroFunction& macro) {
   for (const auto& type : macro.types) {
     args.emplace_back(type.id() == duckdb::LogicalTypeId::UNKNOWN
                         ? duckdb::idx_t{0}
-                        : duckdb::idx_t{Type2Oid(type)});
+                        : duckdb::idx_t{CatalogTypeOid(type)});
   }
   return args;
 }

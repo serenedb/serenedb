@@ -456,6 +456,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type) {
 }
 
 uint32_t Type2Oid(const duckdb::LogicalType& type) {
+  return Logical2Pg(type).oid;
+}
+
+uint32_t CatalogTypeOid(const duckdb::LogicalType& type) {
   return Logical2Pg(type, false, false).oid;
 }
 
@@ -491,7 +495,8 @@ std::span<const PgTypeMapping> PgTypeMappings() {
   static const bool kRoundTrips =
     absl::c_all_of(kMappings, [](const PgTypeMapping& mapping) {
       const auto logical = mapping.logical();
-      const auto* back = FindMapping(static_cast<int32_t>(Type2Oid(logical)));
+      const auto* back =
+        FindMapping(static_cast<int32_t>(CatalogTypeOid(logical)));
       return back && back->logical() == logical;
     });
   SDB_ASSERT(kRoundTrips);

@@ -910,6 +910,31 @@ def test_binary_result_format(conn):
     assert struct.unpack("!i", row[6:10])[0] == 42
 
 
+@pytest.mark.parametrize(
+    "column, source",
+    [
+        ("acldefault('r', 10)", ""),
+        ("table_name", " from information_schema.tables limit 1"),
+    ],
+)
+def test_binary_record_field_type_matches_row_description(conn, column, source):
+    def binary_first_field(query):
+        conn.parse("", query)
+        conn.bind("", "", result_format=1)
+        conn.describe("P", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        ((_, oid, _),) = row_description(m)
+        return oid, all_fields(m)[0]
+
+    column_oid, _ = binary_first_field(f"select {column}{source}")
+    _, record = binary_first_field(f"select row({column}){source}")
+    fields, field_oid = struct.unpack("!iI", record[:8])
+    assert (fields, field_oid) == (1, column_oid)
+
+
 def test_portal_paging_and_unlimited_drain(conn):
     conn.parse("", "SELECT i FROM generate_series(1,10) g(i)")
     conn.bind("", "")

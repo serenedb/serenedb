@@ -11568,69 +11568,9 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   AssertSnapshotEquality(*writer);
 }
 
-TEST_P(IndexTestCase11, docs_mask_small_never_chains) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  std::vector<const tests::Document*> docs;
-  for (size_t i = 0; i < 4; ++i) {
-    docs.push_back(gen.next());
-    ASSERT_NE(nullptr, docs.back());
-  }
-
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-  for (const auto* doc : docs) {
-    ASSERT_TRUE(InsertWithName(*writer, *doc));
-  }
-  writer->RefreshCommit();
-
-  auto mask_chain = [&] {
-    auto snapshot = writer->GetSnapshot();
-    EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
-  };
-  ASSERT_EQ(0, mask_chain());
-
-  auto current_mask = [&] {
-    auto snapshot = writer->GetSnapshot();
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask;
-  };
-
-  const std::array<std::string_view, 3> removed{"A", "B", "C"};
-  for (size_t i = 0; i < removed.size(); ++i) {
-    {
-      auto trx = writer->GetBatch();
-      trx.Remove(MakeByTerm(kNameFieldId, removed[i]));
-      trx.Commit();
-    }
-    writer->RefreshCommit();
-    ASSERT_EQ(1, mask_chain()) << "after removing " << removed[i];
-    const auto mask = current_mask();
-    ASSERT_NE(nullptr, mask);
-    ASSERT_LE(mask->Compress().getSizeInBytes(),
-              irs::segment_meta::kMinChainBytes);
-    ASSERT_EQ(i + 1, mask->Count()) << "after removing " << removed[i];
-  }
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(4, reader[0].Meta().docs_count);
-  ASSERT_EQ(1, reader[0].live_docs_count());
-
-  const auto* mask = reader[0].docs_mask();
-  ASSERT_NE(nullptr, mask);
-  ASSERT_EQ(3, mask->Count());
-
-  auto live = reader[0].docs_iterator();
-  ASSERT_NE(nullptr, live);
-  size_t count = 0;
-  for (auto doc = live->Next(); !irs::doc_limits::eof(doc);
-       doc = live->Next()) {
-    ++count;
-  }
-  ASSERT_EQ(1, count);
+size_t MaskLinks(const irs::SegmentMeta& meta) {
+  return static_cast<size_t>(absl::c_count_if(
+    meta.files, [](std::string_view file) { return file.ends_with(".sm"); }));
 }
 
 // Which bucket document `i` lands in. Deliberately scrambled: consecutive doc
@@ -11663,13 +11603,10 @@ void InsertBucketDocs(irs::IndexWriter& writer, size_t count, size_t buckets) {
   trx.Commit();
 }
 
-TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
-  constexpr uint32_t kRounds = 12;
+TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
+  constexpr uint32_t kRounds = 8;
   constexpr size_t kDocs = 10000;
   constexpr size_t kBuckets = 20;
-  // Enough buckets in the first round to clear kMinChainBytes in one step --
-  // below it the writer rewrites the mask instead of chaining, so the chain
-  // would never start growing.
   constexpr size_t kFirstRound = 6;
   const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
   auto& directory = dir();
@@ -11677,63 +11614,6 @@ TEST_P(IndexTestCase11, docs_mask_chain_grows_unbounded) {
   auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
   InsertBucketDocs(*writer, kDocs, kBuckets);
   writer->RefreshCommit();
-
-  auto mask_chain = [&] {
-    auto snapshot = writer->GetSnapshot();
-    EXPECT_EQ(1, snapshot.size());
-    return snapshot.Meta().index_meta.segments[0].meta.docs_mask_chain;
-  };
-
-  for (uint32_t round = 0; round != kRounds; ++round) {
-    {
-      auto trx = writer->GetBatch();
-      const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
-      const size_t last = round == 0 ? kFirstRound : first + 1;
-      for (size_t b = first; b < last; ++b) {
-        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
-      }
-      trx.Commit();
-    }
-    writer->RefreshCommit();
-
-    // Nothing caps the chain: every patched write adds a link.
-    ASSERT_EQ(round + 1, mask_chain()) << "after round " << round;
-  }
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(kDocs, reader[0].Meta().docs_count);
-  ASSERT_NE(nullptr, reader[0].docs_mask());
-  ASSERT_EQ(kDocs - reader[0].live_docs_count(),
-            reader[0].docs_mask()->Count());
-  ASSERT_LT(reader[0].live_docs_count(), kDocs);
-}
-
-TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
-  constexpr uint32_t kRounds = 5;
-  constexpr size_t kDocs = 10000;
-  constexpr size_t kBuckets = 20;
-  constexpr size_t kFirstRound = 6;
-  const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
-
-  auto& directory = dir();
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-  InsertBucketDocs(*writer, kDocs, kBuckets);
-  writer->RefreshCommit();
-
-  auto remove_round = [&](uint32_t round) {
-    {
-      auto trx = writer->GetBatch();
-      const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
-      const size_t last = round == 0 ? kFirstRound : first + 1;
-      for (size_t b = first; b < last; ++b) {
-        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
-      }
-      trx.Commit();
-    }
-    writer->RefreshCommit();
-  };
 
   auto segment_meta = [&] {
     auto snapshot = writer->GetSnapshot();
@@ -11741,50 +11621,49 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
     return snapshot.Meta().index_meta.segments[0].meta;
   };
 
-  auto exists = [&](std::string_view file) {
-    bool result = false;
-    EXPECT_TRUE(directory.exists(result, file));
-    return result;
+  auto mask_files = [&] {
+    size_t count = 0;
+    directory.visit([&](std::string_view file) {
+      count += file.ends_with(".sm");
+      return true;
+    });
+    return count;
   };
 
-  remove_round(0);
-  ASSERT_EQ(1, segment_meta().docs_mask_chain);
+  size_t removed = 0;
+  for (uint32_t round = 0; round != kRounds; ++round) {
+    const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
+    const size_t last = round == 0 ? kFirstRound : first + 1;
+    {
+      auto trx = writer->GetBatch();
+      for (size_t b = first; b < last; ++b) {
+        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
+      }
+      trx.Commit();
+    }
+    writer->RefreshCommit();
+    for (size_t i = 0; i < kDocs; ++i) {
+      const auto bucket = BucketOf(i, kBuckets);
+      removed += first <= bucket && bucket < last;
+    }
 
-  std::vector<std::string> links;
-  for (uint32_t round = 1; round != kRounds; ++round) {
-    remove_round(round);
     const auto meta = segment_meta();
-    ASSERT_EQ(round + 1, meta.docs_mask_chain) << "after round " << round;
-    links.emplace_back(meta.files.back());
-    ASSERT_TRUE(links.back().ends_with(".sm"));
-    ASSERT_TRUE(exists(links.back()));
+    ASSERT_EQ(0, MaskLinks(meta)) << "after round " << round;
+    ASSERT_NE(nullptr, meta.docs_mask);
+    ASSERT_EQ(removed, meta.docs_mask->Count()) << "after round " << round;
+    ASSERT_EQ(meta.docs_mask->FrozenSize(), meta.docs_mask_size);
   }
 
   irs::directory_utils::RemoveAllUnreferenced(directory);
-  for (const auto& link : links) {
-    ASSERT_TRUE(exists(link)) << "linked " << link << " was collected";
-  }
+  ASSERT_EQ(1, mask_files());
 
-  // Compaction rewrites the segment, which folds the mask in and leaves the
-  // whole chain unreferenced -- the only way a link is dropped now that
-  // nothing caps the chain's length.
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
-  writer->RefreshCommit();
-
-  irs::directory_utils::RemoveAllUnreferenced(directory);
-  for (const auto& link : links) {
-    ASSERT_FALSE(exists(link)) << "orphaned " << link << " was not collected";
-  }
-
-  // The compaction folded the mask into the rewritten segment, so what is left
-  // carries no mask at all -- and it dropped exactly the removed documents.
   auto reader =
     irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(nullptr, reader[0].docs_mask());
-  ASSERT_EQ(reader[0].docs_count(), reader[0].live_docs_count());
-  ASSERT_LT(reader[0].live_docs_count(), kDocs);
+  ASSERT_EQ(kDocs, reader[0].Meta().docs_count);
+  ASSERT_EQ(kDocs - removed, reader[0].live_docs_count());
+  ASSERT_NE(nullptr, reader[0].docs_mask());
+  ASSERT_EQ(*segment_meta().docs_mask, *reader[0].docs_mask());
 }
 
 TEST_P(IndexTestCase11, testExternalGeneration) {

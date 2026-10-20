@@ -86,11 +86,23 @@ struct Api {
     return FoldSpan(ctx, docs_count);
   }
 
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+
+  static Result MakeWindowExclusion(
+    std::span<const detail::PostingClause> terms,
+    std::span<const QueryBuilder::ptr> filters,
+    std::span<const detail::PostingClause> exclude_terms,
+    std::span<const QueryBuilder::ptr> exclude_filters,
+    const SubReader& segment, uint64_t candidates, const Context& ctx);
+
   static Result MakeNegation(
     std::span<const detail::PostingClause> exclude_terms,
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, uint64_t candidates, const Context& ctx);
 };
+
+Root::ptr MakeLiveTerm(const detail::PostingClause& term,
+                       const SubReader& segment);
 
 Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
                                   std::span<const QueryBuilder::ptr> filters,

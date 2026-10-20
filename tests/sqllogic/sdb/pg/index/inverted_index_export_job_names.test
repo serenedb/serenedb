@@ -1,0 +1,74 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS exjn_${__DATABASE__};
+
+
+system ok
+rm -rf $__TEST_DIR__/exjn_glob && mkdir -p $__TEST_DIR__/exjn_glob
+
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body UNION ALL SELECT 2, 'arelav is skuf')
+TO '${__TEST_DIR__}/exjn_glob/f1.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW exjn_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/exjn_glob/f*.parquet');
+
+
+statement ok
+CREATE INDEX exjn_a ON exjn_v USING inverted (id, body) WITH (reindex_interval = 1200000);
+
+
+statement ok
+CREATE INDEX exjn_b ON exjn_v USING inverted (id, body) WITH (reindex_interval = 1500000);
+
+
+statement ok
+ALTER JOB exjn_a RENAME TO exjn_swap;
+
+
+statement ok
+ALTER JOB exjn_b RENAME TO exjn_a;
+
+
+statement ok
+ALTER JOB exjn_swap RENAME TO exjn_b;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exjn_export';
+
+
+statement ok
+CREATE DATABASE exjn_${__DATABASE__};
+
+
+statement ok
+USE exjn_${__DATABASE__};
+
+
+statement error
+IMPORT DATABASE '${__TEST_DIR__}/exjn_export';
+----
+db error: ERROR: Job with name "exjn_b" already exists!
+
+
+query
+SELECT job_name FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+job_name
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE exjn_${__DATABASE__};
+
+
+statement ok
+DROP VIEW exjn_v CASCADE;

@@ -1,0 +1,107 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA cpns_outer;
+
+
+statement ok
+CREATE SCHEMA cpns_outer.cpns_inner;
+
+
+statement ok
+CREATE SCHEMA cpns_inner;
+
+
+statement ok
+CREATE JOB cpns_outer.cpns_inner.cpns_job EVERY 1 HOUR AS SELECT 1;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cpns_outer.cpns_inner.cpns_dict AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TABLE cpns_outer.cpns_inner.cpns_t (id INT, n INT);
+
+
+statement ok
+CREATE TABLE cpns_inner.cpns_t (id INT);
+
+
+statement ok
+CREATE SEQUENCE cpns_outer.cpns_inner.cpns_nested_seq OWNED BY cpns_t.n;
+
+
+statement ok
+CREATE SEQUENCE cpns_inner.cpns_top_seq OWNED BY cpns_t.id;
+
+
+statement ok
+CREATE TABLE cpns_outer.cpns_inner.cpns_serial (id SERIAL);
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE TABLE cpns_outer.cpns_trigger(x INTEGER);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT schema_name, job_name FROM sdb_jobs() WHERE starts_with(job_name, 'cpns_');
+----
+schema_name	job_name
+cpns_inner	cpns_job
+
+
+connection after_checkpoint
+statement ok
+DROP JOB cpns_outer.cpns_inner.cpns_job;
+
+
+connection after_checkpoint
+statement ok
+DROP TEXT SEARCH DICTIONARY cpns_outer.cpns_inner.cpns_dict;
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE cpns_inner.cpns_t;
+
+
+connection after_checkpoint
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_') ORDER BY 1;
+----
+sequence_name
+cpns_nested_seq
+cpns_serial_id_seq
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE cpns_outer.cpns_inner.cpns_t;
+
+
+connection after_checkpoint
+statement ok
+DROP TABLE cpns_outer.cpns_inner.cpns_serial;
+
+
+connection after_checkpoint
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_');
+----
+sequences
+0

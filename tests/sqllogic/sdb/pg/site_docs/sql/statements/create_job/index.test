@@ -257,7 +257,52 @@ SELECT note FROM doc_notes;
 note
 ran once
 
+# DOCS_TEST: example_010
+
+statement ok
+DROP SCHEMA IF EXISTS doc_ops CASCADE;
+
+statement ok
+CREATE SCHEMA doc_ops;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB doc_ops.doc_audit AFTER 1 HOUR AS
+    INSERT INTO doc_daily SELECT 'audit', count(*) FROM doc_events;
+
+statement error
+EXECUTE JOB doc_ops.doc_audit;
+----
+db error: ERROR: Table with name doc_daily does not exist!<slt:ignore>
+
+
+statement ok
+CREATE OR REPLACE JOB doc_ops.doc_audit AFTER 1 HOUR AS
+    INSERT INTO public.doc_daily SELECT 'audit', count(*) FROM public.doc_events;
+
+statement ok
+EXECUTE JOB doc_ops.doc_audit;
+
+query
+SELECT run_count, failure_count, last_status FROM sdb_jobs() WHERE job_name = 'doc_audit';
+----
+run_count	failure_count	last_status
+1	0	success
+
+query
+SELECT events FROM doc_daily WHERE kind = 'audit';
+----
+events
+3
+
 # DOCS_TEST_END
+
+statement ok
+DROP JOB doc_ops.doc_audit;
+
+statement ok
+DROP SCHEMA doc_ops;
 
 statement ok
 DROP JOB doc_ping;

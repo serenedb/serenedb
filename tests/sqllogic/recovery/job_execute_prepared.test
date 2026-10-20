@@ -1,0 +1,69 @@
+statement ok
+CREATE TABLE jep_log (v INTEGER);
+
+
+statement ok
+CREATE JOB jep_self AFTER 1 HOUR AS DROP JOB jep_self;
+
+
+statement ok
+PREPARE jep_run_self AS SELECT * FROM execute_job('jep_self');
+
+
+statement ok
+EXECUTE jep_run_self;
+
+
+statement error
+EXECUTE jep_run_self;
+----
+db error: ERROR: Job with name jep_self does not exist!<slt:ignore>
+
+
+statement ok
+CREATE JOB jep_replace AFTER 1 HOUR AS CREATE OR REPLACE JOB jep_replace AFTER 1 HOUR AS INSERT INTO jep_log VALUES (1);
+
+
+statement ok
+PREPARE jep_run_replace AS SELECT * FROM execute_job('jep_replace');
+
+
+statement ok
+EXECUTE jep_run_replace;
+
+
+statement ok
+EXECUTE jep_run_replace;
+
+
+statement ok
+CREATE JOB jep_client AFTER 1 HOUR AS INSERT INTO jep_log VALUES (2);
+
+
+statement ok
+PREPARE jep_run_client AS SELECT * FROM execute_job('jep_client');
+
+
+statement ok
+EXECUTE jep_run_client;
+
+
+statement ok
+DROP JOB jep_client;
+
+
+statement ok
+CREATE JOB jep_client AFTER 1 HOUR AS INSERT INTO jep_log VALUES (3);
+
+
+statement ok
+EXECUTE jep_run_client;
+
+
+query
+SELECT v FROM jep_log ORDER BY v;
+----
+v
+1
+2
+3

@@ -278,6 +278,12 @@ void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
   from.filters.clear();
 }
 
+void BooleanBuilder::Inherit(const BooleanQuery& nested) {
+  for (const auto occur : kAllOccur) {
+    MergeBucket(BooleanQuery::Steal(nested, occur), occur, kNoBoost);
+  }
+}
+
 void BooleanBuilder::Merge(const BooleanQuery& nested, Occur to) {
   const auto boost = nested.Boost();
   switch (to) {
@@ -351,7 +357,8 @@ uint32_t BooleanBuilder::MaxEstimate(
                       ? 0
                       : bucket.postings.front().state.cookie.docs_count;
   if (!bucket.filters.empty()) {
-    widest = std::max(widest, bucket.filters.front()->EstimateMax());
+    widest = std::max({widest, bucket.filters.front()->EstimateMax(),
+                       bucket.filters.back()->EstimateMax()});
   }
   return widest;
 }
@@ -390,6 +397,9 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   Order(must, true);
   Order(should, false);
   Order(must_not, false);
+  absl::c_stable_partition(must_not.filters, [](const auto& filter) {
+    return filter->Kind() != QueryKind::DocsMask;
+  });
 
   if (Dedup(msm) && _empty) {
     return QueryBuilder::Empty();

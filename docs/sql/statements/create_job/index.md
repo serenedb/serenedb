@@ -35,9 +35,9 @@ EXECUTE JOB name
 DROP JOB [ IF EXISTS ] name [ CASCADE | RESTRICT ]
 ```
 
-`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is one statement, or a string constant, usually dollar-quoted (`AS $$ ... $$`), that holds any number of statements. It is parsed when the job is created, so a syntax error fails `CREATE JOB`, and it cannot use parameters. One statement is stored as normalized SQL text, the statements of a string as written: the `body` column of `sdb_jobs()` shows them. A transaction statement cannot be the whole body. A statement that runs as several statements, such as `TRUNCATE` of several tables or with `RESTART IDENTITY` or `CASCADE`, `ALTER TABLE ... ADD COLUMN` with `NOT NULL`, `UNIQUE` or `PRIMARY KEY`, or `DROP ROLE` with several roles, has to be in a string: unquoted, `CREATE JOB` fails with `CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$`.
+`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is one statement, or a string constant, usually dollar-quoted (`AS $$ ... $$`), that holds any number of statements. It is parsed when the job is created, so a syntax error fails `CREATE JOB`, and it cannot use parameters. One statement is stored as normalized SQL text, the statements of a string as written: the `body` column of `sdb_jobs()` shows them. A transaction statement cannot be the whole body, and neither can `EXPLAIN` of a transaction statement or of a statement that runs as several statements. A statement that runs as several statements, such as `TRUNCATE` of several tables or with `RESTART IDENTITY` or `CASCADE`, `ALTER TABLE ... ADD COLUMN` with `NOT NULL`, `UNIQUE`, `PRIMARY KEY` or a default that is not a constant, or `DROP ROLE` with several roles, has to be in a string: unquoted, `CREATE JOB` fails with `CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$`. A `PIVOT` that takes its values from the data has to be in a string too, or list its values with `IN (...)`: unquoted, it fails `CREATE JOB`, as in a view.
 
-A run executes the body the way a client's query of several statements runs: the statements run in order, each commits on its own unless the body groups them with `BEGIN` and `COMMIT`, and the first one that fails ends the run, leaving the statements before it committed. The body is bound again on every run, so it always sees the current definition of the objects it references. When a statement of the body drops its own job, the run ends there and counts as a success: the statements after it do not run. Dropping or replacing the job from another session cancels the statement that is running, and the run fails without the statements after it. A job can that way run once and remove itself:
+A run executes the body the way a client's query of several statements runs: the statements run in order, each commits on its own unless the body groups them with `BEGIN` and `COMMIT`, and the first one that fails ends the run, leaving the statements before it committed. The body is bound again on every run, so it always sees the current definition of the objects it references, and a missing table, column or privilege fails the run rather than `CREATE JOB`. When a statement of the body drops its own job, the run ends there and counts as a success: the statements after it do not run. Dropping or replacing the job from another session cancels the statement that is running, and the run fails without the statements after it. A job can that way run once and remove itself:
 
 <SqlLogicTest id="sql/statements/create_job/index/example_009" />
 
@@ -45,9 +45,7 @@ A run executes the body the way a client's query of several statements runs: the
 
 ## Schedules
 
-The two schedule kinds follow ClickHouse's refreshable materialized views.
-
-- **`EVERY interval [OFFSET offset]`** runs on a fixed calendar grid in UTC. An interval of days, weeks or time counts from Monday 1969-12-29 at midnight and a month-based interval from January 1970, as in ClickHouse: `EVERY 1 HOUR` runs at the top of every hour, `EVERY 15 MINUTES` at :00, :15, :30 and :45, `EVERY 1 DAY` at midnight, `EVERY 1 WEEK` on Monday midnight, `EVERY 1 MONTH` on the first of the month. `OFFSET` shifts the grid: `EVERY 1 DAY OFFSET 2 HOURS` runs at 02:00. The offset must be shorter than the interval, and a month-based interval cannot be combined with days or time.
+- **`EVERY interval [OFFSET offset]`** runs on a fixed calendar grid in UTC. An interval of days, weeks or time counts from Monday 1969-12-29 at midnight and a month-based interval from January 1970: `EVERY 1 HOUR` runs at the top of every hour, `EVERY 15 MINUTES` at :00, :15, :30 and :45, `EVERY 1 DAY` at midnight, `EVERY 1 WEEK` on Monday midnight, `EVERY 1 MONTH` on the first of the month. `OFFSET` shifts the grid: `EVERY 1 DAY OFFSET 2 HOURS` runs at 02:00. The offset must be shorter than the interval, and a month-based interval cannot be combined with days or time.
 - **`AFTER interval`** runs `interval` after the previous run *finished*, so runs never overlap and a slow run pushes the next one back. The first run happens `interval` after the job is created or the server starts. `AFTER` takes no `OFFSET`.
 
 ```sql
@@ -78,7 +76,7 @@ Scheduled runs execute in the background, like index maintenance, so a long job 
 
 ## Changing a job
 
-`ALTER JOB` suspends and resumes a job, replaces its schedule, or renames it. A suspended job keeps its definition and history but is not scheduled; a run already in progress finishes normally. `CREATE OR REPLACE JOB` replaces the whole definition, including the body.
+`ALTER JOB` suspends and resumes a job, replaces its schedule, or renames it. A suspended job keeps its definition and history but is not scheduled; a run already in progress finishes normally. `CREATE OR REPLACE JOB` replaces the whole definition, including the body, and starts the job afresh: a run in progress is interrupted, and `run_count`, `failure_count` and the `last_*` columns of `sdb_jobs()` start over, where `ALTER JOB` keeps them.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_003" />
 
@@ -90,7 +88,7 @@ A body can run another job with `EXECUTE JOB`: that job runs in a session of its
 
 ## Monitoring
 
-`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory only: a restart empties `sdb_job_runs()`, resets `running`, the `last_*` columns, `run_count` and `failure_count`, and computes `next_run` again from the schedule. Notices and warnings that a run raises, scheduled or started with `EXECUTE JOB`, go to the server log as warnings prefixed with the job's name.
+`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs, up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling) of them for all jobs together, 1024 by default, with `trigger` set to `schedule`, or to `manual` for `EXECUTE JOB`, also when another job's body runs it. [Metadata Functions](../../functions/metadata.md#sdb_jobs) lists the columns of both. Run state is kept in memory only: a restart empties `sdb_job_runs()`, resets `running`, the `last_*` columns, `run_count` and `failure_count`, and computes `next_run` again from the schedule. Notices and warnings that a run raises, scheduled or started with `EXECUTE JOB`, go to the server log as warnings prefixed with the job's name.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_004" />
 
@@ -100,13 +98,15 @@ A job runs **as its owner**, the role that created it, in a session of its own: 
 
 <SqlLogicTest id="sql/statements/create_job/index/example_005" />
 
-The job session starts with the job's schema first on the search path and reads **global** settings; session settings of the role that created the job do not apply.
+The job session's search path holds the job's schema alone, without `"$user"` and `public`, and the session reads **global** settings; session settings of the role that created the job do not apply. Built-in functions and the system catalogs stay reachable, but a job outside `public` must qualify the tables of other schemas, `public` included. A body that names a table it cannot find still creates the job, and fails when it runs:
+
+<SqlLogicTest id="sql/statements/create_job/index/example_010" />
 
 A search path holds only top-level schemas, so a job in a nested schema (`CREATE JOB outer.inner.job ...`) runs with the database's default search path (`"$user", public`), as a new session in that database would, instead of its own schema. Qualify the names in the body of such a job (`INSERT INTO outer.inner.events ...`).
 
 ## Jobs in other databases
 
-A job can live in any SereneDB database, not only the current one; wherever it lives it runs as its owner, with its own schema first on the search path:
+A job can live in any SereneDB database, not only the current one; wherever it lives it runs as its owner, in its own database, with its own schema as the search path:
 
 <SqlLogicTest id="sql/statements/create_job/index/example_006" />
 

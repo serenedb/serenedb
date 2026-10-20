@@ -140,8 +140,7 @@ class BTreeRoot {
     return SeparatorAt(_separators, block - 1);
   }
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) +
-           _heads.capacity() * sizeof(uint64_t) +
+    return SeparatorBytes(_separators) + _heads.capacity() * sizeof(uint64_t) +
            _tree.capacity() * sizeof(uint64_t) +
            _ranks.capacity() * sizeof(uint32_t);
   }
@@ -168,8 +167,7 @@ class RadixRoot {
     return SeparatorAt(_separators, block - 1);
   }
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) +
-           _heads.capacity() * sizeof(uint64_t) +
+    return SeparatorBytes(_separators) + _heads.capacity() * sizeof(uint64_t) +
            _table.capacity() * sizeof(uint32_t) + _prefix.capacity();
   }
 

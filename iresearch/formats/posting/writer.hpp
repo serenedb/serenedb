@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -395,6 +397,7 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   const auto doc_start = _last_state.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
+    out.WriteData(meta.inline_data.data(), meta.inline_size);
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
@@ -467,7 +470,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     });
     WriteDocBlock(out);
     if (_tail.size() <= PostingMeta::kInlineBytes) {
-      meta.inline_data = _tail.data();
+      std::memcpy(meta.inline_data.data(), _tail.data(), _tail.size());
       meta.inline_size = static_cast<uint8_t>(_tail.size());
     } else {
       _doc_out->WriteData(_tail.data(), _tail.size());

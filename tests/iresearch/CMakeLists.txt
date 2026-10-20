@@ -68,6 +68,7 @@ set(iresearch-tests_sources
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
+    ./formats/term_dict_test.cpp
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp

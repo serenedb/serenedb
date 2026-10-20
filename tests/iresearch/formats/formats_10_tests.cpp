@@ -85,9 +85,6 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // write attributes to out
         writer.Encode(*out, posting_meta);
-        if (posting_meta.inline_size != 0) {
-          out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
-        }
       }
 
       auto stats = writer.EndField();
@@ -122,11 +119,6 @@ class Format10TestCase : public tests::FormatTestCase {
       {
         irs::PostingMeta read_meta;
         begin += reader.decode(begin, field.index_features, read_meta);
-        irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
-                                    irs::block_codec::kInSlack]{};
-        std::memcpy(inline_bytes, begin, read_meta.inline_size);
-        read_meta.inline_data = inline_bytes;
-        begin += read_meta.inline_size;
 
         // check PostingMeta
         {
@@ -412,7 +404,6 @@ TEST_P(Format10TestCase, postings_read_write) {
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
   irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
-  irs::bstring inline0, inline1;
 
   // write postings
   {
@@ -439,9 +430,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta0);
-      out->WriteData(meta0.inline_data, meta0.inline_size);
-      inline0.assign(meta0.Inline());
-      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -450,9 +438,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       writer.Encode(*out, meta1);
-      out->WriteData(meta1.inline_data, meta1.inline_size);
-      inline1.assign(meta1.Inline());
-      meta1.inline_data = inline1.data();
     }
 
     ASSERT_NE(0, meta0.inline_size);
@@ -484,15 +469,10 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // cumulative attribute
     irs::PostingMeta read_meta;
-    irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
-                                irs::block_codec::kInSlack]{};
 
     // read term0 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
-      std::memcpy(inline_bytes, begin, read_meta.inline_size);
-      read_meta.inline_data = inline_bytes;
-      begin += read_meta.inline_size;
 
       // check PostingMeta
       {
@@ -516,9 +496,6 @@ TEST_P(Format10TestCase, postings_read_write) {
     // read term1 attributes
     {
       begin += reader.decode(begin, field.index_features, read_meta);
-      std::memcpy(inline_bytes, begin, read_meta.inline_size);
-      read_meta.inline_data = inline_bytes;
-      begin += read_meta.inline_size;
 
       // check PostingMeta
       {

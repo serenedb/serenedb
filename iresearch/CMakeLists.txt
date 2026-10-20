@@ -71,6 +71,7 @@ set(IResearch_core_sources
     ./formats/index/idx_writer.cpp
     ./formats/index/term_dict.cpp
     ./formats/index/term_dict_root.cpp
+    ./formats/index/term_dict_walk.cpp
     ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp

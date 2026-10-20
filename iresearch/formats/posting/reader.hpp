@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
@@ -142,6 +144,8 @@ IRS_FORCE_INLINE inline size_t PostingsReader::decode(
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
+    std::memcpy(posting_meta.inline_data.data(), p, size);
+    p += size;
   } else {
     posting_meta.inline_size = 0;
     if (!single) {

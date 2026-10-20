@@ -166,9 +166,8 @@ size_t SortedRoot::Find(bytes_view key) const noexcept {
 }
 
 size_t SortedRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  return Gallop(from, SeparatorCount(_separators), [&](size_t i) {
-    return SeparatorAt(_separators, i) <= key;
-  });
+  return Gallop(from, SeparatorCount(_separators),
+                [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
 }
 
 void SortedRoot::FindBatch(std::span<const bytes_view> keys,
@@ -225,7 +224,8 @@ EytzingerRoot::EytzingerRoot(Separators separators)
       0, CommonPrefixLength(first, SeparatorAt(_separators, count - 1))));
   }
   size_t next = 0;
-  const auto fill = [&](this auto& self, size_t k) -> std::pair<size_t, size_t> {
+  const auto fill = [&](this auto& self,
+                        size_t k) -> std::pair<size_t, size_t> {
     if (k > count) {
       return {next, next};
     }
@@ -287,9 +287,8 @@ size_t EytzingerRoot::Find(bytes_view key) const noexcept {
 }
 
 size_t EytzingerRoot::FindFrom(size_t from, bytes_view key) const noexcept {
-  return Gallop(from, SeparatorCount(_separators), [&](size_t i) {
-    return SeparatorAt(_separators, i) <= key;
-  });
+  return Gallop(from, SeparatorCount(_separators),
+                [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
 }
 
 void EytzingerRoot::FindBatch(std::span<const bytes_view> keys,
@@ -312,10 +311,9 @@ void EytzingerRoot::FindBatch(std::span<const bytes_view> keys,
       for (size_t i = 0; i != lanes; ++i) {
         if (k[i] != 0 && k[i] <= _count) {
           __builtin_prefetch(_nodes + 4 * k[i]);
-          k[i] = 2 * k[i] + (NotAfter(_nodes[k[i]], keys[base + i],
-                                      padded[i]->Data())
-                               ? 1
-                               : 0);
+          k[i] =
+            2 * k[i] +
+            (NotAfter(_nodes[k[i]], keys[base + i], padded[i]->Data()) ? 1 : 0);
         }
       }
     }
@@ -376,9 +374,8 @@ size_t BTreeRoot::Find(bytes_view key) const noexcept {
   const size_t lo =
     std::lower_bound(_heads.begin(), _heads.begin() + hi, head) -
     _heads.begin();
-  return UpperBound(lo, hi, [&](size_t i) {
-    return SeparatorAt(_separators, i) <= key;
-  });
+  return UpperBound(
+    lo, hi, [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
 }
 
 size_t BTreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {

@@ -63,8 +63,7 @@ std::vector<bytes_view> Views(const std::vector<bstring>& records) {
 
 class KeysIterator : public irs::TermOnlyIterator {
  public:
-  explicit KeysIterator(std::span<const bstring> keys) noexcept
-    : _keys{keys} {}
+  explicit KeysIterator(std::span<const bstring> keys) noexcept : _keys{keys} {}
 
   bytes_view value() const noexcept final { return _keys[_next - 1]; }
   bool next() final { return _next++ < _keys.size(); }
@@ -78,8 +77,8 @@ class KeysIterator : public irs::TermOnlyIterator {
   size_t NextTermsWithPostings(std::span<bytes_view> terms,
                                std::span<irs::PostingRows> postings,
                                irs::IndexFeatures) final {
-    const size_t n = std::min({terms.size(), postings.size(), _docs.size(),
-                               _keys.size() - _next});
+    const size_t n = std::min(
+      {terms.size(), postings.size(), _docs.size(), _keys.size() - _next});
     for (size_t i = 0; i != n; ++i, ++_next) {
       _docs[i] = static_cast<uint32_t>(_next + irs::doc_limits::min());
       terms[i] = _keys[_next];
@@ -184,8 +183,8 @@ void Open(Data& data) {
     return meta;
   }()};
   data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
-  data.fields = std::make_unique<irs::term_dict::FieldReader>(
-    irs::IResourceManager::gNoop);
+  data.fields =
+    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
   data.field = data.fields->field(1);
@@ -235,8 +234,7 @@ const Data& Load(const std::string& base) {
 }
 
 size_t Reference(const Data& data, bytes_view key) {
-  return std::upper_bound(data.separators.begin(), data.separators.end(),
-                          key) -
+  return std::upper_bound(data.separators.begin(), data.separators.end(), key) -
          data.separators.begin();
 }
 
@@ -313,9 +311,8 @@ const Prepared& Prepare(const std::string& base, std::string_view name) {
     .candidate = std::move(candidate),
     .build_ms = std::chrono::duration<double, std::milli>(elapsed).count(),
   });
-  gPrepared->error = data.error.empty()
-                       ? Validate(data, gPrepared->candidate)
-                       : data.error;
+  gPrepared->error =
+    data.error.empty() ? Validate(data, gPrepared->candidate) : data.error;
   gKey = key;
   return *gPrepared;
 }
@@ -328,8 +325,7 @@ bool Skip(benchmark::State& state, const Prepared& prepared) {
   return true;
 }
 
-void Report(benchmark::State& state, const Prepared& prepared,
-            size_t probes) {
+void Report(benchmark::State& state, const Prepared& prepared, size_t probes) {
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * probes));
   std::visit(
     [&](const auto& root) {
@@ -453,8 +449,8 @@ void Lookup(benchmark::State& state, const std::string& base, bool hit) {
     }
     benchmark::DoNotOptimize(sum);
   }
-  state.SetItemsProcessed(static_cast<int64_t>(state.iterations() *
-                                               views.size()));
+  state.SetItemsProcessed(
+    static_cast<int64_t>(state.iterations() * views.size()));
   state.counters["ns_per_probe"] = benchmark::Counter(
     static_cast<double>(state.iterations() * views.size()),
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
@@ -486,26 +482,20 @@ int Main(int argc, char** argv) {
       [base](benchmark::State& state) { Lookup(state, base, false); });
     for (const auto name : kCandidates) {
       const auto suffix = absl::StrCat(base, "/", name);
-      benchmark::RegisterBenchmark(
-        absl::StrCat("find_hit/", suffix),
-        [base, name](benchmark::State& state) {
-          FindPoint(state, base, name, true);
-        });
-      benchmark::RegisterBenchmark(
-        absl::StrCat("find_miss/", suffix),
-        [base, name](benchmark::State& state) {
-          FindPoint(state, base, name, false);
-        });
+      benchmark::RegisterBenchmark(absl::StrCat("find_hit/", suffix),
+                                   [base, name](benchmark::State& state) {
+                                     FindPoint(state, base, name, true);
+                                   });
+      benchmark::RegisterBenchmark(absl::StrCat("find_miss/", suffix),
+                                   [base, name](benchmark::State& state) {
+                                     FindPoint(state, base, name, false);
+                                   });
       benchmark::RegisterBenchmark(
         absl::StrCat("find_hit_cold/", suffix),
-        [base, name](benchmark::State& state) {
-          FindCold(state, base, name);
-        });
+        [base, name](benchmark::State& state) { FindCold(state, base, name); });
       benchmark::RegisterBenchmark(
         absl::StrCat("find_from/", suffix),
-        [base, name](benchmark::State& state) {
-          FindFrom(state, base, name);
-        });
+        [base, name](benchmark::State& state) { FindFrom(state, base, name); });
       for (size_t k = 0; k != std::size(kBatchKinds); ++k) {
         for (size_t s = 0; s != std::size(kBatchSizes); ++s) {
           benchmark::RegisterBenchmark(
@@ -527,6 +517,7 @@ int Main(int argc, char** argv) {
   return 0;
 }
 
-[[maybe_unused]] const bool kMain = sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);
+[[maybe_unused]] const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);
 
 }  // namespace

@@ -58,7 +58,8 @@ struct RecordBytes {
 class RecordOutput final : private RecordBytes, public BufferedOutput {
  public:
   RecordOutput() noexcept
-    : RecordBytes{}, BufferedOutput{bytes.data(), bytes.data() + bytes.size()} {}
+    : RecordBytes{},
+      BufferedOutput{bytes.data(), bytes.data() + bytes.size()} {}
 
   bytes_view View() const noexcept { return {_buf, Length()}; }
   void Clear() noexcept { _pos = _buf; }
@@ -73,9 +74,8 @@ struct BlockBuilder {
   bstring headers;
   bstring suffixes;
   bstring records;
-  std::vector<std::array<uint16_t, 4>> restarts;
+  std::vector<std::array<uint16_t, 3>> restarts;
   uint64_t size = 0;
-  uint64_t inline_base = 0;
   uint32_t width = 0;
   uint32_t prefix = 0;
   bool uniform = true;
@@ -106,8 +106,6 @@ class FieldWriter final {
   RecordOutput _record;
   BlockBuilder _block;
   bstring _page;
-  bstring _region;
-  bstring _inline;
   bstring _directory;
   bstring _separators;
   bstring _separator;
@@ -130,7 +128,7 @@ struct BlockBuffer {
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(const FieldReader& owner, field_id id,
-                 const TermDictMeta& meta, const byte_type* data);
+                 const TermDictMeta& meta, IndexInput& in);
   ~TermReaderImpl();
 
   SeekTermIterator::ptr iterator() const final;
@@ -158,7 +156,6 @@ class TermReaderImpl final : public TermReader {
   bool Small() const noexcept { return _small != nullptr; }
   uint32_t RestartInterval() const noexcept { return _restart_interval; }
   const Root& GetRoot() const noexcept { return _root; }
-  const byte_type* Inline() const noexcept { return _inline; }
   const byte_type* Block(size_t block, BlockBuffer& buffer) const;
   uint64_t BlockOffset(size_t block) const noexcept {
     return uint64_t{_pages[block]} * kPage;
@@ -172,9 +169,9 @@ class TermReaderImpl final : public TermReader {
   FieldMeta _meta;
   uint64_t _terms;
   uint64_t _docs;
-  bytes_view _min;
-  bytes_view _max;
-  const byte_type* _inline = nullptr;
+  bstring _min;
+  bstring _max;
+  bstring _small_copy;
   const byte_type* _small = nullptr;
   uint32_t _blocks = 0;
   uint32_t _restart_interval = kRestartInterval;
@@ -211,7 +208,6 @@ class FieldReader final {
   PostingsReader _pr;
   IndexInput::ptr _in;
   const byte_type* _base = nullptr;
-  bstring _region;
   IResourceManager* _rm;
 };
 

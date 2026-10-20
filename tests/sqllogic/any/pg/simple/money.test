@@ -211,10 +211,19 @@ SELECT ARRAY[1]::money;
 db error: ERROR: cannot cast type integer[] to money<slt:ignore>
 
 
+skipif serenedb # money casts to json as a number
 statement error
 SELECT '1'::money::json;
 ----
 db error: ERROR: cannot cast type money to json<slt:ignore>
+
+
+onlyif serenedb
+query
+SELECT '1'::money::json;
+----
+json
+1.00
 
 
 statement error

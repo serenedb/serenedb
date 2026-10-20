@@ -298,7 +298,9 @@ void RefuseOtherCasts(duckdb::CastFunctionSet& casts,
     if (other == type || IsStringType(other)) {
       return;
     }
-    casts.RegisterCastFunction(type, other, CannotCast, -1);
+    if (!other.IsJSONType() && other != CastKey(type.id())) {
+      casts.RegisterCastFunction(type, other, CannotCast, -1);
+    }
     casts.RegisterCastFunction(other, type, CannotCast, -1);
   };
   for (const auto& other : duckdb::LogicalType::AllTypes()) {

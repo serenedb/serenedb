@@ -55,10 +55,26 @@ SELECT '"<"'::json::xml;
 db error: ERROR: cannot cast type json to xml<slt:ignore>
 
 
+skipif serenedb # xml casts to json as a string
 statement error
 SELECT '<a/>'::xml::json;
 ----
 db error: ERROR: cannot cast type xml to json<slt:ignore>
+
+
+onlyif serenedb
+query
+SELECT '<a/>'::xml::json;
+----
+json
+"<a/>"
+
+
+query
+SELECT to_json('<a b="1">text</a>'::xml) AS a, to_json(NULL::xml) AS b;
+----
+a	b
+"<a b=\\"1\\">text</a>"	NULL
 
 
 statement error

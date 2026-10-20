@@ -31,6 +31,7 @@
 #include <libxml/xmlstring.h>
 #include <libxml/xpath.h>
 #include <libxml/xpathInternals.h>
+#include <simdjson.h>
 
 #include <array>
 #include <cmath>
@@ -431,6 +432,18 @@ duckdb::BoundCastInfo BindTextToXml(duckdb::BindCastInput& input,
   const auto option =
     input.context ? CurrentXmlOption(*input.context) : XmlOption::Content;
   return {TextToXml, duckdb::make_uniq<XmlCastData>(option), InitXmlInput};
+}
+
+bool XmlToJson(duckdb::Vector& source, duckdb::Vector& result,
+               duckdb::idx_t count, duckdb::CastParameters&) {
+  simdjson::builder::string_builder json;
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
+    source, result, count, [&](duckdb::string_t xml) {
+      json.clear();
+      json.escape_and_append_with_quotes(AsView(xml));
+      return duckdb::StringVector::AddString(result, json.view().value());
+    });
+  return true;
 }
 
 struct XmlFunctionState final : duckdb::FunctionLocalState {
@@ -867,6 +880,7 @@ struct XmlAgg {
 void RegisterCasts(duckdb::CastFunctionSet& casts) {
   const auto xml = XML();
   RegisterTextInput(casts, xml, BindTextToXml);
+  casts.RegisterCastFunction(xml, duckdb::LogicalType::JSON(), XmlToJson, -1);
   RefuseOtherCasts(casts, xml);
 }
 

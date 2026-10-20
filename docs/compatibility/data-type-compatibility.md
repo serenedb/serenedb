@@ -12,6 +12,8 @@ split: headings
 
 The array type of each type, `<type>[]`, has the same support as the type, and the column shorthands `smallserial`, `serial` and `bigserial` work as in PostgreSQL. An array type has a fixed number of dimensions, where a PostgreSQL array type takes any: `int4[]` holds one-dimensional arrays and `int4[][]` two-dimensional ones, so `'{{1,2},{3,4}}'::int4[]`, or a two-dimensional array a client sends for an `int4[]` parameter, is an error. As in PostgreSQL, a call of a type's name with one argument, such as `int4('42')` or `text(123)`, is a cast to that type when no function of that name takes the argument. Pseudo-types such as `anyelement`, `record` and `trigger` are listed for function signatures and, as in PostgreSQL, hold no values. Besides these types, SereneDB has types of its own, such as [`VARIANT`](../sql/data_types/variant.md), [`MAP`](../sql/data_types/map.md) and [`UNION`](../sql/data_types/union.md).
 
+Values of `money`, `xml`, the geometric types and the range types cast to `json`, where PostgreSQL refuses the cast, and `to_json`, `json_build_object` and `COPY ... (FORMAT JSON)` write them in the form the cast gives: an amount as a number, such as `12.34`, an `xml` value as a string, a geometric value or a range as an object of its fields, such as `{"x":1.0,"y":2.0}` for `point '(1,2)'`, and a multirange as an array of such objects. PostgreSQL's `to_json` writes the text form of a `money`, geometric or range value instead, such as `"$12.34"` or `"(1,2)"`.
+
 ## Data Types
 
 | Type                         | Support State | Details |
@@ -49,7 +51,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | lseg                         | 🟡            | The comparison operators `<`, `<=`, `>` and `>=` compare the end points one by one, where PostgreSQL compares lengths. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | macaddr                      | 🟢            |         |
 | macaddr8                     | 🟢            |         |
-| money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet and JSON files hold an amount as a decimal number of dollars, such as `12.34`. |
+| money                        | 🟡            | Values read and print in the `C` locale's format, such as `$1,234.56`: there is no `lc_monetary` setting. A number compared or combined with `money`, as in `m = 5` or `COALESCE(m, 0)`, is read as an amount, where PostgreSQL raises an error. Parquet files hold an amount as a decimal number of dollars, such as `12.34`. |
 | name                         | 🟢            |         |
 | numeric                      | 🟡            | Without a precision, `numeric` is `numeric(18,3)` and rounds to three fractional digits. The precision is at most 38, and `NaN` is not supported. |
 | nummultirange                | 🟡            | Bounds are `numeric` values, so without a precision they round to three fractional digits, as for `numrange`. A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |

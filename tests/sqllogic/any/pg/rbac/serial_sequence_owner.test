@@ -1,0 +1,367 @@
+statement ok
+DROP TABLE IF EXISTS sso_t CASCADE
+
+
+statement ok
+DROP SEQUENCE IF EXISTS sso_later
+
+
+statement ok
+DROP ROLE IF EXISTS sso_owner
+
+
+statement ok
+DROP ROLE IF EXISTS sso_reader
+
+
+statement ok
+DROP ROLE IF EXISTS sso_heir
+
+
+statement ok
+DROP ROLE IF EXISTS sso_other
+
+
+statement ok
+CREATE ROLE sso_owner LOGIN PASSWORD 'sso_pw'
+
+
+statement ok
+CREATE ROLE sso_reader
+
+
+statement ok
+CREATE ROLE sso_heir
+
+
+statement ok
+CREATE ROLE sso_other LOGIN PASSWORD 'sso_other_pw'
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO sso_owner
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE sso_owner GRANT USAGE ON SEQUENCES TO sso_reader
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+CREATE TABLE sso_t (id serial, big bigserial, v int)
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) = 'sso_owner' AS owned
+FROM pg_class WHERE relname IN ('sso_t', 'sso_t_id_seq', 'sso_t_big_seq') ORDER BY relname
+----
+relname	owned
+sso_t	t
+sso_t_big_seq	t
+sso_t_id_seq	t
+
+
+query
+SELECT has_sequence_privilege('sso_reader', 'sso_t_id_seq', 'USAGE') AS id_usage,
+       has_sequence_privilege('sso_reader', 'sso_t_big_seq', 'USAGE') AS big_usage,
+       has_sequence_privilege('sso_reader', 'sso_t_id_seq', 'UPDATE') AS id_update
+----
+id_usage	big_usage	id_update
+t	t	f
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_t_id_seq RESTART 10
+
+
+connection sso user=sso_owner password=sso_pw
+query
+SELECT setval('sso_t_big_seq', 100) AS big
+----
+big
+100
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+INSERT INTO sso_t (v) VALUES (1)
+
+
+connection sso user=sso_owner password=sso_pw
+query
+SELECT id, big, v FROM sso_t
+----
+id	big	v
+10	101	1
+
+
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_id_seq"
+DETAIL: Sequence "sso_t_id_seq" is linked to table "sso_t".
+
+
+statement error
+ALTER SEQUENCE public.sso_t_big_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_big_seq"
+DETAIL: Sequence "sso_t_big_seq" is linked to table "sso_t".
+
+
+connection sso user=sso_owner password=sso_pw
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_id_seq"
+DETAIL: Sequence "sso_t_id_seq" is linked to table "sso_t".
+
+
+statement ok
+ALTER SEQUENCE sso_t_big_seq OWNER TO sso_owner
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_t_id_seq OWNER TO CURRENT_USER
+
+
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: must be owner of sequence sso_t_id_seq
+
+
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_owner
+----
+db error: ERROR: must be owner of sequence sso_t_id_seq
+
+
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER TABLE sso_t OWNER TO sso_owner
+----
+db error: ERROR: must be owner of table sso_t
+
+
+statement ok
+BEGIN
+
+
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_id_seq"
+DETAIL: Sequence "sso_t_id_seq" is linked to table "sso_t".
+
+
+statement error
+SELECT 1
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+ALTER TABLE sso_t RENAME TO sso_renamed
+
+
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_id_seq"
+DETAIL: Sequence "sso_t_id_seq" is linked to table "sso_renamed".
+
+
+statement ok
+ALTER TABLE sso_renamed RENAME TO sso_t
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+CREATE SEQUENCE sso_explicit OWNED BY sso_t.v
+
+
+statement error
+ALTER SEQUENCE sso_explicit OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_explicit"
+DETAIL: Sequence "sso_explicit" is linked to table "sso_t".
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+CREATE SEQUENCE sso_later
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_later OWNED BY sso_t.v
+
+
+statement error
+ALTER SEQUENCE sso_later OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_later"
+DETAIL: Sequence "sso_later" is linked to table "sso_t".
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_later OWNED BY NONE
+
+
+statement ok
+ALTER SEQUENCE sso_later OWNER TO sso_heir
+
+
+statement error
+ALTER SEQUENCE sso_later OWNED BY sso_t.v
+----
+db error: ERROR: sequence must have same owner as table it is linked to
+
+
+query
+SELECT pg_get_userbyid(relowner) = 'sso_heir' AS heir FROM pg_class WHERE relname = 'sso_later'
+----
+heir
+t
+
+
+statement ok
+ALTER TABLE sso_t ADD COLUMN added serial
+
+
+query
+SELECT pg_get_userbyid(relowner) = 'sso_owner' AS owned, has_sequence_privilege('sso_reader', 'sso_t_added_seq', 'USAGE') AS reader_usage
+FROM pg_class WHERE relname = 'sso_t_added_seq'
+----
+owned	reader_usage
+t	t
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER SEQUENCE sso_t_added_seq RESTART 50
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+ALTER TABLE sso_t ADD COLUMN mine bigserial
+
+
+query
+SELECT pg_get_userbyid(relowner) = 'sso_owner' AS owned, has_sequence_privilege('sso_reader', 'sso_t_mine_seq', 'USAGE') AS reader_usage
+FROM pg_class WHERE relname = 'sso_t_mine_seq'
+----
+owned	reader_usage
+t	t
+
+
+statement error
+ALTER SEQUENCE sso_t_added_seq OWNER TO sso_heir
+----
+db error: ERROR: cannot change owner of sequence "sso_t_added_seq"
+DETAIL: Sequence "sso_t_added_seq" is linked to table "sso_t".
+
+
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER TABLE sso_t ADD COLUMN theirs serial
+----
+db error: ERROR: must be owner of table sso_t
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'sso_t_theirs_seq'
+----
+sequences
+0
+
+
+connection sso user=sso_owner password=sso_pw
+statement ok
+INSERT INTO sso_t (v) VALUES (2)
+
+
+connection sso user=sso_owner password=sso_pw
+query
+SELECT id, big, v, added, mine FROM sso_t ORDER BY v
+----
+id	big	v	added	mine
+10	101	1	1	1
+11	102	2	50	2
+
+
+statement ok
+ALTER TABLE sso_t OWNER TO sso_heir
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) = 'sso_heir' AS owned
+FROM pg_class WHERE relname IN ('sso_t', 'sso_t_id_seq', 'sso_t_big_seq', 'sso_t_added_seq', 'sso_t_mine_seq', 'sso_explicit') ORDER BY relname
+----
+relname	owned
+sso_explicit	t
+sso_t	t
+sso_t_added_seq	t
+sso_t_big_seq	t
+sso_t_id_seq	t
+sso_t_mine_seq	t
+
+
+statement ok
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+
+
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_owner
+----
+db error: ERROR: cannot change owner of sequence "sso_t_id_seq"
+DETAIL: Sequence "sso_t_id_seq" is linked to table "sso_t".
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE sso_owner REVOKE USAGE ON SEQUENCES FROM sso_reader
+
+
+statement ok
+REVOKE CREATE, USAGE ON SCHEMA public FROM sso_owner
+
+
+statement ok
+DROP ROLE sso_owner
+
+
+statement ok
+DROP TABLE sso_t
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('sso_t_id_seq', 'sso_t_big_seq', 'sso_t_added_seq', 'sso_t_mine_seq', 'sso_explicit', 'sso_later') ORDER BY relname
+----
+relname
+sso_later
+
+
+statement ok
+DROP SEQUENCE sso_later
+
+
+statement ok
+DROP ROLE sso_heir
+
+
+statement ok
+DROP ROLE sso_reader
+
+
+statement ok
+DROP ROLE sso_other

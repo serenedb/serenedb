@@ -381,6 +381,10 @@ class SystemTable final : public VirtualTable {
     if constexpr (requires { T::kSuperuserOnly; }) {
       _acl = {};  // no PUBLIC grant -> superuser-only
     }
+    if constexpr (requires { T::kPrivateColumns; }) {
+      _acl = {};
+      _private_columns = T::kPrivateColumns;
+    }
   }
 
   MaterializedData Materialize(duckdb::Catalog& database,

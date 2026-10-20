@@ -1,0 +1,51 @@
+statement ok
+CREATE TABLE rt (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 100)
+
+
+statement ok
+CREATE INDEX rt_idx ON rt USING inverted(body)
+
+
+statement ok
+INSERT INTO rt SELECT i, 'fox' FROM generate_series(1, 10) s(i)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM rt;
+----
+count
+10
+
+
+statement ok
+SET sdb_faults = 'slow_search_task'
+
+
+sleep 1s
+
+
+statement ok
+ALTER TABLE rt SET (refresh_interval = 0)
+
+
+statement ok
+INSERT INTO rt SELECT i, 'fox' FROM generate_series(11, 20) s(i)
+
+
+statement ok
+RESET sdb_faults
+
+
+sleep 6s
+
+
+query
+SELECT count(*) FROM rt;
+----
+count
+10
+
+
+statement ok
+DROP TABLE rt

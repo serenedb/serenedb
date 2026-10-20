@@ -18,7 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -38,6 +40,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <numeric>
 #include <random>
 #include <span>
 #include <string_view>
@@ -767,6 +770,248 @@ TEST_F(ColumnReaderTest, PointFetchRow) {
   }
 }
 
+struct PointCodecCase {
+  std::string name;
+  duckdb::LogicalType type;
+  duckdb::CompressionType codec;
+  std::function<bool(uint64_t)> valid;
+  std::function<duckdb::Value(uint64_t)> value;
+  std::optional<duckdb::CompressionType> validity_codec = std::nullopt;
+};
+
+void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
+  constexpr uint64_t kRows = 20000;
+  constexpr uint32_t kRgSize = 8192;
+  constexpr irs::field_id kField = 1;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", db};
+    auto& cw = w.OpenColumn(kField, c.type, false, kRgSize, c.codec);
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{c.type, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        v.SetValue(k, c.valid(g) ? c.value(g) : duckdb::Value{c.type});
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", db};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr) << c.name;
+  std::string codecs;
+  for (const auto& block : col->DataBlocks()) {
+    codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+  }
+  ASSERT_TRUE(std::ranges::any_of(
+    col->DataBlocks(),
+    [&](const auto& block) { return block.codec->type == c.codec; }))
+    << c.name << ": " << codecs;
+  if (c.validity_codec) {
+    ASSERT_NE(col->Validity(), nullptr) << c.name;
+    ASSERT_TRUE(std::ranges::any_of(col->Validity()->DataBlocks(),
+                                    [&](const auto& block) {
+                                      return block.codec->type ==
+                                             *c.validity_codec;
+                                    }))
+      << c.name;
+  }
+
+  std::vector<uint64_t> order(kRows);
+  std::iota(order.begin(), order.end(), uint64_t{0});
+  std::shuffle(order.begin(), order.end(), std::mt19937_64{42});
+  for (uint64_t g = kRows; g-- > 0;) {
+    order.push_back(g);
+  }
+  for (uint64_t g = 0; g < kRows; ++g) {
+    order.push_back(g);
+  }
+  irs::ColumnReader::PointReader reader{r, *col};
+  duckdb::Vector out{c.type, 1};
+  for (const auto g : order) {
+    duckdb::FlatVector::ValidityMutable(out).Reset();
+    const bool valid = reader.FetchRow(g, out, 0);
+    ASSERT_EQ(valid, c.valid(g)) << c.name << " row " << g;
+    if (valid) {
+      const auto got = out.GetValue(0);
+      const auto want = c.value(g);
+      ASSERT_TRUE(duckdb::Value::NotDistinctFrom(got, want))
+        << c.name << " row " << g << ": " << got.ToString()
+        << " != " << want.ToString();
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
+  using duckdb::CompressionType;
+  using duckdb::LogicalType;
+  using duckdb::Value;
+  const auto all = [](uint64_t) { return true; };
+  const auto sparse = [](uint64_t g) { return g % 997 != 0; };
+  const auto periodic = [](uint64_t g) { return g % 17 != 0; };
+  const auto dense = [](uint64_t g) { return (g * 2654435761U) % 3 != 0; };
+  const auto runs = [](uint64_t g) { return (g / 300) % 5 != 0; };
+  const auto short_runs = [](uint64_t g) { return (g / 50) % 4 != 0; };
+  const auto rare = [](uint64_t g) { return g % 50 == 0; };
+  const auto mix = [](uint64_t g) { return g * 0x9E3779B97F4A7C15ULL; };
+  const std::vector<PointCodecCase> cases{
+    {"bigint for wide", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, periodic,
+     [&](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>(mix(g) >> 4));
+     }},
+    {"integer for wide", LogicalType::INTEGER,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [&](uint64_t g) {
+       return Value::INTEGER(static_cast<int32_t>(mix(g) >> 33));
+     }},
+    {"smallint for", LogicalType::SMALLINT,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::SMALLINT(static_cast<int16_t>((g * 31) % 30000) - 15000);
+     },
+     CompressionType::COMPRESSION_ROARING},
+    {"bigint short null runs", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, short_runs,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g * 3)); },
+     CompressionType::COMPRESSION_ROARING},
+    {"bigint mostly null", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, rare,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g % 777)); },
+     CompressionType::COMPRESSION_ROARING},
+    {"double alprd exceptions", LogicalType::DOUBLE,
+     CompressionType::COMPRESSION_ALPRD, all,
+     [](uint64_t g) {
+       return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g))
+                          : Value::DOUBLE(std::sin(static_cast<double>(g)));
+     }},
+    {"bigint for", LogicalType::BIGINT, CompressionType::COMPRESSION_BITPACKING,
+     periodic,
+     [](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
+     }},
+    {"bigint delta for", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>(g * 3 + (g * 7919) % 5));
+     }},
+    {"bigint delta for nulls", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::BIGINT(1'000'000'000'000 -
+                            static_cast<int64_t>(g * 1000 + (g * 31) % 7));
+     }},
+    {"bigint constant delta", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) {
+       return Value::BIGINT(1000 + static_cast<int64_t>(g) * 5);
+     }},
+    {"bigint constant groups", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, runs,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g / 5000)); }},
+    {"bigint rle", LogicalType::BIGINT, CompressionType::COMPRESSION_RLE, dense,
+     [](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>((g / 37) % 11));
+     }},
+    {"bigint rle wide", LogicalType::BIGINT, CompressionType::COMPRESSION_RLE,
+     all,
+     [&](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>(mix(g / 9)));
+     }},
+    {"bigint uncompressed", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_UNCOMPRESSED, periodic,
+     [&](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(mix(g))); }},
+    {"integer for", LogicalType::INTEGER,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::INTEGER(static_cast<int32_t>(g % 3000) - 1500);
+     }},
+    {"smallint rle", LogicalType::SMALLINT, CompressionType::COMPRESSION_RLE,
+     all,
+     [](uint64_t g) {
+       return Value::SMALLINT(static_cast<int16_t>((g / 13) % 200));
+     }},
+    {"tinyint for", LogicalType::TINYINT,
+     CompressionType::COMPRESSION_BITPACKING, runs,
+     [](uint64_t g) { return Value::TINYINT(static_cast<int8_t>(g % 100)); }},
+    {"hugeint for", LogicalType::HUGEINT,
+     CompressionType::COMPRESSION_BITPACKING, periodic,
+     [](uint64_t g) {
+       return Value::HUGEINT(
+         duckdb::hugeint_t{static_cast<int64_t>((g * 31) % 100000)});
+     }},
+    {"hugeint delta for", LogicalType::HUGEINT,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) {
+       return Value::HUGEINT(
+         duckdb::hugeint_t{static_cast<int64_t>(g * 7 + g % 3)});
+     }},
+    {"double alp", LogicalType::DOUBLE, CompressionType::COMPRESSION_ALP,
+     periodic,
+     [](uint64_t g) {
+       return g % 101 == 0
+                ? Value::DOUBLE(std::sqrt(static_cast<double>(g)) * 1.000001)
+                : Value::DOUBLE(static_cast<double>(g % 10000) / 100.0);
+     }},
+    {"float alp", LogicalType::FLOAT, CompressionType::COMPRESSION_ALP, all,
+     [](uint64_t g) {
+       return Value::FLOAT(static_cast<float>(g % 1000) / 10.0F);
+     }},
+    {"double alprd", LogicalType::DOUBLE, CompressionType::COMPRESSION_ALPRD,
+     dense,
+     [](uint64_t g) {
+       return Value::DOUBLE(std::sin(static_cast<double>(g)) * 12345.678901234);
+     }},
+    {"float alprd", LogicalType::FLOAT, CompressionType::COMPRESSION_ALPRD,
+     sparse,
+     [](uint64_t g) {
+       return Value::FLOAT(std::sin(static_cast<float>(g)) * 123.456F);
+     }},
+    {"double rle", LogicalType::DOUBLE, CompressionType::COMPRESSION_RLE, runs,
+     [](uint64_t g) {
+       return Value::DOUBLE(static_cast<double>((g / 50) % 7) + 0.5);
+     }},
+    {"varchar dictionary", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_DICT_FSST, periodic,
+     [](uint64_t g) { return Value{"category_" + std::to_string(g % 50)}; }},
+    {"varchar fsst", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_DICT_FSST, sparse,
+     [](uint64_t g) {
+       return Value{"https://example.org/items/" + std::to_string(g * 7919) +
+                    "/detail"};
+     }},
+    {"varchar zstd", LogicalType::VARCHAR, CompressionType::COMPRESSION_ZSTD,
+     dense,
+     [](uint64_t g) {
+       return Value{std::string(200, static_cast<char>('a' + g % 26)) +
+                    std::to_string(g)};
+     }},
+    {"varchar uncompressed", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_UNCOMPRESSED, runs,
+     [](uint64_t g) { return Value{"u" + std::to_string(g)}; }},
+    {"boolean rle", LogicalType::BOOLEAN, CompressionType::COMPRESSION_RLE,
+     periodic, [](uint64_t g) { return Value::BOOLEAN((g / 100) % 2 == 0); }},
+    {"boolean bitpacking", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [](uint64_t g) { return Value::BOOLEAN(g % 3 == 0); }},
+    {"boolean roaring", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_ROARING, dense,
+     [](uint64_t g) { return Value::BOOLEAN(g % 97 == 0); }},
+    {"boolean uncompressed", LogicalType::BOOLEAN,
+     CompressionType::COMPRESSION_UNCOMPRESSED, sparse,
+     [](uint64_t g) { return Value::BOOLEAN(g % 5 < 2); }},
+  };
+  for (const auto& c : cases) {
+    CheckPointFetch(Db(), c);
+  }
+}
+
 // STRUCT{a: BIGINT, b: VARCHAR} with struct-level and field-level NULLs across
 // multiple row-groups.
 TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {
@@ -1027,6 +1272,144 @@ TEST_F(ColumnReaderTest, GatherStructAcrossRowGroups) {
       EXPECT_FALSE(va.RowIsValid(i)) << "a row " << g;
     }
     EXPECT_EQ(db[i].GetString(), b_val(g)) << "b row " << g;
+  }
+}
+
+TEST_F(ColumnReaderTest, GatherStructDenseKeepsFieldsOnOneRow) {
+  constexpr uint64_t kRows = 8192;
+  constexpr irs::field_id kT = 9;
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  auto b_val = [](uint64_t g) {
+    return "value_" + std::to_string(g) + "_padding";
+  };
+  duckdb::Connection con{Db()};
+  for (const bool nulls : {false, true}) {
+    for (const std::string codec : {"auto", "uncompressed"}) {
+      SCOPED_TRACE(testing::Message()
+                   << "nulls " << nulls << " codec " << codec);
+      auto set = con.Query("SET force_compression = '" + codec + "'");
+      ASSERT_FALSE(set->HasError()) << set->GetError();
+      auto s_valid = [&](uint64_t g) { return !nulls || g % 7 != 0; };
+      irs::MemoryDirectory dir{};
+      {
+        irs::ColWriter w{dir, "seg", Db()};
+        auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
+        for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+          duckdb::Vector v{stype, STANDARD_VECTOR_SIZE};
+          auto& entries = duckdb::StructVector::GetEntries(v);
+          auto* da = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+          auto* db =
+            duckdb::FlatVector::GetDataMutable<duckdb::string_t>(entries[1]);
+          auto& vs = duckdb::FlatVector::ValidityMutable(v);
+          vs.Reset(STANDARD_VECTOR_SIZE);
+          for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+            const auto g = pos + k;
+            if (!s_valid(g)) {
+              vs.SetInvalid(k);
+            }
+            da[k] = static_cast<int64_t>(g);
+            db[k] = duckdb::StringVector::AddString(entries[1], b_val(g));
+          }
+          duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+          cw.Append(v, STANDARD_VECTOR_SIZE);
+        }
+        w.Commit(0);
+      }
+      irs::ColReader r{dir, "seg", Db()};
+      const auto* ct = r.Column(kT);
+      ASSERT_NE(ct, nullptr);
+      auto state = ct->InitScan(r.Ctx());
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      auto gather = [&](uint64_t anchor, duckdb::idx_t hits,
+                        duckdb::idx_t step) {
+        for (duckdb::idx_t i = 0; i < hits; ++i) {
+          sel.set_index(i, i * step);
+        }
+        duckdb::Vector out{stype, STANDARD_VECTOR_SIZE};
+        ct->GatherDense(state, anchor, sel, hits, STANDARD_VECTOR_SIZE, out);
+        out.Flatten(hits);
+        auto& entries = duckdb::StructVector::GetEntries(out);
+        const auto* da = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+        const auto* db =
+          duckdb::FlatVector::GetData<duckdb::string_t>(entries[1]);
+        const auto& sv = duckdb::FlatVector::Validity(out);
+        for (duckdb::idx_t i = 0; i < hits; ++i) {
+          const auto g = anchor + i * step;
+          ASSERT_EQ(sv.RowIsValid(i), s_valid(g)) << "row " << g;
+          if (s_valid(g)) {
+            ASSERT_EQ(da[i], static_cast<int64_t>(g)) << "row " << g;
+            ASSERT_EQ(db[i].GetString(), b_val(g)) << "row " << g;
+          }
+        }
+      };
+      gather(0, 1900, 1);
+      gather(2048, STANDARD_VECTOR_SIZE, 1);
+      gather(4096, 1024, 2);
+      gather(6144, STANDARD_VECTOR_SIZE, 1);
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
+TEST_F(ColumnReaderTest, ScanStructAfterNullBlockKeepsFieldsOnOneRow) {
+  constexpr uint64_t kRows = 8192;
+  constexpr uint64_t kNullRows = 4096;
+  constexpr irs::field_id kT = 9;
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  auto b_val = [](uint64_t g) {
+    return "value_" + std::to_string(g) + "_padding";
+  };
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kT, stype, /*skip_validity=*/false, 4096);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{stype, STANDARD_VECTOR_SIZE};
+      auto& entries = duckdb::StructVector::GetEntries(v);
+      auto* da = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+      auto* db =
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(entries[1]);
+      auto& vs = duckdb::FlatVector::ValidityMutable(v);
+      vs.Reset(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        const auto g = pos + k;
+        if (g < kNullRows) {
+          vs.SetInvalid(k);
+        }
+        da[k] = static_cast<int64_t>(g);
+        db[k] = duckdb::StringVector::AddString(entries[1], b_val(g));
+      }
+      duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* ct = r.Column(kT);
+  ASSERT_NE(ct, nullptr);
+  auto state = ct->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector out{stype, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(ct->Scan(state, out, STANDARD_VECTOR_SIZE), STANDARD_VECTOR_SIZE);
+    out.Flatten(STANDARD_VECTOR_SIZE);
+    auto& entries = duckdb::StructVector::GetEntries(out);
+    const auto* da = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+    const auto* db = duckdb::FlatVector::GetData<duckdb::string_t>(entries[1]);
+    const auto& sv = duckdb::FlatVector::Validity(out);
+    for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+      const auto g = pos + i;
+      ASSERT_EQ(sv.RowIsValid(i), g >= kNullRows) << "row " << g;
+      if (g >= kNullRows) {
+        ASSERT_EQ(da[i], static_cast<int64_t>(g)) << "row " << g;
+        ASSERT_EQ(db[i].GetString(), b_val(g)) << "row " << g;
+      }
+    }
   }
 }
 

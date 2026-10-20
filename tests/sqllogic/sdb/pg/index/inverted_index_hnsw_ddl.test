@@ -4,8 +4,7 @@ control substitution on
 # HNSW DDL surface: accepted options, defaults and rejections.
 #
 # quant defaults to sq8 (none for l1, whose kernel has no quantized form).
-# pq and rabitq are rejected because both encode residuals against a cluster
-# centroid, and a graph has no clusters to provide one. l1 with the implicit
+# l1 with the implicit
 # quant default is accepted: the default resolves to none for that metric.
 # ============================================================================
 
@@ -20,18 +19,16 @@ CREATE INDEX hnsw_ddl_no_metric ON hnsw_ddl USING inverted(pk, emb hnsw ());
 db error: ERROR: Column 'emb': hnsw opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: hnsw (metric = 'l2')
 
 
-statement error
+statement ok
 CREATE INDEX hnsw_ddl_pq ON hnsw_ddl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'pq'));
-----
-db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8, sq4 or tq
 
 
-statement error
+# rabitq builds on hnsw now: the writer emits row-major records rather than
+# fast-scan groups, which is what a graph walk can read a single node out of.
+statement ok
 CREATE INDEX hnsw_ddl_rabitq ON hnsw_ddl
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq'));
-----
-db error: ERROR: Column 'emb': hnsw supports only quant = none, sq8, sq4 or tq
 
 
 statement error
@@ -59,7 +56,28 @@ statement error
 CREATE INDEX hnsw_ddl_bogus ON hnsw_ddl
   USING inverted(pk, emb hnsw (metric = 'l2', bogus = 1));
 ----
-db error: ERROR: Column 'emb': unknown hnsw option 'bogus'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: none|sq8|sq4|tq, default sq8, none for l1), nb_bits (int 1-5 for quant='tq' with default 3), m (int >= 2, default 32), ef_construction (int >= 1, default 200, must be >= m), compression (bool, default true)
+db error: ERROR: Column 'emb': unknown hnsw option 'bogus'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: sq8|sq4|usq8|usq4|fp16|bf16|pq|rabitq|tq|bq|osq|none, default sq8, none for l1), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/4), nb_bits (int 1-9 for quant='rabitq' with default 1; int 1-5 or 1.5 for quant='tq' with default 3; 1, 1.5 or 2 for quant='bq' with default 1; 1, 2, 4, 7 or 8 for quant='osq' with default 1), query_bits (int 1|4|8 for quant='bq' with default 1; 4|8 for quant='osq' with nb_bits up to 4, default 4, otherwise equal to nb_bits), m (int >= 2, default 32), ef_construction (int >= 1, default 200, must be >= m), compression (bool, default true)
+
+
+statement error
+CREATE INDEX hnsw_ddl_bad_metric ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'euclid'));
+----
+db error: ERROR: Column 'emb': unknown hnsw metric 'euclid'. Expected one of: l2 l1 cosine ip
+
+
+statement error
+CREATE INDEX hnsw_ddl_bad_quant ON hnsw_ddl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq7'));
+----
+db error: ERROR: Column 'emb': unknown hnsw quant 'sq7'. Expected one of: sq8 sq4 usq8 usq4 fp16 bf16 pq rabitq tq bq osq none
+
+
+statement error
+CREATE INDEX hnsw_ddl_not_vector ON hnsw_ddl
+  USING inverted(pk hnsw (metric = 'l2'));
+----
+db error: ERROR: Column 'pk' must be FLOAT[N] to use the 'hnsw' opclass, not INTEGER
 
 
 statement ok

@@ -26,6 +26,7 @@
 #include <liburing.h>
 
 #include <cstring>
+#include <duckdb/parallel/task_scheduler.hpp>
 
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
@@ -393,6 +394,7 @@ IndexOutput::ptr AsyncDirectory::create(std::string_view name) {
 }
 
 bool AsyncDirectory::sync(std::span<const std::string_view> names) noexcept {
+  duckdb::TaskScheduler::BlockingScope blocking;
   std::filesystem::path path;
 
   try {

@@ -44,6 +44,7 @@ Node::ptr Make(const TokenPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
+inline Node::ptr Make(const ExactVectorQuery&) { return {}; }
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
 Node::ptr Make(const BooleanQuery& query);
@@ -78,6 +79,10 @@ inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&,
                       ScoreMergeType) {
   return {};
 }
+inline Node::ptr Make(const ExactVectorQuery&, const detail::ScoredCtx&,
+                      ScoreMergeType) {
+  return {};
+}
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge);
 inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&,
@@ -103,6 +108,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
                                   ScoreMergeType merge);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
                         score_t score);
 

@@ -1,12 +1,3 @@
-# ----------------------------------------------------------------------
-# PG-compat: DISCARD <target> is emitted between checkouts by pooled
-# drivers (Npgsql, pgjdbc, psycopg pooled connections). SereneDB has no
-# temp tables / session sequences, so every DISCARD variant collapses to
-# DEALLOCATE ALL semantically -- the only observable effect is clearing
-# the prepared statement cache.
-# ----------------------------------------------------------------------
-
-# DISCARD ALL on a fresh connection is a no-op success.
 statement ok
 DISCARD ALL;
 
@@ -27,15 +18,43 @@ statement ok
 DISCARD TEMPORARY;
 
 
-# Case insensitivity (keywords).
 statement ok
 discard all;
 
 
-# DISCARD ALL clears the prepared statement cache, so a previously-prepared
-# statement cannot be executed afterwards.
 statement ok
 PREPARE drv_discard_test AS SELECT 1;
+
+
+statement ok
+DISCARD PLANS;
+
+
+statement ok
+DISCARD SEQUENCES;
+
+
+statement ok
+DISCARD TEMP;
+
+
+query
+EXECUTE drv_discard_test;
+----
+?column?
+1
+
+
+statement ok
+BEGIN;
+
+
+statement error (?i).*DISCARD ALL cannot run inside a transaction block.*
+DISCARD ALL;
+
+
+statement ok
+ROLLBACK;
 
 
 query
@@ -55,32 +74,140 @@ EXECUTE drv_discard_test;
 db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
 
 
-# DISCARD PLANS / SEQUENCES / TEMP also clear prepared statements in SereneDB
-# (same physical-drop path, since the underlying state is the same). PG keeps
-# the prepared statement -- DISCARD PLANS only releases its cached plan.
 statement ok
-PREPARE drv_discard_test AS SELECT 2;
+CREATE TABLE discard_pt (a int);
 
 
 statement ok
-DISCARD PLANS;
+CREATE TEMP TABLE discard_tt (a int);
 
 
-skipif postgres
-statement error
-EXECUTE drv_discard_test;
+statement ok
+CREATE TEMP VIEW discard_tv AS SELECT * FROM discard_tt;
+
+
+statement ok
+CREATE TEMP SEQUENCE discard_ts;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DISCARD TEMP;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM discard_tv;
 ----
-db error: ERROR: prepared statement "drv_discard_test" does not exist<slt:ignore>
+n
+0
 
 
-# DEALLOCATE ALL is PG-only here -- serenedb already cleared the prepared
-# statement via DISCARD PLANS above, while PG kept it cached.
-onlyif postgres
 statement ok
-DEALLOCATE ALL;
+DISCARD TEMP;
 
 
-# Unknown DISCARD target is a syntax error.
+statement error (?i).*discard_tt.*
+SELECT * FROM discard_tt;
+
+
+statement error (?i).*discard_tv.*
+SELECT * FROM discard_tv;
+
+
+statement error (?i).*discard_ts.*
+SELECT nextval('discard_ts');
+
+
+query
+SELECT count(*) AS n FROM discard_pt;
+----
+n
+0
+
+
+statement ok
+CREATE TEMP TABLE discard_tt (a int);
+
+
+statement ok
+DISCARD ALL;
+
+
+statement error (?i).*discard_tt.*
+SELECT * FROM discard_tt;
+
+
+statement ok
+CREATE SEQUENCE discard_seq;
+
+
+query
+SELECT nextval('discard_seq') AS v;
+----
+v
+1
+
+
+query
+SELECT currval('discard_seq') AS v;
+----
+v
+1
+
+
+statement ok
+DISCARD SEQUENCES;
+
+
+statement error (?i).*currval.*
+SELECT currval('discard_seq');
+
+
+statement ok
+SELECT nextval('discard_seq');
+
+
+statement ok
+DISCARD ALL;
+
+
+statement error (?i).*currval.*
+SELECT currval('discard_seq');
+
+
+statement ok
+SET statement_timeout = '5s';
+
+
+statement ok
+SET search_path = pg_catalog, public;
+
+
+statement ok
+DISCARD ALL;
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+0
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
 statement error
 DISCARD WHATEVER;
 ----

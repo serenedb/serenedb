@@ -1,0 +1,341 @@
+control substitution on
+
+statement ok
+CREATE TABLE oor_tiny (a TINYINT);
+
+statement ok
+CREATE TABLE oor_utiny (a UTINYINT);
+
+statement ok
+CREATE TABLE oor_usmall (a USMALLINT);
+
+statement ok
+CREATE TABLE oor_uint (a UINTEGER);
+
+statement ok
+CREATE TABLE oor_dec (a DECIMAL(5, 2));
+
+statement ok
+CREATE TABLE oor_wide_dec (a DECIMAL(20, 2));
+
+statement ok
+CREATE TABLE oor_ts_ns (a TIMESTAMP_NS);
+
+statement ok
+CREATE TABLE oor_tz_ns (a TIMESTAMPTZ_NS);
+
+statement ok
+COPY (SELECT * FROM (VALUES (-128::SMALLINT), (127::SMALLINT)) t(a)) TO '${__TEST_DIR__}/oor_tiny_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_tiny FROM '${__TEST_DIR__}/oor_tiny_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 300::SMALLINT AS a) TO '${__TEST_DIR__}/oor_tiny_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_tiny FROM '${__TEST_DIR__}/oor_tiny_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT -129::SMALLINT AS a) TO '${__TEST_DIR__}/oor_tiny_low.bin' (FORMAT binary);
+
+statement error
+COPY oor_tiny FROM '${__TEST_DIR__}/oor_tiny_low.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (0::SMALLINT), (255::SMALLINT)) t(a)) TO '${__TEST_DIR__}/oor_utiny_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_utiny FROM '${__TEST_DIR__}/oor_utiny_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT -1::SMALLINT AS a) TO '${__TEST_DIR__}/oor_utiny_neg.bin' (FORMAT binary);
+
+statement error
+COPY oor_utiny FROM '${__TEST_DIR__}/oor_utiny_neg.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT 256::SMALLINT AS a) TO '${__TEST_DIR__}/oor_utiny_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_utiny FROM '${__TEST_DIR__}/oor_utiny_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT 65535 AS a) TO '${__TEST_DIR__}/oor_usmall_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_usmall FROM '${__TEST_DIR__}/oor_usmall_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 70000 AS a) TO '${__TEST_DIR__}/oor_usmall_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_usmall FROM '${__TEST_DIR__}/oor_usmall_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT -1 AS a) TO '${__TEST_DIR__}/oor_usmall_neg.bin' (FORMAT binary);
+
+statement error
+COPY oor_usmall FROM '${__TEST_DIR__}/oor_usmall_neg.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT 4294967295::BIGINT AS a) TO '${__TEST_DIR__}/oor_uint_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_uint FROM '${__TEST_DIR__}/oor_uint_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT -1::BIGINT AS a) TO '${__TEST_DIR__}/oor_uint_neg.bin' (FORMAT binary);
+
+statement error
+COPY oor_uint FROM '${__TEST_DIR__}/oor_uint_neg.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT 4294967296::BIGINT AS a) TO '${__TEST_DIR__}/oor_uint_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_uint FROM '${__TEST_DIR__}/oor_uint_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (999.99::DECIMAL(7, 2)), (-999.99::DECIMAL(7, 2))) t(a)) TO '${__TEST_DIR__}/oor_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_dec FROM '${__TEST_DIR__}/oor_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 1000.00::DECIMAL(7, 2) AS a) TO '${__TEST_DIR__}/oor_dec_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec FROM '${__TEST_DIR__}/oor_dec_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT -12345.67::DECIMAL(7, 2) AS a) TO '${__TEST_DIR__}/oor_dec_low.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec FROM '${__TEST_DIR__}/oor_dec_low.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT 999999999999999999.99::DECIMAL(25, 2) AS a) TO '${__TEST_DIR__}/oor_wide_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_wide_dec FROM '${__TEST_DIR__}/oor_wide_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 1000000000000000000.00::DECIMAL(25, 2) AS a) TO '${__TEST_DIR__}/oor_wide_dec_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_wide_dec FROM '${__TEST_DIR__}/oor_wide_dec_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT TIMESTAMP '3000-01-01 00:00:00' AS a) TO '${__TEST_DIR__}/oor_ts_ns_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_ts_ns FROM '${__TEST_DIR__}/oor_ts_ns_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT TIMESTAMP '1600-01-01 00:00:00' AS a) TO '${__TEST_DIR__}/oor_ts_ns_low.bin' (FORMAT binary);
+
+statement error
+COPY oor_ts_ns FROM '${__TEST_DIR__}/oor_ts_ns_low.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT TIMESTAMPTZ '3000-01-01 00:00:00+00' AS a) TO '${__TEST_DIR__}/oor_tz_ns_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_tz_ns FROM '${__TEST_DIR__}/oor_tz_ns_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+CREATE TABLE oor_time (a TIME);
+
+statement ok
+CREATE TABLE oor_timetz (a TIMETZ);
+
+statement ok
+CREATE TABLE oor_date (a DATE);
+
+system ok
+printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000\010\000\000\000\024\364\153\004\000\377\377' > $__TEST_DIR__/oor_time_25h.bin
+
+statement error
+COPY oor_time FROM '${__TEST_DIR__}/oor_time_25h.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000\014\000\000\000\000\000\000\000\000\000\001\031\100\377\377' > $__TEST_DIR__/oor_timetz_zone.bin
+
+statement error
+COPY oor_timetz FROM '${__TEST_DIR__}/oor_timetz_zone.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+system ok
+printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000\004\177\377\375\170\377\377' > $__TEST_DIR__/oor_date_high.bin
+
+statement error
+COPY oor_date FROM '${__TEST_DIR__}/oor_date_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+CREATE TABLE oor_ts_s (a TIMESTAMP_S);
+
+system ok
+printf 'PGCOPY\n\377\r\n\000\000\000\000\000\000\000\000\000\000\001\000\000\000\010\177\377\377\377\377\377\377\376\377\377' > $__TEST_DIR__/oor_ts_s_high.bin
+
+statement error
+COPY oor_ts_s FROM '${__TEST_DIR__}/oor_ts_s_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+CREATE TABLE oor_small_dec (a DECIMAL(3, 1));
+
+statement ok
+COPY (SELECT 12.3::DECIMAL(4, 1) AS a) TO '${__TEST_DIR__}/oor_small_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_small_dec FROM '${__TEST_DIR__}/oor_small_dec_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 123.4::DECIMAL(4, 1) AS a) TO '${__TEST_DIR__}/oor_small_dec_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_small_dec FROM '${__TEST_DIR__}/oor_small_dec_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+CREATE TABLE oor_dec18 (a DECIMAL(18, 0));
+
+statement ok
+COPY (SELECT * FROM (VALUES (999999999999999999::DECIMAL(19, 0)), (-999999999999999999::DECIMAL(19, 0))) t(a)) TO '${__TEST_DIR__}/oor_dec18_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_dec18 FROM '${__TEST_DIR__}/oor_dec18_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 1000000000000000000::DECIMAL(19, 0) AS a) TO '${__TEST_DIR__}/oor_dec18_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec18 FROM '${__TEST_DIR__}/oor_dec18_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT -1000000000000000000::DECIMAL(19, 0) AS a) TO '${__TEST_DIR__}/oor_dec18_low.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec18 FROM '${__TEST_DIR__}/oor_dec18_low.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+CREATE TABLE oor_dec38 (a DECIMAL(38, 0));
+
+statement ok
+COPY (SELECT * FROM (VALUES (99999999999999999999999999999999999999::HUGEINT), (-99999999999999999999999999999999999999::HUGEINT)) t(a)) TO '${__TEST_DIR__}/oor_dec38_ok.bin' (FORMAT binary);
+
+statement ok
+COPY oor_dec38 FROM '${__TEST_DIR__}/oor_dec38_ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 100000000000000000000000000000000000000::HUGEINT AS a) TO '${__TEST_DIR__}/oor_dec38_high.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec38 FROM '${__TEST_DIR__}/oor_dec38_high.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+statement ok
+COPY (SELECT -100000000000000000000000000000000000000::HUGEINT AS a) TO '${__TEST_DIR__}/oor_dec38_low.bin' (FORMAT binary);
+
+statement error
+COPY oor_dec38 FROM '${__TEST_DIR__}/oor_dec38_low.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid binary value in column 1
+
+
+query
+SELECT 'tiny' AS t, a::VARCHAR AS v FROM oor_tiny
+UNION ALL SELECT 'utiny', a::VARCHAR FROM oor_utiny
+UNION ALL SELECT 'usmall', a::VARCHAR FROM oor_usmall
+UNION ALL SELECT 'uint', a::VARCHAR FROM oor_uint
+UNION ALL SELECT 'dec', a::VARCHAR FROM oor_dec
+UNION ALL SELECT 'dec18', a::VARCHAR FROM oor_dec18
+UNION ALL SELECT 'dec38', a::VARCHAR FROM oor_dec38
+UNION ALL SELECT 'small_dec', a::VARCHAR FROM oor_small_dec
+UNION ALL SELECT 'wide_dec', a::VARCHAR FROM oor_wide_dec
+UNION ALL SELECT 'ts_ns', a::VARCHAR FROM oor_ts_ns
+UNION ALL SELECT 'tz_ns', a::VARCHAR FROM oor_tz_ns
+UNION ALL SELECT 'ts_s', a::VARCHAR FROM oor_ts_s
+UNION ALL SELECT 'time', a::VARCHAR FROM oor_time
+UNION ALL SELECT 'timetz', a::VARCHAR FROM oor_timetz
+UNION ALL SELECT 'date', a::VARCHAR FROM oor_date
+ORDER BY t, v;
+----
+t	v
+dec	-999.99
+dec	999.99
+dec18	-999999999999999999
+dec18	999999999999999999
+dec38	-99999999999999999999999999999999999999
+dec38	99999999999999999999999999999999999999
+small_dec	12.3
+tiny	-128
+tiny	127
+uint	4294967295
+usmall	65535
+utiny	0
+utiny	255
+wide_dec	999999999999999999.99

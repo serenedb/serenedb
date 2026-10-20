@@ -28,6 +28,7 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <limits>
 #include <memory>
 #include <tz_calendar.hpp>
 
@@ -90,6 +91,16 @@ struct SerializationContext {
   std::unique_ptr<TypesSerializationCache> types_cache;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };
+
+inline constexpr size_t kMaxMessageSize = std::numeric_limits<int32_t>::max();
+
+[[noreturn]] void ThrowMessageTooLarge();
+
+IRS_FORCE_INLINE inline void CheckMessageSize(size_t size) {
+  if (size > kMaxMessageSize) [[unlikely]] {
+    ThrowMessageTooLarge();
+  }
+}
 
 inline bool IsUtcTimeZoneName(std::string_view name) noexcept {
   return name == "UTC" || name == "GMT" || name == "Etc/UTC";

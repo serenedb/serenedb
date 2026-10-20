@@ -1,0 +1,134 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS eins_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS eins_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE eins_src_${__DATABASE__};
+
+
+statement ok
+USE eins_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA eins_outer;
+
+
+statement ok
+CREATE SCHEMA eins_outer.eins_inner;
+
+
+statement ok
+CREATE SCHEMA eins_inner;
+
+
+statement ok
+CREATE TABLE eins_outer.eins_inner.t (id INT, n INT);
+
+
+statement ok
+CREATE TABLE eins_inner.t (id INT);
+
+
+statement ok
+CREATE SEQUENCE eins_outer.eins_inner.nested_owned OWNED BY t.n;
+
+
+statement ok
+CREATE SEQUENCE eins_inner.top_owned OWNED BY t.id;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY eins_outer.eins_inner.d AS split_text();
+
+
+statement ok
+CREATE JOB eins_outer.eins_inner.j AFTER 1 HOUR AS SELECT 1;
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/eins';
+
+
+query
+SELECT line
+FROM (
+    SELECT unnest(string_split(content, chr(10))) AS line
+    FROM read_text('${__TEST_DIR__}/eins/schema.sql')
+)
+WHERE line LIKE 'CREATE TEXT SEARCH DICTIONARY %' OR line LIKE 'CREATE JOB %' OR line LIKE '%OWNED BY%'
+ORDER BY 1;
+----
+line
+ALTER SEQUENCE eins_inner.top_owned OWNED BY t.id;
+ALTER SEQUENCE eins_outer.eins_inner.nested_owned OWNED BY t.n;
+CREATE JOB eins_outer.eins_inner.j AFTER INTERVAL '01:00:00' AS SELECT 1;
+CREATE TEXT SEARCH DICTIONARY eins_outer.eins_inner.d AS split_text();
+
+
+statement ok
+CREATE DATABASE eins_dst_${__DATABASE__};
+
+
+statement ok
+USE eins_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/eins';
+
+
+query
+SELECT schema_name, job_name FROM sdb_jobs() WHERE database_name = current_database();
+----
+schema_name	job_name
+eins_inner	j
+
+
+statement ok
+DROP JOB eins_outer.eins_inner.j;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY eins_outer.eins_inner.d;
+
+
+statement ok
+DROP TABLE eins_inner.t;
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1;
+----
+sequence_name
+nested_owned
+
+
+statement ok
+DROP TABLE eins_outer.eins_inner.t;
+
+
+query
+SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database();
+----
+sequences
+0
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE eins_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE eins_dst_${__DATABASE__};

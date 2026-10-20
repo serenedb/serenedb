@@ -5,6 +5,10 @@ set -e
 REGISTRY="${DOCKER_REGISTRY:-serenedb}"
 PUSH_ENABLED=${PUSH_IMAGES_2_REGISTRY:-false}
 BUILDER_NAME="serenedb-builder"
+OWNER_LABEL=()
+if [ -n "${SDB_DOCKER_OWNER:-}" ]; then
+	OWNER_LABEL=(--label "serenedb.owner=$SDB_DOCKER_OWNER")
+fi
 
 # --- Validate push credentials early ---
 if [ "$PUSH_ENABLED" = "true" ]; then
@@ -52,14 +56,14 @@ for os in ubuntu; do
 
 	# 2. Extract Version Info
 	echo "    > Inspecting versions..."
-	CLANG_VER=$(docker run --rm "${REPO}:probe" clang++ --version | grep -Po " \K\d+\.\d+[\.\d+]*" | head -1)
+	CLANG_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" clang++ --version | grep -Po " \K\d+\.\d+[\.\d+]*" | head -1)
 
 	case ${os} in
 	ubuntu)
-		OS_VER=$(docker run --rm "${REPO}:probe" cat /etc/os-release | grep -Po "VERSION=\"\K\d+\.\d+[\.\d]*")
+		OS_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" cat /etc/os-release | grep -Po "VERSION=\"\K\d+\.\d+[\.\d]*")
 		;;
 	alpine)
-		OS_VER=$(docker run --rm "${REPO}:probe" cat /etc/alpine-release | grep -Po "\d+\.\d+[\.\d+]*")
+		OS_VER=$(docker run --rm "${OWNER_LABEL[@]}" "${REPO}:probe" cat /etc/alpine-release | grep -Po "\d+\.\d+[\.\d+]*")
 		;;
 	esac
 

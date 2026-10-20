@@ -15,11 +15,12 @@ Adding `USING inverted` to [`CREATE INDEX`](./index.md) builds an [inverted inde
 Each entry in the `USING inverted (...)` list is an **indexed column**.
 
 - **Text and scalar columns** may name a [text search dictionary](../create_text_search_dictionary/index.md) (the analyzer). With no dictionary the column is indexed verbatim — one token per value — giving exact, case-sensitive matching suitable for identifiers, tags and categories. Numeric and temporal columns are indexed for [exact and range](../../indexes/inverted/full-text-search.md#range-queries) queries.
-- **Vector columns** use `ivf (...)` to build an [IVF](../../indexes/inverted/vector-search.md) index. `metric` is required; `nlist` / `nlist_factor` size the coarse clustering and `quant` enables optional compression (`sq8`, `sq4`, `pq`, `rabitq`).
-- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, subqueries and volatile functions (e.g. `random()`) are rejected.
+- **Vector columns** use `ivf (...)` or `hnsw (...)` to build an [IVF or HNSW](../../indexes/inverted/vector-search.md) index. `metric` is required; the other options, among them the vector compression `quant`, are listed on the [Vector Search](../../indexes/inverted/vector-search.md) page.
+- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, subqueries, volatile functions (e.g. `random()`) and functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`) are rejected.
 - **JSON** — index a JSON extraction expression such as `(doc ->> 'host') my_dict`, optionally with a dictionary; this indexes exactly the sub-field you search. (See also the [`VARIANT`](../../data_types/variant.md) type for storing typed payloads.)
 - **Generated columns** — index a [generated column](./index.md) the same as any other column (index the column itself, not its defining expression).
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
+- **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
 `HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
@@ -48,7 +49,7 @@ The trailing `WITH (...)` clause sets index-level options.
 | :--- | :--- | :--- |
 | `refresh_interval` | `1000` | Background refresh interval in milliseconds; `0` disables it |
 | `compaction_interval` | `1000` | Background compaction interval in milliseconds; `0` disables it |
-| `cleanup_interval_step` | `1` | Commit ticks between cleanup passes; `0` disables it |
+| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore; `0` disables the periodic passes, leaving cleanup to background compaction |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
 
@@ -96,7 +97,7 @@ Store an extra column alongside the index with `INCLUDE` so it can be returned w
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-A `column_spec` is an indexed column with an optional analyzer ([dictionary](../create_text_search_dictionary/index.md)) or, for vectors, an `ivf` configuration:
+A `column_spec` is an indexed column with an optional analyzer ([dictionary](../create_text_search_dictionary/index.md)) or, for vectors, an `ivf` or `hnsw` configuration:
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />
 

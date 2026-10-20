@@ -1,0 +1,70 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE jtb_plain (n INT);
+
+
+statement ok
+INSERT INTO jtb_plain VALUES (1), (2);
+
+
+statement ok
+CREATE ROLE jtb_owner;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO jtb_owner;
+
+
+statement ok
+GRANT TRUNCATE ON jtb_plain TO jtb_owner;
+
+
+statement ok
+SET ROLE jtb_owner;
+
+
+statement ok
+CREATE JOB jtb_clear AFTER 1 HOUR SUSPENDED AS TRUNCATE jtb_plain;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT job_name, body FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+job_name	body
+jtb_clear	TRUNCATE jtb_plain
+
+
+connection after_crash
+statement ok
+EXECUTE JOB jtb_clear;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM jtb_plain;
+----
+n
+0

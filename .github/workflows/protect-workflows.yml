@@ -27,7 +27,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `👋 Thank you for your contribution!\n\nThis PR is from a fork and requires maintainer approval before CI workflows will run.\n\nA maintainer will review your changes and approve the workflow run if everything looks good.\n\n**Please do not modify any files in \`.github/workflows/\` as those changes will not be accepted from forks.**`
+              body: `👋 Thank you for your contribution!\n\nThis PR is from a fork and requires maintainer approval before CI workflows will run.\n\nA maintainer will review your changes and approve the workflow run if everything looks good.\n\nBefore we can merge your PR, you need to sign our Contributor License Agreement. If you haven't signed it yet, [request the CLA](https://serenedb.com/cla#form) and we will send it to you for e-signature. You only sign it once.\n\n**Please do not modify any files in \`.github/workflows/\` as those changes will not be accepted from forks.**`
             });
 
       - name: Block workflow file changes

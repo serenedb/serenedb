@@ -1,0 +1,11 @@
+statement error
+SELECT json_structure(repeat('[', 5000) || repeat(']', 5000)) AS s
+----
+db error: ERROR: JSON nesting depth exceeds the maximum of 1000
+
+
+query
+SELECT json_structure(repeat('[', 900) || '1' || repeat(']', 900)) = repeat('[', 900) || '"UBIGINT"' || repeat(']', 900) AS r
+----
+r
+t

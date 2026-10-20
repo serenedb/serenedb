@@ -25,6 +25,7 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/column_definition.hpp>
+#include <duckdb/planner/column_binding.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
@@ -41,6 +42,18 @@ inline constexpr ColumnId kInvalidColumnId = irs::field_limits::invalid();
 inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
   return column.CatalogOid() != 0 ? ColumnId{column.CatalogOid()}
                                   : ColumnId{column.Oid()};
+}
+
+struct BindingKey {
+  duckdb::idx_t table = 0;
+  duckdb::idx_t column = 0;
+
+  auto operator<=>(const BindingKey&) const = default;
+};
+
+inline BindingKey MakeBindingKey(const duckdb::ColumnBinding& binding) {
+  return {.table = binding.table_index.index,
+          .column = binding.column_index.GetIndex()};
 }
 
 // Real column ids are duckdb catalog oids and view column positions, all far

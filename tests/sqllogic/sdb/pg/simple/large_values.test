@@ -1,0 +1,65 @@
+query
+SELECT len(range(10000000)) AS n
+----
+n
+10000000
+
+statement ok
+CREATE MACRO lv_twice_len(l) AS len(l) + len(l)
+
+statement ok
+CREATE MACRO lv_either_len(c, l) AS CASE WHEN c THEN len(l) ELSE -len(l) END
+
+query
+SELECT lv_twice_len(range(10000000)) AS n
+----
+n
+20000000
+
+query
+SELECT lv_either_len(false, range(10000000)) AS n
+----
+n
+-10000000
+
+query
+SELECT lv_twice_len(range(3)) AS n
+----
+n
+6
+
+statement ok
+DROP MACRO lv_either_len
+
+statement ok
+DROP MACRO lv_twice_len
+
+query
+SELECT range(10000000)[i + 1] AS v FROM range(3) t(i) ORDER BY i
+----
+v
+0
+1
+2
+
+query
+SELECT list_contains(range(10000000), i) AS c FROM range(3) t(i) ORDER BY i
+----
+c
+t
+t
+t
+
+query
+SELECT [i] = range(10000000) AS e FROM range(3) t(i) ORDER BY i
+----
+e
+f
+f
+f
+
+query
+SELECT count(*) AS c FROM range(3) a(i) JOIN range(3) b(j) ON a.i = b.j AND list_contains(range(10000000), a.i)
+----
+c
+3

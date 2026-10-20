@@ -1,0 +1,56 @@
+query
+SELECT clamp(5, 0, 3) AS a, clamp(-1, 0, 3) AS b, clamp(1.5, 0, 1) AS c, clamp('nan'::DOUBLE, 0, 1) AS d, clamp('m', 'a', 'f') AS e;
+----
+a	b	c	d	e
+3	0	1.0	1	f
+
+
+query
+SELECT pg_typeof(clamp(1::SMALLINT, 0::TINYINT, 9::BIGINT)) AS t, clamp(300::USMALLINT, 0, 255) AS u, clamp(DATE '2026-01-05', DATE '2026-02-01', DATE '2026-03-01') AS d;
+----
+t	u	d
+bigint	255	2026-02-01
+
+
+query
+SELECT clamp(x, lo, hi) AS c FROM (VALUES (5, 1, 3), (0, 1, 3), (2, NULL, 3), (4, 5, 9)) t(x, lo, hi);
+----
+c
+3
+1
+NULL
+5
+
+
+query
+SELECT clamp([1, 2], [1, 3], [2, 0]) AS l, clamp(INTERVAL 5 DAY, INTERVAL 1 DAY, INTERVAL 3 DAY) AS i;
+----
+l	i
+{1,3}	3 days
+
+
+query
+SELECT count(*) AS n, min(c) AS lo, max(c) AS hi FROM (SELECT clamp(i, 10, 20) AS c FROM range(1000) t(i));
+----
+n	lo	hi
+1000	10	20
+
+
+statement error
+SELECT clamp(5, 3, 1);
+----
+db error: ERROR: clamp minimum cannot be greater than maximum
+
+
+statement ok
+PREPARE clamp_all AS SELECT clamp($1, $2, $3);
+
+query
+EXECUTE clamp_all(5, 0, 3);
+----
+clamp
+3
+
+
+statement ok
+DEALLOCATE clamp_all;

@@ -1,0 +1,66 @@
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+CREATE TABLE tr_ranges (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_ranges_sq8 ON tr_ranges USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement ok
+INSERT INTO tr_ranges VALUES (1, [1, 0, 0]), (2, [0, 1, 0]), (3, [0, 0, 1])
+
+statement ok
+INSERT INTO tr_ranges SELECT i, [20 + (i % 300)::FLOAT, 20 + (i % 7)::FLOAT / 7, 20 + (i % 11)::FLOAT / 11] FROM range(100, 30100) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_ranges
+
+query
+SELECT pk FROM (
+  SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0.5, 0.5, 0.5]::FLOAT[3] LIMIT 3
+) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0, 1, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+2
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0, 0, 1]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0.9, 0.1, 0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0.1, 0.9, 0.1]::FLOAT[3] LIMIT 1;
+----
+pk
+2
+
+query
+SELECT pk FROM tr_ranges_sq8 ORDER BY emb <-> [0, 0.2, 0.8]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+statement ok
+RESET sdb_ivf_search_nprobe

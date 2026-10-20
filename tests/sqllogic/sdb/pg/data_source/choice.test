@@ -3010,7 +3010,7 @@ QUERY PLAN
 │ Type: Sequential Scan                                                    │
 │ Projections: a, b, c, val                                                │
 │ Column Filter:                                                           │
-│ ((a = 1) OR (a = 2)) OR (a = 3)                                          │
+│ (a = 1) OR (a = 2) OR (a = 3)                                            │
 │ ~5 rows                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────╯
 
@@ -3048,7 +3048,7 @@ QUERY PLAN
 │ Type: Sequential Scan                                                                                       │
 │ Projections: a, b, c, val                                                                                   │
 │ Column Filter:                                                                                              │
-│ ((a = 1) OR (a = 2)) OR (a = 3), ((b = 1) OR (b = 2)) OR (b = 3), ((c < 3) OR (c > 1)) OR (c = 2)           │
+│ (a = 1) OR (a = 2) OR (a = 3), (b = 1) OR (b = 2) OR (b = 3), (c < 3) OR (c > 1) OR (c = 2)                 │
 │ ~5 rows                                                                                                     │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -3996,23 +3996,18 @@ query
 EXPLAIN SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
 ----
 QUERY PLAN
-╭─ ORDER_BY ───────────────────────────────────────────╮
-│ Order By: a ASC                                      │
-│ ~1 row                                               │
-╰───────────────────────────┬──────────────────────────╯
-╭─ FILTER ──────────────────┴──────────────────────────╮
-│ Expression:                                          │
-│ (a = 1) OR (a = 3) OR (a = 4) OR (a = 5)             │
-│ ~1 row                                               │
-╰───────────────────────────┬──────────────────────────╯
-╭─ SEQ_SCAN ────────────────┴──────────────────────────╮
-│ Table: choices_array                                 │
-│ Type: Sequential Scan                                │
-│ Projections: a, nums, labels                         │
-│ Column Filter:                                       │
-│ optional: ((a = 1) OR (a = 3) OR (a = 4) OR (a = 5)) │
-│ ~5 rows                                              │
-╰──────────────────────────────────────────────────────╯
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: a ASC                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ SEQ_SCAN ──────────┴────────────────────╮
+│ Table: choices_array                     │
+│ Type: Sequential Scan                    │
+│ Projections: a, nums, labels             │
+│ Column Filter:                           │
+│ (a = 1) OR (a = 3) OR (a = 4) OR (a = 5) │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 
 query

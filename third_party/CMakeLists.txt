@@ -249,7 +249,20 @@ target_include_directories(
 sdb_update_module(${GIT_EXECUTABLE} "re2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(RE2_USE_ICU ON CACHE BOOL "" FORCE)
 set(RE2_INSTALL OFF CACHE BOOL "" FORCE)
+set(RE2_TEST ${SDB_GTEST} CACHE BOOL "" FORCE)
+if(SDB_GTEST)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake "")
+    enable_testing()
+endif()
 add_subdirectory(re2)
+if(SDB_GTEST)
+    get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
+    list(FILTER re2_targets INCLUDE REGEX "_test$")
+    foreach(target ${re2_targets})
+        target_link_libraries(${target} PRIVATE icu_extension)
+    endforeach()
+    add_custom_target(re2-tests DEPENDS ${re2_targets})
+endif()
 
 ################################################################################
 ### tcmalloc library
@@ -311,9 +324,10 @@ set(USE_OPENMP 0 CACHE BOOL "" FORCE)
 set(USE_LOCKING 1 CACHE BOOL "" FORCE)
 set(NO_WARMUP 1 CACHE BOOL "" FORCE)
 set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
-set(NO_LAPACK 1 CACHE BOOL "" FORCE)
-set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
-set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
+set(NO_LAPACK 0 CACHE BOOL "" FORCE)
+set(C_LAPACK 1 CACHE BOOL "" FORCE)
+set(BUILD_SINGLE 1 CACHE BOOL "" FORCE)
+set(NO_CBLAS 1 CACHE BOOL "" FORCE)
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
 if(SDB_SANITIZE MATCHES "^Memory")
     message(
@@ -351,6 +365,16 @@ if(ARCH_AMD64 AND DYNAMIC_ARCH)
 endif()
 
 ################################################################################
+### pcg, header-only, vendored by duckdb
+################################################################################
+add_library(pcg INTERFACE)
+target_include_directories(
+    pcg
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/pcg
+)
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
@@ -368,6 +392,7 @@ target_compile_options(
         -Wno-sign-compare
         -Wno-suggest-destructor-override
 )
+target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
 ## snowball stemmer

@@ -1,0 +1,228 @@
+statement ok
+SET sdb_ann_oversample = 32
+
+statement ok
+CREATE TABLE hnsw_osq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_osq_idx ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq'));
+
+statement ok
+INSERT INTO hnsw_osq SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq;
+
+query
+SELECT pk FROM hnsw_osq_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+51
+35
+
+query
+SELECT count(*) FROM hnsw_osq_idx;
+----
+count
+64
+
+
+statement ok
+CREATE TABLE hnsw_osq2 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_osq2_idx ON hnsw_osq2
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', nb_bits = 2,
+                               query_bits = 8));
+
+statement ok
+INSERT INTO hnsw_osq2 SELECT pk, emb FROM hnsw_osq;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq2;
+
+query
+SELECT pk FROM hnsw_osq2_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+51
+35
+
+
+statement ok
+CREATE TABLE hnsw_osq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_osq4_idx ON hnsw_osq4
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'osq', nb_bits = 4));
+
+statement ok
+INSERT INTO hnsw_osq4 SELECT pk, emb FROM hnsw_osq;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq4;
+
+query
+SELECT pk FROM hnsw_osq4_idx
+  ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+58
+50
+42
+
+
+statement ok
+CREATE TABLE hnsw_osq7 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_osq7_idx ON hnsw_osq7
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', nb_bits = 7));
+
+statement ok
+INSERT INTO hnsw_osq7 SELECT pk, emb FROM hnsw_osq;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq7;
+
+query
+SELECT pk FROM hnsw_osq7_idx
+  ORDER BY emb <-> [80, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+56
+48
+40
+
+
+statement ok
+CREATE TABLE hnsw_osq8 (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX hnsw_osq8_idx ON hnsw_osq8
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'osq', nb_bits = 8));
+
+statement ok
+INSERT INTO hnsw_osq8 VALUES
+  (1, [1, 0, 0, 0]::FLOAT[4]),
+  (2, [0, 1, 0, 0]::FLOAT[4]),
+  (3, [0, 0, 1, 0]::FLOAT[4]),
+  (4, [0, 0, 0, 1]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq8;
+
+query
+SELECT pk FROM hnsw_osq8_idx
+  ORDER BY emb <=> [0, 0, 3, 0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+CREATE TABLE ivf_osq (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_osq_idx ON ivf_osq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'osq', nb_bits = 4));
+
+statement count 6
+INSERT INTO ivf_osq VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [101, 0, 0]::FLOAT[3]),
+  (3, [0, 100, 0]::FLOAT[3]),
+  (4, [0, 101, 0]::FLOAT[3]),
+  (5, [0, 0, 100]::FLOAT[3]),
+  (6, [0, 0, 101]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_osq;
+
+query
+SELECT pk FROM ivf_osq_idx ORDER BY emb <-> [0, 0, 101]::FLOAT[3] LIMIT 2;
+----
+pk
+6
+5
+
+
+statement ok
+DELETE FROM hnsw_osq WHERE pk = 43;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_osq;
+
+query
+SELECT pk FROM hnsw_osq_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+51
+
+
+statement error
+CREATE INDEX hnsw_osq_bits3 ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', nb_bits = 3));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (3) must be 1, 2, 4, 7 or 8 for quant 'osq'
+
+
+statement error
+CREATE INDEX hnsw_osq_half ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', nb_bits = 1.5));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (1.5) must be 1, 2, 4, 7 or 8 for quant 'osq'
+
+
+statement error
+CREATE INDEX hnsw_osq_q2 ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', query_bits = 2));
+----
+db error: ERROR: Column 'emb': hnsw option 'query_bits' (2) must be 4 or 8 for quant 'osq' with nb_bits 1
+
+
+statement error
+CREATE INDEX hnsw_osq_q7 ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'osq', nb_bits = 7,
+                               query_bits = 4));
+----
+db error: ERROR: Column 'emb': hnsw option 'query_bits' (4) must be 7 for quant 'osq' with nb_bits 7
+
+
+statement error
+CREATE INDEX hnsw_osq_l1 ON hnsw_osq
+  USING inverted(pk, emb hnsw (metric = 'l1', quant = 'osq'));
+----
+db error: ERROR: Column 'emb': hnsw with metric = 'l1' supports only quant = none
+
+
+statement ok
+DROP TABLE hnsw_osq;
+
+statement ok
+DROP TABLE hnsw_osq2;
+
+statement ok
+DROP TABLE hnsw_osq4;
+
+statement ok
+DROP TABLE hnsw_osq7;
+
+statement ok
+DROP TABLE hnsw_osq8;
+
+statement ok
+DROP TABLE ivf_osq;

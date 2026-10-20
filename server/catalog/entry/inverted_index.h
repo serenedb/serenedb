@@ -23,6 +23,7 @@
 #include <array>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
@@ -249,6 +250,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
+    duckdb::CatalogTransaction transaction) const final;
   std::string ToSQL() const final {
     return duckdb::IndexCatalogEntry::GetInfo()->ToString();
   }
@@ -295,6 +298,11 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
  private:
   persistence::InvertedIndexData ToPersisted() const;
 
+  bool ViewBacked() const noexcept { return !info && !_search_table; }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
+    duckdb::CatalogTransaction transaction) const;
+
   void AlterReindexJob(duckdb::CatalogTransaction transaction,
                        uint32_t interval_ms);
 
@@ -303,5 +311,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
 };
+
+std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
+  duckdb::DuckCatalog& catalog);
 
 }  // namespace sdb::catalog

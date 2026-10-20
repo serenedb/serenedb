@@ -84,9 +84,6 @@ DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
 DECLARE_PG_TYPE(SQLIDENTIFIER,  SqlIdentifier,  "sql_identifier",  VARCHAR)
 DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
 DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
-DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
-DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
-DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
 // PG pseudo-type `void`: functions declared RETURNS VOID still need a
 // representable result type. We back it with SQLNULL.
 DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
@@ -113,6 +110,11 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
   return kOidLikeAliases.contains(type.GetAlias());
 }
 
+inline bool IsRegLike(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::BIGINT &&
+         type.GetAlias().starts_with("reg");
+}
+
 #undef DECLARE_PG_TYPE
 
 inline constexpr std::string_view kCtidAlias = "ctid";
@@ -129,14 +131,36 @@ inline duckdb::LogicalType CTID() {
 #endif
 
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
+inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
+
+inline constexpr duckdb::idx_t kInetIpTypeChild = 0;
+inline constexpr duckdb::idx_t kInetAddressChild = 1;
+inline constexpr duckdb::idx_t kInetMaskChild = 2;
+inline constexpr duckdb::idx_t kInetChildCount = 3;
+
+inline constexpr uint64_t kInetV6SortBit = uint64_t{1} << 63;
 
 inline bool IsInet(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
          type.GetAlias() == kInetAlias;
 }
 
+inline bool IsCidr(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kCidrAlias;
+}
+
+inline bool IsInetOrCidr(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto alias = type.GetAlias();
+  return alias == kInetAlias || alias == kCidrAlias;
+}
+
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+inline duckdb::LogicalType CIDR() { return duckdb::make_cidr_type(); }
 #endif
 
 }  // namespace sdb::pg

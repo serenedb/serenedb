@@ -5,12 +5,11 @@ hash-threshold 100
 #
 # TurboQuant is data-oblivious: the scalar codebook is a fixed Lloyd-Max
 # table, so there is no training pass. Each document stores a rotated,
-# centroid-relative code in the postings .pay plus its exact residual norm,
+# centroid-relative code in the postings .pay,
 # scored through the quantized QVectorIterator path; a kNN with a WHERE
 # filter and any range query fall back to the exact raw reranker.
 #
-# quant='tq' takes nb_bits 1-5 (default 3): an odd 3 or 5 spends one bit on the
-# QJL refinement stage and the rest on MSE, every other width is MSE-only. Low
+# Low
 # bit counts are lossy, so the sections below use well-separated vectors so
 # exact row order is deterministic. Unlike quant='rabitq', tq supports cosine.
 
@@ -104,6 +103,42 @@ SELECT pk FROM tq_mc_idx ORDER BY emb <-> [0, 0, 100]::FLOAT[3] LIMIT 2;
 pk
 5
 6
+
+statement ok
+CREATE TABLE tq_half (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tq_half_idx ON tq_half
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', nb_bits = 1.5))
+
+statement count 6
+INSERT INTO tq_half VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [101, 0, 0]::FLOAT[3]),
+  (3, [0, 100, 0]::FLOAT[3]),
+  (4, [0, 101, 0]::FLOAT[3]),
+  (5, [0, 0, 100]::FLOAT[3]),
+  (6, [0, 0, 101]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tq_half
+
+query
+SELECT pk FROM tq_half_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM tq_half_idx ORDER BY emb <-> [0, 100, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+3
+4
+
+statement ok
+DROP TABLE tq_half
 
 # ===========================================================================
 # 3. Inner product + tq (4 bits): MSE-only, scored without the QJL
@@ -269,7 +304,7 @@ db error: ERROR: Column 'emb': ivf option 'nb_bits' (6) must be between 1 and 5 
 statement error
 CREATE INDEX tq_bad_wrong_quant ON tq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': ivf option 'nb_bits' is only valid with quant 'rabitq' or 'tq'
+db error: ERROR: Column 'emb': ivf option 'nb_bits' is only valid with quant 'rabitq', 'tq', 'bq' or 'osq'
 
 
 statement error

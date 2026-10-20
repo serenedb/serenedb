@@ -533,6 +533,9 @@ a
 # ----------------------------------------------------------------------
 
 statement ok
+DEALLOCATE tqp_any;
+
+statement ok
 PREPARE tqp_any AS SELECT a FROM tqp_idx WHERE b @@ ts_any($1) ORDER BY a;
 
 query

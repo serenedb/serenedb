@@ -33,7 +33,10 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/function/lambda_functions.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/optimizer/rule/concat_flattening.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -43,8 +46,10 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
@@ -65,11 +70,11 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
           expr->Cast<duckdb::BoundFunctionExpression>())
           .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::Value folded;
-      SDB_ENSURE(
-        duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
-        "Failed to fold constant cast for inverted index");
-      return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-        std::move(folded));
+      if (duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr,
+                                                        folded)) {
+        return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(folded));
+      }
     }
   }
   return expr;
@@ -78,10 +83,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
+                       duckdb::vector<duckdb::LogicalType> t)
+    : duckdb::ColumnBindingResolver(std::move(b), std::move(t)) {}
   void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
     VisitExpression(&expr);
   }
@@ -94,14 +97,55 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                      stream.GetPosition()};
 }
 
+duckdb::unique_ptr<duckdb::Expression> FlattenConcats(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
+  duckdb::ExpressionRewriter rewriter{context};
+  rewriter.rules.push_back(
+    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
+  select_list.push_back(std::move(expr));
+  duckdb::LogicalProjection projection{duckdb::TableIndex{0},
+                                       std::move(select_list)};
+  rewriter.VisitOperator(projection);
+  return std::move(projection.expressions[0]);
+}
+
+void ClearSource(duckdb::Expression& expr);
+
+duckdb::shared_ptr<duckdb::Expression> WithoutSource(
+  const duckdb::Expression& body) {
+  auto copy = body.Copy();
+  duckdb::ExpressionIterator::EnumerateExpression(copy, ClearSource);
+  return duckdb::shared_ptr<duckdb::Expression>{std::move(copy)};
+}
+
+void ClearSource(duckdb::Expression& expr) {
+  expr.SetAlias("");
+  expr.SetQueryLocation(duckdb::optional_idx{});
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    auto& lambda = expr.Cast<duckdb::BoundLambdaExpression>();
+    lambda.SetLambdaExpr(WithoutSource(*lambda.LambdaExpr()));
+  } else if (expr.GetExpressionClass() ==
+             duckdb::ExpressionClass::BOUND_FUNCTION) {
+    auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
+    function.IsOperatorMutable() = false;
+    if (function.Function().HasBindLambdaCallback() && function.BindInfo()) {
+      auto& data =
+        function.BindInfoMutable()->Cast<duckdb::LambdaFunctionData>();
+      if (const auto body = data.GetLambdaExpression()) {
+        data.SetLambdaExpression(WithoutSource(*body));
+      }
+    }
+  }
+}
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FoldConstantCasts(expr.Copy(), context);
+  auto copy = FlattenConcats(FoldConstantCasts(expr.Copy(), context), context);
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
-      e.SetAlias("");
-      e.SetQueryLocation(duckdb::optional_idx{});
+      ClearSource(e);
       if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
         auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
         const auto idx = cref.Binding().column_index.GetIndex();
@@ -110,9 +154,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
         cref.BindingMutable() = duckdb::ColumnBinding(
           duckdb::TableIndex(table_id),
           duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
-      } else if (e.GetExpressionClass() ==
-                 duckdb::ExpressionClass::BOUND_FUNCTION) {
-        e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
       }
     });
   return copy;

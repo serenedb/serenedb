@@ -43,16 +43,8 @@ class HnswHits : public Root {
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},
       _fetcher{fetcher} {
-    SDB_ASSERT(args.scorer != nullptr);
-    _provider.attr.value = _block;
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = irs::detail::NoField(),
-      .doc_attrs = _provider,
-      .fetcher = fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareBlockScorer(
+      args, segment, irs::detail::NoField(), _provider, _block);
   }
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT docs,

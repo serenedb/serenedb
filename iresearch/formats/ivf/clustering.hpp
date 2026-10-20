@@ -50,6 +50,9 @@ bool UsesSuperKMeans(VectorMetric metric, size_t n, uint32_t k, uint32_t d,
 
 faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d);
 
+void RotateVector(const float* rotation, const float* in, float* out,
+                  uint32_t d);
+
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter = 8,

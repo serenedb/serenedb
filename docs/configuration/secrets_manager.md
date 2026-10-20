@@ -14,12 +14,12 @@ The **Secrets manager** provides a unified user interface for secrets across all
 
 ## Types of Secrets
 
-Secrets are typed, their type identifies which service they are for.
-Currently, the following secret types are available:
+Secrets are typed, their type identifies which service they are for. The following secret types are available:
 
 | Secret type   | Service / protocol             |
 | ------------- | ------------------------------ |
 | `azure`       | Azure Blob Storage             |
+| `clickhouse`  | [ClickHouse](#clickhouse-secrets) |
 | `gcs`         | Google Cloud Storage           |
 | `http`        | HTTP and HTTPS                 |
 | `huggingface` | Hugging Face                   |
@@ -30,7 +30,7 @@ Currently, the following secret types are available:
 | `s3`          | AWS S3                         |
 | `typesafe`    | TypeSafe Jev or a local Kev server, used by [`ai_system_one`](../sql/functions/ai.md#ai_system_one) |
 
-Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`. The [`openai` and `typesafe`](../sql/functions/ai.md#providers) secrets are refused when their `base_url` uses plain `http://` for a host other than localhost, unless `sdb_ai_allow_insecure_endpoint` is on.
+Per-cloud guides cover how to obtain each kind of credential and which one fits your deployment: [Google Cloud credentials](./google_cloud_credentials.md) (`gcs`, and `iceberg` targeting BigLake), [AWS credentials](./aws_credentials.md) (`s3`, and the S3 Tables / Glue catalogs), and [Azure credentials](./azure_credentials.md) (`azure`). For `iceberg` secrets in general — every supported catalog authentication method, and when to use which — see [Iceberg catalog authentication](./iceberg_authentication.md). The remaining types are single-credential and documented where they are used: [`r2`](../cookbook/network_cloud_storage/cloudflare_r2_import.md), [`http`](../cookbook/network_cloud_storage/http_import.md), `huggingface`, and `postgres`; [`clickhouse`](#clickhouse-secrets) is described below. The [`openai` and `typesafe`](../sql/functions/ai.md#providers) secrets are refused when their `base_url` uses plain `http://` for a host other than localhost, unless `sdb_ai_allow_insecure_endpoint` is on.
 
 For each type, there are one or more “secret providers” that specify how the secret is created. Secrets can also have an optional scope, which is a file path prefix that the secret applies to. When fetching a secret for a path, the secret scopes are compared to the path, returning the matching secret for the path. In the case of multiple matching secrets, the longest prefix is chosen.
 
@@ -76,6 +76,15 @@ If two secrets exist for a service type, the scope can be used to decide which o
 Now, if the user queries something from `s3://⟨my-other-bucket⟩/something`, secret `secret2` will be chosen automatically for that request. To see which secret is being used, the `which_secret` scalar function can be used, which takes a path and a secret type as parameters:
 
 <SqlLogicTest id="configuration/secrets_manager/example_007" />
+
+## ClickHouse Secrets
+
+A `clickhouse` secret holds the connection options of a ClickHouse server: `host`, `port`, `user`, `password`, `database`, `secure` and `compression` (`none`, `zstd` or `lz4`), or a `uri` that gives them all. `ATTACH '' AS name (TYPE clickhouse, SECRET secret_name)` connects with a named secret. Without `SECRET`, a ClickHouse `ATTACH`, and a [`clickhouse_fdw` server](../sql/statements/create_server/index.md), take every option their connection string leaves out from the unnamed `clickhouse` secret (`__default_clickhouse`), if there is one; a connection string in URI form ignores it.
+
+```sql
+CREATE SECRET (TYPE clickhouse, host 'clickhouse.internal', user 'reader', password 'secret', compression 'zstd');
+ATTACH 'database=events' AS analytics (TYPE clickhouse);
+```
 
 ## Listing Secrets
 

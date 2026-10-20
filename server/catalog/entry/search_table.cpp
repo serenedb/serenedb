@@ -243,8 +243,8 @@ SearchTableEntry::SearchTableEntry(
   if (!_storage) {
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetOid(), oid, base.oid == 0, _options,
-      search::SearchTable::DeclaredCompression(GetColumns()));
+      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
+      _options, search::SearchTable::DeclaredCompression(GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -448,7 +448,7 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
                                     duckdb::optional_idx row_start) {
   std::vector<connector::ColumnId> column_ids;
   for (const auto& column : _columns.Logical()) {
-    column_ids.emplace_back(column.Oid());
+    column_ids.emplace_back(connector::TableColumnId(column));
   }
   _storage->ReplayInsert(context, catalog, column_ids, chunk,
                          row_start.GetIndex());

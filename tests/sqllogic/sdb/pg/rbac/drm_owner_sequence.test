@@ -10,12 +10,7 @@
 # Lore: mop_seq / log_seq are the sequences. vedernikoff is the role that owns
 # them; clickclack is the role they get reassigned to.
 #
-# NOTE: the SERIAL-owned implicit sequence half of this slice is NOT covered --
-# SereneDB does not materialize an implicit `<table>_<col>_seq` for serial /
-# bigserial columns (no pg_class row of relkind 'S' appears), so there is no
-# sequence object for a role to own. On PostgreSQL that implicit sequence
-# follows ALTER TABLE ... OWNER TO and is reported as a separate "owner of
-# sequence" dependency; only standalone sequences are exercised here.
+# Serial columns' sequences are covered by any/pg/rbac/serial_sequence_owner.test.
 
 
 statement ok

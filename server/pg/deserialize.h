@@ -63,9 +63,6 @@ struct DeserializeContext {
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context);
 
-duckdb::LogicalType ExactDecimalType(const duckdb::LogicalType& type,
-                                     std::string_view data, VarFormat format);
-
 // A decoder parses the PG-wire bytes of one field and stores the result through
 // a Sink. Two sinks share one set of decoders: COPY FROM decodes directly into
 // the output chunk's column vectors (VectorSink), and bind parameters decode

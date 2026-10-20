@@ -897,25 +897,6 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   return it->second.get();
 }
 
-duckdb::LogicalType ExactDecimalType(const duckdb::LogicalType& type,
-                                     std::string_view data, VarFormat format) {
-  if (type.id() != duckdb::LogicalTypeId::DECIMAL) {
-    return type;
-  }
-  const auto digits = format == VarFormat::Binary ? BinaryNumericDigits(data)
-                                                  : TextNumericDigits(data);
-  const auto width = duckdb::DecimalType::GetWidth(type);
-  const auto scale = duckdb::DecimalType::GetScale(type);
-  if (!digits || digits->integer > duckdb::Decimal::MAX_WIDTH_DECIMAL ||
-      (digits->fraction <= scale && digits->integer <= width - scale)) {
-    return type;
-  }
-  return duckdb::LogicalType::DECIMAL(
-    duckdb::Decimal::MAX_WIDTH_DECIMAL,
-    std::min(digits->fraction,
-             duckdb::Decimal::MAX_WIDTH_DECIMAL - digits->integer));
-}
-
 void FillDeserializeContext(duckdb::ClientContext& client,
                             DeserializeContext& context) {
   context.xml_option = CurrentXmlOption(client);
@@ -1086,6 +1067,28 @@ struct DecimalText {
   }
 };
 
+template<typename Core, typename WideCore, auto Digits>
+struct ParamDecimal {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    const auto& type = sink.Type();
+    const auto width = duckdb::DecimalType::GetWidth(type);
+    const auto scale = duckdb::DecimalType::GetScale(type);
+    const auto digits = Digits(data);
+    if (!digits || digits->integer > duckdb::Decimal::MAX_WIDTH_DECIMAL ||
+        (digits->fraction <= scale && digits->integer <= width - scale)) {
+      return Core::Decode(ctx, data, sink);
+    }
+    const auto wide = duckdb::LogicalType::DECIMAL(
+      duckdb::Decimal::MAX_WIDTH_DECIMAL,
+      std::min(digits->fraction,
+               duckdb::Decimal::MAX_WIDTH_DECIMAL - digits->integer));
+    Sink wide_sink{wide, sink.out};
+    return WideCore::Decode(ctx, data, wide_sink);
+  }
+};
+
 // Types without a dedicated binary recv (scaled time/timestamp text): route
 // through DuckDB's string->type cast, which parses the column's exact
 // precision.
@@ -1233,6 +1236,19 @@ template<typename BinCore, typename TextCore, typename Sink>
 DeserializationFunction<Sink> SelectDecoder(bool binary) {
   return binary ? &BinCore::template Decode<Sink>
                 : &TextCore::template Decode<Sink>;
+}
+
+template<typename BinCore, typename TextCore, typename Sink>
+DeserializationFunction<Sink> SelectDecimal(bool binary) {
+  if constexpr (std::is_same_v<Sink, ValueSink>) {
+    return SelectDecoder<
+      ParamDecimal<BinCore, DecimalHugeintBin, &BinaryNumericDigits>,
+      ParamDecimal<TextCore, DecimalText<duckdb::hugeint_t>,
+                   &TextNumericDigits>,
+      Sink>(binary);
+  } else {
+    return SelectDecoder<BinCore, TextCore, Sink>(binary);
+  }
 }
 
 // ===========================================================================
@@ -2467,18 +2483,18 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       const auto width = duckdb::DecimalType::GetWidth(type);
       if (width <= duckdb::Decimal::MAX_WIDTH_INT16) {
-        return SelectDecoder<DecimalIntBin<int16_t>, DecimalText<int16_t>,
+        return SelectDecimal<DecimalIntBin<int16_t>, DecimalText<int16_t>,
                              Sink>(binary);
       }
       if (width <= duckdb::Decimal::MAX_WIDTH_INT32) {
-        return SelectDecoder<DecimalIntBin<int32_t>, DecimalText<int32_t>,
+        return SelectDecimal<DecimalIntBin<int32_t>, DecimalText<int32_t>,
                              Sink>(binary);
       }
       if (width <= duckdb::Decimal::MAX_WIDTH_INT64) {
-        return SelectDecoder<DecimalIntBin<int64_t>, DecimalText<int64_t>,
+        return SelectDecimal<DecimalIntBin<int64_t>, DecimalText<int64_t>,
                              Sink>(binary);
       }
-      return SelectDecoder<DecimalHugeintBin, DecimalText<duckdb::hugeint_t>,
+      return SelectDecimal<DecimalHugeintBin, DecimalText<duckdb::hugeint_t>,
                            Sink>(binary);
     }
     case FLOAT:

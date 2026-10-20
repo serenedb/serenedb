@@ -2170,9 +2170,8 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
+    const auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
-    const auto type = sdb::pg::ExactDecimalType(
-      ResolveExpectedType(prepared, stmt.TypeHints(), i), field, format);
     const auto fn =
       sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format);
     duckdb::Value out;

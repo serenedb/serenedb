@@ -21,6 +21,7 @@
 #include "connector/functions/metrics.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/numeric/int128.h>
 
 #include <algorithm>
 #include <array>
@@ -34,6 +35,7 @@
 #include <duckdb/common/vector_operations/aggregate_executor.hpp>
 #include <duckdb/function/aggregate_function.hpp>
 #include <duckdb/function/function_set.hpp>
+#include <duckdb/function/scalar/nested_functions.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -45,6 +47,29 @@
 #include <type_traits>
 #include <vector>
 
+// Aggregates over OpenTelemetry metrics. Users see them in
+// docs/sql/functions/aggregates/index.md, "Counter and Histogram Aggregates".
+//
+// Each aggregate collects the rows of a group into its state, sorts them by
+// time in Finalize, and computes one result:
+//
+//   1. Counters and gauges, (value, ts):
+//        CounterOperation<Kind>        otel_increase, otel_rate, otel_irate,
+//                                      otel_delta, otel_idelta, otel_deriv,
+//                                      otel_changes, otel_resets
+//        PredictOperation              otel_predict_linear(value, ts, seconds)
+//   2. Explicit-bound histograms, (bucket_counts, explicit_bounds):
+//        BucketsOperation              otel_increase(bucket_counts, ts)
+//        HistogramOperation<Shape>     otel_histogram_quantile, _fraction,
+//                                      _stddev, _stdvar
+//   3. Exponential histograms, packed by otel_exponential_histogram(...):
+//        ExponentialOperation<Shape>   the same four histogram functions
+//        ExponentialIncreaseOperation  otel_increase(histogram, ts)
+//
+// Shared rules: rows with a NULL or NaN value or an infinite time are skipped;
+// of samples with the same time the largest counts; a counter that goes down
+// was restarted.
+
 namespace sdb::connector {
 namespace {
 
@@ -55,9 +80,16 @@ bool IsFinite(int64_t ts) {
   return duckdb::Value::IsFinite(duckdb::timestamp_t{ts});
 }
 
+// Two finite timestamps can be further apart than int64 reaches.
+double Elapsed(int64_t from, int64_t to) {
+  return static_cast<double>(absl::int128{to} - from);
+}
+
 bool SameValue(double lhs, double rhs) {
   return lhs == rhs || (std::isnan(lhs) && std::isnan(rhs));
 }
+
+// ---- Shared: samples, states, ordering by time ----
 
 struct Sample {
   int64_t ts;
@@ -70,6 +102,8 @@ struct BucketSample {
   std::vector<double> counts;
 };
 
+// An aggregate state is one pointer: DuckDB copies states as raw bytes, so
+// they can't hold a vector. Allocated on the first row, freed in Destroy.
 template<typename T>
 struct Boxed {
   T* data;
@@ -86,14 +120,45 @@ T& Unbox(Boxed<T>& state) {
   return *state.data;
 }
 
+// Combine may move the source's data out instead of copying it: DuckDB then
+// combines each source once and never reads it again.
+bool MayMove(const duckdb::AggregateInputData& input) {
+  return input.combine_type ==
+           duckdb::AggregateCombineType::ALLOW_DESTRUCTIVE &&
+         !input.combine_multiplicities;
+}
+
 template<typename T>
-void Append(const Boxed<std::vector<T>>& source,
-            Boxed<std::vector<T>>& target) {
+T* Take(T& source, const duckdb::AggregateInputData& input) {
+  return MayMove(input) ? new T{std::move(source)} : new T{source};
+}
+
+template<typename T>
+void Append(std::vector<T>& source, std::vector<T>& target,
+            const duckdb::AggregateInputData& input) {
+  if (!MayMove(input)) {
+    target.insert(target.end(), source.begin(), source.end());
+    return;
+  }
+  if (target.size() < source.size()) {
+    std::swap(target, source);
+  }
+  target.insert(target.end(), std::make_move_iterator(source.begin()),
+                std::make_move_iterator(source.end()));
+  source = std::vector<T>{};
+}
+
+template<typename T>
+void Append(const Boxed<std::vector<T>>& source, Boxed<std::vector<T>>& target,
+            const duckdb::AggregateInputData& input) {
   if (!source.data) {
     return;
   }
-  auto& samples = Unbox(target);
-  samples.insert(samples.end(), source.data->begin(), source.data->end());
+  if (!target.data) {
+    target.data = Take(*source.data, input);
+    return;
+  }
+  Append(*source.data, *target.data, input);
 }
 
 template<typename T, typename Rank>
@@ -101,7 +166,8 @@ void Normalize(std::vector<T>& samples, Rank rank) {
   absl::c_sort(samples, [&](const T& lhs, const T& rhs) {
     return lhs.ts != rhs.ts ? lhs.ts < rhs.ts : rank(lhs) > rank(rhs);
   });
-  const auto [first, last] = std::ranges::unique(samples, {}, &T::ts);
+  const auto [first, last] = std::ranges::unique(
+    samples, [](const T& lhs, const T& rhs) { return lhs.ts == rhs.ts; });
   samples.erase(first, last);
 }
 
@@ -114,6 +180,8 @@ struct Line {
   double intercept;
 };
 
+// Least-squares line through the samples, x in seconds since `origin`.
+// Kahan sums keep it precise for large timestamps.
 Line Regression(std::span<const Sample> samples, int64_t origin,
                 double ticks_per_second) {
   const auto first = samples.front().value;
@@ -123,7 +191,7 @@ Line Regression(std::span<const Sample> samples, int64_t origin,
                              : Line{.slope = 0, .intercept = first};
   }
   const auto seconds = [&](const Sample& sample) {
-    return static_cast<double>(sample.ts - origin) / ticks_per_second;
+    return Elapsed(origin, sample.ts) / ticks_per_second;
   };
   std::array<double, 4> sums{};
   std::array<double, 4> errors{};
@@ -157,6 +225,8 @@ struct BoxedOperation {
   static bool IgnoreNull() { return true; }
 };
 
+// ---- 1. Counters and gauges ----
+
 enum class Counter : uint8_t {
   Increase,
   Rate,
@@ -172,20 +242,51 @@ constexpr bool CountsEvents(Counter kind) {
   return kind == Counter::Changes || kind == Counter::Resets;
 }
 
+template<int64_t TicksPerSecond>
+double Seconds(int64_t from, int64_t to) {
+  return Elapsed(from, to) / TicksPerSecond;
+}
+
+template<Counter Kind, int64_t TicksPerSecond>
+double Measure(std::span<const Sample> samples) {
+  const auto& previous = samples[samples.size() - 2];
+  const auto& current = samples.back();
+  if constexpr (Kind == Counter::InstantRate) {
+    return Increase(previous.value, current.value) /
+           Seconds<TicksPerSecond>(previous.ts, current.ts);
+  } else if constexpr (Kind == Counter::InstantDelta) {
+    return current.value - previous.value;
+  } else if constexpr (Kind == Counter::Delta) {
+    return current.value - samples.front().value;
+  } else if constexpr (Kind == Counter::Deriv) {
+    return Regression(samples, samples.front().ts, TicksPerSecond).slope;
+  } else {
+    double increase = 0;
+    for (size_t i = 1; i < samples.size(); ++i) {
+      increase += Increase(samples[i - 1].value, samples[i].value);
+    }
+    if constexpr (Kind == Counter::Rate) {
+      increase /=
+        Seconds<TicksPerSecond>(samples.front().ts, samples.back().ts);
+    }
+    return increase;
+  }
+}
+
 template<Counter Kind, int64_t TicksPerSecond>
 struct CounterOperation : BoxedOperation {
   template<typename A, typename B, typename State, typename Op>
   static void Operation(State& state, const A& value, const B& ts,
                         duckdb::AggregateBinaryInput&) {
     if (!std::isnan(value) && IsFinite(ts)) {
-      Unbox(state).push_back({.ts = ts, .value = value});
+      Unbox(state).emplace_back(ts, value);
     }
   }
 
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
-    Append(source, target);
+                      duckdb::AggregateInputData& input) {
+    Append(source, target, input);
   }
 
   template<typename Result, typename State>
@@ -209,36 +310,8 @@ struct CounterOperation : BoxedOperation {
     } else if (samples.size() < 2) {
       finalize.ReturnNull();
     } else {
-      target = Measure(samples);
+      target = Measure<Kind, TicksPerSecond>(samples);
     }
-  }
-
-  static double Measure(std::span<const Sample> samples) {
-    const auto& previous = samples[samples.size() - 2];
-    const auto& current = samples.back();
-    if constexpr (Kind == Counter::InstantRate) {
-      return Increase(previous.value, current.value) /
-             Seconds(current.ts - previous.ts);
-    } else if constexpr (Kind == Counter::InstantDelta) {
-      return current.value - previous.value;
-    } else if constexpr (Kind == Counter::Delta) {
-      return current.value - samples.front().value;
-    } else if constexpr (Kind == Counter::Deriv) {
-      return Regression(samples, samples.front().ts, TicksPerSecond).slope;
-    } else {
-      double increase = 0;
-      for (size_t i = 1; i < samples.size(); ++i) {
-        increase += Increase(samples[i - 1].value, samples[i].value);
-      }
-      if constexpr (Kind == Counter::Rate) {
-        increase /= Seconds(samples.back().ts - samples.front().ts);
-      }
-      return increase;
-    }
-  }
-
-  static double Seconds(int64_t ticks) {
-    return static_cast<double>(ticks) / TicksPerSecond;
   }
 };
 
@@ -260,20 +333,18 @@ template<int64_t TicksPerSecond>
 struct PredictOperation : BoxedOperation {
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
+                      duckdb::AggregateInputData& input) {
     if (!source.data) {
       return;
     }
     if (!target.data) {
-      target.data = new Prediction{*source.data};
+      target.data = Take(*source.data, input);
       return;
     }
     if (!SameValue(source.data->seconds, target.data->seconds)) {
       ThrowMixedSeconds();
     }
-    auto& samples = target.data->samples;
-    samples.insert(samples.end(), source.data->samples.begin(),
-                   source.data->samples.end());
+    Append(source.data->samples, target.data->samples, input);
   }
 
   template<typename Result, typename State>
@@ -324,15 +395,17 @@ void PredictUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
     } else if (!SameValue(data->seconds, seconds[s])) {
       ThrowMixedSeconds();
     }
-    data->samples.push_back({.ts = ts[t], .value = value[v]});
+    data->samples.emplace_back(ts[t], value[v]);
   }
 }
+
+// ---- 2. Explicit-bound histograms ----
 
 struct BucketsOperation : BoxedOperation {
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
-    Append(source, target);
+                      duckdb::AggregateInputData& input) {
+    Append(source, target, input);
   }
 
   template<typename Result, typename State>
@@ -415,6 +488,8 @@ void BucketsUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
   }
 }
 
+// What a histogram function asks; Arity is its leading scalar arguments:
+// q for Quantile, lower and upper for Fraction.
 enum class Shape : uint8_t {
   Quantile,
   Fraction,
@@ -478,6 +553,8 @@ bool SameArguments(const Arguments& lhs, const Arguments& rhs) {
   return true;
 }
 
+// The bucket counts of a group added up. Its rows must share the arguments and
+// explicit_bounds.
 struct Histogram {
   Arguments arguments{};
   std::vector<double> bounds;
@@ -505,6 +582,9 @@ void Merge(const Histogram& source, Histogram& target) {
   }
 }
 
+// Bucket i holds values up to bounds[i], the last one values above the last
+// bound. Observations are taken as spread evenly inside a bucket, and the
+// first bucket starts at 0 unless its bound is 0 or less.
 std::optional<double> BucketQuantile(double quantile,
                                      std::span<const double> bounds,
                                      std::span<const double> counts) {
@@ -579,6 +659,7 @@ std::optional<double> BucketFraction(double lower, double upper,
          total;
 }
 
+// Each observation taken at the middle of its bucket.
 std::optional<double> BucketVariance(std::span<const double> bounds,
                                      std::span<const double> counts) {
   const double total = absl::c_accumulate(counts, 0.0);
@@ -633,12 +714,12 @@ template<Shape Kind>
 struct HistogramOperation : BoxedOperation {
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
+                      duckdb::AggregateInputData& input) {
     if (!source.data) {
       return;
     }
     if (!target.data) {
-      target.data = new Histogram{*source.data};
+      target.data = Take(*source.data, input);
       return;
     }
     Merge<Kind>(*source.data, *target.data);
@@ -668,7 +749,7 @@ class ArgumentRows {
     }
   }
 
-  bool Read(duckdb::idx_t row, Arguments& out) const {
+  [[nodiscard]] bool Read(duckdb::idx_t row, Arguments& out) const {
     for (size_t i = 0; i != _arity; ++i) {
       const auto index = _formats[i].sel->get_index(row);
       if (!_formats[i].validity.RowIsValid(index)) {
@@ -684,6 +765,8 @@ class ArgumentRows {
   std::array<duckdb::UnifiedVectorFormat, 2> _formats;
 };
 
+// The first row of a group fixes and validates the bounds; later rows must
+// repeat them.
 template<Shape Kind>
 void HistogramUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector& states,
@@ -738,6 +821,15 @@ void HistogramUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
                               "more than explicit_bounds, got ",
                               count_entry.length, " and ", bound_entry.length));
     }
+    bool nan = false;
+    for (duckdb::idx_t j = 0; !nan && j != count_entry.length; ++j) {
+      const auto value = count_values.sel->get_index(count_entry.offset + j);
+      nan =
+        count_values.validity.RowIsValid(value) && std::isnan(counts[value]);
+    }
+    if (nan) {
+      continue;
+    }
     auto& histogram = Unbox(*state[targets.sel->get_index(i)]);
     if (histogram.counts.empty()) {
       histogram.arguments = row_arguments;
@@ -773,24 +865,34 @@ void HistogramUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
   }
 }
 
+// ---- 3. Exponential histograms ----
+//
+// OTel's base-2 layout: on each side, bucket i covers
+// (2^(i * 2^-scale), 2^((i + 1) * 2^-scale)]. The negative side holds absolute
+// values, zeros are counted apart. One scale lower merges every two
+// neighbouring buckets into one.
+
+// Rows are added at a coarser scale when one side would need more buckets.
 constexpr int64_t kMaxExponentialBuckets = 4096;
+// The scales OTel SDKs produce.
 constexpr int32_t kMinExponentialScale = -10;
 constexpr int32_t kMaxExponentialScale = 20;
 
+// counts[k] is bucket offset + k.
 struct ExponentialBuckets {
   int64_t offset = 0;
   std::vector<double> counts;
-
-  int64_t Last() const noexcept {
-    return offset + static_cast<int64_t>(counts.size()) - 1;
-  }
-
-  double At(int64_t index) const noexcept {
-    return index >= offset && index <= Last()
-             ? counts[static_cast<size_t>(index - offset)]
-             : 0;
-  }
 };
+
+int64_t Last(const ExponentialBuckets& buckets) {
+  return buckets.offset + static_cast<int64_t>(buckets.counts.size()) - 1;
+}
+
+double At(const ExponentialBuckets& buckets, int64_t index) {
+  return index >= buckets.offset && index <= Last(buckets)
+           ? buckets.counts[static_cast<size_t>(index - buckets.offset)]
+           : 0;
+}
 
 struct ExponentialHistogram {
   int32_t scale = 0;
@@ -808,11 +910,14 @@ constexpr int64_t kMinExponentialIndex =
 constexpr int64_t kMaxExponentialIndex =
   (int64_t{1024} << kMaxExponentialScale) - 1;
 
+// Buckets beyond kMin/MaxExponentialIndex, the range of DOUBLE at the finest
+// scale, can't hold an observation; rejecting them keeps every result at
+// scale >= kMinExponentialScale with offsets that fit INTEGER.
 bool Representable(const ExponentialBuckets& buckets, int32_t scale) {
   const auto shift = kMaxExponentialScale - scale;
   return buckets.counts.empty() ||
          (buckets.offset >= Shifted(kMinExponentialIndex, shift) &&
-          buckets.Last() <= Shifted(kMaxExponentialIndex, shift));
+          Last(buckets) <= Shifted(kMaxExponentialIndex, shift));
 }
 
 void Cover(ExponentialBuckets& buckets, int64_t first, int64_t last) {
@@ -826,7 +931,7 @@ void Cover(ExponentialBuckets& buckets, int64_t first, int64_t last) {
                           static_cast<size_t>(buckets.offset - first), 0);
     buckets.offset = first;
   }
-  if (last > buckets.Last()) {
+  if (last > Last(buckets)) {
     buckets.counts.resize(static_cast<size_t>(last - buckets.offset) + 1, 0);
   }
 }
@@ -836,7 +941,7 @@ void Add(ExponentialBuckets& target, const ExponentialBuckets& source,
   if (source.counts.empty()) {
     return;
   }
-  Cover(target, Shifted(source.offset, shift), Shifted(source.Last(), shift));
+  Cover(target, Shifted(source.offset, shift), Shifted(Last(source), shift));
   for (size_t i = 0; i != source.counts.size(); ++i) {
     const auto index =
       Shifted(source.offset + static_cast<int64_t>(i), shift) - target.offset;
@@ -862,20 +967,23 @@ void Downscale(ExponentialHistogram& histogram, int32_t scale) {
 struct Extent {
   int64_t first = std::numeric_limits<int64_t>::max();
   int64_t last = std::numeric_limits<int64_t>::min();
-
-  void Include(const ExponentialBuckets& buckets, int32_t shift) {
-    if (buckets.counts.empty()) {
-      return;
-    }
-    first = std::min(first, Shifted(buckets.offset, shift));
-    last = std::max(last, Shifted(buckets.Last(), shift));
-  }
-
-  bool Fits() const noexcept {
-    return first > last || last - first < kMaxExponentialBuckets;
-  }
 };
 
+void Include(Extent& extent, const ExponentialBuckets& buckets, int32_t shift) {
+  if (buckets.counts.empty()) {
+    return;
+  }
+  extent.first = std::min(extent.first, Shifted(buckets.offset, shift));
+  extent.last = std::max(extent.last, Shifted(Last(buckets), shift));
+}
+
+bool Fits(const Extent& extent) {
+  return extent.first > extent.last ||
+         extent.last - extent.first < kMaxExponentialBuckets;
+}
+
+// The finest scale at which every histogram fits kMaxExponentialBuckets per
+// side.
 int32_t CommonScale(std::span<const ExponentialHistogram* const> histograms) {
   auto scale = std::numeric_limits<int32_t>::max();
   for (const auto* histogram : histograms) {
@@ -885,10 +993,10 @@ int32_t CommonScale(std::span<const ExponentialHistogram* const> histograms) {
     Extent positive;
     Extent negative;
     for (const auto* histogram : histograms) {
-      positive.Include(histogram->positive, histogram->scale - scale);
-      negative.Include(histogram->negative, histogram->scale - scale);
+      Include(positive, histogram->positive, histogram->scale - scale);
+      Include(negative, histogram->negative, histogram->scale - scale);
     }
-    if (positive.Fits() && negative.Fits()) {
+    if (Fits(positive) && Fits(negative)) {
       return scale;
     }
     --scale;
@@ -904,6 +1012,8 @@ void Merge(ExponentialHistogram& target, const ExponentialHistogram& source,
   Add(target.negative, source.negative, source.scale - target.scale, sign);
 }
 
+// The value `fraction` of the way through bucket `index`, measured in powers
+// of 2, since the buckets grow geometrically.
 double Boundary(int64_t index, int32_t scale, double fraction) {
   return std::exp2(std::ldexp(static_cast<double>(index) + fraction, -scale));
 }
@@ -920,12 +1030,15 @@ struct ExponentialBucket {
   double count;
 };
 
+// Visits the buckets from the lowest value up: the negative side, the zeros,
+// the positive side. Stops when `visit` returns false.
 template<typename Visit>
 void Ascending(const ExponentialHistogram& histogram, Visit visit) {
   const auto& negative = histogram.negative;
-  for (auto i = negative.Last();
+  for (auto i = Last(negative);
        !negative.counts.empty() && i >= negative.offset; --i) {
-    if (!visit(ExponentialBucket{Side::Negative, i, negative.At(i)})) {
+    if (!visit(ExponentialBucket{
+          .side = Side::Negative, .index = i, .count = At(negative, i)})) {
       return;
     }
   }
@@ -934,8 +1047,9 @@ void Ascending(const ExponentialHistogram& histogram, Visit visit) {
   }
   const auto& positive = histogram.positive;
   for (auto i = positive.offset;
-       !positive.counts.empty() && i <= positive.Last(); ++i) {
-    if (!visit(ExponentialBucket{Side::Positive, i, positive.At(i)})) {
+       !positive.counts.empty() && i <= Last(positive); ++i) {
+    if (!visit(ExponentialBucket{
+          .side = Side::Positive, .index = i, .count = At(positive, i)})) {
       return;
     }
   }
@@ -1038,6 +1152,7 @@ std::optional<double> ExponentialFraction(
          total;
 }
 
+// Each observation taken at the geometric middle of its bucket, zeros at 0.
 std::optional<double> ExponentialVariance(
   const ExponentialHistogram& histogram) {
   const double total = Total(histogram);
@@ -1074,6 +1189,8 @@ std::optional<double> ExponentialVariance(
   return variance / total;
 }
 
+// Fields of the packed histogram STRUCT, in otel_exponential_histogram's
+// argument order.
 constexpr size_t kScale = 0;
 constexpr size_t kZeroCount = 1;
 constexpr size_t kPositiveOffset = 2;
@@ -1093,14 +1210,16 @@ duckdb::LogicalType ExponentialHistogramType() {
   });
 }
 
+// One packed histogram per row; a NULL histogram or scale skips the row.
 class ExponentialRows {
  public:
-  ExponentialRows(const duckdb::Vector& input, std::string_view function)
+  explicit ExponentialRows(const duckdb::Vector& input,
+                           std::string_view function)
     : _function{function} {
     duckdb::Vector::RecursiveToUnifiedFormat(input, _format);
   }
 
-  bool Read(duckdb::idx_t row, ExponentialHistogram& out) const {
+  [[nodiscard]] bool Read(duckdb::idx_t row, ExponentialHistogram& out) const {
     const auto index = _format.unified.sel->get_index(row);
     if (!_format.unified.validity.RowIsValid(index)) {
       return false;
@@ -1174,6 +1293,7 @@ class ExponentialRows {
   std::string_view _function;
 };
 
+// The histograms of a group added up. Its rows must share the arguments.
 struct ExponentialAggregate {
   Arguments arguments{};
   ExponentialHistogram histogram;
@@ -1205,12 +1325,12 @@ template<Shape Kind>
 struct ExponentialOperation : BoxedOperation {
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
+                      duckdb::AggregateInputData& input) {
     if (!source.data) {
       return;
     }
     if (!target.data) {
-      target.data = new ExponentialAggregate{*source.data};
+      target.data = Take(*source.data, input);
       return;
     }
     if (!SameArguments<Kind>(source.data->arguments, target.data->arguments)) {
@@ -1249,7 +1369,8 @@ void ExponentialUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
   Arguments row_arguments{};
   ExponentialHistogram row;
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (!arguments.Read(i, row_arguments) || !rows.Read(i, row)) {
+    if (!arguments.Read(i, row_arguments) || !rows.Read(i, row) ||
+        std::isnan(Total(row))) {
       continue;
     }
     auto*& data = state[targets.sel->get_index(i)]->data;
@@ -1265,6 +1386,9 @@ void ExponentialUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
   }
 }
 
+// otel_increase(histogram, ts): the increase of every bucket, as a histogram
+// at the coarsest scale among the samples. Any bucket or the zeros going down
+// means a restart.
 struct ExponentialSample {
   int64_t ts;
   double total;
@@ -1278,8 +1402,8 @@ bool Decreased(const ExponentialBuckets& previous,
   if (previous.counts.empty()) {
     return false;
   }
-  for (auto i = previous.offset; i <= previous.Last(); ++i) {
-    if (current.At(i) < previous.At(i)) {
+  for (auto i = previous.offset; i <= Last(previous); ++i) {
+    if (At(current, i) < At(previous, i)) {
       return true;
     }
   }
@@ -1336,8 +1460,8 @@ void WriteHistogram(duckdb::Vector& result, duckdb::idx_t row,
 struct ExponentialIncreaseOperation : BoxedOperation {
   template<typename State, typename Op>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
-    Append(source, target);
+                      duckdb::AggregateInputData& input) {
+    Append(source, target, input);
   }
 
   template<typename State>
@@ -1401,27 +1525,19 @@ void ExponentialIncreaseUpdate(duckdb::Vector inputs[],
     if (std::isnan(total)) {
       continue;
     }
-    Unbox(*state[targets.sel->get_index(i)])
-      .push_back({.ts = ts[time], .total = total, .histogram = row});
+    Unbox(*state[targets.sel->get_index(i)]).emplace_back(ts[time], total, row);
   }
 }
 
-void PackExponentialHistogram(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
-  auto& fields = duckdb::StructVector::GetEntries(result);
-  bool constant = true;
-  duckdb::idx_t size = 0;
-  for (duckdb::idx_t i = 0; i < args.ColumnCount(); ++i) {
-    constant &=
-      args.data[i].GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR;
-    fields[i].Reference(args.data[i]);
-    size = std::max<duckdb::idx_t>(size, fields[i].size());
-  }
-  result.BufferMutable().SetVectorTypeOnly(
-    constant ? duckdb::VectorType::CONSTANT_VECTOR
-             : duckdb::VectorType::FLAT_VECTOR);
-  result.BufferMutable().SetVectorSizeOnly(size);
+// otel_exponential_histogram(...) is struct_pack with fixed field names, which
+// is what StructPackFunction expects to find in the bind data.
+duckdb::unique_ptr<duckdb::FunctionData> BindExponentialHistogram(
+  duckdb::BindScalarFunctionInput&) {
+  return duckdb::make_uniq<duckdb::VariableReturnBindData>(
+    ExponentialHistogramType());
 }
+
+// ---- Registration ----
 
 duckdb::LogicalType Buckets() {
   return duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
@@ -1448,7 +1564,8 @@ duckdb::AggregateFunction MakeAggregate(
     duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING,
     nullptr,
     nullptr,
-    duckdb::AggregateFunction::StateDestroy<State, Op>};
+    duckdb::AggregateFunction::StateDestroy<State, Op>,
+  };
   function.SetOrderDependent(
     duckdb::AggregateOrderDependent::NOT_ORDER_DEPENDENT);
   return function;
@@ -1558,11 +1675,18 @@ void RegisterMetricsFunctions(duckdb::DatabaseInstance& db) {
 
   duckdb::ScalarFunction pack{
     "otel_exponential_histogram",
-    {duckdb::LogicalType::INTEGER, duckdb::LogicalType::DOUBLE,
-     duckdb::LogicalType::INTEGER, Buckets(), duckdb::LogicalType::INTEGER,
-     Buckets()},
+    {
+      duckdb::LogicalType::INTEGER,
+      duckdb::LogicalType::DOUBLE,
+      duckdb::LogicalType::INTEGER,
+      Buckets(),
+      duckdb::LogicalType::INTEGER,
+      Buckets(),
+    },
     ExponentialHistogramType(),
-    PackExponentialHistogram};
+    duckdb::StructPackFunction,
+    BindExponentialHistogram,
+  };
   pack.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   loader.RegisterFunction(pack);
 }

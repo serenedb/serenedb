@@ -465,8 +465,7 @@ void SearchTableEntry::ReplayDeleteRanges(
   std::vector<search::RowRange> rows;
   rows.reserve(starts.size());
   for (size_t i = 0; i != starts.size(); ++i) {
-    rows.push_back(
-      {.begin = starts[i], .end = starts[i] + static_cast<int64_t>(counts[i])});
+    rows.emplace_back(starts[i], starts[i] + static_cast<int64_t>(counts[i]));
   }
   _storage->ReplayDeleteRanges(catalog.GetAttached(), std::move(rows));
 }

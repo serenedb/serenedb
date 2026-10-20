@@ -253,9 +253,15 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _build_truncate > position;
   }
 
-  std::pair<std::vector<RowRange>, irs::SourcePosition> DrainDeleteLog() {
+  struct DrainedDeleteLog {
+    std::vector<RowRange> rows;
+    irs::SourcePosition truncate;
+  };
+
+  DrainedDeleteLog DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return {std::exchange(_delete_log, {}), _build_truncate};
+    return {.rows = std::exchange(_delete_log, {}),
+            .truncate = _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>

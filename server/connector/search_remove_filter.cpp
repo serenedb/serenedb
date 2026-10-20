@@ -375,7 +375,7 @@ void SearchRowRangeFilter::Collect(const irs::SubReader& segment,
     if (!_ranges.empty() && _ranges.back().end == first) {
       _ranges.back().end = last;
     } else {
-      _ranges.push_back({.begin = first, .end = last});
+      _ranges.emplace_back(first, last);
     }
   };
   auto hit = deleted.end();
@@ -403,7 +403,7 @@ void SearchRowRangeFilter::Collect(const irs::SubReader& segment,
   std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
   irs::ColumnReader::ScanState scan;
   uint64_t scanned = 0;
-  irs::BlockWindow window{};
+  irs::BlockWindow window;
   for (uint64_t row = 0; row < rows; row = window.end) {
     window = column.Locate(row, window);
     const uint64_t end = std::min<uint64_t>(window.end, rows);

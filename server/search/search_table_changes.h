@@ -61,7 +61,7 @@ inline void AppendRowRanges(std::vector<RowRange>& ranges,
     if (!ranges.empty() && ranges.back().end == row) {
       ++ranges.back().end;
     } else {
-      ranges.push_back({.begin = row, .end = row + 1});
+      ranges.emplace_back(row, row + 1);
     }
   }
 }

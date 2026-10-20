@@ -20,7 +20,6 @@
 
 #include "search/search_table_transaction.h"
 
-#include <algorithm>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/storage/storage_lock.hpp>
@@ -35,6 +34,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -100,7 +100,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       // Everything promoted sits ahead of what is left inline: a removal in
       // this record names rows committed before the transaction, never these.
       _entries.WriteAdoptSegments(duckdb::vector<std::string>(
-        changes.segments.begin(), changes.segments.end()));
+        std::make_move_iterator(changes.segments.begin()),
+        std::make_move_iterator(changes.segments.end())));
     }
     changes.Visit(
       truncates ? 1 : 0,
@@ -121,7 +122,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
           starts.push_back(range.begin);
           counts.push_back(static_cast<duckdb::idx_t>(range.end - range.begin));
         }
-        _entries.WriteDeleteRowRanges(starts, counts);
+        SDB_IF_FAILURE("search_delete_wal_empty_range") { counts.front() = 0; }
+        _entries.WriteDeleteRowRanges(std::move(starts), std::move(counts));
       });
   }
 
@@ -138,18 +140,13 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
         rowids.push_back(row);
       }
     }
-    for (size_t offset = 0; offset < rowids.size();
-         offset += STANDARD_VECTOR_SIZE) {
-      const auto count =
-        std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - offset);
-      duckdb::DataChunk rows;
-      rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
-      rows.data[0].Reference(
-        duckdb::Vector(duckdb::LogicalType::ROW_TYPE,
-                       duckdb::data_ptr_cast(rowids.data() + offset), count));
-      rows.SetChildCardinality(count);
-      _entries.WriteDelete(rows);
-    }
+    duckdb::DataChunk rows;
+    rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
+    rows.data[0].Reference(duckdb::Vector(duckdb::LogicalType::ROW_TYPE,
+                                          duckdb::data_ptr_cast(rowids.data()),
+                                          rowids.size()));
+    rows.SetChildCardinality(rowids.size());
+    _entries.WriteDelete(rows);
   }
 
   const catalog::SearchTableEntry& _table;

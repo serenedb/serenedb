@@ -678,7 +678,7 @@ The increase of the counter `value` from the first to the last sample, across re
 
 #### `otel_increase(bucket_counts, ts)`
 
-The increase of each bucket of a histogram whose `bucket_counts`, a list of per-bucket counts, only grow, as a `DOUBLE[]`. When any bucket goes down, the histogram was restarted and the sample after the drop counts in full. When the number of buckets changes, the increase starts over from that sample.
+The increase of each bucket of a histogram whose `bucket_counts`, a list of per-bucket counts, only grow, as a `DOUBLE[]`. When any bucket goes down, the histogram was restarted and the sample after the drop counts in full. When the number of buckets changes, the increase up to that sample is dropped and the sample counts in full. A `NULL` element of `bucket_counts` counts as 0, and a sample with a `NaN` count is ignored.
 
 <SqlLogicTest id="sql/functions/aggregates/index/histogram_increase" />
 
@@ -720,7 +720,7 @@ The number of samples whose `value` is lower than the previous sample, the resta
 
 The `q`-quantile of a histogram with explicit bucket bounds, the layout OpenTelemetry uses: bucket `i` counts the values up to `explicit_bounds[i]` and the last bucket the values above the last bound, so `bucket_counts` has one element more than `explicit_bounds`, and `explicit_bounds` must be strictly ascending, without `NULL` or `NaN`. The counts of all rows of a group are added up, so the rows must have the same `q` and `explicit_bounds`; otherwise the function fails.
 
-The result is interpolated linearly inside the bucket that holds the quantile. The first bucket starts at 0, unless its bound is 0 or less, in which case the result is that bound. A quantile in the last bucket is the last bound. A `q` below 0 gives `-Infinity` and above 1 `Infinity`. Rows with empty `bucket_counts` are skipped, and a group with no observations or no bounds gives `NULL`.
+The result is interpolated linearly inside the bucket that holds the quantile. The first bucket starts at 0, unless its bound is 0 or less, in which case the result is that bound. A quantile in the last bucket is the last bound. A `q` below 0 gives `-Infinity` and above 1 `Infinity`. A `NULL` element of `bucket_counts` counts as 0. Rows with empty `bucket_counts` or a `NaN` count are skipped, and a group with no observations or no bounds gives `NULL`.
 
 <SqlLogicTest id="sql/functions/aggregates/index/histogram_quantile" />
 
@@ -742,7 +742,7 @@ The square of `otel_histogram_stddev`: the estimated population variance.
 
 #### `otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts, negative_offset, negative_bucket_counts)`
 
-Packs the columns of an exponential histogram, the layout OpenTelemetry uses for base-2 exponential histograms, into one value for the aggregates below. Bucket `i` of the positive side counts the values above 2^(i·2^-`scale`) up to 2^((i+1)·2^-`scale`); `positive_bucket_counts[k]` is bucket `positive_offset + k`. The negative side holds the same buckets for the absolute values of negative observations, and `zero_count` counts the zeros. A `NULL` `zero_count`, offset or list counts as 0 or empty; a value with a `NULL` `scale` is ignored by the aggregates, and a `scale` outside -10 to 20, or a bucket beyond the range of `DOUBLE` values at that scale, makes them fail.
+Packs the columns of an exponential histogram, the layout OpenTelemetry uses for base-2 exponential histograms, into one value for the aggregates below. Bucket `i` of the positive side counts the values above 2^(i·2^-`scale`) up to 2^((i+1)·2^-`scale`); `positive_bucket_counts[k]` is bucket `positive_offset + k`. The negative side holds the same buckets for the absolute values of negative observations, and `zero_count` counts the zeros. A `NULL` `zero_count`, offset, list or list element counts as 0 or empty; a value with a `NULL` `scale` or a `NaN` count is ignored by the aggregates, and a `scale` outside -10 to 20, or a bucket beyond the range of `DOUBLE` values at that scale, makes them fail.
 
 #### `otel_histogram_quantile(q, histogram)`
 

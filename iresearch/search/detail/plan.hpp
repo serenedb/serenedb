@@ -188,11 +188,6 @@ inline bool SubtractsConjunction(doc_id_t rarest,
   return rarest >= docs_count / kDensityThresholdInverse;
 }
 
-inline bool SubtractsDisjunction(doc_id_t rarest, doc_id_t densest) noexcept {
-  constexpr uint64_t kSkew = 256;
-  return uint64_t{rarest} * kSkew <= densest;
-}
-
 template<typename Result>
 using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
                                       probe::Erased, lead::Erased>;

@@ -86,8 +86,7 @@ void Tokenizer::Release(irs::analysis::Tokenizer::ptr analyzer) const noexcept {
 
 duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateTokenizerInfo>();
-  info->SetName(name);
-  info->SetQualification(catalog.GetName(), ParentSchemaName());
+  info->SetQualifiedName(GetQualifiedName(name));
   info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
   info->config = PackTokenizerConfig(Config());
   info->definition = _definition;

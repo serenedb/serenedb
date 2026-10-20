@@ -33,7 +33,7 @@ Three `WITH` options control the background lifecycle of an inverted index (set 
 |---|---|---|
 | `refresh_interval` | `1000` | Milliseconds between automatic refreshes |
 | `compaction_interval` | `1000` | Milliseconds between automatic segment compactions |
-| `cleanup_interval_step` | `1` | Commit ticks between cleanup passes |
+| `cleanup_interval_step` | `1` | Automatic refreshes between cleanup passes, which delete the files no segment uses anymore |
 
 View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data -- see [Refreshing the index](./views.md#refreshing-the-index).
 
@@ -94,22 +94,22 @@ An inverted index pins every column it reads, including columns reached only thr
 
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:
 
-- **Refresh vs. compaction cadence** -- lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` / `cleanup_interval_step` govern how aggressively segments merge.
+- **Refresh vs. compaction cadence** -- lower `refresh_interval` for fresher results, raise it (or `0`) to reduce overhead on write-heavy tables; `compaction_interval` governs how aggressively segments merge, and `cleanup_interval_step` how soon the files they replace are deleted.
 - **Row-group size** -- `row_group_size` controls the columnstore batch size for stored (`INCLUDE`d) columns and for norm columns alike; norms share this one setting. It must be a multiple of the vector size (2048), and it is also the unit a scan hands to one worker: an index whose segments hold few row groups cannot spread a scan over more threads than it has row groups, so lower it when rows are expensive to materialise and the index is small. It is fixed at `CREATE INDEX` and applies to segments written afterwards.
 - **Build then index** -- for a bulk load, create the table, load the data, then create the index; this produces a more compact index than loading into an already-indexed table.
 - **Top-K** -- set [`optimize_top_k`](./ranking.md#top-k-queries-and-wand-pruning) to accelerate `ORDER BY <scorer> ... LIMIT k`.
-- **Write memory** -- [`segment_memory_max`](#write-memory) bounds what a write holds in memory, and sets the segment size it produces.
+- **Write memory** -- [`segment_memory_max`](#write-memory) sets the segment size a write produces and, together with `checkpoint_threshold` for a serial write, what the write holds in memory.
 
 ## Write memory {#write-memory}
 
-Memory held while writing to a search table is bounded by `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB. Estimate the peak for one writing transaction as:
+Memory held while writing to a search table depends on `segment_memory_max`, set in the table's `CREATE TABLE ... WITH (segment_memory_max = ...)` clause and defaulting to 256 MB, and for a serial write also on [`checkpoint_threshold`](../../../configuration/overview.md), 16 MB by default: a serial write buffers up to that much of its rows before it writes them to the index. Estimate the peak for one writing transaction as:
 
 | Write | Peak memory |
 | :--- | :--- |
 | Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
 | Parallel `INSERT` | ≈ `segment_memory_max` x threads |
 
-Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
+Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
@@ -124,9 +124,9 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 ## Durability {#durability}
 
-A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that no refresh has saved, and a later checkpoint deletes the kept logs no table needs anymore. After a crash, the server replays the kept logs and the current one into the tables that need them.
+A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that its own files do not durably hold, and a later checkpoint deletes the kept logs no table needs anymore. A table's changes are durable in its files once a refresh has written them and a cleanup pass has run after it: by default every automatic refresh runs one (`cleanup_interval_step = 1`), and so do `VACUUM (REFRESH_TABLE)` and `VACUUM (COMPACT_TABLE)`. After a crash, the server replays the kept logs and the current one into the tables that need them.
 
-With automatic refresh disabled (`refresh_interval = 0`), kept logs pile up until `VACUUM (REFRESH_TABLE)` saves the table or the server restarts.
+Kept logs pile up while automatic refresh (`refresh_interval = 0`) or periodic cleanup (`cleanup_interval_step = 0`) is disabled, until `VACUUM (REFRESH_TABLE)` or `VACUUM (COMPACT_TABLE)` saves the table or the server restarts; with only cleanup disabled, a few background compactions save it too.
 
 ## Session settings {#session-settings}
 

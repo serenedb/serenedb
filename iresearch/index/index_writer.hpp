@@ -551,8 +551,9 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocumentMask&& docs_mask,
-                            DocContexts&& docs, size_t committed_docs) noexcept
+    explicit FlushedSegment(IndexSegment&& segment,
+                            DocumentMaskBuilder&& docs_mask, DocContexts&& docs,
+                            size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
         docs_mask{std::move(docs_mask)},
         docs{std::move(docs)},
@@ -560,7 +561,7 @@ class IndexWriter : private util::Noncopyable {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
-    DocumentMask docs_mask;
+    DocumentMaskBuilder docs_mask;
     DocContexts docs;
     size_t committed_docs;
     bool meta_on_disk = false;

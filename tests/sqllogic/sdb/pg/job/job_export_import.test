@@ -1,0 +1,144 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS jei_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS jei_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE jei_src_${__DATABASE__};
+
+
+statement ok
+USE jei_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE jei_log (n INT);
+
+
+statement ok
+CREATE JOB jei_clear EVERY 1 HOUR SUSPENDED AS TRUNCATE jei_log;
+
+
+statement ok
+CREATE JOB jei_hourly EVERY 1 HOUR OFFSET 5 MINUTES AS INSERT INTO jei_log VALUES (1);
+
+
+statement ok
+CREATE JOB jei_paused AFTER 2 HOURS SUSPENDED AS SELECT 1;
+
+
+statement ok
+CREATE SCHEMA jei;
+
+
+statement ok
+CREATE JOB jei.jei_spread EVERY 1 DAY OFFSET 2 HOURS RANDOMIZE FOR 1 HOUR CONCURRENT AS SELECT 2;
+
+
+statement ok
+CREATE SCHEMA jei.jei_inner;
+
+
+statement ok
+CREATE JOB jei.jei_inner.jei_nested AFTER 30 MINUTES RANDOMIZE FOR 5 MINUTES AS SELECT 3;
+
+
+statement ok
+CREATE VIEW jei_v AS SELECT * FROM execute_job('jei_paused');
+
+
+statement ok
+CREATE MACRO jei_m() AS TABLE SELECT * FROM execute_job('jei.jei_spread');
+
+
+query
+SELECT schema_name, job_name, schedule, suspended, body FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+schema_name	job_name	schedule	suspended	body
+public	jei_clear	EVERY INTERVAL '01:00:00'	t	TRUNCATE jei_log
+public	jei_hourly	EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00'	f	INSERT INTO jei_log (VALUES (1))
+jei_inner	jei_nested	AFTER INTERVAL '00:30:00' RANDOMIZE FOR INTERVAL '00:05:00'	f	SELECT 3
+public	jei_paused	AFTER INTERVAL '02:00:00'	t	SELECT 1
+jei	jei_spread	EVERY INTERVAL '1 day' OFFSET INTERVAL '02:00:00' RANDOMIZE FOR INTERVAL '01:00:00' CONCURRENT	f	SELECT 2
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/jei';
+
+
+query
+SELECT line
+FROM (
+    SELECT unnest(string_split(content, chr(10))) AS line
+    FROM read_text('${__TEST_DIR__}/jei/schema.sql')
+)
+WHERE line LIKE 'CREATE JOB %'
+ORDER BY 1;
+----
+line
+CREATE JOB jei.jei_inner.jei_nested AFTER INTERVAL '00:30:00' RANDOMIZE FOR INTERVAL '00:05:00' AS SELECT 3;
+CREATE JOB jei.jei_spread EVERY INTERVAL '1 day' OFFSET INTERVAL '02:00:00' RANDOMIZE FOR INTERVAL '01:00:00' CONCURRENT AS SELECT 2;
+CREATE JOB public.jei_clear EVERY INTERVAL '01:00:00' SUSPENDED AS TRUNCATE jei_log;
+CREATE JOB public.jei_hourly EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00' AS INSERT INTO jei_log (VALUES (1));
+CREATE JOB public.jei_paused AFTER INTERVAL '02:00:00' SUSPENDED AS SELECT 1;
+
+
+statement ok
+CREATE DATABASE jei_dst_${__DATABASE__};
+
+
+statement ok
+USE jei_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/jei';
+
+
+query
+SELECT schema_name, job_name, schedule, suspended, body FROM sdb_jobs() WHERE database_name = current_database() ORDER BY job_name;
+----
+schema_name	job_name	schedule	suspended	body
+public	jei_clear	EVERY INTERVAL '01:00:00'	t	TRUNCATE jei_log
+public	jei_hourly	EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00'	f	INSERT INTO jei_log (VALUES (1))
+jei_inner	jei_nested	AFTER INTERVAL '00:30:00' RANDOMIZE FOR INTERVAL '00:05:00'	f	SELECT 3
+public	jei_paused	AFTER INTERVAL '02:00:00'	t	SELECT 1
+jei	jei_spread	EVERY INTERVAL '1 day' OFFSET INTERVAL '02:00:00' RANDOMIZE FOR INTERVAL '01:00:00' CONCURRENT	f	SELECT 2
+
+
+statement ok
+DROP JOB jei.jei_inner.jei_nested;
+
+
+statement error
+DROP JOB jei_paused;
+----
+db error: ERROR: Cannot drop entry "jei_paused" because there are entries that depend on it.
+view "jei_v" depends on job "jei_paused".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement error
+DROP JOB jei.jei_spread;
+----
+db error: ERROR: Cannot drop entry "jei_spread" because there are entries that depend on it.
+table macro function "jei_m" depends on job "jei_spread".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE jei_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE jei_dst_${__DATABASE__};

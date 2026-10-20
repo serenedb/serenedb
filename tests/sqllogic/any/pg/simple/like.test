@@ -342,3 +342,427 @@ SELECT 'akb' ILIKE ('a' || chr(8490) || 'b') ESCAPE 'k' AS kelvin, 'AKB' ILIKE (
 ----
 kelvin	kelvin_upper	escaped
 t	t	f
+
+
+statement ok
+CREATE TABLE like_strs AS
+SELECT i AS id,
+       CASE i % 5
+           WHEN 0 THEN 'quick brown fox ' || i
+           WHEN 1 THEN '50% off ' || i
+           WHEN 2 THEN 'lazy_dog ' || i
+           WHEN 3 THEN 'back\slash ' || i
+       END AS s
+FROM generate_series(1, 2100) AS g(i)
+
+
+statement ok
+CREATE TABLE like_rows AS
+SELECT id, s,
+       CASE WHEN id <= 700 THEN '%brown%'
+            WHEN id <= 1400 THEN (CASE id % 2 WHEN 0 THEN '%off%' ELSE '%dog%' END)
+            WHEN id <= 1750 THEN '%#%%'
+            WHEN id <= 2000 THEN '%y_d%'
+       END AS p
+FROM like_strs
+
+
+query
+SELECT p,
+       count(*) FILTER (WHERE s LIKE p) AS "like",
+       count(*) FILTER (WHERE s NOT LIKE p) AS not_like,
+       count(*) FILTER (WHERE s LIKE p ESCAPE '#') AS like_escape,
+       count(*) FILTER (WHERE s NOT LIKE p ESCAPE '#') AS not_like_escape,
+       count(*) FILTER (WHERE s ILIKE upper(p) ESCAPE '#') AS ilike_escape
+FROM like_rows
+GROUP BY p
+ORDER BY p COLLATE "C"
+----
+p	like	not_like	like_escape	not_like_escape	ilike_escape
+%#%%	0	280	70	210	70
+%brown%	140	420	140	420	140
+%dog%	70	210	70	210	70
+%off%	70	210	70	210	70
+%y_d%	50	150	50	150	50
+NULL	0	0	0	0	0
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE '%\%%') AS escaped_percent,
+       count(*) FILTER (WHERE s LIKE '50\% off%') AS anchored,
+       count(*) FILTER (WHERE s LIKE '%\%') AS at_end,
+       count(*) FILTER (WHERE s LIKE '%y\_d%') AS escaped_underscore,
+       count(*) FILTER (WHERE s LIKE 'back\\slash%') AS escaped_backslash,
+       count(*) FILTER (WHERE s LIKE '%\%%' ESCAPE '') AS no_escape,
+       count(*) FILTER (WHERE s LIKE '%50#% off%' ESCAPE '#') AS hash_escape,
+       count(*) FILTER (WHERE s ILIKE '%50#% OFF%' ESCAPE '#') AS ilike_hash_escape,
+       count(*) FILTER (WHERE s NOT LIKE '%#%%' ESCAPE '#') AS not_like_escape
+FROM like_strs
+----
+escaped_percent	anchored	at_end	escaped_underscore	escaped_backslash	no_escape	hash_escape	ilike_hash_escape	not_like_escape
+420	420	0	420	420	420	420	420	1260
+
+
+query
+SELECT count(*) AS n FROM like_strs WHERE s LIKE 'abc\'
+----
+n
+0
+
+
+statement ok
+PREPARE like_param AS SELECT count(*) AS n FROM like_strs WHERE s LIKE $1
+
+
+query
+EXECUTE like_param('%brown%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%\%%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%#%%')
+----
+n
+0
+
+
+query
+EXECUTE like_param('%y\_d%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('back\\slash%')
+----
+n
+420
+
+
+query
+EXECUTE like_param('%')
+----
+n
+1680
+
+
+query
+EXECUTE like_param('')
+----
+n
+0
+
+
+statement ok
+DEALLOCATE like_param
+
+
+statement ok
+PREPARE like_escape_param AS SELECT count(*) AS n FROM like_strs WHERE s LIKE $1 ESCAPE $2
+
+
+query
+EXECUTE like_escape_param('%#%%', '#')
+----
+n
+420
+
+
+query
+EXECUTE like_escape_param('%\%%', '')
+----
+n
+420
+
+
+statement ok
+DEALLOCATE like_escape_param
+
+
+statement ok
+CREATE TABLE ilike_ascii AS
+SELECT i AS id,
+       CASE i % 5
+           WHEN 0 THEN 'The Quick Brown Fox Jumps Over The Lazy Dog ' || i
+           WHEN 1 THEN 'quick_brown ' || i
+           WHEN 2 THEN 'KELVIN kelvin ' || i
+           WHEN 3 THEN 'x'
+       END AS s
+FROM generate_series(1, 2000) AS g(i)
+
+
+query
+SELECT (SELECT count(*) FROM ilike_ascii WHERE s ILIKE chr(8490) || '%') AS kelvin_prefix,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE '%' || chr(304) || '%') AS dotted_i,
+       (SELECT count(*) FROM ilike_ascii WHERE s NOT ILIKE chr(8490) || '%') AS not_kelvin,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%BROWN%' WHEN 1 THEN '%' || chr(8490) || '%' ELSE 'x' END) AS per_row
+----
+kelvin_prefix	dotted_i	not_kelvin	per_row
+400	1200	1200	799
+
+
+query
+SELECT id, s ILIKE chr(8490) || 'ELVIN%' AS kelvin, s ILIKE '%' || chr(304) || '%' AS dotted_i
+FROM ilike_ascii
+WHERE id <= 5
+ORDER BY id
+----
+id	kelvin	dotted_i
+1	f	t
+2	t	t
+3	f	f
+4	NULL	NULL
+5	f	t
+
+
+query
+SELECT (SELECT count(*) FROM ilike_ascii WHERE s ILIKE '%QUICK BROWN%') AS contains,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE 'the quick%') AS prefix,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE '%LAZY DOG 1__') AS suffix_underscore,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE '%lazy%DOG%0') AS segments,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE 'QUICK\_BROWN%') AS escaped,
+       (SELECT count(*) FROM ilike_ascii WHERE s NOT ILIKE '%e%') AS not_e,
+       (SELECT count(*) FROM ilike_ascii WHERE s ILIKE 'X') AS short
+----
+contains	prefix	suffix_underscore	segments	escaped	not_e	short
+400	400	20	200	400	800	400
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%QUICK BROWN%') AS contains,
+       count(*) FILTER (WHERE s ILIKE 'the quick%') AS prefix,
+       count(*) FILTER (WHERE s ILIKE '%LAZY DOG 1__') AS suffix_underscore,
+       count(*) FILTER (WHERE s ILIKE '%lazy%DOG%0') AS segments,
+       count(*) FILTER (WHERE s ILIKE 'QUICK\_BROWN%') AS escaped,
+       count(*) FILTER (WHERE s ILIKE 'quick_brown%') AS underscore,
+       count(*) FILTER (WHERE s ILIKE '%' || chr(8490) || 'elvin%') AS kelvin,
+       count(*) FILTER (WHERE s NOT ILIKE '%e%') AS not_e,
+       count(*) FILTER (WHERE s ILIKE 'X') AS short,
+       count(*) FILTER (WHERE s ILIKE '%') AS "any"
+FROM ilike_ascii
+----
+contains	prefix	suffix_underscore	segments	escaped	underscore	kelvin	not_e	short	any
+400	400	20	200	400	400	400	800	400	1600
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%BROWN%' WHEN 1 THEN '%' || chr(8490) || '%' ELSE 'x' END) AS per_row,
+       count(*) FILTER (WHERE s NOT ILIKE CASE id % 3 WHEN 0 THEN '%BROWN%' WHEN 1 THEN '%' || chr(8490) || '%' ELSE 'x' END) AS not_per_row,
+       count(*) FILTER (WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%Q_ICK%' WHEN 1 THEN 'KELVIN' || chr(8490) || '%' ELSE '_' END) AS per_row_underscore
+FROM ilike_ascii
+----
+per_row	not_per_row	per_row_underscore
+799	801	399
+
+
+statement ok
+CREATE TABLE ilike_mixed AS
+SELECT i AS id,
+       CASE i % 6
+           WHEN 0 THEN 'kelvin ' || i
+           WHEN 1 THEN chr(8490) || 'ELVIN ' || i
+           WHEN 2 THEN 'B' || chr(304) || 'RNEN ' || i
+           WHEN 3 THEN 'Äpfel und Birnen ' || i
+           WHEN 4 THEN 'APFEL UND BIRNEN, an ASCII row longer than thirty-two bytes ' || i
+       END AS s
+FROM generate_series(1, 1200) AS g(i)
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%kelvin%') AS kelvin,
+       count(*) FILTER (WHERE s ILIKE 'KELVIN%') AS kelvin_prefix,
+       count(*) FILTER (WHERE s ILIKE '%birnen%') AS birnen,
+       count(*) FILTER (WHERE s ILIKE '%äpfel%') AS umlaut,
+       count(*) FILTER (WHERE s ILIKE '%APFEL%') AS apfel,
+       count(*) FILTER (WHERE s ILIKE '%thirty-two BYTES%') AS long_row,
+       count(*) FILTER (WHERE s ILIKE 'b_rnen%') AS underscore,
+       count(*) FILTER (WHERE s NOT ILIKE '%n%') AS not_n,
+       count(*) FILTER (WHERE s ILIKE '%' || chr(8490) || '%') AS kelvin_sign,
+       count(*) FILTER (WHERE s ILIKE '%1') AS suffix
+FROM ilike_mixed
+----
+kelvin	kelvin_prefix	birnen	umlaut	apfel	long_row	underscore	not_n	kelvin_sign	suffix
+400	400	600	200	200	200	200	0	400	80
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE CASE id % 4 WHEN 0 THEN '%kelvin%' WHEN 1 THEN '%BIRNEN%' WHEN 2 THEN '%' || chr(304) || '%' ELSE 'äpfel%' END) AS per_row,
+       count(*) FILTER (WHERE s NOT ILIKE CASE id % 4 WHEN 0 THEN '%kelvin%' WHEN 1 THEN '%BIRNEN%' WHEN 2 THEN '%' || chr(304) || '%' ELSE 'äpfel%' END) AS not_per_row
+FROM ilike_mixed
+----
+per_row	not_per_row
+600	400
+
+
+statement ok
+CREATE TABLE ilike_bounds AS
+SELECT i AS id, s
+FROM (VALUES (1, 'a@b'), (2, 'A`B'), (3, 'z[y'), (4, 'Z{Y'),
+             (5, repeat('-', 40) || 'A@B[Z' || repeat('-', 40)),
+             (6, repeat('-', 40) || 'a`b{z' || repeat('-', 40))) AS t(i, s)
+
+
+query
+SELECT id,
+       s ILIKE '%a@b%' AS at_sign,
+       s ILIKE '%a`b%' AS backtick,
+       s ILIKE '%z[y%' AS bracket,
+       s ILIKE '%z{y%' AS brace,
+       s ILIKE '%a@b[z%' AS long_at,
+       s ILIKE '%A`B{Z%' AS long_backtick,
+       s ILIKE '%@%' AS one_at
+FROM ilike_bounds
+ORDER BY id
+----
+id	at_sign	backtick	bracket	brace	long_at	long_backtick	one_at
+1	t	f	f	f	f	f	t
+2	f	t	f	f	f	f	f
+3	f	f	t	f	f	f	f
+4	f	f	f	t	f	f	f
+5	t	f	f	f	t	f	t
+6	f	t	f	f	f	t	f
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%a@b%') AS at_sign,
+       count(*) FILTER (WHERE s ILIKE '%a`b%') AS backtick,
+       count(*) FILTER (WHERE s ILIKE '%z[y%') AS bracket,
+       count(*) FILTER (WHERE s ILIKE '%z{y%') AS brace,
+       count(*) FILTER (WHERE s ILIKE '%a@b[z%') AS long_at,
+       count(*) FILTER (WHERE s ILIKE '%A`B{Z%') AS long_backtick,
+       count(*) FILTER (WHERE s ILIKE '%`%') AS one_backtick
+FROM ilike_bounds
+----
+at_sign	backtick	bracket	brace	long_at	long_backtick	one_backtick
+2	2	1	1	1	1	2
+
+
+query
+SELECT repeat(chr(570), 100) ILIKE repeat(chr(11365), 100) AS longer,
+       repeat(chr(570), 100) ILIKE '%' || repeat(chr(11365), 50) || '%' AS contains,
+       'x' || chr(570) || 'y' ILIKE 'X_Y' AS underscore,
+       repeat(chr(570), 100) NOT ILIKE repeat(chr(570), 101) AS not_longer,
+       repeat(chr(304), 100) ILIKE repeat('i', 100) AS shorter
+----
+longer	contains	underscore	not_longer	shorter
+t	t	t	t	t
+
+
+statement ok
+CREATE TABLE ilike_growth AS SELECT i AS id, repeat(chr(570), i) AS s FROM generate_series(1, 199) AS g(i)
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE repeat(chr(11365), id)) AS per_row,
+       count(*) FILTER (WHERE s ILIKE '%' || repeat(chr(11365), 3) || '%') AS contains,
+       count(*) FILTER (WHERE s NOT ILIKE '_' || repeat(chr(11365), id - 1)) AS not_underscore,
+       count(*) FILTER (WHERE s ILIKE repeat(chr(11365), id) ESCAPE '#') AS per_row_escape
+FROM ilike_growth
+----
+per_row	contains	not_underscore	per_row_escape
+199	197	0	199
+
+
+statement ok
+CREATE TABLE ilike_unicode AS
+SELECT i AS id,
+       CASE i % 6
+           WHEN 0 THEN 'Grüße aus Köln ' || i
+           WHEN 1 THEN 'İstanbul ' || i
+           WHEN 2 THEN chr(8490) || 'elvin ' || i
+           WHEN 3 THEN 'crème brûlée ' || i
+           WHEN 4 THEN '🦆 DUCK ' || i
+       END AS s
+FROM generate_series(1, 1200) AS g(i)
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%AUS K%') AS aus,
+       count(*) FILTER (WHERE s ILIKE 'istanbul%') AS dotted_i,
+       count(*) FILTER (WHERE s ILIKE 'kelvin%') AS kelvin,
+       count(*) FILTER (WHERE s ILIKE '%BR_L_E%') AS underscores,
+       count(*) FILTER (WHERE s ILIKE '_ duck%') AS duck,
+       count(*) FILTER (WHERE s ILIKE '%k%') AS any_k,
+       count(*) FILTER (WHERE s NOT ILIKE '%e%') AS no_e,
+       count(*) FILTER (WHERE s ILIKE '%Ü%E%') AS unicode_pattern
+FROM ilike_unicode
+----
+aus	dotted_i	kelvin	underscores	duck	any_k	no_e	unicode_pattern
+200	200	200	200	200	600	400	200
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE CASE id % 3 WHEN 0 THEN '%AUS K%' WHEN 1 THEN '_STANBUL%' ELSE '%' || chr(8490) || '%' END) AS per_row,
+       count(*) FILTER (WHERE s NOT ILIKE CASE id % 3 WHEN 0 THEN '%AUS K%' WHEN 1 THEN '_STANBUL%' ELSE '%' || chr(8490) || '%' END) AS not_per_row
+FROM ilike_unicode
+----
+per_row	not_per_row
+600	400
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE '_ DUCK%') AS duck,
+       count(*) FILTER (WHERE s LIKE 'Gr__e%') AS grusse,
+       count(*) FILTER (WHERE s LIKE '%br_l_e%') AS brulee,
+       count(*) FILTER (WHERE s LIKE '%_') AS nonempty,
+       count(*) FILTER (WHERE s LIKE '______________') AS fourteen_chars,
+       count(*) FILTER (WHERE s LIKE '%l_e _%') AS mixed
+FROM ilike_unicode
+----
+duck	grusse	brulee	nonempty	fourteen_chars	mixed
+200	200	200	1000	2	200
+
+
+query
+SELECT (SELECT count(*) FROM ilike_unicode WHERE s LIKE '%br_l_e%') AS where_brulee,
+       (SELECT count(*) FROM ilike_unicode WHERE s ILIKE '%BR_L_E%') AS where_ilike
+----
+where_brulee	where_ilike
+200	200
+
+
+statement ok
+CREATE TABLE like_rewrites AS
+SELECT * FROM (VALUES (1, 'a%b'), (2, 'a_b'), (3, 'a\b'), (4, 'ab'), (5, 'a_bc'), (6, '50% off'), (7, 'x50%y'), (8, '%'), (9, 'za\b'), (10, 'a#b')) AS t(id, s)
+
+
+query
+SELECT count(*) FILTER (WHERE s LIKE 'a\%b') AS literal_percent,
+       count(*) FILTER (WHERE s LIKE 'a\_b%') AS escaped_prefix,
+       count(*) FILTER (WHERE s LIKE '%a\\b') AS escaped_suffix,
+       count(*) FILTER (WHERE s LIKE '%50\%%') AS escaped_contains,
+       count(*) FILTER (WHERE s LIKE 'a#_b%' ESCAPE '#') AS escape_prefix,
+       count(*) FILTER (WHERE s LIKE '%a\b' ESCAPE '') AS no_escape,
+       count(*) FILTER (WHERE s NOT LIKE 'a\_b%') AS not_prefix,
+       count(*) FILTER (WHERE s LIKE '\a\b') AS escaped_letters
+FROM like_rewrites
+----
+literal_percent	escaped_prefix	escaped_suffix	escaped_contains	escape_prefix	no_escape	not_prefix	escaped_letters
+1	2	2	2	2	2	8	1
+
+
+query
+SELECT id FROM like_rewrites WHERE s LIKE 'a#_b%' ESCAPE '#' ORDER BY id
+----
+id
+2
+5
+
+
+query
+SELECT id FROM like_rewrites WHERE s LIKE '%50\%%' OR s LIKE '\%' ORDER BY id
+----
+id
+6
+7
+8

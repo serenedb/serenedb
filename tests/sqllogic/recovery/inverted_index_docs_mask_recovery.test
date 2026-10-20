@@ -1,0 +1,178 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dmf_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE dmf(id INTEGER PRIMARY KEY, grp INTEGER, txt TEXT);
+
+statement ok
+CREATE INDEX dmf_idx ON dmf USING inverted(id, grp, txt dmf_dict)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO dmf
+SELECT g, (g * 7919) % 100, 'row ' || g || ' alpha'
+FROM generate_series(1, 20000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+statement ok
+VACUUM (COMPACT_INDEX) dmf_idx;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_docs	20000
+num_live_docs	20000
+num_segments	1
+
+statement ok
+DELETE FROM dmf WHERE grp < 60;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+statement ok
+DELETE FROM dmf WHERE grp = 60;
+
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+query
+SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7800
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry 60 backoff $BACKOFF_DURATION
+SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7800
+
+connection after_crash
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_docs	20000
+num_live_docs	7800
+num_segments	1
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dmf_idx WHERE txt @@ ts_like('alpha')
+  EXCEPT
+  SELECT id FROM dmf
+) t;
+----
+count
+0
+
+connection after_crash
+statement ok
+DELETE FROM dmf WHERE grp = 61;
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+connection after_crash
+statement ok
+DELETE FROM dmf WHERE grp = 62;
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+connection after_crash
+query
+SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7400
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry 60 backoff $BACKOFF_DURATION
+SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7400
+
+connection after_second_crash
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'dmf_idx')
+  AND metric IN ('num_docs', 'num_live_docs', 'num_segments')
+ORDER BY metric;
+----
+metric	value
+num_docs	20000
+num_live_docs	7400
+num_segments	1
+
+connection after_second_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dmf_idx WHERE txt @@ ts_like('alpha')
+  EXCEPT
+  SELECT id FROM dmf
+) t;
+----
+count
+0
+
+connection after_second_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dmf
+  EXCEPT
+  SELECT id FROM dmf_idx WHERE txt @@ ts_like('alpha')
+) t;
+----
+count
+0
+
+connection after_second_crash
+statement ok
+DELETE FROM dmf WHERE grp = 63;
+
+connection after_second_crash
+statement ok
+VACUUM (REFRESH_TABLE) dmf;
+
+connection after_second_crash
+query
+SELECT count(*) FROM dmf_idx WHERE txt @@ ts_like('alpha');
+----
+count
+7200

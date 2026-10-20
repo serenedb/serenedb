@@ -23,16 +23,6 @@ for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.pro
 	fi
 done
 
-if [[ -z "${SDB_DRV_PGBACKREST:-}" ]] && ! command -v pgbackrest >/dev/null 2>&1; then
-	pgbackrest_dir="$(mktemp -d)"
-	if (cd "$pgbackrest_dir" && apt-get download pgbackrest=2.59.3-1.pgdg26.04+1 >/dev/null &&
-		dpkg-deb -x pgbackrest_*.deb .); then
-		export SDB_DRV_PGBACKREST="$pgbackrest_dir/usr/bin/pgbackrest"
-	else
-		echo "[python] could not fetch pgbackrest 2.59.3" >&2
-	fi
-fi
-
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"
 

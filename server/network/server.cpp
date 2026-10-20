@@ -404,8 +404,8 @@ void Server::StartListeners() {
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
       const std::string_view schema =
         spec.schema.empty() ? std::string_view{"public"} : spec.schema;
-      if (const auto status =
-            otel::EnsureSchema(database, schema, spec.otel_index);
+      if (const auto status = otel::EnsureSchema(
+            database, schema, spec.otel_create_index.value_or(true));
           !status.ok()) {
         SDB_FATAL(GENERAL, "endpoint '", spec.url,
                   "': OpenTelemetry schema: ", status.message());

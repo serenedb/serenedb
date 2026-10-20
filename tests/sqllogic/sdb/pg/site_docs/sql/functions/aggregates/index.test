@@ -417,9 +417,9 @@ INSERT INTO requests VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT increase(total, ts) AS increase,
-       round(rate(total, ts), 6) AS rate,
-       irate(total, ts) AS irate
+SELECT otel_increase(total, ts) AS increase,
+       round(otel_rate(total, ts), 6) AS rate,
+       otel_irate(total, ts) AS irate
 FROM requests;
 ----
 increase	rate	irate
@@ -429,7 +429,7 @@ increase	rate	irate
 # DOCS_TEST_BODY
 
 query
-SELECT ts, increase(total, ts) OVER (ORDER BY ts ROWS 1 PRECEDING) AS delta
+SELECT ts, otel_increase(total, ts) OVER (ORDER BY ts ROWS 1 PRECEDING) AS delta
 FROM requests
 ORDER BY ts;
 ----
@@ -443,8 +443,8 @@ ts	delta
 # DOCS_TEST_BODY
 
 query
-SELECT histogram_quantile(0.5, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p50,
-       histogram_quantile(0.95, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p95;
+SELECT otel_histogram_quantile(0.5, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p50,
+       otel_histogram_quantile(0.95, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS p95;
 ----
 p50	p95
 1.5	3.6
@@ -462,16 +462,16 @@ INSERT INTO latencies VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT increase(bucket_counts, ts) AS buckets
+SELECT otel_increase(bucket_counts, ts) AS buckets
 FROM latencies;
 ----
 buckets
 {10,4,1,0}
 
 query
-SELECT histogram_quantile(0.9, buckets, explicit_bounds) AS p90
+SELECT otel_histogram_quantile(0.9, buckets, explicit_bounds) AS p90
 FROM (
-    SELECT increase(bucket_counts, ts) AS buckets, any_value(explicit_bounds) AS explicit_bounds
+    SELECT otel_increase(bucket_counts, ts) AS buckets, any_value(explicit_bounds) AS explicit_bounds
     FROM latencies
 );
 ----
@@ -494,12 +494,12 @@ INSERT INTO disk VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT delta(free_gb, ts) AS delta,
-       idelta(free_gb, ts) AS idelta,
-       round(deriv(free_gb, ts), 6) AS per_second,
-       round(predict_linear(free_gb, ts, 3600), 6) AS in_an_hour,
-       changes(free_gb, ts) AS changes,
-       resets(free_gb, ts) AS drops
+SELECT otel_delta(free_gb, ts) AS delta,
+       otel_idelta(free_gb, ts) AS idelta,
+       round(otel_deriv(free_gb, ts), 6) AS per_second,
+       round(otel_predict_linear(free_gb, ts, 3600), 6) AS in_an_hour,
+       otel_changes(free_gb, ts) AS changes,
+       otel_resets(free_gb, ts) AS drops
 FROM disk;
 ----
 delta	idelta	per_second	in_an_hour	changes	drops
@@ -509,8 +509,8 @@ delta	idelta	per_second	in_an_hour	changes	drops
 # DOCS_TEST_BODY
 
 query
-SELECT histogram_fraction('-inf'::DOUBLE, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS at_most_2,
-       round(histogram_stddev([10, 20, 10, 0], [1.0, 2.0, 4.0]), 6) AS stddev;
+SELECT otel_histogram_fraction('-inf'::DOUBLE, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS at_most_2,
+       round(otel_histogram_stddev([10, 20, 10, 0], [1.0, 2.0, 4.0]), 6) AS stddev;
 ----
 at_most_2	stddev
 0.75	0.892679
@@ -519,9 +519,9 @@ at_most_2	stddev
 # DOCS_TEST_BODY
 
 query
-SELECT round(histogram_quantile(0.5, h), 6) AS p50,
-       histogram_fraction(0, 4, h) AS above_0_up_to_4
-FROM (SELECT exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
+SELECT round(otel_histogram_quantile(0.5, h), 6) AS p50,
+       otel_histogram_fraction(0, 4, h) AS above_0_up_to_4
+FROM (SELECT otel_exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
 ----
 p50	above_0_up_to_4
 2.828427	0.3
@@ -542,10 +542,10 @@ INSERT INTO rpc VALUES
 
 query
 SELECT h.zero_count, h.positive_offset, h.positive_bucket_counts,
-       round(histogram_quantile(0.5, h), 6) AS p50
+       round(otel_histogram_quantile(0.5, h), 6) AS p50
 FROM (
-    SELECT increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
-                                          negative_offset, negative_bucket_counts), ts) AS h
+    SELECT otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                    negative_offset, negative_bucket_counts), ts) AS h
     FROM rpc
 )
 GROUP BY ALL;

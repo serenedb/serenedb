@@ -185,13 +185,13 @@ are still stored and retrievable; they are read with a columnstore scan.
 
 ### Your own indexes
 
-The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. `otel_index=none` on the listener creates the tables without any index, so you choose the tokenizer and the indexed columns and expressions before the first export:
+The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. `otel_create_index=none` on the listener creates the tables without any index, so you choose the tokenizer and the indexed columns and expressions before the first export:
 
 ```bash
-serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&otel_index=none'
+serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&otel_create_index=none'
 ```
 
-| `otel_index=` | The tables are created |
+| `otel_create_index=` | The tables are created |
 |---|---|
 | `default` | with the shipped indexes; the default |
 | `none` | without indexes |
@@ -346,14 +346,14 @@ GROUP BY 1, 2 ORDER BY 1, 2;
 
 ### Counters and histograms
 
-SDKs export sums and histograms as running totals by default (`aggregation_temporality = 'Cumulative'`), so `sum(value)` adds up totals instead of counting what happened in a time bucket. [`rate`, `increase` and `irate`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) read them as counters. Compute them per series, one metric with one set of resource and data point attributes, then add the series up:
+SDKs export sums and histograms as running totals by default (`aggregation_temporality = 'Cumulative'`), so `sum(value)` adds up totals instead of counting what happened in a time bucket. [`otel_rate`, `otel_increase` and `otel_irate`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) read them as counters. Compute them per series, one metric with one set of resource and data point attributes, then add the series up:
 
 ```sql
 SELECT minute, service_name, sum(per_second) AS requests_per_second
 FROM (
   SELECT date_trunc('minute', "timestamp") AS minute, service_name,
          resource_attributes, attributes,
-         rate(value, "timestamp") AS per_second
+         otel_rate(value, "timestamp") AS per_second
   FROM otel_metrics_sum
   WHERE metric_name = 'http.server.request.count'
   GROUP BY ALL
@@ -361,16 +361,16 @@ FROM (
 GROUP BY ALL ORDER BY ALL;
 ```
 
-Latency percentiles come from the histogram buckets the same way: `increase(bucket_counts, "timestamp")` per series, then `histogram_quantile` over the series:
+Latency percentiles come from the histogram buckets the same way: `otel_increase(bucket_counts, "timestamp")` per series, then `otel_histogram_quantile` over the series:
 
 ```sql
 SELECT minute,
-       histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
-       histogram_quantile(0.99, buckets, explicit_bounds) AS p99
+       otel_histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
+       otel_histogram_quantile(0.99, buckets, explicit_bounds) AS p99
 FROM (
   SELECT date_trunc('minute', "timestamp") AS minute,
          resource_attributes, attributes, explicit_bounds,
-         increase(bucket_counts, "timestamp") AS buckets
+         otel_increase(bucket_counts, "timestamp") AS buckets
   FROM otel_metrics_histogram
   WHERE metric_name = 'http.server.duration'
   GROUP BY ALL
@@ -378,18 +378,18 @@ FROM (
 GROUP BY minute ORDER BY minute;
 ```
 
-Points exported with delta temporality (`aggregation_temporality = 'Delta'`) need neither: `sum(value)` and `histogram_quantile(q, bucket_counts, explicit_bounds)` over the rows of a time bucket give what happened in it.
+Points exported with delta temporality (`aggregation_temporality = 'Delta'`) need neither: `sum(value)` and `otel_histogram_quantile(q, bucket_counts, explicit_bounds)` over the rows of a time bucket give what happened in it.
 
-The same per-series buckets give the share of requests under a latency target with `histogram_fraction`, and the spread with `histogram_stddev`:
+The same per-series buckets give the share of requests under a latency target with `otel_histogram_fraction`, and the spread with `otel_histogram_stddev`:
 
 ```sql
 SELECT minute,
-       histogram_fraction('-inf'::DOUBLE, 0.3, buckets, explicit_bounds) AS under_300ms,
-       histogram_stddev(buckets, explicit_bounds) AS stddev
+       otel_histogram_fraction('-inf'::DOUBLE, 0.3, buckets, explicit_bounds) AS under_300ms,
+       otel_histogram_stddev(buckets, explicit_bounds) AS stddev
 FROM (
   SELECT date_trunc('minute', "timestamp") AS minute,
          resource_attributes, attributes, explicit_bounds,
-         increase(bucket_counts, "timestamp") AS buckets
+         otel_increase(bucket_counts, "timestamp") AS buckets
   FROM otel_metrics_histogram
   WHERE metric_name = 'http.server.duration'
   GROUP BY ALL
@@ -397,16 +397,16 @@ FROM (
 GROUP BY minute ORDER BY minute;
 ```
 
-Exponential histograms (`otel_metrics_exponential_histogram`) are read the same way once [`exponential_histogram`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) packs their bucket columns into one value; rows at different scales are combined:
+Exponential histograms (`otel_metrics_exponential_histogram`) are read the same way once [`otel_exponential_histogram`](../sql/functions/aggregates/index.md#counter-and-histogram-aggregates) packs their bucket columns into one value; rows at different scales are combined:
 
 ```sql
 SELECT minute,
-       histogram_quantile(0.99, h) AS p99,
-       histogram_fraction('-inf'::DOUBLE, 0.3, h) AS under_300ms
+       otel_histogram_quantile(0.99, h) AS p99,
+       otel_histogram_fraction('-inf'::DOUBLE, 0.3, h) AS under_300ms
 FROM (
   SELECT date_trunc('minute', "timestamp") AS minute, resource_attributes, attributes,
-         increase(exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
-                                        negative_offset, negative_bucket_counts), "timestamp") AS h
+         otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                  negative_offset, negative_bucket_counts), "timestamp") AS h
   FROM otel_metrics_exponential_histogram
   WHERE metric_name = 'http.server.duration'
   GROUP BY ALL
@@ -414,10 +414,10 @@ FROM (
 GROUP BY minute ORDER BY minute;
 ```
 
-Gauges (`otel_metrics_gauge`) are averaged or compared directly; `deriv` gives their per-second trend and `predict_linear` extrapolates it, for example the free disk space an hour after the last sample:
+Gauges (`otel_metrics_gauge`) are averaged or compared directly; `otel_deriv` gives their per-second trend and `otel_predict_linear` extrapolates it, for example the free disk space an hour after the last sample:
 
 ```sql
-SELECT service_name, predict_linear(value, "timestamp", 3600) AS free_in_an_hour
+SELECT service_name, otel_predict_linear(value, "timestamp", 3600) AS free_in_an_hour
 FROM otel_metrics_gauge
 WHERE metric_name = 'system.filesystem.free'
   AND "timestamp" @@ ts_ge(TIMESTAMP_NS '2026-09-08 00:00:00')
@@ -455,7 +455,7 @@ CREATE JOB otel_metrics_sum_retention EVERY 1 HOUR AS
     DELETE FROM otel_metrics_sum WHERE "timestamp" < now() - INTERVAL '90 days';
 ```
 
-Telemetry arrives in roughly time order, so each run removes runs of consecutive rows, which keeps it cheap however many rows it deletes.
+Telemetry arrives in roughly time order, so the rows a job deletes are mostly consecutive: the log space of the delete grows with the number of such stretches, not with the number of rows.
 
 ## Schema evolution
 

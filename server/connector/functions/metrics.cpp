@@ -250,9 +250,10 @@ struct Prediction {
 using PredictionState = Boxed<Prediction>;
 
 [[noreturn]] void ThrowMixedSeconds() {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("predict_linear(): all rows of a group must have "
-                          "the same seconds"));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("otel_predict_linear(): all rows of a group must have "
+            "the same seconds"));
 }
 
 template<int64_t TicksPerSecond>
@@ -437,13 +438,13 @@ constexpr size_t Arity(Shape shape) {
 constexpr std::string_view Name(Shape shape) {
   switch (shape) {
     case Shape::Quantile:
-      return "histogram_quantile";
+      return "otel_histogram_quantile";
     case Shape::Fraction:
-      return "histogram_fraction";
+      return "otel_histogram_fraction";
     case Shape::StdDev:
-      return "histogram_stddev";
+      return "otel_histogram_stddev";
     case Shape::StdVar:
-      return "histogram_stdvar";
+      return "otel_histogram_stdvar";
   }
   return {};
 }
@@ -742,7 +743,15 @@ void HistogramUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
       histogram.arguments = row_arguments;
       histogram.bounds.reserve(bound_entry.length);
       for (duckdb::idx_t j = 0; j != bound_entry.length; ++j) {
-        histogram.bounds.push_back(bound(bound_entry, j));
+        const auto value = bound(bound_entry, j);
+        if (std::isnan(value) ||
+            (!histogram.bounds.empty() && !(histogram.bounds.back() < value))) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG(Name(Kind),
+                    "(): explicit_bounds must be strictly ascending numbers"));
+        }
+        histogram.bounds.push_back(value);
       }
       histogram.counts.assign(count_entry.length, 0);
     } else {
@@ -765,17 +774,21 @@ void HistogramUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
 }
 
 constexpr int64_t kMaxExponentialBuckets = 4096;
+constexpr int32_t kMinExponentialScale = -10;
+constexpr int32_t kMaxExponentialScale = 20;
 
 struct ExponentialBuckets {
-  int32_t offset = 0;
+  int64_t offset = 0;
   std::vector<double> counts;
 
-  int32_t Last() const noexcept {
-    return offset + static_cast<int32_t>(counts.size()) - 1;
+  int64_t Last() const noexcept {
+    return offset + static_cast<int64_t>(counts.size()) - 1;
   }
 
-  double At(int32_t index) const noexcept {
-    return index >= offset && index <= Last() ? counts[index - offset] : 0;
+  double At(int64_t index) const noexcept {
+    return index >= offset && index <= Last()
+             ? counts[static_cast<size_t>(index - offset)]
+             : 0;
   }
 };
 
@@ -786,12 +799,23 @@ struct ExponentialHistogram {
   ExponentialBuckets negative;
 };
 
-int32_t Shifted(int32_t index, int32_t shift) {
-  return static_cast<int32_t>(static_cast<int64_t>(index) >>
-                              std::min<int32_t>(shift, 62));
+int64_t Shifted(int64_t index, int32_t shift) {
+  return index >> std::min<int32_t>(shift, 62);
 }
 
-void Cover(ExponentialBuckets& buckets, int32_t first, int32_t last) {
+constexpr int64_t kMinExponentialIndex =
+  -(int64_t{1075} << kMaxExponentialScale);
+constexpr int64_t kMaxExponentialIndex =
+  (int64_t{1024} << kMaxExponentialScale) - 1;
+
+bool Representable(const ExponentialBuckets& buckets, int32_t scale) {
+  const auto shift = kMaxExponentialScale - scale;
+  return buckets.counts.empty() ||
+         (buckets.offset >= Shifted(kMinExponentialIndex, shift) &&
+          buckets.Last() <= Shifted(kMaxExponentialIndex, shift));
+}
+
+void Cover(ExponentialBuckets& buckets, int64_t first, int64_t last) {
   if (buckets.counts.empty()) {
     buckets.offset = first;
     buckets.counts.assign(static_cast<size_t>(last - first) + 1, 0);
@@ -815,8 +839,8 @@ void Add(ExponentialBuckets& target, const ExponentialBuckets& source,
   Cover(target, Shifted(source.offset, shift), Shifted(source.Last(), shift));
   for (size_t i = 0; i != source.counts.size(); ++i) {
     const auto index =
-      Shifted(source.offset + static_cast<int32_t>(i), shift) - target.offset;
-    target.counts[index] += sign * source.counts[i];
+      Shifted(source.offset + static_cast<int64_t>(i), shift) - target.offset;
+    target.counts[static_cast<size_t>(index)] += sign * source.counts[i];
   }
 }
 
@@ -843,8 +867,8 @@ struct Extent {
     if (buckets.counts.empty()) {
       return;
     }
-    first = std::min<int64_t>(first, Shifted(buckets.offset, shift));
-    last = std::max<int64_t>(last, Shifted(buckets.Last(), shift));
+    first = std::min(first, Shifted(buckets.offset, shift));
+    last = std::max(last, Shifted(buckets.Last(), shift));
   }
 
   bool Fits() const noexcept {
@@ -892,7 +916,7 @@ enum class Side : uint8_t {
 
 struct ExponentialBucket {
   Side side;
-  int32_t index;
+  int64_t index;
   double count;
 };
 
@@ -1071,7 +1095,8 @@ duckdb::LogicalType ExponentialHistogramType() {
 
 class ExponentialRows {
  public:
-  explicit ExponentialRows(const duckdb::Vector& input) {
+  ExponentialRows(const duckdb::Vector& input, std::string_view function)
+    : _function{function} {
     duckdb::Vector::RecursiveToUnifiedFormat(input, _format);
   }
 
@@ -1087,11 +1112,24 @@ class ExponentialRows {
     }
     out.scale =
       duckdb::UnifiedVectorFormat::GetData<int32_t>(scale)[scale_index];
+    if (out.scale < kMinExponentialScale || out.scale > kMaxExponentialScale) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(_function, "(): scale must be between ", kMinExponentialScale,
+                " and ", kMaxExponentialScale, ", got ", out.scale));
+    }
     out.zero = Number(_format.children[kZeroCount].unified, index);
     ReadBuckets(_format.children[kPositiveOffset].unified,
                 _format.children[kPositiveCounts], index, out.positive);
     ReadBuckets(_format.children[kNegativeOffset].unified,
                 _format.children[kNegativeCounts], index, out.negative);
+    if (!Representable(out.positive, out.scale) ||
+        !Representable(out.negative, out.scale)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(_function, "(): buckets beyond the range of DOUBLE at scale ",
+                out.scale));
+    }
     return true;
   }
 
@@ -1133,6 +1171,7 @@ class ExponentialRows {
   }
 
   duckdb::RecursiveUnifiedVectorFormat _format;
+  std::string_view _function;
 };
 
 struct ExponentialAggregate {
@@ -1202,7 +1241,7 @@ void ExponentialUpdate(duckdb::Vector inputs[], duckdb::AggregateInputData&,
                        duckdb::idx_t count) {
   constexpr auto kArity = Arity(Kind);
   const ArgumentRows arguments{inputs, kArity};
-  const ExponentialRows rows{inputs[kArity]};
+  const ExponentialRows rows{inputs[kArity], Name(Kind)};
   duckdb::UnifiedVectorFormat targets;
   states.ToUnifiedFormat(targets);
   const auto* state =
@@ -1264,7 +1303,7 @@ void Trim(ExponentialBuckets& buckets) {
   }
   counts.erase(counts.begin() + static_cast<ptrdiff_t>(end), counts.end());
   counts.erase(counts.begin(), counts.begin() + static_cast<ptrdiff_t>(first));
-  buckets.offset += static_cast<int32_t>(first);
+  buckets.offset += static_cast<int64_t>(first);
 }
 
 template<typename T>
@@ -1287,10 +1326,10 @@ void WriteHistogram(duckdb::Vector& result, duckdb::idx_t row,
   duckdb::FlatVector::GetDataMutable<double>(fields[kZeroCount])[row] =
     histogram.zero;
   duckdb::FlatVector::GetDataMutable<int32_t>(fields[kPositiveOffset])[row] =
-    histogram.positive.offset;
+    static_cast<int32_t>(histogram.positive.offset);
   WriteList<double>(fields[kPositiveCounts], row, histogram.positive.counts);
   duckdb::FlatVector::GetDataMutable<int32_t>(fields[kNegativeOffset])[row] =
-    histogram.negative.offset;
+    static_cast<int32_t>(histogram.negative.offset);
   WriteList<double>(fields[kNegativeCounts], row, histogram.negative.counts);
 }
 
@@ -1343,7 +1382,7 @@ struct ExponentialIncreaseOperation : BoxedOperation {
 void ExponentialIncreaseUpdate(duckdb::Vector inputs[],
                                duckdb::AggregateInputData&, duckdb::idx_t,
                                duckdb::Vector& states, duckdb::idx_t count) {
-  const ExponentialRows rows{inputs[0]};
+  const ExponentialRows rows{inputs[0], "otel_increase"};
   duckdb::UnifiedVectorFormat times;
   duckdb::UnifiedVectorFormat targets;
   inputs[1].ToUnifiedFormat(times);
@@ -1450,7 +1489,7 @@ duckdb::AggregateFunctionSet CounterFunctions(std::string_view name) {
 }
 
 duckdb::AggregateFunctionSet PredictFunctions() {
-  duckdb::AggregateFunctionSet set{duckdb::Identifier{"predict_linear"}};
+  duckdb::AggregateFunctionSet set{duckdb::Identifier{"otel_predict_linear"}};
   set.AddFunction(PredictFunction<duckdb::Interval::NANOS_PER_SEC>(
     duckdb::LogicalType::TIMESTAMP_NS));
   set.AddFunction(PredictFunction<duckdb::Interval::MICROS_PER_SEC>(
@@ -1486,7 +1525,7 @@ duckdb::AggregateFunctionSet HistogramFunctions() {
 void RegisterMetricsFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 
-  auto increase = CounterFunctions<Counter::Increase>("increase");
+  auto increase = CounterFunctions<Counter::Increase>("otel_increase");
   for (const auto id : kTimestamps) {
     const duckdb::LogicalType ts{id};
     increase.AddFunction(MakeAggregate<BucketsState, BucketsOperation>(
@@ -1501,13 +1540,14 @@ void RegisterMetricsFunctions(duckdb::DatabaseInstance& db) {
           ExponentialSeriesState, ExponentialIncreaseOperation>));
   }
   loader.RegisterFunction(increase);
-  loader.RegisterFunction(CounterFunctions<Counter::Rate>("rate"));
-  loader.RegisterFunction(CounterFunctions<Counter::InstantRate>("irate"));
-  loader.RegisterFunction(CounterFunctions<Counter::Delta>("delta"));
-  loader.RegisterFunction(CounterFunctions<Counter::InstantDelta>("idelta"));
-  loader.RegisterFunction(CounterFunctions<Counter::Deriv>("deriv"));
-  loader.RegisterFunction(CounterFunctions<Counter::Changes>("changes"));
-  loader.RegisterFunction(CounterFunctions<Counter::Resets>("resets"));
+  loader.RegisterFunction(CounterFunctions<Counter::Rate>("otel_rate"));
+  loader.RegisterFunction(CounterFunctions<Counter::InstantRate>("otel_irate"));
+  loader.RegisterFunction(CounterFunctions<Counter::Delta>("otel_delta"));
+  loader.RegisterFunction(
+    CounterFunctions<Counter::InstantDelta>("otel_idelta"));
+  loader.RegisterFunction(CounterFunctions<Counter::Deriv>("otel_deriv"));
+  loader.RegisterFunction(CounterFunctions<Counter::Changes>("otel_changes"));
+  loader.RegisterFunction(CounterFunctions<Counter::Resets>("otel_resets"));
 
   loader.RegisterFunction(PredictFunctions());
 
@@ -1517,7 +1557,7 @@ void RegisterMetricsFunctions(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(HistogramFunctions<Shape::StdVar>());
 
   duckdb::ScalarFunction pack{
-    "exponential_histogram",
+    "otel_exponential_histogram",
     {duckdb::LogicalType::INTEGER, duckdb::LogicalType::DOUBLE,
      duckdb::LogicalType::INTEGER, Buckets(), duckdb::LogicalType::INTEGER,
      Buckets()},

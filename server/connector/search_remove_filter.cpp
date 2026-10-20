@@ -352,12 +352,12 @@ irs::lead::Node::ptr SearchRowRangeFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMaskBuilder*) const {
   _ranges.clear();
   _range = 0;
-  if (const auto* store = segment.GetColReader()) {
-    if (const auto* column = store->Column(kGeneratedPKId)) {
-      SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
-      Collect(segment, *store, *column);
-    }
-  }
+  const auto* store = segment.GetColReader();
+  SDB_ASSERT(store);
+  const auto* column = store->Column(kGeneratedPKId);
+  SDB_ASSERT(column);
+  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
+  Collect(segment, *store, *column);
   auto& self = const_cast<SearchRowRangeFilter&>(*this);
   self._doc = irs::doc_limits::invalid();
   return irs::memory::to_managed<irs::lead::Node>(self);
@@ -503,6 +503,13 @@ irs::doc_id_t SearchRemoveUnion::Next() {
 
 std::shared_ptr<const irs::Filter> MakeRowRangeRemoval(
   std::span<const search::RowRange> rows) {
+  SDB_ASSERT(absl::c_all_of(rows, [](const search::RowRange& range) {
+    return range.begin < range.end;
+  }));
+  SDB_ASSERT(absl::c_adjacent_find(
+               rows, [](const search::RowRange& l, const search::RowRange& r) {
+                 return l.end >= r.begin;
+               }) == rows.end());
   const auto scanned = [](const search::RowRange& range) {
     return range.end - range.begin >= kScannedRangeRows;
   };

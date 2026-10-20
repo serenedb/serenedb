@@ -137,8 +137,8 @@ def test_schema_param_places_the_tables(tmp_path: Path) -> None:
         server.close()
 
 
-def test_otel_index_none_leaves_the_indexes_to_the_user(tmp_path: Path) -> None:
-    server = _Server(tmp_path, "api=otel&otel_index=none")
+def test_otel_create_index_none_leaves_the_indexes_to_the_user(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&otel_create_index=none")
     try:
         tables = server.pg.execute(
             "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "

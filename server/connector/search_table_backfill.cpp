@@ -141,14 +141,6 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   return fed;
 }
 
-std::shared_ptr<const irs::Filter> MakeRemoval(
-  std::vector<search::RowRange> rows) {
-  // Sorted rowids encode to sorted terms, so the remove filter walks each
-  // segment's term dictionary sequentially.
-  search::NormalizeRowRanges(rows);
-  return MakeRowRangeRemoval(rows);
-}
-
 struct Slice {
   RowSource source;
   irs::IndexWriter::Transaction trx;
@@ -302,7 +294,8 @@ bool RebuildGroup(duckdb::ClientContext& context,
           truncated = true;
           return false;
         }
-        removal = MakeRemoval(std::move(rows));
+        search::NormalizeRowRanges(rows);
+        removal = MakeRowRangeRemoval(rows);
         return true;
       });
   } catch (const irs::SqlException& e) {

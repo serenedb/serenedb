@@ -152,18 +152,19 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     if (spec.database.empty()) {
       SDB_FATAL(GENERAL, "empty 'db' in endpoint '", url, "'");
     }
-  } else if (key == "otel_index") {
+  } else if (key == "otel_create_index") {
     if (!is_http) {
-      SDB_FATAL(GENERAL, "'otel_index' is only valid on an http endpoint '",
-                url, "'");
+      SDB_FATAL(GENERAL,
+                "'otel_create_index' is only valid on an http endpoint '", url,
+                "'");
     }
     if (value == "default") {
-      spec.otel_index = true;
+      spec.otel_create_index = true;
     } else if (value == "none") {
-      spec.otel_index = false;
+      spec.otel_create_index = false;
     } else {
-      SDB_FATAL(GENERAL, "invalid otel_index in endpoint '", url, "': '", value,
-                "' (default|none)");
+      SDB_FATAL(GENERAL, "invalid otel_create_index in endpoint '", url, "': '",
+                value, "' (default|none)");
     }
   } else if (key == "schema") {
     if (!is_http) {
@@ -310,9 +311,10 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
       SDB_FATAL(GENERAL, "http endpoint '", url,
                 "' requires ?api= (e.g. ?api=es); there is no default api");
     }
-    if (!base.otel_index && !absl::c_linear_search(base.apis, HttpApi::Otel)) {
-      SDB_FATAL(GENERAL, "'otel_index' requires api=otel in endpoint '", url,
-                "'");
+    if (base.otel_create_index &&
+        !absl::c_linear_search(base.apis, HttpApi::Otel)) {
+      SDB_FATAL(GENERAL, "'otel_create_index' requires api=otel in endpoint '",
+                url, "'");
     }
   };
 

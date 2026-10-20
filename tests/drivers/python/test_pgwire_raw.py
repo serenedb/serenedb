@@ -369,6 +369,18 @@ def test_failed_parse_does_not_define_name(conn):
     assert len(rows(m)) == 1 and rows(m)[0].endswith(b"42")
 
 
+def test_missing_unnamed_statement_and_portal(conn):
+    for send, expected in (
+        (lambda: conn.bind("", ""), ("26000", "unnamed prepared statement does not exist")),
+        (lambda: conn.describe("S", ""), ("26000", "unnamed prepared statement does not exist")),
+        (lambda: conn.execute(""), ("34000", 'portal "" does not exist')),
+    ):
+        send()
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert [(e["C"], e["M"]) for e in errors(m)] == [expected], errors(m)
+
+
 def test_duplicate_named_statement_is_42p05(conn):
     conn.parse("dup_test", "select 1")
     conn.sync()

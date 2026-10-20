@@ -2267,7 +2267,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   auto& statement = *slot;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                    ERR_MSG("prepared statement is not ready"));
+                    ERR_MSG("unnamed prepared statement does not exist"));
   }
   // Aborted transaction block: reject the Bind (no BindComplete) unless the
   // bound statement is COMMIT/ROLLBACK.
@@ -2312,7 +2312,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   switch (stmt.GetKind()) {
     case Statement::Kind::Unbound:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                      ERR_MSG("prepared statement is not ready"));
+                      ERR_MSG("unnamed prepared statement does not exist"));
     case Statement::Kind::Empty:
     case Statement::Kind::Copy:
     case Statement::Kind::Compound:
@@ -2450,7 +2450,7 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   auto& portal = _proto.portals.FindOrThrow(portal_name);
   if (!portal.stmt) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
-                    ERR_MSG("portal is not bound"));
+                    ERR_MSG("portal \"", portal_name, "\" does not exist"));
   }
   if (portal.exec.state == PortalState::Done) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

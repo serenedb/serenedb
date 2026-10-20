@@ -16,8 +16,7 @@ performance metrics and system events.
 
 ## Basics
 
-The SereneDB logging mechanism can be enabled or disabled using a special function, `enable_logging`. Logs are exposed through a
-table function named `sdb_logs`, which can be queried like any standard table.
+The SereneDB logging mechanism can be enabled or disabled using a special function, `enable_logging`. Logs are exposed through a table function named `sdb_logs`, which can be queried like any standard table while the log is kept in the `memory` or `file` [log storage](#log-storages). The server logs to `stdout` by default, which `sdb_logs` cannot read, so the example switches the storage to `memory`.
 
 Example:
 
@@ -99,6 +98,7 @@ Beyond the core types above, the SereneDB server (`serened`) emits its own log t
 |-------------|----------------------------------------------------------------------------------------------|
 | `Startup`   | Server startup and initialization: endpoints, role creation, readiness                       |
 | `Search`    | Inverted-index (search engine) activity: background refresh and compaction, index maintenance |
+| `Replication` | Logical replication: the apply workers of [subscriptions](../../sql/statements/create_subscription/index.md) |
 | `IResearch` | Low-level events from the underlying [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch) engine |
 | `Storage`   | Storage-engine events                                                                        |
 | `SSL`       | TLS/SSL configuration and connection events                                                  |
@@ -108,18 +108,16 @@ Server log messages that are not assigned a type fall into the default (empty) t
 
 ## Log Storages
 
-By default, SereneDB logs to an in-memory log storage (`memory`). SereneDB supports different types of log storage. Currently,
-the following log storage types are implemented in core SereneDB.
+By default, SereneDB logs to `stdout`. The `--log_storage` option of `serened` picks the log storage at start (`--log_path` gives the path of `file`), and `enable_logging(storage = ...)` switches it at runtime. SereneDB supports the following log storages:
 
 | Log Storage | Description                                               |
 |-------------|-----------------------------------------------------------|
-| `memory`    | (default) Log to an in-memory buffer                      |
-| `stdout`    | Log to the stdout of the current process (in CSV format)  |
+| `memory`    | Log to an in-memory buffer                                |
+| `stdout`    | (default) Log to the stdout of the current process (in CSV format) |
 | `file`      | Log to (a) csv file(s)                                    |
 
 
-Note that the `sdb_logs` table function is automatically updated to target the currently active log storage. This means that switching
-the log storage may influence what is returned by the `sdb_logs` function.
+Note that the `sdb_logs` table function is automatically updated to target the currently active log storage. This means that switching the log storage may influence what is returned by the `sdb_logs` function. With `stdout`, `sdb_logs` returns no rows.
 
 ### Logging to stdout
 

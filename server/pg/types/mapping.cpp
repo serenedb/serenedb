@@ -68,7 +68,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kBox, &BOX, true},
   {kPolygon, &POLYGON, true},
   {kLine, &LINE, true},
-  {kCidr, &CIDR, true},
+  {kCidr, &CIDR, false},
   {kFloat4, []() -> duckdb::LogicalType { return duckdb::LogicalType::FLOAT; }, false},
   {kFloat8, []() -> duckdb::LogicalType { return duckdb::LogicalType::DOUBLE; }, false},
   {kUnknown, []() -> duckdb::LogicalType { return duckdb::LogicalType::UNKNOWN; }, false},

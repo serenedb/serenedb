@@ -139,7 +139,6 @@ inline duckdb::ScalarFunction Fallible(duckdb::ScalarFunction function) {
 struct Functions {
   absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> scalars;
   absl::btree_map<std::string_view, duckdb::AggregateFunctionSet> aggregates;
-  absl::btree_map<std::string_view, duckdb::ScalarFunctionSet> replacements;
 };
 
 inline void Add(Functions& functions, std::string_view name,
@@ -152,12 +151,6 @@ inline void Add(Functions& functions, std::string_view name,
                 duckdb::AggregateFunction function) {
   function.SetName(duckdb::Identifier{name});
   functions.aggregates.try_emplace(name, duckdb::Identifier{name})
-    .first->second.AddFunction(std::move(function));
-}
-
-inline void Replace(Functions& functions, std::string_view name,
-                    duckdb::ScalarFunction function) {
-  functions.replacements.try_emplace(name, duckdb::Identifier{name})
     .first->second.AddFunction(std::move(function));
 }
 

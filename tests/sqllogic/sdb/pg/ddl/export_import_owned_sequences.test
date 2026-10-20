@@ -1,0 +1,419 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS eios_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS eios_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE eios_src_${__DATABASE__};
+
+
+statement ok
+USE eios_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA eios;
+
+
+statement ok
+CREATE TABLE eios.serials (id SERIAL, big BIGSERIAL, v TEXT);
+
+
+statement ok
+CREATE TABLE owners (c INT, d INT);
+
+
+statement ok
+CREATE SEQUENCE created_owned OWNED BY owners.c;
+
+
+statement ok
+CREATE SEQUENCE altered_owned;
+
+
+statement ok
+ALTER SEQUENCE altered_owned OWNED BY owners.d;
+
+
+statement ok
+ALTER TABLE owners ALTER COLUMN d SET DEFAULT nextval('altered_owned');
+
+
+statement ok
+CREATE SEQUENCE released OWNED BY owners.c;
+
+
+statement ok
+ALTER SEQUENCE released OWNED BY NONE;
+
+
+statement ok
+CREATE TABLE drawers (a INT, b INT);
+
+
+statement ok
+CREATE SEQUENCE drawn OWNED BY drawers.b;
+
+
+statement ok
+ALTER TABLE drawers ALTER COLUMN a SET DEFAULT nextval('drawn');
+
+
+statement ok
+CREATE SEQUENCE free;
+
+
+statement ok
+CREATE VIEW eios.free_next AS SELECT nextval('free') AS n;
+
+
+statement ok
+CREATE MACRO eios.released_next() AS nextval('released');
+
+
+statement ok
+INSERT INTO eios.serials (v) VALUES ('a'), ('b');
+
+
+statement ok
+INSERT INTO owners (c) VALUES (1), (2);
+
+
+query
+SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner, a.attname AS column
+FROM pg_depend d
+JOIN pg_class c ON c.oid = d.objid
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+WHERE d.deptype = 'a' AND c.relkind = 'S'
+ORDER BY 1;
+----
+sequence	owner	column
+altered_owned	owners	d
+created_owned	owners	c
+drawn	drawers	b
+eios.serials_big_seq	eios.serials	big
+eios.serials_id_seq	eios.serials	id
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/eios';
+
+
+query
+SELECT line
+FROM (
+    SELECT unnest(string_split(content, chr(10))) AS line
+    FROM read_text('${__TEST_DIR__}/eios/schema.sql')
+)
+WHERE line LIKE '%OWNED BY%'
+ORDER BY 1;
+----
+line
+ALTER SEQUENCE eios.serials_big_seq OWNED BY serials.big;
+ALTER SEQUENCE eios.serials_id_seq OWNED BY serials.id;
+ALTER SEQUENCE public.altered_owned OWNED BY owners.d;
+ALTER SEQUENCE public.created_owned OWNED BY owners.c;
+ALTER SEQUENCE public.drawn OWNED BY drawers.b;
+
+
+query
+SELECT position('CREATE SEQUENCE public.free ' IN content) < position('CREATE VIEW eios.free_next ' IN content) AS view_after_sequence,
+       position('CREATE SEQUENCE public.released ' IN content) < position('released_next' IN content) AS macro_after_sequence
+FROM read_text('${__TEST_DIR__}/eios/schema.sql');
+----
+view_after_sequence	macro_after_sequence
+t	t
+
+
+statement ok
+CREATE DATABASE eios_dst_${__DATABASE__};
+
+
+statement ok
+USE eios_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/eios';
+
+
+query
+SELECT d.objid::regclass::text AS sequence, d.refobjid::regclass::text AS owner, a.attname AS column
+FROM pg_depend d
+JOIN pg_class c ON c.oid = d.objid
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+WHERE d.deptype = 'a' AND c.relkind = 'S'
+ORDER BY 1;
+----
+sequence	owner	column
+altered_owned	owners	d
+created_owned	owners	c
+drawn	drawers	b
+eios.serials_big_seq	eios.serials	big
+eios.serials_id_seq	eios.serials	id
+
+
+query
+SELECT pg_get_serial_sequence('drawers', 'a') AS a, pg_get_serial_sequence('drawers', 'b') AS b;
+----
+a	b
+NULL	public.drawn
+
+
+query
+SELECT (SELECT n FROM eios.free_next) AS free_next, eios.released_next() AS released_next;
+----
+free_next	released_next
+1	1
+
+
+statement ok
+INSERT INTO eios.serials (v) VALUES ('c');
+
+
+statement ok
+INSERT INTO owners (c) VALUES (3);
+
+
+query
+SELECT id, big, v FROM eios.serials ORDER BY id;
+----
+id	big	v
+1	1	a
+2	2	b
+3	3	c
+
+
+query
+SELECT c, d FROM owners ORDER BY c;
+----
+c	d
+1	1
+2	2
+3	3
+
+
+statement ok
+TRUNCATE eios.serials, owners RESTART IDENTITY;
+
+
+query
+SELECT nextval('eios.serials_id_seq') AS id, nextval('eios.serials_big_seq') AS big, nextval('created_owned') AS created, nextval('altered_owned') AS altered;
+----
+id	big	created	altered
+1	1	1	1
+
+
+statement ok
+DROP TABLE eios.serials;
+
+
+statement ok
+DROP TABLE owners;
+
+
+statement ok
+DROP TABLE drawers;
+
+
+query
+SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+----
+schema_name	sequence_name
+public	free
+public	released
+
+
+statement ok
+USE eios_src_${__DATABASE__};
+
+
+statement ok
+DROP TABLE eios.serials;
+
+
+statement ok
+DROP TABLE owners;
+
+
+statement ok
+DROP TABLE drawers;
+
+
+query
+SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+----
+schema_name	sequence_name
+public	free
+public	released
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE eios_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE eios_dst_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/eios_duck_src.duckdb' AS eios_duck_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eios_duck_src_${__DATABASE__}.main.t (id INTEGER, v TEXT);
+
+
+statement ok
+CREATE SEQUENCE eios_duck_src_${__DATABASE__}.main.by_table;
+
+
+statement ok
+ALTER SEQUENCE eios_duck_src_${__DATABASE__}.main.by_table OWNED BY eios_duck_src_${__DATABASE__}.main.t;
+
+
+statement ok
+CREATE SEQUENCE eios_duck_src_${__DATABASE__}.main.owner_seq;
+
+
+statement ok
+CREATE SEQUENCE eios_duck_src_${__DATABASE__}.main.by_sequence;
+
+
+statement ok
+ALTER SEQUENCE eios_duck_src_${__DATABASE__}.main.by_sequence OWNED BY eios_duck_src_${__DATABASE__}.main.owner_seq;
+
+
+statement ok
+CREATE SCHEMA eios_duck_src_${__DATABASE__}.a;
+
+
+statement ok
+CREATE SCHEMA eios_duck_src_${__DATABASE__}.a.b;
+
+
+statement ok
+CREATE SCHEMA eios_duck_src_${__DATABASE__}.b;
+
+
+statement ok
+CREATE TABLE eios_duck_src_${__DATABASE__}.b.t2 (id INTEGER);
+
+
+statement ok
+CREATE TABLE eios_duck_src_${__DATABASE__}.a.b.t2 (id INTEGER);
+
+
+statement ok
+CREATE SEQUENCE eios_duck_src_${__DATABASE__}.a.b.by_top;
+
+
+statement ok
+USE eios_duck_src_${__DATABASE__};
+
+
+statement ok
+ALTER SEQUENCE a.b.by_top OWNED BY b.t2;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+EXPORT DATABASE eios_duck_src_${__DATABASE__} TO '${__TEST_DIR__}/eios_duck';
+
+
+statement ok
+CREATE DATABASE eios_sdb_dst_${__DATABASE__};
+
+
+statement ok
+USE eios_sdb_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/eios_duck';
+
+
+query
+SELECT schema_name, sequence_name FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1, 2;
+----
+schema_name	sequence_name
+b	by_top
+public	by_sequence
+public	by_table
+public	owner_seq
+
+
+query
+SELECT schema_name, table_name
+FROM duckdb_tables()
+WHERE database_name = current_database() AND schema_name NOT IN ('information_schema', 'pg_catalog')
+ORDER BY 1, 2;
+----
+schema_name	table_name
+b	t2
+b	t2
+public	t
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE eios_sdb_dst_${__DATABASE__};
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/eios_duck_dst.duckdb' AS eios_duck_dst_${__DATABASE__};
+
+
+statement ok
+USE eios_duck_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/eios_duck';
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
+----
+sequence_name
+by_sequence
+by_table
+by_top
+owner_seq
+
+
+query
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'eios_duck_dst_${__DATABASE__}' ORDER BY 1;
+----
+table_name
+t
+t2
+t2
+
+
+statement ok
+DETACH eios_duck_src_${__DATABASE__};
+
+
+statement ok
+DETACH eios_duck_dst_${__DATABASE__};

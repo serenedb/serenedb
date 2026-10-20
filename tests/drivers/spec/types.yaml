@@ -232,7 +232,7 @@
   text: true
   binary: true
   array: true
-  samples: ["192.168.0.0/16", "::1/128", null]
+  samples: ["192.168.0.0/16", "::1/128", "10.1.2.3/32", "0.0.0.0/0", null]
 
 - oid: 829
   name: macaddr

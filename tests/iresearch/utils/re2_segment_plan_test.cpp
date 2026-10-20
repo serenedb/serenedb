@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 #include <re2/re2.h>
+#include <re2/segment_plan.h>
 
 #include <algorithm>
 #include <fstream>
@@ -252,6 +253,41 @@ std::string Instantiate(std::mt19937& rng, std::string_view pattern) {
     }
   }
   return text;
+}
+
+std::unique_ptr<re2::SegmentPlan> LikePlan(std::string_view pattern,
+                                           bool valid_utf8 = false,
+                                           bool has_escape = true,
+                                           char escape = '\\') {
+  return std::unique_ptr<re2::SegmentPlan>{
+    re2::SegmentPlan::MakeLike(pattern, has_escape, escape, valid_utf8)};
+}
+
+bool EndsInEscape(std::string_view pattern, char escape = '\\') {
+  bool escaped = false;
+  for (const auto c : pattern) {
+    escaped = !escaped && c == escape;
+  }
+  return escaped;
+}
+
+void ExpectLikePlanSameAsEngines(std::mt19937& rng, std::string_view pattern,
+                                 size_t texts) {
+  const auto plan = LikePlan(pattern);
+  ASSERT_EQ(EndsInEscape(pattern), plan == nullptr) << Printable(pattern);
+  if (!plan) {
+    return;
+  }
+  const RE2 engines{"(" + LikeRegex(pattern) + ")", Options(true)};
+  if (!engines.ok()) {
+    return;
+  }
+  for (size_t i = 0; i != texts; ++i) {
+    const auto text =
+      Coin(rng, 2) ? Instantiate(rng, pattern) : RandomUnits(rng, 10);
+    ASSERT_EQ(RE2::FullMatch(text, engines), plan->Match(text))
+      << Printable(pattern) << " ~ " << Printable(text);
+  }
 }
 
 void ExpectLikeSameAsEngines(std::mt19937& rng, std::string_view pattern,
@@ -498,4 +534,109 @@ TEST(Re2SegmentPlanTest, random_like_patterns_match_engines) {
     }
     ASSERT_NO_FATAL_FAILURE(ExpectLikeSameAsEngines(rng, pattern, 60));
   }
+}
+
+TEST(Re2SegmentPlanTest, like_plan_shapes) {
+  struct Case {
+    std::string_view pattern;
+    std::string_view text;
+    bool match;
+  };
+  static constexpr Case kCases[] = {
+    {"", "", true},
+    {"", "a", false},
+    {"%", "", true},
+    {"%", "abc", true},
+    {"%%", "abc", true},
+    {"abc", "abc", true},
+    {"abc", "abcd", false},
+    {"abc%", "abcd", true},
+    {"abc%", "xabc", false},
+    {"%bcd", "abcd", true},
+    {"%bcd", "abcdx", false},
+    {"%bc%", "abcd", true},
+    {"%bc%", "acbd", false},
+    {"a%d", "ad", true},
+    {"a%c%d", "abcd", true},
+    {"a%d%d", "abcd", false},
+    {"ab%ba", "aba", false},
+    {"ab%ba", "abba", true},
+    {"%an%an%an%", "banana", false},
+    {"_bcd", "abcd", true},
+    {"a__d", "abcd", true},
+    {"a_d", "abcd", false},
+    {"%_%", "", false},
+    {"%_%", "a", true},
+    {"%__", "a", false},
+    {"_", "\xC3\xA9", true},
+    {"__", "\xC3\xA9", false},
+    {"caf_", "caf\xC3\xA9", true},
+    {"%_\xE2\x82\xAC", "\xE2\x82\xAC", false},
+    {"a\\%b", "a%b", true},
+    {"a\\%b", "axb", false},
+    {"a\\_b", "a_b", true},
+    {"a\\_b", "axb", false},
+    {"\\\\", "\\", true},
+    {"\\a\\b", "ab", true},
+    {"a\n_", "a\nb", true},
+    {"%\n%", "x\ny", true},
+  };
+  for (const auto& [pattern, text, match] : kCases) {
+    const auto plan = LikePlan(pattern);
+    ASSERT_NE(nullptr, plan) << Printable(pattern);
+    EXPECT_EQ(match, plan->Match(text))
+      << Printable(pattern) << " ~ " << Printable(text);
+    const auto valid = LikePlan(pattern, true);
+    ASSERT_NE(nullptr, valid) << Printable(pattern);
+    EXPECT_EQ(match, valid->Match(text))
+      << Printable(pattern) << " ~ " << Printable(text);
+  }
+  EXPECT_EQ(nullptr, LikePlan("a\\"));
+  EXPECT_EQ(nullptr, LikePlan("%\\\\\\"));
+  EXPECT_NE(nullptr, LikePlan("a\\\\"));
+}
+
+TEST(Re2SegmentPlanTest, like_plan_matches_engines) {
+  std::mt19937 rng{20261019};
+  std::ifstream corpus{TestEnv::resource("patterns/like.tsv")};
+  ASSERT_TRUE(corpus.is_open());
+  for (std::string line; std::getline(corpus, line);) {
+    std::string_view pattern = line;
+    for (int column = 0; column != 3; ++column) {
+      pattern.remove_prefix(pattern.find('\t') + 1);
+    }
+    ASSERT_NO_FATAL_FAILURE(ExpectLikePlanSameAsEngines(rng, pattern, 100));
+  }
+  for (size_t i = 0; i != 4000; ++i) {
+    std::string pattern;
+    for (auto n = std::uniform_int_distribution<size_t>{0, 8}(rng); n != 0;
+         --n) {
+      pattern += Pick(rng, kPatternTokens);
+    }
+    ASSERT_NO_FATAL_FAILURE(ExpectLikePlanSameAsEngines(rng, pattern, 60));
+  }
+}
+
+TEST(Re2SegmentPlanTest, like_plan_escapes) {
+  EXPECT_EQ(nullptr, LikePlan("a#%b#_#", true, true, '#'));
+  const auto hashed = LikePlan("a#%b#_##%", true, true, '#');
+  ASSERT_NE(nullptr, hashed);
+  EXPECT_TRUE(hashed->Match("a%b_#"));
+  EXPECT_TRUE(hashed->Match("a%b_#tail"));
+  EXPECT_FALSE(hashed->Match("axb_#"));
+  EXPECT_FALSE(hashed->Match("a%bx#"));
+  EXPECT_EQ(nullptr, LikePlan("a%%b%", true, true, '%'));
+  const auto percent = LikePlan("a%%b", true, true, '%');
+  ASSERT_NE(nullptr, percent);
+  EXPECT_TRUE(percent->Match("a%b"));
+  EXPECT_FALSE(percent->Match("axb"));
+  EXPECT_FALSE(percent->Match("a%bc"));
+  const auto none = LikePlan("a\\%", true, false);
+  ASSERT_NE(nullptr, none);
+  EXPECT_TRUE(none->Match("a\\"));
+  EXPECT_TRUE(none->Match("a\\bc"));
+  EXPECT_FALSE(none->Match("a"));
+  const auto trailing = LikePlan("a\\", true, false);
+  ASSERT_NE(nullptr, trailing);
+  EXPECT_TRUE(trailing->Match("a\\"));
 }

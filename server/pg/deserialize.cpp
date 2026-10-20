@@ -1951,48 +1951,58 @@ struct NestedAdapter<ValueSink> {
   }
 };
 
-template<bool kCidr>
+template<bool Cidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
-  // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or 16),
-  // then nb big-endian addr bytes; only bits and nb are read.
-  if (data.size() < 4) {
+  InetWireHeader header;
+  if (data.size() < sizeof(header)) {
     return false;
   }
-  const auto nb = static_cast<uint8_t>(data[3]);
-  const bool is_v6 = nb == 16;
-  if ((!is_v6 && nb != 4) || data.size() != static_cast<size_t>(4) + nb) {
+  std::memcpy(&header, data.data(), sizeof(header));
+  const bool is_v6 = header.family == kPgsqlAfInet6;
+  const bool known_family = is_v6 || header.family == kPgsqlAfInet;
+  const uint32_t address_size = is_v6 ? kInetWireV6Size : kInetWireV4Size;
+  const bool size_matches_family = header.size == address_size;
+  const bool mask_fits_address = header.bits <= address_size * CHAR_BIT;
+  const bool length_is_exact = data.size() == sizeof(header) + address_size;
+  if (!known_family || !size_matches_family || !mask_fits_address ||
+      !length_is_exact) {
     return false;
   }
-  const char* addr = data.data() + 4;
-  INET_IPAddress inet{};
-  inet.mask = static_cast<uint8_t>(data[1]);
+  const char* addr = data.data() + sizeof(header);
+  INET_IPAddress inet;
+  inet.mask = header.bits;
   if (is_v6) {
     inet.type = INET_IP_ADDRESS_V6;
     inet.address.upper = absl::big_endian::Load<uint64_t>(addr);
-    inet.address.lower = absl::big_endian::Load<uint64_t>(addr + 8);
+    inet.address.lower =
+      absl::big_endian::Load<uint64_t>(addr + sizeof(uint64_t));
   } else {
     inet.type = INET_IP_ADDRESS_V4;
+    inet.address.upper = 0;
     inet.address.lower = absl::big_endian::Load<uint32_t>(addr);
   }
-  if (kCidr && !IsNetwork(inet)) {
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
     return false;
   }
   StoreInet(vec, row, inet);
   return true;
 }
 
-template<bool kCidr>
+template<bool Cidr>
 bool DeserializeTextInet(DeserializeContext&, std::string_view data,
                          duckdb::Vector& vec, duckdb::idx_t row) {
   INET_IPAddress inet;
   try {
-    inet =
-      kCidr ? ParseCidr(data) : ipaddress_from_string(data.data(), data.size());
+    inet = Cidr ? cidr_from_string(data.data(), data.size())
+                : ipaddress_from_string(data.data(), data.size());
   } catch (...) {
     return false;
   }
   if (inet.type == INET_IP_ADDRESS_INVALID) {
+    return false;
+  }
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
     return false;
   }
   StoreInet(vec, row, inet);
@@ -2181,22 +2191,22 @@ struct GeometricText {
   }
 };
 
-template<bool kCidr>
+template<bool Cidr>
 struct InetBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<kCidr>>(
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<Cidr>>(
       ctx, data, sink);
   }
 };
 
-template<bool kCidr>
+template<bool Cidr>
 struct InetText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet<kCidr>>(
+    return NestedAdapter<Sink>::template Run<DeserializeTextInet<Cidr>>(
       ctx, data, sink);
   }
 };

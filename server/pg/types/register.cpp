@@ -28,7 +28,6 @@
 #include "pg/types/float.h"
 #include "pg/types/function.h"
 #include "pg/types/geometric.h"
-#include "pg/types/inet.h"
 #include "pg/types/mac.h"
 #include "pg/types/money.h"
 #include "pg/types/name.h"
@@ -47,7 +46,6 @@ void RegisterTypes(duckdb::DatabaseInstance& db) {
   Functions functions;
   RegisterRegTypes(casts);
   RegisterPgLsn(casts, functions);
-  RegisterInet(casts, functions);
   RegisterBytea(casts, functions);
   RegisterBit(functions);
   RegisterFloat(casts);

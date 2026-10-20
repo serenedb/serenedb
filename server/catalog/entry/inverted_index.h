@@ -250,6 +250,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
+    duckdb::CatalogTransaction transaction) const final;
   std::string ToSQL() const final {
     return duckdb::IndexCatalogEntry::GetInfo()->ToString();
   }
@@ -295,6 +297,11 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
  private:
   persistence::InvertedIndexData ToPersisted() const;
+
+  bool ViewBacked() const noexcept { return !info && !_search_table; }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> ReindexJob(
+    duckdb::CatalogTransaction transaction) const;
 
   void AlterReindexJob(duckdb::CatalogTransaction transaction,
                        uint32_t interval_ms);

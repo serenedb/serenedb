@@ -24,7 +24,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | bytea                        | 🟢            |         |
 | char                         | 🟡            | Values above 127 compare by their text form, such as `\303`, so `'é'::"char" > 'z'::"char"` is false. |
 | cid                          | 🟢            |         |
-| cidr                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
+| cidr                         | 🟡            | A column of this type cannot be a `PRIMARY KEY` or `UNIQUE` column, and only an [inverted index](../sql/indexes/inverted/index.md) indexes it. `min` and `max` of a `cidr` column return `cidr`, where PostgreSQL returns `inet`. |
 | circle                       | 🟡            | The comparison operators such as `=` and `<` compare the center and then the radius, where PostgreSQL compares areas, so `circle '<(0,0),1>' = circle '<(5,5),1>'` is false. `ORDER BY`, `DISTINCT` and `GROUP BY` use the same comparison, where PostgreSQL refuses them. A column of this type cannot be indexed. |
 | date                         | 🟡            | A date before year 1 is read in the form `'0001-12-31 (BC)'` instead of `'0001-12-31 BC'`, and a cast to `text` gives that form. |
 | datemultirange               | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. |
@@ -32,7 +32,7 @@ The array type of each type, `<type>[]`, has the same support as the type, and t
 | float4                       | 🟡            | `real`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e40'::float4` is `Infinity`. A whole number prints without an exponent, so `1000000::float4` is `1000000` where PostgreSQL prints `1e+06`, and a negative zero prints as `0`. |
 | float8                       | 🟡            | `double precision`: a value out of range becomes `Infinity` or `0` instead of an error, so `'1e400'::float8` and `1e308::float8 * 10` are `Infinity`. Hexadecimal input such as `'0x10'::float8` is not accepted. A whole number prints without an exponent, so `1e15::float8` is `1000000000000000` where PostgreSQL prints `1e+15`; other values print in their shortest form, so `0.0001::float8` is `1e-04`, and a negative zero prints as `0`. |
 | gtsvector                    | 🔴            |         |
-| inet                         | 🟡            | A column of this type cannot be indexed, nor be a `PRIMARY KEY` or `UNIQUE` column. `concat`, `format` and `array_to_string` print an address with its netmask, as a cast to `text` does (`10.0.0.1/32`), where PostgreSQL prints `10.0.0.1`. |
+| inet                         | 🟡            | A column of this type cannot be a `PRIMARY KEY` or `UNIQUE` column, and only an [inverted index](../sql/indexes/inverted/index.md) indexes it. `concat`, `format` and `array_to_string` print an address with its netmask, as a cast to `text` does (`10.0.0.1/32`), where PostgreSQL prints `10.0.0.1`. |
 | int2                         | 🟢            | `smallint` |
 | int2vector                   | 🟢            |         |
 | int4                         | 🟢            | `integer` |

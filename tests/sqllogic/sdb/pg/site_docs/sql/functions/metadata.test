@@ -24,6 +24,12 @@ DROP SECRET IF EXISTS demo_secret;
 statement ok
 CREATE SECRET demo_secret (TYPE s3, KEY_ID 'k', SECRET 's');
 
+statement ok
+CREATE OR REPLACE JOB demo_job AFTER 1 HOUR AS SELECT count(*) FROM metadata_demo;
+
+statement ok
+EXECUTE JOB demo_job;
+
 
 # DOCS_TEST: example_001
 
@@ -342,3 +348,27 @@ WHERE view_name = 'metadata_demo_v';
 ----
 view_name	column_count
 metadata_demo_v	2
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query
+SELECT DISTINCT job_name, trigger, success
+FROM sdb_job_runs()
+WHERE database_name = current_database() AND job_name = 'demo_job';
+----
+job_name	trigger	success
+demo_job	manual	t
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query
+SELECT job_name, schedule, run_count, last_status
+FROM sdb_jobs()
+WHERE database_name = current_database() AND job_name = 'demo_job';
+----
+job_name	schedule	run_count	last_status
+demo_job	AFTER INTERVAL '01:00:00'	1	success

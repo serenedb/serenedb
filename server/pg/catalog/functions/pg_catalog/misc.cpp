@@ -1076,7 +1076,7 @@ int64_t DatumSize(const duckdb::Value& value) {
       type.id() == duckdb::LogicalTypeId::ARRAY) {
     return ArrayDatumSize(value);
   }
-  if (IsInet(type) || IsCidr(type)) {
+  if (IsInetOrCidr(type)) {
     const auto& fields = duckdb::StructValue::GetChildren(value);
     return kVarHdrSz + kInetHeaderSize +
            (fields[0].GetValue<uint8_t>() == INET_IP_ADDRESS_V4 ? 4 : 16);

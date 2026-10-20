@@ -75,7 +75,7 @@ Common keys, with the aliases each connector accepts:
 | `database` | `dbname`, `db` | Remote database |
 | `secure` | `ssl` (ClickHouse) | Use TLS |
 
-Keys beyond this list are passed through to the connector, so any connection parameter the underlying connector understands (for example `sslpassword`, `connect_timeout`) can be set the same way. An option the connector does not recognize surfaces as a connection error at `CREATE SERVER`.
+Keys beyond this list are passed through to the connector, so any connection parameter the underlying connector understands (for example `sslpassword`, `connect_timeout`) can be set the same way. An option the connector does not recognize surfaces as a connection error at `CREATE SERVER`. A `clickhouse_fdw` server also takes `compression` (`none`, `zstd` or `lz4`), and takes every option it leaves out from the unnamed `clickhouse` [secret](../../../configuration/secrets_manager.md#clickhouse-secrets), when there is one.
 
 Values are stored verbatim and are not parsed further, so a value containing spaces (`password 'pass word'`) round-trips intact.
 
@@ -119,10 +119,10 @@ INSERT INTO orders.staging.import VALUES (1, 'first');
 
 Filter pushdown applies as it does for an attachment: equality, `IN` and other supported predicates are translated into the remote query rather than filtered locally.
 
-To see the queries sent to the remote, enable the `PostgresQueryLog` or `ClickHouseQueryLog` [log type](../../../configuration/logging/index.md#list-of-available-log-types) and read them, with their durations, from `sdb_logs_parsed`:
+To see the queries sent to the remote, enable the `PostgresQueryLog` or `ClickHouseQueryLog` [log type](../../../configuration/logging/index.md#list-of-available-log-types) with the `memory` [log storage](../../../configuration/logging/index.md#log-storages), and read them, with their durations, from `sdb_logs_parsed`. The server logs to `stdout` by default, which `sdb_logs_parsed` cannot read. Both choices apply to the whole server: until `CALL enable_logging(storage = 'stdout')` switches back, its log holds only this log type, in memory.
 
 ```sql
-CALL enable_logging('ClickHouseQueryLog');
+CALL enable_logging('ClickHouseQueryLog', storage = 'memory');
 SELECT id, val FROM analytics.events.pageviews ORDER BY id;
 SELECT query, duration_ms FROM sdb_logs_parsed('ClickHouseQueryLog');
 ```

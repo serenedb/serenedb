@@ -22,23 +22,33 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <iresearch/utils/shared.hpp>
-#include <string_view>
 
-#include "pg/types/function.h"
+#include "pg/types/logical.h"
 
 namespace sdb::pg {
+
+inline constexpr uint8_t kPgsqlAfInet = 2;
+inline constexpr uint8_t kPgsqlAfInet6 = 3;
+inline constexpr uint8_t kInetWireV4Size = sizeof(uint32_t);
+inline constexpr uint8_t kInetWireV6Size = 2 * sizeof(uint64_t);
+
+struct InetWireHeader {
+  uint8_t family;
+  uint8_t bits;
+  uint8_t is_cidr;
+  uint8_t size;
+};
 
 // STRUCT entries: [0]=ip_type (1=IPv4, 2=IPv6), [1]=address (signed hugeint,
 // IPv6 top bit flipped for sort order), [2]=mask.
 IRS_FORCE_INLINE inline void ReadInet(
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
   INET_IPAddress& inet) {
-  const auto& c0 = vdata.children[0].unified;
-  const auto& c1 = vdata.children[1].unified;
-  const auto& c2 = vdata.children[2].unified;
+  const auto& c0 = vdata.children[kInetIpTypeChild].unified;
+  const auto& c1 = vdata.children[kInetAddressChild].unified;
+  const auto& c2 = vdata.children[kInetMaskChild].unified;
   const auto ip_type =
     duckdb::UnifiedVectorFormat::GetData<uint8_t>(c0)[c0.sel->get_index(row)];
   const auto stored = duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(
@@ -49,20 +59,12 @@ IRS_FORCE_INLINE inline void ReadInet(
   inet.address.lower = stored.lower;
   inet.address.upper = static_cast<uint64_t>(stored.upper);
   if (inet.type == INET_IP_ADDRESS_V6) {
-    inet.address.upper ^= (uint64_t{1} << 63);  // undo IPv6 sort-order flip
+    inet.address.upper ^= kInetV6SortBit;
   }
   inet.mask = mask;
 }
 
 void StoreInet(duckdb::Vector& vec, duckdb::idx_t row,
                const INET_IPAddress& inet);
-
-bool IsNetwork(const INET_IPAddress& inet);
-
-INET_IPAddress ParseCidr(std::string_view text);
-
-size_t CidrToString(const INET_IPAddress& inet, char* buffer, size_t size);
-
-void RegisterInet(duckdb::CastFunctionSet& casts, Functions& functions);
 
 }  // namespace sdb::pg

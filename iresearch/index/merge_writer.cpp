@@ -46,6 +46,7 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -488,12 +489,18 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
                        doc_id_t next_id) {
   doc_id_map.resize(reader.docs_count() + doc_limits::min(), doc_limits::eof());
-  auto docs_itr = reader.docs_iterator();
-  for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
-       src_doc_id = docs_itr->Next(), ++next_id) {
-    SDB_ASSERT(src_doc_id >= doc_limits::min());
-    SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
-    doc_id_map[src_doc_id] = next_id;
+  auto mask = MakeGenericDocsMask(reader);
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  const auto end = LiveEnd(reader);
+  for (auto window = doc_limits::min(); window < end;) {
+    const auto count = std::min(end - window, detail::kWindowDocs);
+    const auto alive = mask.FillLive(window, count, live);
+    auto* IRS_RESTRICT out = doc_id_map.data() + window;
+    for (uint32_t i = 0; i != alive; ++i) {
+      out[live[i]] = next_id + i;
+    }
+    next_id += alive;
+    window += count;
   }
   return next_id;
 }
@@ -523,18 +530,26 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
   const auto& src = *piece.source;
   const auto& region = piece.reader->Region(piece.region);
   const bool has_mask = HasRemovals(src.reader->Meta());
-  auto mask = src.reader->MaskedDocs();
+  auto mask = MakeGenericDocsMask(*src.reader);
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
   for (auto doc = region.first_doc; doc != region.end_doc;) {
     const auto n = std::min<size_t>(region.end_doc - doc, kNormMergeChunk);
     values.resize(n);
     piece.reader->Decode(doc, n, values.data());
     if (has_mask) {
-      size_t live = 0;
-      for (size_t i = 0; i != n; ++i) {
-        values[live] = values[i];
-        live += !mask.Contains(static_cast<doc_id_t>(doc + i));
+      size_t kept = 0;
+      for (size_t at = 0; at < n;) {
+        const auto count =
+          static_cast<doc_id_t>(std::min<size_t>(n - at, detail::kWindowDocs));
+        const auto alive =
+          mask.FillLive(static_cast<doc_id_t>(doc + at), count, live);
+        const auto* from = values.data() + at;
+        for (uint32_t i = 0; i != alive; ++i) {
+          values[kept++] = from[live[i]];
+        }
+        at += count;
       }
-      values.resize(live);
+      values.resize(kept);
     }
     writer.Write(values);
     doc += static_cast<doc_id_t>(n);
@@ -705,7 +720,6 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.MaskedDocs();
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {

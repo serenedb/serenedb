@@ -25,6 +25,8 @@
 #include <fast_float/fast_float.h>
 
 #include <array>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -56,7 +58,6 @@ bool ReportsInputErrors(const duckdb::LogicalType& type) {
     kOidAlias,
     kTidAlias,
     kPgLsnAlias,
-    kCidrAlias,
     kMacaddrAlias,
     kMacaddr8Alias,
     kInt2vectorAlias,
@@ -175,18 +176,36 @@ TextInput::TextInput(duckdb::ClientContext& context,
 std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
   _result.ResetFromCache(_cache);
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_source)[0] = text;
+  if (!_reports) {
+    duckdb::CastParameters parameters{_cast.GetCastData(), false, nullptr,
+                                      _state.get()};
+    try {
+      _cast.Cast(_source, _result, 1, parameters);
+    } catch (const duckdb::Exception& exception) {
+      const duckdb::ErrorData error{exception};
+      if (error.Type() != duckdb::ExceptionType::CONVERSION) {
+        throw;
+      }
+      auto data = SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                                 ERR_MSG(error.RawMessage()));
+      if (auto it = error.ExtraInfo().find("detail");
+          it != error.ExtraInfo().end()) {
+        data.errdetail = it->second;
+      }
+      return data;
+    }
+    return std::nullopt;
+  }
   std::string message;
   duckdb::CastParameters parameters{_cast.GetCastData(), false, &message,
                                     _state.get()};
   if (_cast.Cast(_source, _result, 1, parameters)) {
     return std::nullopt;
   }
-  if (_reports) {
-    if (auto& state = _state->Cast<InputState>(); state.error) {
-      auto error = std::move(*state.error);
-      state.error.reset();
-      return error;
-    }
+  if (auto& state = _state->Cast<InputState>(); state.error) {
+    auto error = std::move(*state.error);
+    state.error.reset();
+    return error;
   }
   return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG(message));

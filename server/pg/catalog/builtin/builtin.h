@@ -57,19 +57,6 @@ constexpr const auto* FindByOid(const Rows& rows, Key oid) {
   return it != std::end(rows) && it->oid == oid ? &*it : nullptr;
 }
 
-struct FrozenOid {
-  std::string_view key;
-  int32_t oid;
-};
-
-constexpr int32_t FindFrozenOid(std::span<const FrozenOid> rows,
-                                std::string_view key) {
-  const auto it = absl::c_lower_bound(
-    rows, key,
-    [](const FrozenOid& row, std::string_view key) { return row.key < key; });
-  return it != rows.end() && it->key == key ? it->oid : kInvalidOid;
-}
-
 template<typename Index, typename Rows>
 constexpr auto OidIndex(const Rows& rows) {
   std::array<Index, kBuiltinTypeOidLimit> index{};

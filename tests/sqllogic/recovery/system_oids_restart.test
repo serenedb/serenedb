@@ -121,7 +121,7 @@ id	txt	doubled
 
 connection after_crash_sor database=sor_db
 query
-SELECT count(*) AS user_objects_below_65536 FROM sor_db_before WHERE kind IN ('relation', 'function') AND oid < 65536;
+SELECT count(*) AS user_objects_below_524288 FROM sor_db_before WHERE kind IN ('relation', 'function') AND oid < 524288;
 ----
-user_objects_below_65536
+user_objects_below_524288
 0

@@ -1,6 +1,7 @@
 import re
 
 from . import source
+from .initdb_oids import OIDS
 
 CREATE_VIEW = re.compile(
     r'^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)'
@@ -113,7 +114,7 @@ class Domain:
 
 
 class Initdb:
-    def __init__(self, lock):
+    def __init__(self):
         system_views = source.read('src', 'backend', 'catalog',
                                    'system_views.sql')
         information_schema = source.read('src', 'backend', 'catalog',
@@ -121,9 +122,6 @@ class Initdb:
         system_functions = source.read('src', 'backend', 'catalog',
                                        'system_functions.sql')
         initdb = source.read('src', 'bin', 'initdb', 'initdb.c')
-        self.lock = lock
-        self.first_oid = source.define('access/transam.h',
-                                       'FirstUnpinnedObjectId')
         self.views = []
         self.tables = {}
         self.domains = []
@@ -132,12 +130,6 @@ class Initdb:
             self.add(statement, 'pg_catalog')
         for statement in statements(information_schema):
             self.add(statement, 'information_schema')
-        lock.retire('relation', {f'{view.schema}.{view.name}'
-                                 for view in self.views} |
-                    {f'information_schema.{name}' for name in self.tables})
-        lock.retire('domain', {f'information_schema.{domain.name}'
-                               for domain in self.domains})
-        lock.retire('namespace', {'information_schema'})
         self.revoked = set(REVOKE_ALL.findall(system_views + initdb))
         self.granted = set(GRANT_SELECT.findall(information_schema))
         self.public_columns = {
@@ -146,10 +138,12 @@ class Initdb:
         self.revoked_functions = set(
             REVOKE_EXECUTE.findall(system_views + system_functions))
 
-    def allocate(self, kind, identity, offset):
-        return self.lock.assign(
-            kind, identity,
-            lambda: self.lock.next_initdb(self.first_oid) + offset)
+    @staticmethod
+    def oid(identity):
+        if identity not in OIDS:
+            raise SystemExit(f'{identity} has no OID in '
+                             f'scripts/pg_catalog/initdb_oids.py')
+        return OIDS[identity]
 
     def add(self, statement, schema):
         if match := CREATE_VIEW.search(statement):
@@ -157,23 +151,23 @@ class Initdb:
             self.views.append(View(
                 schema, name, match.group(2),
                 statement[match.end():].strip('\n'),
-                self.allocate('relation', f'{schema}.{name}', 0)))
+                self.oid(f'{schema}.{name}')))
         elif match := CREATE_TABLE.search(statement):
             name = match.group(1)
             self.tables[name] = Table(
                 name,
                 [tuple(column.split()) for column
                  in split_list(match.group(2))],
-                self.allocate('relation', f'{schema}.{name}', 0))
+                self.oid(f'{schema}.{name}'))
         elif match := CREATE_DOMAIN.search(statement):
             name, spec, collation, function, argument = match.groups()
             default = (f'{function.upper()}({argument})' if function
                        else '')
             self.domains.append(Domain(
                 name, spec, collation, default,
-                self.allocate('domain', f'{schema}.{name}', 1)))
+                self.oid(f'{schema}.{name}')))
         elif match := CREATE_SCHEMA.search(statement):
-            self.namespace = self.allocate('namespace', match.group(1), 0)
+            self.namespace = self.oid(match.group(1))
 
     def superuser_only(self, schema, name):
         if schema == 'information_schema':

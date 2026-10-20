@@ -5,11 +5,11 @@ from .common import GENERATED_DIR, generated
 
 
 class Generator:
-    def __init__(self, lock):
+    def __init__(self):
         self.version = f'PostgreSQL {source.version()} in third_party/postgres'
         self.relations, self.rows, self.indexes = source.bki()
         self.row_types = source.row_types(self.relations, self.rows['pg_type'])
-        self.initdb = initdb.Initdb(lock)
+        self.initdb = initdb.Initdb()
         self.outputs = {}
 
     def find(self, catalog, **match):

@@ -38,7 +38,7 @@ constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
 inline constexpr duckdb::idx_t kPublicGrantee = 0;
 
 inline constexpr duckdb::idx_t kMinSystem = 16384;
-inline constexpr duckdb::idx_t kMaxSystem = 65536;
+inline constexpr duckdb::idx_t kMaxSystem = 524288;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
@@ -130,11 +130,8 @@ constexpr const SystemObject* FindSystemObject(
   return nullptr;
 }
 
-inline constexpr duckdb::idx_t kFirstCollation = kMinSystem + 1'000;
-inline constexpr duckdb::idx_t kFirstUnfrozenCollation = kMinSystem + 9'000;
-
-inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
-inline constexpr duckdb::idx_t kFirstUnfrozenFunction = kMinSystem + 26'000;
+inline constexpr duckdb::idx_t kFirstCollation = 32768;
+inline constexpr duckdb::idx_t kFirstBuiltinFunction = 65536;
 
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;
 inline constexpr uint64_t kRowArrayTypeOidBit = uint64_t{1} << 31;

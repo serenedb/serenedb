@@ -195,4 +195,12 @@ def generate(gen):
     gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])
-    return constants, by_oid, [proc.oid for proc in procs]
+    listed = {proc.oid for proc in procs}
+    gen.write('pg_proc_identities.gen.inc', [
+        f'{{{nsp}, {cpp_str(name)}, {cpp_char(kind)}, {cpp_str(argtypes)}, '
+        f'{oid}}},'
+        for nsp, name, kind, argtypes, oid in sorted(
+            (int(row['pronamespace']), row['proname'], row['prokind'],
+             row['proargtypes'], int(row['oid']))
+            for row in gen.rows['pg_proc'] if int(row['oid']) not in listed)])
+    return constants, by_oid

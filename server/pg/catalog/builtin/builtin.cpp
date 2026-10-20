@@ -46,18 +46,6 @@ constexpr BuiltinCollation kCollations[] = {
 #include "pg/catalog/generated/builtin_collations.gen.inc"
 };
 
-constexpr FrozenOid kFrozenCollations[] = {
-#include "pg/catalog/generated/builtin_collation_oids.gen.inc"
-};
-
-static_assert(absl::c_is_sorted(kFrozenCollations,
-                                [](const auto& lhs, const auto& rhs) {
-                                  return lhs.key < rhs.key;
-                                }));
-static_assert(absl::c_all_of(kFrozenCollations, [](const FrozenOid& row) {
-  return row.oid >= kFirstCollation && row.oid < kFirstUnfrozenCollation;
-}));
-
 static_assert(absl::c_is_sorted(kBuiltinTypes, kByOid) &&
               absl::c_is_sorted(kProcs, kByOid) &&
               absl::c_is_sorted(kCollations, kByOid));
@@ -163,17 +151,16 @@ const std::vector<BuiltinCollation>& Collations() {
     });
     std::vector<BuiltinCollation> collations{std::begin(kCollations),
                                              std::end(kCollations)};
-    auto unfrozen = static_cast<int32_t>(kFirstUnfrozenCollation);
+    auto next = static_cast<int32_t>(kFirstCollation);
     for (const auto* entry : entries) {
       const std::string_view name = entry->name.GetIdentifierName();
       const bool icu =
         absl::StartsWith(entry->function.name.GetIdentifierName(), "collate_");
-      const auto frozen = FindFrozenOid(kFrozenCollations, name);
-      collations.emplace_back(frozen != kInvalidOid ? frozen : unfrozen++, name,
-                              icu ? 'i' : 'b', icu ? name : std::string_view{},
+      collations.emplace_back(next++, name, icu ? 'i' : 'b',
+                              icu ? name : std::string_view{},
                               entry->not_required_for_equality);
     }
-    SDB_ASSERT(unfrozen <= kFirstBuiltinFunction);
+    SDB_ASSERT(next <= kFirstBuiltinFunction);
     absl::c_sort(collations, kByOid);
     return collations;
   }();

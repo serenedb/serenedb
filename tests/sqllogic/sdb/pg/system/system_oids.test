@@ -1,21 +1,21 @@
 query
-SELECT string_agg(proname, ', ' ORDER BY proname) AS unfrozen FROM pg_proc WHERE oid >= 42384;
+SELECT string_agg(proname, ', ' ORDER BY proname) AS outside FROM pg_proc WHERE oid >= 16384 AND oid < 65536 OR oid >= 393216;
 ----
-unfrozen
+outside
 NULL
 
 
 query
-SELECT string_agg(collname, ', ' ORDER BY collname) AS unfrozen FROM pg_collation WHERE oid >= 25384;
+SELECT string_agg(collname, ', ' ORDER BY collname) AS outside FROM pg_collation WHERE oid >= 16384 AND oid < 32768 OR oid >= 65536;
 ----
-unfrozen
+outside
 NULL
 
 
 query
 SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
-       count(*) FILTER (WHERE oid >= 16384 AND oid < 26384) AS outside,
-       count(*) FILTER (WHERE oid >= 26384 AND oid < 42384) > 0 AS serenedb
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 393216) > 0 AS serenedb
 FROM pg_proc WHERE pronamespace IN (11, 13293);
 ----
 postgres	outside	serenedb
@@ -24,8 +24,8 @@ t	0	t
 
 query
 SELECT count(*) FILTER (WHERE oid < 16384) AS postgres,
-       count(*) FILTER (WHERE oid >= 16384 AND oid < 17384) AS outside,
-       count(*) FILTER (WHERE oid >= 17384 AND oid < 25384) > 0 AS serenedb
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 32768) AS outside,
+       count(*) FILTER (WHERE oid >= 32768 AND oid < 65536) > 0 AS serenedb
 FROM pg_collation;
 ----
 postgres	outside	serenedb
@@ -49,16 +49,16 @@ proc	type	class	namespace	collation	am	opclass	language	authid	database
 
 
 query
-SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 13293) AND oid >= 65536) AS proc,
-       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 13293) AND oid >= 65536) AS type,
-       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 13293) AND oid >= 65536) AS class,
-       (SELECT count(*) FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema', 'public') AND oid >= 65536) AS namespace,
-       (SELECT count(*) FROM pg_collation WHERE oid >= 65536) AS collation,
-       (SELECT count(*) FROM pg_am WHERE oid >= 65536) AS am,
-       (SELECT count(*) FROM pg_opclass WHERE oid >= 65536) AS opclass,
-       (SELECT count(*) FROM pg_language WHERE oid >= 65536) AS language,
-       (SELECT count(*) FROM pg_authid WHERE (rolname = 'postgres' OR rolname LIKE 'pg\_%') AND oid >= 65536) AS authid,
-       (SELECT count(*) FROM pg_database WHERE datname = 'postgres' AND oid >= 65536) AS database;
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 13293) AND oid >= 524288) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 13293) AND oid >= 524288) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 13293) AND oid >= 524288) AS class,
+       (SELECT count(*) FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema', 'public') AND oid >= 524288) AS namespace,
+       (SELECT count(*) FROM pg_collation WHERE oid >= 524288) AS collation,
+       (SELECT count(*) FROM pg_am WHERE oid >= 524288) AS am,
+       (SELECT count(*) FROM pg_opclass WHERE oid >= 524288) AS opclass,
+       (SELECT count(*) FROM pg_language WHERE oid >= 524288) AS language,
+       (SELECT count(*) FROM pg_authid WHERE (rolname = 'postgres' OR rolname LIKE 'pg\_%') AND oid >= 524288) AS authid,
+       (SELECT count(*) FROM pg_database WHERE datname = 'postgres' AND oid >= 524288) AS database;
 ----
 proc	type	class	namespace	collation	am	opclass	language	authid	database
 0	0	0	0	0	0	0	0	0	0
@@ -130,9 +130,9 @@ oid	collname
 100	default
 950	C
 951	POSIX
-17471	nfc
-17475	noaccent
-17476	nocase
+32855	nfc
+32859	noaccent
+32860	nocase
 
 
 query
@@ -158,7 +158,7 @@ abs(integer)
 
 
 query
-SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 49152 OR function_oid >= 65536);
+SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 393216 OR function_oid >= 524288);
 ----
 count
 0
@@ -172,21 +172,21 @@ t
 
 
 query
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 49152 OR oid >= 65536);
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 393216 OR oid >= 524288);
 ----
 count
 0
 
 
 query
-SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 49152 OR view_oid >= 65536);
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 393216 OR view_oid >= 524288);
 ----
 count
 0
 
 
 query
-SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_name NOT IN ('postgres') AND database_oid < 65536;
+SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_name NOT IN ('postgres') AND database_oid < 524288;
 ----
 count
 0
@@ -298,7 +298,7 @@ CREATE ROLE system_oids_role;
 
 
 query
-SELECT kind, count(*) AS objects, bool_and(oid >= 65536) AS user_range
+SELECT kind, count(*) AS objects, bool_and(oid >= 524288) AS user_range
 FROM (SELECT 'relation' AS kind, oid FROM pg_class WHERE relnamespace = 'system_oids'::regnamespace
       UNION ALL SELECT 'type', oid FROM pg_type WHERE typnamespace = 'system_oids'::regnamespace
       UNION ALL SELECT 'function', oid FROM pg_proc WHERE pronamespace = 'system_oids'::regnamespace

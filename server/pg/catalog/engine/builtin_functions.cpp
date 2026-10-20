@@ -21,11 +21,11 @@
 #include "pg/catalog/engine/builtin_functions.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/flags/flag.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
 
+#include <bitset>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
@@ -36,11 +36,8 @@
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <tuple>
 #include <vector>
@@ -49,33 +46,52 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
 #include "pg/types/mapping.h"
-#include "utils/file_utils.h"
-
-ABSL_FLAG(std::string, dump_builtin_oids, "",
-          "Write the identity of every builtin function and collation to "
-          "this file and exit, without starting a listener. "
-          "scripts/generate_pg_catalog.py --serened reads it to freeze their "
-          "OIDs.");
 
 namespace sdb::pg {
 namespace {
 
 static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
-static_assert(kFirstUnfrozenFunction <
+static_assert(kFirstBuiltinFunction <
               duckdb::DatabaseManager::FIRST_SYSTEM_OID);
 
-constexpr FrozenOid kFrozenFunctions[] = {
-#include "pg/catalog/generated/builtin_function_oids.gen.inc"
+struct PgProcIdentity {
+  duckdb::idx_t nsp;
+  std::string_view name;
+  char kind;
+  std::string_view argtypes;
+  duckdb::idx_t oid;
 };
 
-static_assert(absl::c_is_sorted(kFrozenFunctions,
+constexpr PgProcIdentity kPgProcIdentities[] = {
+#include "pg/catalog/generated/pg_proc_identities.gen.inc"
+};
+
+constexpr auto Identity(const PgProcIdentity& row) {
+  return std::tie(row.nsp, row.name, row.kind, row.argtypes);
+}
+
+static_assert(absl::c_is_sorted(kPgProcIdentities,
                                 [](const auto& lhs, const auto& rhs) {
-                                  return lhs.key < rhs.key;
+                                  return Identity(lhs) < Identity(rhs);
                                 }));
-static_assert(absl::c_all_of(kFrozenFunctions, [](const FrozenOid& row) {
-  return row.oid < kMinSystem ||
-         (row.oid >= kFirstBuiltinFunction && row.oid < kFirstUnfrozenFunction);
+static_assert(absl::c_all_of(kPgProcIdentities, [](const auto& row) {
+  return row.oid < kMinSystem;
 }));
+
+duckdb::idx_t PgProcOid(const BuiltinFunction& function) {
+  const auto argtypes = absl::StrJoin(function.argtypes, " ");
+  const auto identity =
+    std::tuple{function.nsp, std::string_view{function.name}, function.kind,
+               std::string_view{argtypes}};
+  const auto it =
+    absl::c_lower_bound(kPgProcIdentities, identity,
+                        [](const PgProcIdentity& row, const auto& identity) {
+                          return Identity(row) < identity;
+                        });
+  return it != std::end(kPgProcIdentities) && Identity(*it) == identity
+           ? it->oid
+           : kInvalidOid;
+}
 
 duckdb::idx_t TypeOid(const duckdb::LogicalType& type) {
   return type.IsComplete() ? Type2Oid(type) : kUnknown;
@@ -300,13 +316,27 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
                                  proc.argtypes.begin() + proc.nargs},
       proc.retset, proc.strict, proc.volatility, proc.src);
   }
-  auto unfrozen = kFirstUnfrozenFunction;
+  std::vector<BuiltinOverload> overloads;
   VisitBuiltinOverloads(context, [&](BuiltinOverload&& overload) {
-    const auto frozen = FindFrozenOid(kFrozenFunctions, overload.key);
-    overload.function.oid = frozen != kInvalidOid ? frozen : unfrozen++;
-    functions.emplace_back(std::move(overload.function));
+    overloads.emplace_back(std::move(overload));
   });
-  SDB_ASSERT(unfrozen <= duckdb::DatabaseManager::FIRST_SYSTEM_OID);
+  absl::c_stable_sort(
+    overloads, [](const BuiltinOverload& lhs, const BuiltinOverload& rhs) {
+      return lhs.key < rhs.key;
+    });
+  std::bitset<kMinSystem> matched;
+  auto next = kFirstBuiltinFunction;
+  for (auto& overload : overloads) {
+    const auto pg = overload.exact ? PgProcOid(overload.function) : kInvalidOid;
+    if (pg != kInvalidOid && !matched.test(pg)) {
+      matched.set(pg);
+      overload.function.oid = pg;
+    } else {
+      overload.function.oid = next++;
+    }
+    functions.emplace_back(std::move(overload.function));
+  }
+  SDB_ASSERT(next <= duckdb::DatabaseManager::FIRST_SYSTEM_OID);
   absl::c_sort(functions, kByOid);
   SDB_ASSERT(absl::c_adjacent_find(functions, [](const BuiltinFunction& lhs,
                                                  const BuiltinFunction& rhs) {
@@ -345,38 +375,6 @@ std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   absl::MutexLock guard{&gBuiltinsLock};
   gBuiltins = std::move(built);
   return gBuiltins;
-}
-
-std::optional<int> RunBuiltinOidsDump() {
-  const auto path = absl::GetFlag(FLAGS_dump_builtin_oids);
-  if (path.empty()) {
-    return std::nullopt;
-  }
-  std::string out;
-  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
-  auto& context = *connection->context;
-  context.RunFunctionInTransaction([&] {
-    VisitBuiltinOverloads(context, [&](const BuiltinOverload& overload) {
-      const auto& function = overload.function;
-      absl::StrAppend(&out, "function\t", overload.key, "\t", function.nsp,
-                      "\t", function.name, "\t",
-                      std::string_view{&function.kind, 1}, "\t",
-                      absl::StrJoin(function.argtypes, " "), "\t",
-                      overload.exact ? "t" : "f", "\n");
-    });
-  });
-  for (const auto& collation : BuiltinCollations()) {
-    if (collation.oid >= kFirstCollation) {
-      absl::StrAppend(&out, "collation\t", collation.name, "\n");
-    }
-  }
-  try {
-    utils::file_utils::Spit(path, out);
-  } catch (const std::exception& e) {
-    SDB_ERROR(STARTUP, "cannot write '", path, "': ", e.what());
-    return EXIT_FAILURE;
-  }
-  return EXIT_SUCCESS;
 }
 
 }  // namespace sdb::pg

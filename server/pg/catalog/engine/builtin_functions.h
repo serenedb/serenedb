@@ -24,7 +24,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -71,7 +70,5 @@ class BuiltinFunctions {
 
 std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   duckdb::ClientContext& context);
-
-std::optional<int> RunBuiltinOidsDump();
 
 }  // namespace sdb::pg

@@ -56,6 +56,8 @@ inline constexpr size_t kFastScanBits = 4;
 
 inline constexpr size_t kFastScanKsub = size_t{1} << kFastScanBits;
 
+inline constexpr uint32_t kFastScanCostPerByte = 3;
+
 inline size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 inline constexpr int64_t kIvfRotationSeed = 0x5a17b17c5eed5eedULL;
@@ -512,7 +514,8 @@ std::shared_ptr<const QuantizerStats> MakeStatsWithMetric(VectorMetric metric,
 std::unique_ptr<QuantizerWriter> MakePanoramaWriter(uint32_t d,
                                                     VectorMetric metric);
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
-  VectorMetric metric, uint32_t d, std::span<const byte_type> blob);
+  VectorMetric metric, uint32_t d, std::span<const byte_type> blob,
+  bool list_batches);
 
 std::unique_ptr<QuantizerWriter> MakeScalarWriter(uint32_t d,
                                                   VectorQuantization quant);

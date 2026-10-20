@@ -1,0 +1,111 @@
+control substitution on
+
+# Segments written before each posting list got its own vector batches stay
+# readable, next to segments written with them, in one index.
+
+statement ok
+SET sdb_faults = 'ivf_panorama_shared_batches';
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+statement ok
+CREATE TABLE layout_none (pk INTEGER, emb FLOAT[64]);
+
+statement ok
+CREATE INDEX layout_none_idx ON layout_none
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO layout_none
+SELECT i, list_transform(range(64),
+  j -> ((hash(i * 64 + j) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+FROM range(4000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) layout_none;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_ivf_search_nprobe = 100000;
+
+connection after_crash
+statement ok
+SET sdb_ivf_min_search_fanout = 100000;
+
+connection after_crash
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM layout_none_idx
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM layout_none
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM layout_none
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM layout_none_idx
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) t;
+----
+diff
+0
+
+connection after_crash
+statement ok
+INSERT INTO layout_none
+SELECT i, list_transform(range(64),
+  j -> ((hash(i * 64 + j) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+FROM range(4000, 6000) t(i);
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) layout_none;
+
+connection after_crash
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM layout_none_idx
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM layout_none
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM layout_none
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM layout_none_idx
+      ORDER BY emb <-> list_transform(range(64), j -> ((hash(j + 777777) % 100000) / 10000.0)::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) t;
+----
+diff
+0
+
+connection after_crash
+query
+SELECT count(*) AS n FROM layout_none_idx;
+----
+n
+6000

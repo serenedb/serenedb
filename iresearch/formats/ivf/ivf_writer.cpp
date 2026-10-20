@@ -23,6 +23,7 @@
 #include <absl/random/random.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -55,6 +56,11 @@ constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint64_t kMinCentroidTrainSample = 256;
 constexpr uint32_t kTrainSeed = 0x51ED270Bu;
 
+constexpr double kOverscanSlope = 8;
+constexpr uint64_t kPostingSizeGranularity = 32;
+constexpr uint64_t kMinPostingSize = 64;
+constexpr uint64_t kMaxPostingSize = 8192;
+
 struct DocRowView {
   const doc_id_t* docs;
   size_t n;
@@ -65,6 +71,26 @@ struct DocRowView {
 };
 
 }  // namespace
+
+uint64_t IvfPostingSize(uint64_t rows, uint32_t d, QuantizerScanCost scan,
+                        uint32_t posting_size,
+                        uint32_t max_centroids) noexcept {
+  if (posting_size != 0) {
+    return posting_size;
+  }
+  const double route_bytes = sizeof(float) * static_cast<double>(d);
+  const double scan_bytes =
+    static_cast<double>(std::max<uint32_t>(scan.bytes, 1));
+  auto size = static_cast<uint64_t>(std::sqrt(
+    static_cast<double>(rows) * route_bytes / scan_bytes / kOverscanSlope));
+  size = std::max<uint64_t>(size, scan.group_rows);
+  if (max_centroids != 0) {
+    size = std::max(size, (rows + max_centroids - 1) / max_centroids);
+  }
+  size = (size + kPostingSizeGranularity - 1) / kPostingSizeGranularity *
+         kPostingSizeGranularity;
+  return std::clamp(size, kMinPostingSize, kMaxPostingSize);
+}
 
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                              ReadContext& ctx, QuantizerWriter* qw) const {
@@ -88,7 +114,9 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
     CentroidsBuildParams{
-      .posting_size = _info.posting_size,
+      .posting_size = IvfPostingSize(rows, d, qw->ScanCost(rows),
+                                     _info.posting_size, _info.max_centroids),
+      .max_fanout = _info.max_centroids,
       .sample_factor = _info.sample_factor,
       .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
     });
@@ -367,6 +395,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     _qw->Encode(out, vecs, m);
     b += m;
   }
+  _qw->EndList(out);
 }
 
 void IvfTermReader::Finish(IndexOutput& out) {
@@ -403,11 +432,15 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
+  const auto setting = _result.qw->BlockSetting();
   _idx->AddIvf(_info.centroids_id,
-               IvfCentroidMeta{.tree_offset = tree_span.offset,
-                               .tree_byte_size = tree_span.byte_size,
-                               .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+               IvfCentroidMeta{
+                 .tree_offset = tree_span.offset,
+                 .tree_byte_size = tree_span.byte_size,
+                 .stats_offset = stats_offset,
+                 .stats_byte_size = stats_byte_size,
+                 .list_batches = setting.group_size > 1 && !setting.padded,
+               });
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,

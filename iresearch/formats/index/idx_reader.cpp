@@ -91,22 +91,24 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         kIdxFieldIvf, "ivf",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            const auto id = obj.ReadProperty<uint64_t>(0, "id");
+            const auto id = obj.ReadProperty<uint64_t>(kIvfFieldId, "id");
             const auto tree_offset =
-              obj.ReadProperty<uint64_t>(1, "tree_offset");
-            const auto tree_byte_size =
-              obj.ReadProperty<uint64_t>(2, "tree_byte_size");
+              obj.ReadProperty<uint64_t>(kIvfFieldTreeOffset, "tree_offset");
+            const auto tree_byte_size = obj.ReadProperty<uint64_t>(
+              kIvfFieldTreeByteSize, "tree_byte_size");
             const auto stats_offset =
-              obj.ReadProperty<uint64_t>(3, "stats_offset");
-            const auto stats_byte_size =
-              obj.ReadProperty<uint64_t>(4, "stats_byte_size");
+              obj.ReadProperty<uint64_t>(kIvfFieldStatsOffset, "stats_offset");
+            const auto stats_byte_size = obj.ReadProperty<uint64_t>(
+              kIvfFieldStatsByteSize, "stats_byte_size");
+            const auto list_batches = obj.ReadPropertyWithDefault<bool>(
+              kIvfFieldListBatches, "list_batches");
             _impl->ann_ends.push_back(tree_offset + tree_byte_size);
             _impl->ann_ends.push_back(stats_offset + stats_byte_size);
 
             auto body = _impl->in->Dup();
             body->Seek(tree_offset);
             auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
-            entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
+            entry.SetQuantStats(stats_offset, stats_byte_size, list_batches);
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(

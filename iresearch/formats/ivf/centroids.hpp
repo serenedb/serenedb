@@ -20,17 +20,14 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
-#include <algorithm>
 #include <cstdint>
-#include <functional>
 #include <span>
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -71,7 +68,7 @@ struct CentroidsNode {
   struct Candidate {
     float dist;
     size_t id;
-    std::vector<float> centroid;
+    std::span<const float> centroid;
   };
 
   static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
@@ -83,62 +80,6 @@ struct CentroidsNode {
   static std::vector<CentroidsNodeView> ReadLayer(
     IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
     std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
-
-  template<VectorMetric Metric>
-  static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t beam, bool want_centroids, size_t level,
-                     std::span<const CentroidsNodeView> nodes,
-                     size_t layer_base, size_t layer_total,
-                     std::vector<Candidate>& leaves) {
-    SDB_ASSERT(!nodes.empty());
-    const uint16_t d = query.size();
-    const float* q = query.data();
-
-    struct Scored {
-      float dist;
-      size_t start;
-      size_t count;
-    };
-    std::vector<size_t> starts, sizes;
-    std::vector<Scored> scored;
-    for (const auto& node : nodes) {
-      for (size_t i = 0; i < node.size; ++i) {
-        const auto centroid = node.centroids.subspan(i * d, d);
-        const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
-        const bool is_leaf =
-          level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
-        if (is_leaf) {
-          auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
-          if (want_centroids) {
-            cand.centroid.assign(centroid.begin(), centroid.end());
-          }
-        } else {
-          scored.push_back({dist, node.child_offsets[i],
-                            node.child_offsets[i + 1] - node.child_offsets[i]});
-        }
-      }
-    }
-    const auto k = std::min<size_t>(beam, scored.size());
-    const auto mid = scored.begin() + k;
-    const auto by_dist_desc = [](const Scored& l, const Scored& r) {
-      return l.dist > r.dist;
-    };
-    absl::c_nth_element(scored, mid, by_dist_desc);
-    std::sort(scored.begin(), mid, by_dist_desc);
-    for (auto it = scored.begin(); it != mid; ++it) {
-      starts.emplace_back(it->start);
-      sizes.emplace_back(it->count);
-    }
-    if (level == 0 || starts.empty()) {
-      return;
-    }
-    LayerBuffers bufs;
-    size_t n_total = 0;
-    auto next =
-      CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
-    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
-                   layer_base + layer_total, n_total, leaves);
-  }
 };
 
 class CentroidsBuilder;
@@ -160,8 +101,8 @@ class CentroidsTree {
   static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t beam = 0) const;
+              std::vector<uint32_t>& out_ids,
+              ManagedVector<float>* out_centroids, uint32_t beam = 0) const;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
@@ -169,12 +110,15 @@ class CentroidsTree {
   size_t Levels() const noexcept { return _root.level + 1; }
   size_t RootSize() const noexcept { return _root.size; }
 
-  void SetQuantStatsLocation(uint64_t offset, uint64_t byte_size) noexcept {
+  void SetQuantStats(uint64_t offset, uint64_t byte_size,
+                     bool list_batches) noexcept {
     _stats_offset = offset;
     _stats_byte_size = byte_size;
+    _list_batches = list_batches;
   }
   bool HasQuantStats() const noexcept { return _stats_byte_size != 0; }
   uint64_t QuantStatsOffset() const noexcept { return _stats_offset; }
+  bool ListBatches() const noexcept { return _list_batches; }
 
  private:
   IVFHeader _head;
@@ -182,6 +126,7 @@ class CentroidsTree {
   size_t _next_level_offset;
   uint64_t _stats_offset = 0;
   uint64_t _stats_byte_size = 0;
+  bool _list_batches = false;
 };
 
 struct CentroidsSpan {

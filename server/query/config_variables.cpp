@@ -192,6 +192,17 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
 }
 
 template<irs::utils::detail::FixedString Name>
+void NonNegative(duckdb::ClientContext&, duckdb::SetScope,
+                 duckdb::Value& value) {
+  if (value.GetValue<int32_t>() < 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", std::string_view{Name},
+              "\": \"", value.ToString(), "\""));
+  }
+}
+
+template<irs::utils::detail::FixedString Name>
 void PositiveOrMinusOne(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
   const auto n = value.GetValue<int32_t>();
@@ -759,8 +770,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "query. Higher values improve recall at the cost of latency. A value "
         "is used as written. -1 (the default) lets the engine choose per "
         "segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is "
-        "the segment's rows over the index's posting size, which keeps recall "
-        "near 0.95 at any LIMIT and segment size.",
+        "the number of the segment's posting lists, which keeps recall near "
+        "0.95 at any LIMIT and segment size.",
         [] { return duckdb::Value::INTEGER(-1); },
         PositiveOrMinusOne<"sdb_ivf_search_nprobe">,
       },
@@ -881,19 +892,28 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ivf_posting_size",
       {
         LogicalTypeId::INTEGER,
-        "Target IVF posting-list size (leaf cap t), captured into the index "
-        "config at CREATE INDEX. Smaller values force deeper multi-level "
-        "centroid trees (useful for testing). Default 1024.",
-        [] { return duckdb::Value::INTEGER(1024); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_posting_size\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        "Target number of vectors in an IVF posting list, captured into the "
+        "index config at CREATE INDEX. Fewer, larger lists leave a query "
+        "fewer centroids to compare against and more vectors to scan in each "
+        "list it probes. 0 (the default) balances the two for each segment "
+        "from its row count, the vector dimension and the quantization. A "
+        "value is used as written.",
+        [] { return duckdb::Value::INTEGER(0); },
+        NonNegative<"sdb_ivf_posting_size">,
+      },
+    },
+    {
+      "sdb_ivf_max_centroids",
+      {
+        LogicalTypeId::INTEGER,
+        "Upper bound on the children of one node of the IVF centroid tree, "
+        "captured into the index config at CREATE INDEX. A segment that needs "
+        "more posting lists than this gets a deeper tree, which builds faster "
+        "and compares a query against fewer centroids at some recall cost; "
+        "with sdb_ivf_posting_size at 0, the lists grow instead, up to 8192 "
+        "vectors. 0 (the default) sets no bound.",
+        [] { return duckdb::Value::INTEGER(0); },
+        NonNegative<"sdb_ivf_max_centroids">,
       },
     },
     {
@@ -941,15 +961,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "per-query work. 0 removes the cap, so every term within the edit "
         "distance matches. Default 50.",
         [] { return duckdb::Value::INTEGER(50); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_levenshtein_max_terms\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        NonNegative<"sdb_levenshtein_max_terms">,
       },
     },
     {

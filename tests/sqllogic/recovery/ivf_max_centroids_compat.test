@@ -1,0 +1,81 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'ivf_config_without_max_centroids';
+
+
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+
+statement ok
+CREATE TABLE older_checkpointed (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX older_checkpointed_idx ON older_checkpointed
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TABLE older_logged (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX older_logged_idx ON older_logged
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO older_checkpointed
+  SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+
+
+connection after_crash
+statement ok
+INSERT INTO older_logged
+  SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) older_checkpointed;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) older_logged;
+
+
+connection after_crash
+statement ok
+SET sdb_ivf_search_nprobe = 100000;
+
+
+connection after_crash
+query
+SELECT (SELECT pk FROM older_checkpointed_idx
+        ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1) AS checkpointed,
+       (SELECT pk FROM older_logged_idx
+        ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1) AS logged;
+----
+checkpointed	logged
+1234	1234

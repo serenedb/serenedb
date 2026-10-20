@@ -8,6 +8,9 @@ statement ok
 SET sdb_ivf_posting_size = 2;
 
 statement ok
+SET sdb_ivf_max_centroids = 1024;
+
+statement ok
 CREATE TABLE lvl3 (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
 
 statement ok
@@ -57,6 +60,9 @@ pk
 
 statement ok
 RESET sdb_ivf_posting_size;
+
+statement ok
+RESET sdb_ivf_max_centroids;
 
 # ============================================================================
 # sdb_ivf_sample_factor: train the tree on a fraction of the rows. Assignment

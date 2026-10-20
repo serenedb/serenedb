@@ -668,6 +668,11 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::TQ;
   }
 
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = kFastScanCostPerByte * _lay.record_size,
+            .group_rows = BlockSetting().group_size};
+  }
+
  private:
   void EncodeOne(const float* vec, size_t lane) {
     _rotation.Rotate(vec, _lay.d, _rot.data(), _mix);

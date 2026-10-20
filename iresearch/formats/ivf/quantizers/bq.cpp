@@ -62,6 +62,8 @@ constexpr uint32_t kBqQueryBins = 2 * kBqQueryTop + 1;
 constexpr uint32_t kBqMaxQueryLevels = 16;
 constexpr uint64_t kBqSampleSeed = 0x6271b5a3c0ffee11ULL;
 constexpr double kBqUnitNormSlack = 1e-3;
+constexpr uint32_t kBqScanCostPerByte = 5;
+constexpr uint32_t kBqQueryScanCostPerByte = 9;
 
 struct BqLayout {
   uint32_t d = 0;
@@ -454,6 +456,12 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::BQ;
+  }
+
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = (_query_bits == 1 ? kBqScanCostPerByte
+                                       : kBqQueryScanCostPerByte) *
+                     _lay.record_size};
   }
 
  private:

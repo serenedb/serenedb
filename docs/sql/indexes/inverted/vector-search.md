@@ -17,13 +17,11 @@ A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class. Th
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 
-For `ivf`, the `metric` is required. Everything else is optional: the index is sized automatically from the row count and, for `l2`, `ip` and `cosine`, quantized with `sq8`:
+For `ivf`, the `metric` is required. Everything else is optional: the clusters are [sized automatically](#posting-lists) and, for `l2`, `ip` and `cosine`, the vectors are quantized with `sq8`:
 
 | Parameter | Description |
 |---|---|
 | `metric` | Distance metric: `l2` (Euclidean), `cosine`, `ip` (inner product) or `l1` (Manhattan) |
-| `nlist` | Number of coarse clusters. Higher values narrow each cluster (faster, more precise probes) at the cost of build time. Mutually exclusive with `nlist_factor` |
-| `nlist_factor` | Sizes `nlist` relative to the row count as `round(nlist_factor * sqrt(rows))`. Default `2.0`. Mutually exclusive with `nlist` |
 | `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) -- see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`. Must evenly divide the vector dimension `N`. Defaults to a value close to a 2-dimensional subvector |
 | `rabitq_bits` | Extra magnitude bits per dimension for `quant = 'rabitq'`, `1` to `9`. Default `1` (sign-only). Also spelled `nb_bits` |
@@ -113,6 +111,15 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 - `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact. `fp16` and `bf16` are the exception and answer from their codes, which are close to exact already.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
 - A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
+
+## Posting lists {#posting-lists}
+
+Each segment of an `ivf` index groups its vectors into posting lists, one per cluster, and keeps a centroid for each. A query compares the query vector against the centroids, then scans the vectors of the closest lists. Smaller lists let a query scan fewer vectors for the same recall, at the cost of more centroids to compare against, and to train when the segment is built, so the engine sizes the lists of every segment from its row count, the vector dimension and the quantization. A segment with more rows gets both larger and more lists.
+
+Two settings, read when the index is created, override that for the index's lifetime:
+
+- [`sdb_ivf_posting_size`](../../../configuration/overview.md#search-and-indexing) sets the number of vectors per list.
+- [`sdb_ivf_max_centroids`](../../../configuration/overview.md#search-and-indexing) bounds the children of one node of the centroid tree. A segment that needs more lists than that gets a deeper tree, which builds faster and compares a query against fewer centroids at some recall cost; with an automatic list size, the lists grow instead, up to 8192 vectors each.
 
 ## HNSW {#hnsw}
 

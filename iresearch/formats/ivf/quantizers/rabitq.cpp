@@ -58,6 +58,7 @@ struct RaBitQStatsHeader {
 
 constexpr uint8_t kRaBitQQueryBits = 8;
 constexpr bool kRaBitQCentered = false;
+constexpr uint32_t kExBitsScanCostPerByte = 5;
 
 struct RaBitQLayout {
   uint32_t d = 0;
@@ -199,6 +200,13 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::RaBitQ;
+  }
+
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = (_lay.ex_bits == 0 ? kFastScanCostPerByte
+                                        : kExBitsScanCostPerByte) *
+                     _lay.record_size,
+            .group_rows = BlockSetting().group_size};
   }
 
  private:
@@ -467,10 +475,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     const auto d = static_cast<uint16_t>(query.size());
     const float* centroid = _cluster;
 
-    _rot_centroid.resize(_rd);
-    RotateInto(_cb->Signs().data(), centroid, _rot_centroid.data(), _lay.d,
-               static_cast<uint32_t>(_rd));
-
     _qf = _cur->QueryFactors();
     _qf.qr_to_c_L2sqr =
       -ComputeDistance<VectorMetric::L2Sqr>(query.data(), centroid, d);
@@ -479,6 +483,12 @@ class RaBitQuantizerReader final : public QuantizerReader {
       _qf.q_dot_c =
         ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid, d);
     }
+    if (_lay.ex_bits == 0 && !_lay.row_major) {
+      return;
+    }
+    _rot_centroid.resize(_rd);
+    RotateInto(_cb->Signs().data(), centroid, _rot_centroid.data(), _lay.d,
+               static_cast<uint32_t>(_rd));
     if (_lay.ex_bits == 0) {
       return;
     }

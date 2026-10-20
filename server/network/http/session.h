@@ -200,10 +200,10 @@ class HttpSession final
       _connection_ctx = std::make_shared<ConnectionContext>(
         *_conn->context, user, std::string_view{}, role, dbname, database_id,
         nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
+      _cancel_token->role.store(role, std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = role;
       }
       connector::SereneDBClientState::Register(*_conn->context, _connection_ctx,
                                                true);

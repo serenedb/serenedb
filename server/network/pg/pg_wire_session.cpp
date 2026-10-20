@@ -3024,10 +3024,11 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   };
   try {
     if (SetupConnection()) {
+      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
+                                std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
-        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

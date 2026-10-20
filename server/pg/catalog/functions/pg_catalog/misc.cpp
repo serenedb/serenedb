@@ -527,7 +527,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
       out.WriteValue(false);
       continue;
     }
-    const auto role = match.token->Role();
+    const auto role = match.token->role.load(std::memory_order_relaxed);
     const auto* node = roles->Find(role);
     if (role == kInvalidOid || (node && node->is_superuser)) {
       if (!caller->is_superuser) {

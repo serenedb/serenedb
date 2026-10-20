@@ -23,6 +23,7 @@
 #include <absl/random/random.h>
 #include <absl/synchronization/mutex.h>
 
+#include <atomic>
 #include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -79,14 +80,9 @@ struct CancelToken {
     session.reset();
   }
 
-  duckdb::idx_t Role() {
-    absl::MutexLock lock{&mu};
-    return role;
-  }
-
   absl::Mutex mu;
   duckdb::ClientContext* ctx = nullptr;
-  duckdb::idx_t role = 0;
+  std::atomic<duckdb::idx_t> role = 0;
   duckdb::weak_ptr<TransportBase> session;
 };
 

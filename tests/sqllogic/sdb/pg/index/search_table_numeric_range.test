@@ -217,3 +217,76 @@ SELECT count(*) FROM snr WHERE tag = 'even' OR num > 1500;
 ----
 count
 1250
+
+statement ok
+CREATE TABLE snr_f (pk INTEGER PRIMARY KEY, val DOUBLE, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_f_idx ON snr_f
+  USING inverted(pk, val, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr_f SELECT i, i * 0.5, [i::FLOAT, 0]::FLOAT[2]
+  FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr_f;
+
+query
+SELECT pk FROM snr_f WHERE val <= 20.0
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+40
+39
+38
+
+query
+EXPLAIN SELECT pk FROM snr_f WHERE val <= 20.0
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_f                      │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ─╮              │
+│ │ Field: val       │              │
+│ │ Range: <=20      │              │
+│ ╰──────────────────╯              │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr_f WHERE val <= 750.0
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+1499
+1498
+
+query
+EXPLAIN SELECT pk FROM snr_f WHERE val <= 750.0
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_f                      │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: val <= 750         │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT count(*) FROM snr_f WHERE val BETWEEN 100.25 AND 110.0;
+----
+count
+20

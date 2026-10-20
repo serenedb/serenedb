@@ -93,6 +93,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   FieldProperties properties() const final { return _meta; }
   bytes_view min() const final { return _min; }
   bytes_view max() const final { return _max; }
+  uint32_t KeyWidth() const noexcept final;
 
   TermPayloadWriter* PayloadWriter() const final {
     SDB_ASSERT(_qw);

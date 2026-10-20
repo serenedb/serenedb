@@ -149,7 +149,7 @@ class FieldInverter : util::Noncopyable {
 
   template<typename P, typename ForEach>
   bool InvertNumerics(ForEach&& for_each) {
-    return StagePairs<P, TokenBatch::kCapacity / NumericTermCount<P>()>(
+    return StagePairs<P, TokenBatch::kCapacity>(
       for_each, [&](std::span<const P> vals, const doc_id_t* docs) {
         return InvertNumericImpl<P>(
           vals.size(), [&](size_t j) { return vals[j]; },
@@ -675,25 +675,22 @@ class FieldInverter : util::Noncopyable {
 
   template<typename P, typename ValueAt, typename DocAt>
   bool InvertNumericImpl(size_t n, ValueAt&& value_at, DocAt doc_at) {
-    constexpr uint32_t kTerms = NumericTermCount<P>();
-    constexpr size_t kMaxValues = TokenBatch::kCapacity / kTerms;
+    constexpr size_t kMaxValues = TokenBatch::kCapacity;
     SDB_ASSERT(!_state.value_open);
     SDB_ASSERT(Layout() == TokenLayout::Terms);
+    _meta.ranges = true;
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
-    duckdb::string_t terms[kMaxValues * kTerms];
+    duckdb::string_t terms[kMaxValues];
     for (size_t base = 0; base < n;) {
       const auto m =
         static_cast<uint32_t>(std::min<size_t>(kMaxValues, n - base));
       AppendNumericTermsBlock<P>(terms, m,
                                  [&](size_t j) { return value_at(base + j); });
-      auto* const ids = ResolveTerms(terms, m * kTerms);
-      uint32_t tok = 0;
+      auto* const ids = ResolveTerms(terms, m);
       for (uint32_t k = 0; k < m; ++k) {
-        if (!PushDocTerms(log, doc_at(base + k), ids + tok, kTerms))
-          [[unlikely]] {
+        if (!PushDocTerms(log, doc_at(base + k), ids + k, 1)) [[unlikely]] {
           return false;
         }
-        tok += kTerms;
       }
       base += m;
     }

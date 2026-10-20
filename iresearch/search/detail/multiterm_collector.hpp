@@ -166,6 +166,7 @@ class MultiTermVisitor : util::Noncopyable {
   MultiTermVisitor(const PrepareContext& ctx, MultiTermState& state,
                    const TermReader& field)
     : _state{state}, _thread{ctx.thread} {
+    _state.Prepare(&field);
     if (ctx.collector == nullptr) {
       return;
     }
@@ -180,16 +181,19 @@ class MultiTermVisitor : util::Noncopyable {
 
   void Prepare(const SubReader&, const TermReader& field,
                TermIterator& terms) noexcept {
-    _state.Prepare(&field);
+    SDB_ASSERT(_state.Reader() == &field);
     _terms = &terms;
   }
 
   bool Visit(score_t boost) {
     SDB_ASSERT(_terms);
-    const auto& meta = _terms->cookie();
+    return Visit(_terms->value(), _terms->cookie(), boost);
+  }
+
+  bool Visit(bytes_view term, const PostingMeta& meta, score_t boost) {
     const byte_type* stats = _stats;
     if (_collector != nullptr) {
-      stats = _collector->Collect(_thread, _terms->value(), meta);
+      stats = _collector->Collect(_thread, term, meta);
     }
     _state.Push(meta, boost, stats);
     return true;

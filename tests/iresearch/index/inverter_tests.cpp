@@ -2123,11 +2123,11 @@ void NumericBlockMatchesPerValue(const std::vector<T>& vals) {
     };
     doc_id_t d = doc_limits::min();
     for (const auto v : vals) {
-      if (batch->count + 4 >= TokenBatch::kCapacity) {
+      if (batch->count + 1 >= TokenBatch::kCapacity) {
         flush();
       }
       AppendNumericTermsBlock(*batch, std::span<const T>{&v, 1});
-      runs.push_back({d, NumericTermCount<T>()});
+      runs.push_back({d, 1});
       ++d;
     }
     flush();

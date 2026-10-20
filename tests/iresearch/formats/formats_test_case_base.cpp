@@ -524,12 +524,8 @@ TEST_P(FormatTestCase, fields_seek_ge) {
   // seek to non-existent term in the middle
   {
     const std::vector<std::vector<irs::byte_type>> terms{
-      {207},
-      {208},
-      {208, 191},
-      {208, 192, 81},
-      {192, 192, 187, 86, 0},
-      {192, 192, 187, 88, 0}};
+      {160, 192, 96},     {160, 192, 128},       {160, 192, 160, 1},
+      {160, 192, 187, 0}, {160, 192, 83, 65, 0}, {160, 192, 154, 5, 0}};
 
     auto it = field->iterator();
 

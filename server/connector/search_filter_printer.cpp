@@ -88,10 +88,10 @@ std::string TermToString(Term term) {
   return s;
 }
 
-// Decodes a numeric trie term back to the number it encodes. The leading
-// byte is `shift + TYPE_MAGIC` with disjoint magic ranges per width, so the
-// value type is recovered from the term itself (which also disambiguates the
-// shared JSON-leaf numeric field).
+// Decodes a numeric term back to the number it encodes. The leading byte is
+// the type's TYPE_MAGIC, disjoint per type, so the value type is recovered
+// from the term itself (which also disambiguates the shared JSON-leaf numeric
+// field).
 std::string DecodeNumericTerm(bytes_view term) {
   namespace nu = irs::numeric_utils;
   if (term.empty()) {
@@ -132,15 +132,6 @@ std::string PrefixValue(bytes_view prefix, Kind kind) {
 
 std::string TermValue(const bstring& term, Kind kind) {
   return TermValue(bytes_view{term}, kind);
-}
-
-// A granular-range bound is a vector of granularity levels; the first entry is
-// the exact (shift 0) value.
-std::string TermValue(const std::vector<bstring>& terms, Kind kind) {
-  if (terms.empty()) {
-    return "";
-  }
-  return TermValue(bytes_view{terms.front()}, kind);
 }
 
 template<typename T>

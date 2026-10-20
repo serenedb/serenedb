@@ -32,6 +32,7 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 
@@ -48,6 +49,7 @@ enum class Position : uint8_t {
 
 struct BlockView {
   BlockKind kind;
+  bool coded;
   uint32_t count;
   uint32_t restarts;
   uint32_t stride;
@@ -90,6 +92,10 @@ inline bytes_view FixedKey(const BlockView& view, uint32_t entry) noexcept {
 inline BlockView Parse(const byte_type* p) {
   BlockView view{};
   view.kind = static_cast<BlockKind>(*p++);
+  view.coded = view.kind == BlockKind::VarFsst;
+  if (view.coded) {
+    view.kind = BlockKind::Var;
+  }
   view.count = vread<uint32_t>(p);
   view.restarts = vread<uint32_t>(p);
   if (view.kind == BlockKind::Var) {
@@ -131,6 +137,59 @@ inline IRS_FORCE_INLINE Header ReadHeader(const byte_type*& p) noexcept {
     header.len += vread<uint32_t>(p);
   }
   return header;
+}
+
+inline void DecodeAppend(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
+                         bstring& out) {
+  const size_t base = out.size();
+  utils::StrResizeAmortized(out, base + codes.size() * sizeof(uint64_t));
+  auto* p = out.data() + base;
+  size_t pos = 0;
+  for (size_t i = 0; i != codes.size();) {
+    const size_t code = codes[i++];
+    if (code != FSST_ESC) [[likely]] {
+      std::memcpy(p + pos, &decoder.symbol[code], sizeof(uint64_t));
+      pos += decoder.len[code];
+    } else {
+      p[pos++] = codes[i++];
+    }
+  }
+  out.resize(base + pos);
+}
+
+struct Compared {
+  size_t common;
+  bool ended;
+  bool greater;
+};
+
+inline Compared CompareCoded(const duckdb_fsst_decoder_t& decoder,
+                             bytes_view codes, bytes_view rest) noexcept {
+  size_t common = 0;
+  for (size_t i = 0; i != codes.size();) {
+    byte_type symbol[sizeof(uint64_t)];
+    size_t n = 1;
+    const size_t code = codes[i++];
+    if (code != FSST_ESC) [[likely]] {
+      std::memcpy(symbol, &decoder.symbol[code], sizeof(uint64_t));
+      n = decoder.len[code];
+    } else {
+      symbol[0] = codes[i++];
+    }
+    for (size_t j = 0; j != n; ++j, ++common) {
+      if (common == rest.size()) {
+        return {.common = common, .ended = false, .greater = true};
+      }
+      if (symbol[j] != rest[common]) {
+        return {
+          .common = common,
+          .ended = false,
+          .greater = symbol[j] > rest[common],
+        };
+      }
+    }
+  }
+  return {.common = common, .ended = true, .greater = false};
 }
 
 inline bytes_view RestartKey(const BlockView& view, uint32_t restart) noexcept {
@@ -215,10 +274,13 @@ class Cursor {
       }
       _hint.Advance(_field->Owner().Input(), _field->BlockOffset(block));
     }
-    _block = block;
-    _view = Parse(_field->Block(block, _buffer));
+    _block = kNoEntry;
     _entry = kNoEntry;
     _record = kNoEntry;
+    _view = Parse(_field->Block(block, _buffer));
+    SDB_ASSERT((_view.kind == BlockKind::FixedStride) ==
+               (_field->KeyWidth() != 0));
+    _block = block;
     _hp = _view.headers;
     _sp = _view.suffixes;
   }
@@ -236,7 +298,11 @@ class Cursor {
         return static_cast<uint32_t>(lcp);
       }
       _key.resize(header.lcp);
-      _key.append(suffix);
+      if (_view.coded) {
+        DecodeAppend(*_field->Fsst(), suffix, _key);
+      } else {
+        _key.append(suffix);
+      }
       return header.lcp;
     }
     return SetFixed(_entry);

@@ -372,6 +372,15 @@ class CompoundFieldIterator final : public BasicTermReader {
   FieldProperties properties() const noexcept final { return _props; }
   bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
+  uint32_t KeyWidth() const noexcept final;
+  bool Ranges() const noexcept {
+    return absl::c_any_of(_field_iterator_mask, [](const auto& segment) {
+      return segment.reader->meta().ranges;
+    });
+  }
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   TermOnlyIterator::ptr iterator() const final;
 
   bool Aborted() const {
@@ -458,6 +467,30 @@ bool CompoundFieldIterator::Next() {
   _synthesized_meta.id = _current_id;
   _current_meta = &_synthesized_meta;
   return true;
+}
+
+uint32_t CompoundFieldIterator::KeyWidth() const noexcept {
+  uint32_t width = 0;
+  for (const auto& segment : _field_iterator_mask) {
+    const auto source = segment.reader->KeyWidth();
+    if (source == 0 || (width != 0 && source != width)) {
+      return 0;
+    }
+    width = source;
+  }
+  return width;
+}
+
+void CompoundFieldIterator::SampleTerms(
+  uint64_t bytes,
+  absl::FunctionRef<void(std::span<const bytes_view>)> visit) const {
+  if (_field_iterator_mask.empty()) {
+    return;
+  }
+  const uint64_t share = bytes / _field_iterator_mask.size();
+  for (const auto& segment : _field_iterator_mask) {
+    segment.reader->SampleTerms(share, visit);
+  }
 }
 
 TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
@@ -682,6 +715,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
+    props.ranges = field_itr.Ranges();
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(field_itr.Meta().id);

@@ -1,0 +1,86 @@
+statement ok
+CREATE TABLE ht_sq8 (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ht_sq8_idx ON ht_sq8
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'sq8'))
+  WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE ht_none (id INTEGER PRIMARY KEY, extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ht_none_idx ON ht_none
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'))
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO ht_sq8 SELECT i, i % 10, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(1500, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ht_sq8;
+
+statement ok
+INSERT INTO ht_sq8 SELECT i, i % 10, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
+  FROM range(0, 1500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ht_sq8;
+
+statement ok
+VACUUM (COMPACT_TABLE) ht_sq8;
+
+statement ok
+INSERT INTO ht_none SELECT * FROM ht_sq8 WHERE id >= 1500;
+
+statement ok
+VACUUM (REFRESH_TABLE) ht_none;
+
+statement ok
+INSERT INTO ht_none SELECT * FROM ht_sq8 WHERE id < 1500;
+
+statement ok
+VACUUM (REFRESH_TABLE) ht_none;
+
+statement ok
+VACUUM (COMPACT_TABLE) ht_none;
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id IN ('ht_sq8_idx'::regclass::oid, 'ht_none_idx'::regclass::oid)
+  AND metric = 'num_segments';
+----
+metric	value
+num_segments	1
+num_segments	1
+
+query
+SELECT id FROM ht_sq8_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT id FROM ht_none_idx WHERE extra = 7
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+id
+1497
+1507
+1487
+1517
+1477
+
+query
+SELECT min(id) AS lowest, max(id) AS highest, count(*) AS found
+FROM (SELECT id FROM ht_none_idx
+      ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 60);
+----
+lowest	highest	found
+1471	1530	60

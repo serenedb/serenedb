@@ -65,7 +65,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
 | pg_publication_rel          | 🟡            | Maps relations (tables) to publications (many-to-many). |
 | pg_range                    | 🟡            | Stores information about range types. |
-| pg_replication_origin       | 🟢            | One origin `pg_<subscription oid>` per subscription; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
+| pg_replication_origin       | 🟢            | One origin `pg_<subscription oid>` per subscription, see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md), and the origins made with [`pg_replication_origin_create`](../sql/functions/replication_origin.md). |
 | pg_rewrite                  | 🟢            | Stores rewrite rules for tables and views. |
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
 | pg_sequence                 | 🟢            | Contains information about sequences. |
@@ -76,7 +76,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |
 | pg_statistic_ext_data       | 🟡            | Contains data for extended statistics. |
 | pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
-| pg_subscription_rel         | 🟡            | Tracks per-relation subscription state: `i` before the initial copy, `r` once replicated, with the copy's LSN. |
+| pg_subscription_rel         | 🟢            | Tracks per-relation subscription state: `i` before the initial copy, `r` once replicated, with the copy's LSN. |
 | pg_tablespace               | 🟢            | Stores information about tablespaces. |
 | pg_transform                | 🟡            | Stores transforms between data types and languages. |
 | pg_trigger                  | 🟢            | Contains information about table triggers. |
@@ -109,7 +109,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol; `generic_plans` and `custom_plans` are always NULL. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
-| pg_replication_origin_status | 🟢 | Shows each subscription's origin with the publisher position it has durably applied; `local_lsn` is always `0/0`. |
+| pg_replication_origin_status | 🟢 | Shows each replication origin, of a subscription or made with `pg_replication_origin_create`, with the remote position it has durably applied; `local_lsn` is always `0/0`. |
 | pg_replication_slots | 🟡 | Displays replication slot information. |
 | pg_roles | 🟢 | Lists database roles. |
 | pg_rules | 🟡 | Shows information about rules. |

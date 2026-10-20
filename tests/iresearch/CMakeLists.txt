@@ -100,6 +100,8 @@ set(iresearch-tests_sources
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
     ./search/bitset_docs_test.cpp
+    ./search/document_mask_test.cpp
+    ./search/docs_mask_plan_test.cpp
     ./search/col_filter_leaf_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
@@ -170,6 +172,7 @@ set(iresearch-tests_sources
     ./utils/string_tests.cpp
     ./utils/bitset_tests.cpp
     ./utils/math_utils_test.cpp
+    ./utils/lower_bound_test.cpp
     ./utils/misc_test.cpp
     ./utils/std_test.cpp
     ./utils/thread_pool_test.cpp

@@ -37,6 +37,8 @@ EXEMPT = {
     # CREATE SERVER validates connectivity, so populating this one needs a
     # reachable remote database.
     "pg_foreign_server",
+    # A subscription lists its tables only once it has reached its publisher.
+    "pg_subscription_rel",
 }
 
 FIXTURE = """statement ok

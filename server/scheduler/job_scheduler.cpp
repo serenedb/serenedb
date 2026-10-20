@@ -40,6 +40,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -131,14 +132,15 @@ duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
 }
 
 JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
-  return {
-    .database_oid = job.ParentCatalog().GetOid(),
-    .catalog = job.ParentCatalog().GetName(),
-    .schema = job.schema_info,
-    .name = job.name,
-    .oid = job.oid,
-    .owner = job.permissions.owner,
-    .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
+  return {.database_oid = job.ParentCatalog().GetOid(),
+          .catalog = job.ParentCatalog().GetName(),
+          .schema = job.schema_info,
+          .name = job.name,
+          .oid = job.oid,
+          .owner = job.permissions.owner,
+          .body = std::make_shared<
+            const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>>(
+            duckdb::CreateJobInfo::CopyBody(job.Body()))};
 }
 
 size_t HistorySize() {
@@ -157,6 +159,11 @@ void ForAllJobs(
       catalog::ForEachJob(catalog.Cast<duckdb::DuckCatalog>(), callback);
     }
   }
+}
+
+bool Dropped(JobState& state) {
+  absl::MutexLock lock{&state.mutex};
+  return state.dropped;
 }
 
 duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
@@ -197,22 +204,36 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
       {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
       duckdb::CatalogSetPathType::SET_DIRECTLY);
   }
-  duckdb::QueryParameters parameters;
-  parameters.caller_drives = true;
-  auto pending = context->Submit(job.body->Copy(), parameters);
-  if (pending->HasError()) {
-    return pending->GetErrorObject();
-  }
   {
     absl::MutexLock lock{&state.mutex};
-    if (state.dropped) {
-      return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
-                               "Interrupted!"};
-    }
     state.contexts.emplace_back(context);
   }
-  pending->Complete();
-  return pending->HasError() ? pending->GetErrorObject() : duckdb::ErrorData{};
+  duckdb::QueryParameters parameters;
+  parameters.caller_drives = true;
+  for (const auto& peel : *job.body) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
+    statements.push_back(peel->Copy());
+    try {
+      context->PreprocessStatements(statements);
+    } catch (const std::exception& e) {
+      return duckdb::ErrorData{e};
+    }
+    for (auto& statement : statements) {
+      if (Dropped(state)) {
+        return duckdb::ErrorData{duckdb::ExceptionType::INTERRUPT,
+                                 "Interrupted!"};
+      }
+      auto result = context->Query(std::move(statement), parameters);
+      if (result->HasError()) {
+        return result->GetErrorObject();
+      }
+      if (Dropped(state)) {
+        return {};
+      }
+      SDB_PARK_ONCE_ON_FAILURE("pause_job_after_statement");
+    }
+  }
+  return {};
 }
 
 }  // namespace

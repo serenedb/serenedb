@@ -156,7 +156,7 @@ When the alternatives are a list, [`ts_any`](../../functions/search/full-text.md
 
 ## Range queries {#range-queries}
 
-Numeric, temporal and verbatim text columns support range matching. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
+Numeric, temporal, boolean, text and `BLOB` columns support range matching. On a text column each bound is analyzed with the column's dictionary and must give one token, so `keyword`, `normalize_tokens` and `collate_tokens` dictionaries work, and so does a tokenizing one for single-token bounds. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_014" />
 

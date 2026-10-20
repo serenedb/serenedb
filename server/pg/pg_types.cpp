@@ -226,6 +226,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (IsInet(type)) {
         return make(kInet, kInetArray, -1);
       }
+      if (IsCidr(type)) {
+        return make(kCidr, kCidrArray, -1);
+      }
       if (connector::IsTSQueryStructType(type)) {
         return make(kText, kTextArray, -1);
       }
@@ -331,6 +334,7 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kRegnamespace, REGNAMESPACE())
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
     SDB_OID2TYPE(kInet, INET())
+    SDB_OID2TYPE(kCidr, CIDR())
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())

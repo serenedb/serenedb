@@ -131,6 +131,11 @@ struct Api {
     return {};
   }
 
+  static Result MakeExclusionWindow(const BooleanQuery& query,
+                                    const Context& ctx);
+
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+
   static bool Prunes(const Context& ctx, ScoreMergeType merge,
                      score_t absorbed) noexcept {
     return ctx.prune && merge == ScoreMergeType::Sum && absorbed == 0;
@@ -144,9 +149,9 @@ struct Api {
     std::span<const QueryBuilder::ptr> exclude_filters,
     const SubReader& segment, const Context& ctx, ScoreMergeType merge,
     uint32_t min_match) {
-    return top::MakePrunedDisjunction(
-      should, should_filters, uniformity, nullptr, nullptr, kNoBoost, excludes,
-      exclude_filters, segment, ctx, merge, min_match);
+    return top::MakePrunedDisjunction(should, should_filters, uniformity,
+                                      excludes, exclude_filters, segment, ctx,
+                                      merge, min_match);
   }
 
   static Result MakePrunedConjunction(

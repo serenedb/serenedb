@@ -1497,9 +1497,9 @@ struct RecordBinCore {
 IRS_FORCE_INLINE void ReadInet(
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
   INET_IPAddress& inet) {
-  const auto& c0 = vdata.children[0].unified;
-  const auto& c1 = vdata.children[1].unified;
-  const auto& c2 = vdata.children[2].unified;
+  const auto& c0 = vdata.children[kInetIpTypeChild].unified;
+  const auto& c1 = vdata.children[kInetAddressChild].unified;
+  const auto& c2 = vdata.children[kInetMaskChild].unified;
   const auto ip_type =
     duckdb::UnifiedVectorFormat::GetData<uint8_t>(c0)[c0.sel->get_index(row)];
   const auto stored = duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(
@@ -1510,11 +1510,12 @@ IRS_FORCE_INLINE void ReadInet(
   inet.address.lower = stored.lower;
   inet.address.upper = static_cast<uint64_t>(stored.upper);
   if (inet.type == INET_IP_ADDRESS_V6) {
-    inet.address.upper ^= (uint64_t{1} << 63);  // undo IPv6 sort-order flip
+    inet.address.upper ^= kInetV6SortBit;
   }
   inet.mask = mask;
 }
 
+template<bool Cidr>
 struct InetTextCore {
   static constexpr uint32_t kMaxBytes = 64;
   IRS_FORCE_INLINE static size_t Render(
@@ -1524,7 +1525,9 @@ struct InetTextCore {
     ReadInet(vdata, row, inet);
     // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules)
     // so output matches host()/::varchar.
-    return ipaddress_to_string(&inet, reinterpret_cast<char*>(dst), kMaxBytes);
+    auto* out = reinterpret_cast<char*>(dst);
+    return Cidr ? cidr_to_string(&inet, out, kMaxBytes)
+                : ipaddress_to_string(&inet, out, kMaxBytes);
   }
 };
 
@@ -1578,29 +1581,32 @@ struct TsqueryBinCore {
   }
 };
 
+template<bool Cidr>
 struct InetBinCore {
-  static constexpr uint32_t kMaxBytes = 4 + 16;
+  static constexpr uint32_t kMaxBytes =
+    sizeof(InetWireHeader) + kInetWireV6Size;
   IRS_FORCE_INLINE static size_t Render(
     uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
-    // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or
-    // 16), then nb big-endian addr bytes.
     const bool is_v6 = inet.type == INET_IP_ADDRESS_V6;
-    const uint8_t nb = is_v6 ? 16 : 4;
-    dst[0] = is_v6 ? 3 : 2;
-    dst[1] = static_cast<uint8_t>(inet.mask);
-    dst[2] = 0;
-    dst[3] = nb;
+    const InetWireHeader header{
+      .family = is_v6 ? kPgsqlAfInet6 : kPgsqlAfInet,
+      .bits = static_cast<uint8_t>(inet.mask),
+      .is_cidr = Cidr,
+      .size = is_v6 ? kInetWireV6Size : kInetWireV4Size,
+    };
+    std::memcpy(dst, &header, sizeof(header));
+    auto* address = dst + sizeof(header);
     if (is_v6) {
-      absl::big_endian::Store64(dst + 4, inet.address.upper);
-      absl::big_endian::Store64(dst + 12, inet.address.lower);
+      absl::big_endian::Store64(address, inet.address.upper);
+      absl::big_endian::Store64(address + sizeof(uint64_t), inet.address.lower);
     } else {
-      absl::big_endian::Store32(dst + 4,
+      absl::big_endian::Store32(address,
                                 static_cast<uint32_t>(inet.address.lower));
     }
-    return size_t{4} + nb;
+    return sizeof(header) + header.size;
   }
 };
 
@@ -2303,8 +2309,12 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
-          format, context, kind);
+        return MakeArraySerializer<InetTextCore<false>, InetBinCore<false>,
+                                   kInet>(format, context, kind);
+      }
+      if (IsCidr(type)) {
+        return MakeArraySerializer<InetTextCore<true>, InetBinCore<true>,
+                                   kCidr>(format, context, kind);
       }
       if (connector::IsTSQueryStructType(type)) {
         return MakeArraySerializer<TsqueryTextCore<WrapContext::Array>,
@@ -2573,8 +2583,12 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(
-          format, context);
+        return SelectFieldSerializer<InetTextCore<false>, InetTextCore<false>,
+                                     InetBinCore<false>>(format, context);
+      }
+      if (IsCidr(type)) {
+        return SelectFieldSerializer<InetTextCore<true>, InetTextCore<true>,
+                                     InetBinCore<true>>(format, context);
       }
       if (connector::IsTSQueryStructType(type)) {
         return SelectFieldSerializer<TsqueryTextCore<WrapContext::None>,

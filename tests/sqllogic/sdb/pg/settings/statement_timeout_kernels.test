@@ -1,56 +1,62 @@
+connection timed
 statement ok
 SET statement_timeout = '50ms'
 
+connection timed
 statement error
 SELECT len(list_resize([true], 2000000000)) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT length(lpad('x', 1000000000, 'y')) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT length(rpad('x', 1000000000, 'y')) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT levenshtein(repeat('a', 300000), repeat('b', 300000)) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT damerau_levenshtein(repeat('a', 10000), repeat('b', 10000)) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT length(replace(repeat('a', 100000000), 'a', 'bb')) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT length(regexp_replace(repeat('a', 100000000), 'a', 'b', 'g')) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
 
+connection timed
 statement error
 SELECT len(regexp_extract_all(repeat('ab', 30000000), 'a')) AS n
 ----
 db error: ERROR: canceling statement due to statement timeout
 
-
-statement ok
-RESET statement_timeout
 
 query
 SELECT lpad('ab', 5, 'xy') AS l, rpad('ab', 5, 'xy') AS r, lpad('abcdef', 3, 'x') AS t, replace('abcabc', 'bc', 'Z') AS p, regexp_replace('a1b22c', '[0-9]+', '#', 'g') AS g

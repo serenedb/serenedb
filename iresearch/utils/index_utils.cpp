@@ -444,11 +444,4 @@ void FlushIndexSegment(Directory& dir, IndexSegment& segment,
   segment_meta::Write(dir, segment.filename, segment.meta);
 }
 
-void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
-                            const DocumentMask& patch) {
-  const auto parent = segment.meta.version;
-  PrepareFlush(segment, true);
-  segment_meta::Write(dir, segment.filename, segment.meta, &patch, parent);
-}
-
 }  // namespace irs::index_utils

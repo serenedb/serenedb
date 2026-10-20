@@ -1858,4 +1858,3 @@ DROP TABLE pd_b;
 
 statement ok
 DROP TABLE pd_b_ref;
-

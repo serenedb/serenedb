@@ -4112,4 +4112,3 @@ DROP TABLE pd_c;
 
 statement ok
 DROP TABLE pd_c_ref;
-

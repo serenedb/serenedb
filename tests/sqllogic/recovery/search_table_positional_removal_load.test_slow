@@ -1189,4 +1189,3 @@ n	s
 connection after_crash_15
 statement ok
 DROP TABLE rl;
-

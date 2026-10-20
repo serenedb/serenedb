@@ -9,7 +9,7 @@ query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := '', case := 'lower')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2599	e15bf7d264e5e4df9268b7a77e8d8606
+2598	4b979165823f27d7b01588493e040ea2
 
 
 query
@@ -44,21 +44,21 @@ query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := 'nl', case := 'lower')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2599	e15bf7d264e5e4df9268b7a77e8d8606
+2598	4b979165823f27d7b01588493e040ea2
 
 
 query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := 'hy', case := 'lower')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2599	e15bf7d264e5e4df9268b7a77e8d8606
+2598	4b979165823f27d7b01588493e040ea2
 
 
 query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := '', case := 'upper')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2618	cd2b69242d3bfa3e17d7db664ce14e72
+2617	7ab6ba5459aa90a9f8aa4f293f56adc4
 
 
 query
@@ -93,14 +93,14 @@ query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := 'nl', case := 'upper')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2618	cd2b69242d3bfa3e17d7db664ce14e72
+2617	7ab6ba5459aa90a9f8aa4f293f56adc4
 
 
 query
 SELECT count(*) FILTER (WHERE t <> s) AS changed, md5(string_agg(t, ',' ORDER BY c)) AS digest FROM (SELECT c, s, normalize_tokens(s, locale := 'hy', case := 'upper')[1] AS t FROM cm_cp);
 ----
 changed	digest
-2618	cd2b69242d3bfa3e17d7db664ce14e72
+2617	7ab6ba5459aa90a9f8aa4f293f56adc4
 
 
 query
@@ -1072,3 +1072,51 @@ id	mapped
 
 statement ok
 DROP TABLE cm_strings;
+
+# U+FFFF is a code point like any other: converting the case keeps its three
+# bytes.
+query
+SELECT octet_length(t) AS bytes FROM (SELECT unnest(normalize_tokens('AB' || chr(65535) || 'C', case := 'lower')) AS t);
+----
+bytes
+6
+
+query
+SELECT octet_length(t) AS bytes FROM (SELECT unnest(normalize_tokens('AB' || chr(65534) || 'C', case := 'lower')) AS t);
+----
+bytes
+6
+
+query
+SELECT normalize_tokens('ab' || chr(65535) || 'c', case := 'upper') = ['AB' || chr(65535) || 'C'] AS same;
+----
+same
+t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cm_lower AS normalize_tokens(case := 'lower');
+
+statement ok
+CREATE TABLE cm_ff (id INT PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX cm_ff_idx ON cm_ff USING inverted (id, s cm_lower);
+
+statement ok
+INSERT INTO cm_ff VALUES (1, 'AB' || chr(65535) || 'C'), (2, 'AB' || chr(65534) || 'C');
+
+statement ok
+VACUUM (REFRESH_TABLE) cm_ff;
+
+query
+SELECT id FROM cm_ff_idx WHERE s @@ ts_like('ab%c') ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DROP TABLE cm_ff;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cm_lower;

@@ -361,7 +361,7 @@ TEST(utf8_utils_test, LengthFromChar32) {
   ASSERT_EQ(4, irs::utf8_utils::LengthFromChar32(0x10000));
 
   // Intentionally don't handle this in `cp_length`
-  ASSERT_EQ(3,
+  ASSERT_EQ(4,
             irs::utf8_utils::LengthFromChar32(irs::utf8_utils::kInvalidChar32));
 }
 

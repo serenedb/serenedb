@@ -12,11 +12,16 @@ target_sources(
         inverted_index_bind.cpp
         search_filter_builder.cpp
         geo_filter_builder.cpp
+        inet_filter_builder.cpp
+        inet_terms.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
         duckdb_subscription.cpp
         scan/col_filter_verify.cpp
-        scan/deferred_verify.cpp
+        scan/deferred_check.cpp
+        scan/geo_check.cpp
+        scan/phrase_check.cpp
+        scan/wildcard_check.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp

@@ -212,3 +212,53 @@ SELECT 'SereneDB' ~ 'Serene[A-Z]+';
 ----
 ?column?
 t
+
+
+statement ok
+CREATE TABLE similar_rows AS
+SELECT i AS id,
+       CASE i % 3 WHEN 0 THEN 'SereneDB ' || i WHEN 1 THEN 'DuckDB ' || i ELSE 'Postgres 50% ' || i END AS s,
+       CASE WHEN i <= 300 THEN '(Serene|Duck)DB%'
+            WHEN i <= 600 THEN (CASE i % 2 WHEN 0 THEN 'Postgres%' ELSE '%DB 1%' END)
+            WHEN i <= 800 THEN '%#%%'
+       END AS p
+FROM generate_series(1, 900) AS g(i)
+
+
+query
+SELECT p,
+       count(*) FILTER (WHERE s SIMILAR TO p) AS similar,
+       count(*) FILTER (WHERE s NOT SIMILAR TO p) AS not_similar,
+       count(*) FILTER (WHERE s SIMILAR TO p ESCAPE '#') AS similar_escape
+FROM similar_rows
+GROUP BY p
+ORDER BY p COLLATE "C"
+----
+p	similar	not_similar	similar_escape
+%#%%	0	200	67
+%DB 1%	0	150	0
+(Serene|Duck)DB%	200	100	200
+Postgres%	50	100	50
+NULL	0	0	0
+
+
+statement ok
+PREPARE similar_param AS SELECT count(*) AS n FROM similar_rows WHERE s SIMILAR TO $1
+
+
+query
+EXECUTE similar_param('(Serene|Duck)DB%')
+----
+n
+600
+
+
+query
+EXECUTE similar_param('%50#%%')
+----
+n
+0
+
+
+statement ok
+DEALLOCATE similar_param

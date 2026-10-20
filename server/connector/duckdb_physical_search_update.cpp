@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
@@ -94,7 +95,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   const auto& columns = _table.GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
   for (const auto& column : columns.Logical()) {
-    state->column_ids.emplace_back(column.Oid());
+    state->column_ids.emplace_back(TableColumnId(column));
   }
   state->chunk_types = columns.GetColumnTypes();
   state->write_buffer_max_bytes =

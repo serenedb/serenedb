@@ -91,7 +91,7 @@ By default the index records only which terms appear in which rows. Some query a
 | Flag | Records | Needed for |
 |---|---|---|
 | `frequency` | how often each term occurs | [relevance scoring](./ranking.md) |
-| `position` | each token's ordinal position | [phrase and proximity](./full-text-search.md#phrase-search) queries |
+| `position` | each token's ordinal position | [phrase and proximity](./full-text-search.md#phrase-search) queries answered by the index alone ([without it](./full-text-search.md#phrases-without-positions), they need the column's text in the index) |
 | `offset` | each token's byte offsets in the source value | [highlighting](./full-text-search.md#highlighting) |
 | `norm` | a length-normalization factor | some scorers |
 

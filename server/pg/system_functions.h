@@ -316,24 +316,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
       WHERE false;
   END;)"},
 
-  {"pg_catalog", "pg_prepared_statement",
-   R"(()
-  RETURNS TABLE( name TEXT,
-                 statement TEXT,
-                 prepare_time TIMESTAMP,
-                 parameter_types BIGINT[],
-                 result_types BIGINT[],
-                 from_sql BOOLEAN,
-                 generic_plans BIGINT,
-                 custom_plans BIGINT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT NULL::TEXT, NULL::TEXT, NULL::TIMESTAMP,
-             NULL::BIGINT[], NULL::BIGINT[],
-             NULL::BOOLEAN, NULL::BIGINT, NULL::BIGINT
-      WHERE false;
-  END;)"},
-
   {"pg_catalog", "pg_show_all_file_settings",
    R"(()
   RETURNS TABLE( sourcefile TEXT,
@@ -927,7 +909,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
    R"((role_oid) AS COALESCE(
         (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
         ('unknown (OID=' || role_oid || ')')))"},
-  {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
 
   // Recovery status: SereneDB is always a primary (no WAL-replay standby

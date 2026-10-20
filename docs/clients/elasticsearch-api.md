@@ -292,6 +292,7 @@ A `match`, `match_phrase` or `term` on a `text` field is a full-text clause. The
 
 - A clause names one field. A field that is not in the mapping matches nothing.
 - `match` and `match_phrase` take a string. Use `term` or `range` for numbers.
+- Malformed numeric values in `term` or `range` fail with `400 parsing_exception` for both `_search` and `_count`.
 - `range` bounds on a `date` field are ISO 8601 strings in UTC, like `"2026-09-02"` or `"2026-09-02T10:30:00Z"`. Epoch milliseconds and date math such as `now-30d` fail with `400`.
 - Other clause types fail with `400` and `query type [...] is not supported yet`, for example `terms`, `prefix`, `wildcard`, `fuzzy`, `exists`, `ids`, `multi_match`, `query_string` and `nested`. Parameters beyond the ones in the table fail the same way, for example `boost`, `fuzziness`, `slop` and `format`.
 
@@ -487,7 +488,7 @@ Errors use the Elasticsearch envelope:
 
 | Status | `type` | Cause |
 |---|---|---|
-| 400 | `parsing_exception` | the body is not a JSON object or a `_count` body has keys other than `query` |
+| 400 | `parsing_exception` | the body is not a JSON object, a `term` or `range` number is malformed, or a `_count` body has keys other than `query` |
 | 400 | `illegal_argument_exception` | an unsupported clause, parameter, aggregation or bulk action; an invalid `size`, `from` or document ID |
 | 400 | `mapper_parsing_exception` | an invalid mapping; a document or value that does not parse |
 | 400 | `invalid_index_name_exception` | an index name outside the naming rules |

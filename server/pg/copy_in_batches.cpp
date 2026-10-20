@@ -137,6 +137,20 @@ void CopyInBatches::Abort() {
   {
     Guard guard{_waiters.lock};
     _aborted = true;
+    while (_pushed != _taken) {
+      _retained_bytes -= _window.back()->bytes;
+      _window.pop_back();
+      _done.pop_back();
+      --_pushed;
+      --_outstanding;
+    }
+    if (_pushed == _watermark) {
+      _released.clear();
+    } else {
+      for (auto& released : _released) {
+        released.seq = std::min(released.seq, _pushed - 1);
+      }
+    }
     space = std::exchange(_space_waiter, false);
     waiters = _waiters.TakeBlockedTasks();
   }
@@ -152,7 +166,7 @@ bool CopyInBatches::Aborted() const {
 }
 
 CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
-                             std::vector<CopyBatch*>& out) {
+                             std::vector<CopyBatchLease>& out) {
   Lock lock{_waiters.lock};
   for (;;) {
     ThrowIfFailed(lock);
@@ -170,21 +184,21 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
   }
 }
 
-bool CopyInBatches::TryTake(size_t max, std::vector<CopyBatch*>& out) {
+bool CopyInBatches::TryTake(size_t max, std::vector<CopyBatchLease>& out) {
   Lock lock{_waiters.lock};
   ThrowIfFailed(lock);
   return TakeReady(max, out);
 }
 
-CopyBatch* CopyInBatches::Next() {
+CopyBatchLease CopyInBatches::Next() {
   Lock lock{_waiters.lock};
   for (;;) {
     ThrowIfFailed(lock);
     if (_taken != _pushed) {
-      return _window[_taken++ - _watermark].get();
+      return CopyBatchLease{*this, *_window[_taken++ - _watermark]};
     }
     if (_finished || _aborted) {
-      return nullptr;
+      return {};
     }
     WaitForPush(lock);
   }
@@ -218,15 +232,15 @@ void CopyInBatches::Done(uint64_t seq) {
   }
 }
 
-bool CopyInBatches::TakeReady(size_t max, std::vector<CopyBatch*>& out) {
+bool CopyInBatches::TakeReady(size_t max, std::vector<CopyBatchLease>& out) {
   if (_taken == _pushed) {
     return false;
   }
-  const auto take = std::min<uint64_t>(max, _pushed - _taken);
-  for (uint64_t i = 0; i < take; ++i) {
-    out.emplace_back(_window[_taken + i - _watermark].get());
+  const auto end = _taken + std::min<uint64_t>(max, _pushed - _taken);
+  while (_taken != end) {
+    out.emplace_back(*this, *_window[_taken - _watermark]);
+    ++_taken;
   }
-  _taken += take;
   return true;
 }
 

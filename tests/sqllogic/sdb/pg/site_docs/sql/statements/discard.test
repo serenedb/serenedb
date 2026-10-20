@@ -1,0 +1,54 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEMP TABLE scratch (id INTEGER);
+
+statement ok
+DISCARD TEMP;
+
+statement error (?i).*scratch.*
+SELECT * FROM scratch;
+
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET statement_timeout = '5s';
+
+statement ok
+PREPARE recent AS SELECT 1;
+
+statement ok
+DISCARD ALL;
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+0
+
+statement error
+EXECUTE recent;
+----
+db error: ERROR: prepared statement "recent" does not exist
+
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+BEGIN;
+
+statement error
+DISCARD ALL;
+----
+db error: ERROR: DISCARD ALL cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;

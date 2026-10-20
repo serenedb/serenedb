@@ -55,9 +55,15 @@ namespace {
 
 catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
   auto& context = conn_ctx.GetClientContext();
-  return duckdb::Catalog::GetCatalog(
-           context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-    .Cast<catalog::SereneDBCatalog>();
+  auto database = catalog::DefaultSereneDBCatalog(context);
+  if (!database) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("subscriptions are not supported by database \"",
+                            duckdb::DatabaseManager::GetDefaultDatabase(context)
+                              .GetIdentifierName(),
+                            "\""));
+  }
+  return *database;
 }
 
 std::string DatabaseOf(ConnectionContext& conn_ctx) {

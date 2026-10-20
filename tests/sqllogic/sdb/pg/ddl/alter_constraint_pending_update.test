@@ -1,0 +1,87 @@
+statement ok
+CREATE TABLE acp (a int, b int)
+
+
+statement count 3000
+INSERT INTO acp SELECT g, g FROM generate_series(1, 3000) g
+
+
+connection writer
+statement ok
+BEGIN
+
+
+connection writer
+statement count 1
+UPDATE acp SET b = b + 1 WHERE a = 2500
+
+
+statement error
+ALTER TABLE acp ALTER COLUMN b SET NOT NULL
+----
+db error: ERROR: Cannot verify a constraint with outstanding updates of another transaction
+
+
+statement error
+ALTER TABLE acp ADD CONSTRAINT acp_b_pos CHECK (b > 0)
+----
+db error: ERROR: Cannot verify a constraint with outstanding updates of another transaction
+
+
+connection writer
+statement ok
+ROLLBACK
+
+
+statement ok
+ALTER TABLE acp ALTER COLUMN b SET NOT NULL
+
+
+statement ok
+ALTER TABLE acp ADD CONSTRAINT acp_b_pos CHECK (b > 0)
+
+
+connection writer
+statement ok
+BEGIN
+
+
+connection writer
+statement count 1
+UPDATE acp SET b = 7 WHERE a = 10
+
+
+connection writer
+statement ok
+COMMIT
+
+
+statement ok
+BEGIN
+
+
+statement count 1
+UPDATE acp SET b = 8 WHERE a = 10
+
+
+statement ok
+ALTER TABLE acp ADD CONSTRAINT acp_b_small CHECK (b < 4000)
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT b FROM acp WHERE a = 10
+----
+b
+8
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'acp'::regclass AND contype = 'c' ORDER BY conname
+----
+conname
+acp_b_pos
+acp_b_small

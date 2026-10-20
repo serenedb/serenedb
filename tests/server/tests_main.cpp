@@ -21,11 +21,13 @@
 #include <gtest/gtest.h>
 
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "query/config.h"
 
 int main(int argc, char** argv) {
+  irs::CheckCpuFeatures(argv[0]);
   ::testing::InitGoogleTest(&argc, argv);
   irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(

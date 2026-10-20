@@ -31,16 +31,12 @@
 #include <yaclib/async/future.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
 
-namespace sdb::catalog {
-
-struct InvertedIndexConfig;
-
-}  // namespace sdb::catalog
 namespace sdb::query {
 
 class Transaction : public Config {
@@ -124,7 +120,7 @@ class Transaction : public Config {
   // references stop being held. Refuses while the transaction's view has to
   // stay frozen -- REPEATABLE READ, or any uncommitted DML, whose rows are
   // tied to the view they were written through. Returns whether it dropped.
-  bool TryDropSearchReader(duckdb::idx_t shard_id);
+  bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
 
   void Destroy() noexcept;
 
@@ -192,7 +188,8 @@ class Transaction : public Config {
 
   irs::containers::FlatHashMap<duckdb::idx_t, SearchTransaction>
     _search_transactions;
-  irs::containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
+  irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
+                               search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged

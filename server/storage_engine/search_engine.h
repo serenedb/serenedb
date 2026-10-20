@@ -48,10 +48,6 @@ class SearchEngine final {
       static_cast<uint32_t>(MaxConcurrentCompactions()), 1, 16);
   }
 
-  // Process-wide cap on concurrent compactions, the only hard ceiling on
-  // in-flight merges. Cores-derived (Lucene maxThreadCount): max(1, min(4,
-  // cores/2)). background_threads is auto-floored above this with headroom for
-  // refresh + cleanup + drop bursts (see background_scheduler.cpp).
   static int MaxConcurrentCompactions() noexcept;
 
   SearchEngine();
@@ -94,13 +90,19 @@ class SearchEngine final {
     _running_compactions.fetch_sub(1, std::memory_order_release);
   }
 
-  uint32_t AcquireAnnWorkers(uint32_t want) noexcept {
+  uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
+                             uint32_t most = MaxAnnWorkersPerBuild()) noexcept {
     const uint32_t cap = MaxAnnBuildWorkers();
-    const uint32_t ceiling = std::clamp(want, 1U, MaxAnnWorkersPerBuild());
+    const uint32_t least = held == 0 ? 1U : 0U;
+    const uint32_t room = most > held ? most - held : 0U;
+    const uint32_t ceiling = std::max(least, std::min(want, room));
     auto cur = _running_ann_workers.load(std::memory_order_relaxed);
     for (;;) {
       const uint32_t grant =
-        std::clamp(cur < cap ? cap - cur : 0U, 1U, ceiling);
+        std::clamp(cur < cap ? cap - cur : 0U, least, ceiling);
+      if (grant == 0) {
+        return 0;
+      }
       if (_running_ann_workers.compare_exchange_weak(
             cur, cur + grant, std::memory_order_acq_rel,
             std::memory_order_relaxed)) {
@@ -131,13 +133,27 @@ class SearchEngine final {
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
 
-inline uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
-  return GetSearchEngine().AcquireAnnWorkers(want);
+inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want, held);
 }
 
 inline void AnnReleaseWorkers(uint32_t n) noexcept {
   GetSearchEngine().ReleaseAnnWorkers(n);
 }
+
+class [[nodiscard]] ManualCompactionSlot {
+ public:
+  ManualCompactionSlot() noexcept;
+  ~ManualCompactionSlot();
+
+  ManualCompactionSlot(const ManualCompactionSlot&) = delete;
+  ManualCompactionSlot& operator=(const ManualCompactionSlot&) = delete;
+
+  const irs::AnnBuildEnv* AnnEnv() const noexcept;
+
+ private:
+  bool _held;
+};
 
 }  // namespace search
 }  // namespace sdb

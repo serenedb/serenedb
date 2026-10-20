@@ -1,8 +1,5 @@
 control substitution on
 
-# Rows deleted while an index is being built, a long run of them and scattered
-# ones, stay deleted once the build swaps its segments in.
-
 statement ok
 RESET sdb_faults;
 

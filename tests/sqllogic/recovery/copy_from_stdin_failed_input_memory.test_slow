@@ -1,0 +1,43 @@
+control substitution on
+
+statement ok
+CREATE TABLE copy_fail_memory (id INTEGER);
+
+system ok
+for p in $(pgrep -x serened); do if tr '\0' ' ' < /proc/$p/cmdline | grep -q -- "$SDB_DATADIR"; then echo $p; fi; done | head -1 > $__TEST_DIR__/serened_pid; test -s $__TEST_DIR__/serened_pid
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); echo 5 > /proc/$pid/clear_refs; awk '/VmHWM/ {print $2}' /proc/$pid/status > $__TEST_DIR__/hwm_before
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); python3 -c "import sys; w = sys.stdout.buffer; w.write(b'x\n'); block = b'1\n' * (1 << 19); [w.write(block) for _ in range(768)]" | PGPASSWORD=postgres psql -h 127.0.0.1 -p "$port" -U postgres -d $__DATABASE__ -q -c 'COPY copy_fail_memory FROM STDIN' 2>&1 | grep -c 'invalid input for column 1'
+----
+1
+
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); before=$(cat $__TEST_DIR__/hwm_before); after=$(awk '/VmHWM/ {print $2}' /proc/$pid/status); echo "peak_rss_growth_below_384MiB=$(( after - before < 393216 ))"
+----
+peak_rss_growth_below_384MiB=1
+
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); echo 5 > /proc/$pid/clear_refs; awk '/VmHWM/ {print $2}' /proc/$pid/status > $__TEST_DIR__/hwm_before_csv
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); python3 -c "import sys; w = sys.stdout.buffer; w.write(b'x\n'); block = b'1\n' * (1 << 19); [w.write(block) for _ in range(768)]" | PGPASSWORD=postgres psql -h 127.0.0.1 -p "$port" -U postgres -d $__DATABASE__ -q -c 'COPY copy_fail_memory FROM STDIN (FORMAT csv, HEADER false)' 2>&1 | grep -c '^ERROR:'
+----
+1
+
+
+system ok
+pid=$(cat $__TEST_DIR__/serened_pid); before=$(cat $__TEST_DIR__/hwm_before_csv); after=$(awk '/VmHWM/ {print $2}' /proc/$pid/status); echo "csv_peak_rss_growth_below_384MiB=$(( after - before < 393216 ))"
+----
+csv_peak_rss_growth_below_384MiB=1
+
+
+query
+SELECT count(*) AS n FROM copy_fail_memory;
+----
+n
+0

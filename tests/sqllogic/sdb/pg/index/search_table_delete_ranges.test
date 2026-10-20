@@ -51,7 +51,6 @@ count	sum
 400000	79999800000
 
 
-# A run of rows across segments and row groups, cut inside a row group at the end.
 statement ok
 DELETE FROM dr WHERE ts < TIMESTAMP '2026-01-01' + 151234 * INTERVAL '1 second'
 
@@ -60,7 +59,6 @@ statement ok
 DELETE FROM dr_ref WHERE ts < TIMESTAMP '2026-01-01' + 151234 * INTERVAL '1 second'
 
 
-# Scattered rows among rows that stay.
 statement ok
 DELETE FROM dr WHERE id % 1000 = 7
 
@@ -69,7 +67,6 @@ statement ok
 DELETE FROM dr_ref WHERE id % 1000 = 7
 
 
-# One statement with a long run and scattered rows.
 statement ok
 DELETE FROM dr WHERE (id >= 200000 AND id < 210000) OR id % 997 = 0
 
@@ -103,8 +100,6 @@ count	min
 238289	151234
 
 
-# Two deletes, the second below the first, then inserts between deletes, all in
-# one transaction.
 statement ok
 BEGIN
 
@@ -212,7 +207,6 @@ statement ok
 DELETE FROM dr_ref WHERE id >= 390000 AND id < 390004
 
 
-# A row committed by another transaction after the delete read the table stays.
 statement ok
 VACUUM (REFRESH_TABLE) dr
 
@@ -300,6 +294,67 @@ missing
 
 query
 SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dr EXCEPT ALL SELECT id, ts, body FROM dr_ref)
+----
+extra
+0
+
+
+statement ok
+CREATE TABLE dp_ref AS
+SELECT i AS id, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second' AS ts, 'row ' || i AS body
+FROM range(0, 600000) r(i)
+
+
+statement ok
+CREATE TABLE dp (id BIGINT, ts TIMESTAMP, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 8192)
+
+
+statement ok
+INSERT INTO dp SELECT id, ts, body FROM dp_ref
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(DISTINCT row_group_id) > 1 AS several_segments
+FROM pragma_storage_info('dp') WHERE column_name = 'id';
+----
+several_segments
+t
+
+
+statement ok
+DELETE FROM dp WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
+
+
+statement ok
+DELETE FROM dp_ref WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(*), min(id) FROM dp
+----
+count	min
+200000	400000
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dp_ref EXCEPT ALL SELECT id, ts, body FROM dp)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dp EXCEPT ALL SELECT id, ts, body FROM dp_ref)
 ----
 extra
 0

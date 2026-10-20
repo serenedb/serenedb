@@ -37,6 +37,8 @@ EXEMPT = {
     # CREATE SERVER validates connectivity, so populating this one needs a
     # reachable remote database.
     "pg_foreign_server",
+    # A subscription lists its tables only once it has reached its publisher.
+    "pg_subscription_rel",
 }
 
 FIXTURE = """statement ok
@@ -131,6 +133,9 @@ INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
 
 statement ok
 CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub WITH (connect = false, slot_name = NONE)
+
+statement ok
+PREPARE stc_prep AS SELECT 1
 """
 
 TEARDOWN = """statement ok

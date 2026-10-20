@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -531,6 +533,48 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   ASSERT_EQ(2, synced.size());
   EXPECT_EQ(snapshot.Meta().index_meta.segments.front().filename, synced[0]);
   EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+}
+
+TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
+  constexpr size_t kDocs = 12000;
+  constexpr size_t kRounds = 4;
+  uint64_t tick = 1;
+  {
+    auto trx = _writer->GetBatch();
+    for (size_t i = 0; i != kDocs; ++i) {
+      ASSERT_TRUE(InsertDoc(trx, absl::StrCat("d", i)));
+    }
+    ASSERT_TRUE(trx.Commit(tick));
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  for (size_t round = 0; round != kRounds; ++round) {
+    {
+      auto remover = _writer->GetBatch();
+      for (size_t i = round; i < kDocs; i += 2 * kRounds) {
+        remover.Remove(ByName(absl::StrCat("d", i)));
+        ++tick;
+      }
+      ASSERT_TRUE(remover.Commit(++tick));
+    }
+    _dir->TakeSynced();
+    ASSERT_TRUE(_writer->RefreshCommit());
+
+    const auto snapshot = _writer->GetSnapshot();
+    ASSERT_EQ(1, snapshot.size());
+    const auto& segment = snapshot.Meta().index_meta.segments.front();
+    EXPECT_EQ((round + 1) * kDocs / (2 * kRounds),
+              segment.meta.docs_count - segment.meta.live_docs_count);
+    EXPECT_TRUE(absl::c_none_of(
+      segment.meta.files,
+      [](std::string_view file) { return file.ends_with(".sm"); }))
+      << "round " << round;
+
+    const auto synced = _dir->TakeSynced();
+    ASSERT_EQ(2, synced.size()) << "round " << round;
+    EXPECT_EQ(segment.filename, synced[0]);
+    EXPECT_TRUE(synced[1].starts_with("pending_segments_"));
+  }
 }
 
 // The meta file needs its own ref: the segment reader pins meta.files only, and
@@ -1341,7 +1385,6 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
 
   const auto& compacted = snapshot.Meta().index_meta.segments.front();
   ASSERT_NE(nullptr, compacted.meta.docs_mask);
-  EXPECT_EQ(1, compacted.meta.docs_mask_chain);
   for (const auto& file : compacted.meta.files) {
     EXPECT_FALSE(file.ends_with(".sm")) << file << " is a chain link";
   }

@@ -59,7 +59,7 @@ namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
   std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-  duckdb::idx_t db_id, duckdb::idx_t index_id,
+  bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
@@ -82,6 +82,14 @@ InvertedIndexStorage::InvertedIndexStorage(
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
+  if (const auto& scorer_options = top_k_scorer) {
+    _topk_scorer = MakeScorer(*scorer_options);
+  }
+
+  if (read_only) {
+    return;
+  }
+
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
@@ -94,19 +102,14 @@ InvertedIndexStorage::InvertedIndexStorage(
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = &irs::DuckDBEngine::Instance().instance();
-  writer_options.reader_options.db = writer_options.db;
+  writer_options.reader_options = ReaderOptions();
+  writer_options.db = writer_options.reader_options.db;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
   // serenedb transaction) and a merge hands the compaction task's snapshot
   // index (CompactUnsafe). The long-lived writer therefore never reaches into
   // the live catalog, so a concurrent DROP can no longer dangle it.
-
-  if (const auto& options = top_k_scorer) {
-    _topk_scorer = MakeScorer(*options);
-    writer_options.reader_options.scorer = _topk_scorer.get();
-  }
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
@@ -120,6 +123,20 @@ InvertedIndexStorage::InvertedIndexStorage(
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
 
+  SetFileManifest(stamp.manifest);
+  StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), std::move(stamp.manifest)));
+}
+
+irs::IndexReaderOptions InvertedIndexStorage::ReaderOptions() const {
+  irs::IndexReaderOptions options;
+  options.db = &irs::DuckDBEngine::Instance().instance();
+  options.scorer = _topk_scorer.get();
+  return options;
+}
+
+void InvertedIndexStorage::OpenReader() {
+  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
   SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
@@ -153,12 +170,14 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
+  if (!_writer) {
+    return;
+  }
 
   irs::SegmentOptions segment_options;
   segment_options.segment_count_max = 0;
   segment_options.segment_memory_max = options.segment_memory_max;
   segment_options.segment_docs_max = options.segment_docs_max;
-  SDB_ASSERT(_writer);
   _writer->Options(segment_options);
 }
 
@@ -208,7 +227,7 @@ absl::Status InvertedIndexStorage::Refresh(
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
-  stats.numBufferedDocs = _writer->BufferedDocs();
+  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
 }

@@ -29,6 +29,7 @@ namespace sdb::pg {
 struct PgSubscription {
   static constexpr uint64_t kId = 153;
   static constexpr std::string_view kName = "pg_subscription";
+  static constexpr std::array kPrivateColumns{std::string_view{"subconninfo"}};
 
   enum class Substream : char {
     Disallow = 'f',

@@ -25,10 +25,12 @@
 
 #include <algorithm>
 #include <duckdb.hpp>
+#include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -40,6 +42,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -67,6 +70,9 @@
 #include "connector/column_id.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
+#include "connector/inet_terms.h"
+#include "connector/pg_logical_types.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
 #include "query/config.h"
@@ -1194,6 +1200,161 @@ TEST_F(SearchFilterBuilderTest, test_NotBetween) {
 }
 
 // ===========================================================================
+// INET ranges
+// ===========================================================================
+
+connector::inet_terms::Inet InetOf(std::string_view text) {
+  const auto ip = ipaddress_from_string(text.data(), text.size());
+  const auto value = connector::inet_terms::FromAddress(
+    static_cast<connector::inet_terms::Family>(ip.type), ip.address.upper,
+    ip.address.lower, ip.mask);
+  SDB_ASSERT(value);
+  return *value;
+}
+
+connector::inet_terms::Bytes InetNetworkOf(std::string_view text) {
+  const auto value = InetOf(text);
+  return connector::inet_terms::Network(value, value.mask);
+}
+
+irs::bstring InetLevelTerm(std::string_view network, uint32_t level) {
+  return connector::inet_terms::LevelTermOf(InetOf(network).family, level,
+                                            InetNetworkOf(network));
+}
+
+irs::bstring InetExactTerm(std::string_view text) {
+  return connector::inet_terms::ExactTermOf(InetOf(text));
+}
+
+irs::bstring InetFirstExactTerm(std::string_view network) {
+  return connector::inet_terms::FirstExactTermOf(InetOf(network).family,
+                                                 InetNetworkOf(network));
+}
+
+void AddInetRange(BoolTarget target, irs::bstring min, irs::BoundType min_type,
+                  irs::bstring max, irs::BoundType max_type) {
+  auto& range = sdb::connector::AddFilter<irs::ByRange>(target);
+  *range.mutable_field_id() = ExpectedFieldId(1);
+  range.SetScorer(&irs::ForceConstScore());
+  auto& bounds = range.mutable_options()->range;
+  bounds.min = std::move(min);
+  bounds.min_type = min_type;
+  bounds.max = std::move(max);
+  bounds.max_type = max_type;
+}
+
+void AddInetTerm(BoolTarget target, irs::bstring term) {
+  sdb::connector::AddTerm(target, ExpectedFieldId(1), term, irs::kNoBoost,
+                          &irs::ForceConstScore());
+}
+
+std::vector<ColumnSpec> InetColumns() {
+  return {{.id = 1, .type = sdb::pg::INET(), .name = "ip"}};
+}
+
+constexpr auto kIncl = irs::BoundType::Inclusive;
+constexpr auto kExcl = irs::BoundType::Exclusive;
+
+void AddInetFamilyPrefix(BoolTarget target,
+                         connector::inet_terms::Family family) {
+  auto& prefix = sdb::connector::AddFilter<irs::ByPrefix>(target);
+  *prefix.mutable_field_id() = ExpectedFieldId(1);
+  prefix.SetScorer(&irs::ForceConstScore());
+  prefix.mutable_options()->term =
+    connector::inet_terms::CoarsestLevelPrefixOf(family);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InetGreaterOrEqualFromBucketStart) {
+  irs::BooleanFilter expected;
+  auto families = AddDisjunction(expected);
+  auto pieces = AddDisjunction(families);
+  AddInetRange(pieces, InetLevelTerm("10.1.0.0", 2), kIncl,
+               InetLevelTerm("10.255.0.0", 2), kIncl);
+  AddInetRange(pieces, InetLevelTerm("11.0.0.0", 3), kIncl,
+               InetLevelTerm("255.0.0.0", 3), kIncl);
+  AddInetFamilyPrefix(families, connector::inet_terms::Family::V6);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ip >= '10.1.0.0/16'",
+               InetColumns(), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InetGreaterOrEqualExcludesBucketHead) {
+  irs::BooleanFilter expected;
+  auto families = AddDisjunction(expected);
+  auto range = AddConjunction(families);
+  auto pieces = AddDisjunction(range);
+  AddInetRange(pieces, InetLevelTerm("10.1.0.0", 2), kIncl,
+               InetLevelTerm("10.255.0.0", 2), kIncl);
+  AddInetRange(pieces, InetLevelTerm("11.0.0.0", 3), kIncl,
+               InetLevelTerm("255.0.0.0", 3), kIncl);
+  AddInetRange({range.node, irs::Occur::MustNot},
+               InetFirstExactTerm("10.1.0.0"), kIncl, InetExactTerm("10.1.0.0"),
+               kExcl);
+  AddInetFamilyPrefix(families, connector::inet_terms::Family::V6);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ip >= '10.1.0.0'",
+               InetColumns(), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InetLessOrEqualRaggedBound) {
+  irs::BooleanFilter expected;
+  auto families = AddDisjunction(expected);
+  auto pieces = AddDisjunction(families);
+  AddInetRange(pieces, InetLevelTerm("0.0.0.0", 3), kIncl,
+               InetLevelTerm("9.0.0.0", 3), kIncl);
+  AddInetRange(pieces, InetLevelTerm("10.0.0.0", 2), kIncl,
+               InetLevelTerm("10.1.0.0", 2), kIncl);
+  AddInetRange(pieces, InetLevelTerm("10.2.0.0", 1), kIncl,
+               InetLevelTerm("10.2.254.0", 1), kIncl);
+  AddInetRange(pieces, InetFirstExactTerm("10.2.255.0"), kIncl,
+               InetExactTerm("10.2.255.254"), kIncl);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ip <= '10.2.255.254'",
+               InetColumns(), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_InetComparison) {
+  irs::BooleanFilter expected;
+  auto boosted = AddConjunction(expected);
+  boosted.node->SetBoost(2.0f);
+  auto families = AddDisjunction(boosted);
+  auto pieces = AddDisjunction(families);
+  AddInetRange(pieces, InetLevelTerm("0.0.0.0", 3), kIncl,
+               InetLevelTerm("9.0.0.0", 3), kIncl);
+  AddInetTerm(pieces, InetLevelTerm("10.0.0.0", 2));
+  AddInetRange(pieces, InetFirstExactTerm("10.1.0.0"), kIncl,
+               InetExactTerm("10.1.0.0"), kExcl);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (ip < '10.1.0.0')::boost(2.0)",
+               InetColumns(), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_InetContainedBy) {
+  irs::BooleanFilter expected;
+  auto boosted = AddConjunction(expected);
+  boosted.node->SetBoost(2.0f);
+  auto contained = AddConjunction(boosted);
+  AddInetTerm(contained, InetLevelTerm("10.0.0.0", 3));
+  const auto mask7 =
+    connector::inet_terms::MaskTermOf(connector::inet_terms::Family::V4, 7);
+  AddInetRange({contained.node, irs::Occur::MustNot}, mask7, kIncl, mask7,
+               kIncl);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (ip <<= '10.0.0.0/8')::boost(2.0)",
+               InetColumns(), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InetLessThanSplitsIntoBuckets) {
+  irs::BooleanFilter expected;
+  auto families = AddDisjunction(expected);
+  auto pieces = AddDisjunction(families);
+  AddInetRange(pieces, InetLevelTerm("0.0.0.0", 3), kIncl,
+               InetLevelTerm("9.0.0.0", 3), kIncl);
+  AddInetTerm(pieces, InetLevelTerm("10.0.0.0", 2));
+  AddInetRange(pieces, InetFirstExactTerm("10.1.0.0"), kIncl,
+               InetExactTerm("10.1.0.0"), kExcl);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ip < '10.1.0.0'",
+               InetColumns(), true);
+}
+
+// ===========================================================================
 // Combined AND/OR
 // ===========================================================================
 
@@ -1990,7 +2151,7 @@ TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
     expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox')", columns,
     false, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
-    "Positions and Frequency");
+    "needs the column's text in the index");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
@@ -6788,8 +6949,6 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonStringField) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonAnalyzedField) {
-  // VARCHAR column without the Positions+Frequency index features is
-  // rejected. Mirrors the existing test_SimplePhraseNoFeatures setup.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;  // unused on the negative path
@@ -6798,7 +6957,7 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonAnalyzedField) {
                "ts_phrase('quick brown fox', slop := 2)",
                columns, false,
                SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
-               "Positions and Frequency");
+               "needs the column's text in the index");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleChunksMultipleGaps) {
@@ -6928,10 +7087,6 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseIntervalGapZeroSlop) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSingleTokenFreqOnly) {
-  // A single-term sloppy phrase reduces to a term query at prepare
-  // time (GetKind -> kSingleWord) and the matcher ignores slop for
-  // phrase_size == 1, so a Freq-only column is accepted -- mirrors
-  // ts_phrase, which only requires Positions for multi-term phrases.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;
@@ -7471,6 +7626,21 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryValue_SizeCapFallback) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{text});
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ " + SqlQuoted(text),
                columns, true);
+}
+
+TEST(DeferredCheckTest, wildcard_check_copies_and_compares) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  auto wildcard = std::make_unique<irs::ByWildcardNGram>();
+  *wildcard->mutable_field_id() = 2;
+  *wildcard->mutable_options() =
+    irs::ByWildcardNGramOptions{"foo%bar", analyzer, false};
+  wildcard->mutable_options()->store_field_id = 1;
+  ASSERT_NE(nullptr, wildcard->options().matcher);
+  const auto check =
+    sdb::connector::MakeWildcardCheck(*wildcard, 1, duckdb::LogicalType::BLOB);
+  const auto& original = check.check->Cast<duckdb::ExpressionFilter>();
+  const auto copy = original.Copy();
+  EXPECT_TRUE(copy->Equals(original));
 }
 
 }  // namespace

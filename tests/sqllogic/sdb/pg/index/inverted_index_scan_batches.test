@@ -16,6 +16,10 @@ CREATE INDEX sb_idx ON sb USING inverted (body sb_words)
 
 
 statement ok
+SET threads = 1
+
+
+statement ok
 INSERT INTO sb
 SELECT i, CASE WHEN i % 3 = 0 THEN 'fox dog' ELSE 'fox' END
 FROM generate_series(1, 20000) s(i)

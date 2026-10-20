@@ -64,7 +64,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 
 - SQL the server issues itself is built with DuckDB's C++ API, not as text. Client SQL is the parser's job: never match or rewrite it as text; patch the parser or transformer.
 - Internal work uses the `ClientContext` already in play, passed as the first parameter; never a new `duckdb::Connection`.
-- A new cap or limit is a `SET` variable read through `SettingRef`, named `sdb_<name>` when SereneDB-only.
+- A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`, named `sdb_<name>` when SereneDB-only.
 - Production headers carry no test-only accessors.
 
 ## Tests and benchmarks

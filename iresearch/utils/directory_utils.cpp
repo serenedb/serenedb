@@ -23,6 +23,8 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
+#include <duckdb/parallel/task_scheduler.hpp>
+
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"
@@ -49,6 +51,7 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
 }
 
 bool RemoveAllUnreferenced(Directory& dir) {
+  duckdb::TaskScheduler::BlockingScope blocking;
   auto& refs = dir.attributes().refs();
 
   dir.visit([&refs](std::string_view name) {

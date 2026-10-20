@@ -268,7 +268,7 @@ Validation rules:
 | Non-integer or negative `slop` | `$phrase 'slop' must be a non-negative integer.` |
 | `slop` together with an interval gap | `$phrase 'slop' is incompatible with an interval [min, max] gap.` |
 
-Phrase matching needs positional information, so the column's dictionary must carry `position = true`.
+Phrase matching needs positional information: the column's dictionary carries `position = true`, or the index keeps the column's text, as every column of a search table and every `INCLUDE` column does ([phrases without positions](../../sql/indexes/inverted/full-text-search.md#phrases-without-positions)).
 
 ## Making filters index-covered {#pushdown}
 
@@ -331,7 +331,7 @@ Indexing metadata never changes which rows match — provided the declared types
 | `$fuzzy` | `str` | `@@ ts_levenshtein(...)` | Required |
 | `$match` | `list` or `tokens`/`min_match` mapping | `@@ ts_any(...)` | Required |
 | `$ngram` | `str` or `text`/`threshold` mapping | `@@ ts_ngram(...)` | Required (n-gram dictionary) |
-| `$phrase` | `str`, list, or `text`/`slop` mapping | `@@ ts_phrase(...)` | Required (`position = true`) |
+| `$phrase` | `str`, list, or `text`/`slop` mapping | `@@ ts_phrase(...)` | Required (`position = true`, or the column's text in the index) |
 
 :::note
 The operator sets themselves — `SUPPORTED_OPERATORS`, `COMPARISONS_TO_NATIVE`, `TEXT_OPERATORS`, `SPECIAL_CASED_OPERATORS`, `LOGICAL_OPERATORS`, `FTS_OPERATORS`, `FTS_UNARY_FUNCTIONS` and `PYTHON_TO_SDB_TYPE_MAP` — are importable from `langchain_serenedb.async_vectorstore`, but they are not part of the public API and may change without notice.

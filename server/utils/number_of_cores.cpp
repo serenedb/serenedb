@@ -24,6 +24,7 @@
 #include <absl/strings/str_split.h>
 #include <absl/strings/string_view.h>
 #include <fast_float/fast_float.h>
+#include <sched.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -119,42 +120,49 @@ irs::containers::FlatHashSet<int64_t> ParseCpuList(std::string_view list) {
   return cpus;
 }
 
-// Count CPUs in a kernel "0-3,7" cpu list; 0 if empty/malformed.
-int64_t CountCpuList(std::string_view list) {
-  return static_cast<int64_t>(ParseCpuList(list).size());
-}
-
-// Count CPUs in a "0-3,7" cpuset list; 0 = no cpuset. cgroup v2 then v1.
-int64_t CpusetCores() {
-  const auto parse = [](const char* path) -> int64_t {
-    std::ifstream f(path);
-    std::string list;
-    if (!std::getline(f, list) || list.empty()) {
-      return 0;
+irs::containers::FlatHashSet<int64_t> AffinityCpuSet() {
+  irs::containers::FlatHashSet<int64_t> cpus;
+#ifdef __linux__
+  cpu_set_t mask;
+  CPU_ZERO(&mask);
+  if (sched_getaffinity(getpid(), sizeof(mask), &mask) == 0) {
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+      if (CPU_ISSET(cpu, &mask)) {
+        cpus.insert(cpu);
+      }
     }
-    return CountCpuList(list);
-  };
-  if (const int64_t v2 = parse("/sys/fs/cgroup/cpuset.cpus.effective");
-      v2 > 0) {
-    return v2;
   }
-  return parse("/sys/fs/cgroup/cpuset/cpuset.cpus");
+#endif
+  return cpus;
 }
 
-// The cgroup-allowed logical cpu set (cpuset.cpus.effective), cgroup v2 then
-// v1; empty = no cpuset restriction (any cpu allowed).
 irs::containers::FlatHashSet<int64_t> AllowedCpuSet() {
+  irs::containers::FlatHashSet<int64_t> cgroup;
   for (const char* path : {"/sys/fs/cgroup/cpuset.cpus.effective",
                            "/sys/fs/cgroup/cpuset/cpuset.cpus"}) {
     std::ifstream f(path);
     std::string list;
     if (std::getline(f, list) && !list.empty()) {
-      if (auto cpus = ParseCpuList(list); !cpus.empty()) {
-        return cpus;
+      cgroup = ParseCpuList(list);
+      if (!cgroup.empty()) {
+        break;
       }
     }
   }
-  return {};
+  auto affinity = AffinityCpuSet();
+  if (cgroup.empty()) {
+    return affinity;
+  }
+  if (affinity.empty()) {
+    return cgroup;
+  }
+  irs::containers::FlatHashSet<int64_t> allowed;
+  for (const int64_t cpu : affinity) {
+    if (cgroup.contains(cpu)) {
+      allowed.insert(cpu);
+    }
+  }
+  return allowed;
 }
 
 // Map each logical cpu to its physical core (physical_id, core_id) from
@@ -192,7 +200,8 @@ CpuCoreMap() {
 }
 
 int64_t NumberOfCoresImpl() {
-  return sdb::CountLogicalCores(OnlineCores(), CfsQuotaCores(), CpusetCores());
+  return sdb::CountLogicalCores(OnlineCores(), CfsQuotaCores(),
+                                static_cast<int64_t>(AllowedCpuSet().size()));
 }
 
 }  // namespace

@@ -97,6 +97,12 @@ class LoserScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
+  void Restart(score_t seed) noexcept {
+    _size = 0;
+    _root = Node{};
+    *_score_threshold = seed;
+  }
+
   IRS_FORCE_INLINE score_t ScoreThreshold() const noexcept {
     return _score_threshold->load(std::memory_order_relaxed);
   }

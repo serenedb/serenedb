@@ -1,0 +1,49 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY jes_words AS split_text() WITH (frequency);
+
+statement ok
+CREATE TABLE jes (id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+CREATE INDEX jes_idx ON jes USING inverted (id, (doc->'t') jes_words);
+
+statement ok
+INSERT INTO jes VALUES
+    (1, '{"t":"internationalization\nfoo"}'),
+    (2, '{"t":"zzzzzzzzzzzzzzzzzzzz\nfoo"}'),
+    (3, '{"t":"standardizations\t\"bar\""}'),
+    (4, '{"t":"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nbar"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) jes;
+
+query
+SELECT id FROM jes_idx WHERE (doc->'t') @@ 'internationalization' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM jes_idx WHERE (doc->'t') @@ 'zzzzzzzzzzzzzzzzzzzz' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM jes_idx WHERE (doc->'t') @@ 'standardizations' ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM jes_idx WHERE (doc->'t') @@ 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' ORDER BY id;
+----
+id
+4
+
+query
+SELECT id FROM jes_idx WHERE (doc->'t') @@ 'foo' ORDER BY id;
+----
+id
+1
+2

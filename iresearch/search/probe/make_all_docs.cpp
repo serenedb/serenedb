@@ -18,7 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <utility>
+
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/probe/all_docs.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/make.hpp"
@@ -27,6 +31,14 @@ namespace irs::probe {
 
 Node::ptr MakeAllDocs(const SubReader& segment) {
   return memory::make_managed<Impl<AllDocs>>(segment);
+}
+
+Node::ptr MakeLiveDocs(const SubReader& segment) {
+  return ResolveDocsMask(
+    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Node::ptr {
+      return memory::make_managed<Impl<detail::LiveDocs<Mask>>>(
+        std::move(docs_mask), LiveEnd(segment));
+    });
 }
 
 }  // namespace irs::probe

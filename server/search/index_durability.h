@@ -65,6 +65,8 @@ class IndexDurability {
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
     irs::Directory& dir, std::filesystem::path path, bool on_disk, bool is_new,
     irs::IndexWriterOptions options, ManifestSource manifest = nullptr);
+  static std::pair<irs::DirectoryReader, IndexStamp> OpenReader(
+    irs::Directory& dir, const irs::IndexReaderOptions& options);
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
   void MarkStaged(const irs::SourcePosition& position);

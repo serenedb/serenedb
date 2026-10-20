@@ -25,10 +25,15 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/docs/make.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
+#include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
+#include <iresearch/search/top/make.hpp>
 #include <iresearch/store/memory_directory.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -314,6 +319,71 @@ TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
     } else {
       ASSERT_TRUE(irs::doc_limits::eof(it->Next()));
     }
+  }
+}
+
+irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
+  irs::ByVectorExact filter;
+  *filter.mutable_field_id() = kVec;
+  auto& opts = *filter.mutable_options();
+  opts.query.assign(kDim, 0.f);
+  opts.query[0] = x;
+  opts.centroids_id = kVec;
+  opts.metric = irs::VectorMetric::L2Sqr;
+  opts.radius = radius;
+  opts.inclusive = inclusive;
+  return filter;
+}
+
+TEST_F(VectorSimilarityQueryTest, ExactRadius) {
+  Build(300);
+  const auto& segment = (*_reader)[0];
+  irs::VectorSimilarityScorer scorer;
+  for (const bool inclusive : {false, true}) {
+    SCOPED_TRACE(inclusive);
+    const auto filter = MakeExactFilter(150.f, 9.f, inclusive);
+    const auto query = filter.PrepareSegment(segment, {});
+    ASSERT_NE(nullptr, query);
+    std::vector<irs::doc_id_t> want;
+    for (irs::doc_id_t doc = inclusive ? 147 : 148;
+         doc <= (inclusive ? 153U : 152U); ++doc) {
+      want.push_back(doc);
+    }
+
+    auto count = irs::count::MakeRoot(*query);
+    ASSERT_NE(nullptr, count);
+    EXPECT_EQ(want.size(),
+              count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
+
+    auto docs = irs::docs::MakeRoot(*query);
+    ASSERT_NE(nullptr, docs);
+    std::vector<irs::doc_id_t> out(_docs);
+    out.resize(
+      docs->Run(irs::doc_limits::min(), irs::doc_limits::eof(), out.data()));
+    EXPECT_EQ(want, out);
+
+    auto hits =
+      irs::hits::MakeRoot(*query, {.scorer = scorer, .fetcher = _fetcher});
+    ASSERT_NE(nullptr, hits);
+    std::vector<irs::doc_id_t> hit_docs(_docs);
+    std::vector<irs::score_t> scores(_docs);
+    hit_docs.resize(hits->Run(irs::doc_limits::min(), irs::doc_limits::eof(),
+                              hit_docs.data(), scores.data()));
+    EXPECT_EQ(want, hit_docs);
+    for (size_t i = 0; i < hit_docs.size(); ++i) {
+      const auto x = static_cast<float>(hit_docs[i]) - 150.f;
+      EXPECT_EQ(-x * x, scores[i]);
+    }
+
+    std::atomic<irs::score_t> threshold{
+      std::numeric_limits<irs::score_t>::lowest()};
+    std::vector<irs::ScoreDoc> top(_docs);
+    irs::LoserScoreCollector collector{threshold, top};
+    auto ranked = irs::top::MakeRoot(
+      *query, {.scorer = scorer, .fetcher = _fetcher, .k = _docs});
+    ASSERT_NE(nullptr, ranked);
+    ranked->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
+    EXPECT_EQ(want.size(), collector.AcceptedCount());
   }
 }
 

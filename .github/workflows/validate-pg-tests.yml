@@ -61,6 +61,14 @@ jobs:
       contents: read
 
     steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -116,3 +124,7 @@ jobs:
             tests/sqllogic/*.xml
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

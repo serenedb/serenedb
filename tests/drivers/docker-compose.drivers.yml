@@ -1,6 +1,10 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   serenedb-single:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
       - seccomp:unconfined
@@ -27,6 +31,7 @@ services:
 
   tests:
     image: ${BUILD_IMAGE}
+    labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
@@ -63,3 +68,4 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+    labels: *owner

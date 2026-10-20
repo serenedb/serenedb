@@ -5,7 +5,7 @@ control substitution on
 # DOCS_TEST_BODY
 
 query
-CALL enable_logging();
+CALL enable_logging(storage = 'memory');
 ----
 Success
 

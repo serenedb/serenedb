@@ -22,6 +22,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -44,7 +48,12 @@ class ConnInfoTest : public ::testing::Test {
             ::testing::UnitTest::GetInstance()->current_test_info()->name());
     std::filesystem::create_directories(_dir);
     std::vector<std::string> names;
-    for (char** env = environ; *env != nullptr; ++env) {
+#ifdef __APPLE__
+    char** environment = *_NSGetEnviron();
+#else
+    char** environment = environ;
+#endif
+    for (char** env = environment; *env != nullptr; ++env) {
       const std::string_view entry{*env};
       if (entry.starts_with("PG")) {
         names.emplace_back(entry.substr(0, entry.find('=')));

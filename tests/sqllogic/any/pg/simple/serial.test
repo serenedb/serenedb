@@ -596,3 +596,139 @@ INSERT INTO serial_overflow (v) VALUES (2);
 
 statement ok
 DROP TABLE serial_overflow;
+
+
+statement ok
+CREATE TABLE serial_alias (a serial2, b serial4, c serial8, v int);
+
+
+statement count 2
+INSERT INTO serial_alias (v) VALUES (1), (2);
+
+
+query
+SELECT a, b, c, v FROM serial_alias ORDER BY v;
+----
+a	b	c	v
+1	1	1	1
+2	2	2	2
+
+
+query
+SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'serial_alias' ORDER BY ordinal_position;
+----
+column_name	data_type	is_nullable
+a	smallint	NO
+b	integer	NO
+c	bigint	NO
+v	integer	YES
+
+
+query
+SELECT sequencename, max_value FROM pg_sequences WHERE sequencename LIKE 'serial_alias%' ORDER BY sequencename;
+----
+sequencename	max_value
+serial_alias_a_seq	32767
+serial_alias_b_seq	2147483647
+serial_alias_c_seq	9223372036854775807
+
+
+statement ok
+DROP TABLE serial_alias;
+
+
+statement ok
+CREATE TEMP TABLE serial_temp (id serial, big bigserial, v int);
+
+
+statement count 2
+INSERT INTO serial_temp (v) VALUES (1), (2);
+
+
+query
+SELECT id, big, v FROM serial_temp ORDER BY v;
+----
+id	big	v
+1	1	1
+2	2	2
+
+
+query
+SELECT nextval(pg_get_serial_sequence('serial_temp', 'big')) AS next;
+----
+next
+3
+
+
+statement ok
+DROP TABLE serial_temp;
+
+
+statement ok
+CREATE TABLE serial_rel_id_seq (x int);
+
+
+statement ok
+CREATE TABLE serial_rel (id serial, v int);
+
+
+query
+SELECT pg_get_serial_sequence('serial_rel', 'id') AS seq;
+----
+seq
+public.serial_rel_id_seq1
+
+
+statement count 1
+INSERT INTO serial_rel (v) VALUES (1);
+
+
+query
+SELECT id, v FROM serial_rel;
+----
+id	v
+1	1
+
+
+statement ok
+DROP TABLE serial_rel;
+
+
+statement ok
+DROP TABLE serial_rel_id_seq;
+
+
+statement error
+CREATE TABLE serial_null (a serial NULL);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "a" of table "serial_null"
+
+
+statement error
+CREATE TABLE serial_default (a serial DEFAULT 1);
+----
+db error: ERROR: multiple default values specified for column "a" of table "serial_default"
+
+
+statement error (?i)type (with name )?"?serial"? does not exist
+SELECT 1::serial;
+
+
+statement error (?i)type (with name )?"?bigserial"? does not exist
+SELECT CAST(1 AS bigserial);
+
+
+statement ok
+CREATE TABLE serial_retype (v int);
+
+
+statement error (?i)type (with name )?"?serial"? does not exist
+ALTER TABLE serial_retype ALTER COLUMN v TYPE serial;
+
+
+statement error (array of serial is not implemented|Type with name serial does not exist)
+CREATE TABLE serial_array (a serial[]);
+
+
+statement ok
+DROP TABLE serial_retype;

@@ -58,13 +58,19 @@ constexpr std::string_view kKinds =
   "function, statement, tokenizer, type, setting, index_type, command";
 constexpr int64_t kContentChars = 4000;
 
-std::string Cell(duckdb::QueryResult& result, std::string_view column,
-                 size_t row) {
-  const auto& names = result.GetNames();
-  const auto it = absl::c_find(names, column);
-  SDB_ASSERT(it != names.end(), "no column ", column);
+struct Rows {
+  explicit Rows(duckdb::QueryResult& result)
+    : names{result.GetNames()}, table{result.Collection().GetRows()} {}
+
+  const duckdb::vector<duckdb::Identifier>& names;
+  duckdb::ColumnDataRowCollection table;
+};
+
+std::string Cell(const Rows& rows, std::string_view column, size_t row) {
+  const auto it = absl::c_find(rows.names, column);
+  SDB_ASSERT(it != rows.names.end(), "no column ", column);
   const auto value =
-    result.Collection().GetValue(static_cast<size_t>(it - names.begin()), row);
+    rows.table.GetValue(static_cast<size_t>(it - rows.names.begin()), row);
   return value.IsNull() ? std::string{} : duckdb::StringValue::Get(value);
 }
 
@@ -87,16 +93,17 @@ yaclib::Task<ToolResult> SearchDocs(RequestContext& ctx, const ToolArgs& args) {
   if (result->RowCount() == 0) {
     co_return ToolResult{"No results."};
   }
+  const Rows rows{*result};
   std::string text;
-  for (size_t row = 0; row < result->RowCount(); ++row) {
-    const auto breadcrumb = Cell(*result, "breadcrumb", row);
+  for (size_t row = 0; row < rows.table.size(); ++row) {
+    const auto breadcrumb = Cell(rows, "breadcrumb", row);
     absl::StrAppend(&text, row == 0 ? "" : "\n\n", "[", row + 1, "] ",
-                    Cell(*result, "title", row));
+                    Cell(rows, "title", row));
     if (!breadcrumb.empty()) {
       absl::StrAppend(&text, " - ", breadcrumb);
     }
-    absl::StrAppend(&text, "\npath: ", Cell(*result, "path", row), "\n",
-                    Cell(*result, "snippet", row));
+    absl::StrAppend(&text, "\npath: ", Cell(rows, "path", row), "\n",
+                    Cell(rows, "snippet", row));
   }
   co_return ToolResult{std::move(text)};
 }
@@ -127,13 +134,14 @@ yaclib::Task<ToolResult> ReadDoc(RequestContext& ctx, const ToolArgs& args) {
                                  ". Use list_docs or search_docs to find "
                                  "valid paths."));
   }
+  const Rows rows{*result};
   std::string text = absl::StrCat("path: ", path, "\n");
-  if (const auto breadcrumb = Cell(*result, "breadcrumb", 0);
+  if (const auto breadcrumb = Cell(rows, "breadcrumb", 0);
       !breadcrumb.empty()) {
     absl::StrAppend(&text, "in: ", breadcrumb, "\n");
   }
-  absl::StrAppend(&text, "\n", Cell(*result, "heading", 0), "\n");
-  auto content = connector::AbsoluteLinks(Cell(*result, "content", 0), path);
+  absl::StrAppend(&text, "\n", Cell(rows, "heading", 0), "\n");
+  auto content = connector::AbsoluteLinks(Cell(rows, "content", 0), path);
   if (content.size() > kMaxDocChars) {
     const auto cut = content.rfind('\n', kMaxDocChars);
     const auto total = content.size();
@@ -173,11 +181,12 @@ yaclib::Task<ToolResult> ListDocs(RequestContext& ctx, const ToolArgs& args) {
     co_return ToolResult{
       absl::StrCat("No documentation under prefix: ", prefix)};
   }
+  const Rows rows{*result};
   std::string text;
-  for (size_t row = 0; row < result->RowCount(); ++row) {
-    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(*result, "path", row),
-                    " - ", Cell(*result, "title", row));
-    if (const auto breadcrumb = Cell(*result, "breadcrumb", row);
+  for (size_t row = 0; row < rows.table.size(); ++row) {
+    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(rows, "path", row), " - ",
+                    Cell(rows, "title", row));
+    if (const auto breadcrumb = Cell(rows, "breadcrumb", row);
         !breadcrumb.empty()) {
       absl::StrAppend(&text, " (", breadcrumb, ")");
     }
@@ -212,20 +221,20 @@ yaclib::Task<ToolResult> ListObjects(RequestContext& ctx,
     co_return Error(absl::StrCat("No objects of kind: ", kind,
                                  ". Known kinds: ", kKinds, "."));
   }
+  const Rows rows{*result};
   const auto shown =
-    std::min<size_t>(result->RowCount(), static_cast<size_t>(kMaxObjects));
+    std::min<size_t>(rows.table.size(), static_cast<size_t>(kMaxObjects));
   std::string text;
   for (size_t row = 0; row < shown; ++row) {
-    absl::StrAppend(&text, row == 0 ? "" : "\n",
-                    Cell(*result, "signature", row));
+    absl::StrAppend(&text, row == 0 ? "" : "\n", Cell(rows, "signature", row));
     if (kind.empty()) {
-      absl::StrAppend(&text, " (", Cell(*result, "kind", row), ")");
+      absl::StrAppend(&text, " (", Cell(rows, "kind", row), ")");
     }
-    if (const auto summary = Cell(*result, "summary", row); !summary.empty()) {
+    if (const auto summary = Cell(rows, "summary", row); !summary.empty()) {
       absl::StrAppend(&text, " - ", summary);
     }
   }
-  if (result->RowCount() > shown) {
+  if (rows.table.size() > shown) {
     absl::StrAppend(&text, "\n\n(truncated at ", shown,
                     " objects; narrow with kind)");
   }
@@ -274,10 +283,8 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     co_return Error(
       absl::StrCat("describe_object failed: ", result->GetError()));
   }
-  const auto exact = [&](size_t row) {
-    return !result->Collection().GetValue(3, row).IsNull();
-  };
-  if (result->RowCount() == 0 || !exact(0)) {
+  const Rows rows{*result};
+  if (rows.table.empty() || rows.table.GetValue(3, 0).IsNull()) {
     std::string text = absl::StrCat(
       "No documented ", kind.empty() ? "object" : kind, " named: ", name, ".");
     const bool functions = kind.empty() || kind == "function";
@@ -311,21 +318,22 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     }
     const bool found_live = live && !live->HasError() && live->RowCount() > 0;
     if (found_live) {
+      const Rows live_rows{*live};
       absl::StrAppend(&text, " The server has it, undocumented:");
-      for (size_t row = 0; row < live->RowCount(); ++row) {
-        absl::StrAppend(&text, "\n  ", Cell(*live, "signature", row), " (",
-                        Cell(*live, "kind", row), ")");
-        if (const auto about = Cell(*live, "description", row);
+      for (size_t row = 0; row < live_rows.table.size(); ++row) {
+        absl::StrAppend(&text, "\n  ", Cell(live_rows, "signature", row), " (",
+                        Cell(live_rows, "kind", row), ")");
+        if (const auto about = Cell(live_rows, "description", row);
             !about.empty()) {
           absl::StrAppend(&text, " - ", about);
         }
       }
     }
-    if (result->RowCount() > 0) {
+    if (!rows.table.empty()) {
       absl::StrAppend(&text, "\n\nMaybe you meant:");
-      for (size_t row = 0; row < result->RowCount(); ++row) {
-        absl::StrAppend(&text, "\n  ", Cell(*result, "signature", row), " (",
-                        Cell(*result, "kind", row), ")");
+      for (size_t row = 0; row < rows.table.size(); ++row) {
+        absl::StrAppend(&text, "\n  ", Cell(rows, "signature", row), " (",
+                        Cell(rows, "kind", row), ")");
       }
     }
     auto mentions = co_await ctx.RunQuery(
@@ -333,14 +341,15 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
                    kMentions, ")"),
       /*writes=*/false);
     if (!mentions->HasError() && mentions->RowCount() > 0) {
+      const Rows mention_rows{*mentions};
       absl::StrAppend(&text,
                       "\n\nThe documentation mentions it here (pass a "
                       "path to read_doc):");
-      for (size_t row = 0; row < mentions->RowCount(); ++row) {
-        absl::StrAppend(&text, "\n  ", Cell(*mentions, "path", row), " - ",
-                        Cell(*mentions, "title", row));
+      for (size_t row = 0; row < mention_rows.table.size(); ++row) {
+        absl::StrAppend(&text, "\n  ", Cell(mention_rows, "path", row), " - ",
+                        Cell(mention_rows, "title", row));
       }
-    } else if (!found_live && result->RowCount() == 0) {
+    } else if (!found_live && rows.table.empty()) {
       absl::StrAppend(&text,
                       " Use list_objects to see what exists, or search_docs to "
                       "search the prose.");
@@ -351,8 +360,9 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     co_return Error(std::move(text));
   }
   std::vector<std::string> paths;
-  for (size_t row = 0; row < result->RowCount(); ++row) {
-    paths.push_back(SqlLiteral(Cell(*result, "path", row)));
+  paths.reserve(rows.table.size());
+  for (size_t row = 0; row < rows.table.size(); ++row) {
+    paths.push_back(SqlLiteral(Cell(rows, "path", row)));
   }
   auto bodies = co_await ctx.RunQuery(
     absl::StrCat("SELECT path, left(content, ", kContentChars,
@@ -364,17 +374,19 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     co_return Error(
       absl::StrCat("describe_object failed: ", bodies->GetError()));
   }
+  const Rows body_table{*bodies};
   irs::containers::FlatHashMap<std::string, size_t> body_rows;
-  for (size_t row = 0; row < bodies->RowCount(); ++row) {
-    body_rows.emplace(Cell(*bodies, "path", row), row);
+  body_rows.reserve(body_table.table.size());
+  for (size_t row = 0; row < body_table.table.size(); ++row) {
+    body_rows.emplace(Cell(body_table, "path", row), row);
   }
   std::string text;
-  for (size_t row = 0; row < result->RowCount(); ++row) {
-    const auto path = Cell(*result, "path", row);
+  for (size_t row = 0; row < rows.table.size(); ++row) {
+    const auto path = Cell(rows, "path", row);
     absl::StrAppend(&text, row == 0 ? "" : "\n\n---\n\n",
-                    Cell(*result, "signature", row), " (",
-                    Cell(*result, "kind", row), ")\npath: ", path, "\n");
-    if (const auto breadcrumb = Cell(*result, "breadcrumb", row);
+                    Cell(rows, "signature", row), " (", Cell(rows, "kind", row),
+                    ")\npath: ", path, "\n");
+    if (const auto breadcrumb = Cell(rows, "breadcrumb", row);
         !breadcrumb.empty()) {
       absl::StrAppend(&text, "in: ", breadcrumb, "\n");
     }
@@ -382,17 +394,17 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
     if (body == body_rows.end()) {
       continue;
     }
-    if (const auto summary = Cell(*result, "summary", row);
+    if (const auto summary = Cell(rows, "summary", row);
         !summary.empty() &&
-        !absl::StrContainsIgnoreCase(Cell(*bodies, "title", body->second),
-                                     Cell(*result, "name", row))) {
+        !absl::StrContainsIgnoreCase(Cell(body_table, "title", body->second),
+                                     Cell(rows, "name", row))) {
       absl::StrAppend(&text, "\n", summary);
       continue;
     }
-    if (const auto content = Cell(*bodies, "content", body->second);
+    if (const auto content = Cell(body_table, "content", body->second);
         !content.empty()) {
       absl::StrAppend(&text, "\n", connector::AbsoluteLinks(content, path));
-      if (bodies->Collection().GetValue(2, body->second).GetValue<bool>()) {
+      if (body_table.table.GetValue(2, body->second).GetValue<bool>()) {
         absl::StrAppend(&text,
                         "\n\n(truncated; read the full page with "
                         "read_doc on the path above)");
@@ -528,12 +540,11 @@ yaclib::Task<ToolResult> CheckSql(RequestContext& ctx, const ToolArgs& args) {
     co_return ToolResult{
       absl::StrCat("Invalid: ", WithoutExplain(result->GetError()))};
   }
+  const auto plan = result->Collection().GetRows();
+  const auto column = result->ColumnCount() - 1;
   std::string text = "Valid. The plan:\n";
-  for (size_t row = 0; row < result->RowCount(); ++row) {
-    absl::StrAppend(
-      &text,
-      result->Collection().GetValue(result->ColumnCount() - 1, row).ToString(),
-      "\n");
+  for (size_t row = 0; row < plan.size(); ++row) {
+    absl::StrAppend(&text, plan.GetValue(column, row).ToString(), "\n");
   }
   co_return ToolResult{std::move(text)};
 }

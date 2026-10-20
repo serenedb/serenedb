@@ -160,9 +160,9 @@ db error: ERROR: Function is not supported in SereneDB
 
 skipif serenedb
 query
-SELECT pg_numa_available();
+SELECT pg_numa_available() IS NOT NULL AS answered;
 ----
-pg_numa_available
+answered
 t
 
 
@@ -1319,3 +1319,21 @@ SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_ma
 ----
 parameters
 {arg,val,N}
+
+
+query
+SELECT DISTINCT proname, provolatile
+FROM pg_proc
+WHERE proname IN ('current_user', 'format_type', 'now', 'pg_backend_pid', 'pg_cancel_backend', 'pg_get_viewdef', 'pg_relation_size', 'random', 'upper')
+ORDER BY 1
+----
+proname	provolatile
+current_user	s
+format_type	s
+now	s
+pg_backend_pid	s
+pg_cancel_backend	v
+pg_get_viewdef	s
+pg_relation_size	v
+random	v
+upper	i

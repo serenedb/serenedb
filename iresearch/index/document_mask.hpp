@@ -20,32 +20,39 @@
 
 #pragma once
 
-#include <roaring/bitset/bitset.h>
+#include <roaring/memory.h>
+#include <roaring/roaring.h>
 
-#include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <roaring/roaring.hh>
 
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace roaring {
-
-class Roaring;
-}
-
 namespace irs {
-namespace fill {
 
-class DocsMask;
-}
-namespace probe {
+enum class MaskKind : uint8_t {
+  Bitsets,
+  Arrays,
+  Runs,
+  Mixed,
+  Bitset,
+  Array,
+  Run,
+};
 
-class DocsMask;
-}
+class DocumentMaskBuilder;
 
 class DocumentMask final {
  public:
+  static constexpr uint32_t kChunkShift = 16;
+  static constexpr uint64_t kChunkDocs = uint64_t{1} << kChunkShift;
+
   class Iterator final {
    public:
     Iterator() = default;
@@ -58,99 +65,106 @@ class DocumentMask final {
       return _mask != nullptr && _mask->Contains(doc);
     }
 
-    doc_id_t Seek(doc_id_t target) noexcept {
-#ifdef SDB_DEV
-      SDB_ASSERT(_prev <= target);
-      _prev = target;
-#endif
-      if (target <= _value) {
-        return _value;
-      }
-      return _value = Find(target);
-    }
-
    private:
-    doc_id_t Find(size_t at) const noexcept {
-      return _mask != nullptr &&
-                 roaring::api::bitset_next_set_bit(&_mask->_bits, &at)
-               ? static_cast<doc_id_t>(at)
-               : doc_limits::eof();
-    }
-
     const DocumentMask* _mask = nullptr;
-    doc_id_t _value = doc_limits::invalid();
-#ifdef SDB_DEV
-    doc_id_t _prev = doc_limits::invalid();
-#endif
   };
-
-  DocumentMask() = default;
-  ~DocumentMask();
 
   DocumentMask(DocumentMask&& other) noexcept;
   DocumentMask& operator=(DocumentMask&& other) noexcept;
-  DocumentMask(const DocumentMask& other);
-  DocumentMask& operator=(const DocumentMask& other);
+  DocumentMask(const DocumentMask&) = delete;
+  DocumentMask& operator=(const DocumentMask&) = delete;
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
-  static DocumentMask Read(const char* buf, size_t size);
+  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
 
-  roaring::Roaring Compress() const;
+  size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
 
-  bool Contains(doc_id_t doc) const noexcept {
-    return roaring::api::bitset_get(&_bits, doc);
-  }
+  void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
+
+  bool Contains(doc_id_t doc) const noexcept;
 
   size_t Count() const noexcept { return _count; }
 
   bool Empty() const noexcept { return _count == 0; }
 
-  size_t ByteSize() const noexcept {
-    return roaring::api::bitset_size_in_bytes(&_bits);
+  size_t ByteSize() const noexcept;
+
+  size_t ByteCapacity() const noexcept;
+
+  MaskKind Kind() const noexcept { return _kind; }
+
+  uint64_t RunsBound() const noexcept;
+
+  uint32_t ContainerCount() const noexcept {
+    return static_cast<uint32_t>(_set.roaring.high_low_container.size);
   }
 
-  size_t ByteCapacity() const noexcept {
-    return _bits.capacity * sizeof(uint64_t);
+  const uint16_t* Keys() const noexcept {
+    return _set.roaring.high_low_container.keys;
   }
 
-  bool Add(doc_id_t doc) {
-    SDB_ASSERT(doc_limits::valid(doc));
-    SDB_ASSERT(!doc_limits::eof(doc));
-    const bool added = !Contains(doc);
-    Grow(WordsFor(doc));
-    roaring::api::bitset_set(&_bits, doc);
-    _count += added;
-    return added;
+  const uint8_t* Types() const noexcept {
+    return _set.roaring.high_low_container.typecodes;
   }
 
-  void AddRange(doc_id_t first, doc_id_t last);
-  void Merge(const DocumentMask& other);
-
-  void Clear() noexcept {
-    roaring::api::bitset_clear(&_bits);
-    _count = 0;
+  const void* const* Containers() const noexcept {
+    return reinterpret_cast<const void* const*>(
+      _set.roaring.high_low_container.containers);
   }
-
-  void Trim() noexcept;
 
  private:
-  friend class fill::DocsMask;
-  friend class probe::DocsMask;
+  friend class DocumentMaskBuilder;
 
-  const uint64_t* Words() const noexcept { return _bits.array; }
+  struct FrozenFree {
+    void operator()(byte_type* p) const noexcept { roaring_aligned_free(p); }
+  };
 
-  size_t WordCount() const noexcept { return _bits.arraysize; }
+  DocumentMask() = default;
+  DocumentMask(roaring::api::roaring_bitmap_t& set, size_t count) noexcept;
 
-  static constexpr size_t WordsFor(doc_id_t doc) noexcept {
-    return doc / 64 + 1;
-  }
+  std::unique_ptr<byte_type, FrozenFree> _frozen;
+  roaring::Roaring _set;
+  size_t _count = 0;
+  MaskKind _kind = MaskKind::Runs;
+};
 
-  void Grow(size_t words);
+class DocumentMaskBuilder final {
+ public:
+  static constexpr uint32_t kCanonical = 4097;
+  static constexpr uint32_t kBitsetFrom = 16;
 
-  void Assign(const roaring::api::bitset_t& other);
+  DocumentMaskBuilder() noexcept;
+  explicit DocumentMaskBuilder(const DocumentMask& published);
+  ~DocumentMaskBuilder();
 
-  roaring::api::bitset_t _bits{};
+  DocumentMaskBuilder(DocumentMaskBuilder&& other) noexcept;
+  DocumentMaskBuilder& operator=(DocumentMaskBuilder&& other) noexcept;
+  DocumentMaskBuilder(const DocumentMaskBuilder& other);
+  DocumentMaskBuilder& operator=(const DocumentMaskBuilder& other);
+
+  bool Contains(doc_id_t doc) const noexcept;
+
+  size_t Count() const noexcept { return _count; }
+
+  bool Empty() const noexcept { return _count == 0; }
+
+  size_t ByteSize() const noexcept;
+
+  size_t ByteCapacity() const noexcept;
+
+  bool Add(doc_id_t doc);
+  void AddRange(doc_id_t first, doc_id_t last);
+  void Merge(const DocumentMaskBuilder& other);
+  void Merge(const DocumentMask& published);
+  void Clear() noexcept;
+
+  DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
+
+ private:
+  DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);
+
+  roaring::api::roaring_bitmap_t _set;
   size_t _count = 0;
 };
 

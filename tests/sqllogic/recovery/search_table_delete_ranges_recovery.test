@@ -1,8 +1,5 @@
 control substitution on
 
-# Deletes and updates of a search table replay from the log after a crash, both
-# as written today and as older releases wrote them (one entry per rowid).
-
 statement ok
 CREATE TABLE dr (id BIGINT, body TEXT)
 WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
@@ -26,8 +23,6 @@ CHECKPOINT;
 statement ok
 SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
-# Nothing is refreshed until the crash, so each statement touches rows no
-# earlier one did.
 statement ok
 DELETE FROM dr WHERE id < 50000;
 
@@ -52,8 +47,6 @@ SET sdb_faults = 'crash_on_packet';
 
 query error connection closed
 SELECT 1;
-
-# --- restart ---
 
 connection after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION

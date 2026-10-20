@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import threading
 import uuid
 from pathlib import Path
@@ -131,6 +132,39 @@ def test_copy_binary_round_trip(conn: psycopg.Connection,
     finally:
         _drop(conn, table_name)
         _drop(conn, dest)
+
+
+@pytest.mark.parametrize("fmt", ["TEXT", "BINARY"])
+def test_copy_to_stdout_rows(conn: psycopg.Connection, table_name: str,
+                             fmt: str) -> None:
+    width = 600_000
+    with conn.cursor() as cur:
+        with cur.copy(
+            f"COPY (SELECT i, repeat(chr((97 + i)::INTEGER), {width}) AS s "
+            f"FROM range(8) t(i) ORDER BY i) TO STDOUT (FORMAT {fmt})"
+        ) as cp:
+            cp.set_types(["int8", "text"])
+            assert list(cp.rows()) == [(i, chr(97 + i) * width)
+                                       for i in range(8)]
+        with cur.copy(
+            f"COPY (SELECT 1::BIGINT AS i WHERE false) TO STDOUT (FORMAT {fmt})"
+        ) as cp:
+            cp.set_types(["int8"])
+            assert list(cp.rows()) == []
+        cur.execute(f'CREATE TABLE public."{table_name}" AS '
+                    f"SELECT i::BIGINT AS i FROM range(500000) t(i)")
+        try:
+            for preserve in ("true", "false"):
+                cur.execute(
+                    f"SET SESSION preserve_insertion_order = {preserve}")
+                with cur.copy(
+                    f'COPY public."{table_name}" TO STDOUT (FORMAT {fmt})'
+                ) as cp:
+                    cp.set_types(["int8"])
+                    assert sorted(row[0] for row in cp.rows()) == list(
+                        range(500000))
+        finally:
+            _drop(conn, table_name)
 
 
 # Matches PostgreSQL (verified vs PG 16): text never emits a header; csv emits
@@ -600,6 +634,73 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || x::VARCHAR") == _ROWS
             _assert_insertion_order(cur, table_name, storage, _ROWS)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+def _bytea_value(i: int) -> bytes:
+    length = i % 100 + 1
+    if i % 3 == 1:
+        return bytes(97 + (i + k) % 26 for k in range(length))
+    return bytes((i + k) % 256 for k in range(length))
+
+
+def _bytea_text_field(i: int, value: bytes) -> bytes:
+    if i % 3 == 0:
+        return b"\\\\x" + value.hex().encode()
+    if i % 3 == 1:
+        return value
+    return b"".join(b"\\\\%03o" % byte for byte in value)
+
+
+def _bytea_payload(fmt: str, values: list[bytes]) -> bytes:
+    if fmt == "TEXT":
+        return b"".join(b"%d\t%s\n" % (i, _bytea_text_field(i, value))
+                        for i, value in enumerate(values))
+    rows = b"".join(struct.pack("!hiii", 2, 4, i, len(value)) + value
+                    for i, value in enumerate(values))
+    return (b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 0) + rows +
+            struct.pack("!h", -1))
+
+
+@pytest.mark.parametrize("fmt", ["TEXT", "BINARY"])
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_large_bytea_copy_keeps_every_value(conn: psycopg.Connection,
+                                            table_name: str, storage: str,
+                                            source: str, fmt: str,
+                                            shared_path: Path) -> None:
+    values = [_bytea_value(i) for i in range(100_000)]
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, b BYTEA)'
+                    f" {storage}")
+        try:
+            _copy_from(cur, table_name, _bytea_payload(fmt, values),
+                       f"FORMAT {fmt}", source, shared_path)
+            assert _count(cur, table_name, storage) == len(values)
+            cur.execute(f'SELECT x, b FROM public."{table_name}" ORDER BY x')
+            wrong = [x for x, b in cur if b != values[x]]
+            assert not wrong, wrong[:5]
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("fmt", ["TEXT", "BINARY"])
+@pytest.mark.parametrize("source", _SOURCES)
+def test_bytea_copy_values_longer_than_a_batch(conn: psycopg.Connection,
+                                              table_name: str, source: str,
+                                              fmt: str,
+                                              shared_path: Path) -> None:
+    values = [bytes(range(256)) * 1024, b"y" * 200_000,
+              bytes(range(256)) * 512]
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, b BYTEA)')
+        try:
+            _copy_from(cur, table_name, _bytea_payload(fmt, values),
+                       f"FORMAT {fmt}", source, shared_path)
+            cur.execute(f'SELECT x, b FROM public."{table_name}" ORDER BY x')
+            assert [(x, len(b), b == values[x]) for x, b in cur] == [
+                (x, len(value), True) for x, value in enumerate(values)]
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 

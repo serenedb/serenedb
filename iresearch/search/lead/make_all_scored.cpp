@@ -24,18 +24,12 @@
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/lead/recipe_scored.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
 
 Node::ptr MakeAllScored(const SubReader& segment, score_t score) {
   using Node = ConstantScored<AllDocs>;
   return memory::make_managed<Impl<Node>>(score, segment);
-}
-
-Node::ptr MakeAllScored(const SubReader& segment,
-                        const detail::ScoreArgs& args) {
-  return MakeAllScored(segment, detail::AllDocsScore(segment, args));
 }
 
 }  // namespace irs::lead

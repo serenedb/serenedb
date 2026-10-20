@@ -38,6 +38,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -286,78 +287,6 @@ IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
     for (i *= kChains; i != N; ++i) {
       visit(i);
     }
-  }
-}
-
-template<size_t W>
-IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
-                                    uint32_t value) noexcept {
-  static_assert(W % 16 == 0);
-#ifdef __AVX2__
-  const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
-  const __m256i target =
-    _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(value)), bias);
-  const auto less = [&](size_t j) IRS_FORCE_INLINE {
-    return _mm256_cmpgt_epi32(
-      target,
-      _mm256_xor_si256(
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin + j)), bias));
-  };
-  uint32_t count = 0;
-  size_t i = 0;
-  for (; i + 32 <= W; i += 32) {
-    const __m256i low = _mm256_packs_epi32(less(i), less(i + 8));
-    const __m256i high = _mm256_packs_epi32(less(i + 16), less(i + 24));
-    count += std::popcount(static_cast<uint32_t>(
-      _mm256_movemask_epi8(_mm256_packs_epi16(low, high))));
-  }
-  if constexpr (W % 32 != 0) {
-    count += std::popcount(static_cast<uint32_t>(_mm256_movemask_epi8(
-               _mm256_packs_epi32(less(i), less(i + 8))))) /
-             2;
-  }
-  return count;
-#else
-  using U32x8 = uint32_t __attribute__((vector_size(32)));
-  using I32x8 = int32_t __attribute__((vector_size(32)));
-  const U32x8 target = U32x8{} + value;
-  I32x8 acc{};
-  for (size_t j = 0; j != W; j += 8) {
-    U32x8 v;
-    std::memcpy(&v, begin + j, sizeof(v));
-    acc += (I32x8)(v < target);
-  }
-  int32_t sum = 0;
-  for (size_t lane = 0; lane != 8; ++lane) {
-    sum += acc[lane];
-  }
-  return static_cast<uint32_t>(-sum);
-#endif
-}
-
-template<size_t N, typename It, typename T, typename Cmp = std::less<>>
-IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
-                                         Cmp&& compare = {}) {
-  static_assert(std::has_single_bit(N));
-  constexpr size_t kGroup = 32;
-  if constexpr (N > kGroup && std::is_pointer_v<It> &&
-                std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
-                               uint32_t> &&
-                std::is_same_v<T, uint32_t> &&
-                std::is_same_v<std::remove_cvref_t<Cmp>, std::less<>>) {
-    size_t group = 0;
-    for (size_t g = 1; g != N / kGroup; ++g) {
-      group += static_cast<size_t>(begin[g * kGroup - 1] < value);
-    }
-    begin += group * kGroup;
-    return begin + CountLess<kGroup>(begin, value);
-  } else {
-    for (size_t step = N / 2; step != 0; step /= 2) {
-      if (compare(begin[step], value)) {
-        begin += step;
-      }
-    }
-    return begin + compare(*begin, value);
   }
 }
 

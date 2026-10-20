@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"  // IndexInput
@@ -72,7 +73,8 @@ inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name);
+  IdxReader(const Directory& dir, std::string_view segment_name,
+            HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;

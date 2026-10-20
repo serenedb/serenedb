@@ -113,7 +113,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   DocContexts& docs_context() noexcept { return _docs_context; }
 
-  void flush(IndexSegment& segment, DocumentMask& docs_mask);
+  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
@@ -250,7 +250,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   DocContexts _docs_context;
-  DocumentMask _docs_mask;
+  DocumentMaskBuilder _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;
@@ -261,6 +261,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // set.
   const IndexFieldOptions* _fallback_field_options = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;

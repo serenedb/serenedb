@@ -78,7 +78,7 @@ bool ClickHouseConnectionPool::CheckConnectionHealthy(ClickHouseConnection &conn
 		return false;
 	}
 	try {
-		conn.GetClient().Ping();
+		conn.Ping();
 		return true;
 	} catch (...) {
 		// A dead or protocol-desynced connection: discard, the pool opens a fresh one.

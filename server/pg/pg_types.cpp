@@ -52,17 +52,12 @@ namespace {
 
 // The database this session speaks for. A bare duckdb connection has no
 // serenedb identity, and nothing pg-shaped to resolve against.
-duckdb::optional_ptr<duckdb::Catalog> SessionDatabase(
+duckdb::optional_ptr<duckdb::DuckCatalog> SessionDatabase(
   duckdb::ClientContext* context) {
-  if (!context) {
+  if (!context || !connector::GetSereneDBContextPtr(*context)) {
     return nullptr;
   }
-  auto* conn = connector::GetSereneDBContextPtr(*context);
-  if (!conn) {
-    return nullptr;
-  }
-  return duckdb::Catalog::GetCatalog(
-    *context, duckdb::DatabaseManager::GetDefaultDatabase(*context));
+  return catalog::DefaultDuckCatalog(*context);
 }
 
 std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
@@ -231,6 +226,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (IsInet(type)) {
         return make(kInet, kInetArray, -1);
       }
+      if (IsCidr(type)) {
+        return make(kCidr, kCidrArray, -1);
+      }
       if (connector::IsTSQueryStructType(type)) {
         return make(kText, kTextArray, -1);
       }
@@ -286,11 +284,11 @@ static UserTypeRef FindUserType(duckdb::ClientContext* context, uint64_t oid) {
   if (oid < kMaxSystem || !database) {
     return {};
   }
-  auto& catalog = database->Cast<catalog::SereneDBCatalog>();
-  if (auto type = catalog.FindIn<duckdb::TypeCatalogEntry>(context, oid)) {
+  if (auto type = database->FindIn<duckdb::TypeCatalogEntry>(context, oid)) {
     return {type.get(), false};
   }
-  if (auto type = catalog.FindIn<duckdb::TypeCatalogEntry>(context, oid + 1)) {
+  if (auto type =
+        database->FindIn<duckdb::TypeCatalogEntry>(context, oid + 1)) {
     return {type.get(), true};
   }
   return {};
@@ -336,6 +334,7 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kRegnamespace, REGNAMESPACE())
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
     SDB_OID2TYPE(kInet, INET())
+    SDB_OID2TYPE(kCidr, CIDR())
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
     SDB_OID2TYPE(kVariant, LogicalType::VARIANT())
@@ -651,8 +650,7 @@ std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid) {
     for (const auto type :
          {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
           duckdb::CatalogType::INDEX_ENTRY}) {
-      if (auto entry = database->Cast<catalog::SereneDBCatalog>().FindEntryById(
-            context, type, oid)) {
+      if (auto entry = database->FindEntryById(context, type, oid)) {
         return RelationName(*context,
                             entry->ParentSchemaName().GetIdentifierName(),
                             entry->name.GetIdentifierName(), oid);
@@ -741,8 +739,7 @@ std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
     return "information_schema";
   }
   if (auto database = SessionDatabase(context)) {
-    if (auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-          *context, oid)) {
+    if (auto schema = database->FindSchemaById(*context, oid)) {
       return std::string{schema->name.GetIdentifierName()};
     }
   }

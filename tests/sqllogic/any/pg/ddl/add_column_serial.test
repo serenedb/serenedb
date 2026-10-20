@@ -1,0 +1,761 @@
+statement ok
+CREATE TABLE acs_empty (v int)
+
+
+statement ok
+ALTER TABLE acs_empty ADD COLUMN id serial
+
+
+statement count 2
+INSERT INTO acs_empty (v) VALUES (10), (20)
+
+
+query
+SELECT v, id FROM acs_empty ORDER BY v
+----
+v	id
+10	1
+20	2
+
+
+statement ok
+CREATE TABLE acs_types (v int)
+
+
+statement count 3
+INSERT INTO acs_types VALUES (1), (2), (3)
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN s smallserial
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN i serial
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN b bigserial
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN s2 serial2
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN i4 serial4
+
+
+statement ok
+ALTER TABLE acs_types ADD COLUMN b8 serial8
+
+
+query
+SELECT v, s, i, b, s2, i4, b8 FROM acs_types ORDER BY v
+----
+v	s	i	b	s2	i4	b8
+1	1	1	1	1	1	1
+2	2	2	2	2	2	2
+3	3	3	3	3	3	3
+
+
+query
+SELECT column_name, data_type, is_nullable, column_default LIKE 'nextval(%' AS from_sequence
+FROM information_schema.columns WHERE table_name = 'acs_types' ORDER BY ordinal_position
+----
+column_name	data_type	is_nullable	from_sequence
+v	integer	YES	NULL
+s	smallint	NO	t
+i	integer	NO	t
+b	bigint	NO	t
+s2	smallint	NO	t
+i4	integer	NO	t
+b8	bigint	NO	t
+
+
+query
+SELECT sequencename, max_value, start_value, increment_by FROM pg_sequences WHERE sequencename LIKE 'acs_types%' ORDER BY sequencename
+----
+sequencename	max_value	start_value	increment_by
+acs_types_b8_seq	9223372036854775807	1	1
+acs_types_b_seq	9223372036854775807	1	1
+acs_types_i4_seq	2147483647	1	1
+acs_types_i_seq	2147483647	1	1
+acs_types_s2_seq	32767	1	1
+acs_types_s_seq	32767	1	1
+
+
+query
+SELECT refobjsubid, deptype FROM pg_depend WHERE objid = 'acs_types_b8_seq'::regclass AND refobjid = 'acs_types'::regclass
+----
+refobjsubid	deptype
+7	a
+
+
+statement count 1
+INSERT INTO acs_types (v) VALUES (4)
+
+
+query
+SELECT v, s, i, b, s2, i4, b8 FROM acs_types WHERE v = 4
+----
+v	s	i	b	s2	i4	b8
+4	4	4	4	4	4	4
+
+
+statement count 1
+INSERT INTO acs_types (v, i) VALUES (5, 100)
+
+
+statement error (null value in column "i" of relation "acs_types" violates not-null constraint|NOT NULL constraint failed: acs_types\.i)
+INSERT INTO acs_types (v, i) VALUES (6, NULL)
+
+
+statement error (null value in column "i" of relation "acs_types" violates not-null constraint|NOT NULL constraint failed: acs_types\.i)
+UPDATE acs_types SET i = NULL WHERE v = 1
+
+
+query
+SELECT v, i FROM acs_types ORDER BY v
+----
+v	i
+1	1
+2	2
+3	3
+4	4
+5	100
+
+
+statement ok
+CREATE TABLE acs_holes (v int)
+
+
+statement count 6
+INSERT INTO acs_holes SELECT g FROM generate_series(1, 6) g
+
+
+statement count 3
+DELETE FROM acs_holes WHERE v % 2 = 0
+
+
+statement ok
+ALTER TABLE acs_holes ADD COLUMN id serial
+
+
+query
+SELECT v, id FROM acs_holes ORDER BY v
+----
+v	id
+1	1
+3	2
+5	3
+
+
+statement count 1
+INSERT INTO acs_holes (v) VALUES (7)
+
+
+query
+SELECT id FROM acs_holes WHERE v = 7
+----
+id
+4
+
+
+statement ok
+CREATE TABLE acs_big (v int)
+
+
+statement count 5000
+INSERT INTO acs_big SELECT g FROM generate_series(1, 5000) g
+
+
+statement ok
+ALTER TABLE acs_big ADD COLUMN id bigserial
+
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM acs_big
+----
+n	ids	lo	hi
+5000	5000	1	5000
+
+
+statement count 1
+INSERT INTO acs_big (v) VALUES (5001)
+
+
+query
+SELECT id FROM acs_big WHERE v = 5001
+----
+id
+5001
+
+
+statement ok
+CREATE SCHEMA acs_sch
+
+
+statement ok
+CREATE TABLE acs_sch.t (v int)
+
+
+statement count 1
+INSERT INTO acs_sch.t VALUES (7)
+
+
+statement ok
+ALTER TABLE acs_sch.t ADD COLUMN id serial
+
+
+statement count 1
+INSERT INTO acs_sch.t (v) VALUES (8)
+
+
+query
+SELECT v, id FROM acs_sch.t ORDER BY v
+----
+v	id
+7	1
+8	2
+
+
+statement ok
+CREATE TABLE acs_pub (v int)
+
+
+statement ok
+SET search_path = acs_sch, public
+
+
+statement ok
+ALTER TABLE acs_pub ADD COLUMN id serial
+
+
+statement ok
+CREATE TABLE acs_sp (v int)
+
+
+statement ok
+ALTER TABLE acs_sp ADD COLUMN id serial
+
+
+statement ok
+RESET search_path
+
+
+query
+SELECT schemaname, sequencename FROM pg_sequences WHERE schemaname IN ('public', 'acs_sch') AND sequencename IN ('t_id_seq', 'acs_pub_id_seq', 'acs_sp_id_seq') ORDER BY sequencename
+----
+schemaname	sequencename
+public	acs_pub_id_seq
+acs_sch	acs_sp_id_seq
+acs_sch	t_id_seq
+
+
+statement count 1
+INSERT INTO acs_pub (v) VALUES (1)
+
+
+statement count 1
+INSERT INTO acs_sch.acs_sp (v) VALUES (1)
+
+
+query
+SELECT (SELECT id FROM acs_pub) AS pub, (SELECT id FROM acs_sch.acs_sp) AS sp
+----
+pub	sp
+1	1
+
+
+statement ok
+CREATE TABLE "Acs Mixed" (v int)
+
+
+statement count 1
+INSERT INTO "Acs Mixed" VALUES (1)
+
+
+statement ok
+ALTER TABLE "Acs Mixed" ADD COLUMN "Id Col" serial
+
+
+statement count 1
+INSERT INTO "Acs Mixed" (v) VALUES (2)
+
+
+query
+SELECT v, "Id Col" FROM "Acs Mixed" ORDER BY v
+----
+v	Id Col
+1	1
+2	2
+
+
+query
+SELECT sequencename FROM pg_sequences WHERE sequencename LIKE 'Acs Mixed%'
+----
+sequencename
+Acs Mixed_Id Col_seq
+
+
+statement ok
+CREATE TABLE acs_tx (v int)
+
+
+statement count 2
+INSERT INTO acs_tx VALUES (1), (2)
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE acs_tx ADD COLUMN id serial
+
+
+query
+SELECT v, id FROM acs_tx ORDER BY v
+----
+v	id
+1	1
+2	2
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'acs_tx' ORDER BY ordinal_position
+----
+column_name
+v
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'acs_tx_id_seq'
+----
+sequences
+0
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE acs_tx ADD COLUMN id serial
+
+
+statement count 1
+INSERT INTO acs_tx (v) VALUES (3)
+
+
+statement ok
+COMMIT
+
+
+statement ok
+ALTER TABLE acs_tx ADD COLUMN id2 bigserial
+
+
+query
+SELECT v, id, id2 FROM acs_tx ORDER BY v
+----
+v	id	id2
+1	1	1
+2	2	2
+3	3	3
+
+
+statement ok
+CREATE SEQUENCE acs_coll_id_seq
+
+
+statement ok
+CREATE TABLE acs_coll (v int)
+
+
+statement count 1
+INSERT INTO acs_coll VALUES (1)
+
+
+statement ok
+ALTER TABLE acs_coll ADD COLUMN id serial
+
+
+query
+SELECT pg_get_serial_sequence('acs_coll', 'id') AS seq
+----
+seq
+public.acs_coll_id_seq1
+
+
+statement count 1
+INSERT INTO acs_coll (v) VALUES (2)
+
+
+query
+SELECT v, id FROM acs_coll ORDER BY v
+----
+v	id
+1	1
+2	2
+
+
+query
+SELECT nextval('acs_coll_id_seq') AS untouched
+----
+untouched
+1
+
+
+statement ok
+CREATE TABLE acs_rel_id_seq (x int)
+
+
+statement ok
+CREATE TABLE acs_rel (v int)
+
+
+statement ok
+ALTER TABLE acs_rel ADD COLUMN id serial
+
+
+query
+SELECT pg_get_serial_sequence('acs_rel', 'id') AS seq
+----
+seq
+public.acs_rel_id_seq1
+
+
+statement ok
+CREATE TABLE acs_ren (id serial, v int)
+
+
+statement ok
+ALTER TABLE acs_ren RENAME TO acs_ren_old
+
+
+statement ok
+CREATE TABLE acs_ren (v int)
+
+
+statement count 1
+INSERT INTO acs_ren VALUES (1)
+
+
+statement ok
+ALTER TABLE acs_ren ADD COLUMN id serial
+
+
+query
+SELECT pg_get_serial_sequence('acs_ren', 'id') AS new_seq, pg_get_serial_sequence('acs_ren_old', 'id') AS old_seq
+----
+new_seq	old_seq
+public.acs_ren_id_seq1	public.acs_ren_id_seq
+
+
+query
+SELECT v, id FROM acs_ren
+----
+v	id
+1	1
+
+
+statement ok
+CREATE TABLE acs_ifne (v int, id int)
+
+
+statement ok
+ALTER TABLE acs_ifne ADD COLUMN IF NOT EXISTS id serial
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname LIKE 'acs_ifne%' AND relkind = 'S'
+----
+sequences
+0
+
+
+statement ok
+ALTER TABLE acs_ifne ADD COLUMN IF NOT EXISTS id2 serial
+
+
+statement count 1
+INSERT INTO acs_ifne (v) VALUES (1)
+
+
+query
+SELECT v, id, id2 FROM acs_ifne
+----
+v	id	id2
+1	NULL	1
+
+
+statement ok
+ALTER TABLE IF EXISTS acs_missing ADD COLUMN id serial
+
+
+query
+SELECT count(*) AS relations FROM pg_class WHERE relname LIKE 'acs_missing%'
+----
+relations
+0
+
+
+statement error (relation "acs_missing" does not exist|Table with name acs_missing does not exist)
+ALTER TABLE acs_missing ADD COLUMN id serial
+
+
+statement ok
+ALTER TABLE IF EXISTS acs_ifne ADD COLUMN id3 smallserial
+
+
+query
+SELECT v, id3 FROM acs_ifne
+----
+v	id3
+1	1
+
+
+statement ok
+CREATE TABLE acs_nn (v int)
+
+
+statement error
+ALTER TABLE acs_nn ADD COLUMN f serial NULL
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "f" of table "acs_nn"
+
+
+statement error
+ALTER TABLE acs_nn ADD COLUMN h serial NULL NOT NULL
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "h" of table "acs_nn"
+
+
+statement error
+ALTER TABLE acs_nn ADD COLUMN d serial DEFAULT 5
+----
+db error: ERROR: multiple default values specified for column "d" of table "acs_nn"
+
+
+statement ok
+ALTER TABLE acs_nn ADD COLUMN g serial NOT NULL
+
+
+query
+SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'acs_nn' ORDER BY ordinal_position
+----
+column_name	is_nullable
+v	YES
+g	NO
+
+
+statement ok
+CREATE TABLE acs_pk (v int)
+
+
+statement ok
+ALTER TABLE acs_pk ADD COLUMN id serial PRIMARY KEY
+
+
+statement count 2
+INSERT INTO acs_pk (v) VALUES (1), (2)
+
+
+statement error (duplicate key value violates unique constraint "acs_pk_pkey"|violates primary key constraint)
+INSERT INTO acs_pk (v, id) VALUES (3, 1)
+
+
+statement ok
+CREATE TABLE acs_uq (v int)
+
+
+statement ok
+ALTER TABLE acs_uq ADD COLUMN id bigserial UNIQUE
+
+
+statement count 2
+INSERT INTO acs_uq (v) VALUES (1), (2)
+
+
+query
+SELECT conrelid::regclass::text AS tbl, contype FROM pg_constraint WHERE conrelid IN ('acs_pk'::regclass, 'acs_uq'::regclass) AND contype IN ('p', 'u') ORDER BY tbl
+----
+tbl	contype
+acs_pk	p
+acs_uq	u
+
+
+query
+SELECT (SELECT max(id) FROM acs_pk) AS pk, (SELECT max(id) FROM acs_uq) AS uq
+----
+pk	uq
+2	2
+
+
+statement ok
+CREATE TABLE acs_drop (v int)
+
+
+statement ok
+ALTER TABLE acs_drop ADD COLUMN id serial
+
+
+statement ok
+ALTER TABLE acs_drop ADD COLUMN id2 bigserial
+
+
+statement ok
+ALTER TABLE acs_drop DROP COLUMN id2
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'acs_drop%' AND relkind = 'S' ORDER BY relname
+----
+relname
+acs_drop_id_seq
+
+
+statement error (cannot drop sequence acs_drop_id_seq because other objects depend on it|Cannot drop entry "acs_drop_id_seq" because there are entries that depend on it)
+DROP SEQUENCE acs_drop_id_seq
+
+
+statement ok
+DROP SEQUENCE acs_drop_id_seq CASCADE
+
+
+query
+SELECT column_name, column_default FROM information_schema.columns WHERE table_name = 'acs_drop' ORDER BY ordinal_position
+----
+column_name	column_default
+v	NULL
+id	NULL
+
+
+statement count 1
+INSERT INTO acs_drop (v, id) VALUES (1, 7)
+
+
+statement ok
+CREATE TABLE acs_ren2 (v int)
+
+
+statement ok
+ALTER TABLE acs_ren2 ADD COLUMN id serial
+
+
+statement ok
+ALTER TABLE acs_ren2 RENAME COLUMN id TO ident
+
+
+statement ok
+ALTER TABLE acs_ren2 RENAME TO acs_ren3
+
+
+statement count 1
+INSERT INTO acs_ren3 (v) VALUES (1)
+
+
+query
+SELECT v, ident FROM acs_ren3
+----
+v	ident
+1	1
+
+
+statement ok
+DROP TABLE acs_ren3
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'acs_ren2_id_seq'
+----
+sequences
+0
+
+
+statement ok
+CREATE TABLE acs_small (v int)
+
+
+statement count 1
+INSERT INTO acs_small VALUES (1)
+
+
+statement ok
+ALTER TABLE acs_small ADD COLUMN s smallserial
+
+
+query
+SELECT setval('acs_small_s_seq', 32766) AS s
+----
+s
+32766
+
+
+statement count 1
+INSERT INTO acs_small (v) VALUES (2)
+
+
+statement error reached maximum value of sequence
+INSERT INTO acs_small (v) VALUES (3)
+
+
+query
+SELECT v, s FROM acs_small ORDER BY v
+----
+v	s
+1	1
+2	32767
+
+
+statement ok
+CREATE TEMP TABLE acs_temp (v int)
+
+
+statement count 2
+INSERT INTO acs_temp VALUES (1), (2)
+
+
+statement ok
+ALTER TABLE acs_temp ADD COLUMN id serial
+
+
+statement count 1
+INSERT INTO acs_temp (v) VALUES (3)
+
+
+query
+SELECT v, id FROM acs_temp ORDER BY v
+----
+v	id
+1	1
+2	2
+3	3
+
+
+query
+SELECT nextval(pg_get_serial_sequence('acs_temp', 'id')) AS next
+----
+next
+4
+
+
+statement ok
+DROP TABLE acs_temp
+
+
+statement ok
+CREATE VIEW acs_view AS SELECT 1 AS x
+
+
+statement error
+ALTER TABLE acs_view ADD COLUMN id serial
+----
+db error: ERROR: ALTER action ADD COLUMN cannot be performed on relation "acs_view"
+DETAIL: This operation is not supported for views.

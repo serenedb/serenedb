@@ -272,7 +272,14 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
 
   auto bind = duckdb::make_uniq<TsLexizeBindData>();
   if (auto val = input.TryGetConstant(0); val && !val->IsNull()) {
-    auto dict = LookupTokenizerDict(context, duckdb::StringValue::Get(*val));
+    const auto& dict_name = duckdb::StringValue::Get(*val);
+    auto entry = BindDictionary(input, dict_name);
+    if (!entry) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
+    }
+    auto dict = entry->GetTokenizer();
     const auto output = AcquireTokenizer(context, *dict)->Traits().output;
     bind->state = std::move(dict);
     auto& fn = input.GetBoundFunction();

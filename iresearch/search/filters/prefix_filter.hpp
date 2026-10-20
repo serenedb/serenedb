@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <span>
+#include <vector>
+
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
@@ -69,6 +72,43 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
                                           const bytes_view term);
+
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
+};
+
+class ByPrefixes;
+
+class ByPrefixesFilterOptions {
+ public:
+  void SetPrefixes(std::vector<bstring> prefixes);
+
+  std::span<const bstring> Prefixes() const noexcept { return _prefixes; }
+
+  bool operator==(const ByPrefixesFilterOptions&) const = default;
+
+ private:
+  std::vector<bstring> _prefixes;
+};
+
+struct ByPrefixesOptions : ByPrefixesFilterOptions {
+  using FilterType = ByPrefixes;
+  using filter_options = ByPrefixesFilterOptions;
+
+  bool operator==(const ByPrefixesOptions&) const = default;
+};
+
+class ByPrefixes : public FilterWithField<ByPrefixesOptions> {
+ public:
+  ByPrefixes() noexcept { SetScorer(&DefaultConstScore()); }
+
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

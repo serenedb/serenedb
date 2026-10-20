@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -213,7 +214,10 @@ void Server::SetupAuth() {
     SDB_DEBUG(GENERAL, "network http Bearer auth enabled");
   }
 
-  network::pg::hba::LoadPersistedHba();
+  if (auto text = network::pg::hba::LoadPersistedHba(); !text.empty()) {
+    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance())
+      .SetOptionByName("hba", duckdb::Value{std::move(text)});
+  }
 }
 
 asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {

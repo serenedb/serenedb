@@ -121,6 +121,10 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
 
   size_t Size(Occur occur) const noexcept { return Bucket(occur).size(); }
 
+  bool Empty() const noexcept {
+    return _must.empty() && _should.empty() && _must_not.empty();
+  }
+
   uint32_t MinShouldMatch() const noexcept { return _min_should_match; }
 
   ScoreMergeType MergeType() const noexcept { return _merge_type; }

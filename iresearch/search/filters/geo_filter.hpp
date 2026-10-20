@@ -24,6 +24,11 @@
 #include <s2/s2cap.h>
 #include <s2/s2region_term_indexer.h>
 
+#include <memory>
+#include <string>
+#include <variant>
+#include <vector>
+
 #include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -40,6 +45,73 @@ enum class StoredType : uint8_t {
   S2Centroid,
 };
 
+struct GeoIntersectsAcceptor {
+  const irs::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
+    return filter_shape->intersects(indexed_shape);
+  }
+};
+
+struct GeoContainsAcceptor {
+  const irs::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
+    return filter_shape->contains(indexed_shape);
+  }
+};
+
+struct GeoIsContainedAcceptor {
+  const irs::geo::ShapeContainer* filter_shape;
+
+  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
+    return indexed_shape.contains(*filter_shape);
+  }
+};
+
+template<bool MinIncl, bool MaxIncl>
+struct GeoDistanceRangeAcceptor {
+  S2Cap min;
+  S2Cap max;
+
+  bool operator()(const irs::geo::ShapeContainer& shape) const {
+    const auto point = shape.centroid();
+
+    return !(MinIncl ? min.InteriorContains(point) : min.Contains(point)) &&
+           (MaxIncl ? max.Contains(point) : max.InteriorContains(point));
+  }
+};
+
+template<bool Incl>
+struct GeoDistanceAcceptor {
+  S2Cap filter;
+
+  bool operator()(const irs::geo::ShapeContainer& shape) const {
+    const auto point = shape.centroid();
+
+    return Incl ? filter.Contains(point) : filter.InteriorContains(point);
+  }
+};
+
+using GeoAcceptor = std::variant<
+  GeoIntersectsAcceptor, GeoContainsAcceptor, GeoIsContainedAcceptor,
+  GeoDistanceAcceptor<false>, GeoDistanceAcceptor<true>,
+  GeoDistanceRangeAcceptor<false, false>, GeoDistanceRangeAcceptor<false, true>,
+  GeoDistanceRangeAcceptor<true, false>, GeoDistanceRangeAcceptor<true, true>>;
+
+struct GeoPlan {
+  enum class Kind : uint8_t {
+    Empty,
+    All,
+    AllButCentre,
+    Cells,
+  };
+
+  Kind kind = Kind::Empty;
+  std::vector<std::string> terms;
+  GeoAcceptor acceptor;
+};
+
 struct GeoFilterOptionsBase {
   std::string prefix;
   S2RegionTermIndexer::Options options;
@@ -50,6 +122,7 @@ struct GeoFilterOptionsBase {
   bool source_is_point{false};
   std::vector<std::string> point_latitude;
   std::vector<std::string> point_longitude;
+  std::shared_ptr<const GeoPlan> plan;
 };
 
 enum class GeoFilterType : uint8_t {
@@ -105,52 +178,8 @@ class GeoDistanceFilter final
                                           uint32_t threads) const final;
 };
 
-struct GeoIntersectsAcceptor {
-  const irs::geo::ShapeContainer* filter_shape;
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);
 
-  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
-    return filter_shape->intersects(indexed_shape);
-  }
-};
-
-struct GeoContainsAcceptor {
-  const irs::geo::ShapeContainer* filter_shape;
-
-  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
-    return filter_shape->contains(indexed_shape);
-  }
-};
-
-struct GeoIsContainedAcceptor {
-  const irs::geo::ShapeContainer* filter_shape;
-
-  bool operator()(const irs::geo::ShapeContainer& indexed_shape) const {
-    return indexed_shape.contains(*filter_shape);
-  }
-};
-
-template<bool MinIncl, bool MaxIncl>
-struct GeoDistanceRangeAcceptor {
-  S2Cap min;
-  S2Cap max;
-
-  bool operator()(const irs::geo::ShapeContainer& shape) const {
-    const auto point = shape.centroid();
-
-    return !(MinIncl ? min.InteriorContains(point) : min.Contains(point)) &&
-           (MaxIncl ? max.Contains(point) : max.InteriorContains(point));
-  }
-};
-
-template<bool Incl>
-struct GeoDistanceAcceptor {
-  S2Cap filter;
-
-  bool operator()(const irs::geo::ShapeContainer& shape) const {
-    const auto point = shape.centroid();
-
-    return Incl ? filter.Contains(point) : filter.InteriorContains(point);
-  }
-};
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoDistanceFilterOptions& options);
 
 }  // namespace irs

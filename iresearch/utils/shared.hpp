@@ -54,6 +54,12 @@
 #define IRS_RESTRICT __restrict__
 #endif
 
+#if defined(__clang__)
+#define IRS_UNPREDICTABLE(x) __builtin_unpredictable(x)
+#else
+#define IRS_UNPREDICTABLE(x) (x)
+#endif
+
 // hook for MSVC-only code
 #if defined(_MSC_VER) && !defined(__clang__)
 #define MSVC_ONLY(...) __VA_ARGS__

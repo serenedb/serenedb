@@ -1,0 +1,77 @@
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/default_duckdb_catalog.duckdb' AS ddc_${__DATABASE__};
+
+statement ok
+USE ddc_${__DATABASE__};
+
+skipif pg-wire-extended
+query
+SELECT 999999::regclass AS r, 999999::regnamespace AS n, 999999::regtype AS t;
+----
+r	n	t
+999999	999999	999999
+
+query
+SELECT has_table_privilege(999999::oid, 'SELECT') AS t,
+       has_schema_privilege(999999::oid, 'USAGE') AS s,
+       pg_get_indexdef(999999::oid) AS i;
+----
+t	s	i
+NULL	NULL	NULL
+
+statement error
+SELECT pg_schema_size(999999::BIGINT);
+----
+db error: ERROR: schema with OID 999999 does not exist
+
+
+statement ok
+CREATE TABLE ddc_t (a INTEGER);
+
+statement ok
+CREATE TYPE ddc_e AS ENUM ('x');
+
+skipif pg-wire-extended
+query
+SELECT 'ddc_t'::regclass::oid::regclass AS r, 'main'::regnamespace::oid::regnamespace AS n, (SELECT type_oid::regtype FROM duckdb_types() WHERE type_name = 'ddc_e' AND database_name = 'ddc_${__DATABASE__}') AS t;
+----
+r	n	t
+ddc_t	main	ddc_e
+
+query
+SELECT has_table_privilege('ddc_t'::regclass::oid, 'SELECT') AS t,
+       has_schema_privilege('main'::regnamespace::oid, 'USAGE') AS s,
+       pg_schema_size('main'::regnamespace::oid::BIGINT) >= 0 AS size;
+----
+t	s	size
+t	t	t
+
+
+statement error
+CREATE SUBSCRIPTION ddc_sub CONNECTION 'host=127.0.0.1 port=1' PUBLICATION ddc_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
+
+
+statement error
+ALTER SUBSCRIPTION ddc_sub DISABLE;
+----
+db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
+
+
+statement error
+DROP SUBSCRIPTION IF EXISTS ddc_sub;
+----
+db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
+
+
+statement ok
+PRAGMA serenedb_reindex_by_id(999999);
+
+statement ok
+USE ${__DATABASE__};
+
+statement ok
+DETACH ddc_${__DATABASE__};

@@ -223,7 +223,9 @@ size_t DedupTerms(std::vector<TermClause>& terms, ScoreMergeType merge,
   size_t kept = 0;
   for (size_t i = 1; i != terms.size(); ++i) {
     if (same(terms[kept], terms[i])) {
-      MergeBoost(terms[kept].boost, terms[i].boost, merge);
+      if (scored) {
+        MergeBoost(terms[kept].boost, terms[i].boost, merge);
+      }
       continue;
     }
     if (++kept != i) {
@@ -399,11 +401,11 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& should = node.Bucket(Occur::Should);
   for (const auto occur : {Occur::Must, Occur::MustNot}) {
     const bool required = occur == Occur::Must;
-    const bool by_posting = !required || ScoreIsIgnored(node, ctx);
-    const auto less = [by_posting](const TermClause& lhs,
-                                   const TermClause& rhs) noexcept {
-      return by_posting ? TermPostingLess{}(lhs, rhs)
-                        : TermClauseLess{}(lhs, rhs);
+    const bool by_scorer = required && !ScoreIsIgnored(node, ctx);
+    const auto less = [by_scorer](const TermClause& lhs,
+                                  const TermClause& rhs) noexcept {
+      return by_scorer ? TermClauseLess{}(lhs, rhs)
+                       : TermPostingLess{}(lhs, rhs);
     };
     auto& other = node.Bucket(occur);
     size_t dropped = 0;
@@ -415,7 +417,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
         ++match;
       }
       if (match != other.terms.end() && !less(*it, *match)) {
-        if (required) {
+        if (by_scorer) {
           MergeBoost(match->boost, it->boost, node.MergeType());
         }
         ++dropped;
@@ -428,7 +430,6 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     }
     should.terms.erase(out, should.terms.end());
 
-    const bool by_scorer = required && !ScoreIsIgnored(node, ctx);
     dropped += EraseFilters(should.filters, [&](const Filter& child) {
       const auto survivor =
         absl::c_find_if(other.filters, [&](const Filter::ptr& candidate) {
@@ -438,7 +439,7 @@ bool BooleanDedupRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
       if (survivor == other.filters.end()) {
         return false;
       }
-      if (required && !ScoreIsIgnored(node, ctx)) {
+      if (by_scorer) {
         auto boost = (**survivor).GetBoost();
         MergeBoost(boost, child.GetBoost(), node.MergeType());
         (**survivor).SetBoost(boost);
@@ -502,8 +503,9 @@ field_id AnyFieldOf(const Filter& node) {
 }
 
 field_id RequiringLeafFieldOf(const Filter& node) {
-  return AnyFieldOf<ByTerm, ByPrefix, ByRange, ByGranularRange, ByPhrase,
-                    AutomatonFilter, LevenshteinAutomatonFilter>(node);
+  return AnyFieldOf<ByTerm, ByPrefix, ByPrefixes, ByRange, ByGranularRange,
+                    ByPhrase, AutomatonFilter, LevenshteinAutomatonFilter>(
+    node);
 }
 
 void CollectAnchors(const Filter& node,
@@ -755,7 +757,8 @@ size_t DriverRank(const Filter& filter) noexcept {
       irs::utils::downCast<AutomatonFilter>(filter).options().source;
     return source && source->Automaton() ? kPatternRank : kLiteralsRank;
   }
-  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+  if (type == Type<ByPrefix>::id() || type == Type<ByPrefixes>::id() ||
+      type == Type<ByRange>::id()) {
     return kRangeRank;
   }
   return kRangeRank + 1;
@@ -1144,7 +1147,8 @@ size_t AcceptorRank(const Filter& filter) noexcept {
   if (type == Type<ByTerm>::id()) {
     return kTermRank;
   }
-  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+  if (type == Type<ByPrefix>::id() || type == Type<ByPrefixes>::id() ||
+      type == Type<ByRange>::id()) {
     return 2;
   }
   if (type == Type<AutomatonFilter>::id() ||

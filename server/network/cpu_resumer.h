@@ -57,8 +57,14 @@ namespace sdb::network {
 // the session's lifetime is independent, owned by Run.
 class CpuResumer final : public duckdb::Task {
  public:
-  CpuResumer(duckdb::TaskScheduler& scheduler, IoExecutor& io) noexcept
-    : _scheduler{scheduler}, _io{io} {}
+  explicit CpuResumer(duckdb::TaskScheduler& scheduler)
+    : _scheduler{scheduler},
+      _account{scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND)},
+      _producer{scheduler.CreateProducer(_account)} {}
+
+  const duckdb::shared_ptr<duckdb::SchedulerAccount>& Account() const noexcept {
+    return _account;
+  }
 
   // The coroutine's two suspends. Park lets Execute decide park-vs-requeue;
   // Yield asks Execute to run it again (fairness between query slices).
@@ -93,13 +99,13 @@ class CpuResumer final : public duckdb::Task {
   // enqueues; while running/scheduled a wake just bumps so Execute requeues.
   void RequestRun() noexcept {
     if (_run.fetch_add(2, std::memory_order_acq_rel) == 0) {
-      _scheduler.ScheduleTask(_io.DuckProducer(_scheduler), shared_from_this());
+      _scheduler.ScheduleTask(*_producer, shared_from_this());
     }
   }
 
   void Start() noexcept {
     _run.fetch_add(1, std::memory_order_acq_rel);
-    _scheduler.ScheduleTask(_io.DuckProducer(_scheduler), shared_from_this());
+    _scheduler.ScheduleTask(*_producer, shared_from_this());
   }
 
   duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) override {
@@ -120,7 +126,8 @@ class CpuResumer final : public duckdb::Task {
 
  private:
   duckdb::TaskScheduler& _scheduler;
-  IoExecutor& _io;
+  duckdb::shared_ptr<duckdb::SchedulerAccount> _account;
+  duckdb::unique_ptr<duckdb::ProducerToken> _producer;
   yaclib::Job* _job = nullptr;
   duckdb::TaskExecutionResult _result =
     duckdb::TaskExecutionResult::TASK_BLOCKED;

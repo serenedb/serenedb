@@ -1,0 +1,68 @@
+query
+SELECT '10.1.0.0/16'::inet << '10.0.0.0/8'::inet AS inside, '10.0.0.0/8'::inet << '10.0.0.0/8'::inet AS same, '10.1.2.3/24'::inet << '10.1.2.0/24'::inet AS same_network_host_bits, '10.1.2.3/25'::inet << '10.1.2.3/24'::inet AS narrower, '10.0.0.0/8'::inet << '10.1.0.0/16'::inet AS wider, '10.0.0.0/8'::inet << '0.0.0.0/0'::inet AS in_all, '0.0.0.0/0'::inet << '0.0.0.0/0'::inet AS all_in_all;
+----
+inside	same	same_network_host_bits	narrower	wider	in_all	all_in_all
+t	f	f	t	f	t	f
+
+query
+SELECT '10.0.0.0/8'::inet >> '10.1.0.0/16'::inet AS contains, '10.0.0.0/8'::inet >> '10.0.0.0/8'::inet AS same, '10.1.2.3'::inet >> '10.1.2.3'::inet AS host_self, '0.0.0.0/0'::inet >> '255.255.255.255'::inet AS all_has_max;
+----
+contains	same	host_self	all_has_max
+t	f	f	t
+
+query
+SELECT '10.0.0.0/8'::inet && '10.1.0.0/16'::inet AS outer_inner, '10.1.0.0/16'::inet && '10.0.0.0/8'::inet AS inner_outer, '10.0.0.0/8'::inet && '10.0.0.0/8'::inet AS same, '10.0.0.0/8'::inet && '11.0.0.0/8'::inet AS disjoint, '10.1.2.3/24'::inet && '10.1.2.200/25'::inet AS host_bits;
+----
+outer_inner	inner_outer	same	disjoint	host_bits
+t	t	t	f	t
+
+query
+SELECT '2001:db8::/32'::inet << '2001::/16'::inet AS v6_inside, '2001::/16'::inet >> '2001:db8::1'::inet AS v6_contains, '2001:db8::/32'::inet && '2001:db9::/32'::inet AS v6_disjoint, '::/0'::inet << '::/0'::inet AS v6_all_self;
+----
+v6_inside	v6_contains	v6_disjoint	v6_all_self
+t	t	f	f
+
+query
+SELECT '10.0.0.0/8'::inet << '::/0'::inet AS mixed_strict, '::/0'::inet >> '10.0.0.1'::inet AS mixed_contains, '10.0.0.0/8'::inet && '::/0'::inet AS mixed_overlap;
+----
+mixed_strict	mixed_contains	mixed_overlap
+f	f	f
+
+query
+SELECT ~ '10.1.2.3/24'::inet AS v4, ~ '0.0.0.0/0'::inet AS v4_zero, ~ '::1'::inet AS v6, ~ '2001:db8::/32'::inet AS v6_net, ~ '10.0.0.0/8'::cidr AS from_cidr, pg_typeof(~ '10.0.0.0/8'::cidr)::text AS cidr_result_type;
+----
+v4	v4_zero	v6	v6_net	from_cidr	cidr_result_type
+245.254.253.252/24	255.255.255.255/0	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe	dffe:f247:ffff:ffff:ffff:ffff:ffff:ffff/32	245.255.255.255/8	inet
+
+query
+SELECT '10.1.2.3/24'::inet & '0.0.255.255/8'::inet AS v4_and, '10.1.2.3/8'::inet | '0.0.0.255/24'::inet AS v4_or, '2001:db8::1/64'::inet & 'ffff::/16'::inet AS v6_and, '2001:db8::/32'::inet | '::ff/128'::inet AS v6_or, pg_typeof('10.0.0.0/8'::cidr & '10.0.0.0/8'::cidr)::text AS cidr_and_type;
+----
+v4_and	v4_or	v6_and	v6_or	cidr_and_type
+0.0.2.3/24	10.1.2.255/24	2001::/64	2001:db8::ff	inet
+
+query
+SELECT NULL::inet << '10.0.0.0/8'::inet AS null_lt, '10.0.0.0/8'::inet && NULL::inet AS null_overlap, ~ NULL::inet AS null_not, NULL::inet & '10.0.0.0/8'::inet AS null_and;
+----
+null_lt	null_overlap	null_not	null_and
+NULL	NULL	NULL	NULL
+
+query
+SELECT '10.0.0.0/8'::cidr << '0.0.0.0/0'::cidr AS cidr_lt, '10.0.0.0/8'::cidr >> '10.1.2.3'::inet AS cidr_gt_inet, '10.0.0.0/8'::cidr && '10.0.0.0/16'::cidr AS cidr_overlap;
+----
+cidr_lt	cidr_gt_inet	cidr_overlap
+t	t	t
+
+statement error
+SELECT '10.1.2.3'::inet & '::1'::inet;
+----
+db error: ERROR: cannot AND inet values of different sizes
+
+
+statement error
+SELECT '10.1.2.3'::inet | '::1'::inet;
+----
+db error: ERROR: cannot OR inet values of different sizes
+
+
+statement error (operator is not unique|Could not choose a best candidate function)
+SELECT '10.0.0.0/8' << '10.0.0.0/7';

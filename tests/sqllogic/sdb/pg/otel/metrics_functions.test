@@ -544,6 +544,11 @@ ORDER BY minute;
 minute	p50	under_2
 2026-09-08 12:00:00	2.378414	0.333333
 
+statement ok
+CREATE TABLE big AS
+SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts
+FROM range(0, 1000000) r(i);
+
 query
 SELECT histogram_quantile(0.5, h) AS p50,
        round(histogram_quantile(0.75, h), 6) AS p75,
@@ -553,30 +558,24 @@ FROM (
               THEN exponential_histogram(0, 0, 0, [1, 1], 0, [])
               ELSE exponential_histogram(1, 0, 0, [1, 1, 1, 1], 0, [])
          END AS h
-  FROM range(0, 100000) r(i)
+  FROM big
 );
 ----
 p50	p75	under_2
 2	2.828427	0.5
 
 query
-SELECT round(deriv(value, ts), 6) AS deriv,
-       round(predict_linear(value, ts, 10), 6) AS predicted,
-       delta(value, ts) AS delta
-FROM (
-  SELECT TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts, 3.0 * i AS value
-  FROM range(0, 1000000) r(i)
-);
+SELECT round(deriv(3.0 * i, ts), 6) AS deriv,
+       round(predict_linear(3.0 * i, ts, 10), 6) AS predicted,
+       delta(3.0 * i, ts) AS delta
+FROM big;
 ----
 deriv	predicted	delta
 3	3000027	2999997
 
 query
 SELECT changes(i // 10, ts) AS changes, resets(i % 1000, ts) AS resets
-FROM (
-  SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts
-  FROM range(0, 1000000) r(i)
-);
+FROM big;
 ----
 changes	resets
 99999	999

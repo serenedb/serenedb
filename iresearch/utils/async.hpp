@@ -20,9 +20,11 @@
 
 #pragma once
 
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <tuple>
 #include <type_traits>
 #include <yaclib/async/future.hpp>
+#include <yaclib/async/wait.hpp>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -41,12 +43,11 @@ auto GetReady(yaclib::Future<V, E>&& f) -> V {
 
 template<typename V, typename E>
 auto GetBlocking(yaclib::Future<V, E>&& f) -> V {
-  auto result = std::move(f).Get();
-  if constexpr (std::is_void_v<V>) {
-    std::ignore = std::move(result).Ok();
-  } else {
-    return std::move(result).Ok();
+  if (!f.Ready()) {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    yaclib::Wait(f);
   }
+  return GetReady(std::move(f));
 }
 
 }  // namespace irs

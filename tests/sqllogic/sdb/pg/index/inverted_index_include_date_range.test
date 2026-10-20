@@ -1,0 +1,50 @@
+statement ok
+CREATE TABLE include_dates(id INTEGER PRIMARY KEY, y BIGINT, d DATE, h TIME, t TIMESTAMP);
+
+statement ok
+INSERT INTO include_dates VALUES
+ (1, 0, '-infinity', '00:00:00', '-infinity'),
+ (2, 0, '2026-01-01', '08:00:00', '2026-01-01'),
+ (3, 0, '2026-01-02', '12:00:00', '2026-01-01 00:00:00.000001'),
+ (4, 0, '2026-01-03', '16:00:00', '2026-01-02'),
+ (5, 0, 'infinity', '23:59:59', 'infinity'),
+ (6, 0, NULL, NULL, NULL);
+
+statement ok
+CREATE INDEX include_dates_idx ON include_dates USING inverted(id, y) INCLUDE (d, h, t);
+
+statement ok
+VACUUM (REFRESH_TABLE) include_dates;
+
+query
+SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE d >= DATE '2026-01-01' AND d < DATE '2026-01-03' AND y = 0;
+----
+ids
+{2,3}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE d > DATE '-infinity' AND d < DATE 'infinity' AND y = 0;
+----
+ids
+{2,3,4}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE d = DATE '2026-01-02' AND y = 0;
+----
+ids
+{3}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE h > TIME '08:00:00' AND h <= TIME '16:00:00' AND y = 0;
+----
+ids
+{3,4}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM include_dates_idx WHERE t > TIMESTAMP '2026-01-01' AND t < TIMESTAMP 'infinity' AND y = 0;
+----
+ids
+{3,4}
+
+statement ok
+DROP TABLE include_dates;

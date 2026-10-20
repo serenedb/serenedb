@@ -93,18 +93,6 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
-template<typename Input>
-void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  if (in.Warm(offset, size)) {
-    file_utils::PollResidency();
-    return;
-  }
-  if (size <= file_utils::kPrefetchChunk || !in.Resident(offset, size)) {
-    in.Prefetch(offset, size);
-  }
-  in.MarkWarm(offset, size);
-}
-
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
   if (meta.inline_size != 0 || meta.docs_count <= 1) {
     return 0;
@@ -128,7 +116,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
   }
 }
 
@@ -166,7 +154,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    Hint(in, from, len);
+    file_utils::Hint(in, from, len);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }
@@ -177,6 +165,95 @@ class GrowingHint {
   uint64_t _run = 0;
   uint64_t _skipped = 0;
   uint64_t _window = kFirst;
+};
+
+class TreeWalkHint {
+ public:
+  void Arm(uint64_t at, uint64_t stop) noexcept {
+    _start = at;
+    _last = at;
+    _end = at;
+    _stop = stop;
+    _window = kFirst;
+    _visits = 0;
+    _away = false;
+  }
+
+  template<typename Input>
+  IRS_FORCE_INLINE void Advance(const Input& in, uint64_t at) noexcept {
+    if (!Follow(at)) {
+      return;
+    }
+    ++_visits;
+    _last = std::max(_last, at);
+    if (_window == kFirst) {
+      _end = std::min(_end, at);
+    }
+    if (!_cold && !Probe(in, at)) {
+      return;
+    }
+    if (_last + _window / 2 >= _end && _end < _stop) [[unlikely]] {
+      Grow(in);
+    }
+  }
+
+ private:
+  static constexpr uint64_t kFirst = file_utils::kPrefetchChunk;
+  static constexpr uint64_t kLast = file_utils::kMaxReadahead;
+  static_assert(kFirst < kLast);
+  static constexpr uint64_t kFar = 2 * kLast;
+  static constexpr uint64_t kVisits = 8;
+  static constexpr uint64_t kStride = kFirst;
+  static constexpr uint64_t kProbeSpan = kLast / 2;
+
+  bool Follow(uint64_t at) noexcept {
+    if (at > _last + kFar) {
+      if (!_away) {
+        _away = true;
+        return false;
+      }
+      Arm(at, _stop);
+    } else if (at + kFar < _last) {
+      Arm(at, _stop);
+    }
+    _away = false;
+    return true;
+  }
+
+  template<typename Input>
+  bool Probe(const Input& in, uint64_t at) noexcept {
+    if (_visits > kVisits &&
+        std::max(at, _probed) - std::min(at, _probed) < kProbeSpan) {
+      return false;
+    }
+    _probed = at;
+    _cold = !in.Resident(at, 1);
+    return _cold;
+  }
+
+  template<typename Input>
+  void Grow(const Input& in) noexcept {
+    if (_end >= _stop || _visits < kVisits ||
+        _last - _start > _visits * kStride) {
+      return;
+    }
+    const auto len = std::min(_window, _stop - _end);
+    if (!file_utils::SampledResident(in, _end, len)) {
+      in.Prefetch(_end, len);
+    }
+    _end += len;
+    _window = std::min(2 * _window, kLast);
+  }
+
+  uint64_t _start = 0;
+  uint64_t _last = 0;
+  uint64_t _end = 0;
+  uint64_t _stop = 0;
+  uint64_t _window = kFirst;
+  uint64_t _visits = 0;
+  uint64_t _probed = 0;
+  bool _away = false;
+  bool _cold = false;
 };
 
 inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,

@@ -64,6 +64,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -80,6 +81,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/sort_keys.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -88,6 +90,7 @@
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -180,10 +183,55 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
       _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
-      ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
+      ResolveSettings(entry->options), entry->Config()->top_k_scorer,
+      entry->Config()->sort, false));
   }
   return std::move(entry);
 }
+
+namespace {
+
+irs::containers::FlatHashSet<duckdb::idx_t> StoredColumns(
+  const duckdb::CreateIndexInfo& info, const duckdb::ColumnList& columns) {
+  irs::containers::FlatHashSet<duckdb::idx_t> stored;
+  for (size_t slot = 0; slot != info.parsed_expressions.size(); ++slot) {
+    const auto& expr = *info.parsed_expressions[slot];
+    if (info.column_opclasses[slot] != kIncludedKind ||
+        expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
+      continue;
+    }
+    const auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    if (columns.ColumnExists(name)) {
+      stored.emplace(columns.GetColumn(name).Logical().index);
+    }
+  }
+  return stored;
+}
+
+void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
+                       const duckdb::TableCatalogEntry& table) {
+  const auto& columns = table.GetColumns();
+  const auto keys = ResolveSortKeys(columns, info.sort_orders);
+  info.sort_orders = SortOrdersOf(keys, columns);
+  const auto stored = StoredColumns(info, columns);
+  for (const auto& key : keys) {
+    if (stored.contains(key.column.index)) {
+      continue;
+    }
+    const auto& name = columns.GetColumn(key.column).Name();
+    info.expressions.push_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.parsed_expressions.push_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.column_opclasses.emplace_back(kIncludedKind);
+    info.column_opclass_options.emplace_back(
+      duckdb::case_insensitive_map_t<duckdb::Value>{});
+    info.column_orders.push_back(duckdb::OrderType::ORDER_DEFAULT);
+    info.column_null_orders.push_back(duckdb::OrderByNullType::ORDER_DEFAULT);
+  }
+}
+
+}  // namespace
 
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
@@ -218,6 +266,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
   insert.children.emplace_back(*plan);
+  connector::ShareScanPayloads(*plan);
   return insert;
 }
 
@@ -248,6 +297,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -274,6 +324,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 
@@ -296,6 +347,31 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     for (const auto& [name, value] : info.options) {
       RequireSearchTableIndexOption(name);
     }
+  }
+  if (inverted &&
+      absl::c_any_of(info.column_orders, [](duckdb::OrderType order) {
+        return order != duckdb::OrderType::ORDER_DEFAULT;
+      })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support ASC/DESC options"));
+  }
+  if (inverted && absl::c_any_of(
+                    info.column_null_orders, [](duckdb::OrderByNullType order) {
+                      return order != duckdb::OrderByNullType::ORDER_DEFAULT;
+                    })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support NULLS FIRST/LAST options"));
+  }
+  if (!info.sort_orders.empty() &&
+      (search_table || table.type == duckdb::CatalogType::VIEW_ENTRY)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("SORTED BY is not supported for indexes on ",
+                            search_table ? "search tables" : "views"));
+  }
+  if (inverted && !info.sort_orders.empty()) {
+    BindIndexSortKeys(info, table.Cast<duckdb::TableCatalogEntry>());
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
@@ -420,8 +496,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
+  if (!info.Base().partition_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::NotImplementedException("PARTITIONED BY is not supported")};
+  }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (!search && !info.Base().sort_orders.empty()) {
+    return duckdb::ErrorData{duckdb::NotImplementedException(
+      "SORTED BY is supported only for search tables")};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));
@@ -430,7 +514,19 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     return duckdb::ErrorData{
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
   }
+  for (const auto& column : info.Base().columns.Logical()) {
+    CheckColumnCompression(
+      column, search ? TableEngine::Search : TableEngine::Transactional);
+  }
   return {};
+}
+
+duckdb::vector<duckdb::PhysicalType> SereneDBCatalog::CompressionLeafTypes(
+  const duckdb::CreateTableInfo& info, const duckdb::LogicalType& type) const {
+  if (ReadStorageEngine(info.options) != TableEngine::Search) {
+    return {};
+  }
+  return LeafPhysicalTypes(type);
 }
 
 std::string SereneDBCatalog::GetCatalogType() {
@@ -523,6 +619,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  _directory->MarkDetached();
   if (GetAttached().IsReadOnly()) {
     duckdb::DuckCatalog::OnDetach(context);
     return;
@@ -597,6 +694,29 @@ static void RefuseViewAlter(const duckdb::AlterTableInfo& info,
                   ERR_DETAIL("This operation is not supported for views."));
 }
 
+static void CheckAlterCompression(const duckdb::AlterTableInfo& info,
+                                  const duckdb::TableCatalogEntry& table) {
+  const auto engine = dynamic_cast<const SearchTableEntry*>(&table)
+                        ? TableEngine::Search
+                        : TableEngine::Transactional;
+  if (info.alter_table_type == duckdb::AlterTableType::ADD_COLUMN) {
+    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                           engine);
+    return;
+  }
+  if (info.alter_table_type != duckdb::AlterTableType::SET_COLUMN_COMPRESSION) {
+    return;
+  }
+  const auto& set = info.Cast<duckdb::SetColumnCompressionInfo>();
+  if (!table.ColumnExists(set.column_name)) {
+    return;
+  }
+  auto column = table.GetColumn(set.column_name).Copy();
+  column.SetCompressionType(set.compression_type);
+  column.SetCompressionLevel(set.compression_level);
+  CheckColumnCompression(column, engine);
+}
+
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
                                              duckdb::AlterInfo& info) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -618,6 +738,11 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   if (lookup.entry->type == duckdb::CatalogType::VIEW_ENTRY) {
     RefuseViewAlter(info.Cast<duckdb::AlterTableInfo>(), name);
+    return;
+  }
+  if (lookup.entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+    CheckAlterCompression(info.Cast<duckdb::AlterTableInfo>(),
+                          lookup.entry->Cast<duckdb::TableCatalogEntry>());
   }
 }
 

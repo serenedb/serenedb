@@ -1183,3 +1183,40 @@ TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
   ASSERT_FALSE(set.Contains(4));
   ASSERT_EQ(irs::doc_limits::eof(), set.Probe(kDocs + 1));
 }
+
+TEST(docs_mask_test, added_since_visits_only_the_new_removals) {
+  const auto before = MakeMask({1, 5, 64, 70});
+  const auto after = MakeMask({1, 3, 5, 64, 70, 200});
+  std::vector<irs::doc_id_t> added;
+  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
+    &after, &before, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{3, 200}), added);
+}
+
+TEST(docs_mask_test, added_since_an_empty_mask_is_every_removal) {
+  const auto none = MakeMask({});
+  const auto after = MakeMask({2, 130});
+  std::vector<irs::doc_id_t> added;
+  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
+    &after, &none, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{2, 130}), added);
+  added.clear();
+  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
+    &after, nullptr, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{2, 130}), added);
+  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
+    &none, &none, [](irs::doc_id_t) { FAIL(); }));
+  ASSERT_TRUE(irs::DocumentMask::ForEachAddedSince(
+    nullptr, nullptr, [](irs::doc_id_t) { FAIL(); }));
+}
+
+TEST(docs_mask_test, added_since_refuses_a_removal_that_came_back) {
+  const auto nothing = [](irs::doc_id_t) {};
+  const auto after = MakeMask({1});
+  const auto before = MakeMask({1, 5});
+  const auto far_before = MakeMask({1, 300000});
+  ASSERT_FALSE(irs::DocumentMask::ForEachAddedSince(&after, &before, nothing));
+  ASSERT_FALSE(
+    irs::DocumentMask::ForEachAddedSince(&after, &far_before, nothing));
+  ASSERT_FALSE(irs::DocumentMask::ForEachAddedSince(nullptr, &before, nothing));
+}

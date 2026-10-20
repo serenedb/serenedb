@@ -1,0 +1,56 @@
+# Sparse search hits project their columns from many column blocks into one
+# output vector: every value matches its row, whatever each column's codec
+# (uncompressed, dictionary, chosen per block, numeric) and with NULLs.
+
+statement ok
+CREATE TABLE sparse_hits (id INT PRIMARY KEY, tag TEXT,
+                          body TEXT USING COMPRESSION uncompressed,
+                          note TEXT,
+                          kind TEXT USING COMPRESSION dict_lz4,
+                          n BIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+CREATE INDEX sparse_hits_idx ON sparse_hits USING inverted (tag)
+
+
+statement ok
+INSERT INTO sparse_hits
+SELECT i,
+       CASE WHEN i % 97 = 0 THEN 'rare' ELSE 'common' END,
+       'uncompressed body of row ' || i || ' ' || repeat('x', i % 13),
+       CASE WHEN i % 3 = 0 THEN NULL ELSE 'note of row ' || i || ' ' || repeat('y', i % 7) END,
+       'kind number ' || (i % 5) || ' of the sparse hits table',
+       i * 7
+FROM generate_series(1, 20000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sparse_hits
+
+
+query
+SELECT count(*) AS hits,
+       count(*) FILTER (WHERE body IS DISTINCT FROM 'uncompressed body of row ' || id || ' ' || repeat('x', id % 13)) AS bad_body,
+       count(*) FILTER (WHERE note IS DISTINCT FROM CASE WHEN id % 3 = 0 THEN NULL ELSE 'note of row ' || id || ' ' || repeat('y', id % 7) END) AS bad_note,
+       count(*) FILTER (WHERE kind IS DISTINCT FROM 'kind number ' || (id % 5) || ' of the sparse hits table') AS bad_kind,
+       count(*) FILTER (WHERE n IS DISTINCT FROM id * 7) AS bad_n
+FROM sparse_hits_idx
+WHERE tag @@ 'rare'
+----
+hits	bad_body	bad_note	bad_kind	bad_n
+206	0	0	0	0
+
+
+query
+SELECT id, body, note, kind, n
+FROM sparse_hits_idx
+WHERE tag @@ 'rare'
+ORDER BY id DESC
+LIMIT 3
+----
+id	body	note	kind	n
+19982	uncompressed body of row 19982 x	note of row 19982 yyyy	kind number 2 of the sparse hits table	139874
+19885	uncompressed body of row 19885 xxxxxxxx	note of row 19885 yyyyy	kind number 0 of the sparse hits table	139195
+19788	uncompressed body of row 19788 xx	NULL	kind number 3 of the sparse hits table	138516

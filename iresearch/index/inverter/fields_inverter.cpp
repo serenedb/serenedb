@@ -27,7 +27,8 @@
 namespace irs {
 
 void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra) {
+                           std::span<const BasicTermReader* const> extra,
+                           std::span<const uint32_t> old2new) {
   IndexFeatures index_features{IndexFeatures::None};
 
   ManagedVector<const FieldInverter*> sorted_fields{
@@ -72,7 +73,7 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
       ei >= en ||
       (fi < fn && sorted_fields[fi]->Meta().id < sorted_extra[ei]->id());
     if (take_field) {
-      scattered.Reset(*sorted_fields[fi]);
+      scattered.Reset(*sorted_fields[fi], old2new);
       ++fi;
       SDB_ASSERT(scattered.TermCount() != 0);
       terms.Reset(scattered);

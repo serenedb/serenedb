@@ -174,6 +174,29 @@ void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 void PollResidency() noexcept;
 
+template<typename Input>
+void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  if (in.Warm(offset, size)) {
+    PollResidency();
+    return;
+  }
+  if (size <= kPrefetchChunk || !in.Resident(offset, size)) {
+    in.Prefetch(offset, size);
+  }
+  in.MarkWarm(offset, size);
+}
+
+template<typename Input>
+bool SampledResident(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  constexpr uint64_t kProbes = 4;
+  for (uint64_t i = 0; i != kProbes; ++i) {
+    if (!in.Resident(offset + size * i / kProbes, 1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class ResidencyMap {
  public:
   void Reset(size_t pages);

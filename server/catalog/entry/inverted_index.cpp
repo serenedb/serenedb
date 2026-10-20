@@ -34,6 +34,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -129,6 +130,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   }
   config->pk = data.pk;
   config->top_k_scorer = std::move(data.top_k_scorer);
+  config->sort = std::move(data.sort);
   return config;
 }
 
@@ -256,7 +258,7 @@ std::vector<std::string> ParseKeyColumns(
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   irs::field_id id) const {
-  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  DeclaredCodec declared;
   if (const auto it = declared_compression.find(id);
       it != declared_compression.end()) {
     declared = it->second;
@@ -264,12 +266,16 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   if (const auto* entry = FindEntry(id)) {
     auto options = entry->column_options;
     if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-      options.compression = declared;
+      options.compression = declared.type;
+      options.compression_level = declared.compression_level;
     }
+    options.hyperloglog = options.hyperloglog || declared.hyperloglog;
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    return {.compression = declared};
+    return {.compression = declared.type,
+            .hyperloglog = declared.hyperloglog,
+            .compression_level = declared.compression_level};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its
@@ -487,7 +493,8 @@ std::optional<ScorerOptions> TopKScorer(
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   persistence::InvertedIndexData data{.pk = _config->pk,
-                                      .top_k_scorer = _config->top_k_scorer};
+                                      .top_k_scorer = _config->top_k_scorer,
+                                      .sort = _config->sort};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
     data.keys.emplace_back(key);
@@ -517,9 +524,35 @@ InvertedIndexEntry::InvertedIndexEntry(
 
 duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
-  info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
-    kPayloadOption, Pack(ToPersisted()));
+  auto& index = info->Cast<duckdb::CreateIndexInfo>();
+  index.options.insert_or_assign(kPayloadOption, Pack(ToPersisted()));
+  index.sort_orders = SortOrders();
   return info;
+}
+
+std::string InvertedIndexEntry::ToSQL() const {
+  auto info = duckdb::IndexCatalogEntry::GetInfo();
+  info->Cast<duckdb::CreateIndexInfo>().sort_orders = SortOrders();
+  return info->ToString();
+}
+
+duckdb::vector<duckdb::OrderByNode> InvertedIndexEntry::SortOrders() const {
+  duckdb::vector<duckdb::OrderByNode> orders;
+  for (const auto& key : _config->sort.keys) {
+    const auto* found = _config->FindKey(_config->TermField(key.column));
+    SDB_ASSERT(found && found->column_id == key.column);
+    const auto at = static_cast<size_t>(found - _config->keys.data());
+    SDB_ASSERT(at < parsed_expressions.size());
+    const auto& column =
+      parsed_expressions[at]->Cast<duckdb::ColumnRefExpression>();
+    orders.emplace_back(
+      key.descending ? duckdb::OrderType::DESCENDING
+                     : duckdb::OrderType::ASCENDING,
+      key.nulls_first ? duckdb::OrderByNullType::NULLS_FIRST
+                      : duckdb::OrderByNullType::NULLS_LAST,
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(column.GetColumnName()));
+  }
+  return orders;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo(
@@ -605,15 +638,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
                                    : reindex_interval->GetValue<uint32_t>());
   }
   if (_storage) {
-    auto settings = ResolveSettings(new_options);
-    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-      connection->DeferToCommit(
-        [storage = _storage, settings = std::move(settings)] {
-          storage->ApplyOptions(settings);
-        });
-    } else {
-      _storage->ApplyOptions(settings);
-    }
+    connector::RunAtCommit(
+      context, [storage = _storage, settings = ResolveSettings(new_options)] {
+        storage->ApplyOptions(settings);
+      });
   }
   return result;
 }

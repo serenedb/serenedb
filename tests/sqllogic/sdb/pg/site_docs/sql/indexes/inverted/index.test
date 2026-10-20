@@ -158,3 +158,19 @@ SELECT id, title FROM recent_articles_idx WHERE body @@ 'search' ORDER BY id;
 ----
 id	title
 2	Vector search
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE app_logs (
+    service VARCHAR,
+    ts TIMESTAMP,
+    message VARCHAR
+);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX app_logs_idx ON app_logs
+    USING inverted (message english_dict)
+    SORTED BY (service, ts DESC);

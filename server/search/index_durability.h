@@ -23,6 +23,7 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
+#include <absl/status/statusor.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -79,8 +80,7 @@ class IndexDurability {
   void ReplaceSegments(
     irs::IndexWriter& writer, std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-      removal_provider);
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider);
   void Clear(irs::IndexWriter& writer, const irs::SourcePosition& position);
   void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
   bool FinishCheckpoint(irs::IndexWriter& writer);
@@ -88,7 +88,7 @@ class IndexDurability {
   std::pair<irs::DirectoryReader, irs::SourcePosition> Snapshot(
     irs::IndexWriter& writer);
 
-  absl::Status Cleanup(irs::Directory& dir);
+  absl::StatusOr<irs::RemovedFiles> Cleanup(irs::Directory& dir);
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }

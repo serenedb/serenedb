@@ -40,9 +40,6 @@ bool IsListLike(const duckdb::LogicalType& type) noexcept {
          type.id() == duckdb::LogicalTypeId::MAP;
 }
 
-}  // namespace
-namespace {
-
 constexpr duckdb::idx_t kDenseDensity = 32;
 constexpr duckdb::idx_t kMinDenseBatch = 64;
 
@@ -81,6 +78,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _rg_col = nullptr;
   _rg_cache_begin = 1;
   _rg_cache_end = 0;
+  _col_reader = col_reader;
   if (col_reader == nullptr) {
     _ctx.reset();
     return;
@@ -351,6 +349,20 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
   if (c.extract) {
     const DocRows rows{std::span<const irs::doc_id_t>{&_docs[first], hits}};
     c.extract_binding->MaterializeRows(rows, out, at, dense);
+    return;
+  }
+  const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
+  if (!whole && hits * column_internal::kPointDensity < span &&
+      !c.out_type.IsNested()) {
+    if (!c.point) {
+      c.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
+                                                                 *c.reader);
+    }
+    _rows.clear();
+    for (duckdb::idx_t i = 0; i < hits; ++i) {
+      _rows.push_back(anchor + _sel.get_index(i));
+    }
+    c.point->FetchRows(_rows, out, at);
     return;
   }
   column_internal::GatherSelected(*c.reader, *c.state, anchor, _sel, hits, span,

@@ -94,6 +94,32 @@ class DocumentMask final {
 
   MaskKind Kind() const noexcept { return _kind; }
 
+  template<typename Visitor>
+  void ForEach(Visitor&& visitor) const {
+    for (const auto doc : _set) {
+      visitor(static_cast<doc_id_t>(doc));
+    }
+  }
+
+  template<typename Visitor>
+  static bool ForEachAddedSince(const DocumentMask* after,
+                                const DocumentMask* before, Visitor&& visitor) {
+    if (!after || after->Empty()) {
+      return !before || before->Empty();
+    }
+    if (!before || before->Empty()) {
+      after->ForEach(visitor);
+      return true;
+    }
+    if (!before->_set.isSubset(after->_set)) {
+      return false;
+    }
+    for (const auto doc : after->_set - before->_set) {
+      visitor(static_cast<doc_id_t>(doc));
+    }
+    return true;
+  }
+
   uint64_t RunsBound() const noexcept;
 
   uint32_t ContainerCount() const noexcept {

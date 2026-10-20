@@ -56,7 +56,7 @@ CREATE TABLE ibc(id INTEGER, t TEXT);
 
 
 statement ok
-CREATE INDEX ibc_idx ON ibc USING inverted(t) WITH (refresh_interval = 100, compaction_interval = 0);
+CREATE INDEX ibc_idx ON ibc USING inverted(t) WITH (refresh_interval = 100, compaction_interval = 0, compaction_max_segments = 3);
 
 
 statement ok

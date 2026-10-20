@@ -357,6 +357,15 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   return *ctx;
 }
 
+void RunAtCommit(duckdb::ClientContext& context,
+                 absl::AnyInvocable<void()> action) {
+  if (auto* connection = GetSereneDBContextPtr(context)) {
+    connection->DeferToCommit(std::move(action));
+    return;
+  }
+  action();
+}
+
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database) {
   const duckdb::Identifier catalog{database};

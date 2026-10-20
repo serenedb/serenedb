@@ -10,6 +10,7 @@ add_executable(
     duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
+    presorted_merge_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     meta_transaction_snapshot_test.cpp
@@ -53,9 +54,14 @@ add_executable(
     connector/pg_serialize_array_test.cpp
     connector/pgoutput_test.cpp
     connector/scram_client_test.cpp
+    connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
+    search/compaction/merge_registry_test.cpp
+    search/compaction/merge_scheduler_test.cpp
+    search/compaction/merge_simulator_test.cpp
+    search/compaction/pipeline_merge_executor_test.cpp
 )
 
 target_link_libraries(

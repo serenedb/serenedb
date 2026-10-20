@@ -24,9 +24,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <duckdb/common/bswap.hpp>
 #include <functional>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -88,16 +91,140 @@ class LogColumnReader {
   field_id _field;
 };
 
-IRS_FORCE_INLINE void Put(uint32_t** blocks, uint64_t i,
+IRS_FORCE_INLINE void Put(uint32_t* const* blocks, uint64_t i,
                           uint32_t value) noexcept {
   blocks[i >> ScatterScratch::kBlockShift][i & ScatterScratch::kBlockMask] =
     value;
 }
 
+IRS_FORCE_INLINE uint32_t Get(uint32_t* const* blocks, uint64_t i) noexcept {
+  return blocks[i >> ScatterScratch::kBlockShift]
+               [i & ScatterScratch::kBlockMask];
+}
+
+IRS_FORCE_INLINE doc_id_t Remap(std::span<const uint32_t> old2new,
+                                doc_id_t doc) noexcept {
+  return old2new[doc - doc_limits::min()] + doc_limits::min();
+}
+
+template<typename T, typename DocOf>
+void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
+               doc_id_t max_doc, DocOf doc_of) {
+  constexpr uint32_t kRadixBits = 11;
+  constexpr uint32_t kRadixMask = (uint32_t{1} << kRadixBits) - 1;
+  constexpr size_t kComparisonSortMax = 256;
+  if (items.size() <= kComparisonSortMax) {
+    absl::c_stable_sort(
+      items, [&](const T& l, const T& r) { return doc_of(l) < doc_of(r); });
+    return;
+  }
+  spare.resize(items.size());
+  std::array<uint32_t, kRadixMask + 1> counts;
+  const auto bits = static_cast<uint32_t>(std::bit_width(max_doc));
+  for (uint32_t shift = 0; shift < bits; shift += kRadixBits) {
+    counts.fill(0);
+    for (const auto& item : items) {
+      ++counts[(doc_of(item) >> shift) & kRadixMask];
+    }
+    uint32_t sum = 0;
+    for (auto& count : counts) {
+      sum += std::exchange(count, sum);
+    }
+    for (const auto& item : items) {
+      spare[counts[(doc_of(item) >> shift) & kRadixMask]++] = item;
+    }
+    items.swap(spare);
+  }
+}
+
 }  // namespace
 
-void ScatteredField::Reset(const FieldInverter& field) {
+void ScatteredField::RemapInlineDocs(std::span<const doc_id_t> docs,
+                                     std::span<const uint32_t> old2new) {
+  auto& out = _s->inline_docs;
+  out.resize(docs.size());
+  for (size_t r = 0; r != docs.size(); ++r) {
+    out[r] = Remap(old2new, docs[r]);
+  }
+  if (_s->term_starts.empty()) {
+    return;
+  }
+  for (size_t t = 0, n = TermCount(); t != n; ++t) {
+    std::sort(out.begin() + TermBegin(t), out.begin() + TermEnd(t));
+  }
+}
+
+template<TokenLayout kLayout>
+void ScatteredField::RemapLogDocs(std::span<const uint32_t> old2new) {
+  auto* const* docs = _s->docs.data();
+  auto* const* positions = _s->pos.data();
+  for (size_t t = 0, n = TermCount(); t != n; ++t) {
+    const auto begin = TermBegin(t);
+    const auto end = TermEnd(t);
+    bool sorted = true;
+    doc_id_t prev = 0;
+    doc_id_t max_doc = 0;
+    for (auto i = begin; i != end; ++i) {
+      const auto doc = Remap(old2new, Get(docs, i));
+      Put(docs, i, doc);
+      sorted = sorted && prev <= doc;
+      prev = doc;
+      max_doc = std::max(max_doc, doc);
+    }
+    if (sorted) {
+      continue;
+    }
+    if constexpr (kLayout == TokenLayout::Terms) {
+      auto& keys = _s->doc_keys;
+      keys.clear();
+      for (auto i = begin; i != end; ++i) {
+        keys.push_back(Get(docs, i));
+      }
+      SortByDoc(keys, _s->doc_keys_alt, max_doc,
+                [](uint32_t doc) noexcept { return doc; });
+      for (auto i = begin; const auto doc : keys) {
+        Put(docs, i++, doc);
+      }
+    } else if constexpr (kLayout == TokenLayout::TermsPos) {
+      auto& pairs = _s->doc_pos;
+      pairs.clear();
+      for (auto i = begin; i != end; ++i) {
+        pairs.push_back(uint64_t{Get(docs, i)} << 32 | Get(positions, i));
+      }
+      SortByDoc(pairs, _s->doc_pos_alt, max_doc, [](uint64_t pair) noexcept {
+        return static_cast<uint32_t>(pair >> 32);
+      });
+      for (auto i = begin; const auto pair : pairs) {
+        Put(docs, i, static_cast<uint32_t>(pair >> 32));
+        Put(positions, i++, static_cast<uint32_t>(pair));
+      }
+    } else {
+      auto& occurrences = _s->occurrences;
+      occurrences.clear();
+      for (auto i = begin; i != end; ++i) {
+        occurrences.push_back({.doc = Get(docs, i),
+                               .pos = Get(positions, i),
+                               .offs_start = Get(_s->offs_start.data(), i),
+                               .offs_end = Get(_s->offs_end.data(), i)});
+      }
+      SortByDoc(occurrences, _s->occurrences_alt, max_doc,
+                [](const ScatterScratch::Occurrence& occurrence) noexcept {
+                  return occurrence.doc;
+                });
+      for (auto i = begin; const auto& occurrence : occurrences) {
+        Put(docs, i, occurrence.doc);
+        Put(positions, i, occurrence.pos);
+        Put(_s->offs_start.data(), i, occurrence.offs_start);
+        Put(_s->offs_end.data(), i++, occurrence.offs_end);
+      }
+    }
+  }
+}
+
+void ScatteredField::Reset(const FieldInverter& field,
+                           std::span<const uint32_t> old2new) {
   _field = &field;
+  _remapped = !old2new.empty();
   _all_inline = field.Log().Size() == 0;
   SDB_ASSERT(field.InlineDocs().empty() || _all_inline);
   if (field.Log().Size() > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
@@ -117,6 +244,9 @@ void ScatteredField::Reset(const FieldInverter& field) {
     _all_inline && absl::c_is_sorted(entries.first(field.InlineDocs().size()),
                                      std::less_equal<>{});
   if (_identity) {
+    if (_remapped) {
+      RemapInlineDocs(field.InlineDocs(), old2new);
+    }
     return;
   }
 
@@ -135,6 +265,9 @@ void ScatteredField::Reset(const FieldInverter& field) {
     for (size_t r = 0; r < docs.size(); ++r) {
       out[r] = docs[ranked[r].id];
     }
+    if (_remapped) {
+      RemapInlineDocs(out, old2new);
+    }
     return;
   }
   const auto nocc = PrefixSums();
@@ -144,6 +277,9 @@ void ScatteredField::Reset(const FieldInverter& field) {
       Scatter<true>(log, nocc);
     } else {
       Scatter<false>(log, nocc);
+    }
+    if (_remapped) {
+      RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(old2new);
     }
   });
 }

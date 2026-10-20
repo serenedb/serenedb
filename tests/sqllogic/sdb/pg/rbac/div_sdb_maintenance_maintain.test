@@ -1,0 +1,90 @@
+statement ok
+DROP TABLE IF EXISTS sdbm_logs;
+
+
+statement ok
+DROP ROLE IF EXISTS sdbm_outsider;
+
+
+statement ok
+CREATE ROLE sdbm_outsider LOGIN PASSWORD 'sdbm_outsider_pw';
+
+
+statement ok
+CREATE TABLE sdbm_logs (id INTEGER PRIMARY KEY, body VARCHAR)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sdbm_logs VALUES (1, 'sweep'), (2, 'rinse');
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+statement error
+SELECT * FROM sdb_refresh('sdbm_logs');
+----
+db error: ERROR: permission denied for table "sdbm_logs"
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+statement error
+SELECT * FROM sdb_cleanup('sdbm_logs');
+----
+db error: ERROR: permission denied for table "sdbm_logs"
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+statement error
+SELECT * FROM sdb_compact('sdbm_logs', mode := 'compact');
+----
+db error: ERROR: permission denied for table "sdbm_logs"
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+statement error
+SELECT * FROM sdb_segments('sdbm_logs');
+----
+db error: ERROR: permission denied for table "sdbm_logs"
+
+
+statement ok
+GRANT MAINTAIN ON sdbm_logs TO sdbm_outsider;
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+query
+SELECT segments, docs FROM sdb_refresh('sdbm_logs');
+----
+segments	docs
+1	2
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbm_logs');
+----
+segments	docs
+1	2
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+query
+SELECT files >= 0 AS ran FROM sdb_cleanup('sdbm_logs');
+----
+ran
+t
+
+
+connection c_outsider user=sdbm_outsider password=sdbm_outsider_pw
+query
+SELECT merge, outcome FROM sdb_compact('sdbm_logs', mode := 'compact');
+----
+merge	outcome
+
+
+statement ok
+DROP TABLE sdbm_logs;
+
+
+statement ok
+DROP ROLE sdbm_outsider;

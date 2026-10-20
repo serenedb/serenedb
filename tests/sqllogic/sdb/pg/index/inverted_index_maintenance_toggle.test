@@ -1,6 +1,7 @@
 statement ok
 CREATE TABLE mt_s (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100)
+WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100,
+      compaction_max_segments = 3)
 
 
 statement ok
@@ -284,7 +285,7 @@ CREATE TABLE mt_t (id INT, body TEXT)
 
 
 statement ok
-CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (refresh_interval = 100, compaction_interval = 100)
+CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (refresh_interval = 100, compaction_interval = 100, compaction_max_segments = 3)
 
 
 statement error

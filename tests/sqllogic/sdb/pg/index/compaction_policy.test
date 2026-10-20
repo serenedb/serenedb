@@ -1,0 +1,134 @@
+statement ok
+CREATE TABLE cpt (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+query
+EXPLAIN CALL sdb_compact('cpt', mode := 'background')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────────────────────╮
+│ Table: public.cpt                                                                  │
+│ Mode: background                                                                   │
+│ Segments: 2                                                                        │
+│ Merges: 0                                                                          │
+│ Not Merged:                                                                        │
+│ _1 (not selected by the adjacent policy), _2 (not selected by the adjacent policy) │
+│ Notes:                                                                             │
+│ background compaction is disabled (compaction_interval = 0)                        │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT merge, outcome FROM sdb_compact('cpt', mode := 'background')
+----
+merge	outcome
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(501, 600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(601, 700) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(701, 800) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+query
+EXPLAIN CALL sdb_compact('cpt', mode := 'background')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────────────────────────╮
+│ Table: public.cpt                                           │
+│ Mode: background                                            │
+│ Segments: 8                                                 │
+│ Merges: 1                                                   │
+│ Pipeline: MERGE_UNITS                                       │
+│ Merge 1:                                                    │
+│ 8 segments -> 1, adjacent policy                            │
+│ Merge 1 Inputs:                                             │
+│ _1, _2, _3, _4, _5, _6, _7, _8                              │
+│ Merge 1 Docs:                                               │
+│ 800 (800 live), rowid 1..800                                │
+│ Merge 1 Bytes: <slt:ignore>│
+│ Merge 1 Columns:                                            │
+│ 3, <slt:ignore>│
+│ Merge 1 Postings: 1 field                                   │
+│ Notes:                                                      │
+│ background compaction is disabled (compaction_interval = 0) │
+╰─────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('cpt', mode := 'background')
+----
+outcome	input_docs	output_docs
+merged	800	800
+
+
+query
+SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
+FROM sdb_segments('cpt')
+----
+segments	first	last
+1	1	800
+
+
+statement ok
+DROP TABLE cpt

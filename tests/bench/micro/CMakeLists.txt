@@ -19,6 +19,7 @@ target_include_directories(
     SYSTEM
     PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
         ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 add_custom_command(
@@ -54,6 +55,8 @@ function(add_bench NAME)
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(col_codecs)
+add_bench(col_codecs_real)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)
@@ -67,6 +70,7 @@ add_bench(tokenizer_pool)
 add_bench(invert_kernels)
 add_bench(lower_bound)
 add_bench(exclude_costs)
+add_bench(hits_window_skip)
 add_bench(memory_file)
 add_bench(multi_delimited_tokenizer)
 add_bench(posting_fill_seek)
@@ -111,9 +115,12 @@ add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
+add_bench(nested_columns)
 add_bench(column_point_read)
 add_bench(select_thresholds)
 add_bench(clustering)
+add_bench(sorted_merge)
+add_bench(sorted_flush)
 add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(json_leaf_reader)

@@ -28,20 +28,25 @@
 
 namespace irs {
 
-size_t DirectoryCleaner::clean(Directory& dir,
-                               const removal_acceptor_t& acceptor) {
+RemovedFiles DirectoryCleaner::clean(Directory& dir,
+                                     const removal_acceptor_t& acceptor) {
   auto& refs = dir.attributes().refs().refs();
 
-  size_t remove_count = 0;
+  RemovedFiles removed;
   IndexFileRefs::ref_t tmp_ref;
-  auto visitor = [&dir, &acceptor, &remove_count, &tmp_ref](
+  auto visitor = [&dir, &acceptor, &removed, &tmp_ref](
                    const IndexFileRefs::ref_t& ref, size_t count) -> bool {
     const std::string_view filename = *ref;
     // for retained files add a temporary reference to avoid removal
     if (!acceptor(filename)) {
       tmp_ref = ref;
-    } else if (!count && dir.remove(filename)) {
-      ++remove_count;
+    } else if (!count) {
+      uint64_t bytes = 0;
+      dir.length(bytes, filename);
+      if (dir.remove(filename)) {
+        ++removed.count;
+        removed.bytes += bytes;
+      }
     }
 
     return true;
@@ -49,7 +54,7 @@ size_t DirectoryCleaner::clean(Directory& dir,
 
   refs.visit(visitor, true);
 
-  return remove_count;
+  return removed;
 }
 
 }  // namespace irs

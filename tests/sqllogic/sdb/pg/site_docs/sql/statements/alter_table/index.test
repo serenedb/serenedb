@@ -491,6 +491,25 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
 tgname	tgenabled
 orders_audited	A
 
+# DOCS_TEST: example_038
+
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR, level INTEGER) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE events ALTER COLUMN msg SET COMPRESSION dict_zstd(compression_level = 9);
+
+statement ok
+ALTER TABLE events ALTER COLUMN level SET COMPRESSION rle;
+
+statement ok
+ALTER TABLE events ALTER COLUMN msg SET COMPRESSION DEFAULT;
+
 # DOCS_TEST: add_column_serial
 
 statement ok

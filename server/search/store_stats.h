@@ -24,7 +24,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
+#include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 
 namespace irs {
@@ -123,17 +125,24 @@ class MaintenanceCounters {
 
 class MaintainedStore {
  public:
+  explicit MaintainedStore(uint64_t relation_id)
+    : _merge_relation{std::make_shared<MergeScheduler::Relation>(relation_id)} {
+  }
+
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
+
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation()
+    const noexcept {
+    return _merge_relation;
+  }
 
   // Wake the compaction coordinator: a refresh that produced new segments bumps
   // this generation so the coordinator re-evaluates without waiting for its
   // timer. The coordinator polls CompactionGeneration() during its backoff
   // wait.
-  void NudgeCompaction() noexcept {
-    _compaction_gen.fetch_add(1, std::memory_order_release);
-  }
+  void NudgeCompaction() noexcept { _merge_relation->NudgeCompaction(); }
   uint64_t CompactionGeneration() const noexcept {
-    return _compaction_gen.load(std::memory_order_acquire);
+    return _merge_relation->CompactionGeneration();
   }
 
   // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
@@ -166,7 +175,7 @@ class MaintainedStore {
   MaintenanceCounters _maintenance;
 
  private:
-  std::atomic<uint64_t> _compaction_gen{0};
+  const std::shared_ptr<MergeScheduler::Relation> _merge_relation;
   std::atomic<uint32_t> _stale_pressure{0};
 };
 

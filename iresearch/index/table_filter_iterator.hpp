@@ -361,4 +361,10 @@ struct ColFilterClassification {
   std::vector<ColFilterSpec> active;
 };
 
+void LiveRowGroups(const ColReader& col_reader,
+                   std::span<const ColFilterSpec> specs,
+                   duckdb::ClientContext& context, ColFilterStateCache& states,
+                   uint64_t rows, uint64_t rg_size,
+                   std::vector<uint32_t>& live);
+
 }  // namespace irs

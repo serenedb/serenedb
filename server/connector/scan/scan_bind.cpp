@@ -25,6 +25,7 @@
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -702,6 +703,19 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
   return f;
+}
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input) {
+  for (const auto& source : write_input.GetSources()) {
+    if (source.get().type != duckdb::PhysicalOperatorType::TABLE_SCAN) {
+      continue;
+    }
+    const auto& scan = source.get().Cast<duckdb::PhysicalTableScan>();
+    if (scan.function.bind != &ScanBind || !scan.bind_data) {
+      continue;
+    }
+    scan.bind_data->Cast<ScanBindData>().share_payloads = true;
+  }
 }
 
 }  // namespace sdb::connector

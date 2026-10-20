@@ -51,6 +51,9 @@ set(IResearch_core_sources
     ./analysis/wildcard_tokenizer.cpp
     ./analysis/html_strip_tokenizer.cpp
     ./analysis/filter_tokens_tokenizer.cpp
+    ./formats/column/col_block_copy.cpp
+    ./formats/column/col_block_sink.cpp
+    ./formats/column/col_copy_check.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp
@@ -60,6 +63,22 @@ set(IResearch_core_sources
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
+    ./formats/column/codecs/dict_fsst.cpp
+    ./formats/column/codecs/dict_lz4.cpp
+    ./formats/column/codecs/dict_zstd.cpp
+    ./formats/column/codecs/dict_zxc.cpp
+    ./formats/column/codecs/fsst.cpp
+    ./formats/column/codecs/fsst_chain_encoder.cpp
+    ./formats/column/codecs/lz4.cpp
+    ./formats/column/codecs/numeric.cpp
+    ./formats/column/codecs/registry.cpp
+    ./formats/column/codecs/segment_builder.cpp
+    ./formats/column/codecs/sequence.cpp
+    ./formats/column/codecs/string_scan.cpp
+    ./formats/column/codecs/string_writer.cpp
+    ./formats/column/codecs/trained_dictionary.cpp
+    ./formats/column/codecs/zstd.cpp
+    ./formats/column/codecs/zxc.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
     ./formats/posting/block_codec.cpp
@@ -70,6 +89,7 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/index/term_parts.cpp
     ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
@@ -86,16 +106,30 @@ set(IResearch_core_sources
     ./formats/ivf/quantizers/rabitq.cpp
     ./formats/ivf/quantizers/scalar.cpp
     ./formats/ivf/quantizers/tq.cpp
+    ./index/compaction/adjacent_run_policy.cpp
+    ./index/compaction/merge_ticket.cpp
     ./index/directory_reader.cpp
+    ./index/doc_removal.cpp
     ./index/docs_mask/chunks.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
+    ./index/flush_order.cpp
     ./index/index_writer.cpp
     ./index/index_reader.cpp
     ./index/iterators.cpp
-    ./index/merge_writer.cpp
+    ./index/merge/input_norms.cpp
+    ./index/merge/key_merge.cpp
+    ./index/merge/merge_order.cpp
+    ./index/merge/merge_plan.cpp
+    ./index/merge/merge_schedule.cpp
+    ./index/merge/merged_postings.cpp
+    ./index/merge/merged_terms.cpp
+    ./index/merge/norms_unit.cpp
+    ./index/merge/postings_unit.cpp
+    ./index/merge/term_keys.cpp
+    ./index/merge/term_ranges.cpp
     ./index/norm.cpp
     ./index/hit_batcher.cpp
     ./index/table_filter_iterator.cpp
@@ -513,6 +547,7 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
     PUBLIC
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
@@ -566,6 +601,8 @@ target_link_libraries(
     PUBLIC s2
     PUBLIC duckdb_static
     PRIVATE lz4_static
+    PRIVATE duckdb_fsst
+    PRIVATE zxc::zxc_lib
     PRIVATE stemmer-static
 )
 

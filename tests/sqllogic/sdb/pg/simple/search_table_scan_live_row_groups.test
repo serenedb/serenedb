@@ -1,0 +1,183 @@
+control substitution on
+
+statement ok
+CREATE TABLE slr (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 4096);
+
+
+statement ok
+CREATE TABLE slr_d (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO slr_d SELECT i, i // 4096, i % 7 FROM range(262144) t(i);
+
+
+statement ok
+INSERT INTO slr SELECT * FROM slr_d ORDER BY id;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slr;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('slr');
+----
+segments	docs
+1	262144
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_one.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k = 7;
+----
+n	s
+4096	12285
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_four.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k BETWEEN 10 AND 13;
+----
+n	s
+16384	49158
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_all.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE v = 3;
+----
+n
+37449
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_one.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_four.json');
+----
+row_groups_scanned
+4
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_all.json');
+----
+row_groups_scanned
+64
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+query
+SELECT id FROM slr WHERE k = 20 ORDER BY id DESC LIMIT 3;
+----
+id
+86015
+86014
+86013
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+query
+SELECT id FROM slr WHERE k = 20 ORDER BY id DESC LIMIT 3;
+----
+id
+86015
+86014
+86013
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+statement ok
+RESET sdb_scan_split
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k IN (0, 31, 63)) AS a,
+       (SELECT count(*) || ':' || sum(v) FROM slr WHERE k >= 62 OR k <= 1) = (SELECT count(*) || ':' || sum(v) FROM slr_d WHERE k >= 62 OR k <= 1) AS b,
+       (SELECT max(id) || ':' || min(id) FROM slr WHERE k = 40 AND v = 3) = (SELECT max(id) || ':' || min(id) FROM slr_d WHERE k = 40 AND v = 3) AS c;
+----
+a	b	c
+t	t	t
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE slr;
+
+
+statement ok
+DROP TABLE slr_d;

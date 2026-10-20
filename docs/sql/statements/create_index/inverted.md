@@ -22,7 +22,7 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 - **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
-`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. An inverted index has no column order, so `ASC`, `DESC`, `NULLS FIRST` and `NULLS LAST` after an indexed column are rejected, as PostgreSQL's GIN indexes reject them; [`SORTED BY`](#sort-keys) orders the index's rows instead. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
 ### Operator-class options (feature flags)
 
@@ -39,7 +39,20 @@ The same flags can be set on the dictionary itself, in which case every column u
 
 ## `INCLUDE` columns
 
-Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. A column listed both in `USING inverted (...)` and in `INCLUDE (...)` is searchable and stored, which lets [phrase queries](../../indexes/inverted/full-text-search.md#phrases-without-positions) on it work without `position`; an indexed expression gets the same when it is listed a second time with `included()` to store its value, as in `USING inverted (id, (lower(body)) words, (lower(body)) included())`. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
+Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. A column listed both in `USING inverted (...)` and in `INCLUDE (...)` is searchable and stored, which lets [phrase queries](../../indexes/inverted/full-text-search.md#phrases-without-positions) on it work without `position`; an indexed expression gets the same when it is listed a second time with `included()` to store its value, as in `USING inverted (id, (lower(body)) words, (lower(body)) included())`. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring`, `dict_fsst`, `fsst`, `dict_lz4`, `dict_zstd`, `lz4`, `dict_zxc` or `zxc`, optionally with a level (`'dict_zstd(compression_level = 9)'`), for example `INCLUDE (payload included (compression = 'alp'))`. The codecs and the columnstore they write to are described in [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md). `included (hyperloglog = true)` keeps a HyperLogLog sketch of the column's distinct values per segment, which the optimizer reads as the column's `approx_unique` for cardinality estimates; on a search table the sketch is kept on the table's own column, so queries on the table and on the index both see it.
+
+## Sort keys
+
+`SORTED BY (column [ASC | DESC] [NULLS FIRST | NULLS LAST], ...)` after the column list keeps the index's rows sorted by a key, with the same keys as a search table's [`SORTED BY`](../create_table/index.md#sort-keys):
+
+<SqlLogicTest id="sql/indexes/inverted/index/example_007" />
+
+-   Each key is a column of the indexed table, listed in key order. A key is ascending unless it says `DESC`. NULLs come last in an ascending key and first in a descending one, as in PostgreSQL's `ORDER BY`, unless `NULLS FIRST` or `NULLS LAST` says otherwise.
+-   A key column need not be indexed. The index stores its values as if it were in `INCLUDE`, and the index's definition lists it there.
+-   Every segment of the index holds its rows in key order from the moment it is written, and merges keep that order. A query that reads from the index gets each segment's rows in key order, and the key columns compress better. Rows with equal keys are stored in no particular order.
+-   A merge in key order takes at most 1024 segments: background compaction merges at most 1024 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
+-   A key is a stored column: an expression, a `COLLATE` clause, a column declared with a collation or a generated column is rejected, and so is a column listed twice.
+-   Indexes on search tables and on views reject `SORTED BY`; a search table is sorted by its own `SORTED BY`.
 
 ## Index options
 

@@ -1,0 +1,93 @@
+# Index keys with a lambda: list_transform and list_filter over a list column, inline and through a macro, on a
+# search table and on a view. CREATE INDEX validates an expression's constant parts by evaluating them, and a lambda
+# has no children to the expression iterator, so it looked foldable and failed with "Unimplemented type for
+# StandardVectorBuffer::GetValue" before the lambda was skipped.
+
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iel_kw AS keyword() WITH (frequency)
+
+
+statement ok
+CREATE MACRO iel_names(l) AS list_transform(l, x -> x.a)
+
+
+statement ok
+CREATE TABLE iel_search (id INTEGER, tags VARCHAR[], parts STRUCT(a VARCHAR, b INTEGER)[]) WITH (storage = 'search')
+
+
+statement ok
+CREATE INDEX iel_search_idx ON iel_search USING inverted (id, (list_transform(tags, x -> lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, p -> p.b > 1)) included())
+
+
+statement ok
+INSERT INTO iel_search VALUES (1, ['Red', 'Blue'], [{'a': 'Foo', 'b': 1}]), (2, ['green'], [{'a': 'Bar', 'b': 2}, {'a': 'Baz', 'b': 3}])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iel_search
+
+
+query
+SELECT id FROM iel_search WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM iel_search WHERE (iel_names(parts)) @@ ts_like('Baz') ORDER BY id
+----
+id
+2
+
+statement ok
+INSERT INTO iel_search VALUES (3, ['RED'], [{'a': 'Baz', 'b': 4}])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iel_search
+
+
+query
+SELECT id FROM iel_search WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM iel_search WHERE (iel_names(parts)) @@ ts_like('Baz') ORDER BY id
+----
+id
+2
+3
+
+statement count 3
+COPY (SELECT 1 AS id, ['Red', 'Blue'] AS tags, [{'a': 'Foo', 'b': 1}] AS parts
+      UNION ALL SELECT 2, ['green'], [{'a': 'Bar', 'b': 2}, {'a': 'Baz', 'b': 3}]
+      UNION ALL SELECT 3, ['RED'], [{'a': 'Baz', 'b': 4}])
+TO '${__TEST_DIR__}/iel_view.parquet' (FORMAT PARQUET)
+
+
+statement ok
+CREATE VIEW iel_view AS SELECT * FROM read_parquet('${__TEST_DIR__}/iel_view.parquet')
+
+
+statement ok
+CREATE INDEX iel_view_idx ON iel_view USING inverted (id, (list_transform(tags, x -> lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, p -> p.b > 1)) included())
+
+
+query
+SELECT id FROM iel_view_idx WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM iel_view_idx WHERE (iel_names(parts)) @@ ts_like('Baz') ORDER BY id
+----
+id
+2
+3

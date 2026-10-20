@@ -22,6 +22,7 @@
 
 #include <utility>
 
+#include "iresearch/search/lead/verified_batch.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -37,15 +38,18 @@ class GeoSlotsDocs {
     : _cells{std::make_from_tuple<Cells>(std::forward<CellsArgs>(cells))},
       _shape{recipe.Make()} {}
 
-  doc_id_t Seek(doc_id_t target) { return _cells.Seek(target); }
+  doc_id_t Seek(doc_id_t target) { return _batch.Seek(_cells, _shape, target); }
 
-  doc_id_t Next(doc_id_t) { return _cells.Next(); }
+  doc_id_t Next(doc_id_t) { return _batch.Next(_cells, _shape); }
 
-  bool Match(doc_id_t doc) { return _shape.Check(doc); }
+  bool Match(doc_id_t doc) const { return _batch.Match(doc); }
 
  private:
+  using Verifier = typename GeoQuery<Parser, Acceptor>::Verifier;
+
   Cells _cells;
-  typename GeoQuery<Parser, Acceptor>::Verifier _shape;
+  Verifier _shape;
+  VerifiedBatch<Verifier> _batch;
 };
 
 }  // namespace irs::lead

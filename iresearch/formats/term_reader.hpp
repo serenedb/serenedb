@@ -93,6 +93,8 @@ struct TermReader : public AttributeProvider {
   // Returns total number of documents with at least 1 term in a field.
   virtual uint64_t docs_count() const = 0;
 
+  virtual uint64_t total_term_freq() const = 0;
+
   // Returns the least significant term.
   virtual bytes_view min() const = 0;
 

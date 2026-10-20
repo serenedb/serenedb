@@ -869,7 +869,8 @@ class FieldsInverter : util::Noncopyable {
   }
 
   void Flush(burst_trie::FieldWriter& fw, FlushState& state,
-             std::span<const BasicTermReader* const> extra);
+             std::span<const BasicTermReader* const> extra,
+             std::span<const uint32_t> old2new = {});
 
   size_t MemoryActive() const noexcept {
     return _arena.SizeInBytes() + FieldsMemory();

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
@@ -119,7 +120,18 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
+  bool all_live = true;
+  std::vector<uint32_t> live_rgs;
   std::unique_ptr<OrderedUnits> ordered;
+
+  uint32_t LiveBefore(uint32_t rg) const noexcept {
+    return all_live ? rg
+                    : static_cast<uint32_t>(absl::c_lower_bound(live_rgs, rg) -
+                                            live_rgs.begin());
+  }
+  uint32_t LiveCount() const noexcept {
+    return all_live ? rg_count : static_cast<uint32_t>(live_rgs.size());
+  }
 };
 
 class ScanBarrier {
@@ -173,6 +185,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t row_position_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;
   bool has_real_column = false;
@@ -424,6 +437,12 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
 
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       std::span<const irs::doc_id_t> docs,
+                       duckdb::DataChunk& output);
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       uint64_t first_row, const duckdb::SelectionVector* sel,
+                       duckdb::idx_t count, duckdb::DataChunk& output);
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);

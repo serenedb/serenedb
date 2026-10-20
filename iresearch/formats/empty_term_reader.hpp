@@ -71,6 +71,8 @@ class EmptyTermReader final : public irs::TermReader {
   // total number of documents
   uint64_t docs_count() const noexcept final { return _docs_count; }
 
+  uint64_t total_term_freq() const noexcept final { return 0; }
+
   bytes_view min() const noexcept final { return {}; }
   bytes_view max() const noexcept final { return {}; }
 

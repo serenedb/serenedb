@@ -44,9 +44,7 @@ uint64_t TermOrderKey(bytes_view term) noexcept {
 
 void FieldCollector::Collect(const TermReader& field) noexcept {
   docs_with_field += field.docs_count();
-  if (const auto* freq = irs::get<FreqAttr>(field)) {
-    total_term_freq += freq->value;
-  }
+  total_term_freq += field.total_term_freq();
 }
 
 void FieldPrepareCollector::Finish(StatsArena&) {

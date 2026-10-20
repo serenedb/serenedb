@@ -34,7 +34,9 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -301,6 +303,10 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                   ERR_MSG("permission denied to set parameter \"", name, "\""),
                   ERR_DETAIL(detail));
 }
+
+constexpr std::string_view kObjectCacheSizeDetail =
+  "Only roles with the SUPERUSER attribute may change the size of the "
+  "server-wide object cache.";
 
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
 void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
@@ -1087,11 +1093,14 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_compact_target_segments",
       {
         LogicalTypeId::UINTEGER,
-        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
-        "1 (default) merges every segment into one; a larger N splits the "
-        "segments into N disjoint groups, merges each group into one segment "
-        "and stops there, so no single merge holds the whole table. A table "
-        "with N segments or fewer is left as it is. Default 1.",
+        "How many segments VACUUM (COMPACT_*) and sdb_compact(mode := "
+        "'compact') leave in a search table. 0 or 1 (default) merges every "
+        "segment into one; a larger N splits the segments, in the order their "
+        "rows were written, into N runs of about as many live rows each and "
+        "merges each run into one segment, so no single merge holds the whole "
+        "table. A segment left alone in its run is kept as it is unless it has "
+        "deleted rows. A table with N segments or fewer is left as it is. "
+        "Default 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -1186,6 +1195,40 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kObjectCacheSizeSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes the database's object cache may hold: decoded columnstore "
+        "dictionaries, idle tokenizers and other reusable objects, evicted "
+        "least recently used. 0 = an eighth of memory_limit, at least 256MB. "
+        "Default 0. Server-global; only a superuser may change it.",
+        [] { return duckdb::Value::UBIGINT(0); },
+        [](duckdb::ClientContext& context, duckdb::SetScope,
+           duckdb::Value& value) {
+          RequireSuperuser(context, kObjectCacheSizeSetting,
+                           kObjectCacheSizeDetail);
+          auto& cache =
+            duckdb::DatabaseInstance::GetDatabase(context).GetObjectCache();
+          const auto bytes = value.GetValue<uint64_t>();
+          if (bytes != 0) {
+            cache.SetMaxMemory(bytes);
+            return;
+          }
+          cache.SetAutomaticMaxMemory(
+            duckdb::DBConfig::GetConfig(context).options.maximum_memory);
+        },
+        [](duckdb::ClientContext& context, duckdb::SetScope) {
+          RequireSuperuser(context, kObjectCacheSizeSetting,
+                           kObjectCacheSizeDetail);
+          duckdb::DatabaseInstance::GetDatabase(context)
+            .GetObjectCache()
+            .SetAutomaticMaxMemory(
+              duckdb::DBConfig::GetConfig(context).options.maximum_memory);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       kSegmentMemoryMaxSetting,
       {
         LogicalTypeId::UBIGINT,
@@ -1242,9 +1285,8 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UBIGINT,
         "Byte budget of one background compaction of an inverted index or "
-        "search table (the tier target size). WITH "
-        "(compaction_max_segments_bytes = ...) overrides it per index or "
-        "table. Default 5368709120 (5GB).",
+        "search table. WITH (compaction_max_segments_bytes = ...) overrides "
+        "it per index or table. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);

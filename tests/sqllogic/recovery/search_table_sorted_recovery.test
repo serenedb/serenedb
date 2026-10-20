@@ -1,0 +1,134 @@
+control substitution on
+
+statement ok
+CREATE TABLE srr (k INTEGER, v VARCHAR) SORTED BY (k DESC) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srr SELECT (i * 7) % 13, 'v' || i FROM range(200) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srr;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+CREATE TABLE srr_log (a INTEGER, b TIMESTAMP) SORTED BY (a NULLS FIRST, b DESC NULLS LAST) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srr_log SELECT CASE WHEN i % 9 = 0 THEN NULL ELSE i % 4 END, TIMESTAMP '2026-01-01' + to_seconds(i) FROM range(300) t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT table_name, split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE table_name LIKE 'srr%' ORDER BY table_name;
+----
+table_name	definition
+srr	CREATE TABLE public.srr(k INTEGER, v VARCHAR) SORTED BY (k DESC NULLS FIRST)
+srr_log	CREATE TABLE public.srr_log(a INTEGER, b TIMESTAMP) SORTED BY (a ASC NULLS FIRST, b DESC NULLS LAST)
+
+
+connection after_crash
+statement ok
+INSERT INTO srr SELECT (i * 5) % 11, 'w' || i FROM range(100) t(i);
+
+
+connection after_crash
+statement ok
+INSERT INTO srr_log SELECT i % 3, TIMESTAMP '2026-02-01' + to_seconds(i) FROM range(50) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) srr;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) srr_log;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v LIKE 'w%') AS new_rows FROM srr;
+----
+n	new_rows
+300	100
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM srr_log;
+----
+n
+350
+
+
+connection after_crash
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
+         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY k DESC NULLS FIRST, sdb_row_position$) AS logical
+  FROM srr) WHERE physical <> logical;
+----
+misplaced
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
+         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY a ASC NULLS FIRST, b DESC NULLS LAST) AS logical
+  FROM srr_log) WHERE physical <> logical;
+----
+misplaced
+0
+
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_TABLE) srr_log;
+
+
+connection after_crash
+query
+SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM srr_log;
+----
+segments
+1
+
+
+connection after_crash
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+         row_number() OVER (ORDER BY a ASC NULLS FIRST, b DESC NULLS LAST) AS logical
+  FROM srr_log) WHERE physical <> logical;
+----
+misplaced
+0
+
+
+connection after_crash
+statement ok
+DROP TABLE srr;
+
+
+connection after_crash
+statement ok
+DROP TABLE srr_log;

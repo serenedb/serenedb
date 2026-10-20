@@ -28,34 +28,42 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/sort_keys.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
@@ -170,6 +178,33 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
+void CollectLeafPhysicalTypes(const duckdb::LogicalType& type,
+                              duckdb::vector<duckdb::PhysicalType>& leaves) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+      return CollectLeafPhysicalTypes(duckdb::ArrayType::GetChildType(type),
+                                      leaves);
+    case duckdb::LogicalTypeId::LIST:
+      return CollectLeafPhysicalTypes(duckdb::ListType::GetChildType(type),
+                                      leaves);
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::STRUCT: {
+      const auto& fields = duckdb::StructType::GetChildTypes(
+        type.id() == duckdb::LogicalTypeId::MAP
+          ? duckdb::ListType::GetChildType(type)
+          : type);
+      for (const auto& field : fields) {
+        CollectLeafPhysicalTypes(field.second, leaves);
+      }
+      return;
+    }
+    default:
+      if (!absl::c_linear_search(leaves, type.InternalType())) {
+        leaves.push_back(type.InternalType());
+      }
+  }
+}
+
 }  // namespace
 
 TableEngine ReadStorageEngine(const WithOptions& options) {
@@ -219,6 +254,77 @@ void RequireSearchTableIndexOption(std::string_view name) {
   }
 }
 
+duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type) {
+  duckdb::vector<duckdb::PhysicalType> leaves;
+  CollectLeafPhysicalTypes(type, leaves);
+  return leaves;
+}
+
+duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
+  const auto leaves = LeafPhysicalTypes(type);
+  return leaves.size() == 1 ? leaves.front() : duckdb::PhysicalType::STRUCT;
+}
+
+bool SearchTableOnly(duckdb::CompressionType type) noexcept {
+  return duckdb::IsSereneDBCompressionType(type) ||
+         type == duckdb::CompressionType::COMPRESSION_FSST;
+}
+
+void CheckCompressionLevel(std::string_view column_name,
+                           duckdb::CompressionType type, uint8_t level,
+                           bool columnstore) {
+  if (level == 0) {
+    return;
+  }
+  const uint8_t max_level =
+    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
+      ? irs::codecs::MaxLevel(type)
+      : 0;
+  const auto name =
+    duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
+  if (max_level == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column \"", column_name, "\": compression '", name,
+                            "' takes no compression_level"));
+  }
+  if (level > max_level) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column \"", column_name, "\": compression_level ",
+              static_cast<uint32_t>(level), " is out of range for '", name,
+              "' (1 to ", static_cast<uint32_t>(max_level), ")"));
+  }
+}
+
+void CheckColumnCompression(const duckdb::ColumnDefinition& column,
+                            TableEngine engine) {
+  const auto type = column.CompressionType();
+  const auto& name = column.Name().GetIdentifierName();
+  CheckCompressionLevel(name, type, column.CompressionLevel(),
+                        engine == TableEngine::Search);
+  if (!SearchTableOnly(type)) {
+    return;
+  }
+  if (engine != TableEngine::Search) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Column \"", name, "\": compression '",
+              duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
+              "' is only available on search tables (WITH (storage = "
+              "'search'))"));
+  }
+  const auto physical = LeafPhysicalType(column.GetType());
+  if (physical != duckdb::PhysicalType::VARCHAR) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                    ERR_MSG("Can't compress column \"", name, "\" with type '",
+                            column.GetType().ToString(), "' (physical: ",
+                            duckdb::EnumUtil::ToString(physical),
+                            ") using compression type '",
+                            duckdb::CompressionTypeToString(type), "'"));
+  }
+}
+
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
@@ -233,6 +339,7 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
   if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
     _pk_sequence = duckdb::Identifier{tag->second};
   } else if (base.oid == 0) {
@@ -244,7 +351,8 @@ SearchTableEntry::SearchTableEntry(
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, search::SearchTable::DeclaredCompression(GetColumns()));
+      _options, search::SearchTable::DeclaredCompression(GetColumns()),
+      SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -290,6 +398,7 @@ void AppendIResearchBlockRows(
     info.persistent = true;
     info.block_id = INVALID_BLOCK;
     info.block_offset = meta.file_offset;
+    info.segment_info = absl::StrCat("byte_size=", meta.byte_size);
   }
 }
 
@@ -405,13 +514,16 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   duckdb::virtual_column_map_t result;
   const auto keys = connector::primary_key::KeyColumns(*this);
-  result.reserve(keys.size() + 2);
+  result.reserve(keys.size() + 3);
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   result.insert({connector::kColumnIdentifierGeneratedPk,
                  duckdb::TableColumn{duckdb::Identifier{"rowid"},
                                      duckdb::LogicalType::ROW_TYPE}});
+  result.insert({connector::kColumnIdentifierRowPosition,
+                 duckdb::TableColumn{duckdb::Identifier{"sdb_row_position$"},
+                                     duckdb::LogicalType::UBIGINT}});
   for (size_t i = 0; i != keys.size(); ++i) {
     const auto& column = GetColumns().GetColumn(keys[i]);
     result.insert({connector::kColumnIdentifierPrimaryKeyBase + i,
@@ -421,7 +533,8 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
 }
 
 duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
-  return {connector::kColumnIdentifierGeneratedPk};
+  return {connector::kColumnIdentifierGeneratedPk,
+          connector::kColumnIdentifierRowPosition};
 }
 
 duckdb::optional_ptr<duckdb::SequenceCatalogEntry>
@@ -441,6 +554,29 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
     OnDrop();
   }
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
+  duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info) {
+  const auto index = GetColumnIndex(info.column_name);
+  auto create = GetInfo();
+  auto& column =
+    create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(index);
+  if (column.Generated()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot SET COMPRESSION for generated column \"",
+                            column.Name().GetIdentifierName(), "\""));
+  }
+  column.SetCompressionType(info.compression_type);
+  column.SetCompressionLevel(info.compression_level);
+  auto result = Rebuilt(context, info, std::move(create));
+  auto declared =
+    search::SearchTable::DeclaredCompression(result->GetColumns());
+  connector::RunAtCommit(
+    context, [storage = _storage, declared = std::move(declared)]() mutable {
+      storage->SetDeclaredCompression(std::move(declared));
+    });
+  return result;
 }
 
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
@@ -528,6 +664,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }
+  info->Cast<duckdb::CreateTableInfo>().sort_orders =
+    SortOrdersOf(_sort_keys, GetColumns());
   return info;
 }
 
@@ -603,6 +741,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
+      for (auto& order : table.sort_orders) {
+        auto& column = order.expression->Cast<duckdb::ColumnRefExpression>();
+        if (column.GetColumnName() == rename.old_name) {
+          order.expression =
+            duckdb::make_uniq<duckdb::ColumnRefExpression>(rename.new_name);
+        }
+      }
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;
@@ -667,6 +812,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
         constraint.Copy());
       return Rebuilt(context, info, std::move(create));
     }
+    case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
+      return SetColumnCompression(
+        context, alter.Cast<duckdb::SetColumnCompressionInfo>());
     case duckdb::AlterTableType::SET_TABLE_OPTIONS:
     case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
       return AlterOptions(context, alter);
@@ -680,7 +828,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   duckdb::ClientContext& context, duckdb::AlterTableInfo& alter) {
-  const auto require_alterable = [](std::string_view name) {
+  const auto require_alterable = [&](std::string_view name) {
     if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
       return;
     }
@@ -704,9 +852,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("option \"", name, "\" expects a constant value"));
       }
-      options[name] = OptionConstant(connector::ValidateSetting(
-        context, name,
-        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue()));
+      const auto value =
+        expr->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue();
+      options[name] =
+        OptionConstant(connector::ValidateSetting(context, name, value));
     }
   } else {
     for (const auto& identifier :
@@ -723,13 +872,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage, triggers);
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit([storage = _storage, options = result->_options] {
-      storage->ApplyOptions(options);
-    });
-  } else {
-    _storage->ApplyOptions(result->_options);
-  }
+  connector::RunAtCommit(context,
+                         [storage = _storage, options = result->_options] {
+                           storage->ApplyOptions(options);
+                         });
   return result;
 }
 

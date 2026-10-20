@@ -139,13 +139,18 @@ void IdxWriter::Commit() {
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           const auto& e = _impl->ivf_entries[i];
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty<uint64_t>(0, "id", e.id);
-            obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
-            obj.WriteProperty<uint64_t>(2, "tree_byte_size",
+            obj.WriteProperty<uint64_t>(kIvfFieldId, "id", e.id);
+            obj.WriteProperty<uint64_t>(kIvfFieldTreeOffset, "tree_offset",
+                                        e.meta.tree_offset);
+            obj.WriteProperty<uint64_t>(kIvfFieldTreeByteSize, "tree_byte_size",
                                         e.meta.tree_byte_size);
-            obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
-            obj.WriteProperty<uint64_t>(4, "stats_byte_size",
+            obj.WriteProperty<uint64_t>(kIvfFieldStatsOffset, "stats_offset",
+                                        e.meta.stats_offset);
+            obj.WriteProperty<uint64_t>(kIvfFieldStatsByteSize,
+                                        "stats_byte_size",
                                         e.meta.stats_byte_size);
+            obj.WritePropertyWithDefault<bool>(
+              kIvfFieldListBatches, "list_batches", e.meta.list_batches, false);
           });
         });
     }

@@ -41,9 +41,10 @@ class IndexOutput;
 struct PayloadBlockSetting {
   uint32_t group_size = 1;
   uint32_t record_size = 0;
+  bool padded = true;
 
   size_t RecordCount(size_t docs) const noexcept {
-    return (docs + group_size - 1) / group_size * group_size;
+    return padded ? (docs + group_size - 1) / group_size * group_size : docs;
   }
 };
 
@@ -90,6 +91,8 @@ class QuantizerWriter {
   }
 
   virtual uint32_t EncodeWidth() const noexcept { return 1; }
+
+  virtual void EndList(IndexOutput& /*out*/) {}
 
   virtual void Finish(IndexOutput& out) = 0;
 
@@ -215,7 +218,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major = false);
+  VectorMetric metric, bool row_major = false, bool list_batches = false);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook);

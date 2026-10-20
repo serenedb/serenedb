@@ -28,6 +28,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs::quantizers {
@@ -35,7 +36,7 @@ namespace {
 
 constexpr uint32_t kPanoramaLevelWidth = 32;
 
-constexpr uint32_t kScanCostPerDim = 8;
+constexpr uint32_t kScanCostPerDim = 2;
 
 constexpr size_t kPcaMinRows = 1024;
 constexpr size_t kPcaTrainRows = 4096;
@@ -62,7 +63,9 @@ faiss::Panorama MakePanorama(uint32_t d, size_t batch_size) {
 class PanoramaQuantizerWriter final : public QuantizerWriter {
  public:
   PanoramaQuantizerWriter(uint32_t d, VectorMetric metric)
-    : _d{d}, _metric{metric} {}
+    : _d{d}, _metric{metric} {
+    SDB_IF_FAILURE("ivf_panorama_shared_batches") { _shared = true; }
+  }
 
   size_t TrainSamples(size_t rows) const noexcept final {
     if (!PanoramaApplies(_metric, _d) ||
@@ -86,7 +89,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return {
       .group_size =
         _pano ? static_cast<uint32_t>(_pano->batch_size) : uint32_t{1},
-      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0)};
+      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0),
+      .padded = _shared,
+    };
   }
 
   void Encode(IndexOutput& out, const float* vecs, size_t n) final {
@@ -115,13 +120,24 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     }
   }
 
+  void EndList(IndexOutput& out) final {
+    if (_shared || _pending == 0) {
+      return;
+    }
+    WriteBatch(out, _stage.data(), _pending);
+    _pending = 0;
+  }
+
   void Finish(IndexOutput& out) final {
     if (_pending == 0) {
       return;
     }
-    const size_t batch = _pano->batch_size;
-    std::fill(_stage.begin() + _pending * size_t{_d}, _stage.end(), 0.f);
-    WriteBatch(out, _stage.data(), batch);
+    size_t count = _pending;
+    if (_shared) {
+      count = _pano->batch_size;
+      std::fill(_stage.begin() + _pending * size_t{_d}, _stage.end(), 0.f);
+    }
+    WriteBatch(out, _stage.data(), count);
     _pending = 0;
   }
 
@@ -144,12 +160,8 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::None;
   }
 
-  QuantizerScanCost ScanCost(size_t rows) const noexcept final {
-    return {.bytes = kScanCostPerDim * _d,
-            .group_rows = TrainSamples(rows) != 0
-                            ? static_cast<uint32_t>(
-                                faiss::Panorama::kDefaultBatchSize)
-                            : 1U};
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = kScanCostPerDim * _d};
   }
 
  private:
@@ -169,6 +181,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
 
   uint32_t _d;
   VectorMetric _metric;
+  bool _shared = false;
   faiss::PCAMatrix _rotation;
   std::optional<faiss::Panorama> _pano;
   size_t _pending = 0;
@@ -180,7 +193,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class PanoramaQuantizerStats final : public QuantizerStats {
  public:
-  PanoramaQuantizerStats(uint32_t d, std::span<const byte_type> stats) : _d{d} {
+  PanoramaQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                         bool list_batches)
+    : _d{d}, _list_batches{list_batches} {
     const size_t want = size_t{d} * d * sizeof(float);
     if (stats.size() < sizeof(PanoramaStatsHeader) + want) {
       return;
@@ -202,11 +217,13 @@ class PanoramaQuantizerStats final : public QuantizerStats {
 
   uint32_t Dim() const noexcept { return _d; }
   uint32_t Levels() const noexcept { return _levels; }
+  bool ListBatches() const noexcept { return _list_batches; }
   const byte_type* Rotation() const noexcept { return _rotation; }
 
  private:
   uint32_t _d;
   uint32_t _levels = 0;
+  bool _list_batches;
   const byte_type* _rotation = nullptr;
 };
 
@@ -235,6 +252,7 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
 
   uint32_t Dim() const noexcept { return _stats->Dim(); }
   uint32_t Levels() const noexcept { return _levels; }
+  bool ListBatches() const noexcept { return _stats->ListBatches(); }
   const byte_type* Query() const noexcept {
     return reinterpret_cast<const byte_type*>(_query.data());
   }
@@ -262,19 +280,17 @@ class PanoramaQuantizerReader final : public QuantizerReader {
       _d{_cb->Dim()},
       _levels{_cb->Levels()},
       _record_size{PanoramaRecordSize(_d, _levels)} {
-    if (_levels == 0) {
-      return;
+    if (_levels != 0) {
+      _group_size = static_cast<uint32_t>(_cb->Panorama().batch_size);
     }
-    const auto batch = _cb->Panorama().batch_size;
-    _group_size = static_cast<uint32_t>(batch);
-    _active.resize(batch);
-    _byteset.resize(batch);
-    _exact.resize(batch);
-    _dots.resize(batch);
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
-    return {.group_size = _group_size, .record_size = _record_size};
+    return {
+      .group_size = _group_size,
+      .record_size = _record_size,
+      .padded = !_cb->ListBatches(),
+    };
   }
 
   void StartCluster(const float* /*centroid*/) final {}
@@ -316,6 +332,12 @@ class PanoramaQuantizerReader final : public QuantizerReader {
       kMetric == faiss::METRIC_L2 ? std::numeric_limits<float>::max()
                                   : std::numeric_limits<float>::lowest());
     std::fill_n(out, len, std::numeric_limits<score_t>::lowest());
+    if (_active.size() < len) {
+      _active.resize(len);
+      _byteset.resize(len);
+      _exact.resize(len);
+      _dots.resize(len);
+    }
     faiss::PanoramaStats stats;
     using C = std::conditional_t<kMetric == faiss::METRIC_L2,
                                  faiss::CMax<float, int64_t>,
@@ -363,10 +385,12 @@ PanoramaQuantizerStats<M>::MakeCodebook(std::span<const float> query) const {
 }  // namespace
 
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
-  VectorMetric metric, uint32_t d, std::span<const byte_type> blob) {
+  VectorMetric metric, uint32_t d, std::span<const byte_type> blob,
+  bool list_batches) {
   std::shared_ptr<const QuantizerStats> stats;
   ResolveEnum<VectorMetric>(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
-    stats = std::make_shared<const PanoramaQuantizerStats<M>>(d, blob);
+    stats =
+      std::make_shared<const PanoramaQuantizerStats<M>>(d, blob, list_batches);
   });
   return stats;
 }

@@ -514,7 +514,8 @@ std::shared_ptr<const QuantizerStats> MakeStatsWithMetric(VectorMetric metric,
 std::unique_ptr<QuantizerWriter> MakePanoramaWriter(uint32_t d,
                                                     VectorMetric metric);
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
-  VectorMetric metric, uint32_t d, std::span<const byte_type> blob);
+  VectorMetric metric, uint32_t d, std::span<const byte_type> blob,
+  bool list_batches);
 
 std::unique_ptr<QuantizerWriter> MakeScalarWriter(uint32_t d,
                                                   VectorQuantization quant);

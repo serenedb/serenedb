@@ -50,7 +50,7 @@ faiss::ScalarQuantizer::QuantizerType FaissScalarType(
 constexpr size_t kEncodeTile = kFastScanBbs;
 
 constexpr uint32_t kScanCostPerDim = 4;
-constexpr uint32_t kHalfFloatScanCostPerDim = 6;
+constexpr uint32_t kSlowScanCostPerDim = 6;
 
 bool ScoresAsSq8Batch(const faiss::ScalarQuantizer& sq) noexcept {
   return (sq.qtype == faiss::ScalarQuantizer::QT_8bit ||
@@ -310,9 +310,8 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   VectorQuantization Kind() const noexcept final { return _quant; }
 
   QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
-    return {.bytes = (IsHalfFloat(_quant) ? kHalfFloatScanCostPerDim
-                                          : kScanCostPerDim) *
-                     _d};
+    const bool slow = IsHalfFloat(_quant) || _quant == VectorQuantization::USQ4;
+    return {.bytes = (slow ? kSlowScanCostPerDim : kScanCostPerDim) * _d};
   }
 
  private:
@@ -573,8 +572,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
     }
     const auto& sq = _cb->Sq();
     if (!_weights || _weights->l2 ||
-        sq.qtype != faiss::ScalarQuantizer::QT_8bit ||
-        bound.width == 0 || bound.width % 32 != 0 || bound.query_step == 0 ||
+        sq.qtype != faiss::ScalarQuantizer::QT_8bit || bound.width == 0 ||
+        bound.width % 32 != 0 || bound.query_step == 0 ||
         bound.width % bound.query_step != 0 || !bound.rows) {
       return false;
     }
@@ -636,9 +635,9 @@ class ScalarQuantizerReader final : public QuantizerReader {
     _own_query.assign(query.begin(), query.end());
     _query = _own_query;
     if (ScoresAsSq8Batch(_cb->Sq())) {
-      faiss::scalar_quantizer::sq8_batch_train(
-        _cb->Sq(), _query.data(), M == VectorMetric::L2Sqr,
-        /*integer=*/false, _own_weights);
+      faiss::scalar_quantizer::sq8_batch_train(_cb->Sq(), _query.data(),
+                                               M == VectorMetric::L2Sqr,
+                                               /*integer=*/false, _own_weights);
       _weights = &_own_weights;
     } else {
       SetComputerQuery();

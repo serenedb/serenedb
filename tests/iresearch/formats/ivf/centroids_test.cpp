@@ -1285,7 +1285,8 @@ TEST(centroids_builder_test, unset_fanout_keeps_the_root_within_1024) {
   EXPECT_GT(root(std::numeric_limits<uint32_t>::max()), 1024u);
 }
 
-TEST(centroids_builder_test, root_holds_every_list_a_capped_posting_size_needs) {
+TEST(centroids_builder_test,
+     root_holds_every_list_a_capped_posting_size_needs) {
   constexpr uint32_t d = 4;
   constexpr uint64_t n = 100003;
   constexpr size_t kCap = 626;
@@ -1300,11 +1301,11 @@ TEST(centroids_builder_test, root_holds_every_list_a_capped_posting_size_needs) 
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
-  const auto builder = CentroidsBuilder::Create(
-    *col, r.Ctx(), n, VectorMetric::L2Sqr, d,
-    {.posting_size = (n + kCap - 1) / kCap,
-     .max_fanout = kCap,
-     .sample_factor = 0.2});
+  const auto builder =
+    CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr, d,
+                             {.posting_size = (n + kCap - 1) / kCap,
+                              .max_fanout = kCap,
+                              .sample_factor = 0.2});
   const auto root = BuiltRootSize(builder);
   EXPECT_LE(root, kCap);
   EXPECT_GT(root, kCap / 2);
@@ -1365,12 +1366,12 @@ TEST(ivf_posting_size, ignores_the_dimension_when_the_scan_cost_follows_it) {
 
 TEST(ivf_posting_size, never_splits_a_list_below_a_scan_group) {
   constexpr auto kNoBound = std::numeric_limits<uint32_t>::max();
-  EXPECT_EQ(IvfPostingSize(250'000, 768, {.bytes = 6144, .group_rows = 1024},
-                           0, kNoBound),
-            1024u);
-  EXPECT_EQ(IvfPostingSize(250'000, 768, {.bytes = 588, .group_rows = 32}, 0,
+  EXPECT_EQ(IvfPostingSize(250'000, 768, {.bytes = 6144, .group_rows = 1024}, 0,
                            kNoBound),
-            416u);
+            1024u);
+  EXPECT_EQ(
+    IvfPostingSize(250'000, 768, {.bytes = 588, .group_rows = 32}, 0, kNoBound),
+    416u);
 }
 
 TEST(ivf_posting_size, stays_within_bounds) {
@@ -1384,8 +1385,7 @@ TEST(ivf_posting_size, stays_within_bounds) {
 TEST(ivf_posting_size, grows_to_keep_the_lists_within_the_centroid_bound) {
   EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 1000), 256u);
   EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 100'000), 160u);
-  EXPECT_EQ(IvfPostingSize(250'000'000, 1536, {.bytes = 9216}, 0, 1000),
-            8192u);
+  EXPECT_EQ(IvfPostingSize(250'000'000, 1536, {.bytes = 9216}, 0, 1000), 8192u);
   EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 0), 160u);
 }
 

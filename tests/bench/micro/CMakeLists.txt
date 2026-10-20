@@ -125,6 +125,8 @@ add_bench(stringzilla_kernels)
 add_bench(vector_distances)
 add_bench(quant_quality)
 add_bench(ivf_scan_cost)
+add_bench(ivf_ip_clustering)
+add_bench(panorama_scan)
 add_bench(table_fetch)
 
 if(ARCH_AMD64)

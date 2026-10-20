@@ -58,6 +58,7 @@ struct IvfCentroidMeta {
   uint64_t tree_byte_size = 0;
   uint64_t stats_offset = 0;
   uint64_t stats_byte_size = 0;
+  bool list_batches = false;
 };
 
 struct HnswMeta {
@@ -70,6 +71,13 @@ inline constexpr std::string_view kIdxFormatExt = "idx";
 inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
+
+inline constexpr duckdb::field_id_t kIvfFieldId = 0;
+inline constexpr duckdb::field_id_t kIvfFieldTreeOffset = 1;
+inline constexpr duckdb::field_id_t kIvfFieldTreeByteSize = 2;
+inline constexpr duckdb::field_id_t kIvfFieldStatsOffset = 3;
+inline constexpr duckdb::field_id_t kIvfFieldStatsByteSize = 4;
+inline constexpr duckdb::field_id_t kIvfFieldListBatches = 5;
 
 class IdxReader final {
  public:

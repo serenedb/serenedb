@@ -417,6 +417,116 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   return {std::move(head), std::move(node), next_level_offset};
 }
 
+namespace {
+
+template<VectorMetric Metric>
+void ScoreRows(std::span<const float> query, const float* rows, size_t n,
+               float* out) {
+  const auto d = static_cast<uint16_t>(query.size());
+  for (size_t i = 0; i < n; ++i) {
+    out[i] = ComputeDistance<Metric>(query.data(), rows + i * d, d);
+  }
+}
+
+#if defined(__x86_64__)
+
+#define IRS_ROUTE_AVX512 \
+  __attribute__((target("avx512f,avx512vl,avx512bw,avx512dq"), flatten))
+
+bool HasAvx512() noexcept {
+  static const bool kHas =
+    __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
+    __builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512dq");
+  return kHas;
+}
+
+#else
+
+#define IRS_ROUTE_AVX512
+
+constexpr bool HasAvx512() noexcept { return false; }
+
+#endif
+
+template<VectorMetric Metric>
+IRS_ROUTE_AVX512 void ScoreRowsAvx512(std::span<const float> query,
+                                      const float* rows, size_t n, float* out) {
+  ScoreRows<Metric>(query, rows, n, out);
+}
+
+struct Scored {
+  float dist;
+  size_t start;
+  size_t count;
+};
+
+struct SearchCtx {
+  std::span<const float> query;
+  uint32_t beam = 0;
+  bool avx512 = false;
+  std::vector<CentroidsNode::Candidate> leaves;
+  LayerBuffers bufs;
+  std::vector<float> dists;
+  std::vector<Scored> scored;
+  std::vector<size_t> starts;
+  std::vector<size_t> sizes;
+};
+
+template<VectorMetric Metric>
+void SearchLayer(SearchCtx& ctx, IndexInput& in, size_t level,
+                 std::span<const CentroidsNodeView> nodes, size_t layer_base,
+                 size_t layer_total) {
+  SDB_ASSERT(!nodes.empty());
+  const size_t d = ctx.query.size();
+
+  auto& scored = ctx.scored;
+  scored.clear();
+  for (const auto& node : nodes) {
+    if (ctx.dists.size() < node.size) {
+      ctx.dists.resize(node.size);
+    }
+    if (ctx.avx512) {
+      ScoreRowsAvx512<Metric>(ctx.query, node.centroids.data(), node.size,
+                              ctx.dists.data());
+    } else {
+      ScoreRows<Metric>(ctx.query, node.centroids.data(), node.size,
+                        ctx.dists.data());
+    }
+    for (size_t i = 0; i < node.size; ++i) {
+      if (level == 0 || node.child_offsets[i + 1] == node.child_offsets[i]) {
+        ctx.leaves.emplace_back(ctx.dists[i], layer_base + node.base + i,
+                                node.centroids.subspan(i * d, d));
+      } else {
+        scored.push_back({ctx.dists[i], node.child_offsets[i],
+                          node.child_offsets[i + 1] - node.child_offsets[i]});
+      }
+    }
+  }
+  const auto k = std::min<size_t>(ctx.beam, scored.size());
+  const auto mid = scored.begin() + k;
+  const auto by_dist_desc = [](const Scored& l, const Scored& r) {
+    return l.dist > r.dist;
+  };
+  absl::c_nth_element(scored, mid, by_dist_desc);
+  std::sort(scored.begin(), mid, by_dist_desc);
+  if (level == 0 || k == 0) {
+    return;
+  }
+  ctx.starts.clear();
+  ctx.sizes.clear();
+  for (auto it = scored.begin(); it != mid; ++it) {
+    ctx.starts.emplace_back(it->start);
+    ctx.sizes.emplace_back(it->count);
+  }
+  size_t n_total = 0;
+  auto next = CentroidsNode::ReadLayer(in, level - 1, d, ctx.starts, ctx.sizes,
+                                       ctx.bufs, n_total);
+  SearchLayer<Metric>(ctx, in, level - 1, next, layer_base + layer_total,
+                      n_total);
+}
+
+}  // namespace
+
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
                            ManagedVector<float>* out_centroids,
@@ -425,7 +535,6 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     out_ids.push_back(0);
     return;
   }
-  const auto width = beam != 0 ? beam : nprobe;
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -434,31 +543,35 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
     .size = _root.size};
-  LayerBuffers bufs;
-  std::vector<CentroidsNode::Candidate> leaves;
-  irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, width, _root.level,
-                                  std::span{&root_view, 1}, 0, _root.size, bufs,
-                                  leaves);
-    const auto k = std::min<size_t>(nprobe, leaves.size());
-    const auto mid = leaves.begin() + k;
-    const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
-                                 const CentroidsNode::Candidate& r) {
-      return l.dist > r.dist;
-    };
-    absl::c_nth_element(leaves, mid, by_dist_desc);
-    std::sort(leaves.begin(), mid, by_dist_desc);
-    out_ids.reserve(out_ids.size() + k);
+  SearchCtx ctx{
+    .query = query,
+    .beam = beam != 0 ? beam : nprobe,
+    .avx512 = HasAvx512(),
+  };
+  irs::ResolveEnum<VectorMetric>(
+    EffectiveQuantMetric(_head.metric), [&]<VectorMetric Metric>() {
+      SearchLayer<Metric>(ctx, in, _root.level, std::span{&root_view, 1}, 0,
+                          _root.size);
+    });
+  auto& leaves = ctx.leaves;
+  const auto k = std::min<size_t>(nprobe, leaves.size());
+  const auto mid = leaves.begin() + k;
+  const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
+                               const CentroidsNode::Candidate& r) {
+    return l.dist > r.dist;
+  };
+  absl::c_nth_element(leaves, mid, by_dist_desc);
+  std::sort(leaves.begin(), mid, by_dist_desc);
+  out_ids.reserve(out_ids.size() + k);
+  if (out_centroids) {
+    out_centroids->reserve(out_centroids->size() + k * _head.d);
+  }
+  for (auto it = leaves.begin(); it != mid; ++it) {
+    out_ids.emplace_back(static_cast<uint32_t>(it->id));
     if (out_centroids) {
-      out_centroids->reserve(out_centroids->size() + k * _head.d);
+      out_centroids->append_range(it->centroid);
     }
-    for (auto it = leaves.begin(); it != mid; ++it) {
-      out_ids.emplace_back(static_cast<uint32_t>(it->id));
-      if (out_centroids) {
-        out_centroids->append_range(it->centroid);
-      }
-    }
-  });
+  }
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
@@ -510,10 +623,11 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   sample_size = std::min<size_t>(sample_size, rows);
 
   const size_t tau =
-    rows == 0 ? t
-              : std::max<size_t>(1, static_cast<size_t>(std::ceil(
-                                      static_cast<double>(sample_size) * t /
-                                      static_cast<double>(rows))));
+    rows == 0
+      ? t
+      : std::max<size_t>(
+          1, static_cast<size_t>(std::ceil(static_cast<double>(sample_size) *
+                                           t / static_cast<double>(rows))));
   auto sample =
     GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
   return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);

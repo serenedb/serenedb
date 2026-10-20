@@ -395,6 +395,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     _qw->Encode(out, vecs, m);
     b += m;
   }
+  _qw->EndList(out);
 }
 
 void IvfTermReader::Finish(IndexOutput& out) {
@@ -431,11 +432,15 @@ void IvfWriter::Flush() {
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
+  const auto setting = _result.qw->BlockSetting();
   _idx->AddIvf(_info.centroids_id,
-               IvfCentroidMeta{.tree_offset = tree_span.offset,
-                               .tree_byte_size = tree_span.byte_size,
-                               .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+               IvfCentroidMeta{
+                 .tree_offset = tree_span.offset,
+                 .tree_byte_size = tree_span.byte_size,
+                 .stats_offset = stats_offset,
+                 .stats_byte_size = stats_byte_size,
+                 .list_batches = setting.group_size > 1 && !setting.padded,
+               });
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,

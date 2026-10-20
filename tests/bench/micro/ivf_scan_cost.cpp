@@ -60,12 +60,15 @@ constexpr VectorMetric kMetric = VectorMetric::L2Sqr;
 struct Config {
   std::string_view name;
   AnnInfo::Quantizer quant;
+  size_t posting = kPosting;
 };
 
 std::vector<Config> Configs(uint32_t d) {
   using enum VectorQuantization;
   return {
     {"none", {.kind = None}},
+    {"none@128", {.kind = None}, 128},
+    {"sq8@128", {.kind = SQ8}, 128},
     {"sq8", {.kind = SQ8}},
     {"sq4", {.kind = SQ4}},
     {"usq8", {.kind = USQ8}},
@@ -81,24 +84,51 @@ std::vector<Config> Configs(uint32_t d) {
     {"bq:q8", {.kind = BQ, .nb_bits = 1, .query_bits = 8}},
     {"bq:2", {.kind = BQ, .nb_bits = 2, .query_bits = 1}},
     {"osq", {.kind = OSQ, .nb_bits = 1, .query_bits = 4}},
+    {"osq:2", {.kind = OSQ, .nb_bits = 2, .query_bits = 4}},
     {"osq:4", {.kind = OSQ, .nb_bits = 4, .query_bits = 4}},
+    {"osq:7", {.kind = OSQ, .nb_bits = 7, .query_bits = 7}},
     {"osq:8", {.kind = OSQ, .nb_bits = 8, .query_bits = 8}},
   };
 }
 
-std::vector<float> MakeVectors(size_t rows, uint32_t d, uint32_t seed) {
+std::vector<float> MakeVectors(size_t rows, uint32_t d, uint32_t seed,
+                               uint32_t latent) {
   constexpr size_t kBlobs = 1024;
   std::mt19937 rng{seed};
   std::uniform_real_distribution<float> unit{-1.f, 1.f};
-  std::vector<float> centers(kBlobs * d);
+  const uint32_t width = latent != 0 ? latent : d;
+  std::vector<float> centers(kBlobs * width);
   for (auto& c : centers) {
     c = 4 * unit(rng);
   }
+  std::vector<float> lift;
+  if (latent != 0) {
+    std::mt19937 lift_rng{1};
+    lift.resize(size_t{latent} * d);
+    for (auto& v : lift) {
+      v = unit(lift_rng) / std::sqrt(static_cast<float>(latent));
+    }
+  }
+  std::vector<float> z(width);
   std::vector<float> out(rows * d);
   for (size_t i = 0; i < rows; ++i) {
-    const float* c = centers.data() + rng() % kBlobs * d;
-    for (uint32_t j = 0; j < d; ++j) {
-      out[i * d + j] = c[j] + unit(rng);
+    const float* c = centers.data() + rng() % kBlobs * width;
+    for (uint32_t j = 0; j < width; ++j) {
+      z[j] = c[j] + unit(rng);
+    }
+    float* row = out.data() + i * d;
+    if (latent == 0) {
+      absl::c_copy(z, row);
+      continue;
+    }
+    for (uint32_t t = 0; t < d; ++t) {
+      row[t] = 0.05f * unit(rng);
+    }
+    for (uint32_t j = 0; j < latent; ++j) {
+      const float* l = lift.data() + size_t{j} * d;
+      for (uint32_t t = 0; t < d; ++t) {
+        row[t] += z[j] * l[t];
+      }
     }
   }
   return out;
@@ -138,9 +168,9 @@ struct Route {
   double with_centroids = 0;
 };
 
-Route MeasureRoute(std::span<const float> data, std::span<const float> queries,
-                   uint32_t d) {
+Route MeasureRoute(std::span<const float> data, uint32_t d) {
   std::vector<float> sample(data.begin(), data.begin() + kRouteSample * d);
+  const auto queries = data.subspan(kRouteSample * d, kQueries * d);
   auto builder = CentroidsBuilder::CreateFromSample(
     std::move(sample), d, kMetric,
     {.posting_size = kRouteLeaf, .max_fanout = kRouteSample});
@@ -178,9 +208,12 @@ struct Scan {
 
 Scan MeasureScan(const Config& config, std::span<const float> data,
                  std::span<const float> means, std::span<const float> queries,
-                 uint32_t d) {
+                 uint32_t d, size_t posting) {
   auto writer = MakeQuantizerWriter(config.quant, d, kMetric, kTrainIters);
   const bool needs_centroid = QuantizerNeedsCentroid(config.quant.kind);
+  SDB_ASSERT(!needs_centroid || posting == kPosting);
+  const size_t clusters = kRows / posting;
+  const size_t probes_per_query = kProbes * kPosting / posting;
   if (const size_t train = writer->TrainSamples(kRows);
       train == QuantizerWriter::kTrainStreaming) {
     writer->Train(data.data(), kRows);
@@ -190,11 +223,12 @@ Scan MeasureScan(const Config& config, std::span<const float> data,
   MemoryFile file{IResourceManager::gNoop};
   {
     MemoryIndexOutput out{file};
-    for (size_t c = 0; c < kClusters; ++c) {
+    for (size_t c = 0; c < clusters; ++c) {
       if (needs_centroid) {
         writer->SetClusterCentroid(means.data() + c * d);
       }
-      writer->Encode(out, data.data() + c * kPosting * d, kPosting);
+      writer->Encode(out, data.data() + c * posting * d, posting);
+      writer->EndList(out);
     }
     writer->Finish(out);
     out.Flush();
@@ -209,35 +243,36 @@ Scan MeasureScan(const Config& config, std::span<const float> data,
     BytesOutput out{framed};
     writer->Serialize(out);
   }
+  const auto setting = writer->BlockSetting();
   const auto stats = MakeQuantizerStats(
     config.quant.kind, d,
-    std::span<const byte_type>{framed}.subspan(sizeof(uint64_t)), kMetric);
-  const auto record_size = writer->BlockSetting().record_size;
-  const size_t cluster_bytes = kPosting * record_size;
+    std::span<const byte_type>{framed}.subspan(sizeof(uint64_t)), kMetric,
+    /*row_major=*/false, setting.group_size > 1 && !setting.padded);
+  const size_t cluster_bytes = posting * setting.record_size;
   std::vector<std::shared_ptr<const QuantizerCodebook>> books;
   for (size_t q = 0; q < kQueries; ++q) {
     books.push_back(stats->MakeCodebook(queries.subspan(q * d, d)));
   }
   std::mt19937 rng{7};
-  std::vector<uint32_t> probes(kQueries * kProbes);
+  std::vector<uint32_t> probes(kQueries * probes_per_query);
   for (auto& p : probes) {
-    p = static_cast<uint32_t>(rng() % kClusters);
+    p = static_cast<uint32_t>(rng() % clusters);
   }
-  std::vector<score_t> scores(kPosting);
+  std::vector<score_t> scores(posting);
   std::vector<score_t> top;
   const auto run = [&] {
     for (size_t q = 0; q < kQueries; ++q) {
       top.clear();
-      for (size_t p = 0; p < kProbes; ++p) {
-        const size_t c = probes[q * kProbes + p];
+      for (size_t p = 0; p < probes_per_query; ++p) {
+        const size_t c = probes[q * probes_per_query + p];
         auto reader = MakeQuantizerReader(books[q]);
         reader->StartCluster(needs_centroid ? means.data() + c * d : nullptr);
-        reader->ComputeBlock(
-          std::span<const byte_type>{codes}.subspan(c * cluster_bytes,
-                                                    cluster_bytes),
-          top.size() == kTopK ? top.front()
-                              : std::numeric_limits<score_t>::lowest(),
-          scores.data());
+        reader->ComputeBlock(std::span<const byte_type>{codes}.subspan(
+                               c * cluster_bytes, cluster_bytes),
+                             top.size() == kTopK
+                               ? top.front()
+                               : std::numeric_limits<score_t>::lowest(),
+                             scores.data());
         for (const score_t s : scores) {
           if (top.size() < kTopK) {
             top.push_back(s);
@@ -251,37 +286,44 @@ Scan MeasureScan(const Config& config, std::span<const float> data,
       }
     }
   };
-  return {.record_size = record_size,
+  return {.record_size = setting.record_size,
           .cost_bytes = writer->ScanCost(kRows).bytes,
-          .ns = NsPer(kQueries * kProbes * kPosting, run)};
+          .ns = NsPer(kQueries * probes_per_query * posting, run)};
 }
 
 int Main(int argc, char** argv) {
   std::vector<uint32_t> dims;
+  uint32_t latent = 0;
   for (int i = 1; i < argc; ++i) {
-    uint32_t d = 0;
-    if (!absl::SimpleAtoi(argv[i], &d) || d == 0) {
-      absl::FPrintF(stderr, "usage: ivf_scan_cost [d...]\n");
+    const std::string_view arg = argv[i];
+    uint32_t value = 0;
+    if (arg.starts_with("latent=") &&
+        absl::SimpleAtoi(arg.substr(7), &latent)) {
+      continue;
+    }
+    if (!absl::SimpleAtoi(arg, &value) || value == 0) {
+      absl::FPrintF(stderr, "usage: ivf_scan_cost [latent=N] [d...]\n");
       return 1;
     }
-    dims.push_back(d);
+    dims.push_back(value);
   }
   if (dims.empty()) {
     dims = {128, 384, 768, 1536};
   }
   for (const uint32_t d : dims) {
-    const auto data = MakeVectors(kRows, d, 42);
-    const auto queries = MakeVectors(kQueries, d, 43);
+    const auto data = MakeVectors(kRows, d, 42, latent);
+    const auto queries = MakeVectors(kQueries, d, 43, latent);
     const auto means = ChunkMeans(data, d);
-    const auto route = MeasureRoute(data, queries, d);
+    const auto route = MeasureRoute(data, d);
     absl::PrintF(
       "d=%u rows=%u posting=%u probes=%u route %.2f ns/centroid, %.2f "
       "copying centroids\n",
       d, kRows, kPosting, kProbes, route.plain, route.with_centroids);
-    absl::PrintF("%-10s %8s %10s %10s %10s %8s\n", "quant", "record",
-                 "scan_ns", "measured_B", "model_B", "t@250k");
+    absl::PrintF("%-10s %8s %10s %10s %10s %8s\n", "quant", "record", "scan_ns",
+                 "measured_B", "model_B", "t@250k");
     for (const auto& config : Configs(d)) {
-      const auto scan = MeasureScan(config, data, means, queries, d);
+      const auto scan =
+        MeasureScan(config, data, means, queries, d, config.posting);
       const double route_ns = QuantizerNeedsCentroid(config.quant.kind)
                                 ? route.with_centroids
                                 : route.plain;

@@ -40,6 +40,7 @@ constexpr uint8_t kOsqLayout = 1;
 constexpr double kOsqLambda = 0.1;
 constexpr uint32_t kOsqIters = 5;
 constexpr uint32_t kOsqScanCostPerDim = 3;
+constexpr uint32_t kOsqMultiBitScanCostPerDim = 4;
 constexpr std::array<double, 8> kOsqGrid{0.798, 1.493, 2.051, 2.514,
                                          2.916, 3.278, 3.611, 3.922};
 
@@ -472,7 +473,9 @@ class OsqQuantizerWriter final : public QuantizerWriter {
   }
 
   QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
-    return {.bytes = kOsqScanCostPerDim * _lay.d};
+    return {.bytes = (_lay.bits == 1 ? kOsqScanCostPerDim
+                                     : kOsqMultiBitScanCostPerDim) *
+                     _lay.d};
   }
 
  private:

@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <faiss/impl/Panorama.h>
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -34,6 +37,7 @@
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <limits>
 #include <memory>
@@ -83,6 +87,7 @@ std::vector<float> MakeSpread(uint32_t d, size_t n, uint32_t seed) {
 // Mirrors IvfTermReader's driving loop: rows are encoded against the centroid
 // current at that moment, and only whole groups are flushed -- so a group can
 // hold lanes from two clusters, and only the stream's final group is padded.
+// A quantizer whose lists end their own groups flushes at EndList instead.
 class PayloadStream {
  public:
   struct Cluster {
@@ -96,6 +101,7 @@ class PayloadStream {
   Cluster Add(IndexOutput& out, const float* vecs, size_t n) {
     const Cluster c{out.Position(), _writer.PendingLanes(), n};
     _writer.Encode(out, vecs, n);
+    _writer.EndList(out);
     return c;
   }
 
@@ -425,14 +431,12 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   MemoryIndexOutput out{index.file};
   index.pay_start = out.Position();
   constexpr size_t kBatch = kPostingBlock;
-  {
-    PayloadStream stream{*index.writer};
-    for (size_t b = 0; b < index.n; b += kBatch) {
-      const size_t m = std::min(kBatch, index.n - b);
-      stream.Add(out, points.data() + b * d, m);
-    }
-    stream.Finish(out);
+  for (size_t b = 0; b < index.n; b += kBatch) {
+    const size_t m = std::min(kBatch, index.n - b);
+    index.writer->Encode(out, points.data() + b * d, m);
   }
+  index.writer->EndList(out);
+  index.writer->Finish(out);
   out.Flush();
 }
 
@@ -444,7 +448,8 @@ ClusterScorer OpenPanorama(PanoramaIndex& index, uint32_t d,
     NormalizeRows(query.data(), 1, d);
   }
   auto stats =
-    MakeQuantizerStats(VectorQuantization::None, d, index.blob, metric);
+    MakeQuantizerStats(VectorQuantization::None, d, index.blob, metric,
+                       /*row_major=*/false, /*list_batches=*/true);
   EXPECT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
@@ -590,6 +595,103 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
     }
   }
   EXPECT_GT(pruned, 0u) << "the sweep must exercise the pruning branch";
+}
+
+namespace {
+
+constexpr size_t kPanoramaLists[] = {300, 1500, 7, 1024};
+
+void ExpectPanoramaListsScoreExactly(VectorMetric metric, bool shared) {
+  constexpr uint32_t d = 64;
+  size_t total = 0;
+  for (const size_t n : kPanoramaLists) {
+    total += n;
+  }
+  auto points = MakePanoramaData(d, total, 41);
+  auto query = MakePanoramaData(d, 1, 43);
+  if (metric == VectorMetric::Cosine) {
+    NormalizeRows(points.data(), total, d);
+    NormalizeRows(query.data(), 1, d);
+  }
+  auto writer =
+    MakeQuantizerWriter({.kind = VectorQuantization::None}, d, metric);
+  ASSERT_NE(writer, nullptr);
+  writer->Train(points.data(), total);
+  const auto setting = writer->BlockSetting();
+  ASSERT_EQ(setting.group_size, faiss::Panorama::kDefaultBatchSize);
+  ASSERT_EQ(setting.padded, shared);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  std::vector<PayloadStream::Cluster> lists;
+  uint64_t bytes = 0;
+  {
+    MemoryIndexOutput out{file};
+    PayloadStream stream{*writer};
+    size_t off = 0;
+    for (const size_t n : kPanoramaLists) {
+      lists.push_back(stream.Add(out, points.data() + off * d, n));
+      off += n;
+    }
+    stream.Finish(out);
+    out.Flush();
+    bytes = out.Position();
+  }
+  EXPECT_EQ(bytes, setting.RecordCount(total) * setting.record_size);
+
+  auto stats = MakeQuantizerStats(VectorQuantization::None, d,
+                                  SerializeStats(*writer), metric,
+                                  /*row_major=*/false, !shared);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
+  ASSERT_NE(codebook, nullptr);
+  bool lanes = false;
+  size_t off = 0;
+  for (size_t c = 0; c < lists.size(); ++c) {
+    const size_t n = kPanoramaLists[c];
+    lanes |= lists[c].lane0 != 0;
+    ClusterScorer scorer{codebook,
+                         file,
+                         lists[c].pay_start,
+                         n,
+                         /*centroid=*/nullptr,
+                         lists[c].lane0};
+    const auto scores = scorer.All();
+    ASSERT_EQ(scores.size(), n);
+    std::vector<score_t> windowed(n, kNoPrune);
+    for (size_t b = 0; b < n; b += kPostingBlock) {
+      const size_t m = std::min<size_t>(kPostingBlock, n - b);
+      scorer.Block(b, m, kNoPrune, windowed.data() + b);
+    }
+    ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
+      for (size_t i = 0; i < n; ++i) {
+        const score_t want = ComputeDistance<EffectiveQuantMetric(M)>(
+          query.data(), points.data() + (off + i) * d,
+          static_cast<uint16_t>(d));
+        EXPECT_NEAR(scores[i], want, 2e-3 * (1.f + std::fabs(want)))
+          << "list " << c << " row " << i;
+        EXPECT_EQ(windowed[i], scores[i]) << "list " << c << " row " << i;
+      }
+    });
+    off += n;
+  }
+  EXPECT_EQ(lanes, shared);
+}
+
+}  // namespace
+
+TEST_P(panorama_quantizer_test, every_list_ends_its_own_batches) {
+  ExpectPanoramaListsScoreExactly(GetParam(), /*shared=*/false);
+}
+
+TEST_P(panorama_quantizer_test, reads_lists_that_share_batches) {
+  if (!AddFailurePointDebugging("ivf_panorama_shared_batches")) {
+    GTEST_SKIP() << "needs fault injection to write the older layout";
+  }
+  absl::Cleanup disarm = [] {
+    RemoveFailurePointDebugging("ivf_panorama_shared_batches");
+  };
+  ExpectPanoramaListsScoreExactly(GetParam(), /*shared=*/true);
 }
 
 // L1 is absent on purpose: a rotation does not preserve it, so the writer

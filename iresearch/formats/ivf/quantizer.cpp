@@ -78,10 +78,10 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major) {
+  VectorMetric metric, bool row_major, bool list_batches) {
   switch (quant) {
     case VectorQuantization::None:
-      return quantizers::MakePanoramaStats(metric, d, stats);
+      return quantizers::MakePanoramaStats(metric, d, stats, list_batches);
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
     case VectorQuantization::USQ8:

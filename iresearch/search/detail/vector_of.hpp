@@ -284,10 +284,10 @@ class VectorCluster {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
     SDB_ASSERT(_setting.group_size != 0);
-    _cache.resize(_setting.group_size);
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
+    _cache.resize(std::min(_setting.group_size, _records));
     _list.Prepare(meta, doc_in, IndexFeatures::None, false);
   }
 

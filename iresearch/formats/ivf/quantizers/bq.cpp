@@ -459,9 +459,9 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
   }
 
   QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
-    return {
-      .bytes = (_query_bits == 1 ? kBqScanCostPerByte : kBqQueryScanCostPerByte) *
-               _lay.record_size};
+    return {.bytes = (_query_bits == 1 ? kBqScanCostPerByte
+                                       : kBqQueryScanCostPerByte) *
+                     _lay.record_size};
   }
 
  private:

@@ -68,7 +68,8 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
       stats = owned;
     }
   }
-  auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
+  auto quant_stats = MakeQuantizerStats(quant, d, stats, metric,
+                                        /*row_major=*/false, ivf.ListBatches());
   if (!quant_stats) {
     return nullptr;
   }
@@ -156,7 +157,8 @@ inline bool PrepareVectorState(
     state.pay_starts.push_back(meta.pay_start);
     state.pay_lanes.push_back(meta.pos_offset);
     state.cluster_counts.push_back(meta.docs_count);
-    if (const size_t kept = state.cookies.size(); needs_centroids && kept != i) {
+    if (const size_t kept = state.cookies.size();
+        needs_centroids && kept != i) {
       std::copy_n(state.cluster_centroids.begin() + i * d, d,
                   state.cluster_centroids.begin() + kept * d);
     }

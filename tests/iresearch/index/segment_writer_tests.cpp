@@ -80,10 +80,11 @@ irs::SegmentWriterOptions SortedOptions(const irs::SortSpec* spec) {
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> OpenFlushed(
-  irs::Directory& dir, irs::IndexSegment& segment, irs::DocumentMask&& mask) {
+  irs::Directory& dir, irs::IndexSegment& segment,
+  irs::DocumentMaskBuilder&& mask) {
   if (!mask.Empty()) {
     segment.meta.docs_mask =
-      std::make_shared<irs::DocumentMask>(std::move(mask));
+      std::make_shared<irs::DocumentMask>(std::move(mask).Finish());
   }
   return irs::SegmentReaderImpl::Open(dir, segment.meta,
                                       irs::tests::DefaultReaderOptions());
@@ -370,7 +371,7 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
 
   irs::IndexSegment index_segment;
   index_segment.meta.name = segment.name;
-  irs::DocumentMask mask;
+  irs::DocumentMaskBuilder mask;
   irs::DocOrder order;
   writer->flush(index_segment, mask, order);
   ASSERT_FALSE(order.Empty());
@@ -424,7 +425,7 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
 
     irs::IndexSegment index_segment;
     index_segment.meta.name = segment.name;
-    irs::DocumentMask mask;
+    irs::DocumentMaskBuilder mask;
     irs::DocOrder order;
     writer->flush(index_segment, mask, order);
     ASSERT_EQ(kStagedDocs, order.new2old.size());
@@ -489,7 +490,7 @@ TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
   ASSERT_TRUE(writer->remove(irs::doc_limits::min() + 7));
   irs::IndexSegment index_segment;
   index_segment.meta.name = segment.name;
-  irs::DocumentMask mask;
+  irs::DocumentMaskBuilder mask;
   irs::DocOrder order;
   writer->flush(index_segment, mask, order);
   EXPECT_TRUE(order.Empty());
@@ -534,7 +535,7 @@ TEST_F(SegmentWriterTests, reorder) {
 
     irs::IndexSegment index_segment;
     index_segment.meta.name = segment.name;
-    irs::DocumentMask mask;
+    irs::DocumentMaskBuilder mask;
     irs::DocOrder order;
     writer->flush(index_segment, mask, order);
     const bool identity = std::ranges::is_sorted(inserted);

@@ -119,6 +119,103 @@ TEST(Re2LiteralFinderTest, equal_is_memcmp) {
   }
 }
 
+constexpr std::string_view kMixedCasePieces[] = {
+  "a", "A", "q",  "Q",  "z",    "Z",    "@",    "[",    "`",        "{",
+  " ", "0", "ab", "AB", "\xC1", "\xE1", "\xDA", "\xFA", "\xD0\xBE", "\xD0\x9E",
+};
+
+template<typename Rng>
+std::string RandomCased(Rng& rng, size_t max_pieces) {
+  std::string out;
+  for (auto n = std::uniform_int_distribution<size_t>{0, max_pieces}(rng);
+       n != 0; --n) {
+    out += kMixedCasePieces[std::uniform_int_distribution<size_t>{
+      0, std::size(kMixedCasePieces) - 1}(rng)];
+  }
+  return out;
+}
+
+template<typename Rng>
+std::string FlipCase(Rng& rng, std::string text) {
+  for (auto& c : text) {
+    if (absl::ascii_isalpha(c) && rng() % 2 != 0) {
+      c = absl::ascii_isupper(c) ? absl::ascii_tolower(c)
+                                 : absl::ascii_toupper(c);
+    }
+  }
+  return text;
+}
+
+TEST(Re2LiteralFinderTest, find_ignore_case_is_find_in_lowered_text) {
+  std::mt19937 rng{20261019};
+  for (size_t round = 0; round != 20000; ++round) {
+    auto needle = absl::AsciiStrToLower(RandomCased(rng, 12));
+    if (needle.empty()) {
+      needle = "ab";
+    }
+    auto text = RandomCased(rng, 120);
+    for (auto n = std::uniform_int_distribution<int>{0, 3}(rng); n != 0; --n) {
+      const auto at =
+        std::uniform_int_distribution<size_t>{0, text.size()}(rng);
+      text.insert(at, FlipCase(rng, needle));
+    }
+    const auto lowered = absl::AsciiStrToLower(text);
+    const re2::LiteralFinder finder{needle};
+    const char* end = text.data() + text.size();
+    for (size_t from = 0; from <= text.size(); ++from) {
+      const auto expected = std::string_view{lowered}.find(needle, from);
+      const char* found =
+        finder.FindIgnoreCase(needle, text.data() + from, end);
+      ASSERT_EQ(expected, found == nullptr
+                            ? std::string_view::npos
+                            : static_cast<size_t>(found - text.data()))
+        << "round " << round << " from " << from << " needle size "
+        << needle.size() << " text size " << text.size();
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, equal_ignore_case_is_memcmp_of_lowered) {
+  constexpr std::string_view kBytes{"aqz@[`{ 0\xC1\xE1\xDA\xFA"};
+  std::mt19937 rng{20261019};
+  for (size_t n = 0; n != 40; ++n) {
+    for (size_t round = 0; round != 300; ++round) {
+      std::string needle;
+      for (size_t i = 0; i != n; ++i) {
+        needle += kBytes[rng() % kBytes.size()];
+      }
+      auto text = FlipCase(rng, needle);
+      for (auto flips = rng() % 3; flips != 0 && n != 0; --flips) {
+        text[rng() % n] ^= static_cast<char>(1 + rng() % 255);
+      }
+      const auto lowered = absl::AsciiStrToLower(text);
+      ASSERT_EQ(
+        memcmp(lowered.data(), needle.data(), n) == 0,
+        re2::LiteralFinder::EqualIgnoreCase(text.data(), needle.data(), n))
+        << "size " << n << " round " << round;
+    }
+  }
+}
+
+TEST(Re2LiteralFinderTest, find_ignore_case_empty_and_single_byte_needles) {
+  std::string text(100, 'x');
+  text[70] = 'Q';
+  text[90] = 'q';
+  const char* end = text.data() + text.size();
+  const auto find = [&](std::string_view needle, const char* from) {
+    return re2::LiteralFinder{needle}.FindIgnoreCase(needle, from, end);
+  };
+  EXPECT_EQ(text.data(), find("", text.data()));
+  EXPECT_EQ(text.data() + 70, find("q", text.data()));
+  EXPECT_EQ(text.data() + 90, find("q", text.data() + 71));
+  EXPECT_EQ(nullptr, find("q", text.data() + 91));
+  EXPECT_EQ(text.data() + 69, find("xq", text.data()));
+  EXPECT_EQ(end - 30, find("q", end - 30));
+  EXPECT_EQ(nullptr, find("y", text.data()));
+  EXPECT_EQ(nullptr, find("xx", end - 1));
+  EXPECT_EQ(end - 2, find("xx", end - 2));
+}
+
 TEST(Re2LiteralFinderTest, byte_set_find_is_scan) {
   std::mt19937 rng{20260930};
   for (size_t round = 0; round != 3000; ++round) {

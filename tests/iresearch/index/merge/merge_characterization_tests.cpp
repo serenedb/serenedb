@@ -264,12 +264,12 @@ TEST_F(MergeCharacterizationTest, DocMapAllocationFailureFailsTheMerge) {
 
 TEST_F(MergeCharacterizationTest, FullyDeletedInputYieldsNoSegment) {
   auto meta = _reader.Meta().index_meta.segments.back().meta;
-  irs::DocumentMask all;
+  irs::DocumentMaskBuilder all;
   for (irs::doc_id_t doc = irs::doc_limits::min();
        doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
     all.Add(doc);
   }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
   meta.live_docs_count = 0;
   auto deleted = irs::SegmentReaderImpl::Open(
     _dir, meta, irs::tests::DefaultReaderOptions());
@@ -344,12 +344,12 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
   ASSERT_TRUE(second_merged.flushed);
 
   auto meta = reader.Meta().index_meta.segments.front().meta;
-  irs::DocumentMask all;
+  irs::DocumentMaskBuilder all;
   for (irs::doc_id_t doc = irs::doc_limits::min();
        doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
     all.Add(doc);
   }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
   meta.live_docs_count = 0;
   const auto deleted =
     irs::SegmentReaderImpl::Open(dir, meta, irs::tests::DefaultReaderOptions());
@@ -717,12 +717,13 @@ TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
   std::vector<const irs::SubReader*> inputs;
   for (const auto& segment : reader.Meta().index_meta.segments) {
     auto meta = segment.meta;
-    irs::DocumentMask all;
+    irs::DocumentMaskBuilder all;
     for (auto doc = irs::doc_limits::min();
          doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
       all.Add(doc);
     }
-    meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+    meta.docs_mask =
+      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
     meta.live_docs_count = 0;
     deleted.push_back(irs::SegmentReaderImpl::Open(
       dir, meta, irs::tests::DefaultReaderOptions()));

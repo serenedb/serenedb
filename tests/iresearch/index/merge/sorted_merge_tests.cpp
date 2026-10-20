@@ -565,12 +565,12 @@ TEST_F(SortedMergeTest, FullyDeletedInputsAddNoRows) {
   AddSegment(Keys(1, 2, 100));
   const auto inputs = Snapshot();
   auto meta = _reader.Meta().index_meta.segments.back().meta;
-  irs::DocumentMask all;
+  irs::DocumentMaskBuilder all;
   for (auto doc = irs::doc_limits::min();
        doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
     all.Add(doc);
   }
-  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+  meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all).Finish());
   meta.live_docs_count = 0;
   const auto deleted = irs::SegmentReaderImpl::Open(
     _dir, meta, irs::tests::DefaultReaderOptions());

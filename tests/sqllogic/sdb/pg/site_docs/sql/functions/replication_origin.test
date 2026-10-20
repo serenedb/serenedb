@@ -12,10 +12,11 @@ statement ok
 SELECT pg_replication_origin_advance('docs_origin', '0/16B3748');
 
 query
-SELECT pg_replication_origin_progress('docs_origin', true) AS remote_lsn;
+SELECT pg_replication_origin_progress('docs_origin', true) AS remote_lsn,
+       pg_typeof(pg_replication_origin_progress('docs_origin', true)) AS type;
 ----
-remote_lsn
-0/16B3748
+remote_lsn	type
+0/16B3748	text
 
 # DOCS_TEST: example_002
 

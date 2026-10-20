@@ -78,7 +78,8 @@ struct FlushedSegmentContext {
   std::shared_ptr<const SegmentReaderImpl> reader;
   IndexWriter::FlushedSegment& flushed;
 
-  bool MakeDocumentMask(DocumentMask& document_mask, IndexSegment& index) {
+  bool MakeDocumentMask(DocumentMaskBuilder& document_mask,
+                        IndexSegment& index) {
     const auto docs_count = flushed.meta.docs_count;
     const auto committed = static_cast<doc_id_t>(flushed.docs.size());
     SDB_ASSERT(0 < committed);
@@ -104,7 +105,7 @@ struct FlushedSegmentContext {
               DocRemovalResolver& removals);
 };
 
-bool RemoveFromSegment(DocumentMask& deleted_docs,
+bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
                        const IndexWriter::QueryContext& query,
                        const SubReader& reader, DocRemovalResolver& removals) {
   auto it_mask = reader.MaskedDocs();
@@ -147,7 +148,7 @@ bool RemoveFromSegment(DocumentMask& deleted_docs,
   return modified;
 }
 
-bool RemapRemoval(DocumentMask& docs_mask, const DocRemoval& removal,
+bool RemapRemoval(DocumentMaskBuilder& docs_mask, const DocRemoval& removal,
                   std::span<const SubReader* const> candidates,
                   const MergeDocMap& doc_map,
                   const DocRemovalResolver& removals) {
@@ -190,7 +191,7 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query,
     return;
   }
 
-  std::optional<DocumentMask> hidden;
+  std::optional<DocumentMaskBuilder> hidden;
   if (!new2old.empty() && bound < new2old.size()) {
     hidden.emplace(document_mask);
     for (auto old = bound; old != new2old.size(); ++old) {
@@ -304,7 +305,7 @@ MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
 }
 
 bool MapRemovals(const CandidatesMapping& candidates_mapping,
-                 const MergeDocMap& doc_map, DocumentMask& docs_mask) {
+                 const MergeDocMap& doc_map, DocumentMaskBuilder& docs_mask) {
   for (auto& mapping : candidates_mapping) {
     const auto& segment_mapping = mapping.second;
     const auto* new_segment = segment_mapping.new_segment;
@@ -408,11 +409,11 @@ uint64_t MaxSegmentId(const Directory& dir) {
   return max_id;
 }
 
-DocumentMask CopyMask(const auto& segment) {
+DocumentMaskBuilder CopyMask(const auto& segment) {
   if (const auto* mask = segment.docs_mask(); mask) {
-    return DocumentMask{*mask};
+    return DocumentMaskBuilder{*mask};
   } else {
-    return DocumentMask{};
+    return DocumentMaskBuilder{};
   }
 }
 
@@ -452,7 +453,7 @@ PublishResult UpdateExisting(
   PublishResult result;
   result.segments.reserve(committed_reader_size);
 
-  for (DocumentMask deleted_docs;
+  for (DocumentMaskBuilder deleted_docs;
        const auto& existing_segment : committed_reader.GetReaders()) {
     const auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
@@ -486,12 +487,12 @@ PublishResult UpdateExisting(
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMask(existing_segment);
         docs_mask.Merge(deleted_docs);
-        docs_mask.Trim();
-        return std::make_shared<DocumentMask>(std::move(docs_mask));
+        return std::make_shared<const DocumentMask>(
+          std::move(docs_mask).Finish());
       }();
 
       // Write with new mask
-      index_utils::FlushIndexSegmentPatch(dir, segment, deleted_docs);
+      index_utils::FlushIndexSegment(dir, segment, true);
       deleted_docs.Clear();
       auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
 
@@ -523,7 +524,7 @@ AddIncomingResult AddIncoming(
     SDB_ASSERT(incoming.reader);
     auto& meta = incoming.segment.meta;
     auto& reader = incoming.reader;
-    auto docs_mask = CopyMask(*reader);
+    DocumentMaskBuilder docs_mask;
 
     bool docs_mask_modified = false;
 
@@ -598,16 +599,27 @@ AddIncomingResult AddIncoming(
       }
     }
 
+    const auto* published = reader->docs_mask();
+    size_t masked = 0;
+    if (docs_mask_modified) {
+      if (published != nullptr) {
+        docs_mask.Merge(*published);
+      }
+      masked = docs_mask.Count();
+    } else if (published != nullptr) {
+      masked = published->Count();
+    }
+
     // Skip empty segments
-    if (const auto masked = docs_mask.Count(); meta.docs_count <= masked) {
+    if (meta.docs_count <= masked) {
       SDB_ASSERT(meta.docs_count == masked);
       result.modified = true;  // FIXME(gnusi): looks strange
       continue;
     }
 
     if (docs_mask_modified) {
-      docs_mask.Trim();
-      meta.docs_mask = std::make_shared<DocumentMask>(std::move(docs_mask));
+      meta.docs_mask =
+        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
 
     if (docs_mask_modified || pending_compaction) {
@@ -692,7 +704,7 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     progress("Stage 4: Applying removals for new segments",
              current_segment_ctxs++, segment_ctxs.size());
 
-    DocumentMask document_mask;
+    DocumentMaskBuilder document_mask;
     IndexSegment new_segment;
     if (segment_ctx.MakeDocumentMask(document_mask, new_segment)) {
       continue;
@@ -700,9 +712,8 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     const bool need_flush = !document_mask.Empty();
     if (need_flush) {
       ++new_segment.meta.version;
-      document_mask.Trim();
       new_segment.meta.docs_mask =
-        std::make_shared<DocumentMask>(std::move(document_mask));
+        std::make_shared<const DocumentMask>(std::move(document_mask).Finish());
     }
     if (need_flush || !segment_ctx.flushed.meta_on_disk) {
       index_utils::FlushIndexSegment(dir, new_segment, false);
@@ -1067,7 +1078,7 @@ void IndexWriter::SegmentContext::Flush() {
     committed_buffered_docs = 0;
   };
 
-  DocumentMask docs_mask;
+  DocumentMaskBuilder docs_mask;
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -1673,7 +1684,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
     // handle removals if something changed
     if (has_removals) {
-      DocumentMask docs_mask;
+      DocumentMaskBuilder docs_mask;
       if (!MapRemovals(mappings, doc_map, docs_mask)) {
         // compacted segment has docs missing from
         // current_committed_meta->segments()
@@ -1687,9 +1698,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
       }
 
       SDB_ASSERT(!docs_mask.Empty());
-      docs_mask.Trim();
       compaction_segment.meta.docs_mask =
-        std::make_shared<DocumentMask>(std::move(docs_mask));
+        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
   }
 

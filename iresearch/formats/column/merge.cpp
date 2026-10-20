@@ -57,6 +57,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -360,21 +361,17 @@ struct ColumnMerger::State {
   const std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos) {
     auto& kept = kept_rows[si];
     absl::call_once(kept.once, [&] {
-      auto it_mask = sources[si].reader->MaskedDocs();
-      const uint64_t rows = sources[si].reader->docs_count();
+      const auto& reader = *sources[si].reader;
+      auto mask = MakeGenericDocsMask(reader);
+      const uint64_t rows = reader.docs_count();
       kept.windows.resize((rows + STANDARD_VECTOR_SIZE - 1) /
                           STANDARD_VECTOR_SIZE);
       for (size_t w = 0; w != kept.windows.size(); ++w) {
         auto& slot = kept.windows[w];
-        slot.reserve(STANDARD_VECTOR_SIZE);
-        const uint64_t first = uint64_t{w} * STANDARD_VECTOR_SIZE;
-        for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
-          const auto src_doc =
-            static_cast<doc_id_t>(first + i + doc_limits::min());
-          if (!it_mask.Contains(src_doc)) {
-            slot.push_back(static_cast<duckdb::sel_t>(i));
-          }
-        }
+        slot.resize(STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack);
+        const auto first = static_cast<doc_id_t>(
+          uint64_t{w} * STANDARD_VECTOR_SIZE + doc_limits::min());
+        slot.resize(mask.FillLive(first, STANDARD_VECTOR_SIZE, slot.data()));
       }
     });
     const size_t w = pos / STANDARD_VECTOR_SIZE;

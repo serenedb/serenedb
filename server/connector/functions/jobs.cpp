@@ -258,6 +258,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
+  duckdb::Binder::RegisterEntryRead(input.binder, context, *entry);
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

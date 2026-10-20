@@ -72,6 +72,19 @@ bool IsDenseType(duckdb::PhysicalType type) {
   }
 }
 
+int64_t StoredValue(const duckdb::Value& value, duckdb::PhysicalType type) {
+  switch (type) {
+    case duckdb::PhysicalType::INT8:
+      return value.GetValueUnsafe<int8_t>();
+    case duckdb::PhysicalType::INT16:
+      return value.GetValueUnsafe<int16_t>();
+    case duckdb::PhysicalType::INT32:
+      return value.GetValueUnsafe<int32_t>();
+    default:
+      return value.GetValueUnsafe<int64_t>();
+  }
+}
+
 bool NarrowRange(const duckdb::Expression& expr, duckdb::PhysicalType type,
                  int64_t& lo, int64_t& hi) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
@@ -106,7 +119,7 @@ bool NarrowRange(const duckdb::Expression& expr, duckdb::PhysicalType type,
   if (value.IsNull() || value.type().InternalType() != type) {
     return false;
   }
-  const auto c = value.GetValue<int64_t>();
+  const auto c = StoredValue(value, type);
   switch (op) {
     case duckdb::ExpressionType::COMPARE_EQUAL:
       lo = std::max(lo, c);

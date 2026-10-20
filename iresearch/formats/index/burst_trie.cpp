@@ -1968,7 +1968,7 @@ bool TermIteratorImpl<FST>::next() {
   };
 
   while (this->_cur_block->Done()) {
-    if (this->_cur_block->template NextSubBlock<false>()) {
+    if (this->_cur_block->template NextSubBlock<true>()) {
       this->LoadBlock(*this->_cur_block);
     } else if (&this->_block_stack.front() == this->_cur_block) {  // root
       this->ResetValue();

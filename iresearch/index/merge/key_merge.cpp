@@ -33,8 +33,10 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/log.hpp"
@@ -176,18 +178,14 @@ struct KeyOrder::State {
     const auto count = static_cast<size_t>(merge->PartitionCount());
     std::vector<uint64_t> live_in(count);
     for (size_t i = 0; i != doc_map.size(); ++i) {
+      const auto mask = MakeGenericDocsMask(Reader(i));
       for (size_t p = 0; p != count; ++p) {
+        const auto first = merge->PartitionBegin(p, i);
+        const auto end = merge->PartitionBegin(p + 1, i);
         live_in[p] +=
-          merge->PartitionBegin(p + 1, i) - merge->PartitionBegin(p, i);
-      }
-      auto mask = Reader(i).MaskedDocs();
-      size_t p = 0;
-      for (auto doc = mask.Seek(doc_limits::min()); !doc_limits::eof(doc);
-           doc = mask.Seek(doc + 1)) {
-        while (doc - doc_limits::min() >= merge->PartitionBegin(p + 1, i)) {
-          ++p;
-        }
-        --live_in[p];
+          end - first -
+          mask.CountIn(static_cast<doc_id_t>(first + doc_limits::min()),
+                       static_cast<doc_id_t>(end + doc_limits::min()));
       }
     }
     parts.resize(count);
@@ -202,18 +200,21 @@ struct KeyOrder::State {
 
   void ConcatOrder() {
     doc_id_t next = doc_limits::min();
+    uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
     for (size_t i = 0; i != doc_map.size(); ++i) {
       const auto& reader = Reader(i);
-      auto& id_map = doc_map[i].remap.id_map;
-      auto mask = reader.MaskedDocs();
+      auto* const id_map = doc_map[i].remap.id_map.data();
+      auto mask = MakeGenericDocsMask(reader);
       isolated[i] = next - doc_limits::min();
-      const auto end =
-        static_cast<doc_id_t>(reader.docs_count() + doc_limits::min());
-      for (auto doc = doc_limits::min(); doc != end; ++doc) {
-        if (!mask.Contains(doc)) {
+      const auto end = LiveEnd(reader);
+      for (auto window = doc_limits::min(); window < end;) {
+        const auto count = std::min(end - window, detail::kWindowDocs);
+        const auto alive = mask.FillLive(window, count, live);
+        for (uint32_t k = 0; k != alive; ++k) {
           order->Set(next - doc_limits::min(), i);
-          id_map[doc] = next++;
+          id_map[window + live[k]] = next++;
         }
+        window += count;
       }
     }
     order->Finish();
@@ -278,9 +279,6 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
     rows += s.live[i];
     input.remap.id_map.resize(reader.docs_count() + doc_limits::min(),
                               doc_limits::eof());
-    if (HasRemovals(reader.Meta())) {
-      input.remap.mask = reader.MaskedDocs();
-    }
   }
   s.order.emplace(s.doc_map.size(), rows, s.doc_map.get_allocator().Manager());
   if (s.keys.empty() || rows == 0) {
@@ -315,6 +313,7 @@ void KeyOrder::Expand(size_t partition,
   auto& s = *_state;
   SDB_ASSERT(partition < s.parts.size());
   auto& part = s.parts[partition];
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
   for (const auto& run : runs) {
     if (run.input >= s.doc_map.size()) {
       part.failed = true;
@@ -332,18 +331,23 @@ void KeyOrder::Expand(size_t partition,
     auto& span = part.spans[input];
     const auto begin = static_cast<doc_id_t>(run.begin + doc_limits::min());
     const auto end = static_cast<doc_id_t>(begin + run.count);
-    for (auto doc = begin; doc != end; ++doc) {
-      if (remap.IsMasked(doc)) {
-        continue;
+    auto mask = MakeGenericDocsMask(*s.doc_map[input].reader);
+    for (auto window = begin; window < end;) {
+      const auto count = std::min<doc_id_t>(end - window, detail::kWindowDocs);
+      const auto alive = mask.FillLive(window, count, live);
+      for (uint32_t k = 0; k != alive; ++k) {
+        const auto doc = static_cast<doc_id_t>(window + live[k]);
+        if (remap.id_map[doc] != doc_limits::eof()) {
+          part.failed = true;
+          return;
+        }
+        s.order->Set(part.next, input);
+        remap.id_map[doc] =
+          static_cast<doc_id_t>(part.next + doc_limits::min());
+        span.first = std::min(span.first, part.next);
+        span.last = part.next++;
       }
-      if (remap.id_map[doc] != doc_limits::eof()) {
-        part.failed = true;
-        return;
-      }
-      s.order->Set(part.next, input);
-      remap.id_map[doc] = static_cast<doc_id_t>(part.next + doc_limits::min());
-      span.first = std::min(span.first, part.next);
-      span.last = part.next++;
+      window += count;
     }
   }
 }

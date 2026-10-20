@@ -118,12 +118,13 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
     ASSERT_EQ(7, _inputs.size());
 
     auto meta = _reader.Meta().index_meta.segments[3].meta;
-    irs::DocumentMask all;
+    irs::DocumentMaskBuilder all;
     for (irs::doc_id_t doc = irs::doc_limits::min();
          doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
       all.Add(doc);
     }
-    meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+    meta.docs_mask =
+      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
     meta.live_docs_count = 0;
     _deleted = irs::SegmentReaderImpl::Open(_dir, meta,
                                             irs::tests::DefaultReaderOptions());

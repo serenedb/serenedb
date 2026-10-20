@@ -51,8 +51,7 @@ JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
 
 duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateJobInfo>();
-  info->SetName(name);
-  info->SetQualification(catalog.GetName(), ParentSchemaName());
+  info->SetQualifiedName(GetQualifiedName(name));
   info->schedule = _schedule;
   info->suspended = _suspended;
   info->body = duckdb::CreateJobInfo::CopyBody(_body);

@@ -119,9 +119,9 @@ class FirstLiveFilter final : public irs::Filter, public irs::lead::Node {
     const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
 
   irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
-                                const irs::DocumentMask* pending) const {
+                                const irs::DocumentMaskBuilder* pending) const {
     _segment_mask = segment.MaskedDocs();
-    _pending_mask = irs::DocumentMask::Iterator{pending};
+    _pending_mask = pending;
     _field = segment.field(kPkField);
     _done = _field == nullptr;
     return irs::memory::to_managed<irs::lead::Node>(
@@ -135,7 +135,8 @@ class FirstLiveFilter final : public irs::Filter, public irs::lead::Node {
     _done = true;
     auto doc = irs::doc_limits::eof();
     _field->ReadDocs(_key, [&](irs::doc_id_t found) {
-      if (_segment_mask.Contains(found) || _pending_mask.Contains(found)) {
+      if (_segment_mask.Contains(found) ||
+          (_pending_mask && _pending_mask->Contains(found))) {
         return true;
       }
       doc = found;
@@ -151,7 +152,7 @@ class FirstLiveFilter final : public irs::Filter, public irs::lead::Node {
  private:
   irs::bstring _key;
   mutable irs::DocumentMask::Iterator _segment_mask;
-  mutable irs::DocumentMask::Iterator _pending_mask;
+  mutable const irs::DocumentMaskBuilder* _pending_mask = nullptr;
   mutable const irs::TermReader* _field = nullptr;
   mutable bool _done = true;
 };
@@ -159,7 +160,7 @@ class FirstLiveFilter final : public irs::Filter, public irs::lead::Node {
 class FirstLiveQuery : public irs::QueryBuilder {
  public:
   FirstLiveQuery(const irs::SubReader& segment, const FirstLiveFilter& filter,
-                 const irs::DocumentMask* pending)
+                 const irs::DocumentMaskBuilder* pending)
     : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
 
   irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
@@ -190,7 +191,7 @@ class FirstLiveQuery : public irs::QueryBuilder {
 
  private:
   const FirstLiveFilter& _filter;
-  const irs::DocumentMask* _pending;
+  const irs::DocumentMaskBuilder* _pending;
 };
 
 irs::QueryBuilder::ptr FirstLiveFilter::PrepareSegment(

@@ -22,19 +22,24 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
+
+using GenericDocsMask = DocsMask<MaskKind::Mixed>;
 
 struct NormPiece {
   const MergeSource* source;
@@ -44,6 +49,24 @@ struct NormPiece {
 };
 
 constexpr size_t kNormMergeChunk = 64 * 1024;
+
+size_t KeepLive(GenericDocsMask& mask, doc_id_t first,
+                std::span<uint32_t> values) {
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  size_t kept = 0;
+  for (size_t at = 0; at < values.size();) {
+    const auto count = static_cast<uint32_t>(
+      std::min<size_t>(values.size() - at, detail::kWindowDocs));
+    const auto alive =
+      mask.FillLive(static_cast<doc_id_t>(first + at), count, live);
+    const auto* from = values.data() + at;
+    for (uint32_t i = 0; i != alive; ++i) {
+      values[kept++] = from[live[i]];
+    }
+    at += count;
+  }
+  return kept;
+}
 
 void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
                     std::vector<uint32_t>& values) {
@@ -59,18 +82,13 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
   const auto& src = *piece.source;
   const auto& region = piece.reader->Region(piece.region);
   const bool has_mask = HasRemovals(src.reader->Meta());
-  auto mask = src.reader->MaskedDocs();
+  auto mask = MakeGenericDocsMask(*src.reader);
   for (auto doc = region.first_doc; doc != region.end_doc;) {
     const auto n = std::min<size_t>(region.end_doc - doc, kNormMergeChunk);
     values.resize(n);
     piece.reader->Decode(doc, n, values.data());
     if (has_mask) {
-      size_t live = 0;
-      for (size_t i = 0; i != n; ++i) {
-        values[live] = values[i];
-        live += !mask.Contains(static_cast<doc_id_t>(doc + i));
-      }
-      values.resize(live);
+      values.resize(KeepLive(mask, doc, values));
     }
     writer.Write(values);
     doc += static_cast<doc_id_t>(n);
@@ -82,7 +100,9 @@ constexpr size_t kOrderedNormChunk = 4096;
 class OrderedNormInput {
  public:
   OrderedNormInput(const MergeSource& source, const NormColumnReader* reader)
-    : _reader{reader}, _mask{source.reader->MaskedDocs()} {}
+    : _reader{reader},
+      _mask{MakeGenericDocsMask(*source.reader)},
+      _has_mask{HasRemovals(source.reader->Meta())} {}
 
   uint32_t Next() {
     if (!_reader) {
@@ -105,18 +125,16 @@ class OrderedNormInput {
     const auto n = std::min<size_t>(region.end_doc - _doc, kOrderedNormChunk);
     _values.resize(n);
     _reader->Decode(_doc, n, _values.data());
-    size_t live = 0;
-    for (size_t i = 0; i != n; ++i) {
-      _values[live] = _values[i];
-      live += !_mask.Contains(static_cast<doc_id_t>(_doc + i));
+    if (_has_mask) {
+      _values.resize(KeepLive(_mask, _doc, _values));
     }
-    _values.resize(live);
     _doc += static_cast<doc_id_t>(n);
     _at = 0;
   }
 
   const NormColumnReader* _reader;
-  DocumentMask::Iterator _mask;
+  GenericDocsMask _mask;
+  bool _has_mask;
   std::vector<uint32_t> _values;
   size_t _at = 0;
   size_t _region = 0;
@@ -185,13 +203,13 @@ LiveNormStats ComputeLiveNormStats(field_id id,
     stats.present = true;
     stats.sum += column->Sum();
     stats.non_zero += column->NonZeroCount();
-    auto mask = src.reader->MaskedDocs();
-    for (auto doc = mask.Seek(doc_limits::min()); !doc_limits::eof(doc);
-         doc = mask.Seek(doc + 1)) {
-      uint32_t value = 0;
-      column->Decode(doc, 1, &value);
-      stats.sum -= value;
-      stats.non_zero -= value != 0;
+    if (const auto* removed = src.reader->docs_mask()) {
+      removed->ForEach([&](doc_id_t doc) {
+        uint32_t value = 0;
+        column->Decode(doc, 1, &value);
+        stats.sum -= value;
+        stats.non_zero -= value != 0;
+      });
     }
   }
   return stats;

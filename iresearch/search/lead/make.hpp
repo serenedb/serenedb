@@ -85,6 +85,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const detail::ScoreRecipe& recipe);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 
 Node::ptr MakeSparseConjunctionScored(

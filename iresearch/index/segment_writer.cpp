@@ -119,7 +119,7 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask,
+void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
                           DocOrder& order) {
   auto& meta = segment.meta;
 
@@ -175,12 +175,11 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask,
   if (order.Empty()) {
     docs_mask = std::move(_docs_mask);
   } else {
-    DocumentMask::Iterator masked{&_docs_mask};
-    for (auto doc = masked.Seek(doc_limits::min()); !doc_limits::eof(doc);
-         doc = masked.Seek(doc + 1)) {
+    const auto masked = std::move(_docs_mask).Finish();
+    masked.ForEach([&](doc_id_t doc) {
       docs_mask.Add(order.old2new[doc - doc_limits::min()] + doc_limits::min());
-    }
-    _docs_mask.Clear();
+    });
+    _docs_mask = DocumentMaskBuilder{};
   }
 
   meta.docs_count = state.doc_count;

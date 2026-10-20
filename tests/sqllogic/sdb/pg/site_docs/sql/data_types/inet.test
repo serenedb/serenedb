@@ -1,0 +1,158 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT '192.168.1.5/24'::INET AS v4, '2001:db8::1'::INET AS v6;
+----
+v4	v6
+192.168.1.5/24	2001:db8::1
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT x FROM (VALUES ('10.0.0.1'::INET), ('10.0.0.5/8'::INET), ('::1'::INET), ('10.0.0.0/16'::INET)) t(x) ORDER BY x;
+----
+x
+10.0.0.5/8
+10.0.0.0/16
+10.0.0.1
+::1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT '10.1.2.3'::INET <<= '10.0.0.0/8'::INET AS inside, '10.0.0.0/8'::INET >>= '10.1.2.3'::INET AS contains, '1.2.3.4'::INET <<= '::/0'::INET AS other_family;
+----
+inside	contains	other_family
+t	t	f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT host('192.168.1.5/24'::INET) AS host, network('192.168.1.5/24'::INET) AS network, broadcast('192.168.1.5/24'::INET) AS broadcast, family('::1'::INET) AS family;
+----
+host	network	broadcast	family
+192.168.1.5	192.168.1.0/24	192.168.1.255/24	6
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE hosts (id INTEGER PRIMARY KEY, ip INET);
+
+statement ok
+INSERT INTO hosts VALUES (1, '10.1.2.3'), (2, '10.200.0.7'), (3, '192.168.1.5'), (4, '2001:db8::1');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX hosts_idx ON hosts USING inverted (id, ip);
+
+statement ok
+VACUUM (REFRESH_TABLE) hosts;
+
+query
+SELECT id, ip FROM hosts_idx WHERE ip <<= '10.0.0.0/8' ORDER BY id;
+----
+id	ip
+1	10.1.2.3
+2	10.200.0.7
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE networks (id INTEGER PRIMARY KEY, net INET, name VARCHAR);
+
+statement ok
+INSERT INTO networks VALUES (1, '10.0.0.0/8', 'corporate'), (2, '10.1.0.0/16', 'office'), (3, '192.168.0.0/16', 'lab');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX networks_idx ON networks USING inverted (id, net) INCLUDE (name);
+
+statement ok
+VACUUM (REFRESH_TABLE) networks;
+
+query
+SELECT id, name FROM networks_idx WHERE net >>= '10.1.2.3' ORDER BY id;
+----
+id	name
+1	corporate
+2	office
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+  '{"ip_type": 1, "address": 167772161, "mask": 8}'::JSON::INET AS valid,
+  '{"ip_type": 1, "address": null, "mask": 8}'::JSON::INET AS null_field,
+  TRY_CAST('{"ip_type": 7, "address": 1, "mask": 8}'::JSON AS INET) AS try_invalid,
+  to_json('2001:db8::1/64'::INET) AS json,
+  '"10.0.0.0/8"'::JSON::INET AS json_string;
+----
+valid	null_field	try_invalid	json	json_string
+10.0.0.1/8	NULL	NULL	"2001:db8::1/64"	10.0.0.0/8
+
+statement error
+SELECT '{"ip_type": 7, "address": 1, "mask": 8}'::JSON::INET;
+----
+db error: ERROR: Invalid INET value: ip_type must be 1 (IPv4) or 2 (IPv6)
+
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT '10.1.2.3'::CIDR AS host, '10.0.0.0/8'::CIDR AS net, '192.168.1.5/24'::INET::CIDR AS from_inet, network('10.1.2.3/16'::INET) AS network;
+----
+host	net	from_inet	network
+10.1.2.3/32	10.0.0.0/8	192.168.1.0/24	10.1.0.0/16
+
+statement error
+SELECT '192.168.1.5/24'::CIDR;
+----
+db error: ERROR: invalid cidr value: "192.168.1.5/24"
+
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+  '10.1.0.0/16'::INET << '10.0.0.0/8'::INET AS inside,
+  '10.0.0.0/8'::INET << '10.0.0.0/8'::INET AS same_network,
+  '10.0.0.0/8'::INET >> '10.1.2.3'::INET AS contains,
+  '10.0.0.0/8'::INET && '10.1.0.0/16'::INET AS overlaps,
+  '10.0.0.0/8'::INET && '11.0.0.0/8'::INET AS disjoint;
+----
+inside	same_network	contains	overlaps	disjoint
+t	f	t	t	f
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+  ~ '10.1.2.3/24'::INET AS inverted,
+  '10.1.2.3/24'::INET & '0.0.255.255/8'::INET AS anded,
+  '10.1.2.3/8'::INET | '0.0.0.255/24'::INET AS ored;
+----
+inverted	anded	ored
+245.254.253.252/24	0.0.2.3/24	10.1.2.255/24
+
+statement error
+SELECT '10.1.2.3'::INET & '::1'::INET;
+----
+db error: ERROR: cannot AND inet values of different sizes

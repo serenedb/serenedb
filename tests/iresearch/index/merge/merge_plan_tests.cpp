@@ -182,12 +182,13 @@ TEST_F(MergePlanTest, OnlyDeletedDocsGiveNoSegment) {
   _doc_map.clear();
   for (size_t i = 0; i < 2; ++i) {
     auto meta = _reader.Meta().index_meta.segments[i].meta;
-    irs::DocumentMask all;
+    irs::DocumentMaskBuilder all;
     for (irs::doc_id_t doc = irs::doc_limits::min();
          doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
       all.Add(doc);
     }
-    meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+    meta.docs_mask =
+      std::make_shared<irs::DocumentMask>(std::move(all).Finish());
     meta.live_docs_count = 0;
     deleted.push_back(irs::SegmentReaderImpl::Open(
       _dir, meta, irs::tests::DefaultReaderOptions()));

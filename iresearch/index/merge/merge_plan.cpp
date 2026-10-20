@@ -40,6 +40,7 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/input_norms.hpp"
 #include "iresearch/index/merge/key_merge.hpp"
@@ -96,12 +97,18 @@ void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
                        const SubReader& reader, doc_id_t next_id) {
   doc_id_map.resize(reader.docs_count() + doc_limits::min(), doc_limits::eof());
-  auto docs_itr = reader.docs_iterator();
-  for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
-       src_doc_id = docs_itr->Next(), ++next_id) {
-    SDB_ASSERT(src_doc_id >= doc_limits::min());
-    SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
-    doc_id_map[src_doc_id] = next_id;
+  auto mask = MakeGenericDocsMask(reader);
+  uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
+  const auto end = LiveEnd(reader);
+  for (auto window = doc_limits::min(); window < end;) {
+    const auto count = std::min(end - window, detail::kWindowDocs);
+    const auto alive = mask.FillLive(window, count, live);
+    auto* IRS_RESTRICT out = doc_id_map.data() + window;
+    for (uint32_t i = 0; i != alive; ++i) {
+      out[live[i]] = next_id + i;
+    }
+    next_id += alive;
+    window += count;
   }
   return next_id;
 }
@@ -606,7 +613,6 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
         input.remap.base_id = base_id;
         base_id += static_cast<doc_id_t>(docs_count);
       } else {
-        input.remap.mask = reader.MaskedDocs();
         base_id = ComputeDocIds(input.remap.id_map, reader, base_id);
       }
       if (!doc_limits::valid(base_id)) {

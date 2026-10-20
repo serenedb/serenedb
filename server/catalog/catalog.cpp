@@ -64,6 +64,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <filesystem>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -190,9 +191,9 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
 
 namespace {
 
-bool StoresColumn(const duckdb::CreateIndexInfo& info,
-                  const duckdb::ColumnList& columns,
-                  duckdb::LogicalIndex column) {
+irs::containers::FlatHashSet<duckdb::idx_t> StoredColumns(
+  const duckdb::CreateIndexInfo& info, const duckdb::ColumnList& columns) {
+  irs::containers::FlatHashSet<duckdb::idx_t> stored;
   for (size_t slot = 0; slot != info.parsed_expressions.size(); ++slot) {
     const auto& expr = *info.parsed_expressions[slot];
     if (info.column_opclasses[slot] != kIncludedKind ||
@@ -200,12 +201,11 @@ bool StoresColumn(const duckdb::CreateIndexInfo& info,
       continue;
     }
     const auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
-    if (columns.ColumnExists(name) &&
-        columns.GetColumn(name).Logical() == column) {
-      return true;
+    if (columns.ColumnExists(name)) {
+      stored.emplace(columns.GetColumn(name).Logical().index);
     }
   }
-  return false;
+  return stored;
 }
 
 void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
@@ -213,8 +213,9 @@ void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
   const auto& columns = table.GetColumns();
   const auto keys = ResolveSortKeys(columns, info.sort_orders);
   info.sort_orders = SortOrdersOf(keys, columns);
+  const auto stored = StoredColumns(info, columns);
   for (const auto& key : keys) {
-    if (StoresColumn(info, columns, key.column)) {
+    if (stored.contains(key.column.index)) {
       continue;
     }
     const auto& name = columns.GetColumn(key.column).Name();

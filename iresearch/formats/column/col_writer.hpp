@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
-#include <map>
 #include <memory>
 #include <span>
 #include <string>
@@ -138,7 +138,8 @@ class ColWriter final {
     std::vector<ColumnPart> parts;
     std::vector<ColumnDictionaryMeta> dictionaries;
     uint16_t own_dictionary = 0;
-    std::map<std::vector<uint32_t>, ColumnDictionaryMeta> leaf_dictionaries;
+    absl::btree_map<std::vector<uint32_t>, ColumnDictionaryMeta>
+      leaf_dictionaries;
   };
 
   uint16_t AppendDictionary(ColumnParts& parts, std::string_view bytes);
@@ -164,7 +165,7 @@ class ColWriter final {
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
-  std::map<field_id, ColumnParts> _parts;
+  absl::btree_map<field_id, ColumnParts> _parts;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;

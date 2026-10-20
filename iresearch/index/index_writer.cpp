@@ -23,6 +23,7 @@
 
 #include "index_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
@@ -41,7 +42,8 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/merge_writer.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_plan.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -181,8 +183,7 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query,
       }
       return;
     }
-    const auto end =
-      std::lower_bound(docs.begin(), docs.end(), bound + doc_limits::min());
+    const auto end = absl::c_lower_bound(docs, bound + doc_limits::min());
     for (auto it = docs.begin(); it != end; ++it) {
       document_mask.Add(*it);
     }
@@ -233,7 +234,7 @@ struct CandidateMapping {
   const SubReader* new_segment{};
   struct Old {
     const SubReader* segment{};
-    size_t index{};  // within merge_writer
+    size_t index{};
   } old;
 };
 
@@ -302,12 +303,6 @@ MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
   return {found, has_removals};
 }
 
-const DocumentMask& MaskOf(const SubReader& segment) noexcept {
-  static const DocumentMask kNoRemovals;
-  const auto* mask = segment.docs_mask();
-  return mask != nullptr ? *mask : kNoRemovals;
-}
-
 bool MapRemovals(const CandidatesMapping& candidates_mapping,
                  const MergeDocMap& doc_map, DocumentMask& docs_mask) {
   for (auto& mapping : candidates_mapping) {
@@ -322,12 +317,12 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       continue;
     }
     const auto& merge_ctx = doc_map[segment_mapping.old.index];
-    const bool mapped =
-      MaskOf(*new_segment)
-        .ForEachAddedSince(MaskOf(*merge_ctx.reader), [&](doc_id_t doc) {
-          SDB_ASSERT(!merge_ctx.remap.IsMasked(doc));
-          docs_mask.Add(merge_ctx.remap.Remap(doc));
-        });
+    const bool mapped = DocumentMask::ForEachAddedSince(
+      new_segment->docs_mask(), merge_ctx.reader->docs_mask(),
+      [&](doc_id_t doc) {
+        SDB_ASSERT(!merge_ctx.remap.IsMasked(doc));
+        docs_mask.Add(merge_ctx.remap.Remap(doc));
+      });
     if (!mapped) {
       SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                old_meta.name, "' version '", old_meta.version,
@@ -1459,7 +1454,7 @@ MergeReservation IndexWriter::ReserveMerges(MergePlanner planner,
     {
       auto sorted = group;
       absl::c_sort(sorted);
-      SDB_ASSERT(std::unique(sorted.begin(), sorted.end()) == sorted.end());
+      SDB_ASSERT(absl::c_adjacent_find(sorted) == sorted.end());
       size_t found = 0;
       for (const auto& segment : *snapshot) {
         found += static_cast<size_t>(absl::c_binary_search(sorted, &segment));
@@ -1517,7 +1512,7 @@ void IndexWriter::RevokeTicketsLocked(bool clear) noexcept {
 
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
-                               const MergeWriter::FlushProgress& progress,
+                               const MergeProgress& progress,
                                const AnnBuildEnv* env, MergeExecutor* executor,
                                LoneSegment lone)
   -> yaclib::Future<CompactionResult> {
@@ -1538,7 +1533,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
 auto IndexWriter::RunMerge(MergeTicket ticket,
                            const IndexFieldOptions* field_options,
-                           const MergeWriter::FlushProgress& progress,
+                           const MergeProgress& progress,
                            const AnnBuildEnv* env, MergeExecutor* executor)
   -> yaclib::Future<CompactionResult> {
   auto owned = std::move(ticket);
@@ -1576,11 +1571,11 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   RefTrackingDirectory dir{_dir};  // Track references for new segment
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
-  merger.Reset(candidates.begin(), candidates.end());
+  const auto options = GetSegmentWriterOptions(true, field_options);
+  auto doc_map = MakeMergeDocMap(candidates, options.resource_manager);
 
   std::atomic_bool stopped{false};
-  const MergeWriter::FlushProgress checked = [&state, &progress, &stopped] {
+  const MergeProgress checked = [&state, &progress, &stopped] {
     if ((!progress || progress()) &&
         !state.revoked.load(std::memory_order_relaxed)) {
       return true;
@@ -1591,8 +1586,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   // We do not persist segment meta since some removals may come later
   const bool flushed =
-    co_await merger.Flush(compaction_segment.meta, checked, env, executor);
-  result.stats.profile = merger.Profile();
+    MergeSegments(dir, doc_map, compaction_segment.meta, options, checked, env,
+                  executor, &result.stats.profile);
   if (!flushed) {
     if (stopped.load(std::memory_order_relaxed)) {
       result.error = CompactionError::Cancelled;
@@ -1652,7 +1647,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
       std::move(candidates),      // compaction context candidates
       std::move(pending_reader),  // compacted reader
       std::move(state.inputs),    // what the candidates point to
-      std::move(merger).TakeDocMap());
+      std::move(doc_map));
     SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
               "' successfully finished: pending");
     result.error = CompactionError::Pending;
@@ -1678,7 +1673,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     // handle removals if something changed
     if (has_removals) {
       DocumentMask docs_mask;
-      if (!MapRemovals(mappings, merger.DocMap(), docs_mask)) {
+      if (!MapRemovals(mappings, doc_map, docs_mask)) {
         // compacted segment has docs missing from
         // current_committed_meta->segments()
         SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
@@ -1717,8 +1712,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     std::move(pending_reader),  // compacted reader
     std::move(state.inputs)     // what the candidates point to
   );
-  pending_segment.compaction_ctx.published.emplace(
-    std::move(merger).TakeDocMap());
+  pending_segment.compaction_ctx.published.emplace(std::move(doc_map));
   // noexcept part: mask compacted segments
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
@@ -1740,9 +1734,9 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   co_return result;
 }
 
-CompactionResult IndexWriter::Compact(
-  const CompactionPolicy& policy, const IndexFieldOptions* field_options,
-  const MergeWriter::FlushProgress& progress) {
+CompactionResult IndexWriter::Compact(const CompactionPolicy& policy,
+                                      const IndexFieldOptions* field_options,
+                                      const MergeProgress& progress) {
   return GetReady(CompactAsync(policy, field_options, progress,
                                /*env=*/nullptr));
 }

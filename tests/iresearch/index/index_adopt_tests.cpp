@@ -1719,7 +1719,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
 
   bool removed = false;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!removed) {
       removed = true;
       auto del = _writer->GetBatch();
@@ -1785,7 +1785,7 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   // says "written later".
   bool attempted = false;
   bool held = true;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!attempted) {
       attempted = true;
       held = _writer->ArmCompactionFloor().Held();

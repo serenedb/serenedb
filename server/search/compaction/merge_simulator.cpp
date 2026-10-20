@@ -46,8 +46,7 @@ struct Segment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  std::optional<int64_t> rowid_min;
-  std::optional<int64_t> rowid_max;
+  irs::SegmentRange rowids;
 };
 
 uint32_t DocsOf(uint64_t docs) noexcept {
@@ -72,10 +71,7 @@ class SimulatedIndex final
             .live_docs_count = DocsOf(segment.live_docs),
             .byte_size = segment.bytes,
           },
-          segment.rowid_min.transform([&](int64_t first) {
-            return irs::SegmentRange{.first = first,
-                                     .last = *segment.rowid_max};
-          }));
+          segment.rowids);
         docs_count += reader.docs_count();
         live_docs_count += reader.live_docs_count();
       }
@@ -97,7 +93,7 @@ struct Relation {
   std::vector<Segment> segments;
   std::set<std::string, std::less<>> reserved;
   uint64_t next_segment = 1;
-  bool nudged = false;
+  uint64_t planned_generation = 0;
 };
 
 class Simulation;
@@ -247,12 +243,7 @@ void SimulatedJob::Finish() {
     }
     event.docs += segment.live_docs;
     event.input_bytes += segment.bytes;
-    if (segment.rowid_min) {
-      event.rowid_min = std::min(event.rowid_min.value_or(*segment.rowid_min),
-                                 *segment.rowid_min);
-      event.rowid_max = std::max(event.rowid_max.value_or(*segment.rowid_max),
-                                 *segment.rowid_max);
-    }
+    event.rowids = irs::Union(event.rowids, segment.rowids);
     return true;
   });
   event.live_docs = event.docs;
@@ -262,8 +253,7 @@ void SimulatedJob::Finish() {
     .docs = event.docs,
     .live_docs = event.live_docs,
     .bytes = event.bytes,
-    .rowid_min = event.rowid_min,
-    .rowid_max = event.rowid_max,
+    .rowids = event.rowids,
   });
   _simulation.Record(_relation, std::move(event));
   _simulation.Finished();
@@ -307,8 +297,7 @@ Relation& Simulation::RelationOf(uint64_t id) {
   auto& relation = it->second;
   if (inserted) {
     relation.id = id;
-    relation.handle = std::make_shared<MergeScheduler::Relation>(
-      id, [&relation] { relation.nudged = true; });
+    relation.handle = std::make_shared<MergeScheduler::Relation>(id);
   }
   return relation;
 }
@@ -325,22 +314,20 @@ void Simulation::Record(const Relation& relation, SimulatedEvent event) {
   event.relation_id = relation.id;
   event.segments = relation.segments.size();
   long double covered = 0;
-  std::optional<int64_t> low;
-  std::optional<int64_t> high;
+  irs::SegmentRange span;
   for (const auto& segment : relation.segments) {
     event.segment_bytes += segment.bytes;
-    if (!segment.rowid_min) {
+    if (segment.rowids.Empty()) {
       continue;
     }
-    covered += static_cast<long double>(*segment.rowid_max) -
-               static_cast<long double>(*segment.rowid_min) + 1;
-    low = std::min(low.value_or(*segment.rowid_min), *segment.rowid_min);
-    high = std::max(high.value_or(*segment.rowid_max), *segment.rowid_max);
+    covered += static_cast<long double>(segment.rowids.last) -
+               static_cast<long double>(segment.rowids.first) + 1;
+    span = irs::Union(span, segment.rowids);
   }
-  if (low) {
+  if (!span.Empty()) {
     event.overlap =
-      static_cast<double>(covered / (static_cast<long double>(*high) -
-                                     static_cast<long double>(*low) + 1));
+      static_cast<double>(covered / (static_cast<long double>(span.last) -
+                                     static_cast<long double>(span.first) + 1));
   }
   _events.emplace_back(std::move(event));
 }
@@ -353,8 +340,7 @@ void Simulation::Flush(const SimulatedFlush& flush) {
     .docs = flush.docs,
     .live_docs = flush.live_docs,
     .bytes = flush.bytes,
-    .rowid_min = flush.rowid_min,
-    .rowid_max = flush.rowid_max,
+    .rowids = flush.rowids,
   });
   Record(relation, SimulatedEvent{
                      .type = SegmentEvent::Flush,
@@ -362,10 +348,9 @@ void Simulation::Flush(const SimulatedFlush& flush) {
                      .docs = segment.docs,
                      .live_docs = segment.live_docs,
                      .bytes = segment.bytes,
-                     .rowid_min = segment.rowid_min,
-                     .rowid_max = segment.rowid_max,
+                     .rowids = segment.rowids,
                    });
-  relation.nudged = true;
+  relation.handle->NudgeCompaction();
 }
 
 void Simulation::FinishNext() {
@@ -415,7 +400,9 @@ std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
       FinishNext();
     }
     for (auto& [id, relation] : _relations) {
-      if (std::exchange(relation.nudged, false)) {
+      const auto generation = relation.handle->CompactionGeneration();
+      if (std::exchange(relation.planned_generation, generation) !=
+          generation) {
         Plan(relation);
       }
     }

@@ -20,7 +20,7 @@
 
 #include "iresearch/formats/index/term_parts.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 
 #include "iresearch/utils/assert.hpp"
 
@@ -42,12 +42,8 @@ void TermPartWriter::Add(bytes_view term, const PostingMeta& meta) {
   SDB_ASSERT(meta.docs_count != 0);
   SDB_ASSERT(_count == 0 || bytes_view{_last} < term);
   SDB_ASSERT(meta.doc_start >= _prev.doc_start);
-  const auto shared = static_cast<uint32_t>(
-    std::mismatch(_last.begin(),
-                  _last.begin() + std::min(_last.size(), term.size()),
-                  term.begin())
-      .first -
-    _last.begin());
+  const auto shared =
+    static_cast<uint32_t>(absl::c_mismatch(_last, term).first - _last.begin());
   _out.WriteV32(shared);
   _out.WriteV32(static_cast<uint32_t>(term.size() - shared));
   _out.WriteData(term.data() + shared, term.size() - shared);

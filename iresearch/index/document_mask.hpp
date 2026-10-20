@@ -130,11 +130,12 @@ class DocumentMask final {
   void Merge(const DocumentMask& other);
 
   template<typename Visitor>
-  bool ForEachAddedSince(const DocumentMask& before, Visitor&& visitor) const {
-    const auto* words = Words();
-    const auto* before_words = before.Words();
-    const auto count = WordCount();
-    const auto before_count = before.WordCount();
+  static bool ForEachAddedSince(const DocumentMask* after,
+                                const DocumentMask* before, Visitor&& visitor) {
+    const uint64_t* words = after ? after->Words() : nullptr;
+    const uint64_t* before_words = before ? before->Words() : nullptr;
+    const size_t count = after ? after->WordCount() : 0;
+    const size_t before_count = before ? before->WordCount() : 0;
     for (size_t i = 0, end = std::max(count, before_count); i < end; ++i) {
       const uint64_t now = i < count ? words[i] : 0;
       const uint64_t then = i < before_count ? before_words[i] : 0;

@@ -812,20 +812,11 @@ inline PostingsWriter::Bases PostingsWriter::Append(IndexInput* doc,
     FlushTailPay();
   }
   FlushGroups();
-  const auto align = [](IndexOutput* out) -> uint64_t {
-    if (out == nullptr) {
-      return 0;
-    }
-    for (auto pad = -out->Position() & (sizeof(uint64_t) - 1); pad != 0;
-         --pad) {
-      out->WriteByte(0);
-    }
-    return out->Position();
-  };
+  BlockIndex::WritePad(*_doc_out);
   const Bases bases{
-    .doc = align(_doc_out.get()),
-    .pos = align(_pos_out.get()),
-    .pay = align(_pay_out.get()),
+    .doc = _doc_out->Position(),
+    .pos = _pos_out ? _pos_out->Position() : 0,
+    .pay = _pay_out ? _pay_out->Position() : 0,
   };
   const auto copy = [](IndexInput* in, IndexOutput* out) {
     if (in == nullptr) {

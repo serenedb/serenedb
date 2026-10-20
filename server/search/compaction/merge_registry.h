@@ -20,16 +20,16 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
 #include <deque>
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <optional>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace sdb::search {
@@ -39,15 +39,11 @@ enum class SegmentEvent : uint8_t {
   Merge,
 };
 
-std::string_view SegmentEventName(SegmentEvent event) noexcept;
-
 enum class MergeOrigin : uint8_t {
   Background = 0,
   Vacuum,
   Sql,
 };
-
-std::string_view MergeOriginName(MergeOrigin origin) noexcept;
 
 enum class MergeOutcome : uint8_t {
   Running = 0,
@@ -59,11 +55,6 @@ enum class MergeOutcome : uint8_t {
   Cancelled,
 };
 
-inline constexpr size_t kMergeOutcomeCount =
-  static_cast<size_t>(MergeOutcome::Cancelled) + 1;
-
-std::string_view MergeOutcomeName(MergeOutcome outcome) noexcept;
-
 MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
 bool Produced(MergeOutcome outcome) noexcept;
@@ -72,8 +63,6 @@ enum class MergeLane : uint8_t {
   Small = 0,
   Big,
 };
-
-std::string_view MergeLaneName(MergeLane lane) noexcept;
 
 struct MergeEstimate {
   uint64_t bytes = 0;
@@ -97,8 +86,7 @@ struct MergeRecord {
   size_t threads = 0;
   irs::MergeStats stats{};
   uint64_t output_live_docs = 0;
-  std::optional<int64_t> rowid_min;
-  std::optional<int64_t> rowid_max;
+  irs::SegmentRange rowids;
   std::string error{};
 
   bool Queued() const noexcept { return started_us == 0; }
@@ -129,10 +117,11 @@ class MergeRegistry {
 
  private:
   mutable absl::Mutex _mutex;
-  uint64_t _next_id = 1;
-  absl::flat_hash_map<uint64_t, MergeRecord> _active;
-  std::deque<MergeRecord> _history;
-  std::deque<MergeRecord> _flushes;
+  uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
+  irs::containers::NodeHashMap<uint64_t, MergeRecord> _active
+    ABSL_GUARDED_BY(_mutex);
+  std::deque<MergeRecord> _history ABSL_GUARDED_BY(_mutex);
+  std::deque<MergeRecord> _flushes ABSL_GUARDED_BY(_mutex);
 };
 
 class MergeRecorder {

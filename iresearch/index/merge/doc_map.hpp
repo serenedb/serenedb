@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iterator>
+
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -60,5 +62,15 @@ struct MergeInput {
 };
 
 using MergeDocMap = ManagedVector<MergeInput>;
+
+template<typename Readers>
+MergeDocMap MakeMergeDocMap(const Readers& readers, IResourceManager& rm) {
+  MergeDocMap doc_map{{rm}};
+  doc_map.reserve(std::size(readers));
+  for (const auto& reader : readers) {
+    doc_map.emplace_back(reader, rm);
+  }
+  return doc_map;
+}
 
 }  // namespace irs

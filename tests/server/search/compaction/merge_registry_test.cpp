@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iresearch/utils/enum_name.hpp>
 #include <span>
 #include <string>
 #include <utility>
@@ -127,22 +128,20 @@ TEST(MergeRegistry, OnlyMergedAndDeferredMergesProduceASegment) {
 }
 
 TEST(MergeRegistry, NamesAreStable) {
-  EXPECT_EQ("background",
-            sdb::search::MergeOriginName(MergeOrigin::Background));
-  EXPECT_EQ("vacuum", sdb::search::MergeOriginName(MergeOrigin::Vacuum));
-  EXPECT_EQ("sql", sdb::search::MergeOriginName(MergeOrigin::Sql));
-  EXPECT_EQ("running", sdb::search::MergeOutcomeName(MergeOutcome::Running));
-  EXPECT_EQ("merged", sdb::search::MergeOutcomeName(MergeOutcome::Merged));
-  EXPECT_EQ("deferred", sdb::search::MergeOutcomeName(MergeOutcome::Deferred));
-  EXPECT_EQ("nothing", sdb::search::MergeOutcomeName(MergeOutcome::Nothing));
-  EXPECT_EQ("busy", sdb::search::MergeOutcomeName(MergeOutcome::Busy));
-  EXPECT_EQ("failed", sdb::search::MergeOutcomeName(MergeOutcome::Failed));
-  EXPECT_EQ("cancelled",
-            sdb::search::MergeOutcomeName(MergeOutcome::Cancelled));
-  EXPECT_EQ("small", sdb::search::MergeLaneName(MergeLane::Small));
-  EXPECT_EQ("big", sdb::search::MergeLaneName(MergeLane::Big));
-  EXPECT_EQ("flush", sdb::search::SegmentEventName(SegmentEvent::Flush));
-  EXPECT_EQ("merge", sdb::search::SegmentEventName(SegmentEvent::Merge));
+  EXPECT_EQ("background", irs::SnakeCaseName(MergeOrigin::Background));
+  EXPECT_EQ("vacuum", irs::SnakeCaseName(MergeOrigin::Vacuum));
+  EXPECT_EQ("sql", irs::SnakeCaseName(MergeOrigin::Sql));
+  EXPECT_EQ("running", irs::SnakeCaseName(MergeOutcome::Running));
+  EXPECT_EQ("merged", irs::SnakeCaseName(MergeOutcome::Merged));
+  EXPECT_EQ("deferred", irs::SnakeCaseName(MergeOutcome::Deferred));
+  EXPECT_EQ("nothing", irs::SnakeCaseName(MergeOutcome::Nothing));
+  EXPECT_EQ("busy", irs::SnakeCaseName(MergeOutcome::Busy));
+  EXPECT_EQ("failed", irs::SnakeCaseName(MergeOutcome::Failed));
+  EXPECT_EQ("cancelled", irs::SnakeCaseName(MergeOutcome::Cancelled));
+  EXPECT_EQ("small", irs::SnakeCaseName(MergeLane::Small));
+  EXPECT_EQ("big", irs::SnakeCaseName(MergeLane::Big));
+  EXPECT_EQ("flush", irs::SnakeCaseName(SegmentEvent::Flush));
+  EXPECT_EQ("merge", irs::SnakeCaseName(SegmentEvent::Merge));
 }
 
 TEST(MergeRegistry, AFlushRecordsEverySegmentItWrote) {
@@ -165,8 +164,7 @@ TEST(MergeRegistry, AFlushRecordsEverySegmentItWrote) {
   EXPECT_EQ(10, record.stats.output_docs);
   EXPECT_EQ(8, record.output_live_docs);
   EXPECT_EQ(100, record.stats.output_bytes);
-  EXPECT_FALSE(record.rowid_min);
-  EXPECT_FALSE(record.rowid_max);
+  EXPECT_TRUE(record.rowids.Empty());
   EXPECT_EQ("_2", history[1].stats.output);
   EXPECT_EQ(record.finished_us, history[1].finished_us);
   EXPECT_LT(record.id, history[1].id);

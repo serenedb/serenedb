@@ -45,7 +45,7 @@ struct SegmentWriterOptions {
   // extend at least until SegmentWriter::flush() returns.
   duckdb::DatabaseInstance* db = nullptr;
   // Non-owning. For a segment writer just the fallback (the owning override
-  // comes via SetFieldOptions); for a merge writer the whole config.
+  // comes via SetFieldOptions); for a merge the whole config.
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;

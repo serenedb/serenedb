@@ -32,6 +32,7 @@
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_profile.hpp"
 #include "iresearch/index/merge/postings_unit.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -134,5 +135,13 @@ class MergeExecutor {
 };
 
 bool RunSerially(MergePlan& plan);
+
+[[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,
+                                 SegmentMeta& segment,
+                                 const SegmentWriterOptions& options,
+                                 const MergeProgress& progress = {},
+                                 const AnnBuildEnv* env = nullptr,
+                                 MergeExecutor* executor = nullptr,
+                                 MergeProfile* profile = nullptr);
 
 }  // namespace irs

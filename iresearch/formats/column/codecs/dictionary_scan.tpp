@@ -762,9 +762,8 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (Rle()) {
       ReserveCodes(count);
       auto* codes = code_sel->data();
-      size_t r = static_cast<size_t>(
-        std::upper_bound(run_ends.begin(), run_ends.end(), start) -
-        run_ends.begin());
+      size_t r = static_cast<size_t>(absl::c_upper_bound(run_ends, start) -
+                                     run_ends.begin());
       idx_t pos = start;
       idx_t i = 0;
       while (i < count) {

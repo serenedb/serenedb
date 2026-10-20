@@ -31,6 +31,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,7 +67,7 @@ duckdb::unique_ptr<duckdb::ProfilingNode> MergeNode(
   metrics.operator_type = duckdb::PhysicalOperatorType::EXTENSION;
   metrics.time = static_cast<double>(merge.stats.profile.TotalNanos()) / 1e9;
   metrics.AddExtraInfo("Outcome",
-                       std::string{search::MergeOutcomeName(merge.outcome)});
+                       std::string{irs::SnakeCaseName(merge.outcome)});
   metrics.AddExtraInfo("Inputs", std::to_string(merge.stats.inputs.size()));
   node->children = std::move(queries);
   return node;
@@ -124,7 +125,7 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
     chunk.data[column++].Append(std::move(value));
   };
   append(duckdb::Value::BIGINT(static_cast<int64_t>(number)));
-  append(duckdb::Value{std::string{search::MergeOutcomeName(merge.outcome)}});
+  append(duckdb::Value{std::string{irs::SnakeCaseName(merge.outcome)}});
   append(duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(inputs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_live_docs)));
@@ -195,7 +196,7 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     for (const auto& segment : planned.inputs) {
       names.emplace_back(segment.name);
     }
-    const irs::MergeWriter::FlushProgress progress = [&client] {
+    const irs::MergeProgress progress = [&client] {
       return StatementRunning(client);
     };
     const bool profiled = context.thread.profiler.IsEnabled();

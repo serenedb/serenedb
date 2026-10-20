@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -29,6 +27,7 @@
 #include <vector>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -87,7 +86,7 @@ class DocRemovalResolver {
   struct Lookup {
     field_id column;
     std::vector<int64_t> keys;
-    absl::flat_hash_map<std::string, std::vector<Hit>> hits;
+    irs::containers::FlatHashMap<std::string, std::vector<Hit>> hits;
   };
 
   Lookup* LookupOf(field_id column);
@@ -95,7 +94,8 @@ class DocRemovalResolver {
   static void Scan(const Lookup& lookup, const SubReader& segment,
                    std::vector<Hit>& hits);
 
-  absl::flat_hash_map<const DocRemoval*, std::vector<int64_t>> _fallback;
+  irs::containers::FlatHashMap<const DocRemoval*, std::vector<int64_t>>
+    _fallback;
   std::vector<Lookup> _lookups;
   std::vector<doc_id_t> _scratch;
 };

@@ -20,8 +20,6 @@
 
 #include "sdb_metrics.h"
 
-#include <absl/container/flat_hash_map.h>
-
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -29,6 +27,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/down_cast.hpp>
 
 #include "catalog/catalog.h"
@@ -106,8 +105,8 @@ constexpr std::array<MergeMetricDesc, 3> kMergeMetrics = {{
    "estimated bytes that the queued and running merges will write"},
 }};
 
-absl::flat_hash_map<uint64_t, MergeLoad> MergeLoads() {
-  absl::flat_hash_map<uint64_t, MergeLoad> loads;
+irs::containers::FlatHashMap<uint64_t, MergeLoad> MergeLoads() {
+  irs::containers::FlatHashMap<uint64_t, MergeLoad> loads;
   for (const auto& record : search::MergeRegistry::Instance().Active()) {
     auto& load = loads[record.relation_id];
     if (record.Queued()) {

@@ -280,16 +280,14 @@ MergeScheduler::Lease& MergeScheduler::Lease::operator=(
 MergeScheduler::Lease::~Lease() { Release(); }
 
 void MergeScheduler::Lease::Release() noexcept {
-  if (_scheduler == nullptr) {
+  if (!_scheduler) {
     return;
   }
   {
     absl::MutexLock lock{&_scheduler->_mutex};
     --_relation->_paused;
   }
-  if (_relation->_nudge) {
-    _relation->_nudge();
-  }
+  _relation->NudgeCompaction();
   _scheduler = nullptr;
   _relation.reset();
 }
@@ -399,9 +397,7 @@ void MergeScheduler::Pump() {
     UpdateGauges();
   }
   for (const auto& entry : stale) {
-    if (entry->relation->_nudge) {
-      entry->relation->_nudge();
-    }
+    entry->relation->NudgeCompaction();
   }
   for (auto* entry : started) {
     yaclib::Submit(_executor, Start{*this, *entry});
@@ -464,8 +460,8 @@ void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome,
   }
   const auto relation = entry->relation;
   entry.reset();
-  if (outcome != MergeOutcome::Cancelled && relation->_nudge) {
-    relation->_nudge();
+  if (outcome != MergeOutcome::Cancelled) {
+    relation->NudgeCompaction();
   }
   Pump();
 }

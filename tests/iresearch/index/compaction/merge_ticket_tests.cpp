@@ -132,10 +132,9 @@ class MergeTicketTest : public ::testing::Test {
     return seen;
   }
 
-  irs::CompactionResult Run(
-    irs::MergeTicket ticket,
-    const irs::MergeWriter::FlushProgress& progress = {},
-    irs::MergeExecutor* executor = nullptr) {
+  irs::CompactionResult Run(irs::MergeTicket ticket,
+                            const irs::MergeProgress& progress = {},
+                            irs::MergeExecutor* executor = nullptr) {
     return irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
                                            nullptr, executor));
   }
@@ -374,7 +373,7 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
   ASSERT_EQ(1, reservation.tickets.size());
   irs::IndexWriter::CompactionFloorGuard floor;
   bool armed = false;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!armed) {
       floor = _writer->ArmCompactionFloor();
       armed = true;
@@ -490,7 +489,7 @@ TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.tickets.size());
   bool cleared = false;
-  const irs::MergeWriter::FlushProgress progress = [&] {
+  const irs::MergeProgress progress = [&] {
     if (!cleared) {
       cleared = true;
       _writer->Clear();

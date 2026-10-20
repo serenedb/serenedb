@@ -34,11 +34,8 @@
 
 namespace sdb::search {
 
-std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment) {
-  const auto described = DescribeSegment(segment);
-  return described.rowid_min.transform([&](int64_t first) {
-    return irs::SegmentRange{.first = first, .last = *described.rowid_max};
-  });
+irs::SegmentRange RowIdRange(const irs::SubReader& segment) {
+  return DescribeSegment(segment).rowids;
 }
 
 irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,

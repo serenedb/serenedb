@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
 #include <limits>
@@ -289,7 +291,7 @@ class SegmentWriter {
     auto& tuned_layout = _tuning.layout[Index(leaf)];
     size_t rung = 0;
     if (!retune) {
-      const auto it = std::find(ladder.begin(), ladder.end(), tuned);
+      const auto it = absl::c_find(ladder, tuned);
       rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
     }
     auto layout = retune ? FrameLayout::Dictionary : tuned_layout;

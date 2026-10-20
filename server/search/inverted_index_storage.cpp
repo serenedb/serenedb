@@ -64,7 +64,8 @@ InvertedIndexStorage::InvertedIndexStorage(
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer,
   const irs::SortSpec& sort, bool is_new)
-  : _index_id{index_id},
+  : MaintainedStore{index_id},
+    _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
     _sorted{!sort.Empty()},
@@ -229,14 +230,6 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   _storage->_reindex_cv.SignalAll();
 }
 
-const std::shared_ptr<MergeScheduler::Relation>&
-InvertedIndexStorage::MergeRelation() {
-  absl::call_once(_merge_relation_once, [this] {
-    _merge_relation = MakeMergeRelation(GetId(), weak_from_this());
-  });
-  return _merge_relation;
-}
-
 absl::Status InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
@@ -269,12 +262,11 @@ CleanupResult InvertedIndexStorage::CleanupUnsafe() {
 }
 
 auto InvertedIndexStorage::CompactUnsafeAsync(
-  const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::CompactionResult* outcome,
-  irs::MergeExecutor* executor, irs::LoneSegment lone)
-  -> yaclib::Future<ResultWithTime> {
+  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+  bool& empty_compaction, const irs::IndexFieldOptions* field_options,
+  const irs::AnnBuildEnv* env, MergeOrigin origin,
+  irs::CompactionResult* outcome, irs::MergeExecutor* executor,
+  irs::LoneSegment lone) -> yaclib::Future<ResultWithTime> {
   MergeRecorder recorder{GetId(), origin};
   const auto recorded = recorder.Wrap(policy);
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
@@ -284,7 +276,7 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
 }
 
 auto InvertedIndexStorage::RunMergeAsync(
-  irs::MergeTicket ticket, const irs::MergeWriter::FlushProgress& progress,
+  irs::MergeTicket ticket, const irs::MergeProgress& progress,
   bool& empty_compaction, const irs::IndexFieldOptions* field_options,
   const irs::AnnBuildEnv* env, uint64_t merge_id,
   irs::CompactionResult* outcome, irs::MergeExecutor* executor)

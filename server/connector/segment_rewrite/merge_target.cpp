@@ -172,7 +172,7 @@ std::string MergeTarget::ColumnName(irs::field_id id) const {
 }
 
 MergeRun MergeTarget::Compact(const irs::CompactionPolicy& policy,
-                              const irs::MergeWriter::FlushProgress& progress,
+                              const irs::MergeProgress& progress,
                               const irs::IndexFieldOptions* field_options,
                               search::MergeOrigin origin,
                               irs::MergeExecutor* executor,

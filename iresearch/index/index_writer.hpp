@@ -41,6 +41,7 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
@@ -48,6 +49,7 @@
 #include "iresearch/index/compaction/merge_ticket.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 
@@ -62,8 +64,8 @@ class DatabaseInstance;
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_plan.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
-#include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -445,12 +447,12 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
-                           const MergeWriter::FlushProgress& progress = {});
+                           const MergeProgress& progress = {});
 
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
-                    const MergeWriter::FlushProgress& progress,
-                    const AnnBuildEnv* env, MergeExecutor* executor = nullptr,
+                    const MergeProgress& progress, const AnnBuildEnv* env,
+                    MergeExecutor* executor = nullptr,
                     LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
@@ -458,8 +460,8 @@ class IndexWriter : private util::Noncopyable {
                                  LoneSegment lone = LoneSegment::Skip);
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
-                const MergeWriter::FlushProgress& progress,
-                const AnnBuildEnv* env, MergeExecutor* executor = nullptr)
+                const MergeProgress& progress, const AnnBuildEnv* env,
+                MergeExecutor* executor = nullptr)
     -> yaclib::Future<CompactionResult>;
 
   void AdoptSegment(std::string_view meta_file, uint64_t tick,
@@ -843,7 +845,7 @@ class IndexWriter : private util::Noncopyable {
   struct {
     std::recursive_mutex lock;
     CompactingSegments segments;
-    absl::flat_hash_set<MergeTicket::State*> tickets;
+    irs::containers::FlatHashSet<MergeTicket::State*> tickets;
     uint64_t floor = 0;
     uint32_t floor_requests = 0;
   } _compacting;

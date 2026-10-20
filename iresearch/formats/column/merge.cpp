@@ -22,8 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/call_once.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -61,6 +59,8 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs {
 namespace {
@@ -110,8 +110,8 @@ constexpr uint64_t kRowGroupFallbackBytes =
   uint64_t{kSampleWindows} * codecs::kSamplePieceBytes;
 
 void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t count,
-                    absl::flat_hash_set<uint64_t>& seen, std::string& window,
-                    size_t cap = kSampleWindowBytes) {
+                    irs::containers::FlatHashSet<uint64_t>& seen,
+                    std::string& window, size_t cap = kSampleWindowBytes) {
   duckdb::UnifiedVectorFormat format;
   values.ToUnifiedFormat(count, format);
   const auto* data =
@@ -185,7 +185,7 @@ void ScanSampleWindows(
 void SampleDictionary(std::span<const MergeSource> sources, field_id id,
                       std::span<const std::shared_ptr<ReadContext>> ctxs,
                       absl::FunctionRef<void(std::string_view)> sink) {
-  absl::flat_hash_set<uint64_t> seen;
+  irs::containers::FlatHashSet<uint64_t> seen;
   std::string window;
   ScanSampleWindows(
     sources, id, ctxs,
@@ -253,7 +253,7 @@ struct LeafSample {
   }
 
   std::vector<uint32_t> path;
-  absl::flat_hash_set<uint64_t> seen;
+  irs::containers::FlatHashSet<uint64_t> seen;
   std::string window;
   codecs::DictionarySampler sampler;
   size_t closed = 0;
@@ -580,7 +580,7 @@ struct ColumnMerger::State {
                        absl::FunctionRef<bool()> progress) {
     uint64_t group = 0;
     std::string entries;
-    absl::flat_hash_set<uint64_t> seen;
+    irs::containers::FlatHashSet<uint64_t> seen;
     const auto flush = [&] {
       const std::string_view view{entries};
       sampler.Add({&view, 1});
@@ -866,13 +866,14 @@ struct ColumnMerger::State {
   duckdb::DatabaseInstance* db = nullptr;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<field_id> ids;
-  absl::flat_hash_map<field_id, const ColumnReader*> first_by_id;
+  irs::containers::FlatHashMap<field_id, const ColumnReader*> first_by_id;
   std::unique_ptr<KeptRows[]> kept_rows;
   absl::Mutex dictionaries_mutex;
-  absl::flat_hash_map<field_id,
-                      std::shared_ptr<const codecs::TrainedDictionary>>
+  irs::containers::FlatHashMap<field_id,
+                               std::shared_ptr<const codecs::TrainedDictionary>>
     dictionaries;
-  absl::flat_hash_map<field_id, std::vector<LeafDictionary>> leaf_dictionaries;
+  irs::containers::FlatHashMap<field_id, std::vector<LeafDictionary>>
+    leaf_dictionaries;
 };
 
 ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,

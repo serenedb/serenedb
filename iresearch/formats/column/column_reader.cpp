@@ -328,9 +328,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
                   : 0} {
-  if (!_segments.empty()) {
-    _touched = std::make_unique<std::atomic<bool>[]>(_segments.size());
-  }
+  _touched = std::make_unique<std::atomic<bool>[]>(_segments.size());
   auto stats = duckdb::BaseStatistics::CreateEmpty(
     _segments.empty() ? _type : _segments.front().statistics.GetType());
   _offsets.reserve(_segments.size() + 1);
@@ -451,11 +449,9 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
   ReadContext::CacheSlot slot;
   if (duckdb::IsSereneDBCompressionType(codec.type)) {
-    if (_touched) {
-      slot.file_id = _file_id;
-      slot.file_offset = m.file_offset;
-      slot.touched = &_touched[w.block];
-    }
+    slot.file_id = _file_id;
+    slot.file_offset = m.file_offset;
+    slot.touched = &_touched[w.block];
     slot.dictionaries = Dictionaries(ctx);
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);

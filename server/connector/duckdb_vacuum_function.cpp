@@ -317,7 +317,7 @@ void CompactInvertedStorage(Action action,
                             irs::MergeExecutor& executor) {
   // Fired by the merge every ~16k docs: feeds the sub-index progress counter
   // and aborts the merge on user cancellation.
-  const irs::MergeWriter::FlushProgress tick = [&context, progress] {
+  const irs::MergeProgress tick = [&context, progress] {
     if (progress) {
       pg::ProgressMetrics::Add(progress->step, 1);
     }

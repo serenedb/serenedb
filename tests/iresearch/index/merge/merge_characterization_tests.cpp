@@ -28,7 +28,7 @@
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/detail/ann_index.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -81,7 +81,7 @@ struct MergeResult {
 MergeResult RunMerge(
   irs::Directory& out, std::span<const irs::SubReader* const> inputs,
   const irs::IndexFieldOptions* field_options,
-  const irs::MergeWriter::FlushProgress& progress = {},
+  const irs::MergeProgress& progress = {},
   irs::IResourceManager& memory = irs::IResourceManager::gNoop,
   irs::ScorerPtr scorer = nullptr, irs::MergeExecutor* executor = nullptr) {
   MergeResult result;
@@ -91,10 +91,9 @@ MergeResult RunMerge(
     .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = field_options,
   };
-  irs::MergeWriter merger{out, options};
-  merger.Reset(inputs.begin(), inputs.end());
-  result.flushed =
-    irs::GetReady(merger.Flush(result.meta, progress, nullptr, executor));
+  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
+  result.flushed = irs::MergeSegments(out, doc_map, result.meta, options,
+                                      progress, nullptr, executor);
   if (result.flushed) {
     result.reader = irs::SegmentReaderImpl::Open(
       out, result.meta, irs::tests::DefaultReaderOptions());
@@ -143,8 +142,7 @@ class MergeCharacterizationTest : public ::testing::Test {
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
-  bool Merge(irs::SegmentMeta& meta,
-             const irs::MergeWriter::FlushProgress& progress,
+  bool Merge(irs::SegmentMeta& meta, const irs::MergeProgress& progress,
              irs::IResourceManager& memory = irs::IResourceManager::gNoop,
              const irs::IndexFieldOptions* field_options = nullptr) {
     const irs::SegmentWriterOptions options{
@@ -153,9 +151,8 @@ class MergeCharacterizationTest : public ::testing::Test {
       .field_options =
         field_options != nullptr ? field_options : &_field_options,
     };
-    irs::MergeWriter merger{_out, options};
-    merger.Reset(_inputs.begin(), _inputs.end());
-    return irs::GetReady(merger.Flush(meta, progress));
+    auto doc_map = irs::MakeMergeDocMap(_inputs, options.resource_manager);
+    return irs::MergeSegments(_out, doc_map, meta, options, progress);
   }
 
   irs::MemoryDirectory _dir;

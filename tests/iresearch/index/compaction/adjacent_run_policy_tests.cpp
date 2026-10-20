@@ -23,7 +23,6 @@
 #include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/composite_reader_impl.hpp>
 #include <map>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,7 +54,7 @@ struct Spec {
   uint64_t bytes = 0;
   uint32_t docs = 100;
   uint32_t live_docs = 100;
-  std::optional<irs::SegmentRange> range;
+  irs::SegmentRange range;
 };
 
 class Index final : public irs::CompositeReaderImpl<std::vector<SegmentStub>> {
@@ -89,7 +88,7 @@ class AdjacentRunPolicyTest : public ::testing::Test {
  protected:
   std::vector<std::string> Pick(const std::vector<Spec>& specs,
                                 const irs::CompactingSegments& taken = {}) {
-    std::map<std::string, std::optional<irs::SegmentRange>> ranges;
+    std::map<std::string, irs::SegmentRange> ranges;
     for (const auto& spec : specs) {
       ranges.emplace(spec.name, spec.range);
     }
@@ -171,7 +170,7 @@ TEST_F(AdjacentRunPolicyTest, MergesNeighboursInRowIdOrder) {
 
 TEST_F(AdjacentRunPolicyTest, SegmentsWithoutARangeComeLast) {
   auto specs = Equal(6, 10 * kMiB);
-  specs[0].range.reset();
+  specs[0].range = {};
   EXPECT_EQ((Names{"s1", "s2", "s3", "s4", "s5", "s0"}), Pick(specs));
 }
 

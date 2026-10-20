@@ -277,7 +277,7 @@ class TypedSealer final : public NumericSealer {
       U bits;
       std::memcpy(&bits, &v, sizeof(bits));
       if (!_any_valid) {
-        std::fill(_values.begin(), _values.end(), bits);
+        absl::c_fill(_values, bits);
         _any_valid = true;
       }
       _last = bits;

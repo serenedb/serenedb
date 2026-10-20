@@ -57,7 +57,6 @@
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
-#include <iresearch/index/merge_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -362,16 +361,18 @@ void BM_Merge(benchmark::State& state) {
       .field_options = &field_options,
       .sort = sorted ? &spec : nullptr,
     };
-    irs::MergeWriter merger{out, options};
-    merger.Reset(inputs.reader.begin(), inputs.reader.end());
-    if (!irs::GetReady(merger.Flush(meta, {}, nullptr, &executor))) {
+    auto doc_map =
+      irs::MakeMergeDocMap(inputs.reader, options.resource_manager);
+    irs::MergeProfile profile;
+    if (!irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, &executor,
+                            &profile)) {
       state.SkipWithError("merge failed");
       return;
     }
     benchmark::DoNotOptimize(meta.byte_size);
     state.PauseTiming();
     peak_kb = std::max(peak_kb, StatusKb("VmHWM:") - base_kb);
-    prepare_nanos += merger.Profile().Nanos(irs::MergeStep::Prepare);
+    prepare_nanos += profile.Nanos(irs::MergeStep::Prepare);
     state.ResumeTiming();
   }
   const auto per_merge = [&](uint64_t nanos) {

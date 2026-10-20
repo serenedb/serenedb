@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
@@ -30,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <iresearch/index/compaction/merge_ticket.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,22 +76,28 @@ class MergeScheduler {
 
   class Relation {
    public:
-    Relation(uint64_t id, std::function<void()> nudge) noexcept
-      : _id{id}, _nudge{std::move(nudge)} {}
+    explicit Relation(uint64_t id) noexcept : _id{id} {}
 
     uint64_t Id() const noexcept { return _id; }
+
+    void NudgeCompaction() noexcept {
+      _compaction_gen.fetch_add(1, std::memory_order_release);
+    }
+    uint64_t CompactionGeneration() const noexcept {
+      return _compaction_gen.load(std::memory_order_acquire);
+    }
 
    private:
     friend class MergeScheduler;
 
     uint64_t _id;
-    std::function<void()> _nudge;
+    std::atomic<uint64_t> _compaction_gen{0};
     size_t _queued = 0;
     size_t _running = 0;
     size_t _running_big = 0;
     uint32_t _paused = 0;
     uint32_t _failures = 0;
-    absl::flat_hash_map<std::string, absl::Time> _blocked;
+    irs::containers::FlatHashMap<std::string, absl::Time> _blocked;
   };
 
   class Lease {
@@ -144,7 +150,7 @@ class MergeScheduler {
   class Start;
 
   using Queue = std::vector<std::unique_ptr<Entry>>;
-  using Running = absl::flat_hash_map<Entry*, std::unique_ptr<Entry>>;
+  using Running = irs::containers::FlatHashMap<Entry*, std::unique_ptr<Entry>>;
 
   size_t BigThreads() const noexcept;
   size_t RelationCap() const noexcept;
@@ -169,16 +175,5 @@ class MergeScheduler {
   Queue _queue ABSL_GUARDED_BY(_mutex);
   Running _running ABSL_GUARDED_BY(_mutex);
 };
-
-template<typename Storage>
-std::shared_ptr<MergeScheduler::Relation> MakeMergeRelation(
-  uint64_t id, std::weak_ptr<Storage> storage) {
-  return std::make_shared<MergeScheduler::Relation>(
-    id, [storage = std::move(storage)] {
-      if (auto live = storage.lock()) {
-        live->NudgeCompaction();
-      }
-    });
-}
 
 }  // namespace sdb::search

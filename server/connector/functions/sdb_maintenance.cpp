@@ -20,7 +20,6 @@
 
 #include "connector/functions/sdb_maintenance.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
@@ -31,6 +30,8 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -256,7 +257,7 @@ void RefreshExecute(duckdb::ClientContext& context,
   const auto& data = input.bind_data->Cast<MaintenanceBindData>();
   const auto target = ResolveWritable(context, data.relation, "sdb_refresh");
   const auto begin = std::chrono::steady_clock::now();
-  absl::flat_hash_set<std::string> published;
+  irs::containers::FlatHashSet<std::string> published;
   for (const auto& segment : target.Snapshot()) {
     published.emplace(segment.Meta().name);
   }
@@ -308,7 +309,7 @@ duckdb::TableFunction CompactFunction() {
   function.GetSignature()
     .AddKeywordOnly("mode", duckdb::LogicalType::VARCHAR,
                     duckdb::Value{std::string{
-                      search::MergeModeName(search::MergeMode::Background)}})
+                      irs::SnakeCaseName(search::MergeMode::Background)}})
     .AddKeywordOnly("segments", segments_type, duckdb::Value{segments_type})
     .AddKeywordOnly("target_segments", duckdb::LogicalType::BIGINT,
                     duckdb::Value{duckdb::LogicalType::BIGINT});

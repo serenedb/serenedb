@@ -165,7 +165,7 @@ class StorageMergeJob final : public MergeJob {
       co_return MergeOutcome::Cancelled;
     }
     metrics::Scoped guard{metrics::Gauge::CompactionActive};
-    const irs::MergeWriter::FlushProgress progress = [&stop] {
+    const irs::MergeProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
     const auto granted = GetSearchEngine().TryAcquireCompactions(helpers);

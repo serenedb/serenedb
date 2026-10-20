@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -55,7 +54,6 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "search/compaction/merge_registry.h"
-#include "search/compaction/merge_scheduler.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
@@ -167,7 +165,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ApplyOptions(const catalog::SearchTableOptions& options);
   void SetDeclaredCompression(catalog::CompressionByColumn compression);
 
-  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
   bool Sorted() const noexcept { return !_sort.Empty(); }
 
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
@@ -181,7 +178,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
+                               const irs::MergeProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options,
                                MergeOrigin origin,
@@ -192,7 +189,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                                             origin, nullptr, executor, lone));
   }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
-                          const irs::MergeWriter::FlushProgress& progress,
+                          const irs::MergeProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
@@ -204,8 +201,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _writer->ReserveMerges(planner);
   }
   auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeWriter::FlushProgress& progress,
-                     bool& empty_compaction,
+                     const irs::MergeProgress& progress, bool& empty_compaction,
                      const irs::IndexFieldOptions* field_options,
                      const irs::AnnBuildEnv* env, uint64_t merge_id,
                      irs::CompactionResult* outcome = nullptr,
@@ -222,8 +218,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   [[nodiscard]] absl::Status VacuumRefresh();
   [[nodiscard]] absl::Status VacuumCompact(
     MergeMode mode, uint32_t target_segments, duckdb::TaskScheduler& scheduler,
-    const irs::MergeWriter::FlushProgress& progress,
-    irs::MergeExecutor* executor = nullptr);
+    const irs::MergeProgress& progress, irs::MergeExecutor* executor = nullptr);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();
@@ -367,8 +362,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // keeps waiting.
   static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
 
-  absl::once_flag _merge_relation_once;
-  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
   // spawn competing maintenance loops.

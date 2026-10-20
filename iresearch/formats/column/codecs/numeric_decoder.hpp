@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -609,9 +611,8 @@ class FrameDecoder {
         pos < _run_ends[_hint + 1]) {
       return _hint + 1;
     }
-    return static_cast<uint32_t>(
-      std::upper_bound(_run_ends.begin(), _run_ends.end(), pos) -
-      _run_ends.begin());
+    return static_cast<uint32_t>(absl::c_upper_bound(_run_ends, pos) -
+                                 _run_ends.begin());
   }
 
   duckdb::const_data_ptr_t _base;

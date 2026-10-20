@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
@@ -47,7 +46,6 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/compaction/merge_registry.h"
-#include "search/compaction/merge_scheduler.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
@@ -169,7 +167,7 @@ class InvertedIndexStorage final
   }
 
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
-                          const irs::MergeWriter::FlushProgress& progress,
+                          const irs::MergeProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
@@ -183,8 +181,7 @@ class InvertedIndexStorage final
   }
 
   auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeWriter::FlushProgress& progress,
-                     bool& empty_compaction,
+                     const irs::MergeProgress& progress, bool& empty_compaction,
                      const irs::IndexFieldOptions* field_options,
                      const irs::AnnBuildEnv* env, uint64_t merge_id,
                      irs::CompactionResult* outcome = nullptr,
@@ -253,7 +250,6 @@ class InvertedIndexStorage final
     std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
-  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
   bool Sorted() const noexcept { return _sorted; }
 
   void StartTasks() {
@@ -306,8 +302,6 @@ class InvertedIndexStorage final
     std::numeric_limits<int64_t>::max()};
   std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
-  absl::once_flag _merge_relation_once;
-  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

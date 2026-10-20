@@ -8982,7 +8982,7 @@ TEST_P(IndexTestCase, compact_progress) {
     ASSERT_EQ(1, reader[0].docs_count());
     ASSERT_EQ(1, reader[1].docs_count());
 
-    irs::MergeWriter::FlushProgress progress;
+    irs::MergeProgress progress;
 
     ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
@@ -9015,7 +9015,7 @@ TEST_P(IndexTestCase, compact_progress) {
     ASSERT_EQ(1, reader[0].docs_count());
     ASSERT_EQ(1, reader[1].docs_count());
 
-    irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
+    irs::MergeProgress progress = []() -> bool { return false; };
 
     ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
@@ -9057,8 +9057,7 @@ TEST_P(IndexTestCase, compact_progress) {
     ASSERT_EQ(max_docs, reader[0].docs_count());
     ASSERT_EQ(max_docs, reader[1].docs_count());
 
-    irs::MergeWriter::FlushProgress progress =
-      [&progress_call_count]() -> bool {
+    irs::MergeProgress progress = [&progress_call_count]() -> bool {
       ++progress_call_count;
       return true;
     };
@@ -9102,7 +9101,7 @@ TEST_P(IndexTestCase, compact_progress) {
     ASSERT_EQ(max_docs, reader[0].docs_count());
     ASSERT_EQ(max_docs, reader[1].docs_count());
 
-    irs::MergeWriter::FlushProgress progress = [&call_count]() -> bool {
+    irs::MergeProgress progress = [&call_count]() -> bool {
       return --call_count;
     };
 

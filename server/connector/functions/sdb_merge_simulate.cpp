@@ -37,6 +37,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/operator/logical_extension_operator.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -46,6 +47,7 @@
 #include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "connector/functions/rowid_values.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_simulator.h"
 #include "search/maintenance.h"
@@ -202,8 +204,7 @@ void ReadTrace(duckdb::DataChunk& columns,
     if (high.GetValue() < low.GetValue()) {
       ThrowInvalid("rowid_max must not be below rowid_min");
     }
-    flush.rowid_min = low.GetValue();
-    flush.rowid_max = high.GetValue();
+    flush.rowids = {.first = low.GetValue(), .last = high.GetValue()};
   }
 }
 
@@ -213,11 +214,6 @@ duckdb::Value MergeOnly(bool merge, duckdb::Value value) {
 
 duckdb::Value Bigint(uint64_t value) {
   return duckdb::Value::BIGINT(static_cast<int64_t>(value));
-}
-
-duckdb::Value OptionalBigint(const std::optional<int64_t>& value) {
-  return value ? duckdb::Value::BIGINT(*value)
-               : duckdb::Value{duckdb::LogicalType::BIGINT};
 }
 
 void AppendEvent(duckdb::DataChunk& chunk, size_t number,
@@ -235,7 +231,7 @@ void AppendEvent(duckdb::DataChunk& chunk, size_t number,
   append(Bigint(number));
   append(duckdb::Value::DOUBLE(absl::ToDoubleSeconds(event.at)));
   append(Bigint(event.relation_id));
-  append(duckdb::Value{std::string{search::SegmentEventName(event.type)}});
+  append(duckdb::Value{std::string{irs::SnakeCaseName(event.type)}});
   append(duckdb::Value{event.segment});
   append(MergeOnly(merge, duckdb::Value::LIST(duckdb::LogicalType::VARCHAR,
                                               std::move(inputs))));
@@ -243,16 +239,17 @@ void AppendEvent(duckdb::DataChunk& chunk, size_t number,
   append(Bigint(event.live_docs));
   append(Bigint(event.bytes));
   append(MergeOnly(merge, Bigint(event.input_bytes)));
-  append(OptionalBigint(event.rowid_min));
-  append(OptionalBigint(event.rowid_max));
+  auto rowids = RowIdValuesOf(event.rowids);
+  append(std::move(rowids.min));
+  append(std::move(rowids.max));
   append(MergeOnly(merge,
                    duckdb::Value::DOUBLE(absl::ToDoubleSeconds(event.queued))));
   append(MergeOnly(
     merge, duckdb::Value::DOUBLE(absl::ToDoubleSeconds(event.started))));
   append(MergeOnly(merge, Bigint(event.threads)));
   append(MergeOnly(merge, duckdb::Value::DOUBLE(event.score)));
-  append(MergeOnly(
-    merge, duckdb::Value{std::string{search::MergeLaneName(event.lane)}}));
+  append(MergeOnly(merge,
+                   duckdb::Value{std::string{irs::SnakeCaseName(event.lane)}}));
   append(Bigint(event.segments));
   append(Bigint(event.segment_bytes));
   append(event.overlap ? duckdb::Value::DOUBLE(*event.overlap)

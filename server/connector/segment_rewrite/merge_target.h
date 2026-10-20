@@ -20,11 +20,10 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -75,7 +74,7 @@ class MergeTarget {
   std::string ColumnName(irs::field_id id) const;
 
   MergeRun Compact(const irs::CompactionPolicy& policy,
-                   const irs::MergeWriter::FlushProgress& progress,
+                   const irs::MergeProgress& progress,
                    const irs::IndexFieldOptions* field_options,
                    search::MergeOrigin origin,
                    irs::MergeExecutor* executor = nullptr,
@@ -95,7 +94,7 @@ class MergeTarget {
   std::shared_ptr<const catalog::InvertedIndexConfig> _options;
   std::shared_ptr<search::SearchTable> _table;
   std::shared_ptr<search::InvertedIndexStorage> _index;
-  absl::flat_hash_map<irs::field_id, std::string> _column_names;
+  irs::containers::FlatHashMap<irs::field_id, std::string> _column_names;
 };
 
 }  // namespace sdb::connector

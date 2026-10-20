@@ -540,11 +540,9 @@ std::string InvertedIndexEntry::ToSQL() const {
 duckdb::vector<duckdb::OrderByNode> InvertedIndexEntry::SortOrders() const {
   duckdb::vector<duckdb::OrderByNode> orders;
   for (const auto& key : _config->sort.keys) {
-    const auto slot = absl::c_find_if(_config->keys, [&](const auto& entry) {
-      return entry.column_id == key.column;
-    });
-    SDB_ASSERT(slot != _config->keys.end());
-    const auto at = static_cast<size_t>(slot - _config->keys.begin());
+    const auto* found = _config->FindKey(_config->TermField(key.column));
+    SDB_ASSERT(found && found->column_id == key.column);
+    const auto at = static_cast<size_t>(found - _config->keys.data());
     SDB_ASSERT(at < parsed_expressions.size());
     const auto& column =
       parsed_expressions[at]->Cast<duckdb::ColumnRefExpression>();

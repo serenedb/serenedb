@@ -24,7 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -65,9 +65,9 @@ std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
     .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  irs::MergeWriter merger{out, options};
-  merger.Reset(inputs.begin(), inputs.end());
-  flushed = irs::GetReady(merger.Flush(meta, {}, nullptr, executor));
+  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
+  flushed =
+    irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, executor);
   if (!flushed) {
     return nullptr;
   }
@@ -247,9 +247,9 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
     .field_options = &field_options,
   };
   irs::MemoryDirectory out;
-  irs::MergeWriter merger{out, options};
-  merger.Reset(inputs.begin(), inputs.end());
-  EXPECT_TRUE(irs::GetReady(merger.Flush(meta, {}, nullptr, executor)));
+  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
+  EXPECT_TRUE(
+    irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, executor));
   std::vector<std::string> files(meta.files.begin(), meta.files.end());
   std::ranges::sort(files);
   std::string bytes;

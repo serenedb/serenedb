@@ -183,7 +183,7 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
       writer.EndField();
       writer.End();
     }
-    EXPECT_EQ(0, base % sizeof(uint64_t));
+    EXPECT_EQ(0, irs::BlockIndex::Pad(base));
     auto meta = part_meta;
     meta.doc_start += base;
     auto in = dir.open("final.doc", irs::IOAdvice::NORMAL);

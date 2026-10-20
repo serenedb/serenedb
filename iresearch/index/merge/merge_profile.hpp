@@ -25,8 +25,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <magic_enum/magic_enum.hpp>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace irs {
@@ -41,15 +41,7 @@ enum class MergeStep : uint8_t {
   Commit,
 };
 
-inline constexpr size_t kMergeStepCount = 7;
-
-constexpr std::string_view MergeStepName(MergeStep step) noexcept {
-  constexpr std::array<std::string_view, kMergeStepCount> kNames{
-    "prepare", "norms",    "columns", "columns_commit",
-    "ann",     "postings", "commit",
-  };
-  return kNames[static_cast<size_t>(step)];
-}
+inline constexpr size_t kMergeStepCount = magic_enum::enum_count<MergeStep>();
 
 class MergeProfile {
  public:

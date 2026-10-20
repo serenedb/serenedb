@@ -49,9 +49,11 @@
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -536,7 +538,7 @@ struct MergePlan::State {
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   std::unique_ptr<ColumnMerger> columns;
-  absl::flat_hash_map<field_id, std::vector<ColumnRange>> ranges;
+  irs::containers::FlatHashMap<field_id, std::vector<ColumnRange>> ranges;
   MergedNormIdMap merged_norm_ids;
   std::vector<field_id> norm_fields;
   std::vector<MergeUnit> units;
@@ -812,6 +814,32 @@ bool RunSerially(MergePlan& plan) {
     }
   }
   return true;
+}
+
+bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
+                   const SegmentWriterOptions& options,
+                   const MergeProgress& progress, const AnnBuildEnv* env,
+                   MergeExecutor* executor, MergeProfile* profile) {
+  SDB_ASSERT(options.db);
+  bool merged = false;
+  Finally invalidate = [&merged, &segment]() noexcept {
+    if (!merged) [[unlikely]] {
+      segment.files.clear();
+      static_cast<SegmentInfo&>(segment) = SegmentInfo{};
+    }
+  };
+  MergePlan plan{dir,          doc_map,
+                 segment,      options.scorer,
+                 *options.db,  options.field_options,
+                 progress,     env,
+                 options.sort, options.hnsw_bases};
+  merged = (executor ? plan.Prepare(executor->Threads(), executor->Scheduler())
+                     : plan.Prepare()) &&
+           (executor ? executor->Run(plan) : RunSerially(plan));
+  if (profile) {
+    *profile = plan.Profile();
+  }
+  return merged;
 }
 
 }  // namespace irs

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -45,7 +46,6 @@ enum class MergeMode : uint8_t {
 
 inline constexpr uint64_t kOptimizeRowGroups = 4;
 
-std::string_view MergeModeName(MergeMode mode) noexcept;
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept;
 
 struct PlannedSegment {
@@ -53,8 +53,7 @@ struct PlannedSegment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  std::optional<int64_t> rowid_min{};
-  std::optional<int64_t> rowid_max{};
+  irs::SegmentRange rowids;
 };
 
 struct PlannedMerge {

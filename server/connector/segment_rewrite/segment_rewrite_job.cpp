@@ -24,11 +24,10 @@
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 
-#include <algorithm>
 #include <array>
 #include <duckdb/common/string_util.hpp>
-#include <limits>
-#include <optional>
+#include <iresearch/utils/enum_name.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 namespace sdb::connector {
 namespace {
@@ -59,21 +58,17 @@ std::string JoinLimited(const Range& items, Format format) {
 }
 
 std::string RowIdRange(const search::PlannedMerge& merge) {
-  std::optional<int64_t> min;
-  std::optional<int64_t> max;
+  irs::SegmentRange rowids;
   for (const auto& input : merge.inputs) {
-    if (!input.rowid_min || !input.rowid_max) {
+    if (input.rowids.Empty()) {
       return {};
     }
-    min = std::min(min.value_or(std::numeric_limits<int64_t>::max()),
-                   *input.rowid_min);
-    max = std::max(max.value_or(std::numeric_limits<int64_t>::min()),
-                   *input.rowid_max);
+    rowids = irs::Union(rowids, input.rowids);
   }
-  if (!min || !max) {
+  if (rowids.Empty()) {
     return {};
   }
-  return absl::StrCat(", rowid ", *min, "..", *max);
+  return absl::StrCat(", rowid ", rowids.first, "..", rowids.last);
 }
 
 std::string Plural(uint64_t count, std::string_view noun) {
@@ -123,7 +118,7 @@ std::string StepLabel(irs::MergeStep step) {
     case irs::MergeStep::Commit:
       return "Commit";
   }
-  return std::string{irs::MergeStepName(step)};
+  return std::string{irs::SnakeCaseName(step)};
 }
 
 }  // namespace
@@ -135,7 +130,7 @@ std::vector<std::string> SegmentRewriteColumnNames() {
   };
   for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
     names.emplace_back(absl::StrCat(
-      irs::MergeStepName(static_cast<irs::MergeStep>(step)), "_ms"));
+      irs::SnakeCaseName(static_cast<irs::MergeStep>(step)), "_ms"));
   }
   names.emplace_back("error");
   return names;
@@ -164,7 +159,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
   const auto& plan = job.plan;
   duckdb::InsertionOrderPreservingMap<std::string> params;
   params["Table"] = job.target.Name();
-  params["Mode"] = std::string{search::MergeModeName(plan.mode)};
+  params["Mode"] = std::string{irs::SnakeCaseName(plan.mode)};
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
   if (!plan.merges.empty()) {
@@ -189,7 +184,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
 void AppendSegmentRewriteActuals(
   std::span<const ExecutedMerge> merges, bool zero_times,
   duckdb::InsertionOrderPreservingMap<std::string>& params) {
-  std::array<size_t, search::kMergeOutcomeCount> outcomes{};
+  std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
   irs::MergeProfile total;
   uint64_t written = 0;
   for (const auto& merge : merges) {
@@ -207,8 +202,8 @@ void AppendSegmentRewriteActuals(
   for (size_t outcome = 0; outcome < outcomes.size(); ++outcome) {
     if (outcomes[outcome] != 0) {
       summary.emplace_back(absl::StrCat(
-        search::MergeOutcomeName(static_cast<search::MergeOutcome>(outcome)),
-        " ", outcomes[outcome]));
+        irs::SnakeCaseName(static_cast<search::MergeOutcome>(outcome)), " ",
+        outcomes[outcome]));
     }
   }
   params["Actual Outcome"] =

@@ -38,13 +38,11 @@ namespace sdb::search {
 
 class SimulatedSegment final : public irs::SubReader {
  public:
-  explicit SimulatedSegment(
-    irs::SegmentInfo meta,
-    std::optional<irs::SegmentRange> range = std::nullopt) noexcept
+  explicit SimulatedSegment(irs::SegmentInfo meta,
+                            irs::SegmentRange range = {}) noexcept
     : _meta{std::move(meta)}, _range{range} {}
 
-  static std::optional<irs::SegmentRange> RangeOf(
-    const irs::SubReader& segment) noexcept {
+  static irs::SegmentRange RangeOf(const irs::SubReader& segment) noexcept {
     return static_cast<const SimulatedSegment&>(segment)._range;
   }
 
@@ -60,7 +58,7 @@ class SimulatedSegment final : public irs::SubReader {
 
  private:
   irs::SegmentInfo _meta;
-  std::optional<irs::SegmentRange> _range;
+  irs::SegmentRange _range;
 };
 
 struct SimulatedFlush {
@@ -69,8 +67,7 @@ struct SimulatedFlush {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  std::optional<int64_t> rowid_min;
-  std::optional<int64_t> rowid_max;
+  irs::SegmentRange rowids;
 };
 
 struct MergeSimulation {
@@ -92,8 +89,7 @@ struct SimulatedEvent {
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
   uint64_t input_bytes = 0;
-  std::optional<int64_t> rowid_min;
-  std::optional<int64_t> rowid_max;
+  irs::SegmentRange rowids;
   absl::Duration queued;
   absl::Duration started;
   size_t threads = 0;

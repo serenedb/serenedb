@@ -1369,8 +1369,8 @@ void BmNewRemovalsByWord(benchmark::State& state) {
   const auto removals = MakeRemovalsDuringMerge(docs);
   for (auto _ : state) {
     size_t added = 0;
-    removals.after.ForEachAddedSince(removals.before,
-                                     [&](doc_id_t) { ++added; });
+    irs::DocumentMask::ForEachAddedSince(&removals.after, &removals.before,
+                                         [&](doc_id_t) { ++added; });
     benchmark::DoNotOptimize(added);
   }
 }

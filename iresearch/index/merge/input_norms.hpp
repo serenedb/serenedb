@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/base/call_once.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <cstdint>
 #include <span>
@@ -30,6 +29,7 @@
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
@@ -66,7 +66,7 @@ class InputNormProvider final : public NormProvider {
   const MergeOrder* _order;
   mutable ManagedVector<doc_id_t> _sources;
   mutable absl::once_flag _mapped;
-  absl::flat_hash_map<field_id, Field> _fields;
+  irs::containers::FlatHashMap<field_id, Field> _fields;
 };
 
 }  // namespace irs

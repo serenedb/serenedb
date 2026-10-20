@@ -96,7 +96,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression,
                          irs::SortSpec sort)
-  : _db_id{db_id},
+  : MaintainedStore{table_id},
+    _db_id{db_id},
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
@@ -217,13 +218,6 @@ void SearchTable::StartTasks() {
              GetTableId());
 #endif
   GetSearchEngine().StartTasks(shared_from_this());
-}
-
-const std::shared_ptr<MergeScheduler::Relation>& SearchTable::MergeRelation() {
-  absl::call_once(_merge_relation_once, [this] {
-    _merge_relation = MakeMergeRelation(GetTableId(), weak_from_this());
-  });
-  return _merge_relation;
 }
 
 ResultWithTime SearchTable::RefreshUnsafe(
@@ -446,12 +440,11 @@ void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
 }
 
 auto SearchTable::CompactUnsafeAsync(
-  const irs::CompactionPolicy& policy,
-  const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::CompactionResult* outcome,
-  irs::MergeExecutor* executor, irs::LoneSegment lone)
-  -> yaclib::Future<ResultWithTime> {
+  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+  bool& empty_compaction, const irs::IndexFieldOptions* field_options,
+  const irs::AnnBuildEnv* env, MergeOrigin origin,
+  irs::CompactionResult* outcome, irs::MergeExecutor* executor,
+  irs::LoneSegment lone) -> yaclib::Future<ResultWithTime> {
   MergeRecorder recorder{GetTableId(), origin};
   const auto recorded = recorder.Wrap(policy);
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
@@ -461,7 +454,7 @@ auto SearchTable::CompactUnsafeAsync(
 }
 
 auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
-                                const irs::MergeWriter::FlushProgress& progress,
+                                const irs::MergeProgress& progress,
                                 bool& empty_compaction,
                                 const irs::IndexFieldOptions* field_options,
                                 const irs::AnnBuildEnv* env, uint64_t merge_id,
@@ -538,10 +531,11 @@ absl::Status SearchTable::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status SearchTable::VacuumCompact(
-  MergeMode mode, uint32_t target_segments, duckdb::TaskScheduler& scheduler,
-  const irs::MergeWriter::FlushProgress& progress,
-  irs::MergeExecutor* executor) {
+absl::Status SearchTable::VacuumCompact(MergeMode mode,
+                                        uint32_t target_segments,
+                                        duckdb::TaskScheduler& scheduler,
+                                        const irs::MergeProgress& progress,
+                                        irs::MergeExecutor* executor) {
   const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;

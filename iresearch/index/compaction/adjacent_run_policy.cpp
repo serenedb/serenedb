@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -37,7 +38,7 @@ struct Candidate {
   long double bytes = 0;
   uint64_t live_docs = 0;
   long double deleted_share = 0;
-  std::pair<int64_t, int64_t> order;
+  SegmentRange range;
 };
 
 struct Window {
@@ -50,15 +51,12 @@ Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
   const auto& meta = segment.Meta();
   const auto live = static_cast<long double>(meta.live_docs_count) /
                     static_cast<long double>(meta.docs_count);
-  const auto range = range_of(segment).value_or(
-    SegmentRange{.first = std::numeric_limits<int64_t>::max(),
-                 .last = std::numeric_limits<int64_t>::max()});
   return {
     .segment = &segment,
     .bytes = static_cast<long double>(meta.byte_size) * live,
     .live_docs = meta.live_docs_count,
     .deleted_share = 1 - live,
-    .order = {range.first, range.last},
+    .range = range_of(segment),
   };
 }
 
@@ -123,7 +121,7 @@ CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
       }
     }
     absl::c_stable_sort(segments, [](const Candidate& l, const Candidate& r) {
-      return l.order < r.order;
+      return l.range < r.range;
     });
     const auto taken = [&](size_t i) {
       return compacting.contains(segments[i].segment->Meta().name);

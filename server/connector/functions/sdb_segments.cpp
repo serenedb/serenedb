@@ -38,6 +38,7 @@
 #include <utility>
 #include <vector>
 
+#include "connector/functions/rowid_values.h"
 #include "connector/segment_rewrite/merge_target.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
@@ -107,11 +108,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SegmentsBind(
   return_types.emplace_back(duckdb::LogicalType::VARCHAR);
   return_types.insert(return_types.end(), 6, duckdb::LogicalType::BIGINT);
   return data;
-}
-
-duckdb::Value OptionalBigint(const std::optional<int64_t>& value) {
-  return value ? duckdb::Value::BIGINT(*value)
-               : duckdb::Value{duckdb::LogicalType::BIGINT};
 }
 
 std::string Codecs(const irs::ColumnReader& column) {
@@ -200,8 +196,9 @@ void EmitSegments(SegmentsState& state, duckdb::DataChunk& output) {
       duckdb::Value::BIGINT(static_cast<int64_t>(row.docs - row.live_docs)));
     output.data[4].Append(
       duckdb::Value::BIGINT(static_cast<int64_t>(row.bytes)));
-    output.data[5].Append(OptionalBigint(row.rowid_min));
-    output.data[6].Append(OptionalBigint(row.rowid_max));
+    const auto rowids = RowIdValuesOf(row.rowids);
+    output.data[5].Append(rowids.min);
+    output.data[6].Append(rowids.max);
   }
 }
 

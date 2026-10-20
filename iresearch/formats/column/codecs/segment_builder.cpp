@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/codecs/segment_builder.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/match.h>
 
@@ -137,14 +138,13 @@ void SegmentBuilder::SortEntries() {
   for (uint32_t i = 0; i < n; ++i) {
     _order[i] = {PrefixKey(_entries[i], common), i};
   }
-  std::sort(_order.begin(), _order.end(),
-            [&](const std::pair<uint64_t, uint32_t>& a,
-                const std::pair<uint64_t, uint32_t>& b) {
-              if (a.first != b.first) {
-                return a.first < b.first;
-              }
-              return _entries[a.second] < _entries[b.second];
-            });
+  absl::c_sort(_order, [&](const std::pair<uint64_t, uint32_t>& a,
+                           const std::pair<uint64_t, uint32_t>& b) {
+    if (a.first != b.first) {
+      return a.first < b.first;
+    }
+    return _entries[a.second] < _entries[b.second];
+  });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);
   for (uint32_t pos = 0; pos < n; ++pos) {

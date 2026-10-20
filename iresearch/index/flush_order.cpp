@@ -35,7 +35,6 @@
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <memory>
-#include <numeric>
 #include <utility>
 
 #include "iresearch/formats/column/col_writer.hpp"
@@ -48,7 +47,7 @@ std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
                                  const SortSpec& spec, ColWriter& columns,
                                  uint64_t rows) {
   std::vector<uint32_t> new2old(rows);
-  std::iota(new2old.begin(), new2old.end(), uint32_t{0});
+  absl::c_iota(new2old, uint32_t{0});
   std::vector<const ColumnWriter*> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::BoundOrderByNode> orders;

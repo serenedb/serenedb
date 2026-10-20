@@ -32,7 +32,6 @@
 #include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/index/merge_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/detail/ann_index.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -109,9 +108,9 @@ std::shared_ptr<const irs::SegmentReaderImpl> SortedMerge(
     .field_options = &field_options,
     .sort = spec,
   };
-  irs::MergeWriter merger{out, options};
-  merger.Reset(inputs.begin(), inputs.end());
-  flushed = irs::GetReady(merger.Flush(meta, {}, nullptr, executor));
+  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
+  flushed =
+    irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, executor);
   if (!flushed) {
     return nullptr;
   }

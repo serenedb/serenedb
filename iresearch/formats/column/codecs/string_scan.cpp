@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -98,7 +99,7 @@ const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
 }
 
 EntryRanges Normalize(EntryRanges ranges) {
-  std::sort(ranges.begin(), ranges.end());
+  absl::c_sort(ranges);
   EntryRanges out;
   for (const auto& [lo, hi] : ranges) {
     if (lo >= hi) {

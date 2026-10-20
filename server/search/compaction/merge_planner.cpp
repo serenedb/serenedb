@@ -21,15 +21,17 @@
 #include "search/compaction/merge_planner.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/numeric/int128.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -43,6 +45,11 @@ bool HasDeletes(const irs::SubReader& segment) noexcept {
   return segment.live_docs_count() < segment.docs_count();
 }
 
+int64_t FirstRow(const irs::SubReader& segment) {
+  const auto rowids = DescribeSegment(segment).rowids;
+  return rowids.Empty() ? 0 : rowids.first;
+}
+
 std::string Segments(uint64_t count) {
   return absl::StrCat(count, count == 1 ? " segment" : " segments");
 }
@@ -50,9 +57,9 @@ std::string Segments(uint64_t count) {
 PlannedMerge DescribeMerge(std::string reason,
                            std::span<const irs::SubReader* const> segments) {
   PlannedMerge merge{.reason = std::move(reason)};
-  absl::flat_hash_map<irs::field_id, uint64_t> column_bytes;
-  absl::flat_hash_set<irs::field_id> fields;
-  absl::flat_hash_set<irs::field_id> ann;
+  irs::containers::FlatHashMap<irs::field_id, uint64_t> column_bytes;
+  irs::containers::FlatHashSet<irs::field_id> fields;
+  irs::containers::FlatHashSet<irs::field_id> ann;
   for (const auto* segment : segments) {
     auto& input = merge.inputs.emplace_back(DescribeSegment(*segment));
     merge.docs += input.docs;
@@ -208,15 +215,14 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
   for (const auto& segment : reader) {
     const auto& placed = order.emplace_back(Placed{
       .segment = &segment,
-      .first_row = DescribeSegment(segment).rowid_min.value_or(0),
+      .first_row = FirstRow(segment),
       .live_docs = segment.live_docs_count(),
     });
     total += placed.live_docs;
   }
-  std::stable_sort(order.begin(), order.end(),
-                   [](const Placed& lhs, const Placed& rhs) {
-                     return lhs.first_row < rhs.first_row;
-                   });
+  absl::c_stable_sort(order, [](const Placed& lhs, const Placed& rhs) {
+    return lhs.first_row < rhs.first_row;
+  });
   std::vector<irs::Compaction> buckets(target);
   size_t group = 0;
   absl::uint128 taken = 0;
@@ -303,17 +309,20 @@ void PlanSegments(const irs::IndexReader& reader,
     return;
   }
   if (candidates.size() > request.inputs_max) {
-    std::vector<std::pair<int64_t, const irs::SubReader*>> by_row;
+    struct Ranked {
+      int64_t first_row = 0;
+      const irs::SubReader* segment = nullptr;
+    };
+    std::vector<Ranked> by_row;
     by_row.reserve(candidates.size());
     for (const auto* segment : candidates) {
-      by_row.emplace_back(DescribeSegment(*segment).rowid_min.value_or(0),
-                          segment);
+      by_row.emplace_back(FirstRow(*segment), segment);
     }
-    absl::c_stable_sort(by_row, [](const auto& lhs, const auto& rhs) {
-      return lhs.first < rhs.first;
+    absl::c_stable_sort(by_row, [](const Ranked& lhs, const Ranked& rhs) {
+      return lhs.first_row < rhs.first_row;
     });
     for (size_t i = 0; i < by_row.size(); ++i) {
-      candidates[i] = by_row[i].second;
+      candidates[i] = by_row[i].segment;
     }
     PlaceInSteps(candidates, request.inputs_max, "listed segments", plan);
     return;
@@ -323,28 +332,11 @@ void PlanSegments(const irs::IndexReader& reader,
 
 }  // namespace
 
-std::string_view MergeModeName(MergeMode mode) noexcept {
-  switch (mode) {
-    case MergeMode::Background:
-      return "background";
-    case MergeMode::Compact:
-      return "compact";
-    case MergeMode::Segments:
-      return "segments";
-    case MergeMode::Optimize:
-      return "optimize";
-  }
-  return "unknown";
-}
-
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept {
-  for (const auto mode : {MergeMode::Background, MergeMode::Compact,
-                          MergeMode::Segments, MergeMode::Optimize}) {
-    if (MergeModeName(mode) == name) {
-      return mode;
-    }
-  }
-  return std::nullopt;
+  return magic_enum::enum_cast<MergeMode>(
+    name, [](char given, char enumerator) noexcept {
+      return given == absl::ascii_tolower(enumerator);
+    });
 }
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment) {
@@ -358,8 +350,10 @@ PlannedSegment DescribeSegment(const irs::SubReader& segment) {
       column && column->Type().id() == duckdb::LogicalTypeId::BIGINT) {
     const auto& stats = column->MergedStatistics();
     if (duckdb::NumericStats::HasMinMax(stats)) {
-      result.rowid_min = duckdb::NumericStats::GetMin<int64_t>(stats);
-      result.rowid_max = duckdb::NumericStats::GetMax<int64_t>(stats);
+      result.rowids = {
+        .first = duckdb::NumericStats::GetMin<int64_t>(stats),
+        .last = duckdb::NumericStats::GetMax<int64_t>(stats),
+      };
     }
   }
   return result;
@@ -401,7 +395,7 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
 
 std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
                                          std::span<const std::string> names) {
-  absl::flat_hash_set<std::string_view> present;
+  irs::containers::FlatHashSet<std::string_view> present;
   for (const auto& segment : reader) {
     present.emplace(segment.Meta().name);
   }

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -132,8 +134,8 @@ struct EntryFrames {
   }
 
   uint32_t FrameOf(uint32_t entry) const noexcept {
-    const auto it = std::upper_bound(
-      frames.begin(), frames.end(), entry,
+    const auto it = absl::c_upper_bound(
+      frames, entry,
       [](uint32_t e, const FrameMeta& m) { return e < m.first_entry; });
     SDB_ASSERT(it != frames.begin());
     return static_cast<uint32_t>(it - frames.begin()) - 1;

@@ -38,12 +38,13 @@
 #include <yaclib/exe/inline.hpp>
 
 #include "search/compaction/merge_scheduler.h"
+#include "search/store_stats.h"
 #include "server/utils/metrics.h"
 
 namespace {
 
 using sdb::search::EstimateMerge;
-using sdb::search::MakeMergeRelation;
+using sdb::search::MaintainedStore;
 using sdb::search::MergeJob;
 using sdb::search::MergeLane;
 using sdb::search::MergeOutcome;
@@ -142,8 +143,7 @@ class MergeSchedulerTest : public ::testing::Test {
   }
 
   std::shared_ptr<MergeScheduler::Relation> Relation(uint64_t id) {
-    return std::make_shared<MergeScheduler::Relation>(
-      id, [this, id] { ++_nudges[id]; });
+    return std::make_shared<MergeScheduler::Relation>(id);
   }
 
   void Enqueue(MergeScheduler& scheduler,
@@ -179,7 +179,6 @@ class MergeSchedulerTest : public ::testing::Test {
   Board _board;
   MergeRegistry _registry;
   absl::Time _now = absl::FromUnixSeconds(1'000'000);
-  std::map<uint64_t, size_t> _nudges;
 };
 
 TEST(MergeEstimateTest, LanesAndScores) {
@@ -216,9 +215,9 @@ TEST_F(MergeSchedulerTest, SmallMergesRunBesideABigOneOnOneThread) {
   Complete("small1", MergeOutcome::Merged);
   EXPECT_TRUE(Destroyed("small1"));
   EXPECT_TRUE(Started("small2"));
-  EXPECT_EQ(1, _nudges[1]);
+  EXPECT_EQ(1, relation->CompactionGeneration());
   CompleteAll(MergeOutcome::Merged);
-  EXPECT_EQ(3, _nudges[1]);
+  EXPECT_EQ(3, relation->CompactionGeneration());
 }
 
 TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
@@ -351,7 +350,7 @@ TEST_F(MergeSchedulerTest, StaleQueuedMergesLeaveWithoutAThread) {
   EXPECT_TRUE(Destroyed("dead"));
   EXPECT_FALSE(Started("dead"));
   EXPECT_EQ(round, scheduler->Wanted(*dead));
-  EXPECT_EQ(1, _nudges[2]);
+  EXPECT_EQ(1, dead->CompactionGeneration());
   CompleteAll(MergeOutcome::Merged);
 }
 
@@ -366,7 +365,7 @@ TEST_F(MergeSchedulerTest, StopRunningRaisesOnlyThatRelationsFlags) {
   EXPECT_FALSE(_board.stops["b"]->load());
 
   Complete("a", MergeOutcome::Cancelled);
-  EXPECT_EQ(0, _nudges[1]);
+  EXPECT_EQ(0, first->CompactionGeneration());
   EXPECT_TRUE(scheduler->Blocked(*first).empty());
   CompleteAll(MergeOutcome::Merged);
 }
@@ -376,7 +375,7 @@ TEST_F(MergeSchedulerTest, FailedMergesBlockTheirInputsWithGrowingBackoff) {
   auto relation = Relation(1);
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 2);
   Complete("a", MergeOutcome::Failed);
-  EXPECT_EQ(1, _nudges[1]);
+  EXPECT_EQ(1, relation->CompactionGeneration());
   auto blocked = scheduler->Blocked(*relation);
   std::ranges::sort(blocked);
   EXPECT_EQ(std::vector<std::string>({"a.0", "a.1"}), blocked);
@@ -401,7 +400,7 @@ TEST_F(MergeSchedulerTest, FailedMergesBlockTheirInputsWithGrowingBackoff) {
   Enqueue(*scheduler, relation, "e", 512 * kMiB, 1);
   Complete("e", MergeOutcome::Busy);
   EXPECT_TRUE(scheduler->Blocked(*relation).empty());
-  EXPECT_EQ(5, _nudges[1]);
+  EXPECT_EQ(5, relation->CompactionGeneration());
 }
 
 TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
@@ -505,16 +504,6 @@ TEST_F(MergeSchedulerTest, ADeferredMergeResetsTheFailureBackoff) {
   EXPECT_TRUE(scheduler->Blocked(*relation).empty());
 }
 
-TEST_F(MergeSchedulerTest, ARelationWithoutANudgeStillFinishes) {
-  auto scheduler = Make(1);
-  auto relation = std::make_shared<MergeScheduler::Relation>(9, nullptr);
-  EXPECT_EQ(2, scheduler->RoundSize());
-  Enqueue(*scheduler, relation, "a", 512 * kMiB);
-  Complete("a", MergeOutcome::Merged);
-  EXPECT_TRUE(Destroyed("a"));
-  EXPECT_EQ(2, scheduler->Wanted(*relation));
-}
-
 TEST_F(MergeSchedulerTest, TakingARelationOverStopsItsMergesAndPausesIt) {
   auto scheduler = Make(1);
   auto first = Relation(1);
@@ -545,9 +534,9 @@ TEST_F(MergeSchedulerTest, TakingARelationOverStopsItsMergesAndPausesIt) {
   EXPECT_EQ(0, scheduler->Wanted(*first));
   Enqueue(*scheduler, first, "late", 512 * kMiB);
   EXPECT_TRUE(Destroyed("late"));
-  EXPECT_EQ(0, _nudges[1]);
+  EXPECT_EQ(0, first->CompactionGeneration());
   lease = {};
-  EXPECT_EQ(1, _nudges[1]);
+  EXPECT_EQ(1, first->CompactionGeneration());
   EXPECT_EQ(2, scheduler->Wanted(*first));
   CompleteAll(MergeOutcome::Merged);
 }
@@ -568,12 +557,12 @@ TEST_F(MergeSchedulerTest, ALeaseIsReleasedOnceWhereverItMoves) {
   auto nested = scheduler->TakeOver(relation);
   assigned = {};
   EXPECT_EQ(0, scheduler->Wanted(*relation));
-  EXPECT_EQ(1, _nudges[1]);
+  EXPECT_EQ(1, relation->CompactionGeneration());
   nested = {};
-  EXPECT_EQ(2, _nudges[1]);
+  EXPECT_EQ(2, relation->CompactionGeneration());
   EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*relation));
 
-  auto quiet = std::make_shared<MergeScheduler::Relation>(5, nullptr);
+  auto quiet = Relation(5);
   {
     auto silent = scheduler->TakeOver(quiet);
     EXPECT_EQ(0, scheduler->Wanted(*quiet));
@@ -587,7 +576,7 @@ TEST_F(MergeSchedulerTest, ADroppedSubmissionCountsAsCancelled) {
   Enqueue(*scheduler, relation, "a", 512 * kMiB);
   EXPECT_FALSE(Started("a"));
   EXPECT_TRUE(Destroyed("a"));
-  EXPECT_EQ(0, _nudges[1]);
+  EXPECT_EQ(0, relation->CompactionGeneration());
   EXPECT_EQ(1, scheduler->FreeThreads());
   EXPECT_EQ(2, scheduler->Wanted(*relation));
 }
@@ -626,23 +615,15 @@ TEST_F(MergeSchedulerTest, AMergeKeepsOneIdFromTheQueueToTheHistory) {
   EXPECT_EQ("boom", history[1].error);
 }
 
-struct NudgedStorage {
-  void NudgeCompaction() noexcept { ++nudges; }
-
-  size_t nudges = 0;
-};
-
-TEST_F(MergeSchedulerTest, ARelationNudgesItsStorageOnlyWhileItLives) {
+TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {
   auto scheduler = Make(2);
-  auto storage = std::make_shared<NudgedStorage>();
-  const std::weak_ptr<NudgedStorage> weak = storage;
-  const auto relation = MakeMergeRelation(3, weak);
+  MaintainedStore store{3};
+  const auto& relation = store.MergeRelation();
   EXPECT_EQ(3, relation->Id());
   scheduler->TakeOver(relation);
-  EXPECT_EQ(1, storage->nudges);
-  storage.reset();
-  scheduler->TakeOver(relation);
-  EXPECT_TRUE(weak.expired());
+  EXPECT_EQ(1, store.CompactionGeneration());
+  store.NudgeCompaction();
+  EXPECT_EQ(2, relation->CompactionGeneration());
   EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*relation));
 }
 

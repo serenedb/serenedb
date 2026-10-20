@@ -191,9 +191,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
   // compaction threads
   auto policy = irs::MakeAdjacentRunPolicy(
     irs::AdjacentRunOptions{},
-    [](const irs::SubReader&) -> std::optional<irs::SegmentRange> {
-      return std::nullopt;
-    });
+    [](const irs::SubReader&) { return irs::SegmentRange{}; });
 
   for (size_t i = _opts.compaction_threads; i; --i) {
     thread_pool.run([&] {

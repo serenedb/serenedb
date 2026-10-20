@@ -20,11 +20,12 @@
 
 #include "sdb_merges.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <string_view>
 #include <vector>
 
@@ -35,8 +36,9 @@
 namespace sdb::pg {
 namespace {
 
-absl::flat_hash_set<uint64_t> CurrentRelations(duckdb::ClientContext& context) {
-  absl::flat_hash_set<uint64_t> relations;
+irs::containers::FlatHashSet<uint64_t> CurrentRelations(
+  duckdb::ClientContext& context) {
+  irs::containers::FlatHashSet<uint64_t> relations;
   auto& catalog =
     duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog());
   VisitSchemas(context, catalog, [&](duckdb::SchemaCatalogEntry& schema) {
@@ -60,7 +62,7 @@ absl::flat_hash_set<uint64_t> CurrentRelations(duckdb::ClientContext& context) {
 
 std::vector<search::MergeRecord> Visible(
   std::vector<search::MergeRecord> records,
-  const absl::flat_hash_set<uint64_t>& relations) {
+  const irs::containers::FlatHashSet<uint64_t>& relations) {
   std::erase_if(records, [&](const search::MergeRecord& record) {
     return !relations.contains(record.relation_id);
   });
@@ -106,9 +108,9 @@ MaterializedData SystemTableSnapshot<SdbMerges>::GetTableData() {
     const SdbMerges value{
       .merge_id = record.id,
       .relation_id = RelationOid(record),
-      .origin = search::MergeOriginName(record.origin),
+      .origin = irs::SnakeCaseName(record.origin),
       .state = record.Queued() ? "queued" : "running",
-      .lane = search::MergeLaneName(record.lane),
+      .lane = irs::SnakeCaseName(record.lane),
       .score = record.score,
       .queued = At(record.queued_us),
       .started = At(record.started_us),
@@ -150,9 +152,9 @@ MaterializedData SystemTableSnapshot<SdbCompactHistory>::GetTableData() {
     const SdbCompactHistory value{
       .id = record.id,
       .relation_id = RelationOid(record),
-      .type = search::SegmentEventName(record.event),
-      .origin = search::MergeOriginName(record.origin),
-      .outcome = search::MergeOutcomeName(record.outcome),
+      .type = irs::SnakeCaseName(record.event),
+      .origin = irs::SnakeCaseName(record.origin),
+      .outcome = irs::SnakeCaseName(record.outcome),
       .started = At(record.started_us),
       .finished = At(record.finished_us),
       .inputs = names,
@@ -163,8 +165,8 @@ MaterializedData SystemTableSnapshot<SdbCompactHistory>::GetTableData() {
       .output_docs = static_cast<int64_t>(stats.output_docs),
       .output_live_docs = static_cast<int64_t>(record.output_live_docs),
       .output_bytes = static_cast<int64_t>(stats.output_bytes),
-      .rowid_min = record.rowid_min.value_or(0),
-      .rowid_max = record.rowid_max.value_or(0),
+      .rowid_min = record.rowids.first,
+      .rowid_max = record.rowids.last,
       .total_ms = Millis(stats.profile.TotalNanos()),
       .prepare_ms = StepMillis(record, irs::MergeStep::Prepare),
       .norms_ms = StepMillis(record, irs::MergeStep::Norms),
@@ -197,7 +199,7 @@ MaterializedData SystemTableSnapshot<SdbCompactHistory>::GetTableData() {
     if (stats.output.empty()) {
       nulls |= MaskFromNulls({GetIndex(&SdbCompactHistory::output)});
     }
-    if (!record.rowid_min) {
+    if (record.rowids.Empty()) {
       nulls |= MaskFromNulls({GetIndex(&SdbCompactHistory::rowid_min),
                               GetIndex(&SdbCompactHistory::rowid_max)});
     }

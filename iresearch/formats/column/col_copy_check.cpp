@@ -93,16 +93,16 @@ std::optional<ReencodeEstimate> ReencodeCache::Find(
   field_id column, const ReencodeKey& key) const {
   std::lock_guard lock{_mutex};
   const auto it = _entries.find(column);
-  if (it == _entries.end() || it->second.first != key) {
+  if (it == _entries.end() || it->second.key != key) {
     return std::nullopt;
   }
-  return it->second.second;
+  return it->second.estimate;
 }
 
 void ReencodeCache::Store(field_id column, const ReencodeKey& key,
                           const ReencodeEstimate& estimate) {
   std::lock_guard lock{_mutex};
-  _entries.insert_or_assign(column, std::pair{key, estimate});
+  _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
 }
 
 namespace {

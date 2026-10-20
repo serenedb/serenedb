@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstddef>
@@ -28,10 +27,10 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <memory>
 #include <optional>
-#include <utility>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 namespace codecs {
@@ -77,9 +76,13 @@ class ReencodeCache {
              const ReencodeEstimate& estimate);
 
  private:
+  struct Entry {
+    ReencodeKey key;
+    ReencodeEstimate estimate;
+  };
+
   mutable absl::Mutex _mutex;
-  absl::flat_hash_map<field_id, std::pair<ReencodeKey, ReencodeEstimate>>
-    _entries;
+  irs::containers::FlatHashMap<field_id, Entry> _entries;
 };
 
 uint64_t StoredBytes(const ColumnReader& column);

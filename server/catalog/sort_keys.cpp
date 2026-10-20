@@ -20,11 +20,10 @@
 
 #include "catalog/sort_keys.h"
 
-#include <absl/algorithm/container.h>
-
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -37,6 +36,7 @@ std::vector<SortKey> ResolveSortKeys(
   const duckdb::vector<duckdb::OrderByNode>& orders) {
   std::vector<SortKey> keys;
   keys.reserve(orders.size());
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& order : orders) {
     const auto& expr = *order.expression;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF ||
@@ -68,8 +68,7 @@ std::vector<SortKey> ResolveSortKeys(
       }
     }
     const auto index = column.Logical();
-    if (absl::c_any_of(keys,
-                       [&](const auto& key) { return key.column == index; })) {
+    if (!seen.emplace(index.index).second) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
                       ERR_MSG("column \"", name.GetIdentifierName(),
                               "\" appears more than once in SORTED BY"));

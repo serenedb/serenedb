@@ -65,7 +65,7 @@ WB_ENUM_NAMES = [
 
 EXT_PICT_FLAG = 0x80
 NUM_CODEPOINTS = 0x110000
-STAGE1_CODEPOINTS = 0x200000
+STAGE1_CODEPOINTS = 0x200100
 
 RANGE_RE = re.compile(r"^([0-9A-F]+)(?:\.\.([0-9A-F]+))?\s*;\s*([\w]+)")
 
@@ -213,8 +213,8 @@ def emit_word_break_tables(path, stage1, stage2, ucd_version):
         [f"{name} = {i}," for i, name in enumerate(WB_ENUM_NAMES)],
         lambda v: v, 4)
     out = [LICENSE_HEADER]
-    out.append(provenance(ucd_version))
     out.append("#pragma once\n")
+    out.append(provenance(ucd_version))
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
     out.append('#include "iresearch/utils/shared.hpp"\n')
@@ -251,8 +251,8 @@ def emit_word_break_tables(path, stage1, stage2, ucd_version):
 
 def emit_case_tables(path, lower, upper, growth, ucd_version):
     out = [LICENSE_HEADER]
-    out.append(provenance(ucd_version))
     out.append("#pragma once\n")
+    out.append(provenance(ucd_version))
     out.append("#include <absl/base/optimization.h>\n")
     out.append("#include <array>\n#include <cstdint>\n")
     out.append('#include "iresearch/utils/shared.hpp"\n')

@@ -28,7 +28,6 @@
 #include <absl/strings/match.h>
 #include <fast_float/fast_float.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/operator/add.hpp>
@@ -53,7 +52,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
 #include <limits>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -541,84 +539,6 @@ bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
   return true;
 }
 
-struct NumericDigits {
-  int32_t integer;
-  int32_t fraction;
-};
-
-std::optional<NumericDigits> TextNumericDigits(std::string_view text) {
-  text = absl::StripAsciiWhitespace(text);
-  if (!text.empty() && (text.front() == '+' || text.front() == '-')) {
-    text.remove_prefix(1);
-  }
-  int32_t integer = 0;
-  int32_t fraction = 0;
-  bool point = false;
-  bool digits = false;
-  size_t i = 0;
-  for (; i < text.size(); ++i) {
-    if (text[i] == '.' && !point) {
-      point = true;
-      continue;
-    }
-    if (!absl::ascii_isdigit(text[i])) {
-      break;
-    }
-    digits = true;
-    if (point) {
-      ++fraction;
-    } else if (integer > 0 || text[i] != '0') {
-      ++integer;
-    }
-  }
-  if (!digits) {
-    return std::nullopt;
-  }
-  int32_t exponent = 0;
-  if (i < text.size()) {
-    if (text[i] != 'e' && text[i] != 'E') {
-      return std::nullopt;
-    }
-    auto power = text.substr(i + 1);
-    if (!power.empty() && power.front() == '+') {
-      power.remove_prefix(1);
-    }
-    const auto end = power.data() + power.size();
-    const auto [ptr, ec] = fast_float::from_chars(power.data(), end, exponent);
-    if (ec != std::errc{} || ptr != end || exponent > 1000 ||
-        exponent < -1000) {
-      return std::nullopt;
-    }
-  }
-  return NumericDigits{std::max(0, integer + exponent),
-                       std::max(0, fraction - exponent)};
-}
-
-std::optional<NumericDigits> BinaryNumericDigits(std::string_view data) {
-  if (data.size() < 8) {
-    return std::nullopt;
-  }
-  const auto ndigits =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data()));
-  const auto weight =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data() + 2));
-  const uint16_t sign = absl::big_endian::Load16(data.data() + 4);
-  const uint16_t dscale = absl::big_endian::Load16(data.data() + 6);
-  if ((sign != 0 && sign != 0x4000) || ndigits < 0 ||
-      data.size() < static_cast<size_t>(8 + ndigits * 2)) {
-    return std::nullopt;
-  }
-  int32_t integer = 0;
-  if (ndigits > 0 && weight >= 0) {
-    const uint16_t first = absl::big_endian::Load16(data.data() + 8);
-    integer = 4 * weight + (first >= 1000  ? 4
-                            : first >= 100 ? 3
-                            : first >= 10  ? 2
-                                           : 1);
-  }
-  return NumericDigits{integer, dscale};
-}
-
 // Two's-complement 128-bit pattern, range-checked: a positive magnitude must
 // fit 2^127-1, a negative one 2^127 (HUGEINT's minimum).
 bool MagnitudeToHugeint(bool negative, absl::uint128 magnitude,
@@ -1067,28 +987,6 @@ struct DecimalText {
   }
 };
 
-template<typename Core, typename WideCore, auto Digits>
-struct ParamDecimal {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    const auto& type = sink.Type();
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto scale = duckdb::DecimalType::GetScale(type);
-    const auto digits = Digits(data);
-    if (!digits || digits->integer > duckdb::Decimal::MAX_WIDTH_DECIMAL ||
-        (digits->fraction <= scale && digits->integer <= width - scale)) {
-      return Core::Decode(ctx, data, sink);
-    }
-    const auto wide = duckdb::LogicalType::DECIMAL(
-      duckdb::Decimal::MAX_WIDTH_DECIMAL,
-      std::min(digits->fraction,
-               duckdb::Decimal::MAX_WIDTH_DECIMAL - digits->integer));
-    Sink wide_sink{wide, sink.out};
-    return WideCore::Decode(ctx, data, wide_sink);
-  }
-};
-
 // Types without a dedicated binary recv (scaled time/timestamp text): route
 // through DuckDB's string->type cast, which parses the column's exact
 // precision.
@@ -1236,19 +1134,6 @@ template<typename BinCore, typename TextCore, typename Sink>
 DeserializationFunction<Sink> SelectDecoder(bool binary) {
   return binary ? &BinCore::template Decode<Sink>
                 : &TextCore::template Decode<Sink>;
-}
-
-template<typename BinCore, typename TextCore, typename Sink>
-DeserializationFunction<Sink> SelectDecimal(bool binary) {
-  if constexpr (std::is_same_v<Sink, ValueSink>) {
-    return SelectDecoder<
-      ParamDecimal<BinCore, DecimalHugeintBin, &BinaryNumericDigits>,
-      ParamDecimal<TextCore, DecimalText<duckdb::hugeint_t>,
-                   &TextNumericDigits>,
-      Sink>(binary);
-  } else {
-    return SelectDecoder<BinCore, TextCore, Sink>(binary);
-  }
 }
 
 // ===========================================================================
@@ -2483,18 +2368,18 @@ DeserializationFunction<Sink> GetDeserialization(
       }
       const auto width = duckdb::DecimalType::GetWidth(type);
       if (width <= duckdb::Decimal::MAX_WIDTH_INT16) {
-        return SelectDecimal<DecimalIntBin<int16_t>, DecimalText<int16_t>,
+        return SelectDecoder<DecimalIntBin<int16_t>, DecimalText<int16_t>,
                              Sink>(binary);
       }
       if (width <= duckdb::Decimal::MAX_WIDTH_INT32) {
-        return SelectDecimal<DecimalIntBin<int32_t>, DecimalText<int32_t>,
+        return SelectDecoder<DecimalIntBin<int32_t>, DecimalText<int32_t>,
                              Sink>(binary);
       }
       if (width <= duckdb::Decimal::MAX_WIDTH_INT64) {
-        return SelectDecimal<DecimalIntBin<int64_t>, DecimalText<int64_t>,
+        return SelectDecoder<DecimalIntBin<int64_t>, DecimalText<int64_t>,
                              Sink>(binary);
       }
-      return SelectDecimal<DecimalHugeintBin, DecimalText<duckdb::hugeint_t>,
+      return SelectDecoder<DecimalHugeintBin, DecimalText<duckdb::hugeint_t>,
                            Sink>(binary);
     }
     case FLOAT:

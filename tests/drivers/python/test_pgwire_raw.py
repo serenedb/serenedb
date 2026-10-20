@@ -589,26 +589,29 @@ def numeric_send(text):
 @pytest.mark.parametrize(
     "query, param, fmt, expected",
     [
-        ("select $1 = 1.23456", b"1.23456", 0, b"t"),
-        ("select $1 > 1", b"1.0001", 0, b"t"),
-        ("select round($1, 2)", b"1.23456", 0, b"1.23"),
-        ("select $1::text", b"1.23456", 0, b"1.23456"),
+        ("select $1 = 1.23456", b"1.23456", 0, b"f"),
+        ("select $1 > 1", b"1.0001", 0, b"f"),
+        ("select round($1, 2)", b"1.23456", 0, b"1.24"),
+        ("select $1::text", b"1.23456", 0, b"1.235"),
         (
             "select $1::text",
             b"123456789012345678901234.5",
             0,
-            b"123456789012345678901234.5",
+            "22P02",
         ),
-        ("select $1 = 1.23456", numeric_send("1.23456"), 1, b"t"),
-        ("select $1::text", numeric_send("-0.000123"), 1, b"-0.000123"),
+        ("select $1 = 1.23456", numeric_send("1.23456"), 1, b"f"),
+        ("select $1::text", numeric_send("-0.000123"), 1, b"0.000"),
     ],
 )
-def test_parse_param_oid_numeric_keeps_its_digits(conn, query, param, fmt, expected):
+def test_parse_param_oid_numeric_is_numeric_18_3(conn, query, param, fmt, expected):
     conn.parse("", query, oids=(1700,))
     conn.bind("", "", params=(param,), formats=(fmt,))
     conn.execute("")
     conn.sync()
     m = conn.drain_to_ready()
+    if isinstance(expected, str):
+        assert sqlstates(m) == [expected], errors(m)
+        return
     assert "E" not in types(m), errors(m)
     assert first_field(m) == expected, first_field(m)
 
@@ -627,7 +630,7 @@ def test_binary_json_param(conn, oid, param):
     assert all_fields(m) == [b'{"a": 1}', b"1"], all_fields(m)
 
 
-def test_numeric_param_rounds_only_into_its_column(conn):
+def test_numeric_param_rounds_as_numeric_18_3_into_its_column(conn):
     conn.run_ok("drop table if exists raw_numeric_param")
     conn.run_ok("create table raw_numeric_param (n numeric(10,4))")
     conn.parse("", "insert into raw_numeric_param values ($1)", oids=(1700,))
@@ -637,7 +640,7 @@ def test_numeric_param_rounds_only_into_its_column(conn):
     m = conn.drain_to_ready()
     assert "E" not in types(m), errors(m)
     assert first_field(conn.run_ok("select n::text from raw_numeric_param")) == (
-        b"1.2346"
+        b"1.2350"
     )
     conn.run_ok("drop table raw_numeric_param")
 

@@ -173,14 +173,26 @@ TextInput::TextInput(duckdb::ClientContext& context,
   }
 }
 
-std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
+bool TextInput::Cast(duckdb::string_t text, std::string* message) {
   _result.ResetFromCache(_cache);
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_source)[0] = text;
+  if (_reports) {
+    _state->Cast<InputState>().error.reset();
+  }
+  duckdb::CastParameters parameters{_cast.GetCastData(), false, message,
+                                    _state.get()};
+  return _cast.Cast(_source, _result, 1, parameters);
+}
+
+bool TextInput::Valid(duckdb::string_t text) {
+  std::string message;
+  return Cast(text, &message);
+}
+
+std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
   if (!_reports) {
-    duckdb::CastParameters parameters{_cast.GetCastData(), false, nullptr,
-                                      _state.get()};
     try {
-      _cast.Cast(_source, _result, 1, parameters);
+      Cast(text, nullptr);
     } catch (const duckdb::Exception& exception) {
       const duckdb::ErrorData error{exception};
       if (error.Type() != duckdb::ExceptionType::CONVERSION) {
@@ -197,15 +209,11 @@ std::optional<irs::pg::SqlErrorData> TextInput::Error(duckdb::string_t text) {
     return std::nullopt;
   }
   std::string message;
-  duckdb::CastParameters parameters{_cast.GetCastData(), false, &message,
-                                    _state.get()};
-  if (_cast.Cast(_source, _result, 1, parameters)) {
+  if (Cast(text, &message)) {
     return std::nullopt;
   }
-  if (auto& state = _state->Cast<InputState>(); state.error) {
-    auto error = std::move(*state.error);
-    state.error.reset();
-    return error;
+  if (auto& error = _state->Cast<InputState>().error) {
+    return std::move(*error);
   }
   return SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG(message));

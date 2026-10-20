@@ -84,7 +84,6 @@ target_sources(
         types/float.cpp
         types/function.cpp
         types/geometric.cpp
-        types/inet.cpp
         types/mac.cpp
         types/mapping.cpp
         types/money.cpp

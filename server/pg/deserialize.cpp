@@ -1951,6 +1951,22 @@ struct NestedAdapter<ValueSink> {
   }
 };
 
+// STRUCT vector entries: [0]=ip_type (1=IPv4, 2=IPv6), [1]=address (signed
+// hugeint, IPv6 top bit flipped for sort order), [2]=mask. Inverse of ReadInet.
+void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
+               uint64_t addr_hi, uint64_t addr_lo, uint16_t mask) {
+  if (type == INET_IP_ADDRESS_V6) {
+    addr_hi ^= kInetV6SortBit;
+  }
+  auto& entries = duckdb::StructVector::GetEntries(vec);
+  Out<uint8_t>(entries[kInetIpTypeChild])[row] = static_cast<uint8_t>(type);
+  duckdb::hugeint_t stored;
+  stored.lower = addr_lo;
+  stored.upper = static_cast<int64_t>(addr_hi);
+  Out<duckdb::hugeint_t>(entries[kInetAddressChild])[row] = stored;
+  Out<uint16_t>(entries[kInetMaskChild])[row] = mask;
+}
+
 template<bool Cidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
@@ -1985,7 +2001,8 @@ bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
   if (Cidr && ipaddress_has_host_bits(&inet)) {
     return false;
   }
-  StoreInet(vec, row, inet);
+  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
+            inet.mask);
   return true;
 }
 
@@ -2005,7 +2022,8 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   if (Cidr && ipaddress_has_host_bits(&inet)) {
     return false;
   }
-  StoreInet(vec, row, inet);
+  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
+            inet.mask);
   return true;
 }
 

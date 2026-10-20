@@ -75,9 +75,12 @@ class TextInput final {
  public:
   TextInput(duckdb::ClientContext& context, const duckdb::LogicalType& type);
 
+  bool Valid(duckdb::string_t text);
   std::optional<irs::pg::SqlErrorData> Error(duckdb::string_t text);
 
  private:
+  bool Cast(duckdb::string_t text, std::string* message);
+
   bool _reports;
   duckdb::BoundCastInfo _cast;
   duckdb::unique_ptr<duckdb::FunctionLocalState> _state;

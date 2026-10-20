@@ -1165,14 +1165,13 @@ class InputCheck final : public duckdb::FunctionLocalState {
  public:
   explicit InputCheck(duckdb::ClientContext& context) : _context{context} {}
 
-  std::optional<irs::pg::SqlErrorData> Error(duckdb::string_t text,
-                                             duckdb::string_t type) {
+  TextInput& Input(duckdb::string_t type) {
     const auto name = AsView(type);
     if (!_input || name != _type) {
       _input.emplace(_context, InputType(_context, name));
       _type = name;
     }
-    return _input->Error(text);
+    return *_input;
   }
 
  private:
@@ -1199,7 +1198,7 @@ void InputIsValidFunction(duckdb::DataChunk& args,
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t text, duckdb::string_t type) {
-      return !check.Error(text, type);
+      return check.Input(type).Valid(text);
     });
 }
 
@@ -1228,7 +1227,7 @@ void InputErrorInfoFunction(duckdb::DataChunk& args,
       writer.WriteNull();
       continue;
     }
-    const auto error = check.Error(text.GetValue(), type.GetValue());
+    const auto error = check.Input(type.GetValue()).Error(text.GetValue());
     writer.WriteValue(
       [&](auto& message, auto& detail, auto& hint, auto& sql_error_code) {
         if (!error) {

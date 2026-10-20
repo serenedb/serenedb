@@ -47,7 +47,7 @@ namespace irs {
 struct FlushState;
 struct BasicTermReader;
 
-namespace burst_trie {
+namespace term_dict {
 
 class FieldWriter;
 }
@@ -868,7 +868,7 @@ class FieldsInverter : util::Noncopyable {
     }
   }
 
-  void Flush(burst_trie::FieldWriter& fw, FlushState& state,
+  void Flush(term_dict::FieldWriter& fw, FlushState& state,
              std::span<const BasicTermReader* const> extra);
 
   size_t MemoryActive() const noexcept {

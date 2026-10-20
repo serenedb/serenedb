@@ -67,9 +67,10 @@ set(IResearch_core_sources
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp
     ./formats/segment_meta_writer.cpp
-    ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/index/term_dict.cpp
+    ./formats/index/term_dict_root.cpp
     ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp

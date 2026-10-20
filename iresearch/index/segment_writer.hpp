@@ -25,7 +25,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -255,7 +255,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;
   std::string _error;
-  std::unique_ptr<burst_trie::FieldWriter> _field_writer;
+  std::unique_ptr<term_dict::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;
   // Non-owning fallback, owned by the IndexWriter; used when no override is
   // set.

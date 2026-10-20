@@ -49,8 +49,13 @@ struct TermDictMeta {
   uint64_t total_doc_freq{};
   uint64_t total_term_freq{};
   bool has_score_bounds{false};
-  uint64_t body_offset{};
+  uint64_t meta_offset{};
   field_id norm{field_limits::invalid()};
+};
+
+struct TermDictRegion {
+  uint64_t offset = 0;
+  uint64_t size = 0;
 };
 
 struct IvfCentroidMeta {
@@ -67,9 +72,9 @@ struct HnswMeta {
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
 
-inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
+inline constexpr duckdb::field_id_t kIdxFieldTermDict = 3;
 
 class IdxReader final {
  public:
@@ -84,6 +89,8 @@ class IdxReader final {
   const AnnIndex* Ann(field_id id) const noexcept;
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
+
+  TermDictRegion TermDictBytes() const noexcept;
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 

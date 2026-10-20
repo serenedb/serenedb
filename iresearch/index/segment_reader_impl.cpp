@@ -118,7 +118,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
   reader->_field_reader =
-    std::make_shared<burst_trie::FieldReader>(*dir.ResourceManager().readers);
+    std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,

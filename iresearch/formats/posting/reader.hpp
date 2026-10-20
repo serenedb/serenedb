@@ -68,8 +68,8 @@ class PostingsReader final {
   // features - the set of features available for segment
   void prepare(const ReaderState& state, IndexFeatures features);
 
-  size_t decode(const byte_type* in, IndexFeatures field_features,
-                PostingMeta& state);
+  static size_t decode(const byte_type* in, IndexFeatures field_features,
+                       PostingMeta& state);
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,

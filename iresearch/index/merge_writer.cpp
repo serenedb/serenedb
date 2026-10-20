@@ -41,9 +41,9 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -640,7 +640,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  IResourceManager& rm, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
   auto field_writer =
-    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
+    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 

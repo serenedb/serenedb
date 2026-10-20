@@ -26,9 +26,9 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/formats/posting/reader.hpp>
 #include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/formats/posting_meta.hpp>
@@ -765,8 +765,8 @@ TEST_P(Format10TestCase, ires336) {
       trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
       (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
     irs::IdxWriter idx{*dir, segment_name};
-    irs::burst_trie::FieldWriter fw{/*compaction=*/true,
-                                    irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true,
+                                   irs::IResourceManager::gNoop};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state);
     fw.write(term_reader);
@@ -778,7 +778,7 @@ TEST_P(Format10TestCase, ires336) {
   meta.name = segment_name;
 
   irs::IdxReader idx_reader{*dir, segment_name, nullptr};
-  irs::burst_trie::FieldReader fr_obj{irs::IResourceManager::gNoop};
+  irs::term_dict::FieldReader fr_obj{irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});

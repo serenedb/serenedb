@@ -57,6 +57,7 @@ struct IdxWriter::Impl {
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
   std::vector<TermDictEntry> term_dict_entries;
+  bstring term_dict_bytes;
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
@@ -97,6 +98,10 @@ void IdxWriter::AddTermDictEntry(field_id id, TermDictMeta meta) {
     TermDictEntry{.id = id, .meta = std::move(meta)});
 }
 
+void IdxWriter::SetTermDictBytes(bstring bytes) {
+  _impl->term_dict_bytes = std::move(bytes);
+}
+
 bool IdxWriter::Empty() const noexcept {
   return _impl->ivf_entries.empty() && _impl->hnsw_entries.empty() &&
          _impl->term_dict_entries.empty();
@@ -109,30 +114,13 @@ void IdxWriter::Commit() {
 
   EnsureOut();
 
+  const TermDictRegion region{
+    .offset = _impl->out->Position(),
+    .size = _impl->term_dict_bytes.size(),
+  };
+  _impl->out->WriteData(_impl->term_dict_bytes.data(), region.size);
+
   format_utils::WriteFooter(*_impl->out, [&](duckdb::BinarySerializer& footer) {
-    if (!_impl->term_dict_entries.empty()) {
-      footer.WriteList(
-        kIdxFieldTermDict, "term_dict", _impl->term_dict_entries.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          const auto& e = _impl->term_dict_entries[i];
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            obj.WriteProperty<uint64_t>(0, "id", e.id);
-            obj.WriteProperty<uint32_t>(1, "features",
-                                        static_cast<uint32_t>(e.meta.features));
-            obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
-            obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
-            obj.WriteProperty<uint64_t>(4, "total_doc_freq",
-                                        e.meta.total_doc_freq);
-            obj.WriteProperty<uint64_t>(5, "total_term_freq",
-                                        e.meta.total_term_freq);
-            obj.WriteProperty<bool>(6, "has_score_bounds",
-                                    e.meta.has_score_bounds);
-            obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
-            obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
-                                                   field_limits::invalid());
-          });
-        });
-    }
     if (!_impl->ivf_entries.empty()) {
       footer.WriteList(
         kIdxFieldIvf, "ivf", _impl->ivf_entries.size(),
@@ -161,6 +149,35 @@ void IdxWriter::Commit() {
           });
         });
     }
+    if (!_impl->term_dict_entries.empty()) {
+      footer.WriteObject(
+        kIdxFieldTermDict, "term_dict", [&](duckdb::BinarySerializer& dict) {
+          dict.WriteProperty<uint64_t>(0, "offset", region.offset);
+          dict.WriteProperty<uint64_t>(1, "size", region.size);
+          dict.WriteList(
+            2, "fields", _impl->term_dict_entries.size(),
+            [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+              const auto& e = _impl->term_dict_entries[i];
+              list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                obj.WriteProperty<uint64_t>(0, "id", e.id);
+                obj.WriteProperty<uint32_t>(
+                  1, "features", static_cast<uint32_t>(e.meta.features));
+                obj.WriteProperty<uint64_t>(2, "term_count", e.meta.term_count);
+                obj.WriteProperty<uint64_t>(3, "doc_count", e.meta.doc_count);
+                obj.WriteProperty<uint64_t>(4, "total_doc_freq",
+                                            e.meta.total_doc_freq);
+                obj.WriteProperty<uint64_t>(5, "total_term_freq",
+                                            e.meta.total_term_freq);
+                obj.WriteProperty<bool>(6, "has_score_bounds",
+                                        e.meta.has_score_bounds);
+                obj.WriteProperty<uint64_t>(7, "meta_offset",
+                                            e.meta.meta_offset);
+                obj.WritePropertyWithDefault<uint64_t>(8, "norm", e.meta.norm,
+                                                       field_limits::invalid());
+              });
+            });
+        });
+    }
   });
   _impl->out.reset();
 }
@@ -170,6 +187,7 @@ void IdxWriter::Rollback() noexcept {
   _impl->ivf_entries.clear();
   _impl->hnsw_entries.clear();
   _impl->term_dict_entries.clear();
+  _impl->term_dict_bytes.clear();
 }
 
 }  // namespace irs

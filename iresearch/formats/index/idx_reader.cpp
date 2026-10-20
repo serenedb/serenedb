@@ -44,6 +44,7 @@ struct IdxReader::Impl {
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
+  TermDictRegion term_dict_bytes;
   std::vector<uint64_t> ann_ends;
 };
 
@@ -65,28 +66,6 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-      footer.ReadOptionalList(
-        kIdxFieldTermDict, "term_dict",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            TermDictMeta meta;
-            const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            meta.features = static_cast<IndexFeatures>(
-              obj.ReadProperty<uint32_t>(1, "features"));
-            meta.term_count = obj.ReadProperty<uint64_t>(2, "term_count");
-            meta.doc_count = obj.ReadProperty<uint64_t>(3, "doc_count");
-            meta.total_doc_freq =
-              obj.ReadProperty<uint64_t>(4, "total_doc_freq");
-            meta.total_term_freq =
-              obj.ReadProperty<uint64_t>(5, "total_term_freq");
-            meta.has_score_bounds =
-              obj.ReadProperty<bool>(6, "has_score_bounds");
-            meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
-            meta.norm = obj.ReadPropertyWithExplicitDefault<uint64_t>(
-              8, "norm", field_limits::invalid());
-            _impl->term_dicts.emplace_back(id, std::move(meta));
-          });
-        });
       footer.ReadOptionalList(
         kIdxFieldIvf, "ivf",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -135,6 +114,34 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
             _impl->ann_by_id.emplace(id, idx);
           });
         });
+      footer.ReadOptionalObject(
+        kIdxFieldTermDict, "term_dict", [&](duckdb::BinaryDeserializer& dict) {
+          _impl->term_dict_bytes.offset =
+            dict.ReadProperty<uint64_t>(0, "offset");
+          _impl->term_dict_bytes.size = dict.ReadProperty<uint64_t>(1, "size");
+          dict.ReadList(
+            2, "fields",
+            [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+              list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+                TermDictMeta meta;
+                const auto id = obj.ReadProperty<uint64_t>(0, "id");
+                meta.features = static_cast<IndexFeatures>(
+                  obj.ReadProperty<uint32_t>(1, "features"));
+                meta.term_count = obj.ReadProperty<uint64_t>(2, "term_count");
+                meta.doc_count = obj.ReadProperty<uint64_t>(3, "doc_count");
+                meta.total_doc_freq =
+                  obj.ReadProperty<uint64_t>(4, "total_doc_freq");
+                meta.total_term_freq =
+                  obj.ReadProperty<uint64_t>(5, "total_term_freq");
+                meta.has_score_bounds =
+                  obj.ReadProperty<bool>(6, "has_score_bounds");
+                meta.meta_offset = obj.ReadProperty<uint64_t>(7, "meta_offset");
+                meta.norm = obj.ReadPropertyWithExplicitDefault<uint64_t>(
+                  8, "norm", field_limits::invalid());
+                _impl->term_dicts.emplace_back(id, std::move(meta));
+              });
+            });
+        });
     });
 }
 
@@ -154,6 +161,10 @@ const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
 std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()
   const noexcept {
   return _impl->term_dicts;
+}
+
+TermDictRegion IdxReader::TermDictBytes() const noexcept {
+  return _impl->term_dict_bytes;
 }
 
 std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {

@@ -147,11 +147,11 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | bytea                                             | Yes           | |
 | character [ (n) ]                                 | Yes           | CHAR(n) not supported; use TEXT |
 | character varying [ (n) ]                         | Yes           | VARCHAR works, VARCHAR(n) does not |
-| cidr                                              | No            |                          |
+| cidr                                              | Partial       | See [Inet](../sql/data_types/inet.md#cidr) for the differences |
 | circle                                            | No            |                          |
 | date                                              | Yes           |     |
 | double precision                                  | Yes           |    |
-| inet                                              | No            |                          |
+| inet                                              | Partial       | See [Inet](../sql/data_types/inet.md) for the supported operators and functions |
 | integer                                           | Yes           |    |
 | interval [ fields ] [ (p) ]                       | Yes           |   |
 | json                                              | Yes           |       |
@@ -509,26 +509,26 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 #### Network
 | Feature            | Support State | Details |
 |--------------------|---------------|---------|
-| \<\<               | No            |         |
-| \<\<=              | No            |         |
-| >>                 | No            |         |
-| \>\>=              | No            |         |
-| &&                 | No            |         |
-| ~                  | No            |         |
-| &                  | No            |         |
-| \|                 | No            |         |
-| +                  | No            |         |
-| -                  | No            |         |
+| \<\<               | Yes           |         |
+| \<\<=              | Yes           |         |
+| >>                 | Yes           |         |
+| \>\>=              | Yes           |         |
+| &&                 | Yes           |         |
+| ~                  | Yes           |         |
+| &                  | Yes           |         |
+| \|                 | Yes           |         |
+| +                  | Partial       | `inet + integer` works, `integer + inet` does not |
+| -                  | Partial       | `inet - integer` works, `inet - inet` does not |
 | abbrev             | No            |         |
-| broadcast          | No            |         |
-| family             | No            |         |
-| host               | No            |         |
+| broadcast          | Yes           |         |
+| family             | Yes           |         |
+| host               | Yes           |         |
 | hostmask           | No            |         |
 | inet_merge         | No            |         |
 | inet_same_family   | No            |         |
 | masklen            | No            |         |
-| netmask            | No            |         |
-| network            | No            |         |
+| netmask            | Yes           |         |
+| network            | Yes           |         |
 | set_masklen        | No            |         |
 | text               | No            |         |
 

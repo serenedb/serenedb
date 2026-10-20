@@ -244,7 +244,9 @@ Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not tur
 
 ## Search tables
 
-A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.
+A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. `ENABLE` / `DISABLE TRIGGER` is rejected in every form too, so the table's triggers stay enabled and never fire in a session whose `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md). Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.
+
+<SqlLogicTest id="sql/statements/alter_table/index/search_table_triggers" />
 
 ## Limitations
 

@@ -1,16 +1,9 @@
 # serenedb-specific inet behavior (PostgreSQL-shared cases live in
 # any/pg/simple/inet.test):
-#  - netmask() keeps the /masklen suffix; PostgreSQL omits it (returns
-#    255.255.255.0), so this can't go in any/.
 #  - html_escape/html_unescape come from the duckdb-inet extension and have no
 #    PostgreSQL equivalent.
-
-query
-SELECT netmask('192.168.1.5/24'::INET) AS mask;
-----
-mask
-255.255.255.0/24
-
+#  - casts between INET and STRUCT, JSON or VARIANT values, which PostgreSQL
+#    lacks, and json_build_object, whose output spacing differs.
 
 query
 SELECT html_escape('<a href="x">') AS esc;
@@ -24,3 +17,35 @@ SELECT html_unescape('&lt;a&gt;') AS unesc;
 ----
 unesc
 <a>
+
+
+statement ok
+CREATE TABLE inet_fields_t (id INT, s STRUCT(ip_type INTEGER, address BIGINT, mask INTEGER));
+
+
+statement ok
+INSERT INTO inet_fields_t VALUES (1, {'ip_type': 1, 'address': 5, 'mask': 32}), (2, {'ip_type': 9, 'address': 5, 'mask': 32}), (3, NULL), (4, {'ip_type': 1, 'address': 6, 'mask': 40});
+
+
+query
+SELECT id, s IS NULL AS s_null, TRY_CAST(s AS INET) AS ip, s FROM inet_fields_t ORDER BY id;
+----
+id	s_null	ip	s
+1	f	0.0.0.5	(1,5,32)
+2	f	NULL	(9,5,32)
+3	t	NULL	NULL
+4	f	NULL	(1,6,40)
+
+
+query
+SELECT 'ffff::1'::INET::STRUCT(ip_type UTINYINT, address HUGEINT, mask USMALLINT)::INET AS via_struct, to_json('2001:db8::1/64'::INET)::INET AS via_json, '"10.0.0.0/8"'::JSON::CIDR AS json_string, '10.0.0.1'::VARIANT::INET AS variant_string;
+----
+via_struct	via_json	json_string	variant_string
+ffff::1	2001:db8::1/64	10.0.0.0/8	10.0.0.1
+
+
+query
+SELECT json_build_object('ip', '10.0.0.1'::INET, 'net', '10.0.0.0/8'::CIDR) AS obj, '::1'::INET::JSON AS cast;
+----
+obj	cast
+{"ip":"10.0.0.1","net":"10.0.0.0/8"}	"::1"

@@ -91,11 +91,8 @@ class BooleanSparse : public Root {
           continue;
         }
       }
-      if constexpr (kExcludes) {
-        if (irs::detail::IsExcluded(_excludes, doc)) {
-          doc = _lead.Next();
-          continue;
-        }
+      if (irs::detail::SkipExcluded(_excludes, _lead, doc)) {
+        continue;
       }
       docs[batch] = doc;
       _lead.FetchScoreArgs(batch);

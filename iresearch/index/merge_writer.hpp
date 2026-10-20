@@ -48,11 +48,13 @@ struct TrackingDirectory;
 struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
 
-  DocumentMask::Iterator mask;
   doc_id_t base_id = doc_limits::invalid();
   ManagedVector<doc_id_t> id_map;
 
-  bool IsMasked(doc_id_t src) const noexcept { return mask.Contains(src); }
+  bool IsMasked(doc_id_t src) const noexcept {
+    SDB_ASSERT(id_map.empty() || src < id_map.size());
+    return !id_map.empty() && doc_limits::eof(id_map[src]);
+  }
 
   doc_id_t Remap(doc_id_t src) const noexcept {
     if (!id_map.empty()) {

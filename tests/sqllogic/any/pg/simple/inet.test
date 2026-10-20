@@ -47,6 +47,13 @@ bcast
 
 
 query
+SELECT netmask('192.168.1.5/24'::INET) AS mask4, netmask('192.168.1.5'::INET) AS host4, netmask('2001:db8::1/48'::INET) AS mask6, netmask('0.0.0.0/0'::INET) AS zero;
+----
+mask4	host4	mask6	zero
+255.255.255.0	255.255.255.255	ffff:ffff:ffff::	0.0.0.0
+
+
+query
 SELECT '192.168.1.5'::INET <<= '192.168.1.0/24'::INET AS contained;
 ----
 contained
@@ -92,6 +99,52 @@ id	ip
 1	10.0.0.1
 2	2001:db8::1/64
 3	192.168.1.0/24
+
+
+query
+SELECT '10.0.0.1'::INET::TEXT AS host4, '::1'::INET::TEXT AS host6, '10.0.0.1/24'::INET::TEXT AS net4, '10.0.0.1/32'::INET::TEXT AS full4, CAST('10.0.0.1'::INET AS VARCHAR) AS vc, '10.0.0.1'::INET || '' AS cat, 'ip ' || '::1'::INET AS cat6;
+----
+host4	host6	net4	full4	vc	cat	cat6
+10.0.0.1/32	::1/128	10.0.0.1/24	10.0.0.1/32	10.0.0.1/32	10.0.0.1/32	ip ::1/128
+
+
+query
+SELECT id, ip::TEXT AS t FROM inet_values ORDER BY id;
+----
+id	t
+1	10.0.0.1/32
+2	2001:db8::1/64
+3	192.168.1.0/24
+
+
+query
+SELECT id FROM inet_values WHERE ip::TEXT = '10.0.0.1/32';
+----
+id
+1
+
+
+query
+SELECT to_json('10.0.0.1'::INET) AS host, to_json('2001:db8::1/64'::INET) AS net6, to_json('10.0.0.0/8'::CIDR) AS cidr, to_json('10.0.0.1/32'::CIDR) AS cidr32, to_json(ARRAY['10.0.0.1'::INET, NULL]) AS arr, row_to_json(ROW('10.0.0.1'::INET)) AS rec;
+----
+host	net6	cidr	cidr32	arr	rec
+"10.0.0.1"	"2001:db8::1/64"	"10.0.0.0/8"	"10.0.0.1/32"	["10.0.0.1",null]	{"f1":"10.0.0.1"}
+
+
+query
+SELECT id, to_json(ip) AS j FROM inet_values ORDER BY id;
+----
+id	j
+1	"10.0.0.1"
+2	"2001:db8::1/64"
+3	"192.168.1.0/24"
+
+
+query
+SELECT '10.0.0.5/8'::INET IN ('10.0.0.0/8'::INET) AS a, '10.0.0.5/8'::INET IN ('10.0.0.0/8'::INET, '10.0.0.5/8') AS b, '10.0.0.5/8'::INET NOT IN ('10.0.0.5/8'::INET) AS c;
+----
+a	b	c
+f	t	f
 
 
 query
@@ -188,3 +241,16 @@ SELECT 'inet'::regtype AS rt;
 ----
 rt
 inet
+
+query
+SELECT pg_typeof('10.0.0.1'::INET)::oid AS inet_oid, pg_typeof(ARRAY['10.0.0.1'::INET])::oid AS inet_array_oid, 'inet'::regtype::oid AS by_name, 'inet[]'::regtype::oid AS array_by_name;
+----
+inet_oid	inet_array_oid	by_name	array_by_name
+869	1041	869	1041
+
+query
+SELECT oid, typname, typelem, typarray, typinput::oid AS typinput, typoutput::oid AS typoutput, typreceive::oid AS typreceive, typsend::oid AS typsend FROM pg_type WHERE typname IN ('inet', '_inet') ORDER BY oid;
+----
+oid	typname	typelem	typarray	typinput	typoutput	typreceive	typsend
+869	inet	0	1041	910	911	2496	2497
+1041	_inet	869	0	750	751	2400	2401

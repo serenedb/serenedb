@@ -23,6 +23,14 @@ DROP TABLE IF EXISTS jd_spread_at;
 
 
 statement ok
+DROP JOB IF EXISTS jd_month_after;
+
+
+statement ok
+DROP TABLE IF EXISTS jd_month_at;
+
+
+statement ok
 DROP JOB IF EXISTS jd_five;
 
 
@@ -354,6 +362,34 @@ DROP TABLE jd_spread_at;
 
 
 statement ok
+CREATE JOB jd_month_after AFTER 1 MONTH AS SELECT 1;
+
+
+statement ok
+CREATE TABLE jd_month_at AS SELECT next_run FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jd_month_after';
+
+
+statement ok
+ALTER JOB jd_month_after SET SCHEDULE AFTER 30 DAYS;
+
+
+query
+SELECT schedule, next_run <> (SELECT next_run FROM jd_month_at) AS replanned
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jd_month_after';
+----
+schedule	replanned
+AFTER INTERVAL '30 days'	t
+
+
+statement ok
+DROP TABLE jd_month_at;
+
+
+statement ok
+DROP JOB jd_month_after;
+
+
+statement ok
 DROP JOB jd_saturday;
 
 
@@ -670,6 +706,136 @@ statement error
 CREATE JOB jd_invalid AFTER 1 HOUR AS SELECT $1;
 ----
 db error: ERROR: <slt:ignore>CREATE JOB cannot have parameters<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing, jd_other;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS TRUNCATE jd_missing RESTART IDENTITY;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN c INT NOT NULL DEFAULT 0;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS ALTER TABLE jd_missing ADD COLUMN r DOUBLE DEFAULT random();
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS DROP ROLE jd_role_a, jd_role_b;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$
+
+
+statement ok
+CREATE JOB jd_show_tables AFTER 1 HOUR SUSPENDED AS PRAGMA show_tables;
+
+
+statement ok
+EXECUTE JOB jd_show_tables;
+
+
+query
+SELECT body, run_count, last_status FROM sdb_jobs() WHERE job_name = 'jd_show_tables';
+----
+body	run_count	last_status
+PRAGMA show_tables;	1	success
+
+
+statement ok
+DROP JOB jd_show_tables;
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS EXPLAIN ANALYZE TRUNCATE jd_missing CASCADE;
+----
+db error: ERROR: CREATE JOB body cannot be a statement that runs as several statements
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS EXPLAIN ANALYZE BEGIN TRANSACTION;
+----
+db error: ERROR: CREATE JOB body cannot be a transaction statement
+
+
+statement ok
+CREATE JOB jd_profiling AFTER 1 HOUR SUSPENDED AS PRAGMA disable_profiling;
+
+
+statement ok
+EXECUTE JOB jd_profiling;
+
+
+query
+SELECT body, run_count, last_status FROM sdb_jobs() WHERE job_name = 'jd_profiling';
+----
+body	run_count	last_status
+PRAGMA disable_profiling;	1	success
+
+
+statement ok
+DROP JOB jd_profiling;
+
+
+statement ok
+CREATE TABLE jd_pivot (c text, n int);
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS PIVOT jd_pivot ON c USING sum(n);
+----
+db error: ERROR: PIVOT statements with pivot elements extracted from the data cannot be used in jobs.
+In order to use PIVOT in a job the PIVOT values must be manually specified, e.g.:
+PIVOT ... ON c IN (val1, val2, ...)
+
+
+statement ok
+INSERT INTO jd_pivot VALUES ('a', 1), ('b', 2);
+
+
+statement ok
+CREATE JOB jd_pivot_quoted AFTER 1 HOUR SUSPENDED AS $$CREATE TABLE jd_pivoted AS PIVOT jd_pivot ON c USING sum(n);$$;
+
+
+statement ok
+EXECUTE JOB jd_pivot_quoted;
+
+
+query
+SELECT * FROM jd_pivoted;
+----
+a	b
+1	2
+
+
+statement ok
+DROP JOB jd_pivot_quoted;
+
+
+statement ok
+DROP TABLE jd_pivoted;
+
+
+statement ok
+DROP TABLE jd_pivot;
+
+
+query
+SELECT count(*) FROM sdb_jobs() WHERE job_name = 'jd_invalid';
+----
+count
+0
 
 
 statement ok

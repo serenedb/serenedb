@@ -23,6 +23,8 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
 
+#include <array>
+#include <cstdint>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -44,7 +46,9 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
+#include "connector/inet_terms.h"
 #include "connector/inverted_store_index.h"
+#include "connector/pg_logical_types.h"
 #include "connector/primary_key.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
@@ -207,6 +211,9 @@ class SearchSinkInsertBaseImpl {
   void WriteBoolColumn(const Field& field, const Field& null_field,
                        duckdb::idx_t count);
 
+  void WriteInetColumn(const Field& field, const Field& null_field,
+                       const duckdb::Vector& vec, duckdb::idx_t count);
+
   void WriteNullColumn(const Field& null_field, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId ChildKind>
@@ -291,7 +298,19 @@ class SearchSinkInsertBaseImpl {
     irs::ColumnWriter* _writer = nullptr;
   };
 
+  struct InetBatch {
+    std::array<duckdb::UnifiedVectorFormat, pg::kInetChildCount> fields;
+    irs::TokenBatch tokens;
+    std::array<irs::DocRun,
+               irs::TokenBatch::kCapacity / inet_terms::kV4MinTerms>
+      runs;
+    std::array<uint8_t, irs::TokenBatch::kCapacity / inet_terms::kV6MinTerms *
+                          inet_terms::kV6LongTermBytes>
+      bytes;
+  };
+
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
+  std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
   std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;

@@ -1,0 +1,92 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+CREATE TABLE hosts (pk INT PRIMARY KEY, ip INET, net CIDR);
+
+onlyif serenedb
+statement ok
+CREATE INDEX hosts_idx ON hosts USING inverted(pk, ip, net);
+
+onlyif serenedb
+statement ok
+INSERT INTO hosts VALUES
+  (1, '10.1.2.3', '10.1.2.0/24'),
+  (2, '10.1.2.3/24', '10.0.0.0/8'),
+  (3, '192.168.1.5', '192.168.0.0/16'),
+  (4, '2001:db8::1', '2001:db8::/32'),
+  (5, '2001:db8:1::5/64', '2001:db8:1::/48'),
+  (6, NULL, NULL);
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) hosts;
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT pk, ip, net FROM hosts_idx WHERE ip <<= '10.0.0.0/8' ORDER BY pk;
+----
+pk	ip	net
+1	10.1.2.3	10.1.2.0/24
+2	10.1.2.3/24	10.0.0.0/8
+
+onlyif serenedb
+connection after_crash
+query
+SELECT pk FROM hosts_idx WHERE net >>= '10.1.2.3' ORDER BY pk;
+----
+pk
+1
+2
+
+onlyif serenedb
+connection after_crash
+query
+SELECT pk FROM hosts_idx WHERE ip BETWEEN '192.168.0.0' AND '2001:db8::1' ORDER BY pk;
+----
+pk
+3
+4
+
+onlyif serenedb
+connection after_crash
+query
+SELECT pk FROM hosts_idx WHERE ip = '2001:db8:1::5/64' OR net << '2001:db8::/32' ORDER BY pk;
+----
+pk
+5
+
+onlyif serenedb
+connection after_crash
+statement ok
+INSERT INTO hosts VALUES (7, '10.200.0.1', '10.200.0.0/16');
+
+onlyif serenedb
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) hosts;
+
+onlyif serenedb
+connection after_crash
+query
+SELECT pk FROM hosts_idx WHERE ip <<= '10.0.0.0/8' AND net <<= '10.0.0.0/8' ORDER BY pk;
+----
+pk
+1
+2
+7
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP TABLE hosts;

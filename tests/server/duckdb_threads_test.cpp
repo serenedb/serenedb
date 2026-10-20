@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 
 #ifdef __linux__
@@ -63,6 +64,19 @@ void RecordThread(duckdb::DataChunk&, duckdb::ExpressionState&,
   --gRunning;
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::GetData<bool>(result)[0] = true;
+}
+
+std::atomic<size_t> gProbers{0};
+
+void NeverMatches(duckdb::DataChunk&, duckdb::ExpressionState&,
+                  duckdb::Vector& result) {
+  thread_local bool counted = false;
+  if (!counted) {
+    counted = true;
+    ++gProbers;
+  }
+  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::ConstantVector::GetData<bool>(result)[0] = false;
 }
 
 size_t PeakThreads(duckdb::Connection& con) {
@@ -369,6 +383,53 @@ TEST(DuckDBScheduler, LightTaskDoesNotWaitForHeavyTasks) {
   }
 }
 
+TEST(DuckDBScheduler, LightTaskDoesNotWaitForJoinWithoutOutput) {
+  auto db = SchedulerDB(4);
+  duckdb::Connection con{*db};
+  duckdb::ScalarFunction never{"never_matches",
+                               {duckdb::LogicalType::BIGINT},
+                               duckdb::LogicalType::BOOLEAN,
+                               NeverMatches};
+  never.SetVolatile();
+  duckdb::CreateScalarFunctionInfo info{never};
+  con.context->RegisterFunction(info);
+  Exec(con, "CREATE TABLE big AS SELECT i FROM range(1000000) t(i)");
+  gProbers = 0;
+  std::vector<duckdb::unique_ptr<duckdb::Connection>> heavy_cons;
+  std::vector<std::thread> heavy;
+  absl::Cleanup stop = [&] {
+    for (auto& heavy_con : heavy_cons) {
+      heavy_con->Interrupt();
+    }
+    for (auto& thread : heavy) {
+      thread.join();
+    }
+  };
+  for (int i = 0; i < 2; ++i) {
+    auto& heavy_con =
+      *heavy_cons.emplace_back(duckdb::make_uniq<duckdb::Connection>(*db));
+    heavy.emplace_back([&heavy_con] {
+      heavy_con.Query(
+        "SELECT count(*) FROM big a, (SELECT i FROM range(1000000) t(i)) b "
+        "WHERE never_matches(a.i + b.i)");
+    });
+  }
+  ASSERT_TRUE(WaitFor([] { return gProbers >= 4; }));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  for (int i = 0; i < 20; ++i) {
+    auto producer = scheduler.CreateProducer(
+      scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    const auto start = std::chrono::steady_clock::now();
+    scheduler.ScheduleTask(
+      *producer, duckdb::make_shared_ptr<FunctionTask>([ran] { *ran = true; }));
+    ASSERT_TRUE(WaitFor([&] { return ran->load(); }));
+    EXPECT_LT(std::chrono::steady_clock::now() - start,
+              std::chrono::milliseconds(100));
+  }
+}
+
 TEST(DuckDBScheduler, ArrivalTakenWithoutSelectDoesNotHideNextArrival) {
   duckdb::TaskSchedulerQueue queue;
   auto first = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
@@ -395,6 +456,27 @@ TEST(DuckDBScheduler, AccountGivenAWorkerIsNoLongerAnArrival) {
   EXPECT_FALSE(queue.HasArrivals());
   EXPECT_FALSE(queue.TakeArrival());
   queue.Detach(*account);
+}
+
+TEST(DuckDBScheduler, ListedAccountWithoutWorkerArrivesWithItsNextTask) {
+  auto db = SchedulerDB(1);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  duckdb::TaskSchedulerQueue queue;
+  auto account = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
+    queue, duckdb::SchedulerClass::FOREGROUND);
+  duckdb::ProducerToken producer{scheduler, account};
+  duckdb::shared_ptr<duckdb::Task> task =
+    duckdb::make_shared_ptr<FunctionTask>([] {});
+  queue.Attach(*account);
+  ASSERT_TRUE(queue.Enqueue(producer, &task, 1, false));
+  queue.Publish(*account);
+  EXPECT_FALSE(queue.HasArrivals());
+  ASSERT_TRUE(queue.Dequeue(*account, task));
+  queue.Detach(*account);
+  task = duckdb::make_shared_ptr<FunctionTask>([] {});
+  EXPECT_FALSE(queue.Enqueue(producer, &task, 1, false));
+  EXPECT_TRUE(queue.HasArrivals());
+  EXPECT_TRUE(queue.TakeArrival());
 }
 
 TEST(DuckDBScheduler, TwoHeavyQueriesShareWorkers) {

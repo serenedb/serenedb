@@ -130,8 +130,7 @@ bool SubtractsPair(std::span<const Term> terms, doc_id_t docs_count) noexcept {
   if (terms.size() != 2) {
     return false;
   }
-  return detail::SubtractsDisjunction(RarestOf(terms), DensestOf(terms),
-                                      docs_count);
+  return detail::ProbeBeatsFold(RarestOf(terms), DensestOf(terms), docs_count);
 }
 
 template<typename Term>

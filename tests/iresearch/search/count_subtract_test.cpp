@@ -39,43 +39,46 @@ using irs::doc_id_t;
 
 inline constexpr doc_id_t kWikiDocs = 5032104;
 
-TEST(subtract_disjunction_gate, rare_term_against_sparse_partner_subtracts) {
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(153, 14032, kWikiDocs));
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(4308, 474769, kWikiDocs));
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(4944, 482117, kWikiDocs));
+TEST(probe_fold_gate, rare_term_against_sparse_partner_probes) {
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(153, 14032, kWikiDocs));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(4181, 43333, kWikiDocs));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(4308, 474769, kWikiDocs));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(4944, 482117, kWikiDocs));
 }
 
-TEST(subtract_disjunction_gate, balanced_pair_folds) {
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(5954, 6133, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(10596, 11157, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(23938, 263792, kWikiDocs));
+TEST(probe_fold_gate, balanced_pair_folds) {
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(5449, 5522, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(5954, 6133, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(10596, 11157, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(23938, 263792, kWikiDocs));
 }
 
-TEST(subtract_disjunction_gate, near_the_boundary_folds) {
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(10705, 187602, kWikiDocs));
+TEST(probe_fold_gate, near_the_boundary) {
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(7502, 66880, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(25112, 387642, kWikiDocs));
 }
 
-TEST(subtract_disjunction_gate, dense_partner_costs_its_words) {
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(1000, 4168066, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(31486, 4168066, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(44108, 890767, kWikiDocs));
+TEST(probe_fold_gate, dense_partner_costs_its_words) {
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(1000, 4168066, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(31486, 4168066, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(44108, 890767, kWikiDocs));
 }
 
-TEST(subtract_disjunction_gate, skewed_pair_subtracts) {
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(1, 1000, 100000));
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(100, 300000, kWikiDocs));
+TEST(probe_fold_gate, skewed_pair_probes) {
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(1, 1000, 100000));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(100, 300000, kWikiDocs));
 }
 
-TEST(subtract_conjunction_gate, two_common_terms_subtract) {
-  ASSERT_TRUE(irs::detail::SubtractsConjunction(82685, 94693, kWikiDocs));
-  ASSERT_TRUE(irs::detail::SubtractsConjunction(104806, 215507, kWikiDocs));
-  ASSERT_TRUE(irs::detail::SubtractsConjunction(52686, 55391, kWikiDocs));
+TEST(probe_fold_gate, two_common_terms_fold) {
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(82685, 94693, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(104806, 215507, kWikiDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(52686, 55391, kWikiDocs));
 }
 
-TEST(subtract_conjunction_gate, rare_term_probes) {
-  ASSERT_FALSE(irs::detail::SubtractsConjunction(43, 82685, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsConjunction(304, 280493, kWikiDocs));
-  ASSERT_FALSE(irs::detail::SubtractsConjunction(162, 4168066, kWikiDocs));
+TEST(probe_fold_gate, rare_term_probes) {
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(43, 82685, kWikiDocs));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(304, 280493, kWikiDocs));
+  ASSERT_TRUE(irs::detail::ProbeBeatsFold(162, 4168066, kWikiDocs));
 }
 
 inline constexpr irs::field_id kBodyId = 1;
@@ -200,14 +203,16 @@ class CountSubtractTest : public tests::IndexTestBase {
 
 TEST_P(CountSubtractTest, disjunctions_count_on_both_sides_of_the_gate) {
   Build();
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(DocsWith("rarer"),
-                                                DocsWith("half"), kDocs));
-  ASSERT_TRUE(irs::detail::SubtractsDisjunction(DocsWith("rarer"),
-                                                DocsWith("eleven"), kDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(DocsWith("rare"),
-                                                 DocsWith("half"), kDocs));
-  ASSERT_FALSE(irs::detail::SubtractsDisjunction(DocsWith("seventeen"),
-                                                 DocsWith("thirteen"), kDocs));
+  ASSERT_TRUE(
+    irs::detail::ProbeBeatsFold(DocsWith("rarer"), DocsWith("half"), kDocs));
+  ASSERT_TRUE(
+    irs::detail::ProbeBeatsFold(DocsWith("rarer"), DocsWith("eleven"), kDocs));
+  ASSERT_TRUE(
+    irs::detail::ProbeBeatsFold(DocsWith("rare"), DocsWith("half"), kDocs));
+  ASSERT_FALSE(
+    irs::detail::ProbeBeatsFold(DocsWith("eleven"), DocsWith("half"), kDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(DocsWith("seventeen"),
+                                           DocsWith("thirteen"), kDocs));
   CheckUnion("rarer", "half");
   CheckUnion("rarer", "eleven");
   CheckUnion("rare", "half");
@@ -218,14 +223,14 @@ TEST_P(CountSubtractTest, disjunctions_count_on_both_sides_of_the_gate) {
 
 TEST_P(CountSubtractTest, conjunctions_count_on_both_sides_of_the_gate) {
   Build();
-  ASSERT_TRUE(irs::detail::SubtractsConjunction(DocsWith("eleven"),
-                                                DocsWith("half"), kDocs));
-  ASSERT_TRUE(irs::detail::SubtractsConjunction(DocsWith("seventeen"),
-                                                DocsWith("thirteen"), kDocs));
-  ASSERT_FALSE(irs::detail::SubtractsConjunction(DocsWith("rare"),
-                                                 DocsWith("half"), kDocs));
-  ASSERT_FALSE(irs::detail::SubtractsConjunction(DocsWith("rarer"),
-                                                 DocsWith("eleven"), kDocs));
+  ASSERT_FALSE(
+    irs::detail::ProbeBeatsFold(DocsWith("eleven"), DocsWith("half"), kDocs));
+  ASSERT_FALSE(irs::detail::ProbeBeatsFold(DocsWith("seventeen"),
+                                           DocsWith("thirteen"), kDocs));
+  ASSERT_TRUE(
+    irs::detail::ProbeBeatsFold(DocsWith("rare"), DocsWith("half"), kDocs));
+  ASSERT_TRUE(
+    irs::detail::ProbeBeatsFold(DocsWith("rarer"), DocsWith("eleven"), kDocs));
   CheckIntersection("eleven", "half");
   CheckIntersection("thirteen", "seventeen");
   CheckIntersection("rare", "half");

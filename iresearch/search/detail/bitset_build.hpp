@@ -64,20 +64,12 @@ inline uint64_t FoldRead(uint64_t docs, doc_id_t docs_count,
   return DensePosting(docs, docs_count) ? words : docs;
 }
 
-inline constexpr uint64_t kSubtractProbePostings = 32;
-inline constexpr uint64_t kConjunctionProbePostings = 16;
+inline constexpr uint64_t kProbePostings = 20;
 
-inline bool SubtractsDisjunction(doc_id_t rarest, doc_id_t densest,
-                                 doc_id_t docs_count) noexcept {
+inline bool ProbeBeatsFold(doc_id_t rarest, doc_id_t densest,
+                           doc_id_t docs_count) noexcept {
   const auto words = SegmentWords(docs_count);
-  return uint64_t{rarest} * kSubtractProbePostings <=
-         words + FoldRead(densest, docs_count, words);
-}
-
-inline bool SubtractsConjunction(doc_id_t rarest, doc_id_t densest,
-                                 doc_id_t docs_count) noexcept {
-  const auto words = SegmentWords(docs_count);
-  return uint64_t{rarest} * kConjunctionProbePostings >
+  return uint64_t{rarest} * kProbePostings <=
          words + FoldRead(rarest, docs_count, words) +
            FoldRead(densest, docs_count, words);
 }

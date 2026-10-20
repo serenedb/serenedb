@@ -543,6 +543,8 @@ QUERY PLAN
 │ Index: cos_index                      │
 │ Lookup: table                         │
 │ Score: cosine_distance(emb, FLOAT[3]) │
+│ Exact:                                │
+│ brute force over the stored vectors   │
 │ Projections: id                       │
 │ Column Filter:                        │
 │ sdb_inverted_index_score > 0.5        │
@@ -662,6 +664,8 @@ QUERY PLAN
 │ Index: ip_index                     │
 │ Lookup: table                       │
 │ Score: inner_product(emb, FLOAT[3]) │
+│ Exact:                              │
+│ brute force over the stored vectors │
 │ Projections: id                     │
 │ Column Filter:                      │
 │ sdb_inverted_index_score > 50       │
@@ -692,7 +696,7 @@ CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 statement error
 CREATE INDEX bad_opt ON t_err USING inverted(emb ivf (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: sq8|sq4|pq|rabitq|tq|none, default sq8 for l2|ip|cosine and none for l1; sq8|sq4|pq|tq need l2|ip|cosine, rabitq needs l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), nb_bits (alias rabitq_bits; int 1-9 for quant='rabitq' with default 1; int 1-5 for quant='tq' with default 3), compression (bool, default true; false stores the index vectors uncompressed (increases the search performance and the disk consumption))
+db error: ERROR: Column 'emb': unknown ivf option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: sq8|sq4|usq8|usq4|fp16|bf16|pq|rabitq|tq|bq|osq|none, default sq8 for l2|ip|cosine and none for l1; sq8|sq4|usq8|usq4|fp16|bf16|pq|tq|bq|osq need l2|ip|cosine, rabitq needs l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), nb_bits (alias rabitq_bits; int 1-9 for quant='rabitq' with default 1; int 1-5 or 1.5 for quant='tq' with default 3; 1, 1.5 or 2 for quant='bq' with default 1; 1, 2, 4, 7 or 8 for quant='osq' with default 1), query_bits (int 1|4|8 for quant='bq' with default 1; 4|8 for quant='osq' with nb_bits up to 4, default 4, otherwise equal to nb_bits), compression (bool, default true; false stores the index vectors uncompressed (increases the search performance and the disk consumption))
 
 
 statement error
@@ -704,13 +708,13 @@ db error: ERROR: Column 'emb': unknown ivf metric 'manhattan'. Expected one of: 
 statement error
 CREATE INDEX bad_train_zero ON t_err USING inverted(emb ivf (metric = 'l2', train_sample = 0));
 ----
-db error: ERROR: Column 'emb': unknown ivf option 'train_sample'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: sq8|sq4|pq|rabitq|tq|none, default sq8 for l2|ip|cosine and none for l1; sq8|sq4|pq|tq need l2|ip|cosine, rabitq needs l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), nb_bits (alias rabitq_bits; int 1-9 for quant='rabitq' with default 1; int 1-5 for quant='tq' with default 3), compression (bool, default true; false stores the index vectors uncompressed (increases the search performance and the disk consumption))
+db error: ERROR: Column 'emb': unknown ivf option 'train_sample'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), quant (string: sq8|sq4|usq8|usq4|fp16|bf16|pq|rabitq|tq|bq|osq|none, default sq8 for l2|ip|cosine and none for l1; sq8|sq4|usq8|usq4|fp16|bf16|pq|tq|bq|osq need l2|ip|cosine, rabitq needs l2|ip), pq_m (int >= 1, divides dimension, quant='pq' only, default auto ~d/2), nb_bits (alias rabitq_bits; int 1-9 for quant='rabitq' with default 1; int 1-5 or 1.5 for quant='tq' with default 3; 1, 1.5 or 2 for quant='bq' with default 1; 1, 2, 4, 7 or 8 for quant='osq' with default 1), query_bits (int 1|4|8 for quant='bq' with default 1; 4|8 for quant='osq' with nb_bits up to 4, default 4, otherwise equal to nb_bits), compression (bool, default true; false stores the index vectors uncompressed (increases the search performance and the disk consumption))
 
 
 statement error
 CREATE INDEX bad_quant ON t_err USING inverted(emb ivf (metric = 'l2', quant = 'foo'));
 ----
-db error: ERROR: Column 'emb': unknown ivf quant 'foo'. Expected one of: sq8 sq4 pq rabitq tq none
+db error: ERROR: Column 'emb': unknown ivf quant 'foo'. Expected one of: sq8 sq4 usq8 usq4 fp16 bf16 pq rabitq tq bq osq none
 
 
 statement error
@@ -722,13 +726,13 @@ db error: ERROR: Column 'emb': unknown ivf metric '7'. Expected one of: l2 l1 co
 statement error
 CREATE INDEX bad_scalar ON t_err USING inverted(id ivf (metric = 'l2'));
 ----
-db error: ERROR: Column 'id' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER
+db error: ERROR: Column 'id' must be FLOAT[N] to use the 'ivf' opclass, not INTEGER
 
 
 statement error
 CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int ivf (metric = 'l2'));
 ----
-db error: ERROR: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
+db error: ERROR: Column 'emb_int' must be FLOAT[N] to use the 'ivf' opclass, not INTEGER[3]
 
 
 statement error
@@ -793,6 +797,8 @@ QUERY PLAN
 │ Index: l2_index                                         │
 │ Lookup: table                                           │
 │ Score: l2_distance(emb, FLOAT[3])                       │
+│ Exact:                                                  │
+│ brute force over the stored vectors                     │
 │ Projections: id, sdb_inverted_index_score               │
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
@@ -1257,6 +1263,10 @@ statement ok
 SET sdb_ivf_search_nprobe = 256;
 
 
+statement ok
+SET sdb_ann_oversample = 4;
+
+
 query
 SELECT id FROM big_idx ORDER BY emb <-> [500.5, 500, 500]::FLOAT[3] LIMIT 3;
 ----
@@ -1264,6 +1274,10 @@ id
 500
 501
 499
+
+
+statement ok
+RESET sdb_ann_oversample;
 
 
 statement ok

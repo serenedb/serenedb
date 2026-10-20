@@ -146,7 +146,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                duckdb::Vector& row_ids);
 
   irs::IndexWriter::Transaction NewTransaction();
-  duckdb::idx_t Evaluate(duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+  duckdb::idx_t Evaluate(duckdb::ClientContext& context,
+                         duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
                          duckdb::DataChunk& results, duckdb::Vector& rows,
                          duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
@@ -179,6 +180,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
+  std::vector<FeedColumn> _columns;
+  std::vector<ExpressionSlot> _expressions;
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;

@@ -1,0 +1,47 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE jcd_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE jcd_dst_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE jcd_src_${__DATABASE__}.public.jcd_t (n INT);
+
+
+statement ok
+INSERT INTO jcd_src_${__DATABASE__}.public.jcd_t VALUES (1), (2);
+
+
+statement ok
+CREATE JOB jcd_src_${__DATABASE__}.public.jcd_job AFTER 1 HOUR SUSPENDED AS SELECT 1;
+
+
+statement ok
+COPY FROM DATABASE jcd_src_${__DATABASE__} TO jcd_dst_${__DATABASE__};
+
+
+query
+SELECT count(*) AS n FROM jcd_dst_${__DATABASE__}.public.jcd_t;
+----
+n
+2
+
+
+query
+SELECT database_name = 'jcd_src_${__DATABASE__}' AS source, count(*) AS jobs FROM sdb_jobs() WHERE database_name IN ('jcd_src_${__DATABASE__}', 'jcd_dst_${__DATABASE__}') GROUP BY 1 ORDER BY 1;
+----
+source	jobs
+t	1
+
+
+statement ok
+DROP DATABASE jcd_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE jcd_src_${__DATABASE__};

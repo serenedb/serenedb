@@ -8,6 +8,8 @@ split: page
 
 Use SereneDB applications, or connect with any PostgreSQL-compatible client or driver through the PostgreSQL wire protocol. Framework integrations build higher-level features — such as a LangChain vector store — on the same protocol.
 
+PostgreSQL connections require a user name. If the startup packet omits the database name or sends an empty one, SereneDB connects to the database named after that user. An explicit database name takes precedence.
+
 ## Apps
 
 | App | Purpose | Guide |

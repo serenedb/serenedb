@@ -66,6 +66,8 @@ host all all 10.0.0.0/8   trust
 host all all 0.0.0.0/0    scram-sha-256';
 ```
 
+`SHOW hba` returns the ruleset as it was set, also after a restart; `pg_hba_file_rules` lists the rules in effect, the safety rules included. `RESET hba`, or a value with no rules, restores [the default ruleset](#the-default-posture).
+
 Rules are matched first-to-last against the connection's type (`local` or `host`), database, role, and client address; the first match decides the method. For example, the ruleset above trusts every client from the private `10.0.0.0/8` network and requires a password from everywhere else.
 
 | Method | Effect |

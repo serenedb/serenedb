@@ -1,6 +1,10 @@
+x-owner: &owner
+  serenedb.owner: ${SDB_DOCKER_OWNER:-none}
+
 services:
   s3:
     image: chrislusf/seaweedfs:4.47
+    labels: *owner
     hostname: duckdb-minio.com
     ports:
       - "${S3_HOST_IP}:9000:9000"
@@ -9,3 +13,7 @@ services:
     command: >
       server -dir=/data -ip=duckdb-minio.com -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
       -s3 -s3.port=9000 -s3.domainName=duckdb-minio.com -s3.config=/etc/seaweedfs/s3_config.json
+
+networks:
+  default:
+    labels: *owner

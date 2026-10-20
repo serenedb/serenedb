@@ -21,13 +21,18 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 
@@ -36,33 +41,40 @@ namespace irs {
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,
-            std::shared_ptr<const QuantizerCodebook> codebook,
-            std::vector<float> query, VectorMetric metric, uint32_t d,
-            uint32_t record_size, uint32_t ef, score_t threshold,
-            size_t max_results, bool inclusive, score_t boost)
-    : QueryBuilderImpl{segment},
-      _data{std::move(data)},
-      _codebook{std::move(codebook)},
-      _query{query.size(),
-             [&](float& slot, size_t i) noexcept { slot = query[i]; }},
-      _metric{metric},
-      _d{d},
-      _record_size{record_size},
-      _ef{ef},
-      _threshold{threshold},
-      _max_results{max_results},
-      _boost{boost},
-      _inclusive{inclusive} {}
+            const VectorFilterOptions& opts, uint32_t record_size,
+            HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
+            AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch() const;
+  std::vector<ScoreDoc> RunSearch(detail::TableFilter* table = nullptr) const;
+
+  const QueryBuilder* Inner() const noexcept { return _inner.get(); }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
 
  private:
+  template<typename Dist>
+  void RunRadius(Dist& dist, detail::TableFilter* table,
+                 HnswSearchScratch& scratch) const;
+
+  template<typename Dist>
+  void RunFiltered(Dist& dist, detail::TableFilter* table,
+                   HnswSearchScratch& scratch) const;
+
+  void PrepareDistance() const;
+
+  bool ScansByColumn() const;
+
+  void ScanColumn(HnswSearchScratch& scratch) const;
+
   std::shared_ptr<const HnswData> _data;
-  std::shared_ptr<const QuantizerCodebook> _codebook;
+  mutable std::shared_ptr<const QuantizerCodebook> _codebook;
+  mutable std::shared_ptr<const PanoramaQuery> _panorama;
+  mutable absl::once_flag _distance_prepared;
+  AnnQueryCache* _cache;
+  QueryBuilder::ptr _inner;
+  const ColumnReader* _exact;
   containers::Fixed<float> _query;
   VectorMetric _metric;
   uint32_t _d;
@@ -71,10 +83,9 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   score_t _threshold;
   size_t _max_results;
   score_t _boost;
+  HnswFilterMode _filter_mode;
+  HnswColumnFilter _column_filter;
   bool _inclusive;
 };
-
-[[noreturn]] void HnswRefuseFiltered();
-void HnswRefuseFilter(const detail::TableFilter* table);
 
 }  // namespace irs

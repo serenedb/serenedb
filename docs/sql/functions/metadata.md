@@ -58,8 +58,8 @@ The following metadata functions are available:
 | [`sdb_extensions()`](#sdb_extensions) | Capability modules compiled into the instance |
 | [`sdb_functions()`](#sdb_functions) | Functions and macros |
 | [`sdb_indexes()`](#sdb_indexes) | Secondary indexes |
-| [`sdb_job_runs()`](../statements/create_job/index.md#monitoring) | Most recent runs of scheduled jobs |
-| [`sdb_jobs()`](../statements/create_job/index.md#monitoring) | Scheduled jobs and their run state |
+| [`sdb_job_runs()`](#sdb_job_runs) | Most recent runs of scheduled jobs |
+| [`sdb_jobs()`](#sdb_jobs) | Scheduled jobs and their run state |
 | [`sdb_keywords()`](#sdb_keywords) | Keywords and reserved words |
 | [`sdb_log_contexts()`](#sdb_log_contexts) | Contexts of log entries |
 | [`sdb_logs()`](#sdb_logs) | Log entries |
@@ -258,6 +258,54 @@ The `sdb_indexes()` function provides metadata about secondary indexes available
 | `sql`           | The definition of the index, expressed as a `CREATE INDEX` SQL statement.                    | `VARCHAR`               |
 
 Note that `sdb_indexes` only provides metadata about secondary indexes, i.e., those indexes created by explicit [`CREATE INDEX`](../../sql/indexes/index.md#create-index) statements. Primary keys, foreign keys, and `UNIQUE` constraints are maintained using indexes, but their details are included in the `sdb_constraints()` function.
+
+## `sdb_job_runs`
+
+The `sdb_job_runs()` function returns the most recent runs of [jobs](../statements/create_job/index.md#monitoring), in the order they finished: up to [`sdb_job_history_size`](../../configuration/overview.md#logging-metrics-and-profiling) runs for all jobs together, 1024 by default. The runs are kept in memory, so a restart empties the list.
+
+<SqlLogicTest id="sql/functions/metadata/example_030" />
+
+| Column          | Description                                                                                         | Type          |
+| :-------------- | :-------------------------------------------------------------------------------------------------- | :------------ |
+| `database_name` | The name of the database that contains the job.                                                     | `VARCHAR`     |
+| `schema_name`   | The SQL name of the schema that contains the job.                                                   | `VARCHAR`     |
+| `job_name`      | The SQL name of the job.                                                                            | `VARCHAR`     |
+| `trigger`       | `schedule` for a scheduled run, `manual` for `EXECUTE JOB`, also when another job's body runs it.   | `VARCHAR`     |
+| `start_time`    | When the run started.                                                                               | `TIMESTAMPTZ` |
+| `finish_time`   | When the run finished.                                                                              | `TIMESTAMPTZ` |
+| `success`       | `true` if the run succeeded.                                                                        | `BOOLEAN`     |
+| `error`         | The error of a failed run, `NULL` for a successful one.                                             | `VARCHAR`     |
+
+## `sdb_jobs`
+
+The `sdb_jobs()` function provides metadata about the [jobs](../statements/create_job/index.md) and their run state. The run state is kept in memory: a restart resets `running`, the `last_*` columns, `run_count` and `failure_count`.
+
+<SqlLogicTest id="sql/functions/metadata/example_031" />
+
+| Column               | Description                                                                                                                          | Type          |
+| :------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :------------ |
+| `database_name`      | The name of the database that contains the job.                                                                                      | `VARCHAR`     |
+| `database_oid`       | Internal identifier of the database that contains the job.                                                                           | `BIGINT`      |
+| `schema_name`        | The SQL name of the schema that contains the job.                                                                                    | `VARCHAR`     |
+| `job_name`           | The SQL name of the job.                                                                                                             | `VARCHAR`     |
+| `job_oid`            | Internal identifier of the job.                                                                                                      | `BIGINT`      |
+| `schedule`           | The schedule as `CREATE JOB` takes it, such as `EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:15:00'` or `AFTER INTERVAL '00:00:30'`. | `VARCHAR`     |
+| `schedule_kind`      | `EVERY` or `AFTER`.                                                                                                                  | `VARCHAR`     |
+| `schedule_interval`  | The interval of the schedule.                                                                                                        | `INTERVAL`    |
+| `schedule_offset`    | The `OFFSET` of the schedule, `00:00:00` without one.                                                                                | `INTERVAL`    |
+| `schedule_randomize` | The `RANDOMIZE FOR` spread of the schedule, `00:00:00` without one.                                                                  | `INTERVAL`    |
+| `suspended`          | `true` if the job is suspended.                                                                                                      | `BOOLEAN`     |
+| `running`            | `true` while a run of the job is in progress.                                                                                        | `BOOLEAN`     |
+| `next_run`           | When the next scheduled run starts, `NULL` when none is scheduled, as for a suspended job.                                           | `TIMESTAMPTZ` |
+| `last_start`         | When the last run started, `NULL` before the first run.                                                                              | `TIMESTAMPTZ` |
+| `last_finish`        | When the last run finished, `NULL` before the first run.                                                                             | `TIMESTAMPTZ` |
+| `last_status`        | `success` or `failed` for the last run, `NULL` before the first run.                                                                 | `VARCHAR`     |
+| `last_error`         | The error of the last run when it failed, otherwise `NULL`.                                                                          | `VARCHAR`     |
+| `run_count`          | The number of runs, scheduled and manual, since the job was created or replaced or the server started.                               | `BIGINT`      |
+| `failure_count`      | The number of those runs that failed.                                                                                                | `BIGINT`      |
+| `comment`            | Always `NULL`.                                                                                                                       | `VARCHAR`     |
+| `body`               | The statement the job runs, as normalized SQL text.                                                                                  | `VARCHAR`     |
+| `sql`                | The definition of the job, expressed as a `CREATE JOB` SQL statement.                                                                | `VARCHAR`     |
 
 ## `sdb_keywords`
 

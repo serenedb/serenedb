@@ -40,6 +40,7 @@ set(iresearch-tests_sources
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
+    ./analysis/scan_sink_tests.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/tokenizer_fuzz_corpus.cpp
     ./analysis/tokenizer_fuzz_mutator.cpp
@@ -99,6 +100,9 @@ set(iresearch-tests_sources
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
     ./search/bitset_docs_test.cpp
+    ./search/document_mask_test.cpp
+    ./search/docs_mask_plan_test.cpp
+    ./search/col_filter_leaf_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
     ./search/score_prune_test.cpp
@@ -128,6 +132,7 @@ set(iresearch-tests_sources
     ./search/phrase_slop_matcher_fuzz.cpp
     ./search/phrase_positions_test.cpp
     ./search/shingle_phrase_test.cpp
+    ./search/token_phrase_test.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp
@@ -141,6 +146,7 @@ set(iresearch-tests_sources
     ./search/score_prune_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
+    ./utils/json_leaf_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/container_utils_tests.cpp
     ./utils/crc_test.cpp
@@ -166,6 +172,7 @@ set(iresearch-tests_sources
     ./utils/string_tests.cpp
     ./utils/bitset_tests.cpp
     ./utils/math_utils_test.cpp
+    ./utils/lower_bound_test.cpp
     ./utils/misc_test.cpp
     ./utils/std_test.cpp
     ./utils/thread_pool_test.cpp

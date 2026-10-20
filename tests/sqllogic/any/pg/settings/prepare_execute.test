@@ -1,0 +1,423 @@
+statement ok
+PREPARE typed_inc(int) AS SELECT $1 + 1 AS r;
+
+
+query
+EXECUTE typed_inc(41);
+----
+r
+42
+
+
+query
+EXECUTE typed_inc('41');
+----
+r
+42
+
+
+query
+EXECUTE typed_inc(41.6);
+----
+r
+43
+
+
+query
+EXECUTE typed_inc(40 + 1);
+----
+r
+42
+
+
+statement error (?i).*(invalid input syntax|could not convert).*abc.*
+EXECUTE typed_inc('abc');
+
+
+statement ok
+PREPARE typed_two(int, int) AS SELECT $1 AS r;
+
+
+statement error (?i).*wrong number of parameters for prepared statement "typed_two".*
+EXECUTE typed_two(1);
+
+
+statement error (?i).*wrong number of parameters for prepared statement "typed_two".*
+EXECUTE typed_two(1, 2, 3);
+
+
+query
+EXECUTE typed_two(1, 2);
+----
+r
+1
+
+
+statement ok
+PREPARE typed_partial(int) AS SELECT $1 AS a, $2::text AS b;
+
+
+query
+EXECUTE typed_partial(1, 'x');
+----
+a	b
+1	x
+
+
+statement ok
+PREPARE typed_bigint(bigint) AS SELECT pg_typeof($1)::text AS t;
+
+
+query
+EXECUTE typed_bigint(1);
+----
+t
+bigint
+
+
+statement ok
+PREPARE typed_array(int[]) AS SELECT array_length($1, 1) AS n;
+
+
+query
+EXECUTE typed_array('{1,2,3}');
+----
+n
+3
+
+
+query
+EXECUTE typed_array(ARRAY[1, 2]);
+----
+n
+2
+
+
+statement ok
+PREPARE typed_text(text) AS SELECT $1 || '!' AS r;
+
+
+query
+EXECUTE typed_text(42);
+----
+r
+42!
+
+
+statement ok
+PREPARE typed_date(date) AS SELECT $1 + 1 AS r;
+
+
+query
+EXECUTE typed_date('2026-10-19');
+----
+r
+2026-10-20
+
+
+statement error (?i).*nosuchtype.*
+PREPARE typed_bad(nosuchtype) AS SELECT 1;
+
+
+statement error (?i).*prepared statement "typed_bad" does not exist.*
+EXECUTE typed_bad;
+
+
+statement ok
+PREPARE untyped_cast AS SELECT $1::int * 2 AS r;
+
+
+query
+EXECUTE untyped_cast(21);
+----
+r
+42
+
+
+statement ok
+PREPARE untyped_text AS SELECT $1 AS r;
+
+
+query
+EXECUTE untyped_text('x');
+----
+r
+x
+
+
+statement ok
+CREATE TABLE prep_t (a int, b text);
+
+
+statement ok
+PREPARE prep_ins(int, text) AS INSERT INTO prep_t VALUES ($1, $2);
+
+
+statement ok
+EXECUTE prep_ins(1, 'x');
+
+
+statement ok
+EXECUTE prep_ins('2', 'y');
+
+
+statement ok
+PREPARE prep_upd(int) AS UPDATE prep_t SET b = b || '!' WHERE a = $1;
+
+
+statement ok
+EXECUTE prep_upd(1);
+
+
+statement ok
+PREPARE prep_del(int) AS DELETE FROM prep_t WHERE a = $1 RETURNING a, b;
+
+
+query
+EXECUTE prep_del(2);
+----
+a	b
+2	y
+
+
+query
+SELECT a, b FROM prep_t ORDER BY a;
+----
+a	b
+1	x!
+
+
+statement ok
+PREPARE dup_name AS SELECT 1;
+
+
+statement error (?i).*prepared statement "dup_name" already exists.*
+PREPARE dup_name AS SELECT 2;
+
+
+query
+EXECUTE dup_name;
+----
+?column?
+1
+
+
+statement error (?i).*prepared statement "no_such_stmt" does not exist.*
+EXECUTE no_such_stmt;
+
+
+statement error (?i).*prepared statement "no_such_stmt" does not exist.*
+DEALLOCATE no_such_stmt;
+
+
+statement error (?i).*(syntax error|not a preparable statement).*
+PREPARE prep_ddl AS CREATE TABLE prep_never (a int);
+
+
+statement error (?i).*(syntax error|not a preparable statement).*
+PREPARE prep_nested AS EXECUTE dup_name;
+
+
+statement ok
+PREPARE prep_values AS VALUES (7);
+
+
+query
+EXECUTE prep_values;
+----
+column1
+7
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+PREPARE tx_kept AS SELECT 'kept' AS r;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+EXECUTE tx_kept;
+----
+r
+kept
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DEALLOCATE tx_kept;
+
+
+statement ok
+ROLLBACK;
+
+
+statement error (?i).*prepared statement "tx_kept" does not exist.*
+EXECUTE tx_kept;
+
+
+statement ok
+BEGIN;
+
+
+statement error (?i).*prep_missing_table.*
+SELECT * FROM prep_missing_table;
+
+
+statement error (?i).*current transaction is aborted.*
+EXECUTE dup_name;
+
+
+statement error (?i).*current transaction is aborted.*
+PREPARE in_aborted AS SELECT 1;
+
+
+statement error (?i).*current transaction is aborted.*
+DEALLOCATE dup_name;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+EXECUTE dup_name;
+----
+?column?
+1
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+PREPARE list_sel(int) AS SELECT $1 + 1 AS r;
+
+
+statement ok
+PREPARE list_ins(int, text) AS INSERT INTO prep_t VALUES ($1, $2);
+
+
+statement ok
+PREPARE list_none AS SELECT 'none' AS r;
+
+
+query
+SELECT name, array_to_string(parameter_types, ',') AS parameter_types, array_to_string(result_types, ',') AS result_types, from_sql, prepare_time IS NOT NULL AS timed FROM pg_prepared_statements WHERE from_sql ORDER BY name;
+----
+name	parameter_types	result_types	from_sql	timed
+list_ins	integer,text	NULL	t	t
+list_none	(empty)	text	t	t
+list_sel	integer	integer	t	t
+
+
+query
+SELECT name, statement LIKE 'PREPARE list_sel(int) AS SELECT $1 + 1 AS r%' AS same_text FROM pg_prepared_statements WHERE name = 'list_sel';
+----
+name	same_text
+list_sel	t
+
+
+statement ok
+DEALLOCATE list_sel;
+
+
+query
+SELECT name FROM pg_prepared_statements WHERE from_sql ORDER BY name;
+----
+name
+list_ins
+list_none
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+query
+SELECT count(*) AS n FROM pg_prepared_statements WHERE from_sql;
+----
+n
+0
+
+
+statement ok
+PREPARE "CaseName" AS SELECT 1 AS r;
+
+
+statement error (?i).*prepared statement "casename" does not exist.*
+EXECUTE casename;
+
+
+query
+EXECUTE "CaseName";
+----
+r
+1
+
+
+statement ok
+PREPARE casename AS SELECT 2 AS r;
+
+
+query
+EXECUTE CASENAME;
+----
+r
+2
+
+
+statement ok
+DEALLOCATE "CaseName";
+
+
+statement ok
+DEALLOCATE casename;
+
+
+statement ok
+PREPARE declared_unused(int, text) AS SELECT $1 AS r;
+
+
+query
+SELECT array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name = 'declared_unused';
+----
+parameter_types
+integer,text
+
+
+statement ok
+DEALLOCATE declared_unused;
+
+
+statement ok
+CREATE TABLE prep_shape(a int);
+
+
+statement ok
+PREPARE prep_shape_star AS SELECT * FROM prep_shape;
+
+
+statement ok
+ALTER TABLE prep_shape ADD COLUMN b text;
+
+
+statement error (?i).*cached plan must not change result type.*
+EXECUTE prep_shape_star;
+
+
+statement ok
+DEALLOCATE prep_shape_star;
+
+
+statement ok
+DROP TABLE prep_shape;

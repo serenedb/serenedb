@@ -304,11 +304,9 @@ def test_superuser_only(servers) -> None:
 def test_statement_longer_than_body_timeout(servers) -> None:
     conn_a, _, quack_b, _ = servers
     started = time.monotonic()
-    (total,) = conn_a.execute(_remote(
-        quack_b, "SELECT sum(a % 7) FROM range(4000000000) r(a)")).fetchone()
+    assert conn_a.execute(_remote(
+        quack_b, "SELECT pg_sleep(2) IS NULL")).fetchone() == (True,)
     assert time.monotonic() - started > 1
-    assert total == sum(i % 7 for i in range(7)) * (4000000000 // 7) + sum(
-        range(4000000000 % 7))
 
 
 def test_request_longer_than_body_timeout(servers) -> None:
@@ -320,7 +318,7 @@ def test_request_longer_than_body_timeout(servers) -> None:
     assert conn_a.execute(_remote(
         quack_b, padding +
         "CREATE OR REPLACE TEMP TABLE slow AS "
-        "SELECT sum(a % 7) AS s FROM range(1000000000) r(a)")).fetchone() == (1,)
+        "SELECT pg_sleep(2) IS NULL AS s")).fetchone() == (1,)
     assert time.monotonic() - started > 1
 
 
@@ -465,8 +463,8 @@ def test_remote_statement_leaves_the_worker_free(servers,
 
             def run() -> None:
                 outcome.append(slow.execute(
-                    "SELECT * FROM b.query('SELECT sum(a % 7) AS s "
-                    "FROM range(3000000000) r(a)')").fetchone())
+                    "SELECT * FROM b.query("
+                    "'SELECT pg_sleep(3) IS NULL AS s')").fetchone())
 
             worker = threading.Thread(target=run)
             worker.start()
@@ -474,8 +472,7 @@ def test_remote_statement_leaves_the_worker_free(servers,
             assert fast.execute("SELECT 42").fetchone() == (42,)
             assert worker.is_alive(), "the remote statement ended too soon"
             worker.join(timeout=120)
-            assert outcome == [(sum(range(7)) * (3000000000 // 7) +
-                                sum(range(3000000000 % 7)),)]
+            assert outcome == [(True,)]
     finally:
         conn_b.execute("SET sdb_faults = '-quack_prepare_answers_late'")
         c.stop()

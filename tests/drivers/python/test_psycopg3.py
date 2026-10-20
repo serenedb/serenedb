@@ -690,7 +690,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 100000000000) g(i)"
+                    "select count(*) from generate_series(1, 200000000000) g(i)"
                 )
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:
@@ -726,3 +726,31 @@ def test_binary_parameters_after_an_untyped_null_in_a_transaction():
     with psycopg.connect(**conn_kwargs()) as c:
         assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)
         c.rollback()
+
+
+def _protocol_statements(c: psycopg.Connection) -> list[str]:
+    rows = c.execute(
+        "SELECT name FROM pg_prepared_statements WHERE NOT from_sql ORDER BY name",
+        prepare=False,
+    ).fetchall()
+    return [name for (name,) in rows]
+
+
+def test_prepared_statement_cache_flush_releases_server_statements():
+    with psycopg.connect(**conn_kwargs(), prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER + 1", (41,)).fetchone() == (42,)
+        assert c.execute("SELECT %s::TEXT", ("x",)).fetchone() == ("x",)
+        assert len(_protocol_statements(c)) == 2
+        c.rollback()
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER + 1", (1,)).fetchone() == (2,)
+        assert len(_protocol_statements(c)) == 1
+        c.rollback()
+
+
+def test_discard_all_drops_driver_prepared_statements():
+    with psycopg.connect(**conn_kwargs(), autocommit=True, prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER", (5,)).fetchone() == (5,)
+        c.execute("DISCARD ALL", prepare=False)
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER", (6,)).fetchone() == (6,)

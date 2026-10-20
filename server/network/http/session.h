@@ -176,8 +176,8 @@ class HttpSession final
   // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
-      auto sql =
-        http::OpenSqlConnection(_user, _database, _cancel_key, _cancel);
+      auto sql = http::OpenSqlConnection(_user, _database, _cancel_key, _cancel,
+                                         _task->Account());
       _conn = std::move(sql.conn);
       _connection_ctx = std::move(sql.context);
       {
@@ -252,13 +252,6 @@ class HttpSession final
     duckdb::unique_ptr<duckdb::QueryResult> pending) {
     try {
       if (!pending->HasError()) {
-        // In debug interleave queries more often to see more bugs.
-#ifdef SDB_DEV
-        static constexpr int kInlineSliceBudget = 0;
-#else
-        static constexpr int kInlineSliceBudget = 8;
-#endif
-        int inline_slices = 0;
         for (;;) {
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
@@ -266,13 +259,10 @@ class HttpSession final
             break;
           }
           if (status == duckdb::QueryResultState::NOT_READY) {
-            if (++inline_slices < kInlineSliceBudget) {
-              continue;
+            if (duckdb::TaskScheduler::ShouldYield()) {
+              co_await _task->Yield();
             }
-            inline_slices = 0;
-            co_await _task->Yield();
           } else {
-            inline_slices = 0;
             co_await _task->Park();
           }
         }

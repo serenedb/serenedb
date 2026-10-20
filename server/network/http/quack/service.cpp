@@ -174,19 +174,19 @@ constexpr int kInlineSliceBudget = 8;
 class Session final : public TransportBase,
                       public duckdb::enable_shared_from_this<Session> {
  public:
-  Session(Service& service, IoExecutor& io, std::string connection_id,
-          std::string_view user, std::string_view database)
+  Session(Service& service, std::string connection_id, std::string_view user,
+          std::string_view database)
     : _service{service},
       _cancel{service.Cancel()},
       _connection_id{std::move(connection_id)},
-      _task{duckdb::make_shared_ptr<CpuResumer>(
-        duckdb::TaskScheduler::GetScheduler(
-          irs::DuckDBEngine::Instance().instance()),
-        io)},
+      _task{
+        duckdb::make_shared_ptr<CpuResumer>(duckdb::TaskScheduler::GetScheduler(
+          irs::DuckDBEngine::Instance().instance()))},
       _cancel_token{std::make_shared<CancelToken>()},
       _cancel_key{_cancel.Register(_cancel_token)} {
     absl::Cleanup unregister = [this] { _cancel.Unregister(_cancel_key); };
-    auto sql = OpenSqlConnection(user, database, _cancel_key, &_cancel);
+    auto sql = OpenSqlConnection(user, database, _cancel_key, &_cancel,
+                                 _task->Account());
     _conn = std::move(sql.conn);
     _ctx = std::move(sql.context);
     std::move(unregister).Cancel();
@@ -344,9 +344,8 @@ class Host final : public duckdb::QuackServerHost {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PASSWORD),
                       ERR_MSG("authentication failed"));
     }
-    auto session =
-      duckdb::make_shared_ptr<Session>(_service, _context.Io(), connection_id,
-                                       auth.context.user, _context.Database());
+    auto session = duckdb::make_shared_ptr<Session>(
+      _service, connection_id, auth.context.user, _context.Database());
     session->Start();
     return duckdb::make_uniq<SessionHandle>(std::move(session));
   }

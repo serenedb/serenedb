@@ -42,10 +42,13 @@ Node::ptr Make(const VariadicPhraseQuery& query);
 Node::ptr Make(const NGramSimilarityQuery& query);
 Node::ptr Make(const AllQuery& query);
 Node::ptr Make(const WildcardNGramQuery& query);
+Node::ptr Make(const ApproxQuery& query);
+Node::ptr Make(const TokenPhraseQuery& query);
 Node::ptr Make(const ByNestedQuery& query);
 Node::ptr Make(const RangeVectorQuery& query);
 inline Node::ptr Make(const HnswQuery&) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&) { return {}; }
+inline Node::ptr Make(const ExactVectorQuery&) { return {}; }
 inline Node::ptr Make(const EmptyQueryBuilder&) { return {}; }
 Node::ptr Make(const BooleanQuery& query);
 template<typename Parser, typename Acceptor>
@@ -58,9 +61,14 @@ Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx);
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx);
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx);
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx);
+inline Node::ptr Make(const ExactVectorQuery&, const detail::ScoredCtx&) {
+  return {};
+}
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx);
 inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&) {
   return {};
@@ -77,9 +85,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
                             const detail::ScoreRecipe& recipe);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
-Node::ptr MakeAllScored(const SubReader& segment,
-                        const detail::ScoreArgs& args);
 
 Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,

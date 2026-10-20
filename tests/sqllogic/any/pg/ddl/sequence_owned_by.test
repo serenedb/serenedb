@@ -169,3 +169,217 @@ DROP TABLE pd_t
 
 statement error
 SELECT nextval('public.pd_t_id_seq')
+
+
+statement ok
+CREATE TABLE pd_c (id integer NOT NULL, v text)
+
+
+statement ok
+CREATE SEQUENCE public.pd_c_id_seq AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1
+
+
+statement ok
+ALTER SEQUENCE public.pd_c_id_seq OWNED BY public.pd_c.id
+
+
+statement ok
+ALTER TABLE ONLY public.pd_c ALTER COLUMN id SET DEFAULT nextval('public.pd_c_id_seq'::regclass)
+
+
+query
+SELECT pg_get_serial_sequence('pd_c', 'id') AS seq
+----
+seq
+public.pd_c_id_seq
+
+
+statement ok
+ALTER TABLE pd_c DROP COLUMN id
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'pd_c_id_seq'
+----
+sequences
+0
+
+
+statement ok
+DROP TABLE pd_c
+
+
+# Dropping an owned sequence drops only the sequence, never its table.
+statement ok
+CREATE TABLE ob_drop (x int)
+
+
+statement ok
+CREATE SEQUENCE ob_drop_s OWNED BY ob_drop.x
+
+
+statement ok
+DROP SEQUENCE ob_drop_s
+
+
+statement ok
+CREATE SEQUENCE ob_drop_s OWNED BY ob_drop.x
+
+
+statement ok
+DROP SEQUENCE ob_drop_s CASCADE
+
+
+query
+SELECT count(*) AS tables FROM pg_class WHERE relname = 'ob_drop'
+----
+tables
+1
+
+
+# The defaults that call it block DROP SEQUENCE; CASCADE drops the defaults.
+statement ok
+CREATE TABLE ob_def (a serial, b int)
+
+
+statement ok
+ALTER TABLE ob_def RENAME a TO r
+
+
+statement error (?i)cannot drop .*ob_def_a_seq.* because .*depend on it
+DROP SEQUENCE ob_def_a_seq
+
+
+statement ok
+DROP SEQUENCE ob_def_a_seq CASCADE
+
+
+statement error (null value in column "r" of relation "ob_def" violates not-null constraint|NOT NULL constraint failed: ob_def\.r)
+INSERT INTO ob_def (b) VALUES (1)
+
+
+statement ok
+CREATE TABLE ob_nodef (a serial)
+
+
+statement ok
+ALTER TABLE ob_nodef ALTER a DROP DEFAULT
+
+
+statement ok
+DROP SEQUENCE ob_nodef_a_seq
+
+
+# DROP COLUMN drops the sequences the column owns, and only those.
+statement ok
+CREATE TABLE ob_none (x int, y int)
+
+
+statement ok
+CREATE SEQUENCE ob_none_s OWNED BY ob_none.x
+
+
+statement ok
+ALTER TABLE ob_none DROP COLUMN y
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'ob_none_s'
+----
+sequences
+1
+
+
+statement ok
+ALTER TABLE ob_none DROP COLUMN x
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'ob_none_s'
+----
+sequences
+0
+
+
+statement ok
+CREATE TABLE ob_col (a serial, b int)
+
+
+statement ok
+ALTER TABLE ob_col ALTER b SET DEFAULT nextval('ob_col_a_seq')
+
+
+statement ok
+ALTER TABLE ob_col DROP COLUMN b
+
+
+statement ok
+INSERT INTO ob_col DEFAULT VALUES
+
+
+query
+SELECT a FROM ob_col
+----
+a
+1
+
+
+statement ok
+ALTER TABLE ob_col ADD COLUMN c int
+
+
+statement ok
+ALTER TABLE ob_col ALTER c SET DEFAULT nextval('ob_col_a_seq')
+
+
+statement error (?i)cannot drop .* because .*depend on it
+ALTER TABLE ob_col DROP COLUMN a
+
+
+statement ok
+ALTER TABLE ob_col DROP COLUMN a CASCADE
+
+
+statement ok
+INSERT INTO ob_col DEFAULT VALUES
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'ob_col_a_seq'
+----
+sequences
+0
+
+
+query
+SELECT count(*) AS rows, count(c) AS numbered FROM ob_col
+----
+rows	numbered
+2	0
+
+
+statement ok
+CREATE TABLE ob_owner (a serial)
+
+
+statement ok
+CREATE TABLE ob_user (x int DEFAULT nextval('ob_owner_a_seq'))
+
+
+statement error (?i)cannot drop .* because .*depend on it
+ALTER TABLE ob_owner DROP COLUMN a
+
+
+statement ok
+ALTER TABLE ob_owner DROP COLUMN a CASCADE
+
+
+statement ok
+INSERT INTO ob_user DEFAULT VALUES
+
+
+query
+SELECT x FROM ob_user
+----
+x
+NULL

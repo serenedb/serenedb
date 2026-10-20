@@ -1,16 +1,10 @@
 control substitution on
 
-# Nearest-neighbour search over a hive-partitioned view with filters on the
-# partition and on the row number. Such a filter is applied to a pool of the
-# sdb_rerank_factor * k nearest rows (inverted_index_ivf_filter.test); the
-# pool here covers every row, so the k rows returned are the nearest among
-# the rows that pass, each with its own partition and position.
-
 statement ok
 SET sdb_ivf_search_nprobe TO 2048;
 
 statement ok
-SET sdb_rerank_factor = 32;
+SET sdb_ann_oversample = 32;
 
 system ok
 mkdir -p $__TEST_DIR__/vsvh/part=p0 $__TEST_DIR__/vsvh/part=p1 $__TEST_DIR__/vsvh/part=p2 $__TEST_DIR__/vsvh/part=p3
@@ -113,7 +107,7 @@ statement ok
 RESET sdb_disable_top_k_optimization;
 
 statement ok
-RESET sdb_rerank_factor;
+RESET sdb_ann_oversample;
 
 query
 SELECT count(*) FROM ((SELECT * FROM vsvh_v EXCEPT SELECT * FROM vsvh_idx)

@@ -1,0 +1,319 @@
+control substitution on
+
+statement ok
+SET sdb_ann_oversample = 32
+
+statement ok
+CREATE TABLE hnsw_bq (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_bq_idx ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq'));
+
+statement ok
+INSERT INTO hnsw_bq SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq;
+
+query
+SELECT pk FROM hnsw_bq_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+51
+35
+
+query
+SELECT pk FROM hnsw_bq_idx
+  ORDER BY emb <-> [80, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+56
+48
+40
+
+query
+SELECT count(*) FROM hnsw_bq_idx;
+----
+count
+64
+
+query
+SELECT pk FROM hnsw_bq_idx
+  WHERE emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] < 10 ORDER BY pk;
+----
+pk
+43
+51
+
+query
+SELECT count(*) FROM hnsw_bq_idx
+  WHERE emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] < 10;
+----
+count
+2
+
+
+statement ok
+CREATE TABLE hnsw_bq2 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_bq2_idx ON hnsw_bq2
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq', nb_bits = 2,
+                               query_bits = 8));
+
+statement ok
+INSERT INTO hnsw_bq2 SELECT pk, emb FROM hnsw_bq;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq2;
+
+query
+SELECT pk FROM hnsw_bq2_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+51
+35
+
+
+statement ok
+CREATE TABLE hnsw_bq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_bq_ip_idx ON hnsw_bq_ip
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'bq', nb_bits = 1.5,
+                               query_bits = 4));
+
+statement ok
+INSERT INTO hnsw_bq_ip SELECT pk, emb FROM hnsw_bq;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq_ip;
+
+query
+SELECT pk FROM hnsw_bq_ip_idx
+  ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+58
+50
+42
+
+
+statement ok
+CREATE TABLE hnsw_bq_cos (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX hnsw_bq_cos_idx ON hnsw_bq_cos
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'bq',
+                               query_bits = 8));
+
+statement ok
+INSERT INTO hnsw_bq_cos VALUES
+  (1, [1, 0, 0, 0]::FLOAT[4]),
+  (2, [0, 1, 0, 0]::FLOAT[4]),
+  (3, [0, 0, 1, 0]::FLOAT[4]),
+  (4, [0, 0, 0, 1]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq_cos;
+
+query
+SELECT pk FROM hnsw_bq_cos_idx
+  ORDER BY emb <=> [0, 0, 3, 0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+
+statement ok
+CREATE TABLE hnsw_bq_cos1 (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX hnsw_bq_cos1_idx ON hnsw_bq_cos1
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'bq'));
+
+statement ok
+INSERT INTO hnsw_bq_cos1 VALUES
+  (1, [1, 0, 0, 0]::FLOAT[4]),
+  (2, [0, 1, 0, 0]::FLOAT[4]),
+  (3, [0, 0, 1, 0]::FLOAT[4]),
+  (4, [0, 0, 0, 1]::FLOAT[4]),
+  (5, [0.9, 0.1, 0, 0]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq_cos1;
+
+query
+SELECT pk FROM hnsw_bq_cos1_idx
+  WHERE emb <=> [1, 0, 0, 0]::FLOAT[4] < 0.5 ORDER BY pk;
+----
+pk
+1
+5
+
+
+statement ok
+CREATE TABLE ivf_bq (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+statement ok
+CREATE INDEX ivf_bq_idx ON ivf_bq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'bq', nb_bits = 2,
+                              query_bits = 8));
+
+statement count 6
+INSERT INTO ivf_bq VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [101, 0, 0]::FLOAT[3]),
+  (3, [0, 100, 0]::FLOAT[3]),
+  (4, [0, 101, 0]::FLOAT[3]),
+  (5, [0, 0, 100]::FLOAT[3]),
+  (6, [0, 0, 101]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_bq;
+
+query
+SELECT pk FROM ivf_bq_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM ivf_bq_idx ORDER BY emb <-> [0, 101, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+4
+3
+
+
+statement ok
+CREATE TABLE ivf_bq1 (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_bq1_idx ON ivf_bq1
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'bq'));
+
+statement ok
+INSERT INTO ivf_bq1 SELECT pk, emb FROM ivf_bq;
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_bq1;
+
+query
+SELECT pk FROM ivf_bq1_idx
+  WHERE emb <-> [100, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT count(*) FROM ivf_bq1_idx
+  WHERE emb <-> [100, 0, 0]::FLOAT[3] < 5;
+----
+count
+2
+
+
+statement ok
+DELETE FROM hnsw_bq WHERE pk = 43;
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_bq;
+
+query
+SELECT pk FROM hnsw_bq_idx
+  ORDER BY emb <-> [0, 0, 0, 62, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+51
+
+query
+SELECT count(*) FROM hnsw_bq_idx;
+----
+count
+63
+
+
+statement error
+CREATE INDEX hnsw_bq_bits3 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq', nb_bits = 3));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (3) must be 1, 1.5 or 2 for quant 'bq'
+
+
+statement error
+CREATE INDEX hnsw_bq_bits25 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq', nb_bits = 2.5));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (2.5) must be 1, 1.5 or 2 for quant 'bq'
+
+
+statement error
+CREATE INDEX hnsw_bq_q2 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq', query_bits = 2));
+----
+db error: ERROR: Column 'emb': hnsw option 'query_bits' (2) must be 1, 4 or 8 for quant 'bq'
+
+
+statement error
+CREATE INDEX hnsw_bq_q0 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'bq', query_bits = 0));
+----
+db error: ERROR: Column 'emb': hnsw option 'query_bits' must be positive, got 0
+
+
+statement error
+CREATE INDEX hnsw_bq_q_sq8 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', query_bits = 8));
+----
+db error: ERROR: Column 'emb': hnsw option 'query_bits' is only valid with quant 'bq' or 'osq'
+
+
+statement error
+CREATE INDEX ivf_bq_q_tq ON ivf_bq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'tq', query_bits = 4));
+----
+db error: ERROR: Column 'emb': ivf option 'query_bits' is only valid with quant 'bq' or 'osq'
+
+
+statement error
+CREATE INDEX hnsw_bq_l1 ON hnsw_bq
+  USING inverted(pk, emb hnsw (metric = 'l1', quant = 'bq'));
+----
+db error: ERROR: Column 'emb': hnsw with metric = 'l1' supports only quant = none
+
+
+statement ok
+DROP TABLE hnsw_bq;
+
+statement ok
+DROP TABLE hnsw_bq2;
+
+statement ok
+DROP TABLE hnsw_bq_ip;
+
+statement ok
+DROP TABLE hnsw_bq_cos;
+
+statement ok
+DROP TABLE hnsw_bq_cos1;
+
+statement ok
+DROP TABLE ivf_bq;
+
+statement ok
+DROP TABLE ivf_bq1;

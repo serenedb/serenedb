@@ -16,7 +16,7 @@ Each kind of database has its own dedicated page:
 - [DuckDB](./duckdb.md) — attach a DuckDB database file, including remote files over HTTP and S3.
 - [Quack](./quack.md) — attach another SereneDB server over the Quack protocol.
 
-Attachment definitions are not persisted between sessions: when a new session is launched, you have to re-attach to all databases. For a **persistent** connection to a PostgreSQL or ClickHouse instance — one that survives restart, has an owner and is guarded by `USAGE` privileges — use [`CREATE SERVER`](../create_server/index.md) instead.
+An attachment belongs to the server, not to the session that made it: every session, in every database, sees it until `DETACH` or a restart of the server. For a **persistent** attachment of a PostgreSQL or ClickHouse instance, a DuckDB file or a SereneDB database directory — one that survives restart, has an owner and is guarded by `USAGE` privileges — use [`CREATE SERVER`](../create_server/index.md) instead.
 
 ## `ATTACH`
 
@@ -31,6 +31,7 @@ The type of an attached database is either given explicitly with the `TYPE` opti
 - A **file path** attaches a [DuckDB database file](./duckdb.md).
 - A **connection string** (e.g. `host=… port=…`) attaches an external [PostgreSQL database](./postgres.md) with `TYPE postgres`.
 - A **`quack:` address** (e.g. `quack:10.0.0.5:9494`) attaches a [server over the Quack protocol](./quack.md).
+- A **database directory** of another SereneDB server attaches with `TYPE serenedb` and `READ_ONLY`: `ATTACH '/mnt/snapshots/shop/engine_v1/16390' AS archive (TYPE serenedb, READ_ONLY)`. Only a read-only attach is possible; see [Read-only SereneDB databases](../create_server/index.md#read-only-serenedb-databases) for what such a database serves and which directories it accepts.
 
 By default, `ATTACH` opens a database for reading and writing. Pass `READ_ONLY` to open it for reading only.
 

@@ -490,3 +490,56 @@ SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
 ----
 tgname	tgenabled
 orders_audited	A
+
+# DOCS_TEST: add_column_serial
+
+statement ok
+DROP TABLE IF EXISTS tickets;
+
+statement ok
+CREATE TABLE tickets (title VARCHAR);
+
+statement ok
+INSERT INTO tickets VALUES ('first'), ('second');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE tickets ADD COLUMN id SERIAL;
+
+statement ok
+INSERT INTO tickets (title) VALUES ('third');
+
+query
+SELECT id, title
+FROM tickets
+ORDER BY id;
+----
+id	title
+1	first
+2	second
+3	third
+
+query
+SELECT pg_get_serial_sequence('tickets', 'id') AS sequence;
+----
+sequence
+public.tickets_id_seq
+
+# DOCS_TEST: search_table_triggers
+
+statement ok
+DROP TABLE IF EXISTS events_audit;
+
+statement ok
+CREATE TABLE events_audit (id INTEGER);
+
+statement ok
+CREATE TRIGGER events_audited AFTER INSERT ON events FOR EACH ROW INSERT INTO events_audit VALUES (NEW.id);
+
+# DOCS_TEST_BODY
+
+statement error
+ALTER TABLE events ENABLE REPLICA TRIGGER events_audited;
+----
+db error: ERROR: this ALTER TABLE on a search-backed table is not yet supported

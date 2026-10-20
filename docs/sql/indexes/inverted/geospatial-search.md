@@ -65,6 +65,10 @@ The indexed column must be `JSON` or `GEOMETRY`. GeoJSON uses `[longitude, latit
 
 </DocCallout>
 
+### How rows are checked
+
+Geo predicates are exact: a row matches only when its stored geometry satisfies the predicate. The [function reference](../../functions/search/geo.md) lists the pairs of shapes a predicate rejects or always answers false for. When the predicate is a required condition of the query, it is checked with the query's other filters: `EXPLAIN` lists it under `Table Filter` with `Verify: table filter`, and the `Index Filter` shows the index lookup with `Verify: false`. Under `OR`, under `NOT`, next to `ts_offsets()`, in `ts_dict_agg` and with a vector score, it is checked as the index finds the rows, shown as `Verify: inline`.
+
 ## See also
 
 - [Inverted Index](./index.md) · [Full-Text Search](./full-text-search.md)

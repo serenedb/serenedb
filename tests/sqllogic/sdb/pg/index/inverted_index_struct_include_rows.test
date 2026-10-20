@@ -1,0 +1,136 @@
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TABLE sif_t (id INTEGER PRIMARY KEY, x INTEGER, s STRUCT(a INTEGER, b VARCHAR))
+
+
+statement ok
+INSERT INTO sif_t
+SELECT g, CASE WHEN g BETWEEN 1900 AND 2047 THEN 0 ELSE 1 END, {'a': g, 'b': 'v' || g}
+FROM range(0, 3000) t(g)
+
+
+statement ok
+CREATE INDEX sif_t_idx ON sif_t USING inverted (id) INCLUDE (x, s)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sif_t
+
+
+query
+SELECT id, s FROM sif_t_idx WHERE x = 1 ORDER BY id LIMIT 3 OFFSET 1900
+----
+id	s
+2048	(2048,v2048)
+2049	(2049,v2049)
+2050	(2050,v2050)
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
+FROM (SELECT id, s FROM sif_t_idx WHERE x = 1) q JOIN sif_t t USING (id)
+----
+n	mismatched
+2852	0
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
+FROM (SELECT id, s FROM sif_t_idx WHERE id >= 0 AND x = 1) q JOIN sif_t t USING (id)
+----
+n	mismatched
+2852	0
+
+statement ok
+CREATE TABLE sif_nulls (id INTEGER PRIMARY KEY, x INTEGER, s STRUCT(a INTEGER, b VARCHAR))
+
+
+statement ok
+INSERT INTO sif_nulls
+SELECT g, CASE WHEN g BETWEEN 1900 AND 2047 THEN 0 ELSE 1 END,
+       CASE WHEN g % 7 = 0 THEN NULL ELSE {'a': g, 'b': 'v' || g} END
+FROM range(0, 3000) t(g)
+
+
+statement ok
+CREATE INDEX sif_nulls_idx ON sif_nulls USING inverted (id) INCLUDE (x, s)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sif_nulls
+
+
+query
+SELECT id, s FROM sif_nulls_idx WHERE x = 1 ORDER BY id LIMIT 3 OFFSET 1900
+----
+id	s
+2048	(2048,v2048)
+2049	(2049,v2049)
+2050	(2050,v2050)
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
+FROM (SELECT id, s FROM sif_nulls_idx WHERE x = 1) q JOIN sif_nulls t USING (id)
+----
+n	mismatched
+2852	0
+
+statement ok
+CREATE TABLE sif_nested (id INTEGER PRIMARY KEY, x INTEGER, s STRUCT(a INTEGER, n STRUCT(c INTEGER, d VARCHAR), l INTEGER[]))
+
+
+statement ok
+INSERT INTO sif_nested
+SELECT g, CASE WHEN g BETWEEN 1900 AND 2047 THEN 0 ELSE 1 END,
+       {'a': g, 'n': {'c': g, 'd': 'v' || g}, 'l': [g, g + 1]}
+FROM range(0, 3000) t(g)
+
+
+statement ok
+CREATE INDEX sif_nested_idx ON sif_nested USING inverted (id) INCLUDE (x, s)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sif_nested
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
+FROM (SELECT id, s FROM sif_nested_idx WHERE x = 1) q JOIN sif_nested t USING (id)
+----
+n	mismatched
+2852	0
+
+statement ok
+CREATE TABLE sif_null_block (id INTEGER PRIMARY KEY, s STRUCT(a INTEGER, b VARCHAR))
+
+
+statement ok
+INSERT INTO sif_null_block
+SELECT g, CASE WHEN g < 4096 THEN NULL ELSE {'a': g, 'b': 'v' || g} END
+FROM range(0, 6000) t(g)
+
+
+statement ok
+CREATE INDEX sif_null_block_idx ON sif_null_block USING inverted (id) INCLUDE (s) WITH (row_group_size = 2048)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sif_null_block
+
+
+query
+SELECT id, s FROM sif_null_block_idx ORDER BY id LIMIT 3 OFFSET 4096
+----
+id	s
+4096	(4096,v4096)
+4097	(4097,v4097)
+4098	(4098,v4098)
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE q.s IS DISTINCT FROM t.s) AS mismatched
+FROM (SELECT id, s FROM sif_null_block_idx) q JOIN sif_null_block t USING (id)
+----
+n	mismatched
+6000	0

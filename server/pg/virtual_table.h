@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -53,6 +55,14 @@ class VirtualTable {
   duckdb::idx_t Id() const noexcept { return _id; }
   std::string_view GetName() const noexcept { return _name; }
   std::span<const duckdb::AclItem> GetAcl() const noexcept { return _acl; }
+  std::span<const duckdb::AclItem> ColumnAcl(
+    std::string_view column) const noexcept {
+    if (_private_columns.empty() ||
+        absl::c_linear_search(_private_columns, column)) {
+      return {};
+    }
+    return kSystemTableAcl;
+  }
 
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
@@ -63,6 +73,7 @@ class VirtualTable {
   duckdb::idx_t _id = 0;
   std::string_view _name;
   std::span<const duckdb::AclItem> _acl = kSystemTableAcl;
+  std::span<const std::string_view> _private_columns;
 };
 
 }  // namespace sdb::pg

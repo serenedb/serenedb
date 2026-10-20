@@ -36,6 +36,8 @@ enum class WildcardType {
 
 WildcardType ComputeWildcardType(bytes_view pattern) noexcept;
 
+bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept;
+
 enum WildcardMatch : uint8_t {
   kAnyStr = '%',   // match any number of arbitrary characters
   kAnyChr = '_',   // match a single arbitrary character

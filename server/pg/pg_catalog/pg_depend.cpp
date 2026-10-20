@@ -34,6 +34,7 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -98,11 +99,16 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
       expression.Cast<duckdb::FunctionExpression>().FunctionName() ==
         "nextval") {
     duckdb::ParsedExpressionIterator::EnumerateChildren(
-      expression, [&](const duckdb::ParsedExpression& argument) {
-        if (argument.GetExpressionClass() ==
+      expression, [&](const duckdb::ParsedExpression& child) {
+        const auto* argument = &child;
+        while (argument->GetExpressionClass() ==
+               duckdb::ExpressionClass::CAST) {
+          argument = &argument->Cast<duckdb::CastExpression>().Child();
+        }
+        if (argument->GetExpressionClass() ==
             duckdb::ExpressionClass::CONSTANT) {
           const auto name = duckdb::QualifiedName::Parse(
-            argument.Cast<duckdb::ConstantExpression>()
+            argument->Cast<duckdb::ConstantExpression>()
               .GetLiteral()
               .ToValue()
               .ToString());
@@ -116,6 +122,20 @@ bool NamesSequence(const duckdb::ParsedExpression& expression,
       named = named || NamesSequence(child, sequence);
     });
   return named;
+}
+
+int32_t OwningColumn(const duckdb::TableCatalogEntry& table,
+                     const duckdb::SequenceCatalogEntry& sequence) {
+  const auto& owner = sequence.owner_column;
+  for (const auto& column : table.GetColumns().Logical()) {
+    if (owner.IsValid()
+          ? owner.GetIndex() == column.CatalogOid()
+          : column.HasDefaultValue() &&
+              NamesSequence(column.DefaultValue(), sequence.name)) {
+      return static_cast<int32_t>(column.Logical().index + 1);
+    }
+  }
+  return 0;
 }
 
 std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
@@ -229,8 +249,10 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext& context,
           }
         } else if (object->type == SEQUENCE_ENTRY) {
           if (owned_by) {
-            emit(Oid{PgClass::kId}, object->oid, 0, Oid{PgClass::kId},
-                 table.oid, 0, PgDepend::Deptype::Auto);
+            emit(
+              Oid{PgClass::kId}, object->oid, 0, Oid{PgClass::kId}, table.oid,
+              OwningColumn(table, object->Cast<duckdb::SequenceCatalogEntry>()),
+              PgDepend::Deptype::Auto);
           }
           for (const auto& column : table.GetColumns().Logical()) {
             if (column.HasDefaultValue() &&

@@ -138,41 +138,110 @@ class RawVectorReader {
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
-      const size_t run = ConsecutiveRunLength(docs, i);
-      const auto* base = Read(docs[i], run);
-      for (size_t k = 0; k < run; ++k) {
-        out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+      size_t run = ConsecutiveRunLength(docs, i);
+      if (run == 1 && i + 2 < docs.size()) {
+        PrefetchRow(docs[i + 2]);
       }
-      i += run;
+      while (run != 0) {
+        size_t got = 0;
+        const auto* base = ReadSome(docs[i], run, got);
+        SDB_ASSERT(got != 0 && got <= run);
+        const size_t stride = static_cast<size_t>(_d) * sizeof(float);
+        constexpr size_t kAhead = 2;
+        for (size_t k = 0; k < got; ++k) {
+          if (k + kAhead < got) {
+            const auto* ahead = base + (k + kAhead) * stride;
+            for (size_t off = 0; off < stride; off += 64) {
+              __builtin_prefetch(ahead + off, 0, 3);
+            }
+          }
+          out[i + k] = _dist(q, base + k * stride, d);
+        }
+        i += got;
+        run -= got;
+      }
     }
   }
 
  private:
-  const byte_type* Read(doc_id_t first, size_t count) {
+  void PrefetchRow(doc_id_t doc) noexcept {
     const auto* child = _column->Child();
-    SDB_ASSERT(child != nullptr);
+    const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
+    const auto w = child->Locate(elem, _win);
+    const auto& blocks = child->DataBlocks();
+    if (w.block >= blocks.size()) {
+      return;
+    }
+    const auto& m = blocks[w.block];
+    const uint64_t span = static_cast<uint64_t>(_d) * sizeof(float);
+    if (m.codec->type != duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+        elem < w.begin || elem + _d > w.end) {
+      return;
+    }
+    const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
+    const auto* q = _read_ctx.TryReadStable(off, span);
+    if (!q) {
+      return;
+    }
+    for (uint64_t o = 0; o < span; o += 64) {
+      __builtin_prefetch(reinterpret_cast<const char*>(q) + o, 0, 3);
+    }
+  }
+
+  const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    const auto* child = _column->Child();
+    SDB_ASSERT(child);
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
-    const auto window = child->Locate(elem);
-    const auto& meta = child->DataBlocks()[window.block];
-    const size_t bytes = count * _d * sizeof(float);
+    _win = child->Locate(elem, _win);
+    const auto window = _win;
+    const auto& blocks = child->DataBlocks();
+    const auto& meta = blocks[window.block];
     if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
-        elem + count * _d <= window.end) {
-      const uint64_t offset =
-        meta.file_offset + (elem - window.begin) * sizeof(float);
-      if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
-        return reinterpret_cast<const byte_type*>(p);
+        elem >= window.begin && elem < window.end) {
+      const uint64_t want = elem + static_cast<uint64_t>(count) * _d;
+      uint64_t end = window.end;
+      for (auto w = window; end < want;) {
+        const auto next = child->Locate(end, w);
+        if (next.block == w.block || next.begin != end) {
+          break;
+        }
+        const auto& m = blocks[next.block];
+        if (m.codec->type !=
+              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
+            m.file_offset !=
+              meta.file_offset + (next.begin - window.begin) * sizeof(float)) {
+          break;
+        }
+        end = next.end;
+        w = next;
+        _win = next;
       }
-      _buf.resize(bytes);
-      _read_ctx.Read(offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
-                     bytes);
-      return _buf.data();
+      const auto fit = static_cast<size_t>((end - elem) / _d);
+      if (fit != 0) {
+        got = std::min(count, fit);
+        const size_t bytes = got * _d * sizeof(float);
+        const uint64_t offset =
+          meta.file_offset + (elem - window.begin) * sizeof(float);
+        if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+          return reinterpret_cast<const byte_type*>(p);
+        }
+        _buf.resize(bytes);
+        _read_ctx.Read(
+          offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()), bytes);
+        return _buf.data();
+      }
+      got = 1;
+      return reinterpret_cast<const byte_type*>(
+        _vreader.ReadDocBatch(first, 1));
     }
+    got = count;
     return reinterpret_cast<const byte_type*>(
       _vreader.ReadDocBatch(first, count));
   }
 
   ReadContext _read_ctx;
+  irs::BlockWindow _win{};
   IvfVectorReader _vreader;
   const ColumnReader* _column;
   std::vector<byte_type> _buf;
@@ -214,7 +283,8 @@ class VectorCluster {
       _lane{lane} {
     SDB_ASSERT(_quantizer);
     _setting = _quantizer->BlockSetting();
-    SDB_ASSERT(_setting.group_size <= _cache.size());
+    SDB_ASSERT(_setting.group_size != 0);
+    _cache.resize(_setting.group_size);
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
@@ -355,7 +425,7 @@ class VectorCluster {
   detail::PostingLead<InputType> _list;
   std::array<doc_id_t, kRun> _docs;
   std::array<score_t, kRun> _dist;
-  std::array<score_t, kRun> _cache;
+  std::vector<score_t> _cache;
   PayloadBlockSetting _setting;
   score_t _threshold = std::numeric_limits<score_t>::lowest();
   uint32_t _total;
@@ -477,7 +547,7 @@ class VectorClusters {
   bool _filled = false;
 };
 
-template<typename Cluster, bool HasInner, bool Rescore>
+template<typename Cluster, typename Gate, bool HasInner, bool Rescore>
 class VectorSlots {
  public:
   template<typename Args>
@@ -485,7 +555,8 @@ class VectorSlots {
               const RawRecipe& raw)
     : _clusters{count, std::forward<Args>(args)},
       _inner{std::move(inner)},
-      _raw{raw} {
+      _raw{raw},
+      _edge{edge} {
     _clusters.SetThreshold(edge);
   }
 
@@ -507,6 +578,9 @@ class VectorSlots {
     }
     if constexpr (Rescore) {
       _raw.ComputeDistances({&doc, 1}, {&_distance, 1});
+      if constexpr (!Gate::kAll) {
+        return Gate::Inside(_distance, _edge);
+      }
     } else {
       _distance = distance;
     }
@@ -520,6 +594,7 @@ class VectorSlots {
   [[no_unique_address]] utils::Need<HasInner, probe::Erased> _inner;
   [[no_unique_address]] utils::Need<Rescore, RawVectorReader> _raw;
   score_t _distance = 0.f;
+  score_t _edge;
 };
 
 struct ClusterFeed {
@@ -585,7 +660,7 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
   return ResolveClusters<Gate>(
     query, [&]<typename Cluster>(size_t count, const ClusterFeed& feed) {
       return ResolveBool(inner != nullptr, [&]<bool HasInner>() {
-        using Slots = VectorSlots<Cluster, HasInner, Rescore>;
+        using Slots = VectorSlots<Cluster, Gate, HasInner, Rescore>;
         return emit.template operator()<Slots>(count, feed, edge,
                                                std::move(inner), recipe);
       });
@@ -596,13 +671,17 @@ template<template<typename> typename Walk, typename Result, typename Gate,
          template<typename> typename Two, typename Query, typename... Prefix>
 Result MakeVectorDocs(const Query& query, score_t edge, probe::Node::ptr inner,
                       Prefix&&... prefix) {
-  return ResolveVector<Gate, false>(
-    query, edge, std::move(inner),
-    [&]<typename Slots>(auto&&... args) -> Result {
-      using Node = Two<Slots>;
-      return memory::make_managed<Walk<Node>>(
-        std::forward<Prefix>(prefix)..., std::forward<decltype(args)>(args)...);
-    });
+  return ResolveBool(!Gate::kAll && query.Rescored(),
+                     [&]<bool Rescore>() -> Result {
+                       return ResolveVector<Gate, Rescore>(
+                         query, edge, std::move(inner),
+                         [&]<typename Slots>(auto&&... args) -> Result {
+                           using Node = Two<Slots>;
+                           return memory::make_managed<Walk<Node>>(
+                             std::forward<Prefix>(prefix)...,
+                             std::forward<decltype(args)>(args)...);
+                         });
+                     });
 }
 
 template<template<typename> typename Walk, typename Result, typename Gate,

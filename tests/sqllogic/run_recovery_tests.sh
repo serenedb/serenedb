@@ -28,7 +28,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 cd "$SCRIPT_DIR"
 
-export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-10}"
+export RETRY_ATTEMPTS="${RETRY_ATTEMPTS:-60}"
 export BACKOFF_DURATION="${BACKOFF_DURATION:-500ms}"
 
 # Per-worker listen-port ranges: [BASE + id*PER, BASE + (id+1)*PER). With the

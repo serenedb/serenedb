@@ -30,8 +30,11 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/multi_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -151,6 +154,14 @@ struct CopyKind {
   CopyDir dir = CopyDir::None;
   CopyFormat format = CopyFormat::Other;
 };
+
+bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::DROP_STATEMENT) {
+    return false;
+  }
+  const auto& info = statement.Cast<duckdb::DropStatement>().info;
+  return info && info->type == duckdb::CatalogType::PREPARED_STATEMENT;
+}
 
 // Classified from the parsed statement BEFORE Prepare -- the CSV sniff opens
 // /dev/stdin during Prepare, so the bridge must already be live by then.
@@ -436,12 +447,14 @@ bool PgWireSession<Kind>::SetupConnection() {
   const bool superuser = login.superuser;
 
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
+  _conn->context->SetSchedulerAccount(this->_task->Account());
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  _client_state->protocol_state = &_proto;
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -690,6 +703,9 @@ bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire) {
       auto chain = wire.PopChain();
       if (!chain) {
         break;
+      }
+      if (std::exchange(wire.copy_binary_header, false)) {
+        WriteCopyBinaryHeader(this->_send, *chain);
       }
       this->_send.SpliceCommitted(std::move(*chain), false);
     }
@@ -1393,6 +1409,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     // DataRow (a plan error then lands after T, which is postgres's
     // mid-stream error behavior).
     const auto stmt_type = statement->type;
+    const bool deallocates = DeallocatesPreparedStatements(*statement);
     const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
                        ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
                        : sdb::pg::BuildCommandTag(*statement, *_conn->context);
@@ -1403,6 +1420,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       co_await DriveStatementToResult(std::move(statement), pending, wire);
     commit_block_if_last(is_last, stmt_type);
     DrainNotices();
+    if (deallocates) {
+      ReleaseDeallocated();
+    }
     const auto return_type = result->GetStatementProperties().return_type;
     if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
       WriteCommandComplete(this->_send, tag,
@@ -1422,12 +1442,6 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
 template<SocketKind Kind>
 yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
   duckdb::QueryResult& pending, WireSinkContext* wire, bool own_waiter) {
-  // Productive slices run back-to-back: a per-slice scheduler round-trip
-  // costs an enqueue + futex wake per query, and the common short query
-  // finishes on its second slice. The budget bounds worker hogging by long
-  // CPU-bound queries.
-  static constexpr int kInlineSliceBudget = 8;
-  int inline_slices = 0;
   // Wire drives splice/unblock on every wake; direct-mode backpressure unblocks
   // ride writer progress, so their parks must receive FlushDone wakes. When the
   // caller owns the waiter (DriveToResult, spanning the following
@@ -1461,15 +1475,12 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
       co_return status;
     }
     if (status == duckdb::QueryResultState::NOT_READY) {
-      if (++inline_slices < kInlineSliceBudget) {
-        continue;
+      if (duckdb::TaskScheduler::ShouldYield()) {
+        co_await this->_task->Yield();
       }
-      inline_slices = 0;
-      co_await this->_task->Yield();
     } else {
       // NO_TASKS / BLOCKED: the pool is executing the query (or it is
       // blocked); the executor's on_reschedule wake re-runs us.
-      inline_slices = 0;
       co_await this->_task->Park();
     }
   }
@@ -1595,11 +1606,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
 // COPY ... TO STDOUT (FORMAT binary|text): runs the COPY's inner query through
 // the SAME wire collector SELECT uses (parallel + zero-copy + SELECT ordering),
 // but with the collector framing rows as PGCOPY/PG-text CopyData instead of
-// DataRow. The session brackets the stream: CopyOutResponse (+ the PGCOPY
-// header for binary) before PendingQuery (arming hands the _send producer role
-// to the direct-mode sink, and workers may run it inside PendingQuery -- so the
-// header must already be committed), the trailer (binary only) + CopyDone + the
-// COPY-N tag after the drive.
+// DataRow. The session brackets the stream: CopyOutResponse before PendingQuery
+// (arming hands the _send producer role to the direct-mode sink, and workers
+// may run it inside PendingQuery -- so it must already be committed), the
+// trailer (binary only) + CopyDone + the COPY-N tag after the drive.
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
@@ -1616,13 +1626,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // staging in PendingQueryEnsured never sees this statement.
   StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
 
-  // CopyOutResponse, plus (binary only) the PGCOPY 19-byte header as a CopyData
-  // frame, both before arming/PendingQuery (see comment above).
+  // CopyOutResponse before arming/PendingQuery (see comment above).
   WriteCopyOutResponse(this->_send, binary,
                        static_cast<int16_t>(prepared->ColumnCount()));
-  if (binary) {
-    WriteCopyBinaryHeader(this->_send);
-  }
 
   static constexpr std::array<sdb::pg::VarFormat, 1> kAllBinary{
     sdb::pg::VarFormat::Binary};
@@ -1632,6 +1638,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     MakeWireContext(binary ? std::span<const sdb::pg::VarFormat>{kAllBinary}
                            : std::span<const sdb::pg::VarFormat>{kAllCopyText});
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
+  wire->copy_binary_header = binary;
   if (!binary) {
     // COPY text fields escape inline through the reused Text serializers
     // (SerializationContext::copy_text); backslash_count = 2 is the COPY
@@ -1662,7 +1669,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // stream, then the COPY N tag (postgres reports COPY, not SELECT, for COPY TO
   // STDOUT).
   if (binary) {
-    WriteCopyBinaryFooter(this->_send);
+    WriteCopyBinaryFooter(this->_send, wire->copy_binary_header);
   }
   WriteCopyDone(this->_send);
   WriteCommandComplete(
@@ -1769,7 +1776,11 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   const auto publish = [&]() -> yaclib::Task<> {
-    if (!builder.HasRows() || !feeding()) {
+    if (!feeding()) {
+      batches.Release(std::exchange(retained, {}));
+      co_return {};
+    }
+    if (!builder.HasRows()) {
       co_return {};
     }
     if (batches.NeedSpace()) {
@@ -1982,11 +1993,19 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // Named statements are stored only after a successful parse: a syntax error
   // must win over "already exists" and must not define the name.
   if (!statement_name.empty()) {
+    DropDeallocated(statement_name);
+    if (duckdb::ClientData::Get(*_conn->context)
+          .prepared_statements.contains(statement_name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
+        ERR_MSG("prepared statement \"", statement_name, "\" already exists"));
+    }
     slot = &_proto.statements.Create(statement_name);
   }
   Statement& statement = **slot;
   if (extracted.empty()) {
     // Empty query string is legal: Execute replies EmptyQueryResponse.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.MakeEmpty();
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -1998,6 +2017,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // stream at Execute (the wire collector for binary/text, DuckDB's writer
     // for csv/json/parquet/...), rather than running as a plain Prepared
     // statement.
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCopy(std::move(extracted[0]));
     WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -2019,8 +2039,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
+    const duckdb::Identifier alias{statement_name};
     auto prepared = _conn->Prepare(std::move(extracted[0]),
-                                   type_hints.empty() ? nullptr : &type_hints);
+                                   type_hints.empty() ? nullptr : &type_hints,
+                                   statement_name.empty() ? nullptr : &alias);
     if (prepared->HasError()) {
       // A failed prepare must not define the name (the slot is dropped below;
       // the unnamed slot stays Unbound).
@@ -2031,6 +2053,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));
+    statement.SetAlias(statement_name);
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2039,6 +2062,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // them now -- before the ADD COLUMN has run -- fails "Referenced update
     // column ... not found". They are prepared and run in sequence at Execute,
     // inside the session's implicit block (ExecuteCompound).
+    RegisterUnprepared(statement, statement_name, query, extracted);
     statement.SetCompound(std::move(extracted));
   }
   WriteEmptyFrame(this->_send, PQ_MSG_PARSE_COMPLETE);
@@ -2149,7 +2173,56 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
     // (PG's revalidation likewise fails per attempt, not once and for all).
     prepared->GetErrorObject().Throw();
   }
+  if (!stmt.Alias().empty()) {
+    auto& statements =
+      duckdb::ClientData::Get(*_conn->context).prepared_statements;
+    const auto alias = statements.find(stmt.Alias());
+    const auto handle = statements.find(prepared->GetName());
+    if (alias != statements.end() && handle != statements.end()) {
+      alias->second = handle->second;
+    }
+  }
   stmt.SetPrepared(std::move(prepared), epoch);
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::DropDeallocated(std::string_view name) {
+  if (name.empty()) {
+    return;
+  }
+  auto& named = _proto.statements.Named();
+  const auto it = named.find(name);
+  if (it != named.end() && !it->second->Alias().empty() &&
+      !duckdb::ClientData::Get(*_conn->context)
+         .prepared_statements.contains(name)) {
+    named.erase(it);
+  }
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::ReleaseDeallocated() {
+  const auto& statements =
+    duckdb::ClientData::Get(*_conn->context).prepared_statements;
+  absl::erase_if(_proto.statements.Named(), [&](const auto& entry) {
+    return !entry.second->Alias().empty() && !statements.contains(entry.first);
+  });
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::RegisterUnprepared(
+  Statement& statement, std::string_view name, std::string_view query,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body) {
+  if (name.empty()) {
+    return;
+  }
+  auto unbound = duckdb::make_uniq<duckdb::MultiStatement>();
+  for (const auto& part : body) {
+    unbound->statements.push_back(part->Copy());
+  }
+  unbound->query = query;
+  _conn->context->RegisterPreparedStatement(duckdb::Identifier{name},
+                                            std::move(unbound));
+  statement.SetAlias(name);
 }
 
 template<SocketKind Kind>
@@ -2167,6 +2240,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     payload.substr(portal_end + 1, statement_end - portal_end - 1);
   payload.remove_prefix(statement_end + 1);
 
+  DropDeallocated(statement_name);
   auto& slot = _proto.statements.FindOrThrow(statement_name);
   auto& statement = *slot;
   if (!statement.Bound()) {
@@ -2320,6 +2394,7 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
   const char what = payload.front();
   const std::string_view name = payload.substr(1, name_end - 1);
   if (what == 'S') {
+    DropDeallocated(name);
     DescribeStatement(*_proto.statements.FindOrThrow(name));
   } else if (what == 'P') {
     // Find (not FindOrThrow): the anon slot always exists but an unbound anon
@@ -2464,6 +2539,10 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
         WriteCommandTag(prepared, *result, return_type);
       }
       exec.state = PortalState::Exhausted;
+      if (const auto* unbound = portal.stmt->Unbound();
+          unbound && DeallocatesPreparedStatements(*unbound)) {
+        ReleaseDeallocated();
+      }
       if (prepared.GetStatementType() ==
           duckdb::StatementType::TRANSACTION_STATEMENT) {
         // COMMIT/ROLLBACK closes the block and drops the portals it owned
@@ -2576,6 +2655,9 @@ void PgWireSession<Kind>::HandleClose(std::string_view payload) {
     // portal co-owns its plan via the StatementPtr, so it survives until its
     // own Close or the transaction boundary (PG DEALLOCATE semantics).
     _proto.statements.Drop(name);
+    if (!name.empty()) {
+      duckdb::ClientData::Get(*_conn->context).prepared_statements.erase(name);
+    }
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                     ERR_MSG("invalid Close target"));
@@ -2701,10 +2783,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
     // PostgreSQL uses the user name as the database when none is given.
-    if (const auto [it, inserted] =
-          _params.try_emplace("database", user->second);
-        !inserted && it->second.empty()) {
-      it->second = user->second;
+    if (auto& database = _params["database"]; database.empty()) {
+      database = UserName();
     }
 
     if (_max_conn != 0 && _active &&
@@ -2904,6 +2984,9 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // Teardown runs where everything was created: results/portals die on a duck
   // worker; their cleanup may emit notices that must be stolen before
   // ~ConnectionContext asserts an empty queue.
+  if (_client_state) {
+    _client_state->protocol_state = nullptr;
+  }
   _proto.Clear();
   if (_connection_ctx) {
     _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});

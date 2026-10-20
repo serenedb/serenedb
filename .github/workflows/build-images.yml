@@ -39,6 +39,14 @@ jobs:
     runs-on:
       - ${{ inputs.LOCATION }}
     steps:
+      - name: Reap containers left on this runner
+        run: |
+          echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
+          filter="label=serenedb.owner=ci-${RUNNER_NAME}"
+          docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
+          docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
+          docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+
       - name: Checkout SereneDB
         uses: actions/checkout@v7
         with:
@@ -47,7 +55,7 @@ jobs:
           clean: true
 
       - name: Setup QEMU for multi-arch
-        run: docker run --rm --privileged tonistiigi/binfmt --install all
+        run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
 
       - name: Build and push build images
         working-directory: ./scripts/ci
@@ -75,3 +83,7 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
+
+      - name: Reap containers of this job
+        if: always()
+        run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"

@@ -20,11 +20,11 @@
 
 #include "scheduler/background_scheduler.h"
 
-#include <absl/flags/flag.h>
-
 #include <algorithm>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
@@ -33,10 +33,6 @@
 #include "server/utils/asio_ns.h"
 #include "server/utils/number_of_cores.h"
 
-ABSL_FLAG(uint64_t, background_threads, 0,
-          "Number of background worker threads (drop / cleanup / maintenance "
-          "tasks; later object-store prefetch). 0 = auto-detect.");
-
 namespace sdb {
 
 std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
@@ -44,39 +40,20 @@ std::uint64_t BackgroundScheduler::AnnBuildBudget() noexcept {
     1, static_cast<std::uint64_t>(CountLogicalCores()));
 }
 
-BackgroundScheduler::BackgroundScheduler()
-  : _threads(absl::GetFlag(FLAGS_background_threads)) {
-  // Pool size = max(logical_cores / 4, 2): floor 2 on small boxes, scaling at
-  // quarter-rate on big ones. The compaction gate (max concurrent CPU-heavy
-  // merges, in SearchEngine) derives from this as pool - 1: merges may use all
-  // but one thread, on which the light refresh / cleanup / drop tasks
-  // interleave. Quarter-rate keeps merges from contending with the cpu query
-  // pool (= all logical cores).
-  if (_threads == 0) {
-    _threads = std::max<std::uint64_t>(2, CountLogicalCores() / 4);
-  }
-  absl::SetFlag(&FLAGS_background_threads, _threads);
-  gInstance = this;
-}
+BackgroundScheduler::BackgroundScheduler() { gInstance = this; }
 
 BackgroundScheduler::~BackgroundScheduler() { gInstance = nullptr; }
 
 void BackgroundScheduler::start() {
-  _pool = yaclib::MakeFairThreadPool(_threads);
-  _ann_pool = yaclib::MakeFairThreadPool(
-    std::max<std::uint64_t>(1, AnnBuildBudget() - 1));
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  _executor = std::make_unique<DuckExecutor>(
+    scheduler, duckdb::SchedulerClass::BACKGROUND);
 }
 
 void BackgroundScheduler::stop() {
-  if (_ann_pool) {
-    _ann_pool->SoftStop();
-    _ann_pool->Wait();
-    _ann_pool = nullptr;
-  }
-  if (_pool) {
-    _pool->SoftStop();
-    _pool->Wait();
-    _pool = nullptr;
+  if (_executor) {
+    _executor->Drain();
   }
 }
 
@@ -121,7 +98,7 @@ void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
                                 std::function<void()> task) {
   const std::chrono::microseconds delay{
     at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
-  Delay(delay).Detach(*_pool, [this, task = std::move(task)] {
+  Delay(delay).Detach(*_executor, [this, task = std::move(task)] {
     if (!IsStopping()) {
       task();
     }

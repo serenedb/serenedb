@@ -48,11 +48,13 @@ struct TrackingDirectory;
 struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
 
-  DocumentMask::Iterator mask;
   doc_id_t base_id = doc_limits::invalid();
   ManagedVector<doc_id_t> id_map;
 
-  bool IsMasked(doc_id_t src) const noexcept { return mask.Contains(src); }
+  bool IsMasked(doc_id_t src) const noexcept {
+    SDB_ASSERT(id_map.empty() || src < id_map.size());
+    return !id_map.empty() && doc_limits::eof(id_map[src]);
+  }
 
   doc_id_t Remap(doc_id_t src) const noexcept {
     if (!id_map.empty()) {
@@ -85,7 +87,8 @@ class MergeWriter : public util::Noncopyable {
         SDB_ASSERT(db);
         return *db;
       }()},
-      _field_options{options.field_options} {}
+      _field_options{options.field_options},
+      _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -113,6 +116,7 @@ class MergeWriter : public util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

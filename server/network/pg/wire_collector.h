@@ -95,13 +95,13 @@ class WireSinkContext {
   // template the lstates clone (buffer/types_cache filled per lstate).
   std::vector<sdb::pg::VarFormat> formats;
   sdb::pg::SerializationContext proto;
-  // Normal SELECT emits DataRow; COPY ... TO STDOUT emits one CopyData frame
-  // per chunk holding PGCOPY rows (CopyBinary) or PG-text rows (CopyText). The
-  // session brackets a COPY stream -- CopyOutResponse (+ PGCOPY header for
-  // binary) before, trailer (binary) + CopyDone after -- while mode selection /
-  // chain splice stay shared with SELECT, so COPY inherits Direct/Parallel +
-  // zero-copy.
+  // Normal SELECT emits DataRow; COPY ... TO STDOUT emits PGCOPY rows
+  // (CopyBinary) or PG-text rows (CopyText). The session brackets a COPY
+  // stream -- CopyOutResponse before, trailer (binary) + CopyDone after --
+  // while mode selection / chain splice stay shared with SELECT, so COPY
+  // inherits Direct/Parallel + zero-copy.
   RowEncoding row_encoding = RowEncoding::DataRow;
+  bool copy_binary_header = false;
 
   // Paged Execute (protocol max_rows>0): force single-threaded Direct mode and
   // cap emitted rows at row_budget. The sink suspends (BLOCKED) when the budget
@@ -133,6 +133,7 @@ class WireSinkContext {
     engaged = false;
     proto = sdb::pg::SerializationContext{};
     row_encoding = RowEncoding::DataRow;
+    copy_binary_header = false;
     mode = Mode::Direct;
     paged = false;
     row_budget.store(0, std::memory_order_relaxed);

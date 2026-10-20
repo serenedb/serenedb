@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parallel/task_scheduler_token.hpp>
 #include <memory>
 #include <string_view>
 
@@ -35,8 +36,9 @@ struct SqlConnection {
   std::shared_ptr<ConnectionContext> context;
 };
 
-SqlConnection OpenSqlConnection(std::string_view user,
-                                std::string_view database, uint64_t cancel_key,
-                                CancelRegistry* cancel);
+SqlConnection OpenSqlConnection(
+  std::string_view user, std::string_view database, uint64_t cancel_key,
+  CancelRegistry* cancel,
+  const duckdb::shared_ptr<duckdb::SchedulerAccount>& account);
 
 }  // namespace sdb::network::http

@@ -48,6 +48,7 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/hash.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
@@ -64,6 +65,7 @@
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
+#include "pg/pg_catalog/pg_prepared_statements.h"
 #include "pg/pg_catalog/pg_replication_origin.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -204,22 +206,6 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::YESORNO(),
       nullptr,
     },
-    // pseudo-types for SERIAL types.
-    {
-      "serial",
-      sdb::pg::SERIAL(),
-      nullptr,
-    },
-    {
-      "bigserial",
-      sdb::pg::BIGSERIAL(),
-      nullptr,
-    },
-    {
-      "smallserial",
-      sdb::pg::SMALLSERIAL(),
-      nullptr,
-    },
     // PG pseudo-type used in RETURNS VOID; backed by SQLNULL.
     {
       "void",
@@ -296,8 +282,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // connector/duckdb_client_state.cpp), which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
-  config.SetOptionByName("scheduler_process_partial",
-                         duckdb::Value::BOOLEAN(true));
   // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
   // DuckDB's writer defaults it on.
   config.SetOptionByName("copy_csv_header_default",
@@ -315,6 +299,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterHashFunctions(db);
 
   connector::RegisterSubscriptionPragma(db);
 
@@ -356,6 +342,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
   pg::RegisterReplicationOriginStatus(db);
+  pg::RegisterPreparedStatements(db);
 
   connector::RegisterSearchFunctions(db);
 

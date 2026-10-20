@@ -31,9 +31,10 @@
 
 namespace sdb::network::http {
 
-SqlConnection OpenSqlConnection(std::string_view user,
-                                std::string_view database, uint64_t cancel_key,
-                                CancelRegistry* cancel) {
+SqlConnection OpenSqlConnection(
+  std::string_view user, std::string_view database, uint64_t cancel_key,
+  CancelRegistry* cancel,
+  const duckdb::shared_ptr<duckdb::SchedulerAccount>& account) {
   const std::string_view dbname =
     database.empty() ? irs::StaticStrings::kDefaultDatabase : database;
   duckdb::idx_t database_id = 0;
@@ -54,6 +55,7 @@ SqlConnection OpenSqlConnection(std::string_view user,
   }
   SqlConnection result{.conn =
                          irs::DuckDBEngine::Instance().CreateConnection()};
+  result.conn->context->SetSchedulerAccount(account);
   result.context = std::make_shared<ConnectionContext>(
     *result.conn->context, login_user, login.role, dbname, database_id, nullptr,
     static_cast<int32_t>(cancel_key >> 32), cancel);

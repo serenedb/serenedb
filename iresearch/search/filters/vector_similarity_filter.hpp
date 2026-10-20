@@ -22,6 +22,7 @@
 
 #include <cstdint>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/detail/vector_filter_util.hpp"
 #include "iresearch/search/filters/filter.hpp"
 
@@ -47,6 +48,9 @@ class ByVectorSimilarity final
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
+
+ private:
+  mutable AnnQueryCache _cache;
 };
 
 }  // namespace irs

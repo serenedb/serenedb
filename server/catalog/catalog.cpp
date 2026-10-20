@@ -21,6 +21,8 @@
 #include "catalog/catalog.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -57,7 +59,10 @@
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <filesystem>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -108,6 +113,25 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
     .ModifyDatabase(catalog.GetAttached(), type);
 }
 
+duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
+  duckdb::ClientContext& context) {
+  auto catalog = duckdb::Catalog::GetCatalogEntry(
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
+  if (!catalog || !catalog->IsDuckCatalog()) {
+    return nullptr;
+  }
+  return catalog->Cast<duckdb::DuckCatalog>();
+}
+
+duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
+  duckdb::ClientContext& context) {
+  auto catalog = DefaultDuckCatalog(context);
+  if (!catalog || catalog->GetCatalogType() != SereneDBCatalog::kStorageType) {
+    return nullptr;
+  }
+  return catalog->Cast<SereneDBCatalog>();
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -124,6 +148,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
+        sequence_info.permissions.owner = info.Base().permissions.owner;
         info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
@@ -154,40 +179,10 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      _directory, InMemory(), GetOid(), entry->oid,
+      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
-}
-
-namespace {
-
-duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
-  switch (type) {
-    case duckdb::CatalogType::VIEW_ENTRY:
-      return duckdb::CatalogType::TABLE_ENTRY;
-    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
-      return duckdb::CatalogType::TABLE_FUNCTION_ENTRY;
-    case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:
-    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
-    case duckdb::CatalogType::WINDOW_FUNCTION_ENTRY:
-      return duckdb::CatalogType::MACRO_ENTRY;
-    default:
-      return type;
-  }
-}
-
-}  // namespace
-
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
-SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
-                                duckdb::idx_t id) {
-  auto entry =
-    GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
-  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
-    return nullptr;
-  }
-  return &entry->Cast<duckdb::SchemaCatalogEntry>();
 }
 
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
@@ -209,20 +204,6 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
     job->ScheduleAtCommit(*transaction.context);
   }
   return job;
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::FindEntryById(
-  duckdb::optional_ptr<duckdb::ClientContext> context, duckdb::CatalogType type,
-  duckdb::idx_t id) {
-  auto entry =
-    context ? GetOidIndex().GetVisible(id, GetCatalogTransaction(*context).view)
-            : GetOidIndex().GetCommitted(id);
-  if (!entry || entry->internal ||
-      entry->type == duckdb::CatalogType::SCHEMA_ENTRY ||
-      SchemaSetOf(entry->type) != SchemaSetOf(type)) {
-    return nullptr;
-  }
-  return entry;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
@@ -452,11 +433,58 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
+std::string SereneDBCatalog::GetCatalogType() {
+  return GetAttached().IsReadOnly() ? kReadOnlyStorageType : kStorageType;
+}
+
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (_detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
+}
+
+void SereneDBCatalog::FinalizeLoad(
+  duckdb::optional_ptr<duckdb::ClientContext> context) {
+  if (!GetAttached().IsReadOnly()) {
+    return;
+  }
+  SDB_ASSERT(context);
+  const auto& path = _directory->Path();
+  const auto name = path.filename().string();
+  duckdb::idx_t oid = 0;
+  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
+      !absl::SimpleAtoi(name, &oid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", path.string(),
+                            "\" is not a SereneDB database directory: its "
+                            "name is not a database oid"));
+  }
+  const auto log_path = (path.parent_path() / kCatalogLog).string();
+  _catalog_log_lock =
+    duckdb::FileSystem::Get(GetAttached())
+      .OpenFile(log_path, duckdb::FileFlags::FILE_FLAGS_READ |
+                            duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS |
+                            duckdb::FileLockType::READ_LOCK);
+  if (!_catalog_log_lock) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("Cannot open catalog log \"", log_path,
+              "\" in read-only mode: catalog log does not exist"));
+  }
+  auto& storage = GetAttached().GetStorageManager();
+  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
+  for (auto& table : SearchTableStorages(*this)) {
+    table->OpenReader();
+  }
+  for (auto& index : InvertedIndexEntries(*this)) {
+    if (const auto& index_storage = index.get().Storage()) {
+      index_storage->OpenReader();
+    }
+  }
+  auto attached = GetAttached().shared_from_this();
+  duckdb::MetaTransaction::Get(*context).UseDatabase(attached);
+  storage.FinishLoad(*context);
 }
 
 bool SereneDBCatalog::AppendLocalIndexes(
@@ -495,6 +523,10 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  if (GetAttached().IsReadOnly()) {
+    duckdb::DuckCatalog::OnDetach(context);
+    return;
+  }
   ForEachJob(*this, [](JobCatalogEntry& job) { job.OnDrop(); });
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)

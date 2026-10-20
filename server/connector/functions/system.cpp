@@ -23,15 +23,19 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
@@ -45,12 +49,14 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <functional>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -69,6 +75,7 @@
 #include "network/cancel_registry.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -325,10 +332,8 @@ duckdb::optional_ptr<duckdb::Catalog> SessionCatalog(
 // session database's sets.
 duckdb::optional_ptr<duckdb::CatalogEntry> FindByOid(
   duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t id) {
-  auto database = SessionCatalog(context);
-  return database ? database->Cast<catalog::SereneDBCatalog>().FindEntryById(
-                      &context, type, id)
-                  : nullptr;
+  auto database = catalog::DefaultDuckCatalog(context);
+  return database ? database->FindEntryById(&context, type, id) : nullptr;
 }
 
 template<typename T>
@@ -372,6 +377,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
   auto* result_ptr =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  std::optional<duckdb::idx_t> last_found;
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto name_value = names[row];
     auto ok_value = oks[row];
@@ -380,11 +386,17 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
       continue;
     }
     const bool missing_ok = ok_value.GetValue();
-    const auto key = name_value.GetValue().GetString();
+    const auto name = name_value.GetValue();
+    if (last_found && names[*last_found].GetValue() == name) {
+      result_ptr[row] = result_ptr[*last_found];
+      continue;
+    }
+    const auto key = name.GetString();
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
       result_ptr[row] =
         duckdb::StringVector::AddString(result, value.ToString());
+      last_found = row;
       continue;
     }
     if (missing_ok) {
@@ -755,13 +767,13 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
   // A schema oid resolves in the session's own database, as it does in pg.
-  auto database = SessionCatalog(context);
-  SDB_ASSERT(database);
+  auto database = catalog::DefaultDuckCatalog(context);
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto schema = database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-        context, pg::OidFromSql(oid));
+      auto schema = database
+                      ? database->FindSchemaById(context, pg::OidFromSql(oid))
+                      : nullptr;
       if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
@@ -1267,11 +1279,9 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     }
   }
   if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
-    auto database = SessionCatalog(context);
-    auto schema = database
-                    ? database->Cast<catalog::SereneDBCatalog>().FindSchemaById(
-                        context, obj_id)
-                    : nullptr;
+    auto database = catalog::DefaultDuckCatalog(context);
+    auto schema =
+      database ? database->FindSchemaById(context, obj_id) : nullptr;
     if (!schema) {
       is_null = true;
       return false;
@@ -1521,31 +1531,65 @@ bool AttnumExists(const duckdb::TableCatalogEntry& table, int64_t attnum) {
                                     table.GetColumns().LogicalColumnCount());
 }
 
-// Whether `role_id` holds `priv` on `column` of `table`. PG resolves a column
+// Whether `role_id` holds `priv` on any of `columns`, whose grants
+// `column_acl` returns, of the relation with `perm`. PG resolves a column
 // privilege via a table-level grant OR a per-column grant
 // (pg_attribute.attacl); the optional "WITH GRANT OPTION" suffix additionally
-// requires the grant-option bit on the column (or table).
-bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
-                    const duckdb::TableCatalogEntry& table,
-                    const duckdb::ColumnDefinition& column,
-                    std::string_view priv) {
+// requires the grant-option bit on the column (or table). A list of privileges
+// holds when any of them does.
+bool ColumnsPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                     const duckdb::Permissions& perm, auto&& columns,
+                     auto&& column_acl, std::string_view priv) {
   const auto modes = ParsePrivCheckText(priv, duckdb::CatalogType::TABLE_ENTRY);
-  const std::span<const duckdb::AclItem> column_acl = column.Acl();
   const auto closure = auth::ClosureFor(&context, role_id);
   if (modes.privs != duckdb::AclMode::NoRights &&
-      closure->CanColumns(table.permissions, modes.privs, {&column_acl, 1})) {
+      closure->CanAny(duckdb::CatalogType::TABLE_ENTRY, perm, modes.privs)) {
     return true;
   }
-  if (modes.grant_options == duckdb::AclMode::NoRights) {
-    return false;
-  }
-  const auto& rc = *closure;
-  if (rc.Owns(table.permissions.owner)) {
+  if (modes.grant_options != duckdb::AclMode::NoRights &&
+      (closure->Owns(perm.owner) ||
+       (closure->GrantableModes(perm.acl) & modes.grant_options) !=
+         duckdb::AclMode::NoRights)) {
     return true;
   }
-  const auto held =
-    rc.GrantableModes(table.permissions.acl) | rc.GrantableModes(column_acl);
-  return (held & modes.grant_options) != duckdb::AclMode::NoRights;
+  for (const auto& column : columns) {
+    const std::span<const duckdb::AclItem> acl = column_acl(column);
+    if ((closure->HeldModes(acl) & modes.privs) != duckdb::AclMode::NoRights ||
+        (closure->GrantableModes(acl) & modes.grant_options) !=
+          duckdb::AclMode::NoRights) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                    const duckdb::Permissions& perm,
+                    std::span<const duckdb::AclItem> column_acl,
+                    std::string_view priv) {
+  return ColumnsPrivHeld(context, role_id, perm, std::span{&column_acl, 1},
+                         std::identity{}, priv);
+}
+
+bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                       const duckdb::TableCatalogEntry& table,
+                       std::string_view priv) {
+  return ColumnsPrivHeld(
+    context, role_id, table.permissions, table.GetColumns().Logical(),
+    [](const duckdb::ColumnDefinition& column)
+      -> std::span<const duckdb::AclItem> { return column.Acl(); },
+    priv);
+}
+
+bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                       const pg::VirtualTable& sys, std::string_view priv) {
+  return ColumnsPrivHeld(
+    context, role_id, SystemRelationPermissions(sys),
+    duckdb::StructType::GetChildTypes(sys.RowType()),
+    [&](const auto& child) {
+      return sys.ColumnAcl(child.first.GetIdentifierName());
+    },
+    priv);
 }
 
 bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,
@@ -1559,7 +1603,8 @@ bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,
       ERR_MSG("column \"", col, "\" of relation \"",
               table.name.GetIdentifierName(), "\" does not exist"));
   }
-  return ColumnPrivHeld(context, role_id, table, columns.GetColumn(key), priv);
+  return ColumnPrivHeld(context, role_id, table.permissions,
+                        columns.GetColumn(key).Acl(), priv);
 }
 
 // has_column_privilege(role, oid, attnum, priv): attnum is 1-based over the
@@ -1569,12 +1614,10 @@ bool HasColumnPrivByAttnum(duckdb::ClientContext& context,
                            const duckdb::TableCatalogEntry& table,
                            int64_t attnum, std::string_view priv) {
   return ColumnPrivHeld(
-    context, role_id, table,
-    table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)), priv);
+    context, role_id, table.permissions,
+    table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(), priv);
 }
 
-// System relations have no per-column ACLs: the column privilege reduces to the
-// relation-level privilege once the column is known to exist.
 bool SystemRelationColumnPriv(ConnectionContext& conn_ctx,
                               duckdb::idx_t role_id,
                               const duckdb::QualifiedName& name,
@@ -1588,9 +1631,9 @@ bool SystemRelationColumnPriv(ConnectionContext& conn_ctx,
                     ERR_MSG("column \"", col, "\" of relation \"",
                             sys->GetName(), "\" does not exist"));
   }
-  return HasAnyPermissionsPrivilegeText(conn_ctx.GetClientContext(), role_id,
-                                        SystemRelationPermissions(*sys),
-                                        duckdb::CatalogType::TABLE_ENTRY, priv);
+  return ColumnPrivHeld(conn_ctx.GetClientContext(), role_id,
+                        SystemRelationPermissions(*sys), sys->ColumnAcl(col),
+                        priv);
 }
 
 void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
@@ -1702,15 +1745,13 @@ std::optional<bool> ColumnPrivByNameTableAttnum(ConnectionContext& conn_ctx,
   if (sys == nullptr) {
     ThrowRelationNotFound(name.Name().GetIdentifierName());
   }
-  // System relations carry no per-column ACL; a valid attnum reduces to the
-  // relation-level privilege.
   const auto cols = duckdb::StructType::GetChildTypes(sys->RowType());
   if (attnum < 1 || attnum > static_cast<int64_t>(cols.size())) {
     return std::nullopt;
   }
-  return HasAnyPermissionsPrivilegeText(conn_ctx.GetClientContext(), role_id,
-                                        SystemRelationPermissions(*sys),
-                                        duckdb::CatalogType::TABLE_ENTRY, priv);
+  return ColumnPrivHeld(
+    conn_ctx.GetClientContext(), role_id, SystemRelationPermissions(*sys),
+    sys->ColumnAcl(cols[attnum - 1].first.GetIdentifierName()), priv);
 }
 
 void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
@@ -1805,13 +1846,11 @@ void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
       const auto* table = FindTable(state.GetContext(), name);
       try {
         if (table) {
-          return HasAnyTablePrivilegeText(state.GetContext(), role->oid,
-                                          table->permissions,
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), role->oid, *table,
+                                   {p.GetData(), p.GetSize()});
         } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return HasAnyTablePrivilegeText(state.GetContext(), role->oid,
-                                          SystemRelationPermissions(*sys),
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), role->oid, *sys,
+                                   {p.GetData(), p.GetSize()});
         } else {
           ThrowRelationNotFound(name.Name().GetIdentifierName());
         }
@@ -1832,12 +1871,18 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
       if (!current) {
         return duckdb::nullopt;
       }
-      const auto* perm = RelationPermissions(
-        RelationEntryByOid(state.GetContext(), pg::OidFromSql(toid)).get());
+      const auto entry =
+        RelationEntryByOid(state.GetContext(), pg::OidFromSql(toid));
+      const auto* perm = RelationPermissions(entry.get());
       if (!perm) {
         return duckdb::nullopt;
       }
       try {
+        if (entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+          return AnyColumnPrivHeld(state.GetContext(), current->oid,
+                                   entry->Cast<duckdb::TableCatalogEntry>(),
+                                   {p.GetData(), p.GetSize()});
+        }
         return HasAnyTablePrivilegeText(state.GetContext(), current->oid, *perm,
                                         {p.GetData(), p.GetSize()});
       } catch (const irs::SqlException& e) {
@@ -1861,13 +1906,11 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
       const auto* table = FindTable(state.GetContext(), name);
       try {
         if (table) {
-          return HasAnyTablePrivilegeText(state.GetContext(), current->oid,
-                                          table->permissions,
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), current->oid, *table,
+                                   {p.GetData(), p.GetSize()});
         } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return HasAnyTablePrivilegeText(state.GetContext(), current->oid,
-                                          SystemRelationPermissions(*sys),
-                                          {p.GetData(), p.GetSize()});
+          return AnyColumnPrivHeld(state.GetContext(), current->oid, *sys,
+                                   {p.GetData(), p.GetSize()});
         } else {
           ThrowRelationNotFound(name.Name().GetIdentifierName());
         }
@@ -1877,10 +1920,135 @@ void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
     });
 }
 
+[[noreturn]] void ThrowColumnNotFound(std::string_view column,
+                                      std::string_view relation) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                  ERR_MSG("column \"", column, "\" of relation \"", relation,
+                          "\" does not exist"));
+}
+
+bool ViewHasColumn(duckdb::ClientContext& context,
+                   duckdb::ViewCatalogEntry& view, std::string_view column) {
+  view.BindView(context);
+  const auto info = view.GetColumnInfo();
+  if (!info) {
+    return false;
+  }
+  for (duckdb::idx_t i = 0; i < info->names.size(); ++i) {
+    const auto& name = i < view.aliases.size() && !view.aliases[i].empty()
+                         ? view.aliases[i]
+                         : info->names[i];
+    if (name.GetIdentifierName() == column) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SerialSequenceOf(duckdb::ClientContext& context,
+                      std::string_view table_name, std::string_view column_name,
+                      std::string& sequence) {
+  const auto name = duckdb::QualifiedName::Parse(table_name);
+  const auto relation = name.Name().GetIdentifierName();
+  if (pg::ResolveRelation(context, name) == pg::kInvalidOid) {
+    ThrowRelationNotFound(absl::StrJoin(
+      name.Path(), ".", [](std::string* out, const duckdb::Identifier& part) {
+        out->append(part.GetIdentifierName());
+      }));
+  }
+  auto entry = duckdb::Catalog::GetEntry(
+    context, duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, name},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
+    return false;
+  }
+  if (entry->type == duckdb::CatalogType::VIEW_ENTRY) {
+    if (!ViewHasColumn(context, entry->Cast<duckdb::ViewCatalogEntry>(),
+                       column_name)) {
+      ThrowColumnNotFound(column_name, relation);
+    }
+    return false;
+  }
+  if (entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return false;
+  }
+  const duckdb::ColumnDefinition* column = nullptr;
+  for (const auto& candidate :
+       entry->Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+    if (candidate.Name().GetIdentifierName() == column_name) {
+      column = &candidate;
+      break;
+    }
+  }
+  if (!column) {
+    ThrowColumnNotFound(column_name, relation);
+  }
+  auto& catalog = entry->ParentCatalog();
+  auto dependency_manager = catalog.GetDependencyManager();
+  if (!dependency_manager) {
+    return false;
+  }
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  const duckdb::IdentifierEquality equals(catalog.IsCaseSensitive());
+  for (const auto& owned :
+       dependency_manager->OwnedEntries(transaction, *entry)) {
+    const auto& candidate = owned.get();
+    if (candidate.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
+      continue;
+    }
+    const auto& schema = candidate.ParentSchema(transaction);
+    const auto& owner =
+      candidate.Cast<duckdb::SequenceCatalogEntry>().owner_column;
+    if (owner.IsValid()
+          ? owner.GetIndex() != column->CatalogOid()
+          : !duckdb::Binder::DefaultNamesSequence(
+              *column, schema.GetQualifiedName(candidate.name), equals)) {
+      continue;
+    }
+    sequence =
+      absl::StrCat(pg::QuoteIdentifier(schema.name.GetIdentifierName()), ".",
+                   pg::QuoteIdentifier(candidate.name.GetIdentifierName()));
+    return true;
+  }
+  return false;
+}
+
+void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState& state,
+                                 duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  const auto tables = args.data[0].Values<duckdb::string_t>();
+  const auto columns = args.data[1].Values<duckdb::string_t>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  std::string sequence;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    const auto table = tables[row];
+    const auto column = columns[row];
+    if (!table.IsValid() || !column.IsValid() ||
+        !SerialSequenceOf(
+          context, {table.GetValue().GetData(), table.GetValue().GetSize()},
+          {column.GetValue().GetData(), column.GetValue().GetSize()},
+          sequence)) {
+      writer.WriteNull();
+      continue;
+    }
+    writer.WriteValue(duckdb::string_t{sequence});
+  }
+}
+
 }  // namespace
 
 void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
+  const auto register_stable = [&loader](duckdb::ScalarFunction func) {
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    loader.RegisterFunction(func);
+  };
+  const auto register_volatile = [&loader](duckdb::ScalarFunction func) {
+    func.SetStability(duckdb::FunctionStability::VOLATILE);
+    loader.RegisterFunction(func);
+  };
 
   // PG types are registered via duckdb_external_types in duckdb_engine.cpp
   // pg_typeof(any) -> regtype
@@ -1903,41 +2071,58 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::VARCHAR,
       CurrentSetting2Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
     loader.RegisterFunction(func);
   }
 
   // set_config(name, value, is_local) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "set_config",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::BOOLEAN},
-    duckdb::LogicalType::VARCHAR,
-    SetConfigFunction});
+  {
+    duckdb::ScalarFunction func{
+      "set_config",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
+       duckdb::LogicalType::BOOLEAN},
+      duckdb::LogicalType::VARCHAR,
+      SetConfigFunction};
+    func.SetStability(duckdb::FunctionStability::VOLATILE);
+    func.SetRequiresOrderedExecution(true);
+    loader.RegisterFunction(func);
+  }
+
+  {
+    duckdb::ScalarFunction func{
+      "pg_get_serial_sequence",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::VARCHAR,
+      PgGetSerialSequenceFunction};
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    func.SetFallible();
+    loader.RegisterFunction(func);
+  }
 
   // search_path_canonical() -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{"search_path_canonical",
-                                                 {},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 SearchPathCanonicalFunction});
+  register_stable(duckdb::ScalarFunction{"search_path_canonical",
+                                         {},
+                                         duckdb::LogicalType::VARCHAR,
+                                         SearchPathCanonicalFunction});
 
   // version() -> text (overrides DuckDB's built-in)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "version", {}, duckdb::LogicalType::VARCHAR, VersionFunction});
 
   // pg_backend_pid() -> int4 (this connection's backend PID)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_backend_pid", {}, duckdb::LogicalType::INTEGER, PgBackendPidFunction});
 
   // pg_cancel_backend(pid) / pg_terminate_backend(pid) -> bool: cancel another
   // backend's query by pid (terminate degrades to cancel + a warning).
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_cancel_backend",
-                                                 {duckdb::LogicalType::INTEGER},
-                                                 duckdb::LogicalType::BOOLEAN,
-                                                 PgCancelBackendFunction});
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_terminate_backend",
-                                                 {duckdb::LogicalType::INTEGER},
-                                                 duckdb::LogicalType::BOOLEAN,
-                                                 PgTerminateBackendFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_cancel_backend",
+                                           {duckdb::LogicalType::INTEGER},
+                                           duckdb::LogicalType::BOOLEAN,
+                                           PgCancelBackendFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_terminate_backend",
+                                           {duckdb::LogicalType::INTEGER},
+                                           duckdb::LogicalType::BOOLEAN,
+                                           PgTerminateBackendFunction});
 
   // num_nonnulls(...) -> int
   {
@@ -2008,7 +2193,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   // --- pg_*_size functions ---
   // --- pg_*_size functions: all take regclass (implicit cast from text) ---
   // pg_relation_size(regclass)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_volatile(duckdb::ScalarFunction{
     "pg_relation_size",
     {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
@@ -2022,7 +2207,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     }});
 
   // pg_relation_size(regclass, text)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_volatile(duckdb::ScalarFunction{
     "pg_relation_size",
     {pg::REGCLASS(), duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BIGINT,
@@ -2038,7 +2223,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     }});
 
   // pg_table_size(regclass)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_volatile(duckdb::ScalarFunction{
     "pg_table_size",
     {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
@@ -2052,7 +2237,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     }});
 
   // pg_total_relation_size(regclass)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_volatile(duckdb::ScalarFunction{
     "pg_total_relation_size",
     {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
@@ -2065,7 +2250,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     }});
 
   // pg_indexes_size(regclass)
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_volatile(duckdb::ScalarFunction{
     "pg_indexes_size",
     {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
@@ -2083,12 +2268,12 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("Function is not supported in SereneDB"));
   };
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_current_xact_id", {}, pg::XID8(), not_supported});
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_xact_status",
-                                                 {pg::XID8()},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 not_supported});
+  register_volatile(duckdb::ScalarFunction{"pg_xact_status",
+                                           {pg::XID8()},
+                                           duckdb::LogicalType::VARCHAR,
+                                           not_supported});
 
   {
     duckdb::ScalarFunction to_regtype_fn{
@@ -2099,6 +2284,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     };
     to_regtype_fn.SetNullHandling(
       duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    to_regtype_fn.SetStability(
+      duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
     duckdb::CreateScalarFunctionInfo info{std::move(to_regtype_fn)};
     info.SetSchema("pg_catalog");
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
@@ -2116,48 +2303,50 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     // typmod nulls the whole result before the function runs.
     format_type_fn.SetNullHandling(
       duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    format_type_fn.SetStability(
+      duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
     duckdb::CreateScalarFunctionInfo info{std::move(format_type_fn)};
     info.SetSchema("pg_catalog");
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));
   }
   // pg_database_size(text) and pg_database_size(bigint/oid)
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_database_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgDatabaseSizeNameFunction});
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_database_size",
-                                                 {duckdb::LogicalType::BIGINT},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgDatabaseSizeOidFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_database_size",
+                                           {duckdb::LogicalType::VARCHAR},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgDatabaseSizeNameFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_database_size",
+                                           {duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgDatabaseSizeOidFunction});
 
   // pg_schema_size(text) and pg_schema_size(oid) -- non-standard helper.
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_schema_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgSchemaSizeNameFunction});
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_schema_size",
-                                                 {duckdb::LogicalType::BIGINT},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgSchemaSizeOidFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_schema_size",
+                                           {duckdb::LogicalType::VARCHAR},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgSchemaSizeNameFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_schema_size",
+                                           {duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgSchemaSizeOidFunction});
 
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "current_user", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
 
   // current_role is same as current_user in postgres
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "current_role", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
 
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "session_user", {}, duckdb::LogicalType::VARCHAR, SessionUserFunction});
 
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "has_table_privilege",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     HasTablePrivilege3Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "has_table_privilege",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
@@ -2168,7 +2357,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                 duckdb::LogicalType::BOOLEAN,
                                 HasTablePrivilegeOid2Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2177,7 +2366,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasTablePrivilegeOid3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2186,7 +2375,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasTablePrivilegeOidName3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2195,49 +2384,49 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasTablePrivilegeNameOid3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
 
-  const auto register_object_priv = [&loader]<duckdb::CatalogType kType>(
-                                      std::string_view name) {
-    loader.RegisterFunction(duckdb::ScalarFunction{
-      duckdb::Identifier{name},
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN,
-      HasObjectPrivilege3Function<kType>});
-    loader.RegisterFunction(duckdb::ScalarFunction{
-      duckdb::Identifier{name},
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN,
-      HasObjectPrivilege2Function<kType>});
-    {
-      duckdb::ScalarFunction func{duckdb::Identifier{name},
-                                  {pg::OID(), duckdb::LogicalType::VARCHAR},
-                                  duckdb::LogicalType::BOOLEAN,
-                                  HasObjectPrivilegeOid2Function<kType>};
-      func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-      loader.RegisterFunction(func);
-    }
-    {
-      duckdb::ScalarFunction func{
+  const auto register_object_priv =
+    [&register_stable]<duckdb::CatalogType kType>(std::string_view name) {
+      register_stable(duckdb::ScalarFunction{
         duckdb::Identifier{name},
-        {pg::OID(), duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+        {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::VARCHAR},
         duckdb::LogicalType::BOOLEAN,
-        HasObjectPrivilegeOidName3Function<kType>};
-      func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-      loader.RegisterFunction(func);
-    }
-    {
-      duckdb::ScalarFunction func{
+        HasObjectPrivilege3Function<kType>});
+      register_stable(duckdb::ScalarFunction{
         duckdb::Identifier{name},
-        {pg::OID(), pg::OID(), duckdb::LogicalType::VARCHAR},
+        {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
         duckdb::LogicalType::BOOLEAN,
-        HasObjectPrivilegeOid3Function<kType>};
-      func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-      loader.RegisterFunction(func);
-    }
-  };
+        HasObjectPrivilege2Function<kType>});
+      {
+        duckdb::ScalarFunction func{duckdb::Identifier{name},
+                                    {pg::OID(), duckdb::LogicalType::VARCHAR},
+                                    duckdb::LogicalType::BOOLEAN,
+                                    HasObjectPrivilegeOid2Function<kType>};
+        func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+        register_stable(func);
+      }
+      {
+        duckdb::ScalarFunction func{duckdb::Identifier{name},
+                                    {pg::OID(), duckdb::LogicalType::VARCHAR,
+                                     duckdb::LogicalType::VARCHAR},
+                                    duckdb::LogicalType::BOOLEAN,
+                                    HasObjectPrivilegeOidName3Function<kType>};
+        func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+        register_stable(func);
+      }
+      {
+        duckdb::ScalarFunction func{
+          duckdb::Identifier{name},
+          {pg::OID(), pg::OID(), duckdb::LogicalType::VARCHAR},
+          duckdb::LogicalType::BOOLEAN,
+          HasObjectPrivilegeOid3Function<kType>};
+        func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+        register_stable(func);
+      }
+    };
   register_object_priv.operator()<duckdb::CatalogType::SCHEMA_ENTRY>(
     "has_schema_privilege");
   register_object_priv.operator()<duckdb::CatalogType::SEQUENCE_ENTRY>(
@@ -2249,36 +2438,36 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   register_object_priv.operator()<duckdb::CatalogType::TYPE_ENTRY>(
     "has_type_privilege");
 
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     PgHasRoleNameName3Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     PgHasRoleNameOid3Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     PgHasRoleOidName3Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT,
      duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     PgHasRoleOidOid3Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
     PgHasRoleName2Function});
-  loader.RegisterFunction(duckdb::ScalarFunction{
+  register_stable(duckdb::ScalarFunction{
     "pg_has_role",
     {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BOOLEAN,
@@ -2292,7 +2481,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeNameName4Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2302,7 +2491,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeName3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2312,7 +2501,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeOidAttnum3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2322,7 +2511,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeNameAttnum4Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2332,7 +2521,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeOidNameAttnum4Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2342,7 +2531,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeOidOidAttnum4Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
 
   {
@@ -2353,7 +2542,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasAnyColumnPrivilegeName3Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2362,7 +2551,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasAnyColumnPrivilegeName2Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
   {
     duckdb::ScalarFunction func{
@@ -2371,7 +2560,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BOOLEAN,
       HasAnyColumnPrivilegeOid2Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    loader.RegisterFunction(func);
+    register_stable(func);
   }
 }
 

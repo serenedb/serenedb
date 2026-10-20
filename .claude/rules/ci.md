@@ -3,6 +3,9 @@ paths:
   - ".github/**"
   - "scripts/ci/**"
   - "tests/sqllogic/fixtures/**"
+  - "**/docker-compose*"
+  - "tests/**/run*.sh"
+  - "tests/drivers/harness/**"
 ---
 
 # CI
@@ -10,6 +13,10 @@ paths:
 - Workflows, `scripts/ci/`, CI images and fixtures change, and failed or flaky jobs rerun, only when the user asks. Runs: [pull-requests.md](pull-requests.md).
 - A red job is reproduced natively. The dev machines are set up like CI, so run the step's own runner (`scripts/ci/steps/` shows it) against a local build of the job's config; never `run_in_docker.sh` or containers to mimic CI.
 - `act` checks a workflow change locally: `./scripts/ci/act-local.sh validate <workflow>.yml`.
+
+## Containers
+
+- Every container, network and volume a CI job or a test runner starts carries the label `serenedb.owner=$SDB_DOCKER_OWNER` when that variable is set: `labels: *owner` in compose files, and a service that starts more through the docker socket gets `SDB_DOCKER_OWNER` in its environment. Each job removes its owner's leftovers before checkout and at its end; an unlabelled one outlives a cancelled job and keeps writing into the next job's workspace.
 
 ## What a run covers
 

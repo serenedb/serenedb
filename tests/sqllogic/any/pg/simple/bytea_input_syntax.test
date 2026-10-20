@@ -1,0 +1,70 @@
+query
+SELECT encode('\x'::bytea, 'hex') AS h
+----
+h
+(empty)
+
+query
+SELECT encode('\x41 '::bytea, 'hex') AS h
+----
+h
+41
+
+query
+SELECT encode(E'\\x41\r42\t43\n44'::bytea, 'hex') AS h
+----
+h
+41424344
+
+query
+SELECT encode('\\001'::bytea, 'hex') AS h
+----
+h
+5c303031
+
+query
+SELECT encode('é\001\377\000'::bytea, 'hex') AS h
+----
+h
+c3a901ff00
+
+statement error
+SELECT '\x4 1'::bytea
+----
+db error: ERROR: invalid hexadecimal digit: " "
+
+
+statement error
+SELECT '\x 0'::bytea
+----
+db error: ERROR: invalid hexadecimal data: odd number of digits
+
+
+statement error
+SELECT '\X41'::bytea
+----
+db error: ERROR: invalid input syntax for type bytea
+
+
+statement error
+SELECT 'abc\'::bytea
+----
+db error: ERROR: invalid input syntax for type bytea
+
+
+statement error
+SELECT '\01'::bytea
+----
+db error: ERROR: invalid input syntax for type bytea
+
+
+statement error
+SELECT '\08x'::bytea
+----
+db error: ERROR: invalid input syntax for type bytea
+
+
+statement error
+SELECT '\400'::bytea
+----
+db error: ERROR: invalid input syntax for type bytea

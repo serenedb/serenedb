@@ -15,13 +15,14 @@ paths:
 - `tests/drivers/<lang>/`: client drivers over the wire, on the shared spec in `tests/drivers/spec/`; `tests/drivers/psql/` pins psql's output; `tests/drivers/network/`: pg_hba matching.
 - `tests/drivers/stress/`: concurrency and soak profiles; `tests/drivers/sqlsmith/` and `tests/drivers/fuzz/`: fuzzers.
 - `tests/bench/micro/`: microbenchmarks; `scripts/perf/`: end-to-end performance scripts. `tests/duckdb/`: DuckDB's and the extensions' own suites.
+- `third_party/re2/re2/testing/`: the re2 fork's own suites, whose exhaustive and random tests check every matching engine against a backtracking reference; CI runs them when `third_party/re2` or what it builds against changes.
 
 ## When a change needs one
 
 - A bug fix, always ([CLAUDE.md](../../CLAUDE.md), "Evidence"); a bug a plain test can't reach (a race, an error or a crash at one spot) gets a fault point.
 - A new feature or behaviour change: a sqllogic test in the right subtree, plus a gtest for isolated logic worth pinning.
 - A change to plan shape or to which execution path runs: tests pin both `EXPLAIN` and the results, across the shapes it affects.
-- Shared low-level code: run its whole sibling test file, and add adversarial inputs (a NULL first row, an all-NULL chunk, boundaries).
+- Shared low-level code: run its whole sibling test file, and add adversarial inputs (a NULL first row, an all-NULL chunk, boundaries, strings longer than the 12 bytes `string_t` inlines, since inlined ones hide lifetime bugs).
 - Anything checked by hand (a crash loop, a driver check) becomes a committed recovery or driver test.
 - Never edit a test or an expectation to make a failure go away.
 - After a DuckDB update, a changed error text is fine (update the test); an internal error, an assertion or ok -> error is a regression; for error -> ok, find out why before changing the expectation.
@@ -36,6 +37,7 @@ paths:
 - gtests: one test runs directly (`--gtest_filter=...`); more go through `scripts/gtest-parallel/gtest-parallel`, as CI runs them. `iresearch-load-tests` run as one process. `ninja serened` doesn't relink the test binaries.
 - Drivers: `tests/drivers/run.sh --port <port> --lang <lang>`, only for languages whose toolchain is installed; a skipped language is not a pass.
 - DuckDB suites: `./tests/duckdb/run.sh --suite <name>` (`--list` names them); run `ninja unittest` first after a change. A suite's skip list holds only the SereneDB divergences that can't pass ([tests/duckdb/README.md](../../tests/duckdb/README.md)).
+- re2 fork suites, in a build with `SDB_GTEST`: `ninja re2-tests`, then `ctest --test-dir <build>/third_party/re2 -j "$(nproc)" --output-on-failure`.
 
 ```bash
 ./tests/sqllogic/run.sh --single-port <port> --test 'tests/sqllogic/sdb/pg/simple/*.test'

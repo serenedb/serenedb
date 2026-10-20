@@ -106,3 +106,62 @@ val	name
 
 statement ok
 DROP TABLE invoker;
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff ADD COLUMN r float8 DEFAULT random();
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff ADD COLUMN n int NOT NULL DEFAULT 1;
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff ADD COLUMN u int UNIQUE;
+
+
+statement error (relation "vedernikoff" does not exist|Table with name vedernikoff does not exist)
+ALTER TABLE vedernikoff ADD COLUMN r float8 DEFAULT random();
+
+
+statement ok
+CREATE TABLE nullable(v int);
+
+
+statement error
+ALTER TABLE nullable ADD COLUMN a int NOT NULL NULL;
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "a" of table "nullable"
+
+
+statement error
+ALTER TABLE nullable ADD COLUMN b int NULL NOT NULL;
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "b" of table "nullable"
+
+
+statement error
+ALTER TABLE nullable ADD COLUMN c int NULL PRIMARY KEY;
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "c" of table "nullable"
+
+
+statement ok
+ALTER TABLE nullable ADD COLUMN d int NULL UNIQUE;
+
+
+statement ok
+ALTER TABLE nullable ADD COLUMN e int NULL NULL;
+
+
+query
+SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'nullable' ORDER BY ordinal_position;
+----
+column_name	is_nullable
+v	YES
+d	YES
+e	YES
+
+
+statement ok
+DROP TABLE nullable;

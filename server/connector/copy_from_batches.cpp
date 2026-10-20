@@ -239,7 +239,7 @@ struct BatchesGlobalState final : public CopyFromGlobalState {
 };
 
 struct BatchesLocalState final : public CopyFromLocalState {
-  std::vector<pg::CopyBatch*> run;
+  std::vector<pg::CopyBatchLease> run;
   size_t next = 0;
 };
 
@@ -314,8 +314,8 @@ void ScanBatches(duckdb::ClientContext& context,
     }
     row = parser.Parse(output, row);
     if (parser.Exhausted()) {
-      g.queue.Done(parser.Seq());
       parser.Stop();
+      l.run[l.next - 1].Reset();
       if (g.reader) {
         g.reader->Resume();
       }

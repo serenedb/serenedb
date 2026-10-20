@@ -94,6 +94,10 @@ All table functions support a `WITH ORDINALITY` suffix, which extends the return
 Note that the same result could be achieved using the [`row_number` window function](../../functions/window_functions/index.md#row_numberorder-by-ordering).
 In the presence of [joins](#joins), however, `WITH ORDINALITY` allows enumerating one side of the join instead of the final result set, without having to resort to sub-queries.
 
+The `generate_series` table function returns `integer` values for `integer` arguments and `bigint` values for `bigint` arguments, and `range` returns `bigint` values. `range` and `generate_series` produce their rows on all threads. `range_st` takes the same arguments as the `range` table function and produces the rows on one thread, for a query whose result depends on which thread produced a row, such as one that fills a table from a seeded `random()`:
+
+<SqlLogicTest id="sql/query_syntax/from_and_join/index/range_st" />
+
 ## Joins
 
 Joins are a fundamental relational operation used to connect two tables or relations horizontally.

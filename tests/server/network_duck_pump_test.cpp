@@ -33,7 +33,6 @@
 #include <yaclib/coro/future.hpp>
 
 #include "network/cpu_resumer.h"
-#include "network/io_context.h"
 
 using namespace sdb;
 
@@ -91,10 +90,7 @@ yaclib::Future<> StoppableBody(network::CpuResumer& task,
 TEST(NetworkCpuResumer, WakeBeforeTheCoroutineExistsIsDeliveredByStart) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
-  network::IoThreadPool pool{1};
-  pool.Start();
-  auto task =
-    duckdb::make_shared_ptr<network::CpuResumer>(scheduler, pool.Next());
+  auto task = duckdb::make_shared_ptr<network::CpuResumer>(scheduler);
 
   std::atomic<bool> stopping{true};
   std::atomic<int> runs{0};
@@ -105,7 +101,6 @@ TEST(NetworkCpuResumer, WakeBeforeTheCoroutineExistsIsDeliveredByStart) {
   task->Start();
   [[maybe_unused]] const auto done = std::move(future).Get();
   EXPECT_EQ(runs.load(std::memory_order_relaxed), 1);
-  pool.Stop();
 }
 
 TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
@@ -120,11 +115,8 @@ TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
 
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
-  network::IoThreadPool pool{1};
-  pool.Start();
   // shared_ptr-managed: CpuResumer enqueues itself via shared_from_this().
-  auto task =
-    duckdb::make_shared_ptr<network::CpuResumer>(scheduler, pool.Next());
+  auto task = duckdb::make_shared_ptr<network::CpuResumer>(scheduler);
 
   std::atomic<int> phase{0};
   auto future = HostedBody(*task, *pending, phase, std::this_thread::get_id());
@@ -142,5 +134,4 @@ TEST(NetworkCpuResumer, DrivesQueryAndParksOffTestThread) {
   task->RequestRun();
   [[maybe_unused]] const auto done = std::move(future).Get();
   EXPECT_EQ(phase.load(std::memory_order_acquire), 3);
-  pool.Stop();
 }

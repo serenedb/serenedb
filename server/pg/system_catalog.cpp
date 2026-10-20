@@ -345,10 +345,6 @@ static duckdb::Permissions ViewPermissions(std::string_view name) {
     std::string_view{"pg_replication_origin_status"},
     std::string_view{"pg_shmem_allocations"},
     std::string_view{"pg_shmem_allocations_numa"},
-    std::string_view{"pg_statistic"},
-    std::string_view{"pg_statistic_ext_data"},
-    std::string_view{"pg_subscription"},
-    std::string_view{"pg_user_mapping"},
   };
   duckdb::Permissions permissions{.owner = kRootUser};
   if (!absl::c_linear_search(kSuperuserOnly, name)) {

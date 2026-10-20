@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
@@ -34,6 +35,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/lead/constant_scored.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/probe/plan.hpp"
@@ -156,12 +158,7 @@ Node::ptr Make(const NGramSimilarityQuery& query,
 Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  return MakeAllScored(query.Segment(),
-                       detail::ScoreArgs{.scorer = record.scorer,
-                                         .stats = record.stats,
-                                         .fetcher = ctx.fetcher,
-                                         .boost = query.Boost()});
+  return MakeAllScored(query.Segment(), detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
@@ -169,13 +166,14 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  return MakeWildcardNGramScored(
-    query, detail::AllDocsScore(query.Segment(),
-                                detail::ScoreArgs{.scorer = record.scorer,
-                                                  .stats = record.stats,
-                                                  .fetcher = ctx.fetcher,
-                                                  .boost = query.Boost()}));
+  return MakeWildcardNGramScored(query, detail::AllDocsScoreOf(query, ctx));
+}
+
+Node::ptr Make(const ApproxQuery& query) { return query.Approx().PlanLead({}); }
+
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
+    query, 0, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::lead

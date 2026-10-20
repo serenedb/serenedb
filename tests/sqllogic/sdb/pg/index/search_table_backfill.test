@@ -338,6 +338,50 @@ id	tag
 3	v3
 
 statement ok
+CREATE TABLE bf_masked (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bf_masked SELECT i, 't' || (i % 3) FROM generate_series(1, 10000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_masked;
+
+statement ok
+DELETE FROM bf_masked WHERE id % 2 = 0 OR id BETWEEN 2001 AND 7000;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_masked;
+
+statement ok
+CREATE INDEX bf_masked_idx ON bf_masked USING inverted (tag);
+
+query
+SELECT count(*) AS n, sum(id) AS sum_id FROM bf_masked;
+----
+n	sum_id
+2500	13750000
+
+query
+SELECT
+  (SELECT count(*) FROM bf_masked_idx WHERE tag @@ 't0') AS t0,
+  (SELECT count(*) FROM bf_masked_idx WHERE tag @@ 't1') AS t1,
+  (SELECT count(*) FROM bf_masked_idx WHERE tag @@ 't2') AS t2;
+----
+t0	t1	t2
+833	834	833
+
+query
+SELECT count(*) AS stale FROM (
+  SELECT id FROM bf_masked_idx WHERE tag @@ 't0' OR tag @@ 't1' OR tag @@ 't2'
+  EXCEPT
+  SELECT id FROM bf_masked WHERE id % 2 = 1 AND id NOT BETWEEN 2001 AND 7000
+) t;
+----
+stale
+0
+
+statement ok
 DROP TABLE bf;
 
 statement ok
@@ -351,3 +395,6 @@ DROP TABLE bf_groups;
 
 statement ok
 DROP TABLE bf_onegroup;
+
+statement ok
+DROP TABLE bf_masked;

@@ -23,12 +23,15 @@
 #include <algorithm>
 #include <cstdint>
 #include <span>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
@@ -93,9 +96,12 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr Make(const AllQuery& query, const Context& ctx);
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx);
+Root::ptr Make(const ApproxQuery& query, const Context& ctx);
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx);
 Root::ptr Make(const ByNestedQuery& query, const Context& ctx);
 Root::ptr Make(const HnswQuery& query, const Context& ctx);
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx);
+Root::ptr Make(const ExactVectorQuery& query, const Context& ctx);
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx);
 Root::ptr Make(const BooleanQuery& query, const Context& ctx);
 template<typename Parser, typename Acceptor>
@@ -109,8 +115,6 @@ Root::ptr MakePosting(const irs::detail::PostingClause& posting,
                       const SubReader& segment, const Context& ctx);
 Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 Root::ptr MakeFixedPhrase(const FixedPhraseQuery& query, const Context& ctx);
@@ -164,7 +168,14 @@ Root::ptr MakeNestedPrunedConjunction(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
 
-template<typename Term>
+Root::ptr MakePrunedDisjunction(
+  std::span<const irs::detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge, uint32_t min_match);
+
+template<bool kExcludes, typename Term>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
   irs::detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
@@ -173,6 +184,7 @@ Root::ptr MakePrunedDisjunction(
   const Context& ctx, ScoreMergeType merge, uint32_t min_match = 1) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   SDB_ASSERT(min_match != 0);
+  SDB_ASSERT(kExcludes || (excludes.empty() && exclude_filters.empty()));
   if (merge != ScoreMergeType::Sum || !filters.empty() ||
       uniformity != irs::detail::Terms::Bounded || min_match != 1) {
     return {};
@@ -203,24 +215,26 @@ Root::ptr MakePrunedDisjunction(
       return posting.state.cookie.docs_count;
     };
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    const auto make = [&]() -> Root::ptr {
-      if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
-          ctx, terms.size(), docs_count, init, std::forward_as_tuple());
+    if constexpr (kExcludes) {
+      if (!excludes.empty() || !exclude_filters.empty()) {
+        const auto candidates =
+          std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
+        return irs::detail::BuildBlockExcludes<Root::ptr>(
+          excludes, exclude_filters, nullptr, segment, candidates, candidates,
+          [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+            return irs::detail::MakeRemovable(
+              std::type_identity<Exclude>{},
+              std::forward<decltype(negated)>(negated),
+              [&]<typename Removable>(auto&& args) -> Root::ptr {
+                return MakeShape<PrunedDisjunction, Leaf, Removable>(
+                  ctx, terms.size(), docs_count, init,
+                  std::forward<decltype(args)>(args));
+              });
+          });
       }
-      const auto candidates =
-        std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
-      return irs::detail::BuildBlockExcludes<Root::ptr>(
-        excludes, exclude_filters, nullptr, segment, candidates, candidates,
-        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedDisjunction, Leaf,
-                           fill::ProbedAndNot<Exclude>>(
-            ctx, terms.size(), docs_count, init,
-            std::forward_as_tuple(std::piecewise_construct,
-                                  std::forward<decltype(negated)>(negated)));
-        });
-    };
-    return make();
+    }
+    return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
+      ctx, terms.size(), docs_count, init, std::forward_as_tuple());
   });
 }
 

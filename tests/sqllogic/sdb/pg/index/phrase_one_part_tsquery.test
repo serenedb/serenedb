@@ -1,0 +1,229 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_syn AS split_text(case := 'lower') | expand_solr_synonyms('car, auto') WITH (frequency)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY opt_pos AS split_text(case := 'lower') | expand_solr_synonyms('car, auto') WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE opt_cars (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+INSERT INTO opt_cars VALUES (1, 'red car'), (2, 'auto parts'), (3, 'green bike'), (4, 'brown bag')
+
+
+statement ok
+CREATE INDEX opt_cars_idx ON opt_cars USING inverted (id, body opt_syn) INCLUDE (body)
+
+
+statement ok
+CREATE INDEX opt_cars_pos_idx ON opt_cars USING inverted (id, body opt_pos)
+
+
+statement ok
+CREATE INDEX opt_cars_bare_idx ON opt_cars USING inverted (id, body opt_syn)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_cars
+
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+id
+1
+2
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"b*"')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+id
+4
+3
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"bro?n"')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+id
+4
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"brwn~1"')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+id
+4
+
+query
+SELECT id FROM opt_cars_bare_idx WHERE body @@ to_tsquery('"car"')
+ORDER BY BM25(opt_cars_bare_idx.tableoid) DESC, id
+----
+id
+1
+2
+
+query
+SELECT id FROM opt_cars_bare_idx WHERE body @@ to_tsquery('"b*"')
+ORDER BY BM25(opt_cars_bare_idx.tableoid) DESC, id
+----
+id
+4
+3
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car" OR bike')
+ORDER BY id
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car" OR bike')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+id
+3
+1
+2
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
+----
+id	s
+1	0.4176
+2	0.4176
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ ts_phrase('car') ORDER BY id
+----
+id	s
+1	0.4176
+2	0.4176
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('"car"^2') ORDER BY id
+----
+id	s
+1	0.8351
+2	0.8351
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ ts_phrase('car') ^ 2.0 ORDER BY id
+----
+id	s
+1	0.8351
+2	0.8351
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('"b*"^2') ORDER BY id
+----
+id	s
+3	2
+4	4
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('b*^2') ORDER BY id
+----
+id	s
+3	2
+4	4
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx
+WHERE (body @@ to_tsquery('"car"'))::score('constant(5)') ORDER BY id
+----
+id	s
+1	5
+2	5
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx
+WHERE (body @@ to_tsquery('"b*"'))::score('constant(5)') ORDER BY id
+----
+id	s
+3	5
+4	10
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx
+WHERE (body @@ to_tsquery('b*'))::score('constant(5)') ORDER BY id
+----
+id	s
+3	5
+4	10
+
+query
+SELECT id, round(BM25(opt_cars_pos_idx.tableoid), 4) AS s FROM opt_cars_pos_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
+----
+id	s
+1	0.4176
+2	0.4176
+
+query
+SELECT id, round(BM25(opt_cars_pos_idx.tableoid), 4) AS s FROM opt_cars_pos_idx WHERE body @@ ts_phrase('car') ORDER BY id
+----
+id	s
+1	0.4176
+2	0.4176
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('"b*"') ORDER BY id
+----
+id	s
+3	1
+4	2
+
+query
+SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('b*') ORDER BY id
+----
+id	s
+3	1
+4	2
+
+query
+SELECT id, round(BM25(opt_cars_pos_idx.tableoid), 4) AS s FROM opt_cars_pos_idx WHERE body @@ to_tsquery('"b*"') ORDER BY id
+----
+id	s
+3	1
+4	2
+
+query
+EXPLAIN SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"')
+ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: #1 DESC, id ASC              │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: opt_cars_idx                    │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Or ──────────────────╮              │
+│ │ Merge: max            │              │
+│ ╰───────────┬───────────╯              │
+│ ╭─ Terms ───┴───────────╮              │
+│ │ Field: body(string)   │              │
+│ │ Values: 'auto', 'car' │              │
+│ ╰───────────────────────╯              │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

@@ -21,6 +21,12 @@ DROP TABLE IF EXISTS doc_sec_audit;
 statement ok
 DROP ROLE IF EXISTS doc_sec_owner;
 
+statement ok
+DROP TABLE IF EXISTS doc_sec_log;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_viewer;
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -116,6 +122,36 @@ DROP TABLE doc_sec_audit;
 
 statement ok
 DROP ROLE doc_sec_owner;
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_viewer;
+
+statement ok
+CREATE TABLE doc_sec_log (id int);
+
+statement ok
+GRANT SELECT ON doc_sec_log TO doc_sec_viewer;
+
+statement error
+DROP ROLE doc_sec_viewer;
+----
+db error: ERROR: Cannot drop entry "doc_sec_viewer" because there are entries that depend on it.
+table "doc_sec_log" depends on role "doc_sec_viewer".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+REVOKE SELECT ON doc_sec_log FROM doc_sec_viewer;
+
+statement ok
+DROP ROLE doc_sec_viewer;
+
+statement ok
+DROP TABLE doc_sec_log;
 
 # DOCS_TEST: example_007
 

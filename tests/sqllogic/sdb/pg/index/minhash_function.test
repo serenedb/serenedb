@@ -1,8 +1,6 @@
-# A MinHash similarity index is an expression index over minhash(). Indexed
-# expressions run on workers without a client context, so the tokenization
-# inside them must be context-free (no ts_lexize); the query side hashes its
-# text the same way and matches signatures as raw keyword terms through
-# ts_tokenize(..., 'keyword').
+# A MinHash similarity index is an expression index over minhash(). The query
+# side hashes its text the same way and matches signatures as raw keyword
+# terms through ts_tokenize(..., 'keyword').
 
 statement ok
 CREATE TABLE mh_docs(id INTEGER, body TEXT);
@@ -134,16 +132,55 @@ db error: ERROR: ts_any min_match must be >= 1, got 0
 HINT: Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list element through the column analyzer.
 
 
-# --- A dictionary needing a client context cannot be part of an indexed expression ---
+# --- An indexed expression may tokenize with a dictionary, and depends on it ---
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY mh_words AS
     split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false);
 
-statement error
+statement ok
 CREATE INDEX mh_lexize_idx ON mh_docs USING inverted(id, (minhash(ts_lexize('mh_words', body), 16)));
+
+statement ok
+VACUUM (REFRESH_TABLE) mh_docs;
+
+query
+SELECT id FROM mh_lexize_idx
+WHERE minhash(ts_lexize('mh_words', body), 16)
+      @@ ts_any(ts_tokenize(minhash(ts_lexize('mh_words', 'Quick Brown'), 16), 'keyword'), 2)
+ORDER BY id;
 ----
-db error: ERROR: Cannot use "ts_lexize" in this context
+id
+1
+2
+
+statement error
+DROP TEXT SEARCH DICTIONARY mh_words;
+----
+db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
+index "mh_lexize_idx" depends on tokenizer "mh_words".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP INDEX mh_lexize_idx;
+
+statement ok
+CREATE VIEW mh_lexized AS SELECT id, ts_lexize('mh_words', body) AS words FROM mh_docs;
+
+statement error
+DROP TEXT SEARCH DICTIONARY mh_words;
+----
+db error: ERROR: Cannot drop entry "mh_words" because there are entries that depend on it.
+view "mh_lexized" depends on tokenizer "mh_words".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW mh_lexized;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY mh_words;
 
 
 # --- The index follows inserts and deletes ---

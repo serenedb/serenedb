@@ -37,12 +37,12 @@ add_executable(
     number_of_cores_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
-    random_test.cpp
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
     catalog/entry/tokenizer_test.cpp
+    catalog/entry/inverted_index_config_test.cpp
     connector/ai_functions_test.cpp
     connector/copy_in_batches_test.cpp
     connector/duckdb_search_filter_builder_test.cpp

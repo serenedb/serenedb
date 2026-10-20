@@ -33,6 +33,7 @@
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -83,6 +84,20 @@ std::string_view CreateObjectTag(const duckdb::CreateInfo& info) {
     default:
       return "CREATE";
   }
+}
+
+std::string_view DiscardTag(duckdb::DiscardTarget target) {
+  switch (target) {
+    case duckdb::DiscardTarget::ALL:
+      return "DISCARD ALL";
+    case duckdb::DiscardTarget::PLANS:
+      return "DISCARD PLANS";
+    case duckdb::DiscardTarget::SEQUENCES:
+      return "DISCARD SEQUENCES";
+    case duckdb::DiscardTarget::TEMP:
+      return "DISCARD TEMP";
+  }
+  return "DISCARD";
 }
 
 std::string_view DropObjectTag(const duckdb::DropInfo& info) {
@@ -243,6 +258,11 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
         const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
         if (drop_stmt.info) {
           if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
+            if (drop_stmt.info->extra_drop_info) {
+              return make(DiscardTag(drop_stmt.info->extra_drop_info
+                                       ->Cast<duckdb::ExtraDropDiscardInfo>()
+                                       .target));
+            }
             return make(drop_stmt.info->GetQualifiedName().Name().empty()
                           ? "DEALLOCATE ALL"
                           : "DEALLOCATE");
@@ -341,7 +361,7 @@ const duckdb::SQLStatement* UnboundStatement(
   }
   const auto& statements =
     duckdb::ClientData::Get(*context).prepared_statements;
-  const auto it = statements.find(duckdb::Identifier{prepared.GetName()});
+  const auto it = statements.find(prepared.GetName());
   return it != statements.end() && it->second
            ? it->second->unbound_statement.get()
            : nullptr;

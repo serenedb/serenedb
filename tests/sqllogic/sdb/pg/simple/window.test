@@ -353,3 +353,100 @@ mark	join_count	cumulative_joins
 1	1	1
 2	2	3
 3	1	4
+
+
+statement ok
+SET delim_join_as_cte = false
+
+
+statement ok
+CREATE TABLE window_lead_delim (i INTEGER)
+
+
+statement ok
+INSERT INTO window_lead_delim VALUES (1)
+
+
+query
+SELECT i, lead(i) OVER () AS nxt FROM window_lead_delim
+WHERE i < (SELECT max(window_lead_delim.i + j) FROM range(5) r(j))
+----
+i	nxt
+1	NULL
+
+
+query
+EXPLAIN SELECT i, lead(i) OVER () AS nxt FROM window_lead_delim
+WHERE i < (SELECT max(window_lead_delim.i + j) FROM range(5) r(j))
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #0, #1                      │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ WINDOW ────────────┴────────────────────╮
+│ Projections:                             │
+│ lead(i, 1, NULL::INTEGER) OVER ()        │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #1                          │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(i AS BIGINT) < SUBQUERY │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ RIGHT_DELIM_JOIN ──┴────────────────────╮
+│ Join Type: RIGHT                         │
+│ Conditions: i IS NOT DISTINCT FROM i     │
+│ Delim Index: 1                           │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+                      ├───────────────────────────────────────────┬──────────────────────────────╮
+╭─ SEQ_SCAN ──────────┴────────────────────╮  ╭─ HASH_JOIN ───────┴──────────────────╮  ╭─ HASH_GROUP_BY ─╮
+│ Table: window_lead_delim                 │  │ Join Type: RIGHT                     │  │ Groups: #0      │
+│ Type: Sequential Scan                    │  │ Conditions: i IS NOT DISTINCT FROM i │  │ ~1 row          │
+│ Projections: i                           │  │ ~2 rows                              │  ╰─────────────────╯
+│ ~1 row                                   │  ╰───────────────────┬──────────────────╯
+╰──────────────────────────────────────────╯                      ├─────────────────────────────╮
+                                              ╭─ PROJECTION ──────┴──────────────────╮  ╭─ DUMMY_SCAN ─╮
+                                              │ Projections:                         │  ╰──────────────╯
+                                              │ max((CAST(i AS BIGINT) + j)), i      │
+                                              │ ~2 rows                              │
+                                              ╰───────────────────┬──────────────────╯
+                                              ╭─ HASH_GROUP_BY ───┴──────────────────╮
+                                              │ Groups: #0                           │
+                                              │ Aggregates: max(#1)                  │
+                                              │ ~2 rows                              │
+                                              ╰───────────────────┬──────────────────╯
+                                              ╭─ PROJECTION ──────┴──────────────────╮
+                                              │ Projections: i,                      │
+                                              │              CAST(i AS BIGINT) + j   │
+                                              │ ~5 rows                              │
+                                              ╰───────────────────┬──────────────────╯
+                                              ╭─ CROSS_PRODUCT ───┴──────────────────╮
+                                              ╰───────────────────┬──────────────────╯
+                                                                  ├──────────────────────────────╮
+                                              ╭─ RANGE ───────────┴──────────────────╮  ╭─ DELIM_SCAN ───╮
+                                              │ Function: RANGE                      │  │ Delim Index: 1 │
+                                              │ ~5 rows                              │  │ ~1 row         │
+                                              ╰──────────────────────────────────────╯  ╰────────────────╯
+
+
+query
+WITH RECURSIVE t(i, nxt) AS (
+  SELECT 1, NULL::INTEGER
+  UNION ALL
+  SELECT i + 1, lead(i) OVER () FROM t
+  WHERE i < 3 AND i < (SELECT max(t.i + j) FROM range(5) r(j))
+) SELECT * FROM t ORDER BY 1, 2
+----
+i	nxt
+1	NULL
+2	NULL
+3	NULL
+
+
+statement ok
+RESET delim_join_as_cte

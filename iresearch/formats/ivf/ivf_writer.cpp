@@ -331,6 +331,8 @@ IvfTermReader::IvfTermReader(
 
 IvfTermReader::~IvfTermReader() = default;
 
+uint32_t IvfTermReader::KeyWidth() const noexcept { return kCentroidTermWidth; }
+
 TermOnlyIterator::ptr IvfTermReader::iterator() const {
   _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
   return memory::to_managed<TermOnlyIterator>(*_it);

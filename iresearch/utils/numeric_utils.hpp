@@ -215,8 +215,6 @@ struct numeric_traits<double> {
 template<>
 struct numeric_traits<long double> {};  // numeric_traits
 
-inline constexpr uint32_t kPrecisionStepDef = 16;
-
 template<typename T>
 struct NumericEncodeOf;
 
@@ -254,36 +252,8 @@ struct NumericEncodeOf<double_t> {
   }
 };
 
-template<typename T>
-constexpr uint32_t NumericTermCount(
-  uint32_t step = kPrecisionStepDef) noexcept {
-  using U = typename NumericEncodeOf<T>::Traits::type;
-  return (BitsRequired<U>() + step - 1) / step;
-}
-
 inline constexpr size_t kNumericTermMaxSize = 1 + sizeof(uint64_t);
 
-// Precision-step trie terms of `value`, highest precision (shift 0) first.
-// `visit` receives a
-// bytes_view into a scratch buffer valid only for the duration of the call.
-template<typename T, typename Visit>
-void ForEachNumericTerm(T value, Visit&& visit,
-                        uint32_t step = kPrecisionStepDef) {
-  using Enc = typename NumericEncodeOf<T>::Traits;
-  using U = typename Enc::type;
-  constexpr uint32_t kBits = BitsRequired<U>();
-  const U payload = NumericEncodeOf<T>::Integral(value) ^ (U{1} << (kBits - 1));
-  for (uint32_t shift = 0; shift < kBits; shift += step) {
-    byte_type buf[kNumericTermMaxSize];
-    buf[0] = static_cast<byte_type>(shift) + Enc::TYPE_MAGIC;
-    const U be = absl::big_endian::FromHost(
-      payload & (std::numeric_limits<U>::max() ^ ((U{1} << shift) - U{1})));
-    std::memcpy(buf + 1, &be, sizeof(U));
-    visit(bytes_view{buf, EncodedSize<U>(shift) + 1});
-  }
-}
-
-// The full-precision (shift 0) term: what exact-match numeric filters seek.
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type (&buf)[kNumericTermMaxSize], T value) {
   using Enc = typename NumericEncodeOf<T>::Traits;

@@ -27,8 +27,8 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -101,7 +101,7 @@ class SegmentReaderImpl final : public SubReader {
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
   std::shared_ptr<ColumnData> _data;
-  std::shared_ptr<burst_trie::FieldReader> _field_reader;
+  std::shared_ptr<term_dict::FieldReader> _field_reader;
 };
 
 }  // namespace irs

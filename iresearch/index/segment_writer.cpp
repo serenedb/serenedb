@@ -219,7 +219,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   if (!_field_writer) {
     auto& rm = _docs_context.ResourceManager();
     _field_writer =
-      std::make_unique<burst_trie::FieldWriter>(/*compaction=*/false, rm);
+      std::make_unique<term_dict::FieldWriter>(/*compaction=*/false, rm);
   }
 
   const auto* active = ActiveFieldOptions();

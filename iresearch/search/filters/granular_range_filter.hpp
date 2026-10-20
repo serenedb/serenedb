@@ -36,27 +36,17 @@ struct FilterVisitor;
 struct ByGranularRangeOptions {
   using FilterType = ByGranularRange;
 
-  using terms = std::vector<bstring>;
-  using range_type = SearchRange<terms>;
+  using range_type = SearchRange<bstring>;
 
   range_type range;
-
-  bool is_granular{true};
 
   bool operator==(const ByGranularRangeOptions& rhs) const noexcept = default;
 };
 
 template<typename T>
-void SetGranularTerm(ByGranularRangeOptions::terms& boundary, T&& value) {
-  boundary.clear();
-  boundary.emplace_back(std::forward<T>(value));
-}
-
-template<typename T>
-void SetGranularNumericTerm(ByGranularRangeOptions::terms& boundary, T value) {
-  boundary.clear();
-  numeric_utils::ForEachNumericTerm(
-    value, [&](bytes_view term) { boundary.emplace_back(term); });
+void SetGranularNumericTerm(bstring& boundary, T value) {
+  byte_type buf[numeric_utils::kNumericTermMaxSize];
+  boundary.assign(numeric_utils::EncodeNumericTerm(buf, value));
 }
 
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {

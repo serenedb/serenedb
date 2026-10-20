@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
@@ -68,8 +70,8 @@ class PostingsReader final {
   // features - the set of features available for segment
   void prepare(const ReaderState& state, IndexFeatures features);
 
-  size_t decode(const byte_type* in, IndexFeatures field_features,
-                PostingMeta& state);
+  static size_t decode(const byte_type* in, IndexFeatures field_features,
+                       PostingMeta& state);
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
@@ -142,6 +144,8 @@ IRS_FORCE_INLINE inline size_t PostingsReader::decode(
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
+    std::memcpy(posting_meta.inline_data.data(), p, size);
+    p += size;
   } else {
     posting_meta.inline_size = 0;
     if (!single) {

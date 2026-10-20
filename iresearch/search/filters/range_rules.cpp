@@ -84,11 +84,7 @@ bool IsMaxOnly(const Range& node) noexcept {
 template<typename Range>
 const bstring& RangeBound(const Range& node, bool min) noexcept {
   const auto& rng = node.options().range;
-  if constexpr (std::is_same_v<Range, ByRange>) {
-    return min ? rng.min : rng.max;
-  } else {
-    return min ? rng.min.front() : rng.max.front();
-  }
+  return min ? rng.min : rng.max;
 }
 
 template<typename Range>
@@ -413,10 +409,9 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
   return changed;
 }
 
-}  // namespace
-
-bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
-  auto& node = irs::utils::downCast<ByRange>(*slot);
+template<typename Range>
+bool Degenerate(Filter::ptr& slot) {
+  auto& node = irs::utils::downCast<Range>(*slot);
   const auto& rng = node.options().range;
   if (rng.min_type == BoundType::Unbounded ||
       rng.max_type == BoundType::Unbounded) {
@@ -443,32 +438,15 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   return true;
 }
 
+}  // namespace
+
+bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+  return Degenerate<ByRange>(slot);
+}
+
 bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext&) {
-  auto& node = irs::utils::downCast<ByGranularRange>(*slot);
-  const auto& rng = node.options().range;
-  if (rng.min.empty() || rng.max.empty()) {
-    return false;
-  }
-  if (rng.min.front() > rng.max.front()) {
-    slot = std::make_unique<Empty>();
-    return true;
-  }
-  if (rng.min.front() != rng.max.front()) {
-    return false;
-  }
-  if (rng.min_type == BoundType::Inclusive &&
-      rng.max_type == BoundType::Inclusive) {
-    auto by_term = std::make_unique<ByTerm>();
-    *by_term->mutable_field_id() = node.field_id();
-    by_term->mutable_options()->term = rng.min.front();
-    by_term->SetBoost(node.GetBoost());
-    by_term->SetScorer(node.GetScorer());
-    slot = std::move(by_term);
-    return true;
-  }
-  slot = std::make_unique<Empty>();
-  return true;
+  return Degenerate<ByGranularRange>(slot);
 }
 
 bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {

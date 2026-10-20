@@ -59,45 +59,21 @@ TEST(string_token_stream_tests, next_end) {
 }
 
 template<typename T>
-std::vector<irs::bstring> NumericTerms(T value) {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
-}
-
-template<typename T>
-void AssertNumericTerms(T value,
-                        const std::vector<std::string_view>& expected) {
+void AssertNumericTerm(T value, std::string_view expected) {
   SCOPED_TRACE(testing::Message() << "value=" << value);
-  const auto terms = NumericTerms(value);
-  ASSERT_EQ(irs::NumericTermCount<T>(), terms.size());
-  ASSERT_EQ(expected.size(), terms.size());
-  for (size_t i = 0; i < terms.size(); ++i) {
-    ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected[i]), terms[i]);
-  }
   irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
-  ASSERT_EQ(terms.front(), irs::numeric_utils::EncodeNumericTerm(buf, value));
+  ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected),
+            irs::numeric_utils::EncodeNumericTerm(buf, value));
 }
 
 TEST(numeric_terms_test, golden_terms) {
-  AssertNumericTerms(int64_t{0}, {"\x60\x80\x00\x00\x00\x00\x00\x00\x00"sv,
-                                  "\x70\x80\x00\x00\x00\x00\x00"sv,
-                                  "\x80\x80\x00\x00\x00"sv, "\x90\x80\x00"sv});
-  AssertNumericTerms(int64_t{42}, {"\x60\x80\x00\x00\x00\x00\x00\x00\x2A"sv,
-                                   "\x70\x80\x00\x00\x00\x00\x00"sv,
-                                   "\x80\x80\x00\x00\x00"sv, "\x90\x80\x00"sv});
-  AssertNumericTerms(int64_t{-1}, {"\x60\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF"sv,
-                                   "\x70\x7F\xFF\xFF\xFF\xFF\xFF"sv,
-                                   "\x80\x7F\xFF\xFF\xFF"sv, "\x90\x7F\xFF"sv});
-  AssertNumericTerms(int32_t{7}, {"\x00\x80\x00\x00\x07"sv, "\x10\x80\x00"sv});
-  AssertNumericTerms(
-    double_t{2.5},
-    {"\xA0\xC0\x04\x00\x00\x00\x00\x00\x00"sv, "\xB0\xC0\x04\x00\x00\x00\x00"sv,
-     "\xC0\xC0\x04\x00\x00"sv, "\xD0\xC0\x04"sv});
+  AssertNumericTerm(int64_t{0}, "\x60\x80\x00\x00\x00\x00\x00\x00\x00"sv);
+  AssertNumericTerm(int64_t{42}, "\x60\x80\x00\x00\x00\x00\x00\x00\x2A"sv);
+  AssertNumericTerm(int64_t{-1}, "\x60\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFF"sv);
+  AssertNumericTerm(int32_t{7}, "\x00\x80\x00\x00\x07"sv);
+  AssertNumericTerm(double_t{2.5}, "\xA0\xC0\x04\x00\x00\x00\x00\x00\x00"sv);
 #ifndef FLOAT_T_IS_DOUBLE_T
-  AssertNumericTerms(float_t{1.5f},
-                     {"\x20\xBF\xC0\x00\x00"sv, "\x30\xBF\xC0"sv});
+  AssertNumericTerm(float_t{1.5f}, "\x20\xBF\xC0\x00\x00"sv);
 #endif
 }
 
@@ -105,16 +81,14 @@ template<typename T>
 void AssertNumericBlockMatchesPerValue(std::span<const T> values) {
   auto batch = std::make_unique<irs::TokenBatch>();
   irs::AppendNumericTermsBlock(*batch, values);
-  ASSERT_EQ(values.size() * irs::NumericTermCount<T>(), batch->count);
-  uint32_t i = 0;
-  for (const auto v : values) {
-    for (const auto& expected : NumericTerms(v)) {
-      const auto& t = batch->terms[i++];
-      const irs::bytes_view term{
-        reinterpret_cast<const irs::byte_type*>(t.GetData()),
-        static_cast<size_t>(t.GetSize())};
-      ASSERT_EQ(expected, term);
-    }
+  ASSERT_EQ(values.size(), batch->count);
+  for (size_t i = 0; i != values.size(); ++i) {
+    irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+    const auto& t = batch->terms[i];
+    const irs::bytes_view term{
+      reinterpret_cast<const irs::byte_type*>(t.GetData()),
+      static_cast<size_t>(t.GetSize())};
+    ASSERT_EQ(irs::numeric_utils::EncodeNumericTerm(buf, values[i]), term);
   }
 }
 

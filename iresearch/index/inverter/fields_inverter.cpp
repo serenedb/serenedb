@@ -21,12 +21,12 @@
 #include <absl/algorithm/container.h>
 
 #include "iresearch/formats/flush_state.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
 
 namespace irs {
 
-void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
+void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
 

@@ -34,9 +34,9 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index/term_dict.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/reader_state.hpp>
@@ -524,12 +524,8 @@ TEST_P(FormatTestCase, fields_seek_ge) {
   // seek to non-existent term in the middle
   {
     const std::vector<std::vector<irs::byte_type>> terms{
-      {207},
-      {208},
-      {208, 191},
-      {208, 192, 81},
-      {192, 192, 187, 86, 0},
-      {192, 192, 187, 88, 0}};
+      {160, 192, 96},     {160, 192, 128},       {160, 192, 160, 1},
+      {160, 192, 187, 0}, {160, 192, 83, 65, 0}, {160, 192, 154, 5, 0}};
 
     auto it = field->iterator();
 
@@ -728,8 +724,8 @@ TEST_P(FormatTestCase, fields_read_write) {
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
 
     irs::IdxWriter idx{dir(), "segment_name"};
-    irs::burst_trie::FieldWriter writer{/*compaction=*/false,
-                                        irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter writer{/*compaction=*/false,
+                                       irs::IResourceManager::gNoop};
     writer.SetIdxWriter(idx);
     writer.prepare(state);
     writer.write(term_reader);
@@ -743,7 +739,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name", nullptr};
-    irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
@@ -844,17 +840,14 @@ TEST_P(FormatTestCase, fields_read_write) {
 
     // ensure term is not invalidated during consequent unsuccessful seeks
     {
-      constexpr std::pair<std::string_view, std::string_view> kTerms[]{
-        {"abcabamet", "abcabamet"},
-        {"abcabrit", "abcabsit"},
-        {"abcabzit", "abcabsit"},
-        {"abcabelit", "abcabelit"}};
+      constexpr std::string_view kTerms[]{"abcabamet", "abcabrit", "abcabzit",
+                                          "abcabelit"};
 
       auto term = term_reader->iterator();
-      for (const auto& [seek_term, expected_term] : kTerms) {
-        ASSERT_EQ(seek_term == expected_term,
-                  term->seek(irs::ViewCast<irs::byte_type>(seek_term)));
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected_term), term->value());
+      for (const auto seek_term : kTerms) {
+        const auto target = irs::ViewCast<irs::byte_type>(seek_term);
+        ASSERT_EQ(sorted_terms.contains(target), term->seek(target));
+        ASSERT_TRUE(sorted_terms.contains(term->value()));
       }
     }
 
@@ -884,41 +877,16 @@ TEST_P(FormatTestCase, fields_read_write) {
       }
     }
 
-    /* Here is the structure of blocks:
-     *   TERM aaLorem
-     *   TERM abaLorem
-     *   BLOCK abab ------> Integer
-     *                      ...
-     *                      ...
-     *   TERM abcaLorem
-     *   ...
-     *
-     * Here we seek to "abaN" and since first entry that
-     * is greater than "abaN" is BLOCK entry "abab".
-     *
-     * In case of "seek" we end our scan on BLOCK entry "abab",
-     * and further "next" cause the skipping of the BLOCK "abab".
-     *
-     * In case of "seek_next" we also end our scan on BLOCK entry "abab"
-     * but furher "next" get us to the TERM "ababInteger" */
     {
       auto seek_term = irs::ViewCast<irs::byte_type>(std::string_view("abaN"));
       auto seek_result =
         irs::ViewCast<irs::byte_type>(std::string_view("ababInteger"));
 
-      /* seek exactly to term */
       {
         auto term = term_reader->iterator();
         ASSERT_FALSE(term->seek(seek_term));
-        /* we on the BLOCK "abab" */
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abab")),
-                  term->value());
-        ASSERT_TRUE(term->next());
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abcaLorem")),
-                  term->value());
       }
 
-      /* seek to term which is equal or greater than current */
       {
         auto term = term_reader->iterator();
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(seek_term));

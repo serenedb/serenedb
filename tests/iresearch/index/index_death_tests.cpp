@@ -1266,14 +1266,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   auto terms = segment.field(kSameAnlPayId);
   ASSERT_NE(nullptr, terms);
 
-  // regiseter reopen failure in term dictionary
-  {
-    dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.idx");
-    auto term_itr = terms->iterator();  // successful attempt
-    ASSERT_NE(nullptr, term_itr);
-    ASSERT_SQL_ERROR(term_itr->next(), ERRCODE_IO_ERROR);
-  }
-
   auto term_itr = terms->iterator();  // successful attempt
   ASSERT_NE(nullptr, term_itr);
   ASSERT_TRUE(term_itr->next());

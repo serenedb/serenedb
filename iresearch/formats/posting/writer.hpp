@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -188,6 +190,18 @@ class PostingsWriter final {
 
   void Encode(BufferedOutput& out, const PostingMeta& state);
 
+  void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
+    const auto last = _last_state;
+    _last_state.clear();
+    Encode(out, meta);
+    _last_state = last;
+  }
+
+  void Tee(std::vector<doc_id_t>* docs, size_t limit) noexcept {
+    _tee = docs;
+    _tee_limit = limit;
+  }
+
   FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
       SDB_ASSERT(_pay_out);
@@ -289,6 +303,8 @@ class PostingsWriter final {
   // Scratch list of the current term's document ids (collected when
   // HasVector).
   std::vector<doc_id_t> _term_docs;
+  std::vector<doc_id_t>* _tee = nullptr;
+  size_t _tee_limit = 0;
   uint32_t _enc_buf[block_io::kEncWords];
   doc_id_t _run_docs[doc_limits::kBlockSize];
   uint32_t _run_freqs[doc_limits::kBlockSize];
@@ -395,6 +411,7 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
   const auto doc_start = _last_state.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
+    out.WriteData(meta.inline_data.data(), meta.inline_size);
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
@@ -467,7 +484,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     });
     WriteDocBlock(out);
     if (_tail.size() <= PostingMeta::kInlineBytes) {
-      meta.inline_data = _tail.data();
+      std::memcpy(meta.inline_data.data(), _tail.data(), _tail.size());
       meta.inline_size = static_cast<uint8_t>(_tail.size());
     } else {
       _doc_out->WriteData(_tail.data(), _tail.size());
@@ -822,6 +839,10 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
     if (has_vec) {
       _term_docs.insert(_term_docs.end(), _run_docs, _run_docs + n);
     }
+    if (_tee && _tee->size() < _tee_limit) {
+      _tee->insert(_tee->end(), _run_docs,
+                   _run_docs + std::min<size_t>(n, _tee_limit - _tee->size()));
+    }
 
     for (uint32_t k = 0; k != n;) {
       if (_doc.Full()) {
@@ -887,12 +908,16 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
+  auto* const tee = _tee;
 
   const auto begin_doc = [&](doc_id_t doc, uint32_t occurrences)
                            IRS_FORCE_INLINE {
                              const uint32_t freq = has_freq ? occurrences : 0;
                              if (has_vec) {
                                _term_docs.push_back(doc);
+                             }
+                             if (tee && tee->size() < _tee_limit) {
+                               tee->push_back(doc);
                              }
                              BeginDocInTerm(doc, freq, meta, has_freq);
                              ++docs_count;

@@ -67,9 +67,13 @@ set(IResearch_core_sources
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp
     ./formats/segment_meta_writer.cpp
-    ./formats/index/burst_trie.cpp
+    ./formats/term_reader.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/index/term_dict.cpp
+    ./formats/index/term_dict_ranges.cpp
+    ./formats/index/term_dict_root.cpp
+    ./formats/index/term_dict_walk.cpp
     ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
@@ -513,6 +517,7 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
     PUBLIC
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include

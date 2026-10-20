@@ -41,6 +41,7 @@ struct FieldStats {
 struct FieldProperties {
   field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
+  bool ranges = false;
 };
 
 struct FieldMeta : FieldProperties {

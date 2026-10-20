@@ -65,7 +65,7 @@ class PostingsStream : public TermPostings {
       _max_in_leaf = doc;
     } else {
       if (meta.inline_size != 0) {
-        _inline_in.reset(meta.Inline());
+        _inline_in.Assign(meta.Inline());
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
@@ -170,7 +170,7 @@ class PostingsStream : public TermPostings {
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
   IndexInput::ptr _file_in;
-  BytesViewInput _inline_in;
+  InlineInput _inline_in;
   IndexInput* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();

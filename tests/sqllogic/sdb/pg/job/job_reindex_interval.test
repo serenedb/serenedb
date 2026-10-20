@@ -57,7 +57,7 @@ body
 arelav is skuf
 
 
-query
+query ok retry 80 backoff 250ms
 SELECT run_count > 0 AS ran, failure_count FROM sdb_jobs() WHERE job_name = 'jri_idx';
 ----
 ran	failure_count

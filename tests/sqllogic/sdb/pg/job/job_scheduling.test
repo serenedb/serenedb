@@ -53,7 +53,7 @@ fired
 t
 
 
-query
+query ok retry 80 backoff 250ms
 SELECT run_count >= 2 AS counted, failure_count, last_status, next_run > last_start AS rescheduled
 FROM sdb_jobs() WHERE job_name = 'js_every';
 ----

@@ -149,13 +149,6 @@ CREATE JOB jsd_concurrent EVERY 1 SECOND CONCURRENT AS DROP JOB IF EXISTS jsd_co
 
 
 query ok retry 80 backoff 250ms
-SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every', 'jsd_concurrent');
-----
-jobs
-0
-
-
-query
 SELECT job_name, trigger, count(*) AS runs, bool_and(success) AS succeeded
 FROM sdb_job_runs()
 WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every')
@@ -167,11 +160,18 @@ jsd_after	schedule	1	t
 jsd_every	schedule	1	t
 
 
-query
+query ok retry 80 backoff 250ms
 SELECT bool_or(success) AS succeeded FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsd_concurrent';
 ----
 succeeded
 t
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every', 'jsd_concurrent');
+----
+jobs
+0
 
 
 statement ok

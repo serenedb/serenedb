@@ -1,0 +1,106 @@
+control substitution on
+
+query
+SELECT current_setting('sdb_ivf_posting_size') AS posting_size,
+       current_setting('sdb_ivf_max_centroids') AS max_centroids;
+----
+posting_size	max_centroids
+0	0
+
+statement error
+SET sdb_ivf_posting_size = -1;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_posting_size": "-1"
+
+
+statement error
+SET sdb_ivf_max_centroids = -1;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_max_centroids": "-1"
+
+
+statement ok
+CREATE TABLE ps_src AS
+SELECT i AS pk,
+       list_transform(range(8),
+         j -> ((hash(i * 8 + j) % 100000) / 1000.0)::FLOAT)::FLOAT[8] AS emb
+FROM range(6000) t(i);
+
+statement ok
+CREATE TABLE ps_auto (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ps_auto_idx ON ps_auto
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+SET sdb_ivf_max_centroids = 4;
+
+statement ok
+CREATE TABLE ps_bounded (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ps_bounded_idx ON ps_bounded
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+statement ok
+CREATE TABLE ps_deep (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX ps_deep_idx ON ps_deep
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+statement ok
+RESET sdb_ivf_max_centroids;
+
+statement ok
+INSERT INTO ps_auto SELECT * FROM ps_src;
+
+statement ok
+INSERT INTO ps_bounded SELECT * FROM ps_src;
+
+statement ok
+INSERT INTO ps_deep SELECT * FROM ps_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) ps_auto;
+
+statement ok
+VACUUM (REFRESH_TABLE) ps_bounded;
+
+statement ok
+VACUUM (REFRESH_TABLE) ps_deep;
+
+statement ok
+SET sdb_ivf_search_nprobe = 100000;
+
+statement ok
+SET sdb_ivf_min_search_fanout = 100000;
+
+query
+WITH p AS (SELECT pk FROM ps_src
+           ORDER BY emb <-> [50.013, 49.987, 50.021, 49.969, 50.007, 49.993, 50.031, 49.977]::FLOAT[8] LIMIT 10),
+     a AS (SELECT pk FROM ps_auto_idx
+           ORDER BY emb <-> [50.013, 49.987, 50.021, 49.969, 50.007, 49.993, 50.031, 49.977]::FLOAT[8] LIMIT 10),
+     b AS (SELECT pk FROM ps_bounded_idx
+           ORDER BY emb <-> [50.013, 49.987, 50.021, 49.969, 50.007, 49.993, 50.031, 49.977]::FLOAT[8] LIMIT 10),
+     d AS (SELECT pk FROM ps_deep_idx
+           ORDER BY emb <-> [50.013, 49.987, 50.021, 49.969, 50.007, 49.993, 50.031, 49.977]::FLOAT[8] LIMIT 10)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM a EXCEPT SELECT * FROM p)) AS auto,
+       (SELECT COUNT(*) FROM (SELECT * FROM b EXCEPT SELECT * FROM p)) AS bounded,
+       (SELECT COUNT(*) FROM (SELECT * FROM d EXCEPT SELECT * FROM p)) AS deep;
+----
+auto	bounded	deep
+0	0	0
+
+statement ok
+RESET sdb_ivf_min_search_fanout;
+
+statement ok
+RESET sdb_ivf_search_nprobe;

@@ -35,6 +35,8 @@ namespace {
 
 constexpr uint32_t kPanoramaLevelWidth = 32;
 
+constexpr uint32_t kScanCostPerDim = 8;
+
 constexpr size_t kPcaMinRows = 1024;
 constexpr size_t kPcaTrainRows = 4096;
 
@@ -140,6 +142,14 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::None;
+  }
+
+  QuantizerScanCost ScanCost(size_t rows) const noexcept final {
+    return {.bytes = kScanCostPerDim * _d,
+            .group_rows = TrainSamples(rows) != 0
+                            ? static_cast<uint32_t>(
+                                faiss::Panorama::kDefaultBatchSize)
+                            : 1U};
   }
 
  private:

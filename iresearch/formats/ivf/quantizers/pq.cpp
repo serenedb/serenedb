@@ -144,6 +144,12 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::PQ;
   }
 
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    const auto block = BlockSetting();
+    return {.bytes = kFastScanCostPerByte * block.record_size,
+            .group_rows = block.group_size};
+  }
+
  private:
   void CodePending() {
     if (_lane == _coded) {
@@ -715,6 +721,10 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::PQ;
+  }
+
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = BlockSetting().record_size};
   }
 
  private:

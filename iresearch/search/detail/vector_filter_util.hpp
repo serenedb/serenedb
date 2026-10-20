@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <core_functions/array_kernels.hpp>
 #include <cstdint>
@@ -113,9 +114,8 @@ inline bool PrepareVectorState(
   const bool needs_centroids = QuantizerNeedsCentroid(opts.quant);
 
   std::vector<uint32_t> fine_ids;
-  std::vector<float> probed_centroids;
   ivf.Search(query, *idx_in, nprobe, fine_ids,
-             needs_centroids ? &probed_centroids : nullptr, beam);
+             needs_centroids ? &state.cluster_centroids : nullptr, beam);
   if (fine_ids.empty()) {
     return false;
   }
@@ -141,9 +141,6 @@ inline bool PrepareVectorState(
   state.pay_starts.reserve(fine_ids.size());
   state.pay_lanes.reserve(fine_ids.size());
   state.cluster_counts.reserve(fine_ids.size());
-  if (needs_centroids) {
-    state.cluster_centroids.reserve(fine_ids.size() * d);
-  }
 
   std::array<byte_type, kCentroidTermWidth> term_buf{};
   uint64_t estimation = 0;
@@ -159,12 +156,14 @@ inline bool PrepareVectorState(
     state.pay_starts.push_back(meta.pay_start);
     state.pay_lanes.push_back(meta.pos_offset);
     state.cluster_counts.push_back(meta.docs_count);
-    if (needs_centroids) {
-      const float* cen = probed_centroids.data() + i * d;
-      state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
-                                     cen + d);
+    if (const size_t kept = state.cookies.size(); needs_centroids && kept != i) {
+      std::copy_n(state.cluster_centroids.begin() + i * d, d,
+                  state.cluster_centroids.begin() + kept * d);
     }
     state.cookies.emplace_back(meta);
+  }
+  if (needs_centroids) {
+    state.cluster_centroids.resize(state.cookies.size() * d);
   }
   state.estimation = estimation;
 

@@ -51,6 +51,7 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 #include <span>
 #include <string>
 #include <utility>
@@ -695,10 +696,9 @@ float ReadIVFSampleFactor(duckdb::ClientContext& context) {
   return static_cast<float>(f);
 }
 
-uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
-  const auto n = GetIntSetting(context, "sdb_ivf_posting_size");
-  SDB_ASSERT(n >= 1);
-  return n;
+uint32_t ReadIVFMaxCentroids(duckdb::ClientContext& context) {
+  const auto n = GetIntSetting(context, "sdb_ivf_max_centroids");
+  return n != 0 ? n : std::numeric_limits<uint32_t>::max();
 }
 
 void FinishAnnOpclass(const irs::AnnInfo& cfg, bool compression,
@@ -721,7 +721,8 @@ void ApplyIVFOpclass(
   bool compression = true;
   ApplyIVFOptions(owner_label, *opts, cfg, compression);
   cfg.sample_factor = ReadIVFSampleFactor(context);
-  cfg.posting_size = ReadIVFPostingSize(context);
+  cfg.posting_size = GetIntSetting(context, "sdb_ivf_posting_size");
+  cfg.max_centroids = ReadIVFMaxCentroids(context);
   FinishAnnOpclass(cfg, compression, entry);
 }
 

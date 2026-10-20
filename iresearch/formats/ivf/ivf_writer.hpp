@@ -54,6 +54,9 @@ class ReadContext;
 class IdxWriter;
 class IvfTermIterator;
 
+uint64_t IvfPostingSize(uint64_t rows, uint32_t d, QuantizerScanCost scan,
+                        uint32_t posting_size, uint32_t max_centroids) noexcept;
+
 struct BuiltIvf {
   bool empty = true;
   uint32_t d = 0;

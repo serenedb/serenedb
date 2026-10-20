@@ -186,6 +186,8 @@ struct AnnInfo {
   uint32_t m = 0;
   uint32_t ef_construction = 0;
 
+  uint32_t max_centroids = 0;
+
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 

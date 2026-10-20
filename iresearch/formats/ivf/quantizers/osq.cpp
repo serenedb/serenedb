@@ -39,6 +39,7 @@ static_assert(std::has_unique_object_representations_v<OsqStatsHeader>);
 constexpr uint8_t kOsqLayout = 1;
 constexpr double kOsqLambda = 0.1;
 constexpr uint32_t kOsqIters = 5;
+constexpr uint32_t kOsqScanCostPerDim = 3;
 constexpr std::array<double, 8> kOsqGrid{0.798, 1.493, 2.051, 2.514,
                                          2.916, 3.278, 3.611, 3.922};
 
@@ -468,6 +469,10 @@ class OsqQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::OSQ;
+  }
+
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = kOsqScanCostPerDim * _lay.d};
   }
 
  private:

@@ -49,6 +49,15 @@ faiss::ScalarQuantizer::QuantizerType FaissScalarType(
 
 constexpr size_t kEncodeTile = kFastScanBbs;
 
+constexpr uint32_t kScanCostPerDim = 4;
+constexpr uint32_t kHalfFloatScanCostPerDim = 6;
+
+bool ScoresAsSq8Batch(const faiss::ScalarQuantizer& sq) noexcept {
+  return (sq.qtype == faiss::ScalarQuantizer::QT_8bit ||
+          sq.qtype == faiss::ScalarQuantizer::QT_8bit_uniform) &&
+         sq.code_size == sq.d;
+}
+
 struct Sq8Levels {
   const float* a;
   uint32_t d;
@@ -300,6 +309,12 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final { return _quant; }
 
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {.bytes = (IsHalfFloat(_quant) ? kHalfFloatScanCostPerDim
+                                          : kScanCostPerDim) *
+                     _d};
+  }
+
  private:
   uint32_t _d;
   VectorQuantization _quant;
@@ -429,10 +444,7 @@ class ScalarQuantizerStats final : public QuantizerStats {
 
   std::shared_ptr<const QuantizerCodeBound> MakeCodeBound(
     std::span<const float> query, VectorMetric metric) const final {
-    const auto qt = _sq.qtype;
-    if ((qt != faiss::ScalarQuantizer::QuantizerType::QT_8bit &&
-         qt != faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform) ||
-        _sq.code_size != _sq.d || query.size() != _sq.d ||
+    if (!ScoresAsSq8Batch(_sq) || query.size() != _sq.d ||
         (metric != VectorMetric::L2Sqr &&
          metric != VectorMetric::InnerProduct &&
          metric != VectorMetric::Cosine)) {
@@ -453,30 +465,36 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
  public:
   ScalarQuantizerCodebook(std::shared_ptr<const ScalarQuantizerStats<M>> stats,
                           std::span<const float> query)
-    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {}
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    if (ScoresAsSq8Batch(Sq())) {
+      faiss::scalar_quantizer::sq8_batch_train(Sq(), _query.data(),
+                                               M == VectorMetric::L2Sqr,
+                                               /*integer=*/true, _weights);
+    }
+  }
 
   std::unique_ptr<QuantizerReader> MakeReader() const final;
 
   const faiss::ScalarQuantizer& Sq() const noexcept { return _stats->Sq(); }
   std::span<const float> Query() const noexcept { return _query; }
+  const faiss::scalar_quantizer::SQ8BatchWeights* Weights() const noexcept {
+    return ScoresAsSq8Batch(Sq()) ? &_weights : nullptr;
+  }
 
  private:
   std::shared_ptr<const ScalarQuantizerStats<M>> _stats;
   std::vector<float> _query;
+  faiss::scalar_quantizer::SQ8BatchWeights _weights;
 };
 
 template<VectorMetric M>
 class ScalarQuantizerReader final : public QuantizerReader {
  public:
   ScalarQuantizerReader(std::shared_ptr<const ScalarQuantizerCodebook<M>> cb)
-    : _cb{std::move(cb)} {
-    _dc.reset(_cb->Sq().get_distance_computer(
-      M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
-                               : faiss::MetricType::METRIC_INNER_PRODUCT));
-    _dc->code_size = _cb->Sq().code_size;
-    _dc->set_query(_cb->Query().data());
-    PrepareFast(_cb->Query(), /*integer=*/true);
-    _query = _cb->Query();
+    : _cb{std::move(cb)}, _weights{_cb->Weights()}, _query{_cb->Query()} {
+    if (!_weights) {
+      SetComputerQuery();
+    }
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
@@ -488,16 +506,16 @@ class ScalarQuantizerReader final : public QuantizerReader {
 
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
                     score_t* out) final {
-    SDB_ASSERT(_dc);
     const size_t cs = _cb->Sq().code_size;
     SDB_ASSERT(block.size() % cs == 0);
     const size_t n = block.size() / cs;
     const byte_type* c = block.data();
-    if (_fast) {
+    if (_weights) {
       faiss::scalar_quantizer::sq8_batch_score_n(
-        _weights, [&](size_t j) { return c + j * cs; }, n, out, 0);
+        *_weights, [&](size_t j) { return c + j * cs; }, n, out, 0);
       return;
     }
+    SDB_ASSERT(_dc);
     size_t i = 0;
     for (; i + 4 <= n; i += 4) {
       _dc->distance_to_code_batch_4(c + i * cs, c + (i + 1) * cs,
@@ -517,15 +535,15 @@ class ScalarQuantizerReader final : public QuantizerReader {
   void ComputeGathered(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t /*threshold*/,
                        score_t* out) final {
-    SDB_ASSERT(_dc);
     const auto row = [&](size_t j) {
       return base + static_cast<size_t>(ids[j]) * record_size;
     };
     const size_t n = ids.size();
-    if (_fast) {
-      faiss::scalar_quantizer::sq8_batch_score_n(_weights, row, n, out, 0);
+    if (_weights) {
+      faiss::scalar_quantizer::sq8_batch_score_n(*_weights, row, n, out, 0);
       return;
     }
+    SDB_ASSERT(_dc);
     for (size_t j = 0; j < n; ++j) {
       __builtin_prefetch(row(j), 0, 3);
       __builtin_prefetch(row(j) + record_size - 1, 0, 3);
@@ -554,7 +572,8 @@ class ScalarQuantizerReader final : public QuantizerReader {
       return false;
     }
     const auto& sq = _cb->Sq();
-    if (!_fast || _weights.l2 || sq.qtype != faiss::ScalarQuantizer::QT_8bit ||
+    if (!_weights || _weights->l2 ||
+        sq.qtype != faiss::ScalarQuantizer::QT_8bit ||
         bound.width == 0 || bound.width % 32 != 0 || bound.query_step == 0 ||
         bound.width % bound.query_step != 0 || !bound.rows) {
       return false;
@@ -574,11 +593,11 @@ class ScalarQuantizerReader final : public QuantizerReader {
         acc += double{q[j]} * (vmin[j] + 0.5f * (vdiff[j] / 255.f));
       }
     }
-    const Sq8Levels lv{.a = _weights.a.data(),
+    const Sq8Levels lv{.a = _weights->a.data(),
                        .d = d,
                        .width = bound.width,
                        .query_step = bound.query_step,
-                       .bias = _weights.bias,
+                       .bias = _weights->bias,
                        .level_bias = _level_bias.data(),
                        .query = bound.query.data()};
     const bool wide = HasAvx512Vnni();
@@ -613,35 +632,39 @@ class ScalarQuantizerReader final : public QuantizerReader {
   }
 
   bool SetQuery(std::span<const float> query) final {
-    SDB_ASSERT(_dc);
     SDB_ASSERT(query.size() == _cb->Sq().d);
-    _dc->set_query(query.data());
-    PrepareFast(query, /*integer=*/false);
     _own_query.assign(query.begin(), query.end());
     _query = _own_query;
+    if (ScoresAsSq8Batch(_cb->Sq())) {
+      faiss::scalar_quantizer::sq8_batch_train(
+        _cb->Sq(), _query.data(), M == VectorMetric::L2Sqr,
+        /*integer=*/false, _own_weights);
+      _weights = &_own_weights;
+    } else {
+      SetComputerQuery();
+    }
     _level_bias.clear();
     return true;
   }
 
  private:
-  void PrepareFast(std::span<const float> query, bool integer) {
-    const auto qt = _cb->Sq().qtype;
-    _fast = (qt == faiss::ScalarQuantizer::QT_8bit ||
-             qt == faiss::ScalarQuantizer::QT_8bit_uniform) &&
-            _cb->Sq().code_size == _cb->Sq().d;
-    if (_fast) {
-      faiss::scalar_quantizer::sq8_batch_train(
-        _cb->Sq(), query.data(), M == VectorMetric::L2Sqr, integer, _weights);
+  void SetComputerQuery() {
+    if (!_dc) {
+      _dc.reset(_cb->Sq().get_distance_computer(
+        M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
+                                 : faiss::MetricType::METRIC_INNER_PRODUCT));
+      _dc->code_size = _cb->Sq().code_size;
     }
+    _dc->set_query(_query.data());
   }
 
   std::shared_ptr<const ScalarQuantizerCodebook<M>> _cb;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
-  faiss::scalar_quantizer::SQ8BatchWeights _weights;
+  const faiss::scalar_quantizer::SQ8BatchWeights* _weights = nullptr;
+  faiss::scalar_quantizer::SQ8BatchWeights _own_weights;
   std::vector<float> _own_query;
   std::span<const float> _query;
   std::vector<float> _level_bias;
-  bool _fast = false;
 };
 
 template<VectorMetric M>

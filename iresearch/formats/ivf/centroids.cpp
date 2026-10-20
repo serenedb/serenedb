@@ -344,8 +344,8 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   n_total = layout.n_total;
   std::vector<CentroidsNodeView> nodes;
   nodes.reserve(starts.size());
-  bufs.centroids.reserve(starts.size());
-  bufs.child_offsets.reserve(starts.size());
+  bufs.centroids.reserve(bufs.centroids.size() + starts.size());
+  bufs.child_offsets.reserve(bufs.child_offsets.size() + starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNodeView node;
     node.base = start;
@@ -419,7 +419,7 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
 
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids,
+                           ManagedVector<float>* out_centroids,
                            uint32_t beam) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
@@ -434,11 +434,12 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .child_offsets = std::span<const size_t>{_root.child_offsets},
     .base = 0,
     .size = _root.size};
+  LayerBuffers bufs;
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(
-      query, in, width, static_cast<bool>(out_centroids), _root.level,
-      std::span{&root_view, 1}, 0, _root.size, leaves);
+    CentroidsNode::Search<Metric>(query, in, width, _root.level,
+                                  std::span{&root_view, 1}, 0, _root.size, bufs,
+                                  leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
     const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
@@ -509,10 +510,10 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   sample_size = std::min<size_t>(sample_size, rows);
 
   const size_t tau =
-    rows == 0
-      ? t
-      : std::max<size_t>(
-          1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
+    rows == 0 ? t
+              : std::max<size_t>(1, static_cast<size_t>(std::ceil(
+                                      static_cast<double>(sample_size) * t /
+                                      static_cast<double>(rows))));
   auto sample =
     GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
   return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);

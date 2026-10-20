@@ -78,7 +78,6 @@ struct VectorScorerOptions {
   uint32_t max_search_fanout = 0;
   uint32_t ef_search = 0;
   uint32_t ef_construction = 0;
-  uint32_t posting_size = 0;
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;

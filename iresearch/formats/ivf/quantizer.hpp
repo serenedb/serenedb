@@ -50,6 +50,11 @@ struct PayloadBlockSetting {
 using TrainFanout =
   absl::FunctionRef<void(size_t, absl::FunctionRef<void(size_t)>)>;
 
+struct QuantizerScanCost {
+  uint32_t bytes = 0;
+  uint32_t group_rows = 1;
+};
+
 class QuantizerWriter {
  public:
   static constexpr size_t kTrainStreaming = std::numeric_limits<size_t>::max();
@@ -93,6 +98,8 @@ class QuantizerWriter {
   virtual void Serialize(DataOutput& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
+
+  virtual QuantizerScanCost ScanCost(size_t rows) const noexcept = 0;
 };
 
 struct QuantizerLevelBound {

@@ -47,6 +47,7 @@
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -494,7 +495,12 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   }
   data.fields.reserve(_config->fields.size());
   for (const auto& [field_id, field] : _config->fields) {
-    data.fields.emplace(field_id, field);
+    auto& stored = data.fields.emplace(field_id, field).first->second;
+    SDB_IF_FAILURE("ivf_config_without_max_centroids") {
+      if (auto& ann = stored.column_options.ann_info) {
+        ann->max_centroids = 0;
+      }
+    }
   }
   return data;
 }

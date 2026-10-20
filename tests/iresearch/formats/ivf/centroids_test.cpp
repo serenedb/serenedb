@@ -32,6 +32,7 @@
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
+#include <iresearch/formats/ivf/ivf_writer.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
@@ -321,7 +322,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
     ASSERT_EQ(gathered[j].size(), d);
     const std::span<const float> q{data.data() + assigned.perm[j] * d, d};
     std::vector<uint32_t> ids;
-    std::vector<float> cens;
+    ManagedVector<float> cens{{IResourceManager::gNoop}};
     tree.Search(q, in, /*nprobe=*/1, ids, &cens);
     ASSERT_EQ(ids.size(), 1u);
     ASSERT_EQ(cens.size(), d);
@@ -661,7 +662,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
 
   // Enumerate every leaf id + centroid via an all-covering probe.
   std::vector<uint32_t> leaf_ids;
-  std::vector<float> leaf_cens;
+  ManagedVector<float> leaf_cens{{IResourceManager::gNoop}};
   tree.Search(std::span<const float>{data.data(), d}, in,
               static_cast<uint32_t>(n), leaf_ids, &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
@@ -974,7 +975,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
 
   const auto n = static_cast<uint32_t>(data.size() / d);
   std::vector<uint32_t> leaf_ids;
-  std::vector<float> leaf_cens;
+  ManagedVector<float> leaf_cens{{IResourceManager::gNoop}};
   tree.Search(std::span<const float>{data.data(), d}, in, n, leaf_ids,
               &leaf_cens);
   const size_t n_leaves = leaf_ids.size();
@@ -1272,30 +1273,120 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
   EXPECT_GE(levels_lo, levels_hi);
 }
 
+TEST(centroids_builder_test, unset_fanout_keeps_the_root_within_1024) {
+  constexpr uint32_t d = 8;
+  const auto data = MakeClusters(d, /*n_clusters=*/1500, /*per_cluster=*/2);
+  const auto root = [&](size_t max_fanout) {
+    return BuiltRootSize(CentroidsBuilder::CreateFromSample(
+      data, d, VectorMetric::L2Sqr,
+      {.posting_size = 2, .max_fanout = max_fanout}));
+  };
+  EXPECT_LE(root(0), 1024u);
+  EXPECT_GT(root(std::numeric_limits<uint32_t>::max()), 1024u);
+}
+
+TEST(centroids_builder_test, root_holds_every_list_a_capped_posting_size_needs) {
+  constexpr uint32_t d = 4;
+  constexpr uint64_t n = 100003;
+  constexpr size_t kCap = 626;
+  constexpr field_id kVec = 1;
+  const auto data = MakeRowMajor(d, n);
+
+  duckdb::DuckDB db;
+  MemoryDirectory dir;
+  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+
+  ColReader r{dir, "seg", *db.instance};
+  const auto* col = r.Column(kVec);
+  ASSERT_NE(col, nullptr);
+
+  const auto builder = CentroidsBuilder::Create(
+    *col, r.Ctx(), n, VectorMetric::L2Sqr, d,
+    {.posting_size = (n + kCap - 1) / kCap,
+     .max_fanout = kCap,
+     .sample_factor = 0.2});
+  const auto root = BuiltRootSize(builder);
+  EXPECT_LE(root, kCap);
+  EXPECT_GT(root, kCap / 2);
+}
+
 }  // namespace
 
 TEST(ivf_auto_nprobe, grows_with_the_limit_and_the_root_of_the_list_count) {
-  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 10), 41u);
-  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 100), 82u);
-  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 1000), 122u);
-  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 10), 15u);
-  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 100), 29u);
-  EXPECT_EQ(IvfAutoNprobe(125'000, 1024, 1000), 44u);
-  EXPECT_EQ(IvfAutoNprobe(2000, 16, 50), 25u);
+  EXPECT_EQ(IvfAutoNprobe(977, 10), 41u);
+  EXPECT_EQ(IvfAutoNprobe(977, 100), 82u);
+  EXPECT_EQ(IvfAutoNprobe(977, 1000), 122u);
+  EXPECT_EQ(IvfAutoNprobe(123, 10), 15u);
+  EXPECT_EQ(IvfAutoNprobe(123, 100), 29u);
+  EXPECT_EQ(IvfAutoNprobe(123, 1000), 44u);
+  EXPECT_EQ(IvfAutoNprobe(125, 50), 25u);
 }
 
 TEST(ivf_auto_nprobe, floors_the_limit_at_ten_and_stays_within_the_lists) {
-  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 5), 41u);
-  EXPECT_EQ(IvfAutoNprobe(1'000'000, 1024, 0), 41u);
-  EXPECT_EQ(IvfAutoNprobe(4096, 1024, 1000), 4u);
-  EXPECT_EQ(IvfAutoNprobe(0, 1024, 10), 1u);
-  EXPECT_EQ(IvfAutoNprobe(2000, 0, 10), 59u);
+  EXPECT_EQ(IvfAutoNprobe(977, 5), 41u);
+  EXPECT_EQ(IvfAutoNprobe(977, 0), 41u);
+  EXPECT_EQ(IvfAutoNprobe(4, 1000), 4u);
+  EXPECT_EQ(IvfAutoNprobe(2000, 10), 59u);
+  EXPECT_EQ(IvfAutoNprobe(7, 50), 6u);
+  EXPECT_EQ(IvfAutoNprobe(2, 50), 2u);
 }
 
-TEST(ivf_auto_nprobe, counts_the_leaves_a_tree_has_when_it_knows_them) {
-  EXPECT_EQ(IvfAutoNprobe(64, 16, 50), 4u);
-  EXPECT_EQ(IvfAutoNprobe(64, 16, 50, 7), 6u);
-  EXPECT_EQ(IvfAutoNprobe(64, 16, 50, 2), 2u);
+TEST(ivf_auto_nprobe, probes_one_list_of_a_segment_without_lists) {
+  EXPECT_EQ(IvfAutoNprobe(0, 10), 1u);
+  EXPECT_EQ(IvfAutoNprobe(1, 1000), 1u);
+}
+
+TEST(ivf_posting_size, uses_a_set_size_as_written) {
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 300, 0), 300u);
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216, .group_rows = 1024},
+                           7, std::numeric_limits<uint32_t>::max()),
+            7u);
+}
+
+TEST(ivf_posting_size, balances_the_centroids_against_the_scanned_lists) {
+  constexpr auto kNoBound = std::numeric_limits<uint32_t>::max();
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, kNoBound), 160u);
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 768}, 0, kNoBound), 512u);
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 524}, 0, kNoBound), 608u);
+  EXPECT_EQ(IvfPostingSize(1'000'000, 1536, {.bytes = 9216}, 0, kNoBound),
+            288u);
+  EXPECT_EQ(IvfPostingSize(4'000'000, 1536, {.bytes = 9216}, 0, kNoBound),
+            608u);
+}
+
+TEST(ivf_posting_size, ignores_the_dimension_when_the_scan_cost_follows_it) {
+  for (const uint32_t d : {128u, 384u, 768u, 1536u}) {
+    EXPECT_EQ(IvfPostingSize(250'000, d, {.bytes = 6 * d}, 0,
+                             std::numeric_limits<uint32_t>::max()),
+              160u)
+      << d;
+  }
+}
+
+TEST(ivf_posting_size, never_splits_a_list_below_a_scan_group) {
+  constexpr auto kNoBound = std::numeric_limits<uint32_t>::max();
+  EXPECT_EQ(IvfPostingSize(250'000, 768, {.bytes = 6144, .group_rows = 1024},
+                           0, kNoBound),
+            1024u);
+  EXPECT_EQ(IvfPostingSize(250'000, 768, {.bytes = 588, .group_rows = 32}, 0,
+                           kNoBound),
+            416u);
+}
+
+TEST(ivf_posting_size, stays_within_bounds) {
+  constexpr auto kNoBound = std::numeric_limits<uint32_t>::max();
+  EXPECT_EQ(IvfPostingSize(0, 128, {.bytes = 512}, 0, kNoBound), 64u);
+  EXPECT_EQ(IvfPostingSize(1000, 128, {.bytes = 512}, 0, kNoBound), 64u);
+  EXPECT_EQ(IvfPostingSize(100'000'000, 1536, {.bytes = 16}, 0, kNoBound),
+            8192u);
+}
+
+TEST(ivf_posting_size, grows_to_keep_the_lists_within_the_centroid_bound) {
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 1000), 256u);
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 100'000), 160u);
+  EXPECT_EQ(IvfPostingSize(250'000'000, 1536, {.bytes = 9216}, 0, 1000),
+            8192u);
+  EXPECT_EQ(IvfPostingSize(250'000, 1536, {.bytes = 9216}, 0, 0), 160u);
 }
 
 TEST(ivf_search_beam, follows_nprobe_within_the_bounds) {

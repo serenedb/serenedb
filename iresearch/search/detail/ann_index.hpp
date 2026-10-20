@@ -54,7 +54,6 @@ struct VectorFilterOptions {
   uint32_t ef_search = 0;
   uint32_t min_ef = 0;
   uint32_t top_k = 0;
-  uint32_t posting_size = 0;
   HnswFilterMode hnsw_filter_mode = HnswFilterMode::Auto;
   HnswColumnFilter hnsw_column_filter = HnswColumnFilter::Auto;
   std::shared_ptr<const Filter> inner;

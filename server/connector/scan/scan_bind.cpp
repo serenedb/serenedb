@@ -698,7 +698,6 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;
   o->top_k = vs.top_k;
-  o->posting_size = vs.posting_size;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
   return f;

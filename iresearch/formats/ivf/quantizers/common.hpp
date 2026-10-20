@@ -56,6 +56,8 @@ inline constexpr size_t kFastScanBits = 4;
 
 inline constexpr size_t kFastScanKsub = size_t{1} << kFastScanBits;
 
+inline constexpr uint32_t kFastScanCostPerByte = 3;
+
 inline size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 inline constexpr int64_t kIvfRotationSeed = 0x5a17b17c5eed5eedULL;

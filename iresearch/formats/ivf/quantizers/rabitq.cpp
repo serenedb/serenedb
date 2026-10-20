@@ -58,6 +58,7 @@ struct RaBitQStatsHeader {
 
 constexpr uint8_t kRaBitQQueryBits = 8;
 constexpr bool kRaBitQCentered = false;
+constexpr uint32_t kExBitsScanCostPerByte = 5;
 
 struct RaBitQLayout {
   uint32_t d = 0;
@@ -199,6 +200,14 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::RaBitQ;
+  }
+
+  QuantizerScanCost ScanCost(size_t /*rows*/) const noexcept final {
+    return {
+      .bytes =
+        (_lay.ex_bits == 0 ? kFastScanCostPerByte : kExBitsScanCostPerByte) *
+        _lay.record_size,
+      .group_rows = BlockSetting().group_size};
   }
 
  private:

@@ -80,4 +80,15 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext& context,
   duckdb::TableFunctionGetStatisticsInput& input);
 
+duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
+  duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::FunctionData> bind_data);
+
+bool IResearchSupportsLookup(duckdb::ClientContext& context,
+                             const duckdb::LogicalGet& get,
+                             duckdb::vector<bool>& fetchable);
+
+duckdb::TableFunction IResearchGetLookupFunction(
+  duckdb::ClientContext& context, const duckdb::LogicalGet& source);
+
 }  // namespace sdb::connector

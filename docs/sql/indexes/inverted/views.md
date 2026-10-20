@@ -126,7 +126,9 @@ Selecting a real source column that is neither indexed nor `INCLUDE`d **material
 
 <SqlLogicTest id="sql/indexes/inverted/views/materialize" />
 
-Because the read is live, if the underlying source changed after the index was built, materialized values reflect the *current* source: rows deleted from the source come back as `NULL`, and edited content shows its new value (or raises an error if a file became unreadable). Counts and scores, by contrast, still reflect the frozen build-time snapshot.
+Because the read is live, if the underlying source changed after the index was built, materialized values reflect the *current* source: rows deleted from the source are left out of the result, and edited content shows its new value (or raises an error if a file became unreadable). Counts and scores, by contrast, still reflect the frozen build-time snapshot.
+
+With `ORDER BY … LIMIT k`, a plain `LIMIT k` or `USING SAMPLE k ROWS`, the index picks the `k` rows before their real columns are read, and only those rows are read from the source. A query can then return fewer than `k` rows when some of the picked rows were deleted from the source after the index was built; [refreshing the index](#refreshing-the-index) brings it back in line with the source.
 
 Columns a file reader adds on its own materialize too, with the values the view gives them: a hive partition column (`hive_partitioning`) comes from the path of the row's file, `filename` is that path, and `file_row_number` is the position the reader reports for the row. Filters on these columns work like filters on any other materialized column.
 

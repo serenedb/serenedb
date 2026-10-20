@@ -215,6 +215,9 @@ std::string ProjectionDisplayName(const ScanBindData& bind,
   if (col_id == kColumnIdentifierGeneratedPk) {
     return "generated_pk";
   }
+  if (col_id == kColumnIdentifierDocAddress) {
+    return "doc_address";
+  }
   if (col_id == kColumnIdentifierPkRowNumber) {
     return "row_number";
   }
@@ -238,6 +241,9 @@ bool ProjectionIsFromIndex(const ScanBindData& bind,
 bool ProjectionIsVirtual(const ScanBindData& bind,
                          const duckdb::ColumnIndex& column_index) {
   const auto col_id = column_index.GetPrimaryIndex();
+  if (col_id == kColumnIdentifierDocAddress) {
+    return true;
+  }
   if (col_id >= duckdb::VIRTUAL_COLUMN_START ||
       col_id >= bind.columns.ids.size()) {
     return false;

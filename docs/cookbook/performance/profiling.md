@@ -126,3 +126,5 @@ Join operators in the query plan show the join type used:
 -   Inner joins are denoted as `INNER`.
 -   Left outer joins and right outer joins are denoted as `LEFT` and `RIGHT`, respectively.
 -   Full outer joins are denoted as `FULL`.
+
+A `LOOKUP_JOIN` reads columns of rows its left input picked — after a `TOP_N`, a `LIMIT` or a `SAMPLE` — from the scan on its right. The right scan is not run as a scan: it reads only the rows the left input produces, and its row count in `EXPLAIN ANALYZE` is the number of rows it read. A row that is no longer in the source produces no output row.

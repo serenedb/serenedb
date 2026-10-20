@@ -204,6 +204,10 @@ A full-text search is a first-class part of the SQL query plan, not a black box 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
+When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS` — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus a `doc_address` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan_lookup_join" />
+
 A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan. A condition the index can only narrow down — a [phrase without `position`](#phrases-without-positions), a [geo predicate](./geospatial-search.md#how-rows-are-checked) or a re-checked [`ts_like`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) pattern — keeps its lookup in the `Index Filter` and lists the exact check under `Table Filter`, where it runs with the query's other filters.
 
 Because the search executes inside the scan, it composes with the rest of SQL: a `JOIN`, a `GROUP BY`, or an `ORDER BY <scorer>` over the same query is planned and run as one statement. See [Profiling](../../../cookbook/performance/profiling.md) for reading plans, and [Ranking](./ranking.md#top-k-queries-and-wand-pruning) for the WAND-optimized `Top: k, optimized` plan.

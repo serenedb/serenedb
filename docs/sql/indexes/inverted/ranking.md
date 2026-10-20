@@ -74,6 +74,8 @@ The index stores the kind of score bound that the scorer named in `optimize_top_
 
 `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`) when the first two conditions hold, plus a `Bounds:` row that names the index's scorer when it differs from the `ORDER BY` scorer; it doesn't check the filter's shape. The scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
 
+Any other ranked query — an ascending order, a scorer the scan cannot rank by, or a filter on a column that is not indexed — ranks the matches in a `TOP_N` above the scan. Columns the query returns but does not order or filter by are then read only for the `k` rows the `TOP_N` keeps, by a `LOOKUP_JOIN` above it, so wide columns cost the same whether the query matches ten rows or a million.
+
 ## Tie-breaking
 
 Scores can tie. Add further `ORDER BY` columns after the scorer for a deterministic order — typically the primary key:

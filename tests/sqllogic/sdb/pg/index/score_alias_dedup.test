@@ -257,9 +257,8 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 DESC                      │
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #0                        │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ PROJECTION ───────┴───────────────────╮
@@ -267,17 +266,31 @@ QUERY PLAN
 │ kostya, 2 * sdb_inverted_index_score   │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
+╭─ LOOKUP_JOIN ──────┴───────────────────╮
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+                     ├─────────────────────────────────╮
+╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ────╮
+│ Top: 3                                 │  │ Lookup: table       │
+│ Order By: #0 DESC                      │  │ Projections: kostya │
+│ ~1 row                                 │  │ ~1 row              │
+╰────────────────────┬───────────────────╯  ╰─────────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections:                           │
+│ 2 * sdb_inverted_index_score,          │
+│ doc_address, sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
 │ ╰────────────────────────╯             │
 │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: kostya,                   │
-│              sdb_inverted_index_score  │
+│ Projections: sdb_inverted_index_score, │
+│              doc_address               │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
 

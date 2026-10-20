@@ -157,15 +157,26 @@ query
 EXPLAIN SELECT id FROM tk_idx ORDER BY n DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ──────────────────────────╮
-│ Top: 2                           │
-│ Order By: #1 DESC                │
+╭─ PROJECTION ─────────────────────╮
+│ Projections: #0                  │
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: id, n               │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ LOOKUP_JOIN ───┴────────────────╮
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+                  ├─────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 2                           │  │ Lookup: table    │
+│ Order By: #0 DESC                │  │ Projections: id  │
+│ ~2 rows                          │  │ ~2 rows          │
+╰─────────────────┬────────────────╯  ╰──────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: tk_idx                    │
-│ Lookup: table                    │
-│ Projections: id (l), n (i)       │
+│ Projections: n, doc_address      │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (n > ?) │
 │ ~5 rows                          │

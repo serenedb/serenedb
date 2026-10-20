@@ -27,6 +27,7 @@ target_sources(
         scan/scan_count.cpp
         scan/scan_explain.cpp
         scan/scan_function.cpp
+        scan/scan_lookup.cpp
         scan/scan_plan.cpp
         scan/scan_prepare.cpp
         scan/scan_pushdown.cpp

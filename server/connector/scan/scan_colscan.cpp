@@ -60,10 +60,10 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
+    const auto first =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
     duckdb::idx_t produced;
     if (l.has_mask) {
-      const auto first =
-        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
       l.live_sel.Initialize(l.live_sel_data);
       const auto live =
         l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
@@ -75,6 +75,16 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     l.doc_cursor += take;
     if (produced != 0) {
+      if (g.doc_address_output_idx != duckdb::DConstants::INVALID_INDEX) {
+        const auto* sel = scanner.Selection();
+        auto* out = duckdb::FlatVector::GetDataMutable<int64_t>(
+          output.data[g.doc_address_output_idx]);
+        for (duckdb::idx_t i = 0; i < produced; ++i) {
+          const auto offset = sel ? sel->get_index(i) : i;
+          out[i] =
+            DocAddress(l.unit.seg, first + static_cast<irs::doc_id_t>(offset));
+        }
+      }
       WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }

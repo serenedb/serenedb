@@ -136,14 +136,25 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ─────────────────────────────────────────────────╮
-│ Top: 3                                                  │
-│ Order By: #1 ASC                                        │
+╭─ PROJECTION ────────────────────────────────────────────╮
+│ Projections: #0                                         │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
+╭─ PROJECTION ───────────────┴────────────────────────────╮
+│ Projections: id, sdb_inverted_index_score               │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+                             ├─────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                                                  │  │ Lookup: table    │
+│ Order By: #0 ASC                                        │  │ Projections: id  │
+│ ~1 row                                                  │  │ ~1 row           │
+╰────────────────────────────┬────────────────────────────╯  ╰──────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: prune_small_idx                                  │
-│ Lookup: table                                           │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -152,7 +163,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: id, sdb_inverted_index_score               │
+│ Projections: sdb_inverted_index_score, doc_address      │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 

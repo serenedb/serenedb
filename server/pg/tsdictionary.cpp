@@ -60,12 +60,15 @@
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/snowball_stemmer.hpp>
+#include <charconv>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <text_normalizer.hpp>
+#include <text_utf8.hpp>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -88,6 +91,32 @@ void VisitValues(auto&& callback) {
   [&]<std::size_t... Is>(std::index_sequence<Is...>) {
     (callback.template operator()<Array[Is]>(), ...);
   }(std::make_index_sequence<std::size(Array)>{});
+}
+
+uint32_t ParseKeepMark(std::string_view item) {
+  uint32_t mark = 0;
+  if (item.size() > 2 && (item[0] == 'U' || item[0] == 'u') && item[1] == '+') {
+    const auto* begin = item.data() + 2;
+    const auto* end = item.data() + item.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, mark, 16);
+    if (ec != std::errc{} || ptr != end) {
+      mark = 0;
+    }
+  } else {
+    std::vector<uint32_t> chars;
+    duckdb::text::DecodeUtf8(item, chars);
+    if (chars.size() == 1) {
+      mark = chars[0];
+    }
+  }
+  if (mark > 0x10FFFF || !duckdb::text::Normalizer::IsNonspacingMark(mark)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value in \"keep_marks\" parameter"),
+      ERR_DETAIL("\"", item, "\" is not a single nonspacing mark"),
+      ERR_HINT(tokenizer_options::kKeepMarks.description));
+  }
+  return mark;
 }
 
 void ParseCommaSeparated(std::string_view input,
@@ -317,6 +346,17 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.accent = Value<tokenizer_options::kAccent>();
     opts.form =
       ResolveEnum<tokenizer_options::kForm, irs::analysis::NormForm>();
+    if (OptionsParser::HasOption(tokenizer_options::kKeepMarks)) {
+      if (opts.accent) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("\"keep_marks\" parameter requires \"accent\" to be false"));
+      }
+      ForEachListItem<tokenizer_options::kKeepMarks>(
+        [&](std::string_view item) {
+          opts.keep_marks.push_back(ParseKeepMark(item));
+        });
+    }
     return opts;
   }
 

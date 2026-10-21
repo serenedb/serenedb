@@ -399,6 +399,63 @@ SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'posix');
 db error: ERROR: invalid regular expression: invalid escape sequence: \d
 
 
+# '.' does not match a line break unless (?s) says so, after a literal too.
+statement ok
+CREATE TABLE tsq_nl (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_nl_idx ON tsq_nl USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_nl VALUES (1, 'abc'), (2, 'abc' || chr(10) || 'def'), (3, 'abcdef'), (4, chr(10));
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_nl;
+
+query
+SELECT id FROM tsq_nl WHERE regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('(?s)abc.*') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ (ts_regexp('abc.*') || ts_regexp('x.+')) ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT msg, count(*) AS c FROM tsq_nl_idx WHERE msg @@ ts_regexp('abc.*') GROUP BY msg ORDER BY msg;
+----
+msg	c
+abc	1
+abcdef	1
+
+
 
 # ----------------------------------------------------------------------
 # ts_between(min, max, min_incl, max_incl) -- TSQUERY range constructor.
@@ -1030,18 +1087,18 @@ query
 EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_regexp('fo.*') ## ts_regexp('jumps'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
-│ Index: tsq_idx                                                                   │
-│ Lookup: table                                                                    │
-│ Index Filter:                                                                    │
-│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────╮ │
-│ │ Field: b(string)                                                             │ │
-│ │ Parts:                                                                       │ │
-│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Prefix:fo(1, 1); Term:jumps(1, 1);  │ │
-│ ╰──────────────────────────────────────────────────────────────────────────────╯ │
-│ Projections: a                                                                   │
-│ ~1 row                                                                           │
-╰──────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────╮
+│ Index: tsq_idx                                                                        │
+│ Lookup: table                                                                         │
+│ Index Filter:                                                                         │
+│ ╭─ Phrase ──────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: b(string)                                                                  │ │
+│ │ Parts:                                                                            │ │
+│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Automaton:fo.*(1, 1); Term:jumps(1, 1);  │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: a                                                                        │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────╯
 
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn', 'lisp'));

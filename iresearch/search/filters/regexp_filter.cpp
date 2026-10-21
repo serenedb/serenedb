@@ -22,7 +22,6 @@
 
 #include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
@@ -44,13 +43,6 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
       filter->mutable_options()->term = term;
-      filter->SetBoost(boost);
-      return filter;
-    },
-    [&](bytes_view prefix) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = id;
-      filter->mutable_options()->term = prefix;
       filter->SetBoost(boost);
       return filter;
     },
@@ -81,11 +73,6 @@ TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
     [](bytes_view term) -> TermPredicate::ptr {
       return MakeTermPredicate(
         [term = bstring{term}](bytes_view key) { return key == term; });
-    },
-    [](bytes_view prefix) -> TermPredicate::ptr {
-      return MakeTermPredicate([prefix = bstring{prefix}](bytes_view key) {
-        return key.starts_with(prefix);
-      });
     },
     [&](bytes_view pattern) -> TermPredicate::ptr {
       const auto source =

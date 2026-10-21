@@ -976,6 +976,14 @@ constexpr std::string_view kRe2Terms[]{
 
 constexpr std::string_view kRe2Perl[]{
   "bur.*",
+  "b.*",
+  "a.*",
+  ".*",
+  "(?s)a.*",
+  "b.*?",
+  "\\Qb\\E\\b.*",
+  "^atl.*",
+  "\xC3\xA9t.*",
   ".*tion",
   "b.rden",
   "atl(as|antic)",
@@ -1069,7 +1077,7 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
   posix.set_posix_syntax(true);
   posix.set_one_line(true);
   constexpr std::string_view kPosix[]{
-    "[[:alpha:]]+", "gr(a|e)y", "b.rden", "a[a-z]*e", "bur.*", "(ab)*",
+    "[[:alpha:]]+", "gr(a|e)y", "b.rden", "a[a-z]*e", "bur.*", "(ab)*", "a.*",
   };
   for (const auto pattern : kPosix) {
     SCOPED_TRACE(testing::Message("POSIX: '") << pattern << "'");
@@ -1082,6 +1090,10 @@ TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
     AssertOracle(
       *reader.GetImpl(), acceptor, IsUtf8,
       [&](std::string_view term) { return RE2::FullMatch(term, re); });
+    const auto source = irs::MakePatternSource(
+      irs::ViewCast<irs::byte_type>(pattern), irs::PatternKind::RegexpPosixEre);
+    ASSERT_NE(nullptr, source);
+    AssertSourceMatchesWalk(*reader.GetImpl(), acceptor, *source);
   }
 
   RE2::Options like;
@@ -1192,6 +1204,11 @@ TEST_P(AcceptorWalkIndexTestCase, union_walk_is_the_union_of_its_parts) {
      part(Kind::Wildcard, "%ment")},
     {part(Kind::Term, "parliamentary"), part(Kind::Prefix, "international"),
      part(Kind::Term, "parliament"), part(Kind::Wildcard, "%ness")},
+    {part(Kind::Perl, "b.*"), part(Kind::Wildcard, "%tion")},
+    {part(Kind::Perl, "a.*"), part(Kind::Wildcard, "%den")},
+    {part(Kind::PosixEre, "atl.*"), part(Kind::Perl, ".*(ion|ing)")},
+    {part(Kind::Perl, "(?s)a.*"), part(Kind::Term, "zz"),
+     part(Kind::Wildcard, "%ment")},
   };
   for (const auto& parts : unions) {
     const auto key = irs::UnionKey(parts);

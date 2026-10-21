@@ -678,9 +678,9 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: ffw_idx                       │
 │ Index Filter:                        │
-│ ╭─ Starts With ───────╮              │
+│ ╭─ Automaton ─────────╮              │
 │ │ Field: body(string) │              │
-│ │ Prefix: charg       │              │
+│ │ Pattern: charg.*    │              │
 │ ╰─────────────────────╯              │
 │ TsDict: scope                        │
 │ Projections:                         │
@@ -760,9 +760,9 @@ QUERY PLAN
 │            ├─────────────────────────╮            │
 │ ╭─ Must ───┴──────────╮  ╭─ Must Not ┴──────────╮ │
 │ ╰──────────┬──────────╯  ╰───────────┬──────────╯ │
-│ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮ │
+│ ╭─ Automaton ─────────╮  ╭─ Terms ───┴──────────╮ │
 │ │ Field: body(string) │  │ Field: scope(string) │ │
-│ │ Prefix: charg       │  │ Values: 'net'        │ │
+│ │ Pattern: charg.*    │  │ Values: 'net'        │ │
 │ ╰─────────────────────╯  ╰──────────────────────╯ │
 │ TsDict: scope                                     │
 │ Projections:                                      │
@@ -1015,9 +1015,9 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: gsf_idx                                                                      │
 │ Index Filter:                                                                       │
-│ ╭─ Starts With ───────╮                                                             │
+│ ╭─ Automaton ─────────╮                                                             │
 │ │ Field: body(string) │                                                             │
-│ │ Prefix: charg       │                                                             │
+│ │ Pattern: charg.*    │                                                             │
 │ ╰─────────────────────╯                                                             │
 │ TsDict: brand, color                                                                │
 │ Projections:                                                                        │
@@ -1083,9 +1083,9 @@ QUERY PLAN
 │            ├─────────────────────────╮                                              │
 │ ╭─ Must ───┴──────────╮  ╭─ Must Not ┴──────────╮                                   │
 │ ╰──────────┬──────────╯  ╰───────────┬──────────╯                                   │
-│ ╭─ Starts With ───────╮  ╭─ Terms ───┴──────────╮                                   │
+│ ╭─ Automaton ─────────╮  ╭─ Terms ───┴──────────╮                                   │
 │ │ Field: body(string) │  │ Field: brand(string) │                                   │
-│ │ Prefix: charg       │  │ Values: 'acme'       │                                   │
+│ │ Pattern: charg.*    │  │ Values: 'acme'       │                                   │
 │ ╰─────────────────────╯  ╰──────────────────────╯                                   │
 │ Index Filter(brand):                                                                │
 │ ╭─ Not ────────────────╮                                                            │

@@ -148,7 +148,7 @@ How much memory the engine may use and how many threads it runs.
 | --- | --- | --- | --- | --- |
 | `allocator_background_threads` | Whether to enable the allocator background thread. | `BOOLEAN` | `GLOBAL` | `false` |
 | `allocator_bulk_deallocation_flush_threshold` | If a bulk deallocation larger than this occurs, flush outstanding allocations. | `VARCHAR` | `GLOBAL` | `512.0 MiB` |
-| `allocator_flush_threshold` | Peak allocation threshold at which to flush the allocator after completing a task. | `VARCHAR` | `GLOBAL` | `128.0 MiB` |
+| `allocator_flush_threshold` | Peak allocation threshold at which to flush the allocator after completing a task. | `VARCHAR` | `GLOBAL` | `134217728B` |
 | `async_threads` | The number of async tasks, such as I/O, a query runs at once. -1 = automatic, four times the number of CPU cores, at most 256; 0 runs the I/O on the threads that run the query (see [`SET`](../sql/statements/set/index.md#async-threads)). | `BIGINT` | `SESSION` | `-1` |
 | `block_allocator_memory` | Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced). | `VARCHAR` | `GLOBAL` | `0 bytes` |
 | `max_memory` | The maximum memory of the system (e.g. 1GB). | `VARCHAR` | `GLOBAL` | 80% of RAM |
@@ -225,7 +225,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `access_mode` | Access mode of the database (`AUTOMATIC`, `READ_ONLY` or `READ_WRITE`) | `VARCHAR` | `GLOBAL` | `automatic` |
 | `application_name` | Sets the application name to be reported in statistics and logs. | `VARCHAR` | `SESSION` |  |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `SESSION` | `hex` |
-| `Calendar` | The current calendar | `VARCHAR` | `SESSION` | System (locale) calendar |
+| `Calendar` | The current calendar | `VARCHAR` | `SESSION` | `gregorian` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
 | `current_transaction_invalidation_policy` | Which types of exceptions invalidate the database for the current transaction | `VARCHAR` | `GLOBAL` | `STANDARD_POLICY` |
@@ -258,7 +258,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `standard_conforming_strings` | Causes '...' strings to treat backslashes literally. | `BOOLEAN` | `SESSION` | `on` |
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `SESSION` | `0` |
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
-| `TimeZone` | The current time zone | `VARCHAR` | `SESSION` | System (locale) timezone |
+| `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
 
 ### Logical replication
@@ -382,7 +382,7 @@ Settings for the PostgreSQL and ClickHouse connectors. The `pg_pool_*` and `ch_p
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
 | `ch_binary_as_blob` | Read ClickHouse `String` and `FixedString` columns as `BLOB` instead of `VARCHAR`. | `BOOLEAN` | `SESSION` | `off` |
-| `ch_connection_cache` | Reuse pooled ClickHouse connections across statements; `false` bypasses the connection pool. | `BOOLEAN` | `SESSION` | `on` |
+| `ch_connection_cache` | Reuse pooled ClickHouse connections across statements; `false` bypasses the connection pool. The change applies to the queries of every session, although other sessions keep showing their own value. | `BOOLEAN` | `GLOBAL` | `on` |
 | `ch_experimental_filter_pushdown` | Push filters down to ClickHouse. | `BOOLEAN` | `SESSION` | `on` |
 | `ch_order_pushdown` | Push `ORDER BY` and `LIMIT` down to ClickHouse. | `BOOLEAN` | `SESSION` | `on` |
 | `ch_pool_acquire_mode` | How a query gets a connection from the pool: `force` always connects, ignoring the pool limit; `wait` blocks until one is free; `try` fails at once when none is free. | `VARCHAR` | `GLOBAL` | `force` |
@@ -394,8 +394,8 @@ Settings for the PostgreSQL and ClickHouse connectors. The `pg_pool_*` and `ch_p
 | `ch_pool_wait_timeout_millis` | Maximum milliseconds to wait for a connection when every pooled connection is taken. | `UBIGINT` | `GLOBAL` | `30000` |
 | `ch_statement_timeout_millis` | Maximum milliseconds a ClickHouse query may run; NULL or 0 = no limit. | `UBIGINT` | `SESSION` | NULL |
 | `pg_array_as_varchar` | Read Postgres arrays as varchar - enables reading mixed dimensional arrays. | `BOOLEAN` | `SESSION` | `off` |
-| `pg_connection_cache` | Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases. | `BOOLEAN` | `SESSION` | `on` |
-| `pg_connection_limit` | The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases. | `UBIGINT` | `SESSION` | 1.5 x the number of CPU threads, from 4 to 32 |
+| `pg_connection_cache` | Deprecated: use `pg_pool_max_connections` (`0` turns pooling off) for databases attached later, or `postgres_configure_pool()` for one already attached. `false` sets the pool limit of every attached PostgreSQL database to 0, and `true` back to its default. | `BOOLEAN` | `GLOBAL` | `on` |
+| `pg_connection_limit` | Deprecated: use `pg_pool_max_connections` for databases attached later, or `postgres_configure_pool()` for one already attached. Sets the connection limit of the pool of every attached PostgreSQL database. | `UBIGINT` | `GLOBAL` | 1.5 x the number of CPU threads, from 4 to 32 |
 | `pg_experimental_filter_pushdown` | Whether or not to use filter pushdown. | `BOOLEAN` | `SESSION` | `on` |
 | `pg_idle_in_transaction_timeout_millis` | Postgres idle in transaction timeout in milliseconds to set on scan connections. | `UINTEGER` | `SESSION` |  |
 | `pg_null_byte_replacement` | When writing NULL bytes to Postgres, replace them with the given character. | `VARCHAR` | `SESSION` |  |
@@ -517,7 +517,7 @@ Everything that does not fall into the groups above.
 | `index_scan_percentage` | The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `DOUBLE` | `GLOBAL` | `0.001` |
 | `integer_division` | Whether or not the / operator defaults to integer division, or to floating point division | `BOOLEAN` | `SESSION` | `true` |
 | `integer_overflow` | What integer `+`, `-`, `*` and unary minus do when the result does not fit its type: `ERROR` raises an error, `WRAP` keeps the low bits of the result (two's complement wraparound). | `VARCHAR` | `SESSION` | `ERROR` |
-| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `DEFAULT` |
+| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `ENABLE_SINGLE_ARROW` |
 | `max_vacuum_tasks` | The maximum vacuum tasks to schedule during a checkpoint. | `UBIGINT` | `GLOBAL` | `100` |
 | `merge_http_secret_into_s3_request` | Merges http secret params into S3 requests | `BOOLEAN` | `SESSION` | `true` |
 | `perfect_ht_threshold` | Threshold in bytes for when to use a perfect hash table | `UBIGINT` | `SESSION` | `12` |

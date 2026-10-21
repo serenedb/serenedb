@@ -215,8 +215,10 @@ duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
 
 bool IResearchSupportsLookup(duckdb::ClientContext&,
                              const duckdb::LogicalGet& get,
-                             duckdb::vector<bool>& fetchable) {
+                             duckdb::vector<bool>& fetchable,
+                             bool& filters_rows) {
   const auto& bind = get.bind_data->Cast<ScanBindData>();
+  filters_rows = filters_rows || !bind.IsMatchAll();
   if (bind.ts_dict.Active()) {
     return false;
   }

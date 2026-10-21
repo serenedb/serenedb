@@ -86,7 +86,8 @@ duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
 
 bool IResearchSupportsLookup(duckdb::ClientContext& context,
                              const duckdb::LogicalGet& get,
-                             duckdb::vector<bool>& fetchable);
+                             duckdb::vector<bool>& fetchable,
+                             bool& filters_rows);
 
 duckdb::TableFunction IResearchGetLookupFunction(
   duckdb::ClientContext& context, const duckdb::LogicalGet& source);

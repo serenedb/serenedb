@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "connector/column_id.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector::primary_key {
@@ -81,6 +82,7 @@ struct KeySlot {
   duckdb::idx_t input_col_idx;
   std::string name;
   duckdb::LogicalType type;
+  ColumnId column;
 };
 
 std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry);

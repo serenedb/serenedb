@@ -312,6 +312,12 @@ class IndexWriter : private util::Noncopyable {
 
     std::span<const FlushedSegment> FlushAndFsync();
 
+    std::span<const FlushedSegment> Flushed() const noexcept {
+      const auto* segment = _active.Segment();
+      return segment == nullptr ? std::span<const FlushedSegment>{}
+                                : std::span{segment->flushed};
+    }
+
     bool Commit(uint64_t last_tick,
                 const SourcePosition& position = {}) noexcept {
       auto* segment = _active.Segment();

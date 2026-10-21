@@ -144,6 +144,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _writer ? _writer->GetSnapshot() : _reader;
   }
 
+  irs::SegmentReader OpenFlushedSegment(const irs::SegmentMeta& meta) const;
+
   void Clear(const irs::SourcePosition& position) {
     _durability.Clear(*_writer, position);
   }

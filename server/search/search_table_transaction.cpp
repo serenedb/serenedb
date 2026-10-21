@@ -40,7 +40,9 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/search_filter_builder.hpp"
 #include "connector/search_sink_writer.hpp"
+#include "connector/search_unique_probe.h"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
 
@@ -254,6 +256,114 @@ void SearchTableTransaction::FlushBuffer(
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.
   it->second.ClearBufferedRows();
+}
+
+void SearchTableTransaction::CertifyKeys(
+  const std::shared_ptr<SearchTable>& shard,
+  std::span<const connector::primary_key::KeySlot> slots) {
+  if (slots.empty()) {
+    return;
+  }
+  const auto changes = _changes.find(shard->GetTableId());
+  if (changes == _changes.end()) {
+    return;
+  }
+
+  std::vector<irs::field_id> key_fields;
+  key_fields.reserve(slots.size());
+  for (const auto& slot : slots) {
+    key_fields.push_back(slot.column);
+  }
+
+  std::vector<int64_t> deleted;
+  for (const auto& op : changes->second.ops) {
+    deleted.insert(deleted.end(), op.delete_rows.begin(),
+                   op.delete_rows.end());
+  }
+
+  connector::UniqueProbe probe{shard->GetDirectoryReader(), key_fields,
+                               deleted};
+
+  std::vector<irs::bstring> terms(slots.size());
+  const auto certify = [&](duckdb::DataChunk& chunk) {
+    for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+      for (size_t i = 0; i != slots.size(); ++i) {
+        const connector::SearchColumnInfo info{.field_id = slots[i].column,
+                                               .logical_type = slots[i].type};
+        irs::TermClause clause;
+        const auto status = connector::SetupTermClause(
+          clause, info, chunk.GetValue(slots[i].input_col_idx, row));
+        if (!status.ok()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG(status.message()));
+        }
+        terms[i] = std::move(clause.term);
+      }
+      if (probe.Exists(terms)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("Duplicate key \"", slots[0].name, ": ",
+                  chunk.GetValue(slots[0].input_col_idx, row).ToString(),
+                  "\" violates primary key constraint."));
+      }
+    }
+  };
+
+  if (changes->second.collection != nullptr) {
+    for (auto& chunk : changes->second.collection->Chunks()) {
+      certify(chunk);
+    }
+  }
+
+  const auto writes = _writes.find(shard->GetTableId());
+  if (writes == _writes.end()) {
+    return;
+  }
+  for (const auto& trx : writes->second.transactions) {
+    for (const auto& flushed : trx->Flushed()) {
+      CertifySegment(*shard, flushed.meta, key_fields, slots, probe);
+    }
+  }
+}
+
+void SearchTableTransaction::CertifySegment(
+  SearchTable& shard, const irs::SegmentMeta& meta,
+  std::span<const irs::field_id> key_fields,
+  std::span<const connector::primary_key::KeySlot> slots,
+  connector::UniqueProbe& probe) {
+  const auto segment = shard.OpenFlushedSegment(meta);
+  if (!segment) {
+    return;
+  }
+
+  irs::containers::FlatHashMap<irs::doc_id_t, std::vector<irs::bstring>> keys;
+  for (size_t i = 0; i != key_fields.size(); ++i) {
+    const auto* field = segment.field(key_fields[i]);
+    if (field == nullptr) {
+      return;
+    }
+    auto terms = field->iterator();
+    while (terms->next()) {
+      const auto term = terms->value();
+      field->ReadDocs(term, [&](irs::doc_id_t doc) {
+        auto& key = keys[doc];
+        key.resize(key_fields.size());
+        key[i].assign(term);
+        return true;
+      });
+    }
+  }
+
+  for (const auto& [doc, key] : keys) {
+    if (absl::c_any_of(key, [](const auto& t) { return t.empty(); })) {
+      continue;
+    }
+    if (probe.Exists(key)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+                      ERR_MSG("Duplicate key on column \"", slots[0].name,
+                              "\" violates primary key constraint."));
+    }
+  }
 }
 
 void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {

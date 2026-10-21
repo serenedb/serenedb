@@ -37,6 +37,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
@@ -177,6 +178,12 @@ irs::IndexReaderOptions SearchTable::ReaderOptions() const {
   options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
   return options;
+}
+
+irs::SegmentReader SearchTable::OpenFlushedSegment(
+  const irs::SegmentMeta& meta) const {
+  return irs::SegmentReader{
+    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
 }
 
 void SearchTable::StartTasks() {

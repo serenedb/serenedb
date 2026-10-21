@@ -290,6 +290,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
                            std::move(gstate.flushed_segments));
   }
   search_txn.FlushBufferTransaction(gstate.table_id);
+  search_txn.CertifyKeys(gstate.search_table, gstate.pk_slots);
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }

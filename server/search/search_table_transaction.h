@@ -36,6 +36,7 @@
 #include "connector/column_id.h"
 #include "connector/primary_key.h"
 #include "connector/search_key_index.h"
+#include "connector/search_unique_probe.h"
 #include "search/search_table_changes.h"
 
 namespace duckdb {
@@ -117,6 +118,9 @@ class SearchTableTransaction {
                std::span<const connector::primary_key::KeySlot> slots,
                duckdb::DataChunk& chunk, uint64_t pk_base);
 
+  void CertifyKeys(const std::shared_ptr<SearchTable>& shard,
+                   std::span<const connector::primary_key::KeySlot> slots);
+
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
     auto it = _changes.find(shard_id);
@@ -181,6 +185,12 @@ class SearchTableTransaction {
   // The shard's exclusive buffer transaction, created on first overrun.
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
     const std::shared_ptr<SearchTable>& shard);
+
+  static void CertifySegment(
+    SearchTable& shard, const irs::SegmentMeta& meta,
+    std::span<const irs::field_id> key_fields,
+    std::span<const connector::primary_key::KeySlot> slots,
+    connector::UniqueProbe& probe);
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,

@@ -155,6 +155,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  bool BindsDeleteColumnsAsExpressions() const final { return true; }
+
   void OnDrop() final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
@@ -439,6 +440,8 @@ void BuildOffsetsEntries(FetchLocalState& f,
                          const ScanBindData& bd);
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output);
+void FeedHits(irs::HitBatcher& batcher, std::span<const irs::ScoreDoc> hits,
+              bool scored, absl::FunctionRef<void()> on_ready);
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);

@@ -820,6 +820,48 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
   return batch.count;
 }
 
+void FeedHits(irs::HitBatcher& batcher, std::span<const irs::ScoreDoc> hits,
+              bool scored, absl::FunctionRef<void()> on_ready) {
+  size_t at = 0;
+  bool done = false;
+  while (!done) {
+    while (!batcher.Ready()) {
+      if (at == hits.size()) {
+        if (batcher.Empty()) {
+          done = true;
+          break;
+        }
+        batcher.Finalize();
+        if (!batcher.Ready()) {
+          done = true;
+        }
+        break;
+      }
+      const auto row = hits[at].doc - irs::doc_limits::min();
+      const auto span = batcher.OpenWindow(row);
+      if (span == 0) {
+        break;
+      }
+      auto* out_docs = batcher.WindowHead();
+      auto* out_scores = scored ? batcher.ScoreHead() : nullptr;
+      duckdb::idx_t n = 0;
+      while (at != hits.size() &&
+             (hits[at].doc - irs::doc_limits::min()) < row + span) {
+        out_docs[n] = hits[at].doc;
+        if (out_scores != nullptr) {
+          out_scores[n] = hits[at].score;
+        }
+        ++n;
+        ++at;
+      }
+      batcher.CommitWindow(n);
+    }
+    if (batcher.Ready()) {
+      on_ready();
+    }
+  }
+}
+
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected) {

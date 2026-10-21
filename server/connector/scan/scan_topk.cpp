@@ -323,45 +323,9 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
     batcher.BeginSegment(seg, (*g.reader)[seg].GetColReader(),
                          g.client_context);
   }
-  const bool scored = g.ScanScore();
-  size_t at = 0;
-  bool done = false;
-  while (!done) {
-    while (!batcher.Ready()) {
-      if (at == hits.size()) {
-        if (batcher.Empty()) {
-          done = true;
-          break;
-        }
-        batcher.Finalize();
-        if (!batcher.Ready()) {
-          done = true;
-        }
-        break;
-      }
-      const auto row = hits[at].doc - irs::doc_limits::min();
-      const auto span = batcher.OpenWindow(row);
-      if (span == 0) {
-        break;
-      }
-      auto* out_docs = batcher.WindowHead();
-      auto* out_scores = scored ? batcher.ScoreHead() : nullptr;
-      duckdb::idx_t n = 0;
-      while (at != hits.size() &&
-             (hits[at].doc - irs::doc_limits::min()) < row + span) {
-        out_docs[n] = hits[at].doc;
-        if (out_scores != nullptr) {
-          out_scores[n] = hits[at].score;
-        }
-        ++n;
-        ++at;
-      }
-      batcher.CommitWindow(n);
-    }
-    if (batcher.Ready()) {
-      AppendBatch(ctx, g, l, tmp, *chunk, pk, hits.size(), appended);
-    }
-  }
+  FeedHits(batcher, hits, g.ScanScore(), [&] {
+    AppendBatch(ctx, g, l, tmp, *chunk, pk, hits.size(), appended);
+  });
   SDB_ASSERT(appended == hits.size());
   return {.chunk = std::move(chunk), .pk = std::move(pk)};
 }

@@ -580,7 +580,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
     return false;
   }
   const uint64_t cur = ColumnReader::GatherCursor(s);
-  SDB_ASSERT(first >= cur, "FetchSparse requires ascending rows");
+  SDB_ASSERT(first >= cur);
   const auto window = Locate(first, s.window);
   if (last >= window.end || (s.initialized && window.block == s.window.block) ||
       (s.fetch.segment && s.fetch_window.block == window.block)) {

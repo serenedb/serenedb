@@ -30,6 +30,7 @@
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
+#include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
 
 namespace sdb::connector {
@@ -55,7 +56,7 @@ struct LookupLocalState final : duckdb::LocalTableFunctionState {
   duckdb::DataChunk stored;
   duckdb::DataChunk batch;
   std::vector<duckdb::idx_t> order;
-  std::vector<int64_t> addresses;
+  std::vector<irs::ScoreDoc> hits;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
 };
 
@@ -123,55 +124,20 @@ void AppendBatch(duckdb::ClientContext& context, LookupLocalState& state,
 
 void FetchByAddress(duckdb::ClientContext& context, LookupLocalState& state) {
   const auto& reader = state.snapshot->reader;
-  auto& batcher = *state.batcher;
   duckdb::idx_t appended = 0;
-  size_t at = 0;
-  while (at != state.order.size()) {
-    const auto seg =
-      static_cast<uint32_t>(state.addresses[state.order[at]] >> 32);
-    batcher.BeginSegment(seg, reader[seg].GetColReader(), &context);
-    const auto doc_at = [&](size_t i) {
-      return static_cast<irs::doc_id_t>(state.addresses[state.order[i]]);
-    };
-    const auto in_segment = [&](size_t i) {
-      return i != state.order.size() &&
-             static_cast<uint32_t>(state.addresses[state.order[i]] >> 32) ==
-               seg;
-    };
-    bool done = false;
-    while (!done) {
-      while (!batcher.Ready()) {
-        if (!in_segment(at)) {
-          if (batcher.Empty()) {
-            done = true;
-            break;
-          }
-          batcher.Finalize();
-          if (!batcher.Ready()) {
-            done = true;
-          }
-          break;
-        }
-        const auto row = doc_at(at) - irs::doc_limits::min();
-        const auto span = batcher.OpenWindow(row);
-        if (span == 0) {
-          break;
-        }
-        auto* out_docs = batcher.WindowHead();
-        duckdb::idx_t n = 0;
-        while (in_segment(at) &&
-               doc_at(at) - irs::doc_limits::min() < row + span) {
-          out_docs[n++] = doc_at(at);
-          ++at;
-        }
-        batcher.CommitWindow(n);
-      }
-      if (batcher.Ready()) {
-        AppendBatch(context, state, appended);
-      }
-    }
+  std::span<const irs::ScoreDoc> hits = state.hits;
+  while (!hits.empty()) {
+    const auto seg = hits.front().segment_idx;
+    const auto in_segment = static_cast<size_t>(
+      absl::c_find_if(hits,
+                      [&](const auto& hit) { return hit.segment_idx != seg; }) -
+      hits.begin());
+    state.batcher->BeginSegment(seg, reader[seg].GetColReader(), &context);
+    FeedHits(*state.batcher, hits.first(in_segment), false,
+             [&] { AppendBatch(context, state, appended); });
+    hits = hits.subspan(in_segment);
   }
-  SDB_ASSERT(appended == state.order.size());
+  SDB_ASSERT(appended == state.hits.size());
 }
 
 duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
@@ -185,15 +151,17 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
   }
   const auto count = input.size();
   const auto addresses = input.data[0].Values<int64_t>();
-  state.addresses.resize(count);
-  for (duckdb::idx_t k = 0; k < count; ++k) {
-    state.addresses[k] = addresses[k].GetValue();
-  }
   state.order.resize(count);
   absl::c_iota(state.order, 0);
   absl::c_sort(state.order, [&](duckdb::idx_t a, duckdb::idx_t b) {
-    return state.addresses[a] < state.addresses[b];
+    return addresses[a].GetValue() < addresses[b].GetValue();
   });
+  state.hits.resize(count);
+  for (duckdb::idx_t r = 0; r < count; ++r) {
+    const auto address = addresses[state.order[r]].GetValue();
+    state.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
+                     .segment_idx = static_cast<uint32_t>(address >> 32)};
+  }
   state.stored.Reset();
   FetchByAddress(context.client, state);
   auto found = count;
@@ -253,15 +221,12 @@ bool IResearchSupportsLookup(duckdb::ClientContext&,
     return false;
   }
   const auto& column_ids = get.GetColumnIds();
-  if (bind.score.HasTopK()) {
-    bool lookup_filter = false;
-    for (const auto& entry : get.table_filters) {
-      lookup_filter =
-        lookup_filter || IsLookupServed(bind, column_ids[entry.GetIndex()]);
-    }
-    if (!lookup_filter || bind.score.vector) {
-      return false;
-    }
+  if (bind.score.HasTopK() &&
+      (bind.score.vector ||
+       !absl::c_any_of(get.table_filters, [&](const auto& entry) {
+         return IsLookupServed(bind, column_ids[entry.GetIndex()]);
+       }))) {
+    return false;
   }
   for (duckdb::idx_t i = 0; i < column_ids.size(); ++i) {
     fetchable[i] =

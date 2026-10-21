@@ -468,6 +468,7 @@ constexpr uint16_t kNumericNegative = 0x4000;
 constexpr uint16_t kNumericNaN = 0xC000;
 constexpr uint16_t kNumericPositiveInfinity = 0xD000;
 constexpr uint16_t kNumericNegativeInfinity = 0xF000;
+constexpr uint16_t kNumericDscaleMask = 0x3FFF;
 constexpr uint16_t kNumericBase = 10000;
 constexpr int kNumericDigitPow10[] = {1, 10, 100, 1000};
 
@@ -500,6 +501,10 @@ bool ReadPgNumeric(std::string_view data, PgNumeric& value) {
                     ERR_MSG("invalid sign in external \"numeric\" value"));
   }
   value.dscale = ReadNumericWord(data, offset);
+  if ((value.dscale & kNumericDscaleMask) != value.dscale) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                    ERR_MSG("invalid scale in external \"numeric\" value"));
+  }
   const auto digits = offset;
   for (uint16_t i = 0; i < ndigits; ++i) {
     if (ReadNumericWord(data, offset) >= kNumericBase) {
@@ -520,6 +525,7 @@ bool PgNumericMagnitude(const PgNumeric& value, int32_t scale,
                         absl::uint128& magnitude) {
   const auto ndigits = static_cast<int32_t>(value.digits.size() / 2);
   const int32_t weight = value.weight;
+  const int32_t dscale = value.dscale;
   // Accumulate value*10^scale MSB-first, taking only the decimal digits at
   // exponent >= -scale; the running total never exceeds the final magnitude
   // (concat-then-divide would overflow uint128 on a full-precision
@@ -536,8 +542,10 @@ bool PgNumericMagnitude(const PgNumeric& value, int32_t scale,
     const uint16_t group =
       absl::big_endian::Load16(value.digits.data() + i * 2);
     for (int k = 3; k >= 0; --k) {
-      const int target = 4 * (weight - i) + k + scale;
-      const int digit = (group / kNumericDigitPow10[k]) % 10;
+      const int exponent = 4 * (weight - i) + k;
+      const int target = exponent + scale;
+      const int digit =
+        exponent < -dscale ? 0 : (group / kNumericDigitPow10[k]) % 10;
       if (target >= 0) {
         if (checked && (acc > kMaxTenth || (acc == kMaxTenth && digit > 5))) {
           return false;

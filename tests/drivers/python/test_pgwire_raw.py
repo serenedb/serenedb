@@ -752,8 +752,8 @@ def test_hugeint_min_numeric_binary(conn):
         assert _decode_pg_numeric(all_fields(m)[0]) == v, v
 
 
-def _pg_numeric(groups, weight, sign=0x0000):
-    return struct.pack("!hhHH", len(groups), weight, sign, 0) + b"".join(
+def _pg_numeric(groups, weight, sign=0x0000, dscale=0):
+    return struct.pack("!hhHH", len(groups), weight, sign, dscale) + b"".join(
         struct.pack("!H", g) for g in groups
     )
 
@@ -894,6 +894,44 @@ def test_binary_numeric_param_rejects_out_of_range(conn):
     finally:
         for table in tables:
             conn.run_ok(f"drop table if exists {table}")
+
+
+def test_binary_numeric_param_drops_digits_past_its_dscale(conn):
+    conn.run_ok("drop table if exists bin_num_dscale")
+    conn.run_ok("create table bin_num_dscale (a decimal(10, 3))")
+    try:
+        for dscale, stored in ((2, "1.230"), (3, "1.234"), (4, "1.235")):
+            conn.run_ok("delete from bin_num_dscale")
+            m = _bind_insert(
+                conn, "bin_num_dscale", _pg_numeric([1, 2345], 0, dscale=dscale)
+            )
+            assert not errors(m), (dscale, errors(m))
+            assert _column_text(conn, "bin_num_dscale") == stored, dscale
+        refused = [
+            (
+                _pg_numeric([1], 0, dscale=0x4000),
+                ("22P03", 'invalid scale in external "numeric" value', None),
+            ),
+            (
+                _pg_numeric([1, 2345], 0)[:-2],
+                ("08P01", "insufficient data left in message", None),
+            ),
+            (
+                _pg_numeric([1], 0)[:7],
+                ("08P01", "insufficient data left in message", None),
+            ),
+            (
+                _pg_numeric([1], 0) + b"\0",
+                ("22P03", "incorrect binary data format in bind parameter 1", None),
+            ),
+        ]
+        conn.run_ok("delete from bin_num_dscale")
+        for value, expected in refused:
+            m = _bind_insert(conn, "bin_num_dscale", value)
+            assert _error(m) == expected, value.hex()
+        assert _column_text(conn, "bin_num_dscale") == ""
+    finally:
+        conn.run_ok("drop table if exists bin_num_dscale")
 
 
 def test_float_special_values_text(conn):

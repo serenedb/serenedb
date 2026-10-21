@@ -34,6 +34,18 @@ option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
+option(
+    IRESEARCH_BENCH
+    "build only search-benchmark-game, against iresearch-minimal: no server, vector, geo, fastText or DuckDB extensions besides icu"
+    OFF
+)
+if(IRESEARCH_BENCH AND SDB_GTEST)
+    message(
+        FATAL_ERROR
+        "IRESEARCH_BENCH builds only search-benchmark-game: turn SDB_GTEST off"
+    )
+endif()
+
 set(SDB_ALLOC
     ""
     CACHE STRING
@@ -671,9 +683,13 @@ include(SereneDBInstall)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_subdirectory(iresearch)
-add_subdirectory(server/utils)
-add_subdirectory(server)
+if(NOT IRESEARCH_BENCH)
+    add_subdirectory(server/utils)
+    add_subdirectory(server)
+endif()
 add_subdirectory(tests)
-add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
+if(NOT IRESEARCH_BENCH)
+    add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
 
-add_custom_target(serenedb DEPENDS serened)
+    add_custom_target(serenedb DEPENDS serened)
+endif()

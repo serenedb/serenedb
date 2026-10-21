@@ -20,6 +20,7 @@
 
 #include "connector/functions/system.h"
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -65,6 +66,7 @@
 #include <ranges>
 #include <span>
 
+#include "auth/enforce.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -76,7 +78,6 @@
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "pg/sql_utils.h"
-#include "pg/system_catalog.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/build.h"
@@ -154,6 +155,18 @@ int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
   return total;
 }
 
+int64_t BoundIndexBytes(duckdb::ClientContext& context,
+                        duckdb::DataTableInfo& info,
+                        const duckdb::Identifier& name) {
+  info.BindIndexes(context);
+  auto entry = info.GetIndexes().FindEntry(name);
+  if (!entry || entry->GetBindState() != duckdb::IndexBindState::BOUND) {
+    return 0;
+  }
+  const auto bound = entry->GetReadHandle<duckdb::BoundIndex>();
+  return static_cast<int64_t>(bound->GetAllocationSize());
+}
+
 // Every entry of one kind across the catalog's schemas, which is duckdb's own
 // two-level scan rather than anything of ours.
 void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& catalog,
@@ -191,14 +204,20 @@ int64_t IndexEntryBytes(duckdb::ClientContext& context,
   }
   // A secondary index is an ART on the store table, so its size is the
   // allocation the store table reports for it.
-  auto& info = index.GetDataTableInfo();
-  info.BindIndexes(context);
-  auto entry = info.GetIndexes().FindEntry(index.name);
-  if (!entry || entry->GetBindState() != duckdb::IndexBindState::BOUND) {
+  return BoundIndexBytes(context, index.GetDataTableInfo(), index.name);
+}
+
+int64_t KeyIndexBytes(duckdb::ClientContext& context,
+                      const duckdb::TableCatalogEntry& table,
+                      const duckdb::UniqueConstraint& constraint) {
+  if (!table.IsDuckTable()) {
     return 0;
   }
-  const auto bound = entry->GetReadHandle<duckdb::BoundIndex>();
-  return static_cast<int64_t>(bound->GetAllocationSize());
+  return BoundIndexBytes(context,
+                         *const_cast<duckdb::TableCatalogEntry&>(table)
+                            .GetStorage()
+                            .GetDataTableInfo(),
+                         constraint.GetName(table.name));
 }
 
 int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
@@ -336,35 +355,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindByOid(
   return database ? database->FindEntryById(&context, type, id) : nullptr;
 }
 
-template<typename T>
-duckdb::optional_ptr<T> FindByOid(duckdb::ClientContext& context,
-                                  duckdb::idx_t id) {
-  auto entry = FindByOid(context, T::Type, id);
-  return entry ? &entry->template Cast<T>() : nullptr;
-}
-
-// A view answers the relation privilege functions the way a table does -- pg
-// spells both with the relation keywords -- so a relation name takes either.
-duckdb::optional_ptr<duckdb::CatalogEntry> FindRelation(
-  duckdb::ClientContext& context, const duckdb::QualifiedName& name) {
-  for (const auto type :
-       {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::VIEW_ENTRY}) {
-    if (auto entry = duckdb::Catalog::GetEntry(
-          context, duckdb::EntryLookupInfo{type, name},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
-      return entry;
-    }
-  }
-  return nullptr;
-}
-
-const duckdb::TableCatalogEntry* FindTable(duckdb::ClientContext& context,
-                                           const duckdb::QualifiedName& name) {
-  return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-           context, name, duckdb::OnEntryNotFound::RETURN_NULL)
-    .get();
-}
-
 // current_setting(name, missing_ok) -> text
 // Ported from server/pg/functions/system.cpp CurrentSettingMissingOkFunction.
 void CurrentSetting2Function(duckdb::DataChunk& args,
@@ -441,42 +431,91 @@ void PgBackendPidFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
+struct SignalText {
+  std::string_view denied;
+  std::string_view superuser_detail;
+  std::string_view member_detail;
+};
+
+constexpr SignalText kCancelText{
+  .denied = "permission denied to cancel query",
+  .superuser_detail =
+    "Only roles with the SUPERUSER attribute may cancel "
+    "queries of roles with the SUPERUSER attribute.",
+  .member_detail =
+    "Only roles with privileges of the role whose query is "
+    "being canceled or with privileges of the "
+    "\"pg_signal_backend\" role may cancel this query.",
+};
+
+constexpr SignalText kTerminateText{
+  .denied = "permission denied to terminate process",
+  .superuser_detail =
+    "Only roles with the SUPERUSER attribute may terminate "
+    "processes of roles with the SUPERUSER attribute.",
+  .member_detail =
+    "Only roles with privileges of the role whose process is "
+    "being terminated or with privileges of the "
+    "\"pg_signal_backend\" role may terminate this process.",
+};
+
+void CheckSignalAllowed(const auth::RoleGraph& roles,
+                        const auth::RoleClosure& caller, duckdb::idx_t role,
+                        bool terminate) {
+  const auto* node = roles.Find(role);
+  const bool superuser =
+    role == pg::kInvalidOid || (node && node->is_superuser);
+  if (superuser ? caller.is_superuser : caller.MemberOf(role)) {
+    return;
+  }
+  const auto& text = terminate ? kTerminateText : kCancelText;
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE), ERR_MSG(text.denied),
+    ERR_DETAIL(superuser ? text.superuser_detail : text.member_detail));
+}
+
 // Cancel (or, with `terminate`, terminate) each requested backend by pid ->
 // BOOLEAN per row (true if the pid matched a live backend). Shared by
-// pg_cancel_backend and pg_terminate_backend. Authorised by being a session
-// (single superuser), so it matches on the pid half of the cancel key alone,
-// no secret.
+// pg_cancel_backend and pg_terminate_backend; it matches on the pid half of
+// the cancel key alone, no secret.
 void CancelBackendsByPid(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state, duckdb::Vector& result,
                          bool terminate) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
   auto* registry = conn_ctx.GetCancelRegistry();
-  auto pids = args.data[0].Values<int32_t>();
-  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
-  using CancelResult = network::CancelRegistry::CancelResult;
+  const auto roles = auth::RolesOf(&context);
+  const auto caller = auth::ClosureFor(&context, conn_ctx.GetRoleId());
+  const auto pids = args.data[0].Values<int32_t>();
+  auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    auto pid = pids[i];
+    const auto pid = pids[i];
     if (!pid.IsValid()) {
-      validity.SetInvalid(i);
+      out.WriteNull();
       continue;
     }
     const auto target = static_cast<uint32_t>(pid.GetValue());
-    const auto outcome = registry ? registry->CancelByPid(target, terminate)
-                                  : CancelResult::NotFound;
-    out[i] = outcome == CancelResult::Cancelled;
-    if (outcome == CancelResult::Ambiguous) {
+    const auto match = registry ? registry->FindByPid(target)
+                                : network::CancelRegistry::PidMatch{};
+    if (!match.token) {
       // The pid is the high half of a random key, not a unique OS pid; two
       // backends collided on it, so cancelling either could hit the wrong one.
       conn_ctx.AddNotice(SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_WARNING),
         ERR_MSG("PID ", target,
-                " matches more than one backend; not cancelling any")));
-    } else if (outcome == CancelResult::NotFound) {
-      conn_ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_WARNING),
-        ERR_MSG("PID ", target, " is not a PostgreSQL backend process")));
+                match.ambiguous
+                  ? " matches more than one backend; not cancelling any"
+                  : " is not a PostgreSQL backend process")));
+      out.WriteValue(false);
+      continue;
     }
+    CheckSignalAllowed(*roles, *caller, match.token->Role(), terminate);
+    if (terminate) {
+      match.token->Terminate();
+    } else {
+      match.token->Cancel();
+    }
+    out.WriteValue(true);
   }
 }
 
@@ -628,69 +667,75 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
-// The relation `oid` names. The caller has an id and no name, so this walks
-// the session database's sets; null when it holds no such object.
-duckdb::optional_ptr<duckdb::CatalogEntry> RelationEntryByOid(
-  duckdb::ClientContext& context, uint64_t oid) {
-  for (const auto type :
-       {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::VIEW_ENTRY,
-        duckdb::CatalogType::INDEX_ENTRY}) {
-    if (auto entry = FindByOid(context, type, oid)) {
-      return entry;
-    }
+duckdb::TableCatalogEntry* RelationTable(const pg::Relation& relation) {
+  if (!relation.entry ||
+      relation.entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return nullptr;
   }
-  return nullptr;
+  return &relation.entry->Cast<duckdb::TableCatalogEntry>();
 }
 
-[[noreturn]] void ThrowNoRelationWithOid(uint64_t oid) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                  ERR_MSG("relation with OID ", oid, " does not exist"));
-}
-
-int64_t GetRelationForkSize(duckdb::ClientContext& context, uint64_t oid,
-                            std::string_view fork, bool table_only = false) {
-  auto entry = RelationEntryByOid(context, oid);
-  if (!entry) {
-    ThrowNoRelationWithOid(oid);
+int64_t RelationMainForkBytes(duckdb::ClientContext& context,
+                              const pg::Relation& relation) {
+  if (relation.key.table) {
+    return catalog::KeyIndexBytes(context, *relation.key.table,
+                                  *relation.key.constraint);
   }
-  auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
-  if (table_only && !table) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-      ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a table"));
-  }
-  if (fork != "main") {
-    return 0;
-  }
-  if (table) {
+  if (const auto* table = RelationTable(relation)) {
     return catalog::RelationDataBytes(context, *table);
   }
-  if (auto* index = dynamic_cast<duckdb::DuckIndexEntry*>(entry.get())) {
-    return catalog::IndexEntryBytes(context, *index);
+  if (relation.entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+    return catalog::IndexEntryBytes(
+      context, relation.entry->Cast<duckdb::DuckIndexEntry>());
   }
   return 0;
 }
 
-int64_t GetRelationTotalSize(duckdb::ClientContext& context, uint64_t oid) {
-  auto entry = RelationEntryByOid(context, oid);
-  if (!entry) {
-    ThrowNoRelationWithOid(oid);
+int64_t RelationForkBytes(duckdb::ClientContext& context,
+                          const pg::Relation& relation, std::string_view fork) {
+  if (fork == "main") {
+    return RelationMainForkBytes(context, relation);
   }
-  auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
+  if (fork != "fsm" && fork != "vm" && fork != "init") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG("invalid fork name"),
+      ERR_HINT(
+        "Valid fork names are \"main\", \"fsm\", \"vm\", and \"init\"."));
+  }
+  return 0;
+}
+
+int64_t RelationTotalBytes(duckdb::ClientContext& context,
+                           const pg::Relation& relation) {
+  auto* table = RelationTable(relation);
   if (!table) {
-    return GetRelationForkSize(context, oid, "main");
+    return RelationMainForkBytes(context, relation);
   }
   return catalog::RelationDataBytes(context, *table) +
          catalog::TableIndexesTotalBytes(context, *table);
 }
 
-int64_t GetTableIndexesSize(duckdb::ClientContext& context, uint64_t oid) {
-  auto entry = RelationEntryByOid(context, oid);
-  if (!entry) {
-    ThrowNoRelationWithOid(oid);
-  }
-  auto* table = dynamic_cast<duckdb::TableCatalogEntry*>(entry.get());
+int64_t RelationIndexesBytes(duckdb::ClientContext& context,
+                             const pg::Relation& relation) {
+  auto* table = RelationTable(relation);
   return table ? catalog::TableIndexesTotalBytes(context, *table) : 0;
+}
+
+void RelationSizeFunction(
+  duckdb::DataChunk& args, duckdb::ExpressionState& state,
+  duckdb::Vector& result,
+  absl::FunctionRef<int64_t(duckdb::ClientContext&, const pg::Relation&)>
+    bytes) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<int64_t> {
+      const auto relation = pg::RelationByOid(context, pg::OidFromSql(oid));
+      if (!relation) {
+        return duckdb::nullopt;
+      }
+      return bytes(context, relation);
+    });
 }
 
 // pg_database_size(name) -> bigint
@@ -721,14 +766,10 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      // Try our catalog by OID first
       auto entry = FindDatabaseById(context, pg::OidFromSql(oid));
-      // DuckDB's pg_database OIDs don't match ours -- fall back to
-      // current database (covers the common pg_database_size(d.oid)
-      // WHERE d.datname = current_database() pattern)
       auto database = entry
                         ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-                        : SessionCatalog(context);
+                        : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database with OID ", oid, " does not exist"));
@@ -819,12 +860,9 @@ PrivCheckModes ParsePrivCheckText(std::string_view priv_text,
   return out;
 }
 
-bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
-                                    duckdb::idx_t role_id,
-                                    const duckdb::Permissions& perm,
-                                    duckdb::CatalogType type,
-                                    std::string_view priv_text) {
-  const auto modes = ParsePrivCheckText(priv_text, type);
+bool HoldsAnyMode(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                  const duckdb::Permissions& perm, duckdb::CatalogType type,
+                  const PrivCheckModes& modes) {
   // The cached inherit-closure (superuser bit + sorted role ids): one hash
   // lookup unless a role DDL has happened since the last check.
   const auto closure = auth::ClosureFor(&context, role_id);
@@ -842,28 +880,104 @@ bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
   return (held & modes.grant_options) != duckdb::AclMode::NoRights;
 }
 
-bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
-                              duckdb::idx_t role_id,
-                              const duckdb::Permissions& perm,
-                              std::string_view priv_text) {
-  return HasAnyPermissionsPrivilegeText(
-    context, role_id, perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
+bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
+                                    duckdb::idx_t role_id,
+                                    const duckdb::Permissions& perm,
+                                    duckdb::CatalogType type,
+                                    std::string_view priv_text) {
+  return HoldsAnyMode(context, role_id, perm, type,
+                      ParsePrivCheckText(priv_text, type));
 }
 
-// The grants `entry` answers a relation privilege check with. Postgres gives a
-// table and a view the same vocabulary, so both come back here; anything else
-// under the relation namespace -- the index-as-table wrapper -- is not one, and
-// a null makes the caller answer NULL rather than false.
-const duckdb::Permissions* RelationPermissions(
-  const duckdb::CatalogEntry* entry) {
-  if (!entry) {
-    return nullptr;
+bool HoldsUnchecked(const duckdb::CatalogEntry& entry,
+                    std::string_view priv_text, duckdb::CatalogType type) {
+  if (!auth::Unowned(entry)) {
+    return false;
   }
-  if (entry->type != duckdb::CatalogType::TABLE_ENTRY &&
-      entry->type != duckdb::CatalogType::VIEW_ENTRY) {
-    return nullptr;
+  ParsePrivCheckText(priv_text, type);
+  return true;
+}
+
+bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
+                                    duckdb::idx_t role_id,
+                                    const duckdb::CatalogEntry& entry,
+                                    duckdb::CatalogType type,
+                                    std::string_view priv_text) {
+  return HoldsUnchecked(entry, priv_text, type) ||
+         HasAnyPermissionsPrivilegeText(context, role_id, entry.permissions,
+                                        type, priv_text);
+}
+
+const duckdb::CatalogEntry& IndexedRelation(duckdb::ClientContext& context,
+                                            const pg::Relation& relation) {
+  if (relation.key.table) {
+    return *relation.key.table;
   }
-  return &entry->permissions;
+  const auto& index = relation.entry->Cast<duckdb::IndexCatalogEntry>();
+  const auto host =
+    index.GetRelation(index.catalog.GetCatalogTransaction(context));
+  if (!host) {
+    return index;
+  }
+  return *host;
+}
+
+// A view answers the relation privilege functions the way a table does -- pg
+// spells both with the relation keywords -- so a relation name takes either.
+bool HasRelationPrivilegeText(duckdb::ClientContext& context,
+                              duckdb::idx_t role_id,
+                              const pg::Relation& relation,
+                              std::string_view priv_text) {
+  if (relation.key.table ||
+      relation.entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+    const auto& indexed = IndexedRelation(context, relation);
+    return HoldsUnchecked(indexed, priv_text,
+                          duckdb::CatalogType::TABLE_ENTRY) ||
+           HasAnyPermissionsPrivilegeText(
+             context, role_id,
+             duckdb::Permissions{.owner = indexed.permissions.owner},
+             duckdb::CatalogType::TABLE_ENTRY, priv_text);
+  }
+  const auto& entry = *relation.entry;
+  if (HoldsUnchecked(entry, priv_text, duckdb::CatalogType::TABLE_ENTRY)) {
+    return true;
+  }
+  if (entry.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
+    return HasAnyPermissionsPrivilegeText(context, role_id, entry.permissions,
+                                          duckdb::CatalogType::TABLE_ENTRY,
+                                          priv_text);
+  }
+  auto modes = ParsePrivCheckText(priv_text, duckdb::CatalogType::TABLE_ENTRY);
+  const auto rights =
+    duckdb::Permissions::AllPrivileges(duckdb::CatalogType::SEQUENCE_ENTRY);
+  modes.privs = modes.privs & rights;
+  modes.grant_options = modes.grant_options & rights;
+  if (modes.privs == duckdb::AclMode::NoRights &&
+      modes.grant_options == duckdb::AclMode::NoRights) {
+    return auth::ClosureFor(&context, role_id)->is_superuser;
+  }
+  return HoldsAnyMode(context, role_id, entry.permissions,
+                      duckdb::CatalogType::SEQUENCE_ENTRY, modes);
+}
+
+bool HasRelationPrivilege(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                          const pg::Relation& relation,
+                          std::string_view priv_text) {
+  try {
+    return HasRelationPrivilegeText(context, role_id, relation, priv_text);
+  } catch (const irs::SqlException& e) {
+    ThrowInvalidPrivilege(e);
+  }
+}
+
+pg::Relation RelationNamed(duckdb::ClientContext& context,
+                           std::string_view text) {
+  const auto name = duckdb::QualifiedName::Parse(text);
+  auto relation = pg::RelationByName(context, name);
+  if (!relation) {
+    ThrowRelationNotFound(name.Name().GetIdentifierName());
+  }
+  return relation;
 }
 
 std::optional<duckdb::idx_t> ResolveRoleOrPublic(duckdb::ClientContext& context,
@@ -877,66 +991,17 @@ std::optional<duckdb::idx_t> ResolveRoleOrPublic(duckdb::ClientContext& context,
   return std::nullopt;
 }
 
-const pg::VirtualTable* ResolveSystemRelation(
-  const duckdb::QualifiedName& name) {
-  const auto& schema = name.Schema();
-  const auto& relation = name.Name().GetIdentifierName();
-  if (schema == irs::StaticStrings::kPgCatalogSchema ||
-      schema == irs::StaticStrings::kInformationSchema) {
-    return pg::GetSystemTable(schema.GetIdentifierName(), relation);
-  }
-  if (schema.empty()) {
-    return pg::GetSystemTable(irs::StaticStrings::kPgCatalogSchema, relation);
-  }
-  return nullptr;
-}
-
-// A system relation has no catalog definition: it exists for the life of the
-// statement that reads it. Its owner is root and its ACL the one grant the
-// table declares.
-duckdb::Permissions SystemRelationPermissions(const pg::VirtualTable& sys) {
-  return duckdb::Permissions{
-    pg::kRootUser,
-    duckdb::vector<duckdb::AclItem>{sys.GetAcl().begin(), sys.GetAcl().end()},
-    {}};
-}
-
-bool SystemRelationHasColumn(const pg::VirtualTable& sys,
-                             std::string_view column) {
-  for (const auto& [name, type] :
-       duckdb::StructType::GetChildTypes(sys.RowType())) {
-    if (name == column) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
                            std::string_view role_name,
                            std::string_view table_name,
                            std::string_view priv_text) {
-  auto role_id = ResolveRoleOrPublic(conn_ctx.GetClientContext(), role_name);
+  auto& context = conn_ctx.GetClientContext();
+  auto role_id = ResolveRoleOrPublic(context, role_name);
   if (!role_id) {
     ThrowRoleNotFound(role_name);
   }
-  const auto name = duckdb::QualifiedName::Parse(table_name);
-  auto entry = FindRelation(conn_ctx.GetClientContext(), name);
-  try {
-    if (const auto* perm = RelationPermissions(entry.get())) {
-      return HasAnyPermissionsPrivilegeText(
-        conn_ctx.GetClientContext(), *role_id, *perm,
-        duckdb::CatalogType::TABLE_ENTRY, priv_text);
-    }
-    if (const auto* sys = ResolveSystemRelation(name)) {
-      return HasAnyPermissionsPrivilegeText(
-        conn_ctx.GetClientContext(), *role_id, SystemRelationPermissions(*sys),
-        duckdb::CatalogType::TABLE_ENTRY, priv_text);
-    }
-    ThrowRelationNotFound(name.Name().GetIdentifierName());
-  } catch (const irs::SqlException& e) {
-    ThrowInvalidPrivilege(e);
-  }
+  return HasRelationPrivilege(context, *role_id,
+                              RelationNamed(context, table_name), priv_text);
 }
 
 void HasTablePrivilege3Function(duckdb::DataChunk& args,
@@ -971,28 +1036,10 @@ void HasTablePrivilege2Function(duckdb::DataChunk& args,
 bool HasTablePrivilegeByOidImpl(duckdb::ClientContext& context,
                                 duckdb::idx_t role_id, duckdb::idx_t table_id,
                                 std::string_view priv_text, bool& is_null) {
-  is_null = false;
-  const auto* perm =
-    RelationPermissions(RelationEntryByOid(context, table_id).get());
-  std::optional<duckdb::Permissions> system_perm;
-  if (!perm) {
-    pg::VisitSystemTables([&](const pg::VirtualTable& table, pg::Oid) {
-      if (!system_perm && table.Id() == table_id) {
-        system_perm = SystemRelationPermissions(table);
-      }
-    });
-    perm = system_perm ? &*system_perm : nullptr;
-  }
-  if (!perm) {
-    is_null = true;
-    return false;
-  }
-  try {
-    return HasAnyPermissionsPrivilegeText(
-      context, role_id, *perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
-  } catch (const irs::SqlException& e) {
-    ThrowInvalidPrivilege(e);
-  }
+  const auto relation = pg::RelationByOid(context, table_id);
+  is_null = !relation;
+  return relation &&
+         HasRelationPrivilege(context, role_id, relation, priv_text);
 }
 
 void HasTablePrivilegeOid2Function(duckdb::DataChunk& args,
@@ -1041,25 +1088,11 @@ void HasTablePrivilegeOidName3Function(duckdb::DataChunk& args,
     args, result,
     [&](int64_t roid, duckdb::string_t tname,
         duckdb::string_t priv) -> duckdb::optional<bool> {
-      const auto name = duckdb::QualifiedName::Parse(tname.GetString());
-      const auto* table = FindTable(state.GetContext(), name);
-      const duckdb::idx_t role{pg::OidFromSql(roid)};
-      const std::string_view priv_text{priv.GetData(), priv.GetSize()};
-      try {
-        if (table) {
-          return HasAnyPermissionsPrivilegeText(
-            state.GetContext(), role, table->permissions,
-            duckdb::CatalogType::TABLE_ENTRY, priv_text);
-        } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return HasAnyPermissionsPrivilegeText(
-            state.GetContext(), role, SystemRelationPermissions(*sys),
-            duckdb::CatalogType::TABLE_ENTRY, priv_text);
-        } else {
-          ThrowRelationNotFound(name.Name().GetIdentifierName());
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
+      auto& context = state.GetContext();
+      return HasRelationPrivilege(
+        context, pg::OidFromSql(roid),
+        RelationNamed(context, {tname.GetData(), tname.GetSize()}),
+        {priv.GetData(), priv.GetSize()});
     });
 }
 
@@ -1117,8 +1150,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
                       ERR_MSG("database \"", obj_name, "\" does not exist"));
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, database->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1132,8 +1165,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
           database->GetSchema(context, duckdb::Identifier{obj_name},
                               duckdb::OnEntryNotFound::RETURN_NULL)) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, schema->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *schema, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1147,8 +1180,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
           duckdb::EntryLookupInfo{type, duckdb::QualifiedName::Parse(obj_name)},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, sequence->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *sequence, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1176,8 +1209,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     }
     if (entry) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, entry->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *entry, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1260,6 +1293,22 @@ void HasObjectPrivilege2Function(duckdb::DataChunk& args,
     });
 }
 
+duckdb::optional_ptr<duckdb::CatalogEntry> ObjectEntryByOid(
+  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid) {
+  if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+    const auto relation = pg::RelationByOid(context, oid);
+    if (!relation.entry || relation.entry->type != type) {
+      return nullptr;
+    }
+    return relation.entry;
+  }
+  auto entry = FindByOid(context, type, oid);
+  if (!entry && type == duckdb::CatalogType::MACRO_ENTRY) {
+    entry = FindByOid(context, duckdb::CatalogType::TABLE_MACRO_ENTRY, oid);
+  }
+  return entry;
+}
+
 bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
                                  duckdb::CatalogType type,
                                  duckdb::idx_t role_id, duckdb::idx_t obj_id,
@@ -1272,8 +1321,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, database->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1287,8 +1336,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, schema->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *schema, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1296,18 +1345,14 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
   if (type == duckdb::CatalogType::SEQUENCE_ENTRY ||
       type == duckdb::CatalogType::TYPE_ENTRY ||
       type == duckdb::CatalogType::MACRO_ENTRY) {
-    auto entry = FindByOid(context, type, obj_id);
-    if (!entry && type == duckdb::CatalogType::MACRO_ENTRY) {
-      entry =
-        FindByOid(context, duckdb::CatalogType::TABLE_MACRO_ENTRY, obj_id);
-    }
+    auto entry = ObjectEntryByOid(context, type, obj_id);
     if (!entry) {
       is_null = true;
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, entry->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *entry, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1526,11 +1571,6 @@ void PgHasRoleOid2Function(duckdb::DataChunk& args,
     });
 }
 
-bool AttnumExists(const duckdb::TableCatalogEntry& table, int64_t attnum) {
-  return attnum >= 1 && attnum <= static_cast<int64_t>(
-                                    table.GetColumns().LogicalColumnCount());
-}
-
 // Whether `role_id` holds `priv` on any of `columns`, whose grants
 // `column_acl` returns, of the relation with `perm`. PG resolves a column
 // privilege via a table-level grant OR a per-column grant
@@ -1574,37 +1614,21 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
 bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
                        const duckdb::TableCatalogEntry& table,
                        std::string_view priv) {
-  return ColumnsPrivHeld(
-    context, role_id, table.permissions, table.GetColumns().Logical(),
-    [](const duckdb::ColumnDefinition& column)
-      -> std::span<const duckdb::AclItem> { return column.Acl(); },
-    priv);
-}
-
-bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
-                       const pg::VirtualTable& sys, std::string_view priv) {
-  return ColumnsPrivHeld(
-    context, role_id, SystemRelationPermissions(sys),
-    duckdb::StructType::GetChildTypes(sys.RowType()),
-    [&](const auto& child) {
-      return sys.ColumnAcl(child.first.GetIdentifierName());
-    },
-    priv);
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnsPrivHeld(
+           context, role_id, table.permissions, table.GetColumns().Logical(),
+           [](const duckdb::ColumnDefinition& column)
+             -> std::span<const duckdb::AclItem> { return column.Acl(); },
+           priv);
 }
 
 bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,
                          const duckdb::TableCatalogEntry& table,
                          std::string_view col, std::string_view priv) {
-  const auto& columns = table.GetColumns();
-  const duckdb::Identifier key{col};
-  if (!columns.ColumnExists(key)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-      ERR_MSG("column \"", col, "\" of relation \"",
-              table.name.GetIdentifierName(), "\" does not exist"));
-  }
-  return ColumnPrivHeld(context, role_id, table.permissions,
-                        columns.GetColumn(key).Acl(), priv);
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnPrivHeld(
+           context, role_id, table.permissions,
+           table.GetColumns().GetColumn(duckdb::Identifier{col}).Acl(), priv);
 }
 
 // has_column_privilege(role, oid, attnum, priv): attnum is 1-based over the
@@ -1613,311 +1637,11 @@ bool HasColumnPrivByAttnum(duckdb::ClientContext& context,
                            duckdb::idx_t role_id,
                            const duckdb::TableCatalogEntry& table,
                            int64_t attnum, std::string_view priv) {
-  return ColumnPrivHeld(
-    context, role_id, table.permissions,
-    table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(), priv);
-}
-
-bool SystemRelationColumnPriv(ConnectionContext& conn_ctx,
-                              duckdb::idx_t role_id,
-                              const duckdb::QualifiedName& name,
-                              std::string_view col, std::string_view priv) {
-  const auto* sys = ResolveSystemRelation(name);
-  if (sys == nullptr) {
-    ThrowRelationNotFound(name.Name().GetIdentifierName());
-  }
-  if (!SystemRelationHasColumn(*sys, col)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", col, "\" of relation \"",
-                            sys->GetName(), "\" does not exist"));
-  }
-  return ColumnPrivHeld(conn_ctx.GetClientContext(), role_id,
-                        SystemRelationPermissions(*sys), sys->ColumnAcl(col),
-                        priv);
-}
-
-void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
-                                         duckdb::ExpressionState& state,
-                                         duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
-                                    duckdb::string_t, duckdb::string_t>(
-    args, result,
-    [&](duckdb::string_t u, duckdb::string_t t, duckdb::string_t c,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      auto role = FindRole(state.GetContext(), {u.GetData(), u.GetSize()});
-      if (!role) {
-        ThrowRoleNotFound({u.GetData(), u.GetSize()});
-      }
-      const auto name = duckdb::QualifiedName::Parse(t.GetString());
-      const auto* table = FindTable(state.GetContext(), name);
-      const std::string_view col{c.GetData(), c.GetSize()};
-      const std::string_view priv{p.GetData(), p.GetSize()};
-      try {
-        if (table) {
-          return HasColumnPrivByName(state.GetContext(), role->oid, *table, col,
-                                     priv);
-        } else {
-          return SystemRelationColumnPriv(conn_ctx, role->oid, name, col, priv);
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasColumnPrivilegeName3Function(duckdb::DataChunk& args,
-                                     duckdb::ExpressionState& state,
-                                     duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  auto current = FindRole(state.GetContext(), conn_ctx.user());
-  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
-                                    duckdb::string_t>(
-    args, result,
-    [&](duckdb::string_t t, duckdb::string_t c,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      if (!current) {
-        return duckdb::nullopt;
-      }
-      const auto name = duckdb::QualifiedName::Parse(t.GetString());
-      const auto* table = FindTable(state.GetContext(), name);
-      const std::string_view col{c.GetData(), c.GetSize()};
-      const std::string_view priv{p.GetData(), p.GetSize()};
-      try {
-        if (table) {
-          return HasColumnPrivByName(state.GetContext(), current->oid, *table,
-                                     col, priv);
-        } else {
-          return SystemRelationColumnPriv(conn_ctx, current->oid, name, col,
-                                          priv);
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
-                                          duckdb::ExpressionState& state,
-                                          duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  auto current = FindRole(state.GetContext(), conn_ctx.user());
-  duckdb::VariadicExecutor::Execute<bool, int64_t, int32_t, duckdb::string_t>(
-    args, result,
-    [&](int64_t toid, int32_t attnum,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      if (!current) {
-        return duckdb::nullopt;
-      }
-      const auto* table = FindByOid<duckdb::TableCatalogEntry>(
-                            state.GetContext(), pg::OidFromSql(toid))
-                            .get();
-      if (!table || !AttnumExists(*table, attnum)) {
-        return duckdb::nullopt;
-      }
-      try {
-        return HasColumnPrivByAttnum(state.GetContext(), current->oid, *table,
-                                     attnum, {p.GetData(), p.GetSize()});
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-// Column privilege by (role, table-by-name, attnum, priv), with the same
-// system-relation fallback as the name-column path. Returns a tri-state: an
-// unset optional means the attnum is out of range (SQL NULL, matching PG).
-std::optional<bool> ColumnPrivByNameTableAttnum(ConnectionContext& conn_ctx,
-                                                duckdb::idx_t role_id,
-                                                std::string_view table_name,
-                                                int64_t attnum,
-                                                std::string_view priv) {
-  const auto name = duckdb::QualifiedName::Parse(table_name);
-  const auto* table = FindTable(conn_ctx.GetClientContext(), name);
-  if (table) {
-    if (!AttnumExists(*table, attnum)) {
-      return std::nullopt;
-    }
-    return HasColumnPrivByAttnum(conn_ctx.GetClientContext(), role_id, *table,
-                                 attnum, priv);
-  }
-  const auto* sys = ResolveSystemRelation(name);
-  if (sys == nullptr) {
-    ThrowRelationNotFound(name.Name().GetIdentifierName());
-  }
-  const auto cols = duckdb::StructType::GetChildTypes(sys->RowType());
-  if (attnum < 1 || attnum > static_cast<int64_t>(cols.size())) {
-    return std::nullopt;
-  }
-  return ColumnPrivHeld(
-    conn_ctx.GetClientContext(), role_id, SystemRelationPermissions(*sys),
-    sys->ColumnAcl(cols[attnum - 1].first.GetIdentifierName()), priv);
-}
-
-void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
-                                           duckdb::ExpressionState& state,
-                                           duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
-                                    int16_t, duckdb::string_t>(
-    args, result,
-    [&](duckdb::string_t u, duckdb::string_t t, int16_t attnum,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      auto role = FindRole(state.GetContext(), {u.GetData(), u.GetSize()});
-      if (!role) {
-        ThrowRoleNotFound({u.GetData(), u.GetSize()});
-      }
-      try {
-        auto r = ColumnPrivByNameTableAttnum(conn_ctx, role->oid,
-                                             {t.GetData(), t.GetSize()}, attnum,
-                                             {p.GetData(), p.GetSize()});
-        if (r) {
-          return *r;
-        } else {
-          return duckdb::nullopt;
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasColumnPrivilegeOidNameAttnum4Function(duckdb::DataChunk& args,
-                                              duckdb::ExpressionState& state,
-                                              duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  duckdb::VariadicExecutor::Execute<bool, int64_t, duckdb::string_t, int16_t,
-                                    duckdb::string_t>(
-    args, result,
-    [&](int64_t roid, duckdb::string_t t, int16_t attnum,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      try {
-        auto r = ColumnPrivByNameTableAttnum(conn_ctx, pg::OidFromSql(roid),
-                                             {t.GetData(), t.GetSize()}, attnum,
-                                             {p.GetData(), p.GetSize()});
-        if (r) {
-          return *r;
-        } else {
-          return duckdb::nullopt;
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
-                                             duckdb::ExpressionState& state,
-                                             duckdb::Vector& result) {
-  duckdb::VariadicExecutor::Execute<bool, int64_t, int64_t, int16_t,
-                                    duckdb::string_t>(
-    args, result,
-    [&](int64_t roid, int64_t toid, int16_t attnum,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      const auto* table = FindByOid<duckdb::TableCatalogEntry>(
-                            state.GetContext(), pg::OidFromSql(toid))
-                            .get();
-      if (!table || !AttnumExists(*table, attnum)) {
-        return duckdb::nullopt;
-      }
-      try {
-        return HasColumnPrivByAttnum(state.GetContext(), pg::OidFromSql(roid),
-                                     *table, attnum,
-                                     {p.GetData(), p.GetSize()});
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
-                                        duckdb::ExpressionState& state,
-                                        duckdb::Vector& result) {
-  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
-                                    duckdb::string_t>(
-    args, result,
-    [&](duckdb::string_t u, duckdb::string_t t,
-        duckdb::string_t p) -> duckdb::optional<bool> {
-      auto role = FindRole(state.GetContext(), {u.GetData(), u.GetSize()});
-      if (!role) {
-        ThrowRoleNotFound({u.GetData(), u.GetSize()});
-      }
-      const auto name = duckdb::QualifiedName::Parse(t.GetString());
-      const auto* table = FindTable(state.GetContext(), name);
-      try {
-        if (table) {
-          return AnyColumnPrivHeld(state.GetContext(), role->oid, *table,
-                                   {p.GetData(), p.GetSize()});
-        } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return AnyColumnPrivHeld(state.GetContext(), role->oid, *sys,
-                                   {p.GetData(), p.GetSize()});
-        } else {
-          ThrowRelationNotFound(name.Name().GetIdentifierName());
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
-                                       duckdb::ExpressionState& state,
-                                       duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  auto current = FindRole(state.GetContext(), conn_ctx.user());
-  duckdb::VariadicExecutor::Execute<bool, int64_t, duckdb::string_t>(
-    args, result,
-    [&](int64_t toid, duckdb::string_t p) -> duckdb::optional<bool> {
-      if (!current) {
-        return duckdb::nullopt;
-      }
-      const auto entry =
-        RelationEntryByOid(state.GetContext(), pg::OidFromSql(toid));
-      const auto* perm = RelationPermissions(entry.get());
-      if (!perm) {
-        return duckdb::nullopt;
-      }
-      try {
-        if (entry->type == duckdb::CatalogType::TABLE_ENTRY) {
-          return AnyColumnPrivHeld(state.GetContext(), current->oid,
-                                   entry->Cast<duckdb::TableCatalogEntry>(),
-                                   {p.GetData(), p.GetSize()});
-        }
-        return HasAnyTablePrivilegeText(state.GetContext(), current->oid, *perm,
-                                        {p.GetData(), p.GetSize()});
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
-}
-
-void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
-                                        duckdb::ExpressionState& state,
-                                        duckdb::Vector& result) {
-  auto& conn_ctx = GetSereneDBContext(state.GetContext());
-  auto current = FindRole(state.GetContext(), conn_ctx.user());
-  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t>(
-    args, result,
-    [&](duckdb::string_t t, duckdb::string_t p) -> duckdb::optional<bool> {
-      if (!current) {
-        return duckdb::nullopt;
-      }
-      const auto name = duckdb::QualifiedName::Parse(t.GetString());
-      const auto* table = FindTable(state.GetContext(), name);
-      try {
-        if (table) {
-          return AnyColumnPrivHeld(state.GetContext(), current->oid, *table,
-                                   {p.GetData(), p.GetSize()});
-        } else if (const auto* sys = ResolveSystemRelation(name)) {
-          return AnyColumnPrivHeld(state.GetContext(), current->oid, *sys,
-                                   {p.GetData(), p.GetSize()});
-        } else {
-          ThrowRelationNotFound(name.Name().GetIdentifierName());
-        }
-      } catch (const irs::SqlException& e) {
-        ThrowInvalidPrivilege(e);
-      }
-    });
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnPrivHeld(
+           context, role_id, table.permissions,
+           table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(),
+           priv);
 }
 
 [[noreturn]] void ThrowColumnNotFound(std::string_view column,
@@ -1943,6 +1667,288 @@ bool ViewHasColumn(duckdb::ClientContext& context,
     }
   }
   return false;
+}
+
+duckdb::ViewCatalogEntry* RelationView(const pg::Relation& relation) {
+  if (!relation.entry ||
+      relation.entry->type != duckdb::CatalogType::VIEW_ENTRY) {
+    return nullptr;
+  }
+  return &relation.entry->Cast<duckdb::ViewCatalogEntry>();
+}
+
+pg::IndexColumns IndexColumnsOf(const pg::Relation& relation) {
+  if (relation.key.table) {
+    return pg::ColumnsOfIndex(relation.key);
+  }
+  if (relation.entry->type != duckdb::CatalogType::INDEX_ENTRY) {
+    return {};
+  }
+  return pg::ColumnsOfIndex(relation.entry->Cast<duckdb::IndexCatalogEntry>(),
+                            nullptr);
+}
+
+bool RelationHasColumn(duckdb::ClientContext& context,
+                       const pg::Relation& relation, std::string_view column) {
+  if (const auto* table = RelationTable(relation)) {
+    return table->GetColumns().ColumnExists(duckdb::Identifier{column});
+  }
+  if (auto* view = RelationView(relation)) {
+    return ViewHasColumn(context, *view, column);
+  }
+  return absl::c_any_of(
+    IndexColumnsOf(relation).columns,
+    [&](const pg::IndexColumn& indexed) { return indexed.name == column; });
+}
+
+int64_t RelationColumnCount(duckdb::ClientContext& context,
+                            const pg::Relation& relation) {
+  if (const auto* table = RelationTable(relation)) {
+    return static_cast<int64_t>(table->GetColumns().LogicalColumnCount());
+  }
+  if (auto* view = RelationView(relation)) {
+    view->BindView(context);
+    const auto info = view->GetColumnInfo();
+    return info ? static_cast<int64_t>(info->names.size()) : 0;
+  }
+  return static_cast<int64_t>(IndexColumnsOf(relation).columns.size());
+}
+
+std::string RelationLabel(const pg::Relation& relation) {
+  if (relation.entry) {
+    return std::string{relation.entry->name.GetIdentifierName()};
+  }
+  return pg::ConstraintName(*relation.key.table, *relation.key.constraint);
+}
+
+bool HasAnyColumnPrivilege(duckdb::ClientContext& context,
+                           duckdb::idx_t role_id, const pg::Relation& relation,
+                           std::string_view priv) {
+  try {
+    if (const auto* table = RelationTable(relation)) {
+      return AnyColumnPrivHeld(context, role_id, *table, priv);
+    }
+    return HasRelationPrivilegeText(context, role_id, relation, priv);
+  } catch (const irs::SqlException& e) {
+    ThrowInvalidPrivilege(e);
+  }
+}
+
+bool HasColumnPrivilege(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                        const pg::Relation& relation, std::string_view column,
+                        std::string_view priv) {
+  if (!RelationHasColumn(context, relation, column)) {
+    ThrowColumnNotFound(column, RelationLabel(relation));
+  }
+  try {
+    if (const auto* table = RelationTable(relation)) {
+      return HasColumnPrivByName(context, role_id, *table, column, priv);
+    }
+    return HasRelationPrivilegeText(context, role_id, relation, priv);
+  } catch (const irs::SqlException& e) {
+    ThrowInvalidPrivilege(e);
+  }
+}
+
+bool ColumnPrivilegeAt(duckdb::ClientContext& context, duckdb::idx_t role_id,
+                       const pg::Relation& relation, int64_t attnum,
+                       std::string_view priv, bool& held) {
+  if (attnum < 1 || attnum > RelationColumnCount(context, relation)) {
+    return false;
+  }
+  try {
+    const auto* table = RelationTable(relation);
+    held = table ? HasColumnPrivByAttnum(context, role_id, *table, attnum, priv)
+                 : HasRelationPrivilegeText(context, role_id, relation, priv);
+  } catch (const irs::SqlException& e) {
+    ThrowInvalidPrivilege(e);
+  }
+  return true;
+}
+
+void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
+                                         duckdb::ExpressionState& state,
+                                         duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
+                                    duckdb::string_t, duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t u, duckdb::string_t t, duckdb::string_t c,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      auto& context = state.GetContext();
+      auto role = FindRole(context, {u.GetData(), u.GetSize()});
+      if (!role) {
+        ThrowRoleNotFound({u.GetData(), u.GetSize()});
+      }
+      return HasColumnPrivilege(
+        context, role->oid, RelationNamed(context, {t.GetData(), t.GetSize()}),
+        {c.GetData(), c.GetSize()}, {p.GetData(), p.GetSize()});
+    });
+}
+
+void HasColumnPrivilegeName3Function(duckdb::DataChunk& args,
+                                     duckdb::ExpressionState& state,
+                                     duckdb::Vector& result) {
+  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto current = FindRole(state.GetContext(), conn_ctx.user());
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t t, duckdb::string_t c,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      if (!current) {
+        return duckdb::nullopt;
+      }
+      auto& context = state.GetContext();
+      return HasColumnPrivilege(
+        context, current->oid,
+        RelationNamed(context, {t.GetData(), t.GetSize()}),
+        {c.GetData(), c.GetSize()}, {p.GetData(), p.GetSize()});
+    });
+}
+
+void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
+                                          duckdb::ExpressionState& state,
+                                          duckdb::Vector& result) {
+  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto current = FindRole(state.GetContext(), conn_ctx.user());
+  duckdb::VariadicExecutor::Execute<bool, int64_t, int32_t, duckdb::string_t>(
+    args, result,
+    [&](int64_t toid, int32_t attnum,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      if (!current) {
+        return duckdb::nullopt;
+      }
+      auto& context = state.GetContext();
+      const auto relation = pg::RelationByOid(context, pg::OidFromSql(toid));
+      bool held = false;
+      if (!relation ||
+          !ColumnPrivilegeAt(context, current->oid, relation, attnum,
+                             {p.GetData(), p.GetSize()}, held)) {
+        return duckdb::nullopt;
+      }
+      return held;
+    });
+}
+
+void HasColumnPrivilegeNameAttnum4Function(duckdb::DataChunk& args,
+                                           duckdb::ExpressionState& state,
+                                           duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
+                                    int16_t, duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t u, duckdb::string_t t, int16_t attnum,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      auto& context = state.GetContext();
+      auto role = FindRole(context, {u.GetData(), u.GetSize()});
+      if (!role) {
+        ThrowRoleNotFound({u.GetData(), u.GetSize()});
+      }
+      bool held = false;
+      if (!ColumnPrivilegeAt(context, role->oid,
+                             RelationNamed(context, {t.GetData(), t.GetSize()}),
+                             attnum, {p.GetData(), p.GetSize()}, held)) {
+        return duckdb::nullopt;
+      }
+      return held;
+    });
+}
+
+void HasColumnPrivilegeOidNameAttnum4Function(duckdb::DataChunk& args,
+                                              duckdb::ExpressionState& state,
+                                              duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, int64_t, duckdb::string_t, int16_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](int64_t roid, duckdb::string_t t, int16_t attnum,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      auto& context = state.GetContext();
+      bool held = false;
+      if (!ColumnPrivilegeAt(context, pg::OidFromSql(roid),
+                             RelationNamed(context, {t.GetData(), t.GetSize()}),
+                             attnum, {p.GetData(), p.GetSize()}, held)) {
+        return duckdb::nullopt;
+      }
+      return held;
+    });
+}
+
+void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
+                                             duckdb::ExpressionState& state,
+                                             duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, int64_t, int64_t, int16_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](int64_t roid, int64_t toid, int16_t attnum,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      auto& context = state.GetContext();
+      const auto relation = pg::RelationByOid(context, pg::OidFromSql(toid));
+      bool held = false;
+      if (!relation ||
+          !ColumnPrivilegeAt(context, pg::OidFromSql(roid), relation, attnum,
+                             {p.GetData(), p.GetSize()}, held)) {
+        return duckdb::nullopt;
+      }
+      return held;
+    });
+}
+
+void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
+                                        duckdb::ExpressionState& state,
+                                        duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t u, duckdb::string_t t,
+        duckdb::string_t p) -> duckdb::optional<bool> {
+      auto& context = state.GetContext();
+      auto role = FindRole(context, {u.GetData(), u.GetSize()});
+      if (!role) {
+        ThrowRoleNotFound({u.GetData(), u.GetSize()});
+      }
+      return HasAnyColumnPrivilege(
+        context, role->oid, RelationNamed(context, {t.GetData(), t.GetSize()}),
+        {p.GetData(), p.GetSize()});
+    });
+}
+
+void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
+                                       duckdb::ExpressionState& state,
+                                       duckdb::Vector& result) {
+  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto current = FindRole(state.GetContext(), conn_ctx.user());
+  duckdb::VariadicExecutor::Execute<bool, int64_t, duckdb::string_t>(
+    args, result,
+    [&](int64_t toid, duckdb::string_t p) -> duckdb::optional<bool> {
+      if (!current) {
+        return duckdb::nullopt;
+      }
+      auto& context = state.GetContext();
+      const auto relation = pg::RelationByOid(context, pg::OidFromSql(toid));
+      if (!relation) {
+        return duckdb::nullopt;
+      }
+      return HasAnyColumnPrivilege(context, current->oid, relation,
+                                   {p.GetData(), p.GetSize()});
+    });
+}
+
+void HasAnyColumnPrivilegeName2Function(duckdb::DataChunk& args,
+                                        duckdb::ExpressionState& state,
+                                        duckdb::Vector& result) {
+  auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  auto current = FindRole(state.GetContext(), conn_ctx.user());
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t t, duckdb::string_t p) -> duckdb::optional<bool> {
+      if (!current) {
+        return duckdb::nullopt;
+      }
+      auto& context = state.GetContext();
+      return HasAnyColumnPrivilege(
+        context, current->oid,
+        RelationNamed(context, {t.GetData(), t.GetSize()}),
+        {p.GetData(), p.GetSize()});
+    });
 }
 
 bool SerialSequenceOf(duckdb::ClientContext& context,
@@ -2199,11 +2205,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     "main");
-        });
+      RelationSizeFunction(args, state, result, RelationMainForkBytes);
     }});
 
   // pg_relation_size(regclass, text)
@@ -2213,12 +2215,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
+      auto& context = state.GetContext();
       duckdb::BinaryExecutor::Execute<int64_t, duckdb::string_t, int64_t>(
         args.data[0], args.data[1], result, args.size(),
-        [&](int64_t oid, duckdb::string_t fork) -> int64_t {
-          std::string_view f{fork.GetData(), fork.GetSize()};
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     f);
+        [&](int64_t oid, duckdb::string_t fork) -> duckdb::optional<int64_t> {
+          const auto relation = pg::RelationByOid(context, pg::OidFromSql(oid));
+          if (!relation) {
+            return duckdb::nullopt;
+          }
+          return RelationForkBytes(context, relation,
+                                   {fork.GetData(), fork.GetSize()});
         });
     }});
 
@@ -2229,11 +2235,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     "main", true);
-        });
+      RelationSizeFunction(args, state, result, RelationMainForkBytes);
     }});
 
   // pg_total_relation_size(regclass)
@@ -2243,10 +2245,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationTotalSize(state.GetContext(), pg::OidFromSql(oid));
-        });
+      RelationSizeFunction(args, state, result, RelationTotalBytes);
     }});
 
   // pg_indexes_size(regclass)
@@ -2256,10 +2255,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetTableIndexesSize(state.GetContext(), pg::OidFromSql(oid));
-        });
+      RelationSizeFunction(args, state, result, RelationIndexesBytes);
     }});
 
   // Stub functions that throw "not supported"

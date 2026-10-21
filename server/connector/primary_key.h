@@ -34,6 +34,11 @@
 
 #include "server/utils/primary_key.h"
 
+namespace duckdb {
+
+class RowIdDeduplicator;
+
+}  // namespace duckdb
 namespace sdb::connector::primary_key {
 
 std::vector<duckdb::LogicalIndex> KeyColumns(
@@ -49,6 +54,9 @@ struct PKColumn {
 void PreparePKFormats(duckdb::DataChunk& chunk,
                       std::span<const PKColumn> columns,
                       std::vector<duckdb::UnifiedVectorFormat>& formats);
+
+duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
+                              duckdb::DataChunk& chunk, const PKColumn& rowid);
 
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,

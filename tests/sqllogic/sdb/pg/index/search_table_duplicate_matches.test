@@ -1,0 +1,167 @@
+statement ok
+CREATE TABLE dm (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+CREATE TABLE dm_plain (id BIGINT, v TEXT);
+
+statement ok
+INSERT INTO dm SELECT i, 'v' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+INSERT INTO dm_plain SELECT i, 'v' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+statement ok
+CREATE TABLE dm_src (id BIGINT);
+
+statement ok
+INSERT INTO dm_src SELECT i FROM generate_series(0, 9999, 3) g(i), generate_series(1, 3) r(j);
+
+statement count 3334
+DELETE FROM dm USING dm_src WHERE dm.id = dm_src.id;
+
+statement count 3334
+DELETE FROM dm_plain USING dm_src WHERE dm_plain.id = dm_src.id;
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT (SELECT count(*) FROM dm) AS search_n, (SELECT count(*) FROM dm_plain) AS plain_n, (SELECT count(*) FROM dm WHERE id % 3 = 0) AS search_left;
+----
+search_n	plain_n	search_left
+6666	6666	0
+
+statement count 3333
+UPDATE dm SET v = 'u' || dm_src.id FROM dm_src WHERE dm.id = dm_src.id + 1;
+
+statement count 3333
+UPDATE dm_plain SET v = 'u' || dm_src.id FROM dm_src WHERE dm_plain.id = dm_src.id + 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'u' || (id - 1)) AS updated FROM dm;
+----
+n	ids	updated
+6666	6666	3333
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, v FROM dm EXCEPT ALL SELECT id, v FROM dm_plain)) AS only_search, (SELECT count(*) FROM (SELECT id, v FROM dm_plain EXCEPT ALL SELECT id, v FROM dm)) AS only_plain;
+----
+only_search	only_plain
+0	0
+
+query ? rowsort
+DELETE FROM dm USING dm_src WHERE dm.id = dm_src.id + 2 AND dm.id < 30 RETURNING dm.id;
+----
+id
+11
+14
+17
+2
+20
+23
+26
+29
+5
+8
+
+query ?? rowsort
+UPDATE dm SET v = 'r' FROM dm_src WHERE dm.id = dm_src.id + 1 AND dm.id < 20 RETURNING dm.id, dm.v;
+----
+id	v
+1	r
+10	r
+13	r
+16	r
+19	r
+4	r
+7	r
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'r') AS returned_rows FROM dm;
+----
+n	ids	returned_rows
+6656	6656	7
+
+statement count 2
+UPDATE dm SET v = 'once' FROM (VALUES (1), (4)) s(id) WHERE dm.id = s.id;
+
+statement count 3
+DELETE FROM dm WHERE id IN (SELECT id FROM dm_src WHERE id + 1 < 10) OR id IN (31, 32, 34);
+
+statement count 2
+UPDATE dm SET v = 'plain' WHERE id IN (7, 10);
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 'once') AS once, count(*) FILTER (WHERE v = 'plain') AS plain FROM dm;
+----
+n	once	plain
+6653	2	2
+
+statement ok
+BEGIN;
+
+statement count 3
+DELETE FROM dm USING dm_src WHERE dm.id = dm_src.id + 1 AND dm.id BETWEEN 100 AND 108;
+
+statement count 3
+UPDATE dm SET v = 'txn' FROM dm_src WHERE dm.id = dm_src.id + 2 AND dm.id BETWEEN 100 AND 108;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'txn') AS txn FROM dm WHERE id BETWEEN 100 AND 108;
+----
+n	ids	txn
+3	3	3
+
+statement count 30
+DELETE FROM dm WHERE id IN (SELECT id + 1 FROM dm_src WHERE id BETWEEN 200 AND 290);
+
+statement count 30
+DELETE FROM dm_plain WHERE id IN (SELECT id + 1 FROM dm_src WHERE id BETWEEN 200 AND 290);
+
+statement count 31
+UPDATE dm SET v = 'sub' WHERE id IN (SELECT id + 2 FROM dm_src WHERE id BETWEEN 300 AND 390);
+
+statement count 31
+UPDATE dm_plain SET v = 'sub' WHERE id IN (SELECT id + 2 FROM dm_src WHERE id BETWEEN 300 AND 390);
+
+statement count 30
+DELETE FROM dm WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 1 AND dm_src.id BETWEEN 400 AND 490);
+
+statement count 30
+UPDATE dm SET v = 'exists' WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 2 AND dm_src.id BETWEEN 500 AND 590);
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'sub') AS sub, count(*) FILTER (WHERE v = 'exists') AS exists_, count(*) FILTER (WHERE (id BETWEEN 202 AND 289 OR id BETWEEN 403 AND 490) AND id % 3 = 1) AS left_ FROM dm;
+----
+n	ids	sub	exists_	left_
+6590	6590	31	30	0
+
+statement ok
+DROP TABLE dm;
+
+statement ok
+DROP TABLE dm_plain;
+
+statement ok
+DROP TABLE dm_src;

@@ -41,7 +41,6 @@
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/ts_query_codec.h"
 #include "search.h"
-#include "string.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -750,10 +749,10 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
       } break;
       case TSQueryOp::Like: {
         auto text = get_text_arg();
-        auto pattern = LikeEscapePattern(text, '\\');
+        CheckLikePattern(text);
         options.push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
           irs::ByWildcardOptions{
-            irs::ViewCast<irs::byte_type>(std::string_view{pattern})};
+            irs::ViewCast<irs::byte_type>(std::string_view{text})};
       } break;
       case TSQueryOp::Regexp: {
         auto args = ParseRegexpArgs(*f);

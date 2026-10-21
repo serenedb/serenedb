@@ -16,26 +16,26 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 
 - **Text and scalar columns** may name a [text search dictionary](../create_text_search_dictionary/index.md) (the analyzer). With no dictionary the column is indexed verbatim — one token per value — giving exact, case-sensitive matching suitable for identifiers, tags and categories. Numeric and temporal columns are indexed for [exact and range](../../indexes/inverted/full-text-search.md#range-queries) queries.
 - **Vector columns** use `ivf (...)` or `hnsw (...)` to build an [IVF or HNSW](../../indexes/inverted/vector-search.md) index. `metric` is required; the other options, among them the vector compression `quant`, are listed on the [Vector Search](../../indexes/inverted/vector-search.md) page.
-- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, subqueries, volatile functions (e.g. `random()`) and functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`) are rejected.
+- **Expressions** — an entry may be a parenthesized expression over one or more columns, e.g. `(lower(name)) my_dict` or `(price * 110 / 100)`. The query must use the identical expression. Aggregates, window functions, subqueries, volatile functions (e.g. `random()`) and functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`) are rejected.
 - **JSON** — index a JSON extraction expression such as `(doc ->> 'host') my_dict`, optionally with a dictionary; this indexes exactly the sub-field you search. (See also the [`VARIANT`](../../data_types/variant.md) type for storing typed payloads.)
 - **Generated columns** — index a [generated column](./index.md) the same as any other column (index the column itself, not its defining expression).
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 - **`INET` and `CIDR` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=`, `>>=`, `<<`, `>>` and `&&`; see [Inet](../../data_types/inet.md#indexing).
 
-`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be indexed, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays; such a column fails with `Column '<name>' has unsupported type <type> and can not be indexed`. A `GEOMETRY` column is indexed only with a [geo dictionary](../../indexes/inverted/geospatial-search.md). `INCLUDE` stores values of every type. A column or expression is listed once as an indexed key, with one dictionary or none; besides that, only `included()` can list it again. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
-### Operator-class options (feature flags)
+### Feature flags
 
-A column's trailing `WITH (...)` sets per-column **feature flags** controlling what the index records. They are off by default; enable only what your queries need.
+A column takes the **feature flags** of its text search dictionary, which control what the index records; `CREATE INDEX` has no per-column flags, so columns that need different flags use different dictionaries. The flags are off by default; enable only what your queries need.
 
 | Flag | Default | Enables |
 | :--- | :--- | :--- |
-| `frequency` | `false` | Term frequency — required for [relevance scoring](../../indexes/inverted/ranking.md) |
+| `frequency` | `false` | Term frequency — lets [relevance scoring](../../indexes/inverted/ranking.md) rank by how often terms occur; without it every match of a term scores the same |
 | `position` | `false` | Term positions — answer [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries from the index alone; without them a phrase needs the column's text in the index ([phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions)) |
-| `offset` | `false` | Character offsets — required for [highlighting](../../indexes/inverted/full-text-search.md#highlighting) |
+| `offset` | `false` | Byte offsets — stored for [highlighting](../../indexes/inverted/full-text-search.md#highlighting); without them `ts_offsets` recomputes them for each matching row |
 | `norm` | `false` | The length-normalization factor used by some scorers |
 
-The same flags can be set on the dictionary itself, in which case every column using it inherits them. See the [feature flags](../create_text_search_dictionary/index.md#feature-flags) reference.
+They are set in the dictionary's `WITH` clause; see the [feature flags](../create_text_search_dictionary/index.md#feature-flags) reference.
 
 ## `INCLUDE` columns
 

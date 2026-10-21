@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry.hpp>
+
 namespace duckdb {
 
 class Binder;
@@ -36,5 +38,7 @@ namespace sdb::auth {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
+
+bool Unowned(const duckdb::CatalogEntry& entry);
 
 }  // namespace sdb::auth

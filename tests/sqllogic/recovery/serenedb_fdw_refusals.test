@@ -34,6 +34,21 @@ statement ok
 CREATE INDEX sfx_view_idx ON postgres.public.sfx_view USING inverted(id, body);
 
 statement ok
+USE postgres;
+
+query
+CALL es_create_index('sfx_logs', '{"mappings":{"properties":{"msg":{"type":"text"}}}}');
+----
+acknowledged
+t
+
+statement count 1
+INSERT INTO es.sfx_logs VALUES ('1', 'hello', '{"msg":"hello"}');
+
+statement ok
+CALL es_refresh('sfx_logs');
+
+statement ok
 CHECKPOINT postgres;
 
 system ok
@@ -88,7 +103,7 @@ db error: ERROR: Cannot execute statement of type "CREATE" on database "sfx_snap
 statement error
 CREATE INDEX sfx_more_idx ON sfx_snap.public.sfx_docs USING inverted(body);
 ----
-db error: ERROR: cannot CREATE INDEX on sfx_snap<slt:ignore>
+db error: ERROR: cannot run CREATE INDEX on database "sfx_snap": it is attached read-only
 
 
 statement error
@@ -139,8 +154,50 @@ db error: ERROR: cannot run VACUUM (refresh_database) on database "sfx_snap": it
 statement error
 REINDEX INDEX sfx_snap.public.sfx_view_idx;
 ----
-db error: ERROR: cannot REINDEX "sfx_view_idx": its database is attached read-only
+db error: ERROR: cannot run REINDEX on database "sfx_snap": it is attached read-only
 
+
+query
+SELECT _id, msg FROM sfx_snap.es.sfx_logs ORDER BY _id;
+----
+_id	msg
+1	hello
+
+statement ok
+USE sfx_snap;
+
+statement error
+CALL es_refresh('sfx_logs');
+----
+db error: ERROR: cannot run es_refresh on database "sfx_snap": it is attached read-only
+
+
+statement error
+CALL es_refresh(NULL);
+----
+db error: ERROR: cannot run es_refresh on database "sfx_snap": it is attached read-only
+
+
+statement error
+CALL es_create_index('sfx_more_logs', '{"mappings":{"properties":{"msg":{"type":"text"}}}}');
+----
+db error: ERROR: Cannot execute statement of type "CALL" on database "sfx_snap" which is attached in read-only mode!
+
+
+statement error
+CALL es_drop_index('sfx_logs');
+----
+db error: ERROR: Cannot execute statement of type "CALL" on database "sfx_snap" which is attached in read-only mode!
+
+
+query
+SELECT * FROM es_cat_indices();
+----
+index	docs_count
+sfx_logs	1
+
+statement ok
+USE postgres;
 
 
 query

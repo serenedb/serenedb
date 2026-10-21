@@ -15,13 +15,13 @@ flowchart LR
     w["writers<br/>Spark · BigQuery · SereneDB · any engine"] -->|"INSERT / UPDATE / DELETE<br/>atomic commits"| t[("Iceberg table<br/>object storage + REST catalog")]
     t -->|"REINDEX INDEX<br/>the freshness barrier"| idx[("inverted index<br/>BM25 · IVF vectors · filters")]
     q["queries<br/>full-text · semantic · hybrid"] --> idx
-    idx -.->|"non-indexed columns:<br/>fetched per matched row"| t
+    idx -.->|"columns the index does not store:<br/>fetched per matched row"| t
 ```
 
 What lives where:
 
 - **The Iceberg table** (your bucket, your catalog) holds the rows — text, metadata, embeddings — as plain Parquet. It stays fully yours: every engine can read and write it, and `REINDEX` picks up foreign commits, updates and deletes the same way.
-- **SereneDB** holds only the derived index (term dictionaries, vector structures, indexed columns) on local disk. There is no second copy of the corpus — lose the node, rebuild the index from the table. Columns you did not index are still selectable: they are materialized from the source Parquet at query time, only for the rows a query matched.
+- **SereneDB** holds only the derived index (term dictionaries, vector structures and any `INCLUDE`d columns) on local disk. There is no second copy of the corpus — lose the node, rebuild the index from the table. Every other column, an indexed text or numeric one too, is still selectable: it is materialized from the source Parquet at query time, only for the rows a query matched.
 
 ## How REINDEX refreshes
 
@@ -75,7 +75,7 @@ To run the pass on a schedule instead of by hand, set the [`reindex_interval`](.
 
 ## Query
 
-Vector similarity, scoped to a filter — everything below answers from the index:
+Vector similarity, scoped to a filter — the index finds and ranks the matches, and the columns they return are read from the source Parquet for those rows only:
 
 <SqlLogicTest id="cookbook/search/insert_to_searchable_iceberg/example_semantic" />
 
@@ -83,7 +83,7 @@ Hybrid — full-text filter plus semantic ranking in one statement:
 
 <SqlLogicTest id="cookbook/search/insert_to_searchable_iceberg/example_hybrid" />
 
-Selecting a column the index does not hold (`uri` here) still works: it is fetched from the source Parquet at query time, only for the matched rows:
+A column the index does not cover at all (`uri` here) is fetched the same way, only for the matched rows:
 
 <SqlLogicTest id="cookbook/search/insert_to_searchable_iceberg/example_materialize" />
 

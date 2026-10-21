@@ -74,6 +74,8 @@ Using the CLI client, the statement is executed as follows.
 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_011" />
 
+A client can also declare parameter types when it prepares a statement over the PostgreSQL protocol, as most drivers do for their decimal and JSON values. A parameter declared `numeric` or `numeric[]` keeps the digits it is sent with: the statement rounds it only where it stores or casts it into a `DECIMAL(WIDTH, SCALE)`, and a comparison sees its exact value. Such a parameter holds up to 38 digits: digits after the decimal point past the 38th are rounded, and a value with more than 38 digits before the decimal point fails with SQLSTATE `22003`. `NaN` and the infinities are refused, as for [`DECIMAL`](../data_types/numeric.md#fixed-point-decimals). A parameter declared `jsonb` or `jsonb[]` is read as `JSON`.
+
 
 ## Plans
 

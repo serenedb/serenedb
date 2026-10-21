@@ -199,6 +199,18 @@ class LoserScoreCollector {
   IRS_FORCE_INLINE static uint64_t GetScoreMask(
     const score_t* IRS_RESTRICT scores, score_t threshold) noexcept {
     const auto v = _mm256_set1_ps(threshold);
+    const auto max = _mm256_max_ps(
+      _mm256_max_ps(
+        _mm256_max_ps(_mm256_loadu_ps(scores), _mm256_loadu_ps(scores + 8)),
+        _mm256_max_ps(_mm256_loadu_ps(scores + 16),
+                      _mm256_loadu_ps(scores + 24))),
+      _mm256_max_ps(_mm256_max_ps(_mm256_loadu_ps(scores + 32),
+                                  _mm256_loadu_ps(scores + 40)),
+                    _mm256_max_ps(_mm256_loadu_ps(scores + 48),
+                                  _mm256_loadu_ps(scores + 56))));
+    if (_mm256_movemask_ps(_mm256_cmp_ps(max, v, kCmpPred)) == 0) {
+      return 0;
+    }
     uint64_t mask = 0;
     for (int i = 0; i < 64; i += 8) {
       const uint64_t bits = _mm256_movemask_ps(

@@ -970,13 +970,17 @@ skipif postgres
 ----
 > \prompt: missing required argument
 
-# PG accepts an empty password with a NOTICE; serened accepts it without
-# one. Test asserts serened's own output.
+# psql's \password queries `password_encryption` to pick a hash algo;
+# serened doesn't expose that GUC. PG accepts an empty password with a
+# NOTICE; serened errors. Test asserts serened's own output.
 skipif postgres
 \password
 ----
 > Enter new password for user "postgres":
 > Enter it again:
+> ERROR:  unrecognized configuration parameter "password_encryption"
+>
+> Did you mean: "s3_endpoint"
 
 \cd
 ----

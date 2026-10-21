@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo JSON);
 
@@ -20,8 +22,6 @@ INSERT INTO geo_data VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) geo_data;
-
-# DOCS_TEST_BODY
 
 query
 SELECT id FROM geo_idx
@@ -75,6 +75,8 @@ id
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE geo_shapes (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
 
@@ -94,8 +96,6 @@ INSERT INTO geo_shapes VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) geo_shapes;
-
-# DOCS_TEST_BODY
 
 query
 SELECT id FROM geo_shapes_idx
@@ -125,6 +125,8 @@ id
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE places (id INTEGER PRIMARY KEY, loc JSON);
 
@@ -144,8 +146,6 @@ INSERT INTO places VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) places;
-
-# DOCS_TEST_BODY
 
 query
 SELECT id

@@ -457,25 +457,21 @@ class IndexWriter : private util::Noncopyable {
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
   bool RefreshBegin(const CommitInfo& info = {}) {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     return Start(info);
   }
 
   void RefreshAbort() {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Abort();
   }
 
   void RefreshFinish() {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Finish();
   }
 
   bool RefreshCommit(const CommitInfo& info = {}) {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     const bool modified = Start(info);
     Finish();

@@ -39,7 +39,7 @@ For a more detailed description, see the [page on the `INSERT` statement](../dat
 
 ## File Loading: Relative Paths
 
-Use the configuration option [`file_search_path`](../configuration/overview.md#local-configuration-options) to configure to which “root directories” relative paths are expanded on.
+Use the configuration option [`file_search_path`](../configuration/overview.md#files-object-stores-and-caching) to configure to which “root directories” relative paths are expanded on.
 If `file_search_path` is not set, the working directory is used as the basis for relative paths.
 
 ## File Formats

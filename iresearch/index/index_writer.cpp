@@ -1249,9 +1249,10 @@ void IndexWriter::InitMeta(IndexMeta& meta) const {
 }
 
 void IndexWriter::Clear(const SourcePosition& position) {
-  _commit_lock.ForgetDeadlockInfo();
   std::lock_guard commit_lock{_commit_lock};
 
+  const bool had_pending = _pending_state.Valid();
+  Abort();
   auto ctx = SwitchFlushContext();
   // Ensure there are no active struct update operations
   ctx->pending.Done();
@@ -1266,7 +1267,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
 
   SDB_ASSERT(_committed_reader);
   if (const auto& committed_meta = _committed_reader->Meta();
-      !_pending_state.Valid() && committed_meta.index_meta.segments.empty() &&
+      !had_pending && committed_meta.index_meta.segments.empty() &&
       !IsInitialCommit(committed_meta)) {
     return;  // Already empty
   }
@@ -1275,7 +1276,6 @@ void IndexWriter::Clear(const SourcePosition& position) {
   InitMeta(to_commit.meta);
   to_commit.ctx = std::move(ctx);
 
-  Abort();  // iff Clear called between Begin and Commit
   ApplyFlush(std::move(to_commit));
   Finish();
 
@@ -1539,7 +1539,6 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
-  _commit_lock.ForgetDeadlockInfo();
   std::shared_lock lock{_commit_lock};
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
@@ -1770,7 +1769,6 @@ void IndexWriter::ReplaceSegments(
     adopted.push_back(std::move(entry));
   }
 
-  _commit_lock.ForgetDeadlockInfo();
   std::shared_lock commit_lock{_commit_lock};
   if (_pending_state.Valid()) {
     THROW_SQL_ERROR(
@@ -1865,23 +1863,16 @@ IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
   }
 }
 
-IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept
-  ABSL_NO_THREAD_SAFETY_ANALYSIS {
+IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
+  _commit_lock.AssertHeld();
+  SDB_ASSERT(!_pending_state.Valid());
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
-  for (;;) {
-    ctx->context_mutex.lock();
-    auto* curr = _flush_context.load(std::memory_order_relaxed);
-    if (ctx == curr) [[likely]] {
-      _flush_context.store(ctx->next, std::memory_order_relaxed);
-      return {ctx, [](FlushContext* ctx)
-                     ABSL_UNLOCK_FUNCTION(ctx->context_mutex) noexcept {
-                       ctx->Reset();  // reset context and make ready for reuse
-                       ctx->context_mutex.unlock();
-                     }};
-    }
-    ctx->context_mutex.unlock();
-    ctx = curr;
-  }
+  absl::MutexLock lock{&ctx->context_mutex};
+  _flush_context.store(ctx->next, std::memory_order_relaxed);
+  return {ctx, [](FlushContext* ctx) noexcept {
+            absl::MutexLock lock{&ctx->context_mutex};
+            ctx->Reset();
+          }};
 }
 
 IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(

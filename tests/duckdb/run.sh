@@ -620,12 +620,14 @@ fi
 # per-test progress shows up while the suites run, not 6000 lines at the end.
 rc=0
 summaries=()
+stage_rcs=()
 run_unittest() {
 	local start
 	start=$(wc -l <"$log")
 	"$UNITTEST" "${args[@]}" "$@" 2>&1 | tee -a "$log"
 	local unittest_rc=${PIPESTATUS[0]}
 	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^test cases:|^All tests (passed|were skipped)' | tail -1)")
+	stage_rcs+=("$unittest_rc")
 	[[ $rc -eq 0 ]] && rc=$unittest_rc
 }
 : >"$log"
@@ -646,6 +648,7 @@ if [[ "$run_quack" == true ]]; then
 	BUILD_DIR="$BUILD_DIR" DUCKDB_JOBS="$DUCKDB_JOBS" "$SCRIPT_DIR/quack/run.sh" 2>&1 | tee -a "$log"
 	quack_rc=${PIPESTATUS[0]}
 	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^===== \[duckdb quack\] [0-9]+/[0-9]+ passed' | tail -1)")
+	stage_rcs+=("$quack_rc")
 	[[ $rc -eq 0 ]] && rc=$quack_rc
 fi
 if [[ "$run_interop" == true ]]; then
@@ -653,6 +656,7 @@ if [[ "$run_interop" == true ]]; then
 	BUILD_DIR="$BUILD_DIR" "$SCRIPT_DIR/interop/run.sh" 2>&1 | tee -a "$log"
 	interop_rc=${PIPESTATUS[0]}
 	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^===== \[duckdb interop\] [0-9]+/[0-9]+ passed' | tail -1)")
+	stage_rcs+=("$interop_rc")
 	[[ $rc -eq 0 ]] && rc=$interop_rc
 fi
 
@@ -670,9 +674,9 @@ echo "===== [duckdb] SUMMARY ====="
 # Catch prints one of three shapes: "test cases: N | ..." when anything failed
 # or was skipped, "All tests passed (...)" when fully clean, and "All tests
 # were skipped (...)" when every test was gated behind a require-env.
-for summary in "${summaries[@]}"; do
-	printf '  %-10s %s\n' "$([[ $rc -eq 0 ]] && echo PASS || echo FAIL)" \
-		"${summary:-no summary -- run did not reach the end}"
+for i in "${!summaries[@]}"; do
+	printf '  %-10s %s\n' "$([[ ${stage_rcs[i]} -eq 0 ]] && echo PASS || echo FAIL)" \
+		"${summaries[i]:-no summary -- run did not reach the end}"
 done
 # Failures carry the test path, so attribute them back to the suite that owns it.
 if [[ $rc -ne 0 ]]; then

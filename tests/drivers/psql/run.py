@@ -282,7 +282,7 @@ def main() -> int:
 
     # The unfiltered \du and \dg goldens list every role in the cluster, so no
     # concurrent lane may hold one while this suite runs.
-    roles_lock = open("/tmp/sdb-drivers-global-roles.lock", "w")
+    roles_lock = open(f"/tmp/sdb-drivers-global-roles-{os.getuid()}.lock", "w")
     fcntl.flock(roles_lock, fcntl.LOCK_EX)
     probe = _psql_command()
     if subprocess.run(["sh", "-c", f"command -v {shlex.quote(probe[0])}"], capture_output=True).returncode != 0:

@@ -16,7 +16,7 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-: "${WORKSPACE:=$(realpath "${SCRIPT_DIR}/../..")}"
+: "${WORKSPACE:=$(realpath "${SCRIPT_DIR}/../../..")}"
 : "${BUILD_DIR:=build}"
 
 : "${SERENED:=${WORKSPACE}/${BUILD_DIR}/bin/serened}"

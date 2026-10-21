@@ -125,7 +125,7 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
 
     # The psql lane's unfiltered \du goldens list every role in the cluster;
     # hold the cross-lane lock for as long as the sentinel exists.
-    lock = open("/tmp/sdb-drivers-global-roles.lock", "w")
+    lock = open(f"/tmp/sdb-drivers-global-roles-{os.getuid()}.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     _admin("DROP ROLE IF EXISTS zzz_sentinel_user;")
     _admin("CREATE ROLE zzz_sentinel_user LOGIN;")

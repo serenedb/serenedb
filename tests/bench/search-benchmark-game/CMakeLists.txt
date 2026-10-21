@@ -7,7 +7,11 @@ add_library(
     index_builder.cpp
     line_source.cpp
 )
-target_link_libraries(search-benchmark-common iresearch-static simdjson)
+if(SDB_IRESEARCH_MINIMAL)
+    target_link_libraries(search-benchmark-common iresearch-minimal simdjson)
+else()
+    target_link_libraries(search-benchmark-common iresearch-static simdjson)
+endif()
 target_include_directories(
     search-benchmark-common
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}

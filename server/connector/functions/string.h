@@ -34,4 +34,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db);
 // builder when it translates `LIKE ... ESCAPE` predicates.
 std::string LikeEscapePattern(std::string_view pattern, char escape_char);
 
+bool LikePatternEndsWithEscape(std::string_view pattern);
+
 }  // namespace sdb::connector

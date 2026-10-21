@@ -704,6 +704,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
   auto& table_catalog = op.table.ParentCatalog();
+  catalog::ThrowIfReadOnly(table_catalog, "CREATE INDEX");
   if (table_catalog.GetCatalogType() !=
       catalog::SereneDBCatalog::kStorageType) {
     THROW_SQL_ERROR(

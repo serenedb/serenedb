@@ -242,6 +242,8 @@ irs::containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
 irs::containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
 irs::containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
 irs::containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
+irs::containers::FlatHashMap<duckdb::idx_t, SystemRelationName>
+  gSystemRelations;
 
 bool IsInformationSchema(std::string_view schema) {
   SDB_ASSERT(schema == irs::StaticStrings::kPgCatalogSchema ||
@@ -273,6 +275,11 @@ const VirtualTable* GetTable(std::string_view name) {
     return GetTableFromSchema(name, kPgCatalog);
   }
   return nullptr;
+}
+
+SystemRelationName FindSystemRelation(duckdb::idx_t oid) {
+  const auto it = gSystemRelations.find(oid);
+  return it == gSystemRelations.end() ? SystemRelationName{} : it->second;
 }
 
 void VisitSystemTables(
@@ -354,8 +361,22 @@ static duckdb::Permissions ViewPermissions(std::string_view name) {
 }
 
 void InitSystemViews(duckdb::Parser& parser) {
+  for (const auto* table : kPgCatalog) {
+    gSystemRelations.try_emplace(
+      table->Id(),
+      SystemRelationName{.schema = irs::StaticStrings::kPgCatalogSchema,
+                         .name = table->GetName()});
+  }
+  for (const auto* table : kInformationSchema) {
+    gSystemRelations.try_emplace(
+      table->Id(),
+      SystemRelationName{.schema = irs::StaticStrings::kInformationSchema,
+                         .name = table->GetName()});
+  }
   uint64_t next_oid = kFirstSystemView;
   for (const auto& view : kExternalViews) {
+    gSystemRelations.try_emplace(
+      next_oid, SystemRelationName{.schema = view.schema, .name = view.name});
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});

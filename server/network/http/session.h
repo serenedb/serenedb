@@ -203,6 +203,7 @@ class HttpSession final
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);

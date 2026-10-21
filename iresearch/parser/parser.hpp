@@ -316,9 +316,8 @@ struct ParserContext {
 
   void AddPhraseWildcard(std::string_view word) {
     const auto wildcard = FindPattern(word);
-    auto pattern = Analyze(word.substr(0, wildcard));
-    pattern.append(Pattern(word.substr(wildcard)));
-    Emplace<irs::ByWildcardOptions>().term = std::move(pattern);
+    Emplace<irs::ByWildcardOptions>().term =
+      Pattern(Analyze(word.substr(0, wildcard)), word.substr(wildcard));
   }
 
   static size_t FindPattern(std::string_view word) noexcept {
@@ -372,9 +371,8 @@ struct ParserContext {
     auto& f = Build<irs::ByWildcard>();
     *f.mutable_field_id() = FieldId();
     const auto wildcard = FindPattern(value);
-    auto pattern = Normalize(value.substr(0, wildcard));
-    pattern.append(Pattern(value.substr(wildcard)));
-    *f.mutable_options() = irs::ByWildcardOptions{std::move(pattern)};
+    *f.mutable_options() = irs::ByWildcardOptions{
+      Pattern(Normalize(value.substr(0, wildcard)), value.substr(wildcard))};
     return f;
   }
 
@@ -400,9 +398,17 @@ struct ParserContext {
     return f;
   }
 
-  static irs::bstring Pattern(std::string_view word) {
+  static irs::bstring Pattern(irs::bytes_view literal, std::string_view word) {
     irs::bstring out;
-    out.reserve(word.size());
+    out.reserve(literal.size() + word.size());
+    for (const auto c : literal) {
+      if (c == irs::WildcardMatch::kAnyStr ||
+          c == irs::WildcardMatch::kAnyChr ||
+          c == irs::WildcardMatch::kEscape) {
+        out += static_cast<irs::byte_type>(irs::WildcardMatch::kEscape);
+      }
+      out += c;
+    }
     for (size_t i = 0; i != word.size(); ++i) {
       const auto c = word[i];
       switch (c) {

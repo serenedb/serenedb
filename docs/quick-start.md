@@ -26,7 +26,7 @@ curl https://install.serenedb.com | sh
 Or run the image directly:
 
 ```sh
-docker run -d --name serenedb -p 7890:7890 serenedb/serenedb
+docker run -d --name serenedb -p 7890:7890 -e SERENEDB_HOST_AUTH_METHOD=trust serenedb/serenedb
 ```
 
 </TabItem>
@@ -46,7 +46,7 @@ Direct downloads are available on the [GitHub releases page](https://github.com/
 SereneDB speaks the PostgreSQL wire protocol. Connect with `psql` or any PostgreSQL-compatible client:
 
 ```sh
-psql -h localhost -p 7890
+psql -h localhost -p 7890 -U postgres
 ```
 
 No credentials are required by default.

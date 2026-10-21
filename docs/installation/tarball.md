@@ -30,6 +30,6 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to keep it after you clo
 serened
 ```
 
-The server listens on `127.0.0.1:7890` and stores its data in a `serenedb-data` folder in the current directory. To use a different location, pass it as an argument: `serened /var/lib/serenedb`.
+The server listens on `127.0.0.1:7890` and stores its data in a `serenedb-data` folder in the current directory. To use a different location, pass it as an argument: `serened ~/serenedb-data`.
 
 Your server is running. Continue with the [Quick Start](../quick-start.md) to connect and run your first query.

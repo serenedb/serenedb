@@ -600,7 +600,7 @@ PostgreSQL's geometric types (`point`, `line`, `lseg`, `box`, `path`, `polygon`,
 
 The PostgreSQL-named JSON functions below are largely unsupported. SereneDB instead provides JSON access through the [`JSON` column type](../data_import_and_export/json/json_type.md) and SereneDB-style functions -- `json_extract`, `json_extract_string`, `json_keys`, `json_type`, `json_valid` and more (see [JSON Functions](../data_import_and_export/json/json_functions.md)). The PostgreSQL accessor operators `->`, `->>`, `#>` and `#>>` are supported.
 
-Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable.
+Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jsonb`-only operators are unavailable. A query parameter a client sends as `jsonb` is read as `JSON`.
 
 | Feature | Support State | Details |
 |---|---|---|

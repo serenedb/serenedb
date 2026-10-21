@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
-#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
@@ -72,7 +71,6 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan_common.hpp"
 #include "connector/optimizer/ts_dict_plan.hpp"
-#include "connector/pg_logical_types.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
@@ -1157,48 +1155,13 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   return out;
 }
 
-bool DependsOnSession(const duckdb::LogicalType& type) {
-  return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
-    return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
-           t.id() == duckdb::LogicalTypeId::TIME_TZ ||
-           t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
-  });
-}
-
-bool ComputedFromRowAlone(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-    if (DependsOnSession(func.GetReturnType()) ||
-        absl::c_any_of(func.GetChildren(), [](const auto& arg) {
-          return DependsOnSession(arg->GetReturnType());
-        })) {
-      return false;
-    }
-    if (duckdb::BoundCastExpression::IsCast(func) &&
-        duckdb::TypeVisitor::Contains(
-          duckdb::BoundCastExpression::SourceType(func),
-          duckdb::LogicalTypeId::BLOB) &&
-        duckdb::TypeVisitor::Contains(func.GetReturnType(),
-                                      duckdb::LogicalTypeId::VARCHAR)) {
-      return false;
-    }
-  }
-  bool alone = true;
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      alone = alone && ComputedFromRowAlone(child);
-    });
-  return alone;
-}
-
 bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
                               duckdb::LogicalOperator& root,
                               const duckdb::LogicalOperator& op,
                               duckdb::ClientContext& context) {
   if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       expr->IsFoldable() || !expr->IsConsistent() || expr->HasParameter() ||
-      !ComputedFromRowAlone(*expr)) {
+      !connector::ComputedFromRowAlone(*expr)) {
     return false;
   }
   const auto table_index = SingleReferencedTableIndex(*expr);

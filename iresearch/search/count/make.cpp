@@ -42,7 +42,9 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
     return MakeTerm(detail::ClauseOf(terms.front(), field), query.Segment(),
                     ctx);
   }
-  if (ctx.table == nullptr && SubtractsPair(terms)) {
+  if (ctx.table == nullptr &&
+      SubtractsPair(terms,
+                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
     if (auto subtracted = MakeSubtractDisjunction(
           detail::ClauseOf(terms.front(), field),
           detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {

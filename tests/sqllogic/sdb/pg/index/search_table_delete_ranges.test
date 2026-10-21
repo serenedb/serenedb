@@ -1,0 +1,360 @@
+statement ok
+CREATE TABLE dr (id BIGINT, ts TIMESTAMP, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 8192)
+
+
+statement ok
+CREATE TABLE dr_ref (id BIGINT, ts TIMESTAMP, body TEXT)
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(0, 100000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(100000, 200000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(200000, 300000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(300000, 400000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+statement ok
+INSERT INTO dr_ref SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second', 'row ' || i FROM range(0, 400000) r(i)
+
+
+query
+SELECT count(*), sum(id) FROM dr
+----
+count	sum
+400000	79999800000
+
+
+statement ok
+DELETE FROM dr WHERE ts < TIMESTAMP '2026-01-01' + 151234 * INTERVAL '1 second'
+
+
+statement ok
+DELETE FROM dr_ref WHERE ts < TIMESTAMP '2026-01-01' + 151234 * INTERVAL '1 second'
+
+
+statement ok
+DELETE FROM dr WHERE id % 1000 = 7
+
+
+statement ok
+DELETE FROM dr_ref WHERE id % 1000 = 7
+
+
+statement ok
+DELETE FROM dr WHERE (id >= 200000 AND id < 210000) OR id % 997 = 0
+
+
+statement ok
+DELETE FROM dr_ref WHERE (id >= 200000 AND id < 210000) OR id % 997 = 0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dr EXCEPT ALL SELECT id, ts, body FROM dr_ref)
+----
+extra
+0
+
+
+query
+SELECT count(*), min(id) FROM dr
+----
+count	min
+238289	151234
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DELETE FROM dr WHERE id >= 300000 AND id < 320000
+
+
+statement ok
+DELETE FROM dr WHERE id >= 280000 AND id < 290000
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2025-01-01' + i * INTERVAL '1 second', 'new ' || i FROM range(1000000, 1010000) r(i)
+
+
+statement ok
+DELETE FROM dr WHERE id >= 320000 AND id < 330000
+
+
+statement ok
+INSERT INTO dr SELECT i, TIMESTAMP '2025-01-01' + i * INTERVAL '1 second', 'new ' || i FROM range(1010000, 1020000) r(i)
+
+
+statement ok
+DELETE FROM dr WHERE id >= 270000 AND id < 271000
+
+
+statement ok
+COMMIT
+
+
+statement ok
+DELETE FROM dr_ref WHERE (id >= 270000 AND id < 271000) OR (id >= 280000 AND id < 290000) OR (id >= 300000 AND id < 330000)
+
+
+statement ok
+INSERT INTO dr_ref SELECT i, TIMESTAMP '2025-01-01' + i * INTERVAL '1 second', 'new ' || i FROM range(1000000, 1020000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dr EXCEPT ALL SELECT id, ts, body FROM dr_ref)
+----
+extra
+0
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DELETE FROM dr WHERE id >= 330000
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT count(*) FROM dr WHERE id >= 330000
+----
+count
+89860
+
+
+statement ok
+UPDATE dr SET body = 'updated' WHERE id >= 340000 AND id < 360000
+
+
+statement ok
+UPDATE dr_ref SET body = 'updated' WHERE id >= 340000 AND id < 360000
+
+
+query
+SELECT id FROM dr WHERE id >= 390000 AND id < 390004 ORDER BY id
+----
+id
+390000
+390001
+390002
+390003
+
+
+statement ok
+DELETE FROM dr WHERE id >= 390000 AND id < 390004 RETURNING id
+
+
+statement ok
+DELETE FROM dr_ref WHERE id >= 390000 AND id < 390004
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+connection writer
+statement ok
+BEGIN
+
+
+connection writer
+statement ok
+DELETE FROM dr WHERE ts < TIMESTAMP '2026-01-03'
+
+
+connection other
+statement ok
+INSERT INTO dr VALUES (2000000, TIMESTAMP '2025-06-01', 'late')
+
+
+connection other
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+connection writer
+statement ok
+COMMIT
+
+
+statement ok
+DELETE FROM dr_ref WHERE ts < TIMESTAMP '2026-01-03'
+
+
+statement ok
+INSERT INTO dr_ref VALUES (2000000, TIMESTAMP '2025-06-01', 'late')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT body FROM dr WHERE id = 2000000
+----
+body
+late
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dr EXCEPT ALL SELECT id, ts, body FROM dr_ref)
+----
+extra
+0
+
+
+statement ok
+DELETE FROM dr WHERE id >= 360000 AND id < 380000
+
+
+statement ok
+DELETE FROM dr_ref WHERE id >= 360000 AND id < 380000
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dr
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dr
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dr_ref EXCEPT ALL SELECT id, ts, body FROM dr)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dr EXCEPT ALL SELECT id, ts, body FROM dr_ref)
+----
+extra
+0
+
+
+statement ok
+CREATE TABLE dp_ref AS
+SELECT i AS id, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second' AS ts, 'row ' || i AS body
+FROM range(0, 600000) r(i)
+
+
+statement ok
+CREATE TABLE dp (id BIGINT, ts TIMESTAMP, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 8192)
+
+
+statement ok
+INSERT INTO dp SELECT id, ts, body FROM dp_ref
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(DISTINCT row_group_id) > 1 AS several_segments
+FROM pragma_storage_info('dp') WHERE column_name = 'id';
+----
+several_segments
+t
+
+
+statement ok
+DELETE FROM dp WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
+
+
+statement ok
+DELETE FROM dp_ref WHERE ts < TIMESTAMP '2026-01-01' + 400000 * INTERVAL '1 second'
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dp
+
+
+query
+SELECT count(*), min(id) FROM dp
+----
+count	min
+200000	400000
+
+
+query
+SELECT count(*) AS missing FROM (SELECT id, ts, body FROM dp_ref EXCEPT ALL SELECT id, ts, body FROM dp)
+----
+missing
+0
+
+
+query
+SELECT count(*) AS extra FROM (SELECT id, ts, body FROM dp EXCEPT ALL SELECT id, ts, body FROM dp_ref)
+----
+extra
+0

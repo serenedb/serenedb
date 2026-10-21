@@ -28,6 +28,7 @@
 #include <pcg_random.hpp>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::quantizers {

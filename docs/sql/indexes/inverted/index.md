@@ -7,7 +7,7 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-An **inverted index** maps each token back to the rows that contain it. Instead of scanning every row, the engine looks up the query's tokens and jumps straight to the matching rows — which is what makes full-text search fast. SereneDB's inverted index is built on [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch) and, beyond text, the same index also powers [vector / approximate-nearest-neighbor search](./vector-search.md) and [geospatial search](./geospatial-search.md).
+An **inverted index** maps each token back to the rows that contain it. Instead of scanning every row, the engine looks up the query's tokens and jumps straight to the matching rows — which is what makes full-text search fast. Beyond text, the same index also powers [vector / approximate-nearest-neighbor search](./vector-search.md) and [geospatial search](./geospatial-search.md).
 
 ```mermaid
 flowchart LR
@@ -55,11 +55,12 @@ After loading data, run `VACUUM (REFRESH_TABLE) table_name` to make newly insert
 
 ## Operator classes and fields
 
-Each indexed column carries its **own operator class** — the `column [dictionary] [WITH (...)]` form in the column list tells the index how to analyze and store *that* column. Different columns in the same index can use different operator classes:
+Each indexed column carries its **own operator class** — the `column [dictionary]` form in the column list tells the index how to analyze and store *that* column. Only the built-in operator classes `ivf (...)`, `hnsw (...)` and `included (...)` take options, in parentheses after the name; a column's [feature flags](./text-analysis.md#token-positions-and-feature-flags) come from its dictionary. Different columns in the same index can use different operator classes:
 
 - a column with a **dictionary** is analyzed into tokens (full-text);
 - a column with **no dictionary** is indexed verbatim — one token per value — giving exact, case-sensitive matching, ideal for ids, tags and enum-like categories;
 - a numeric or temporal column is indexed for [exact and range queries](./full-text-search.md#range-queries);
+- an `INET` or `CIDR` column, indexed with no dictionary, serves equality, range and network-containment predicates (see [`INET` indexing](../../data_types/inet.md#indexing));
 - a `FLOAT[N]` column with `ivf (...)` or `hnsw (...)` is indexed for [vector search](./vector-search.md), and a `JSON`/`GEOMETRY` column with a geo dictionary for [geospatial search](./geospatial-search.md).
 
 The example below puts an analyzed column (`name`) and a verbatim column (`category`) in one index:
@@ -99,7 +100,7 @@ FROM articles_idx          -- the index, by name
 WHERE body @@ 'search';    -- @@ match on an indexed column
 ```
 
-A `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the base table raises an error. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
+On a regular table, a `TSQUERY` predicate (`@@`, `ST_*`, range functions) only resolves **against an inverted-indexed column inside the index relation** — issuing it against the table raises an error. A table created `WITH (storage = 'search')` also answers `@@` on itself, for the columns its inverted indexes cover. [Vector kNN](./vector-search.md) reads the index the same way: `ORDER BY emb <-> $q LIMIT k` against the base table still answers, but from a full scan of the table.
 
 <DocCallout type="tip">
 
@@ -119,7 +120,7 @@ See [What to Index](./modeling.md) for choosing indexed vs. `INCLUDE`d columns, 
 
 An inverted index can be built over a base **table** or a **view**:
 
-- **Base tables** use the table's `PRIMARY KEY` as row identity, and the background refresh tracks inserts, updates and deletes.
+- **Base tables** need no `PRIMARY KEY`: the index identifies each row by the table's hidden row id, and the background refresh tracks inserts, updates and deletes.
 - **Views** let you index data the database does not own a primary copy of — including [external Parquet/CSV/JSON files](./external-data.md) on disk or S3. A view-backed index holds a snapshot of its source that `REINDEX INDEX` or the `reindex_interval` option refreshes; see [Refreshing the index](./views.md#refreshing-the-index).
 
 <SqlLogicTest id="sql/indexes/inverted/index/example_005" />
@@ -132,10 +133,9 @@ An inverted index is **eventually consistent**: after a write, the new rows beco
 
 ## Limitations
 
-- Indexed expressions cannot contain aggregates, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
-- `HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed.
-- Composite `ROW(...)` columns are not supported.
-- The same indexed expression cannot be listed twice with different dictionaries.
+- Indexed expressions cannot contain aggregates, window functions, subqueries, volatile functions (e.g. `random()`) or functions that read the clock, the session or the catalog (e.g. `now()`, `current_user`).
+- Columns of type `UBIGINT`, `HUGEINT`, `UHUGEINT`, `DECIMAL`, `BIGNUM`, `UUID`, `INTERVAL`, `BIT`, `ENUM`, `MAP`, `UNION`, `VARIANT` or `STRUCT` (`ROW(...)`) cannot be searchable keys, and neither can arrays of these types, arrays of arrays or `GEOMETRY` arrays. A `GEOMETRY` column is a key only with a [geo dictionary](./geospatial-search.md). `INCLUDE` stores values of every one of these types.
+- A column or expression is listed once as a searchable key, with one dictionary or none; besides that, only `included()` can list it again.
 
 ## See also
 

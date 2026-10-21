@@ -20,10 +20,20 @@
 
 #include "search_remove_filter.hpp"
 
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <limits>
+#include <string>
 
+#include "connector/column_id.h"
+#include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -292,6 +302,254 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
       continue;
     }
     _postings = _terms->postings(irs::IndexFeatures::None);
+  }
+}
+
+namespace {
+
+enum class Coverage : uint8_t {
+  None,
+  All,
+  Some,
+};
+
+constexpr int64_t kScannedRangeRows = 4096;
+
+std::span<const search::RowRange>::iterator RangeEndingAfter(
+  std::span<const search::RowRange> rows, int64_t row) {
+  return absl::c_upper_bound(rows, row,
+                             [](int64_t value, const search::RowRange& range) {
+                               return value < range.end;
+                             });
+}
+
+Coverage Classify(const duckdb::BaseStatistics& stats,
+                  std::span<const search::RowRange> rows) {
+  if (!duckdb::NumericStats::HasMinMax(stats)) {
+    return Coverage::Some;
+  }
+  const auto min = duckdb::NumericStats::GetMin<int64_t>(stats);
+  const auto max = duckdb::NumericStats::GetMax<int64_t>(stats);
+  const auto range = RangeEndingAfter(rows, min);
+  if (range == rows.end() || range->begin > max) {
+    return Coverage::None;
+  }
+  if (range->begin <= min && max < range->end) {
+    return Coverage::All;
+  }
+  return Coverage::Some;
+}
+
+}  // namespace
+
+irs::QueryBuilder::ptr SearchRowRangeFilter::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchRowRangeFilter>>(
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
+}
+
+irs::lead::Node::ptr SearchRowRangeFilter::MakeLead(
+  const irs::SubReader& segment, const irs::DocumentMaskBuilder*) const {
+  _ranges.clear();
+  _range = 0;
+  const auto* store = segment.GetColReader();
+  SDB_ASSERT(store);
+  const auto* column = store->Column(kGeneratedPKId);
+  SDB_ASSERT(column);
+  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
+  Collect(segment, *store, *column);
+  auto& self = const_cast<SearchRowRangeFilter&>(*this);
+  self._doc = irs::doc_limits::invalid();
+  return irs::memory::to_managed<irs::lead::Node>(self);
+}
+
+void SearchRowRangeFilter::Collect(const irs::SubReader& segment,
+                                   const irs::ColReader& store,
+                                   const irs::ColumnReader& column) const {
+  const std::span<const search::RowRange> deleted{_rows};
+  const uint64_t rows = std::min(column.RowCount(), segment.docs_count());
+  const auto add = [&](uint64_t begin, uint64_t end) {
+    const auto first =
+      static_cast<irs::doc_id_t>(irs::doc_limits::min() + begin);
+    const auto last = static_cast<irs::doc_id_t>(irs::doc_limits::min() + end);
+    if (!_ranges.empty() && _ranges.back().end == first) {
+      _ranges.back().end = last;
+    } else {
+      _ranges.emplace_back(first, last);
+    }
+  };
+  auto hit = deleted.end();
+  const auto contains = [&](int64_t rowid) {
+    if (hit != deleted.end() && hit->begin <= rowid && rowid < hit->end) {
+      return true;
+    }
+    const auto range = RangeEndingAfter(deleted, rowid);
+    if (range == deleted.end() || rowid < range->begin) {
+      return false;
+    }
+    hit = range;
+    return true;
+  };
+  switch (Classify(column.MergedStatistics(), deleted)) {
+    case Coverage::None:
+      return;
+    case Coverage::All:
+      add(0, rows);
+      return;
+    case Coverage::Some:
+      break;
+  }
+  std::unique_ptr<irs::ReadContext> ctx;
+  std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
+  irs::ColumnReader::ScanState scan;
+  uint64_t scanned = 0;
+  irs::BlockWindow window;
+  for (uint64_t row = 0; row < rows; row = window.end) {
+    window = column.Locate(row, window);
+    const uint64_t end = std::min<uint64_t>(window.end, rows);
+    const auto coverage =
+      Classify(column.RowGroupStatistics(window.block), deleted);
+    if (coverage == Coverage::All) {
+      add(row, end);
+    }
+    if (coverage != Coverage::Some) {
+      continue;
+    }
+    if (!ctx) {
+      ctx = std::make_unique<irs::ReadContext>(store);
+      scan = column.InitScan(*ctx);
+      scratch =
+        std::make_unique<irs::ColumnReader::VectorScratch>(column.Type());
+    }
+    if (row > scanned) {
+      column.Skip(scan, row - scanned);
+      scanned = row;
+    }
+    while (scanned < end) {
+      const auto count =
+        std::min<uint64_t>(end - scanned, STANDARD_VECTOR_SIZE);
+      auto& values = scratch->Reset();
+      column.Scan(scan, values, count);
+      duckdb::UnifiedVectorFormat format;
+      values.ToUnifiedFormat(format);
+      const auto* data = duckdb::UnifiedVectorFormat::GetData<int64_t>(format);
+      for (uint64_t i = 0; i != count; ++i) {
+        const auto index = format.sel->get_index(i);
+        if (format.validity.RowIsValid(index) && contains(data[index])) {
+          add(scanned + i, scanned + i + 1);
+        }
+      }
+      scanned += count;
+    }
+  }
+}
+
+irs::doc_id_t SearchRowRangeFilter::Next() {
+  while (_range != _ranges.size()) {
+    auto& range = _ranges[_range];
+    if (range.begin != range.end) {
+      return _doc = range.begin++;
+    }
+    ++_range;
+  }
+  return _doc = irs::doc_limits::eof();
+}
+
+irs::QueryBuilder::ptr SearchRemoveUnion::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchRemoveUnion>>(
+    ctx.memory, segment, *this, ctx.pending_docs_mask);
+}
+
+irs::lead::Node::ptr SearchRemoveUnion::MakeLead(
+  const irs::SubReader& segment,
+  const irs::DocumentMaskBuilder* pending) const {
+  _prepared.clear();
+  _leads.clear();
+  _heads.clear();
+  for (const auto& filter : _filters) {
+    auto prepared =
+      filter->PrepareSegment(segment, {.pending_docs_mask = pending});
+    if (!prepared) {
+      continue;
+    }
+    auto lead = prepared->PlanLead({});
+    if (!lead) {
+      continue;
+    }
+    _heads.push_back(lead->Next());
+    _prepared.push_back(std::move(prepared));
+    _leads.push_back(std::move(lead));
+  }
+  return irs::memory::to_managed<irs::lead::Node>(
+    const_cast<SearchRemoveUnion&>(*this));
+}
+
+irs::doc_id_t SearchRemoveUnion::Next() {
+  if (_heads.empty()) {
+    return irs::doc_limits::eof();
+  }
+  const auto doc = *absl::c_min_element(_heads);
+  if (irs::doc_limits::eof(doc)) {
+    return doc;
+  }
+  for (size_t i = 0; i != _heads.size(); ++i) {
+    if (_heads[i] == doc) {
+      _heads[i] = _leads[i]->Next();
+    }
+  }
+  return doc;
+}
+
+std::shared_ptr<const irs::Filter> MakeRowRangeRemoval(
+  std::span<const search::RowRange> rows) {
+  SDB_ASSERT(absl::c_all_of(rows, [](const search::RowRange& range) {
+    return range.begin < range.end;
+  }));
+  SDB_ASSERT(absl::c_adjacent_find(
+               rows, [](const search::RowRange& l, const search::RowRange& r) {
+                 return l.end >= r.begin;
+               }) == rows.end());
+  const auto scanned = [](const search::RowRange& range) {
+    return range.end - range.begin >= kScannedRangeRows;
+  };
+  std::vector<search::RowRange> scanned_ranges;
+  size_t looked_up = 0;
+  for (const auto& range : rows) {
+    if (scanned(range)) {
+      scanned_ranges.push_back(range);
+    } else {
+      looked_up += range.end - range.begin;
+    }
+  }
+  std::vector<std::shared_ptr<const irs::Filter>> removals;
+  if (looked_up != 0) {
+    auto removal =
+      std::make_shared<SearchRemoveFilter>(looked_up, term_dict::kPKFieldId);
+    std::string key;
+    for (const auto& range : rows) {
+      if (scanned(range)) {
+        continue;
+      }
+      for (auto row = range.begin; row != range.end; ++row) {
+        key.clear();
+        primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
+        removal->Add(key);
+      }
+    }
+    removals.push_back(std::move(removal));
+  }
+  if (!scanned_ranges.empty()) {
+    removals.push_back(
+      std::make_shared<SearchRowRangeFilter>(std::move(scanned_ranges)));
+  }
+  switch (removals.size()) {
+    case 0:
+      return nullptr;
+    case 1:
+      return std::move(removals.front());
+    default:
+      return std::make_shared<SearchRemoveUnion>(std::move(removals));
   }
 }
 

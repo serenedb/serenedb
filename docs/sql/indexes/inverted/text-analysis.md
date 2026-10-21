@@ -86,13 +86,13 @@ A chain of stages joined with `|` is a `pipeline`: each stage re-analyzes the to
 
 ## Token positions and feature flags
 
-By default the index records only which terms appear in which rows. Some query and ranking features need extra per-token information, enabled with **feature flags** on the dictionary (or per-column in the index):
+By default the index records only which terms appear in which rows. Some query and ranking features need extra per-token information, enabled with **feature flags** on the dictionary. An indexed column takes the flags of its dictionary, so columns that need different flags use different dictionaries:
 
 | Flag | Records | Needed for |
 |---|---|---|
-| `frequency` | how often each term occurs | [relevance scoring](./ranking.md) |
+| `frequency` | how often each term occurs | [relevance scoring](./ranking.md) by how often terms occur; without it every match of a term scores the same |
 | `position` | each token's ordinal position | [phrase and proximity](./full-text-search.md#phrase-search) queries answered by the index alone ([without it](./full-text-search.md#phrases-without-positions), they need the column's text in the index) |
-| `offset` | each token's byte offsets in the source value | [highlighting](./full-text-search.md#highlighting) |
+| `offset` | each token's byte offsets in the source value | [highlighting](./full-text-search.md#highlighting) from stored offsets; without it they are recomputed for each matching row |
 | `norm` | a length-normalization factor | some scorers |
 
 The flags have dependencies: `position` and `norm` require `frequency`, and `offset` requires `frequency` and `position`. Positions are what let phrase search distinguish `quick brown fox` from `fox brown quick` — the tokens are the same, but their positions differ:

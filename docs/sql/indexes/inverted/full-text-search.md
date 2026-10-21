@@ -19,7 +19,7 @@ Every query family below produces a `TSQUERY`. The simplest is a bare string lit
 
 <DocCallout type="tip">
 
-All examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
+Most examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
 
 </DocCallout>
 
@@ -123,7 +123,7 @@ Without `position` and without the column's text, a phrase of two or more words 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_023" />
 
-**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance) (insertions, deletions, substitutions):
+**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance): insertions, deletions and substitutions, and by default also a swap of two adjacent characters, which is why `act` matches `cat` at distance 1 above:
 
 | Query | Closest token | Edit distance | `ts_levenshtein(…, 1)` |
 |---|---|:---:|:---:|

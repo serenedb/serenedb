@@ -36,6 +36,6 @@ Indexes are created with `CREATE INDEX` and removed with `DROP INDEX`. The index
 
 <DocCallout type="tip">
 
-Indexes have a strong effect on performance, slowing down loading and updates, but speeding up certain queries. Please consult the Performance Guide for details.
+Indexes have a strong effect on performance, slowing down loading and updates, but speeding up certain queries. Please consult the [Performance Guide](../../cookbook/performance/indexing.md) for details.
 
 </DocCallout>

@@ -22,7 +22,7 @@ statement ok
 CREATE VIEW v_docs AS SELECT id, body, extra FROM base_docs;
 
 statement ok
-CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body view_en);
+CREATE INDEX v_docs_idx ON v_docs USING inverted (id, body view_en) INCLUDE (id);
 
 # DOCS_TEST: count_no_materialization
 
@@ -60,6 +60,8 @@ id	extra
 
 # DOCS_TEST: generic_pk
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE VIEW u_docs AS
     SELECT 1 AS id, 'quick brown fox' AS body
@@ -67,8 +69,6 @@ CREATE VIEW u_docs AS
 
 statement ok
 CREATE INDEX u_docs_idx ON u_docs USING inverted (id, body view_en);
-
-# DOCS_TEST_BODY
 
 query
 SELECT count(*) FROM u_docs_idx WHERE body @@ ts_phrase('quick');

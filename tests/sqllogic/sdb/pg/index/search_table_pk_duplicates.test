@@ -97,3 +97,120 @@ SELECT count(*) AS n FROM pkd_nokey;
 ----
 n
 2
+
+
+# ---------------------------------------------------------------------------
+# Below: conflicts against state an EARLIER transaction published. The checks
+# above run during execution against this transaction's own keys; these run at
+# end of statement against the reader, and are what make a declared key mean
+# anything across statements.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE pkp (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkp VALUES (1, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkp;
+
+statement error
+INSERT INTO pkp VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+INSERT INTO pkp VALUES (2, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkp;
+
+query
+SELECT id, s FROM pkp ORDER BY id;
+----
+id	s
+1	a
+2	c
+
+
+# The deferral boundary of a key-shifting UPDATE: every hit is a row this
+# statement is itself deleting, so the final state is unique and it is allowed.
+# A per-row probe would reject this on the first row.
+statement ok
+CREATE TABLE pku (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pku VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) pku;
+
+statement ok
+UPDATE pku SET id = id + 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pku;
+
+query
+SELECT id, s FROM pku ORDER BY id;
+----
+id	s
+2	a
+3	b
+4	c
+
+
+# The same shape against a key that SURVIVES the statement is still a conflict.
+statement error
+UPDATE pku SET id = 3 WHERE id = 2;
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+query
+SELECT id, s FROM pku ORDER BY id;
+----
+id	s
+2	a
+3	b
+4	c
+
+
+# A bulk insert reaches the reader through the segments it flushed rather than
+# through the write buffer, so it exercises a second key source. It has to stay
+# large enough to actually parallelise: a small INSERT ... SELECT takes the
+# buffered path and silently re-tests the case above.
+#
+# NOT covered here, and known-failing until the term-dictionary merge lands: a
+# bulk insert whose keys duplicate EACH OTHER rather than a published row.
+statement ok
+CREATE TABLE pkb (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkb VALUES (500, 'seed');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkb;
+
+statement ok
+SET threads = 4;
+
+statement error
+INSERT INTO pkb SELECT i, 'x' FROM range(1, 20000) t(i);
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pkb;
+
+query
+SELECT count(*) AS n FROM pkb;
+----
+n
+1

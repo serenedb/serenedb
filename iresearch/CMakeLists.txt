@@ -488,7 +488,7 @@ endif()
 # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
-if(SDB_IRESEARCH_MINIMAL)
+if(IRESEARCH_BENCH)
     set(IResearch_library iresearch-minimal)
     list(
         FILTER IResearch_core_sources
@@ -570,7 +570,7 @@ target_link_libraries(
     PUBLIC duckdb_static
 )
 
-if(SDB_IRESEARCH_MINIMAL)
+if(IRESEARCH_BENCH)
     target_compile_definitions(
         iresearch-minimal
         PUBLIC IRESEARCH_NO_GEO IRESEARCH_NO_VECTOR

@@ -685,7 +685,7 @@ option(
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-if(SDB_IRESEARCH_MINIMAL)
+if(IRESEARCH_BENCH)
     set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
     set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
     set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
@@ -716,7 +716,7 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-if(SDB_IRESEARCH_MINIMAL)
+if(IRESEARCH_BENCH)
     set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
@@ -793,7 +793,7 @@ target_link_libraries(
         simdutf
 )
 
-if(NOT SDB_IRESEARCH_MINIMAL)
+if(NOT IRESEARCH_BENCH)
     target_link_libraries(
         iceberg_catalog_rest_storage_authorization
         PRIVATE OpenSSL::Crypto

@@ -7,7 +7,7 @@ add_library(
     index_builder.cpp
     line_source.cpp
 )
-if(SDB_IRESEARCH_MINIMAL)
+if(IRESEARCH_BENCH)
     target_link_libraries(search-benchmark-common iresearch-minimal simdjson)
 else()
     target_link_libraries(search-benchmark-common iresearch-static simdjson)

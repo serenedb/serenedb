@@ -38,6 +38,8 @@ asio_ns::ip::address NormalizePeerAddress(const asio_ns::ip::address& address);
 hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
                           std::string_view database);
 
+bool CanLogIn(std::string_view user);
+
 bool PasswordExpired(std::string_view user);
 
 }  // namespace sdb::network::pg

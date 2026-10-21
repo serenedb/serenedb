@@ -146,16 +146,18 @@ AuthResult HttpAuthenticator::Password(std::string_view user,
   const auto decision = pg::DecideLogin(
     peer, user,
     database.empty() ? irs::StaticStrings::kDefaultDatabase : database);
-  if (decision.kind == pg::hba::Decision::Kind::Trust) {
-    return {.context = {.user = std::string{user}}};
+  if (decision.kind != pg::hba::Decision::Kind::Trust) {
+    if (decision.kind != pg::hba::Decision::Kind::Method) {
+      return {.status = HttpStatus::Unauthorized};
+    }
+    const auto credential = _credentials->LookupCredential(user);
+    if (!credential ||
+        !PasswordMatches(*credential, decision.method, user, password) ||
+        pg::PasswordExpired(user)) {
+      return {.status = HttpStatus::Unauthorized};
+    }
   }
-  if (decision.kind != pg::hba::Decision::Kind::Method) {
-    return {.status = HttpStatus::Unauthorized};
-  }
-  const auto credential = _credentials->LookupCredential(user);
-  if (!credential ||
-      !PasswordMatches(*credential, decision.method, user, password) ||
-      pg::PasswordExpired(user)) {
+  if (!pg::CanLogIn(user)) {
     return {.status = HttpStatus::Unauthorized};
   }
   return {.context = {.user = std::string{user}}};

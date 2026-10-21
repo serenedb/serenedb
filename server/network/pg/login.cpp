@@ -81,6 +81,14 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
   return hba::Decide(*hba::GetHbaRuleset(), client, is_member);
 }
 
+bool CanLogIn(std::string_view user) {
+  bool can_login = false;
+  catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& role) {
+    can_login = role.CanLogin();
+  });
+  return can_login;
+}
+
 bool PasswordExpired(std::string_view user) {
   int64_t valid_until = 0;
   catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& role) {

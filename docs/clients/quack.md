@@ -41,7 +41,7 @@ A client presents one credential when it connects: the `TOKEN` of its `ATTACH`, 
 | a static token, with or without `Bearer ` | `s3cret`, `Bearer s3cret` | `postgres`, when the server runs with `--auth_bearer_token=s3cret` |
 | `ApiKey <base64 of id:key>` | `ApiKey aWQ6a2V5` | `postgres`, when the server runs with `--auth_api_key=id:key` |
 
-A `user:password` or `Basic` credential follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, so `postgres:` works there, and every other role needs its password. A role whose `VALID UNTIL` has passed is refused. Any credential that does not check out fails the `ATTACH` with `authentication failed`.
+A `user:password` or `Basic` credential follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, so `postgres:` works there, and every other role needs its password. A role that does not exist or has no `LOGIN`, or whose `VALID UNTIL` has passed, is refused. Any credential that does not check out fails the `ATTACH` with `authentication failed`.
 
 The role's privileges apply to everything the client runs, and so do its settings, such as `statement_timeout`. A client without `SELECT` on a table gets `permission denied for table ...` like a `psql` session of the same role.
 

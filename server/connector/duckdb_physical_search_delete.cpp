@@ -112,8 +112,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
 
   // Buffered, not removed here. The removal reaches iresearch when the write
   // buffer is replayed, after exactly the rows that precede it, which is what
-  // reproduces the ordering these statements would have had. Rowids stay raw
-  // until then; the record carries them that way too.
+  // reproduces the ordering these statements would have had.
   duckdb::UnifiedVectorFormat rowid;
   chunk.data[gstate.pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
                                                                  rowid);

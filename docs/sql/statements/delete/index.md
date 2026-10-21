@@ -32,6 +32,14 @@ The `RETURNING` clause allows returning the deleted values. It uses the same syn
 
 <SqlLogicTest id="sql/statements/delete/index/example_003" />
 
+### Retention
+
+A [job](../create_job/index.md) that deletes rows older than a cutoff keeps a table to a retention period:
+
+<SqlLogicTest id="sql/statements/delete/index/example_007" />
+
+On a search table, the log space of a delete grows with the number of stretches of consecutive rows it removes, not with the number of rows: the oldest rows of a table filled in time order are one stretch, however many rows go. Rows deleted one by one from among rows that stay are a stretch each. Finding the rows to delete still reads each of them.
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

@@ -54,6 +54,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -241,7 +242,7 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
   if (rows.empty()) {
     return;
   }
@@ -549,6 +550,18 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
   connector::RemoveGeneratedRows(
     session->trx, std::span<const int64_t>{
                     duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+}
+
+void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                                     std::vector<RowRange> rows) {
+  auto* session = BeginReplay(db);
+  if (!session) {
+    return;
+  }
+  NormalizeRowRanges(rows);
+  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
+    session->trx.Remove(std::move(removal));
+  }
 }
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {

@@ -610,7 +610,7 @@ AddIncomingResult AddIncoming(
 
     const CompactionView candidates{incoming.compaction_ctx.candidates};
 
-    const auto pending_compaction = incoming.compaction_ctx.merger.has_value();
+    const auto pending_compaction = incoming.compaction_ctx.pending;
 
     if (pending_compaction) {
       // Pending compaction request
@@ -667,10 +667,10 @@ AddIncomingResult AddIncoming(
           docs_mask_modified |=
             RemoveFromSegment(docs_mask, *query, *reader, removals);
           by_key |= ByKey(*query, removals);
-          if (query->removal && incoming.compaction_ctx.remap) {
+          if (query->removal && incoming.compaction_ctx.merger) {
             docs_mask_modified |= RemapRemoval(
               docs_mask, *query->removal, incoming.compaction_ctx.candidates,
-              *incoming.compaction_ctx.remap, removals);
+              *incoming.compaction_ctx.merger, removals);
           }
         }
       }
@@ -1738,7 +1738,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     std::move(pending_reader),   // compacted reader
     std::move(committed_reader)  // compaction context meta
   );
-  pending_segment.compaction_ctx.remap.emplace(std::move(merger));
+  pending_segment.compaction_ctx.merger.emplace(std::move(merger));
   // noexcept part: mask compacted segments
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
@@ -2095,7 +2095,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
     }
     for (const auto& incoming : ctx->incoming) {
-      if (incoming.compaction_ctx.remap) {
+      if (incoming.compaction_ctx.merger && !incoming.compaction_ctx.pending) {
         live.insert(live.end(), incoming.compaction_ctx.candidates.begin(),
                     incoming.compaction_ctx.candidates.end());
       }

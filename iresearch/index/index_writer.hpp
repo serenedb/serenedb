@@ -499,7 +499,7 @@ class IndexWriter : private util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
     std::optional<MergeWriter> merger;
-    std::optional<MergeWriter> remap;
+    bool pending = false;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -517,7 +517,8 @@ class IndexWriter : private util::Noncopyable {
         reader{std::move(reader)},
         compaction_ctx{.compaction_reader = std::move(compaction_reader),
                        .candidates = std::move(compaction_candidates),
-                       .merger = std::move(merger)} {}
+                       .merger = std::move(merger),
+                       .pending = true} {}
 
     IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,

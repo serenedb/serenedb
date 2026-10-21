@@ -384,7 +384,9 @@ IndexShape ShapeOf(duckdb::ClientContext& context,
                 : std::string_view{"secondary"},
     .options = Options(index.options),
   };
-  for (duckdb::idx_t i = 0; i < index.parsed_expressions.size(); ++i) {
+  const auto columns = pg::ColumnsOfIndex(index, nullptr);
+  for (size_t column = 0; column < columns.columns.size(); ++column) {
+    const auto i = columns.columns[column].position;
     const std::string_view opclass =
       i < index.column_opclasses.size()
         ? std::string_view{index.column_opclasses[i]}
@@ -394,9 +396,9 @@ IndexShape ShapeOf(duckdb::ClientContext& context,
         ? &*index.column_opclass_options[i]
         : nullptr;
     const bool has_options = options && !options->empty();
-    const bool included = opclass == catalog::kIncludedKind;
+    const bool included = column >= columns.keys;
     IndexElement element;
-    element.attribute = IndexAttribute(*index.parsed_expressions[i]);
+    element.attribute = IndexAttribute(*columns.columns[column].expression);
     element.definition = element.attribute;
     if (!opclass.empty() && (!included || has_options)) {
       absl::StrAppend(&element.definition, " ", OpclassName(opclass));

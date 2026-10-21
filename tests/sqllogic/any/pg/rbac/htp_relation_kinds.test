@@ -125,6 +125,23 @@ SELECT has_column_privilege('htp_rk_reader', 'htp_rk_view', 'nope', 'SELECT');
 db error: ERROR: column "nope" of relation "htp_rk_view" does not exist
 
 
+query
+SELECT has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 'v', 'SELECT') AS own_idx_col,
+       has_column_privilege('htp_rk_reader', 'htp_rk_t_v', 'v', 'SELECT') AS rd_idx_col,
+       has_column_privilege('htp_rk_owner', 'htp_rk_t_pkey', 'id', 'SELECT') AS own_pkey_col,
+       has_column_privilege('htp_rk_reader', 'htp_rk_t_pkey', 1::int2, 'SELECT') AS rd_pkey_attnum,
+       has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 2::int2, 'SELECT') AS own_idx_past_end;
+----
+own_idx_col	rd_idx_col	own_pkey_col	rd_pkey_attnum	own_idx_past_end
+t	f	t	f	NULL
+
+
+statement error
+SELECT has_column_privilege('htp_rk_owner', 'htp_rk_t_v', 'w', 'SELECT');
+----
+db error: ERROR: column "w" of relation "htp_rk_t_v" does not exist
+
+
 connection c_htp_rk user=htp_rk_reader password=htp_rk_reader_pw
 query
 SELECT has_table_privilege('htp_rk_view'::regclass, 'SELECT') AS view_tbl,

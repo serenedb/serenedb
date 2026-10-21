@@ -1571,11 +1571,6 @@ void PgHasRoleOid2Function(duckdb::DataChunk& args,
     });
 }
 
-bool AttnumExists(const duckdb::TableCatalogEntry& table, int64_t attnum) {
-  return attnum >= 1 && attnum <= static_cast<int64_t>(
-                                    table.GetColumns().LogicalColumnCount());
-}
-
 // Whether `role_id` holds `priv` on any of `columns`, whose grants
 // `column_acl` returns, of the relation with `perm`. PG resolves a column
 // privilege via a table-level grant OR a per-column grant
@@ -1682,11 +1677,41 @@ duckdb::ViewCatalogEntry* RelationView(const pg::Relation& relation) {
   return &relation.entry->Cast<duckdb::ViewCatalogEntry>();
 }
 
-int64_t ViewColumnCount(duckdb::ClientContext& context,
-                        duckdb::ViewCatalogEntry& view) {
-  view.BindView(context);
-  const auto info = view.GetColumnInfo();
-  return info ? static_cast<int64_t>(info->names.size()) : 0;
+pg::IndexColumns IndexColumnsOf(const pg::Relation& relation) {
+  if (relation.key.table) {
+    return pg::ColumnsOfIndex(relation.key);
+  }
+  if (relation.entry->type != duckdb::CatalogType::INDEX_ENTRY) {
+    return {};
+  }
+  return pg::ColumnsOfIndex(relation.entry->Cast<duckdb::IndexCatalogEntry>(),
+                            nullptr);
+}
+
+bool RelationHasColumn(duckdb::ClientContext& context,
+                       const pg::Relation& relation, std::string_view column) {
+  if (const auto* table = RelationTable(relation)) {
+    return table->GetColumns().ColumnExists(duckdb::Identifier{column});
+  }
+  if (auto* view = RelationView(relation)) {
+    return ViewHasColumn(context, *view, column);
+  }
+  return absl::c_any_of(
+    IndexColumnsOf(relation).columns,
+    [&](const pg::IndexColumn& indexed) { return indexed.name == column; });
+}
+
+int64_t RelationColumnCount(duckdb::ClientContext& context,
+                            const pg::Relation& relation) {
+  if (const auto* table = RelationTable(relation)) {
+    return static_cast<int64_t>(table->GetColumns().LogicalColumnCount());
+  }
+  if (auto* view = RelationView(relation)) {
+    view->BindView(context);
+    const auto info = view->GetColumnInfo();
+    return info ? static_cast<int64_t>(info->names.size()) : 0;
+  }
+  return static_cast<int64_t>(IndexColumnsOf(relation).columns.size());
 }
 
 std::string RelationLabel(const pg::Relation& relation) {
@@ -1712,14 +1737,11 @@ bool HasAnyColumnPrivilege(duckdb::ClientContext& context,
 bool HasColumnPrivilege(duckdb::ClientContext& context, duckdb::idx_t role_id,
                         const pg::Relation& relation, std::string_view column,
                         std::string_view priv) {
-  const auto* table = RelationTable(relation);
-  auto* view = RelationView(relation);
-  if (table ? !table->GetColumns().ColumnExists(duckdb::Identifier{column})
-            : (!view || !ViewHasColumn(context, *view, column))) {
+  if (!RelationHasColumn(context, relation, column)) {
     ThrowColumnNotFound(column, RelationLabel(relation));
   }
   try {
-    if (table) {
+    if (const auto* table = RelationTable(relation)) {
       return HasColumnPrivByName(context, role_id, *table, column, priv);
     }
     return HasRelationPrivilegeText(context, role_id, relation, priv);
@@ -1731,14 +1753,11 @@ bool HasColumnPrivilege(duckdb::ClientContext& context, duckdb::idx_t role_id,
 bool ColumnPrivilegeAt(duckdb::ClientContext& context, duckdb::idx_t role_id,
                        const pg::Relation& relation, int64_t attnum,
                        std::string_view priv, bool& held) {
-  const auto* table = RelationTable(relation);
-  auto* view = RelationView(relation);
-  if (table
-        ? !AttnumExists(*table, attnum)
-        : (!view || attnum < 1 || attnum > ViewColumnCount(context, *view))) {
+  if (attnum < 1 || attnum > RelationColumnCount(context, relation)) {
     return false;
   }
   try {
+    const auto* table = RelationTable(relation);
     held = table ? HasColumnPrivByAttnum(context, role_id, *table, attnum, priv)
                  : HasRelationPrivilegeText(context, role_id, relation, priv);
   } catch (const irs::SqlException& e) {

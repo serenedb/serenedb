@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -93,6 +94,23 @@ struct Relation {
 
   explicit operator bool() const noexcept { return entry || key.table; }
 };
+
+struct IndexColumn {
+  std::string name;
+  const duckdb::ParsedExpression* expression = nullptr;
+  duckdb::idx_t position = 0;
+  int16_t attnum = 0;
+};
+
+struct IndexColumns {
+  std::vector<IndexColumn> columns;
+  size_t keys = 0;
+};
+
+IndexColumns ColumnsOfIndex(const duckdb::IndexCatalogEntry& index,
+                            const duckdb::TableCatalogEntry* table);
+
+IndexColumns ColumnsOfIndex(const KeyIndex& key);
 
 Relation RelationByName(duckdb::ClientContext& context,
                         const duckdb::QualifiedName& name);

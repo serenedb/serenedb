@@ -20,6 +20,9 @@
 
 #include "sql_utils.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
 #include <array>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -36,9 +39,11 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <span>
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
 
@@ -268,6 +273,79 @@ Relation RelationByName(duckdb::ClientContext& context,
               context, irs::StaticStrings::kInformationSchema, relation)};
   }
   return {};
+}
+
+IndexColumns ColumnsOfIndex(const duckdb::IndexCatalogEntry& index,
+                            const duckdb::TableCatalogEntry* table) {
+  IndexColumns result;
+  const auto& expressions = index.parsed_expressions;
+  const auto included = [&](duckdb::idx_t position) {
+    return position < index.column_opclasses.size() &&
+           index.column_opclasses[position] == catalog::kIncludedKind;
+  };
+  const auto add = [&](bool include) {
+    for (duckdb::idx_t position = 0; position < expressions.size();
+         ++position) {
+      if (included(position) != include) {
+        continue;
+      }
+      const auto& expression = *expressions[position];
+      auto name = expression.GetColumnName();
+      if (name == duckdb::BaseExpression::ANONYMOUS_COLUMN_NAME) {
+        name = "expr";
+      }
+      int16_t attnum = 0;
+      if (table && expression.GetExpressionClass() ==
+                     duckdb::ExpressionClass::COLUMN_REF) {
+        const auto& column =
+          expression.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+        if (table->GetColumns().ColumnExists(column)) {
+          attnum = static_cast<int16_t>(
+            table->GetColumns().GetColumn(column).Logical().index + 1);
+        }
+      }
+      result.columns.push_back({.name = std::move(name),
+                                .expression = &expression,
+                                .position = position,
+                                .attnum = attnum});
+    }
+  };
+  add(false);
+  result.keys = result.columns.size();
+  add(true);
+  for (size_t i = 0; i < result.columns.size(); ++i) {
+    const auto base = result.columns[i].name;
+    for (size_t suffix = 1;
+         absl::c_any_of(std::span{result.columns.data(), i},
+                        [&](const IndexColumn& previous) {
+                          return previous.name == result.columns[i].name;
+                        });
+         ++suffix) {
+      result.columns[i].name = absl::StrCat(base, suffix);
+    }
+  }
+  return result;
+}
+
+IndexColumns ColumnsOfIndex(const KeyIndex& key) {
+  IndexColumns result;
+  const auto& columns = key.table->GetColumns();
+  const auto attnums = KeyConstraintAttnums(*key.table, *key.constraint);
+  for (duckdb::idx_t position = 0; position < attnums.size(); ++position) {
+    const auto attnum = attnums[position];
+    result.columns.push_back(
+      {.name =
+         attnum > 0
+           ? std::string{columns.GetColumn(duckdb::LogicalIndex(attnum - 1))
+                           .Name()
+                           .GetIdentifierName()}
+           : std::string{key.constraint->GetColumnNames()[position]
+                           .GetIdentifierName()},
+       .position = position,
+       .attnum = attnum});
+  }
+  result.keys = result.columns.size();
+  return result;
 }
 
 Relation RelationByOid(duckdb::ClientContext& context, duckdb::idx_t oid) {

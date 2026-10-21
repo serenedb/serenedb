@@ -62,6 +62,23 @@ SELECT count(*) > 0 AS visible FROM sfp_snap.pg_catalog.pg_class;
 visible
 t
 
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS docs,
+       has_any_column_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS any_column,
+       has_column_privilege('sfp_snap.public.sfp_docs', 'body', 'SELECT') AS body,
+       has_table_privilege('sfp_snap.pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+docs	any_column	body	authid
+t	t	t	f
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+statement error
+SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'BOGUS');
+----
+db error: ERROR: unrecognized privilege type: "BOGUS"
+
+
 connection default
 statement ok
 ATTACH '${__TEST_DIR__}/sfp_snap/5' AS sfp_session (TYPE serenedb, READ_ONLY);

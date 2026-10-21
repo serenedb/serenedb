@@ -148,11 +148,6 @@ std::string KindName(CatalogType type) {
                   ERR_DETAIL(detail));
 }
 
-bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid ||
-         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
-}
-
 bool StoresPermissions(duckdb::Catalog& catalog) {
   return !catalog.IsDuckCatalog() ||
          duckdb::IsSereneDBStorageVersion(
@@ -1713,6 +1708,11 @@ class Enforcer {
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
   Enforcer{context, connection, binder, plan}.Run();
+}
+
+bool Unowned(const duckdb::CatalogEntry& entry) {
+  return entry.permissions.owner == pg::kInvalidOid ||
+         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
 }  // namespace sdb::auth

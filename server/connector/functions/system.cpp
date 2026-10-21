@@ -65,6 +65,7 @@
 #include <ranges>
 #include <span>
 
+#include "auth/enforce.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -891,20 +892,30 @@ bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
   return (held & modes.grant_options) != duckdb::AclMode::NoRights;
 }
 
-bool HasAnyTablePrivilegeText(duckdb::ClientContext& context,
-                              duckdb::idx_t role_id,
-                              const duckdb::Permissions& perm,
-                              std::string_view priv_text) {
-  return HasAnyPermissionsPrivilegeText(
-    context, role_id, perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
+bool HoldsUnchecked(const duckdb::CatalogEntry& entry,
+                    std::string_view priv_text, duckdb::CatalogType type) {
+  if (!auth::Unowned(entry)) {
+    return false;
+  }
+  ParsePrivCheckText(priv_text, type);
+  return true;
 }
 
-// The grants `entry` answers a relation privilege check with. Postgres gives a
+bool HasAnyPermissionsPrivilegeText(duckdb::ClientContext& context,
+                                    duckdb::idx_t role_id,
+                                    const duckdb::CatalogEntry& entry,
+                                    duckdb::CatalogType type,
+                                    std::string_view priv_text) {
+  return HoldsUnchecked(entry, priv_text, type) ||
+         HasAnyPermissionsPrivilegeText(context, role_id, entry.permissions,
+                                        type, priv_text);
+}
+
+// The entry a relation privilege check is answered from. Postgres gives a
 // table and a view the same vocabulary, so both come back here; anything else
 // under the relation namespace -- the index-as-table wrapper -- is not one, and
 // a null makes the caller answer NULL rather than false.
-const duckdb::Permissions* RelationPermissions(
-  const duckdb::CatalogEntry* entry) {
+const duckdb::CatalogEntry* RelationEntry(const duckdb::CatalogEntry* entry) {
   if (!entry) {
     return nullptr;
   }
@@ -912,7 +923,7 @@ const duckdb::Permissions* RelationPermissions(
       entry->type != duckdb::CatalogType::VIEW_ENTRY) {
     return nullptr;
   }
-  return &entry->permissions;
+  return entry;
 }
 
 std::optional<duckdb::idx_t> ResolveRoleOrPublic(duckdb::ClientContext& context,
@@ -982,9 +993,9 @@ bool HasTablePrivilegeImpl(ConnectionContext& conn_ctx,
   const auto name = duckdb::QualifiedName::Parse(table_name);
   auto entry = FindRelation(conn_ctx.GetClientContext(), name);
   try {
-    if (const auto* perm = RelationPermissions(entry.get())) {
+    if (const auto* relation = RelationEntry(entry.get())) {
       return HasAnyPermissionsPrivilegeText(
-        conn_ctx.GetClientContext(), *role_id, *perm,
+        conn_ctx.GetClientContext(), *role_id, *relation,
         duckdb::CatalogType::TABLE_ENTRY, priv_text);
     }
     if (const auto* sys = ResolveSystemRelation(name)) {
@@ -1031,25 +1042,23 @@ bool HasTablePrivilegeByOidImpl(duckdb::ClientContext& context,
                                 duckdb::idx_t role_id, duckdb::idx_t table_id,
                                 std::string_view priv_text, bool& is_null) {
   is_null = false;
-  const auto* perm =
-    RelationPermissions(RelationEntryByOid(context, table_id).get());
-  std::optional<duckdb::Permissions> system_perm;
-  if (!perm) {
-    if (const auto* sys = SystemRelationByOid(table_id)) {
-      system_perm = SystemRelationPermissions(*sys);
-      perm = &*system_perm;
-    }
-  }
-  if (!perm) {
-    is_null = true;
-    return false;
-  }
+  const auto entry = RelationEntryByOid(context, table_id);
   try {
-    return HasAnyPermissionsPrivilegeText(
-      context, role_id, *perm, duckdb::CatalogType::TABLE_ENTRY, priv_text);
+    if (const auto* relation = RelationEntry(entry.get())) {
+      return HasAnyPermissionsPrivilegeText(context, role_id, *relation,
+                                            duckdb::CatalogType::TABLE_ENTRY,
+                                            priv_text);
+    }
+    if (const auto* sys = SystemRelationByOid(table_id)) {
+      return HasAnyPermissionsPrivilegeText(
+        context, role_id, SystemRelationPermissions(*sys),
+        duckdb::CatalogType::TABLE_ENTRY, priv_text);
+    }
   } catch (const irs::SqlException& e) {
     ThrowInvalidPrivilege(e);
   }
+  is_null = true;
+  return false;
 }
 
 void HasTablePrivilegeOid2Function(duckdb::DataChunk& args,
@@ -1105,8 +1114,8 @@ void HasTablePrivilegeOidName3Function(duckdb::DataChunk& args,
       try {
         if (table) {
           return HasAnyPermissionsPrivilegeText(
-            state.GetContext(), role, table->permissions,
-            duckdb::CatalogType::TABLE_ENTRY, priv_text);
+            state.GetContext(), role, *table, duckdb::CatalogType::TABLE_ENTRY,
+            priv_text);
         } else if (const auto* sys = ResolveSystemRelation(name)) {
           return HasAnyPermissionsPrivilegeText(
             state.GetContext(), role, SystemRelationPermissions(*sys),
@@ -1174,8 +1183,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
                       ERR_MSG("database \"", obj_name, "\" does not exist"));
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, database->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1189,8 +1198,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
           database->GetSchema(context, duckdb::Identifier{obj_name},
                               duckdb::OnEntryNotFound::RETURN_NULL)) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, schema->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *schema, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1204,8 +1213,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
           duckdb::EntryLookupInfo{type, duckdb::QualifiedName::Parse(obj_name)},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, sequence->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *sequence, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1233,8 +1242,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     }
     if (entry) {
       try {
-        return HasAnyPermissionsPrivilegeText(
-          context, role_id, entry->permissions, type, priv_text);
+        return HasAnyPermissionsPrivilegeText(context, role_id, *entry, type,
+                                              priv_text);
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }
@@ -1329,8 +1338,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, database->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1344,8 +1353,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, schema->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *schema, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1363,8 +1372,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(
-        context, role_id, entry->permissions, type, priv_text);
+      return HasAnyPermissionsPrivilegeText(context, role_id, *entry, type,
+                                            priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
     }
@@ -1631,11 +1640,12 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
 bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
                        const duckdb::TableCatalogEntry& table,
                        std::string_view priv) {
-  return ColumnsPrivHeld(
-    context, role_id, table.permissions, table.GetColumns().Logical(),
-    [](const duckdb::ColumnDefinition& column)
-      -> std::span<const duckdb::AclItem> { return column.Acl(); },
-    priv);
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnsPrivHeld(
+           context, role_id, table.permissions, table.GetColumns().Logical(),
+           [](const duckdb::ColumnDefinition& column)
+             -> std::span<const duckdb::AclItem> { return column.Acl(); },
+           priv);
 }
 
 bool AnyColumnPrivHeld(duckdb::ClientContext& context, duckdb::idx_t role_id,
@@ -1660,7 +1670,8 @@ bool HasColumnPrivByName(duckdb::ClientContext& context, duckdb::idx_t role_id,
       ERR_MSG("column \"", col, "\" of relation \"",
               table.name.GetIdentifierName(), "\" does not exist"));
   }
-  return ColumnPrivHeld(context, role_id, table.permissions,
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnPrivHeld(context, role_id, table.permissions,
                         columns.GetColumn(key).Acl(), priv);
 }
 
@@ -1670,9 +1681,11 @@ bool HasColumnPrivByAttnum(duckdb::ClientContext& context,
                            duckdb::idx_t role_id,
                            const duckdb::TableCatalogEntry& table,
                            int64_t attnum, std::string_view priv) {
-  return ColumnPrivHeld(
-    context, role_id, table.permissions,
-    table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(), priv);
+  return HoldsUnchecked(table, priv, duckdb::CatalogType::TABLE_ENTRY) ||
+         ColumnPrivHeld(
+           context, role_id, table.permissions,
+           table.GetColumns().GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl(),
+           priv);
 }
 
 bool SystemColumnPrivByAttnum(duckdb::ClientContext& context,
@@ -1956,9 +1969,9 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
       }
       const auto oid = pg::OidFromSql(toid);
       const auto entry = RelationEntryByOid(state.GetContext(), oid);
-      const auto* perm = RelationPermissions(entry.get());
+      const auto* relation = RelationEntry(entry.get());
       try {
-        if (!perm) {
+        if (!relation) {
           const auto* sys = SystemRelationByOid(oid);
           if (!sys) {
             return duckdb::nullopt;
@@ -1966,13 +1979,14 @@ void HasAnyColumnPrivilegeOid2Function(duckdb::DataChunk& args,
           return AnyColumnPrivHeld(state.GetContext(), current->oid, *sys,
                                    {p.GetData(), p.GetSize()});
         }
-        if (entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+        if (relation->type == duckdb::CatalogType::TABLE_ENTRY) {
           return AnyColumnPrivHeld(state.GetContext(), current->oid,
-                                   entry->Cast<duckdb::TableCatalogEntry>(),
+                                   relation->Cast<duckdb::TableCatalogEntry>(),
                                    {p.GetData(), p.GetSize()});
         }
-        return HasAnyTablePrivilegeText(state.GetContext(), current->oid, *perm,
-                                        {p.GetData(), p.GetSize()});
+        return HasAnyPermissionsPrivilegeText(
+          state.GetContext(), current->oid, *relation,
+          duckdb::CatalogType::TABLE_ENTRY, {p.GetData(), p.GetSize()});
       } catch (const irs::SqlException& e) {
         ThrowInvalidPrivilege(e);
       }

@@ -24,7 +24,7 @@ Delete all rows in the table `tbl`:
 
 ### `USING` Clause
 
-The `USING` clause allows deleting based on the content of other tables or subqueries.
+The `USING` clause allows deleting based on the content of other tables or subqueries. A row that several rows of the `USING` clause match is deleted, counted and returned by `RETURNING` once.
 
 ### `RETURNING` Clause
 

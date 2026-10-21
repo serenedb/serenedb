@@ -234,7 +234,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
-    op.return_chunk, std::move(op.return_columns));
+    op.return_chunk, std::move(op.return_columns), op.row_id_handling);
   del.children.emplace_back(plan);
   return del;
 }
@@ -272,7 +272,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk);
+    op.estimated_cardinality, op.return_chunk, op.row_id_handling);
   update.children.emplace_back(plan);
   return update;
 }

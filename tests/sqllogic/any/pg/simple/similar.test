@@ -262,3 +262,11 @@ n
 
 statement ok
 DEALLOCATE similar_param
+
+query
+SELECT 'a\b' SIMILAR TO 'a\b' ESCAPE '' AS literal_backslash,
+       'ab' SIMILAR TO 'a\b' ESCAPE '' AS no_escape,
+       similar_to_escape('a\b', '') AS regex
+----
+literal_backslash	no_escape	regex
+t	f	^(?:a\\\\b)$

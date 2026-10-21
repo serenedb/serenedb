@@ -52,6 +52,8 @@ struct KeyRow {
 
   auto Attnums() const { return KeyAttnums(table.GetColumns(), key); }
 
+  auto Indkey() const { return Attnums(); }
+
   size_t Keys() const { return Attnums().size(); }
 };
 
@@ -68,6 +70,13 @@ struct IndexRow {
       attnums = IndexAttnums(context, index, relation);
     }
     return *attnums;
+  }
+
+  std::span<const int16_t> Indkey() const {
+    if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
+      return {};
+    }
+    return Attnums();
   }
 
   size_t Keys() const {
@@ -97,7 +106,7 @@ auto Collations(const duckdb::CatalogEntry& relation, R attnums, size_t keys) {
 constexpr std::tuple kIndexColumns{
   Col<"indnatts">([](const auto& row) { return row.Attnums().size(); }),
   Col<"indnkeyatts">([](const auto& row) { return row.Keys(); }),
-  Col<"indkey">([](const auto& row) { return row.Attnums(); }),
+  Col<"indkey">([](const auto& row) { return row.Indkey(); }),
   Col<"indcollation">([](const auto& row) {
     return Collations(row.Relation(), row.Attnums(), row.Keys());
   }),

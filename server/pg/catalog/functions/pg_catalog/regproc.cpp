@@ -906,6 +906,31 @@ std::optional<ResolvedType> ResolveType(const Session& session,
 
 }  // namespace
 
+duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
+  const Session& session, std::string_view text) {
+  const auto names = ParseNames(text, nullptr);
+  if (!names || names->size() != 3 ||
+      duckdb::DatabaseManager::TryGetDefaultDatabase(*session.context) ==
+        names->front() ||
+      !duckdb::Catalog::GetCatalogEntry(*session.context,
+                                        duckdb::Identifier{names->front()})) {
+    return nullptr;
+  }
+  const duckdb::QualifiedName name{duckdb::Identifier{(*names)[0]},
+                                   duckdb::Identifier{(*names)[1]},
+                                   duckdb::Identifier{(*names)[2]}};
+  for (const auto type : kRelationSets) {
+    if (auto entry = duckdb::Catalog::GetEntry(
+          *session.context, duckdb::EntryLookupInfo{type, name},
+          duckdb::OnEntryNotFound::RETURN_NULL)) {
+      return entry;
+    }
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+    ERR_MSG("relation \"", absl::StrJoin(*names, "."), "\" does not exist"));
+}
+
 std::string_view SqlTypeName(int32_t oid) {
   switch (oid) {
     case kBit:
@@ -1016,6 +1041,9 @@ OutText ClassOut(const Session& session, uint64_t oid) {
     return absl::StrCat(oid);
   }
   const auto object = NameOf(*session.transaction, *relation);
+  if (IsTemporary(*relation)) {
+    return OutName(object.name);
+  }
   return RelationName(session, object.schema, object.name);
 }
 
@@ -1785,6 +1813,9 @@ std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid) {
   const auto relation = FindRelation(session, oid);
   if (!relation) {
     return std::nullopt;
+  }
+  if (IsTemporary(*relation)) {
+    return true;
   }
   const auto object = NameOf(*session.transaction, *relation);
   return RelationVisible(session, object.schema, object.name);

@@ -112,9 +112,10 @@ const duckdb::ColumnDefinition* TableColumn(const RelationAccess& relation,
 }
 
 template<typename R>
-std::optional<std::string> IndexColumn(duckdb::ClientContext& context,
-                                       duckdb::CatalogEntry& relation,
-                                       const R& attnums, size_t column) {
+std::optional<std::string> IndexColumn(
+  duckdb::ClientContext& context, duckdb::CatalogEntry& relation,
+  const R& attnums,
+  std::span<const duckdb::ParsedExpression* const> expressions, size_t column) {
   const auto view =
     relation.type == duckdb::CatalogType::VIEW_ENTRY
       ? ViewColumns(context, relation.Cast<duckdb::ViewCatalogEntry>())
@@ -123,7 +124,8 @@ std::optional<std::string> IndexColumn(duckdb::ClientContext& context,
       column >= attnums.size()) {
     return std::nullopt;
   }
-  return std::string{IndexColumnAt(relation, view.get(), attnums[column]).name};
+  return std::move(
+    IndexAttributeNames(relation, view.get(), attnums, expressions)[column]);
 }
 
 std::optional<std::string> ColumnName(const Session& session,
@@ -148,7 +150,7 @@ std::optional<std::string> ColumnName(const Session& session,
       context, entry,
       KeyAttnums(entry.Cast<duckdb::TableCatalogEntry>().GetColumns(),
                  *relation.key),
-      column);
+      {}, column);
   }
   if (const auto* definition = TableColumn(relation, attnum)) {
     return definition->Name().GetIdentifierName();
@@ -163,12 +165,14 @@ std::optional<std::string> ColumnName(const Session& session,
   }
   if (entry.type == INDEX_ENTRY) {
     const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-    auto table = EntryByOid(session, index.table_oid);
+    auto table = IsTemporary(relation)
+                   ? TemporaryEntryByOid(session, index.table_oid)
+                   : EntryByOid(session, index.table_oid);
     if (!table) {
       return std::nullopt;
     }
     return IndexColumn(context, *table, IndexAttnums(context, index, *table),
-                       column);
+                       IndexExpressions(index), column);
   }
   if (entry.type == SEQUENCE_ENTRY) {
     if (NumbersRows(entry) || column >= kSequenceColumns.size()) {

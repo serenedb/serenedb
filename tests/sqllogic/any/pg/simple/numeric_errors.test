@@ -1,0 +1,56 @@
+statement error (numeric field overflow|Could not convert string "1e40" to DECIMAL\(10,2\))
+SELECT '1e40'::NUMERIC(10, 2);
+
+statement error (numeric field overflow|Could not convert string "-Infinity" to DECIMAL\(10,2\))
+SELECT '-Infinity'::NUMERIC(10, 2);
+
+statement error (numeric field overflow|Could not convert string " inf " to DECIMAL\(10,2\))
+SELECT ' inf '::NUMERIC(10, 2);
+
+statement error (invalid input syntax for type numeric: "abc"|Could not convert string "abc" to DECIMAL\(10,2\))
+SELECT 'abc'::NUMERIC(10, 2);
+
+statement error (invalid input syntax for type numeric: "1\.5 x"|Could not convert string "1\.5 x" to DECIMAL\(10,2\))
+SELECT '1.5 x'::NUMERIC(10, 2);
+
+statement error (invalid input syntax for type numeric: "-NaN"|Could not convert string "-NaN" to DECIMAL\(10,2\))
+SELECT '-NaN'::NUMERIC(10, 2);
+
+statement error (invalid input syntax for type numeric: "Infinityx"|Could not convert string "Infinityx" to DECIMAL\(10,2\))
+SELECT 'Infinityx'::NUMERIC(10, 2);
+
+statement error (numeric field overflow|Casting value "12345\.678" to type DECIMAL\(5,2\) failed: value is out of range!)
+SELECT 12345.678::NUMERIC(5, 2);
+
+statement error (numeric field overflow|Could not cast value 123456 to DECIMAL\(5,2\))
+SELECT 123456::NUMERIC(5, 2);
+
+statement error (numeric field overflow|Casting value "0\.99999" to type DECIMAL\(4,4\) failed: value is out of range!)
+SELECT 0.99999::NUMERIC(5, 5)::NUMERIC(4, 4);
+
+statement error (numeric field overflow|Could not cast value 10000000000000000303786028427003666890752\.000000 to DECIMAL\(10,2\))
+SELECT 1e40::FLOAT8::NUMERIC(10, 2);
+
+statement error (numeric field overflow|Could not cast value inf to DECIMAL\(10,2\))
+SELECT 'Infinity'::FLOAT8::NUMERIC(10, 2);
+
+statement ok
+CREATE TABLE numeric_errors (a NUMERIC(10, 2));
+
+statement error (numeric field overflow|Could not convert string "99999999\.995" to DECIMAL\(10,2\))
+INSERT INTO numeric_errors VALUES ('99999999.995');
+
+statement ok
+INSERT INTO numeric_errors VALUES ('99999999.994'), ('-1.005');
+
+query
+SELECT a
+FROM numeric_errors
+ORDER BY a;
+----
+a
+-1.01
+99999999.99
+
+statement ok
+DROP TABLE numeric_errors;

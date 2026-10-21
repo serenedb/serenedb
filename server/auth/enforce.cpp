@@ -159,11 +159,6 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
                   ERR_DETAIL(detail));
 }
 
-bool Unowned(const duckdb::CatalogEntry& entry) {
-  return entry.permissions.owner == pg::kInvalidOid ||
-         entry.ParentCatalog().GetAttached().IsReadOnly();
-}
-
 bool StoresPermissions(duckdb::Catalog& catalog) {
   return !catalog.IsDuckCatalog() ||
          duckdb::IsSereneDBStorageVersion(
@@ -640,6 +635,9 @@ class Enforcer {
   duckdb::idx_t PrincipalFor(duckdb::idx_t table_index) const {
     const duckdb::StatementProperties::ViewScope* inner = nullptr;
     for (const auto& scope : _props.view_scopes) {
+      if (Unowned(*scope.view)) {
+        continue;
+      }
       if (scope.begin <= table_index && table_index < scope.end &&
           (!inner || scope.end - scope.begin < inner->end - inner->begin)) {
         inner = &scope;
@@ -1727,6 +1725,11 @@ class Enforcer {
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
   Enforcer{context, connection, binder, plan}.Run();
+}
+
+bool Unowned(const duckdb::CatalogEntry& entry) {
+  return entry.permissions.owner == pg::kInvalidOid ||
+         (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
 }  // namespace sdb::auth

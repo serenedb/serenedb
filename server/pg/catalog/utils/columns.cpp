@@ -31,6 +31,8 @@
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <ranges>
 #include <vector>
 
@@ -169,12 +171,34 @@ std::string IndexExpressionName(const duckdb::ParsedExpression& expression) {
   return name == duckdb::BaseExpression::ANONYMOUS_COLUMN_NAME ? "expr" : name;
 }
 
-std::string_view IndexColumnNames::Add(std::string_view name) {
-  std::string unique{name};
-  for (size_t i = 1; absl::c_linear_search(_names, unique); ++i) {
-    unique = absl::StrCat(name, i);
+duckdb::LogicalType IndexExpressionType(
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& relation,
+  const duckdb::ViewColumnInfo* columns,
+  const duckdb::ParsedExpression& expression) {
+  duckdb::vector<duckdb::Identifier> names;
+  duckdb::vector<duckdb::LogicalType> types;
+  if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
+    if (!columns) {
+      return duckdb::LogicalType::SQLNULL;
+    }
+    const auto& view = relation.Cast<duckdb::ViewCatalogEntry>();
+    for (duckdb::idx_t i = 0; i < columns->types.size(); ++i) {
+      names.push_back(view.ColumnName(*columns, i));
+    }
+    types = columns->types;
+  } else {
+    for (const auto& column :
+         relation.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+      names.push_back(column.Name());
+      types.push_back(column.Type());
+    }
   }
-  return _names.emplace_back(std::move(unique));
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->bind_context.AddGenericBinding(duckdb::TableIndex(0), relation.name,
+                                         names, types);
+  duckdb::IndexBinder index_binder(*binder, context);
+  auto bound = expression.Copy();
+  return index_binder.Bind(bound)->GetReturnType();
 }
 
 std::vector<int16_t> ExpressionAttnums(

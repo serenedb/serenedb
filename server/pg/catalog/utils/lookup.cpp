@@ -34,10 +34,12 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
@@ -103,6 +105,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
   }
   auto entry =
     session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
+  if (!entry || entry->internal) {
+    return nullptr;
+  }
+  return entry;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
+  const Session& session, uint64_t oid) {
+  if (!session.context || oid == kInvalidOid) {
+    return nullptr;
+  }
+  auto& temporary = duckdb::ClientData::Get(*session.context)
+                      .temporary_objects->GetCatalog()
+                      .Cast<duckdb::DuckCatalog>();
+  auto entry = temporary.GetOidIndex().GetVisible(
+    oid, temporary.GetCatalogTransaction(*session.context).view);
   if (!entry || entry->internal) {
     return nullptr;
   }
@@ -182,6 +200,10 @@ std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
   if (const auto key = FindKeyIndex(session, oid); key.table) {
     return Relation{key.table, key.key_index, nullptr, nullptr};
   }
+  if (const auto entry = TemporaryEntryByOid(session, oid);
+      entry && CatalogClassOid(entry->type) == kPgClassTable) {
+    return Relation{entry, nullptr, nullptr, nullptr};
+  }
   return std::nullopt;
 }
 
@@ -192,6 +214,10 @@ ObjectName NameOf(duckdb::CatalogTransaction transaction,
       .schema =
         relation.entry->ParentSchema(transaction).name.GetIdentifierName(),
       .name = relation.key->constraint_name};
+  }
+  if (IsTemporary(relation)) {
+    return {.schema = kTemporarySchema,
+            .name = relation.entry->name.GetIdentifierName()};
   }
   if (relation.entry) {
     return NameOf(transaction, *relation.entry);
@@ -235,15 +261,24 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation}, &entry->permissions};
+    return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
   }
   if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
-    const auto owner = EntryByOid(
-      session, relation->entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
-    return RelationAccess{{*relation},
-                          &(owner ? owner : relation->entry)->permissions};
+    const auto table_oid =
+      relation->entry->Cast<duckdb::IndexCatalogEntry>().table_oid;
+    const auto owner = IsTemporary(*relation)
+                         ? TemporaryEntryByOid(session, table_oid)
+                         : EntryByOid(session, table_oid);
+    return RelationAccess{
+      {*relation}, &PrivilegePermissions(owner ? *owner : *relation->entry)};
   }
-  return RelationAccess{{*relation}, &relation->entry->permissions};
+  return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
+}
+
+const duckdb::Permissions& PrivilegePermissions(
+  const duckdb::CatalogEntry& entry) {
+  static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
+  return auth::Unowned(entry) ? kUnowned : entry.permissions;
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,

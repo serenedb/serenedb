@@ -75,6 +75,9 @@ template<typename T>
 const T* TypedEntry(const Session& session, duckdb::CatalogType type,
                     int64_t oid) {
   auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
+  if (!entry) {
+    entry = TemporaryEntryByOid(session, static_cast<uint64_t>(oid));
+  }
   return entry && entry->type == type ? &entry->Cast<T>() : nullptr;
 }
 
@@ -88,6 +91,11 @@ std::string RelationName(const Session& session, std::string_view schema,
 
 std::string RelationName(const Session& session,
                          const duckdb::CatalogEntry& relation, bool qualified) {
+  if (relation.ParentCatalog().IsTemporaryCatalog()) {
+    const auto& name = relation.name.GetIdentifierName();
+    return qualified ? QualifiedOutName(kTemporarySchema, name)
+                     : QuoteIdentifier(name);
+  }
   const auto [schema, name] = NameOf(*session.transaction, relation);
   return RelationName(session, schema, name, qualified);
 }
@@ -151,7 +159,8 @@ const duckdb::ViewCatalogEntry* UserView(const Session& session, int64_t oid) {
   if (!view) {
     return nullptr;
   }
-  if (FindSystemObject(kSystemNamespaces,
+  if (!view->ParentCatalog().IsTemporaryCatalog() &&
+      FindSystemObject(kSystemNamespaces,
                        NameOf(*session.transaction, *view).schema)) {
     return nullptr;
   }
@@ -324,7 +333,12 @@ IndexShape ShapeOf(const Session& session,
   IndexShape shape{
     .name = index.name.GetIdentifierName(),
     .unique = index.IsUnique(),
-    .relation = index.GetRelation(*session.transaction).get(),
+    .relation =
+      index
+        .GetRelation(index.catalog.IsTemporaryCatalog()
+                       ? index.catalog.GetCatalogTransaction(*session.context)
+                       : *session.transaction)
+        .get(),
     .method = connector::IsInvertedIndex(index)
                 ? std::string_view{catalog::kInvertedIndexTypeName}
                 : std::string_view{"secondary"},

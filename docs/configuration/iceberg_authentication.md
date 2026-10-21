@@ -57,7 +57,7 @@ The standard machine credential for Google's [BigLake / Lakehouse Iceberg catalo
 
 <SqlLogicTest id="configuration/iceberg_authentication/example_google_sa" />
 
-**Production-friendly** — this is what self-hosted engines across the ecosystem (Trino, StarRocks, PyIceberg) take for Google Iceberg access. How to create the account, grant the three required roles, and download the key: [Google Cloud credentials](./google_cloud_credentials.md#service-account-key). `PRIVATE_KEY_ID`, `TOKEN_URI`, and `OAUTH2_SCOPE` (default `https://www.googleapis.com/auth/cloud-platform`) are optional. The `private_key` is stored redacted.
+**Production-friendly.** How to create the account, grant the three required roles, and download the key: [Google Cloud credentials](./google_cloud_credentials.md#service-account-key). `PRIVATE_KEY_ID`, `TOKEN_URI`, and `OAUTH2_SCOPE` (default `https://www.googleapis.com/auth/cloud-platform`) are optional. `sdb_secrets()` shows the `private_key` redacted, but a persistent secret stores it unencrypted.
 
 ### Google attached service account (metadata server)
 
@@ -81,7 +81,7 @@ AWS's Iceberg catalogs don't use bearer tokens at all — every request is signe
 
 <SqlLogicTest id="configuration/iceberg_authentication/example_sigv4_s3tables" />
 
-For the [Glue Data Catalog](https://docs.aws.amazon.com/glue/latest/dg/connect-glu-iceberg-rest.html), the warehouse is your 12-digit account id, `:` for the current account's default catalog, or a nested `⟨account⟩:⟨catalog⟩/⟨child⟩` path. Glue takes its endpoint region from the secret, so the `S3` secret must include `REGION`:
+For the [Glue Data Catalog](https://docs.aws.amazon.com/glue/latest/dg/connect-glu-iceberg-rest.html), the warehouse is your 12-digit account id, `:` for the current account's default catalog, `⟨account⟩:⟨catalog⟩` for a catalog of an account, `⟨catalog⟩/⟨child⟩` for a nested catalog of the current account, or `⟨account⟩:⟨catalog⟩/⟨child⟩`. Glue takes its endpoint region from the secret, so the `S3` secret must include `REGION`:
 
 <SqlLogicTest id="configuration/iceberg_authentication/example_sigv4_glue" />
 

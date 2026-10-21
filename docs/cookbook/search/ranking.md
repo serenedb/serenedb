@@ -105,11 +105,11 @@ Combine relevance scores with other columns for domain-specific ranking:
 
 ## Dictionary requirements
 
-To use scoring functions, your dictionary must have `FREQUENCY = true`:
+Scoring functions rank rows by how often the query's terms occur only when the dictionary has `FREQUENCY = true`; without it, every row that matches a term scores the same for that term:
 
 <SqlLogicTest id="cookbook/search/ranking/example_012" />
 
-The `FREQUENCY` flag stores term frequency data in the index, which BM25 and TF-IDF need for scoring.
+The `FREQUENCY` flag stores term frequency data in the index, which BM25 and TF-IDF use to rank rows.
 
 ## See also
 

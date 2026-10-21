@@ -157,8 +157,8 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 
 - **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
 - **Search finds refreshed rows.** Rows not yet refreshed into a search table or an inverted index when the directory was last written are not returned by it. Run `VACUUM (REFRESH_TABLE)` before stopping the server to include them.
-- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, DDL, `CREATE INDEX` and `nextval` fail as on any read-only attachment, and `VACUUM` and `REINDEX` fail with `it is attached read-only`.
-- **`USAGE` on the server is the only privilege checked.** Owners and grants recorded in the directory belong to the other server's roles and are not used.
+- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, other DDL and `nextval` fail as on any read-only attachment, and `CREATE INDEX`, `VACUUM`, `REINDEX` and `es_refresh` fail with `it is attached read-only`.
+- **`USAGE` on the server is the only privilege checked on the database's own objects.** Owners and grants recorded in the directory belong to the other server's roles and are not used, so a view of the database reads with the privileges of the role that runs the query: a table outside the database that the view reads needs that role's `SELECT`. `has_table_privilege` and the other privilege functions report every privilege on the database's own objects. The system catalogs in its `pg_catalog` and `information_schema` keep the privileges they have in any database.
 - **`DROP SERVER` only detaches.** It never removes files from the directory.
 
 ### Many readers or one writer

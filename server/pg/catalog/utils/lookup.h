@@ -81,6 +81,8 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
+duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
+  const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
   const Session& session, uint64_t oid);
 inline duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
@@ -140,6 +142,13 @@ struct Relation {
   const StaticView* view;
 };
 
+inline constexpr std::string_view kTemporarySchema = "pg_temp";
+
+inline bool IsTemporary(const Relation& relation) {
+  return relation.entry && !relation.key &&
+         relation.entry->ParentCatalog().IsTemporaryCatalog();
+}
+
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation);
@@ -148,6 +157,9 @@ const duckdb::ColumnList* TableColumns(const Relation& relation);
 struct RelationAccess : Relation {
   const duckdb::Permissions* permissions;
 };
+
+const duckdb::Permissions& PrivilegePermissions(
+  const duckdb::CatalogEntry& entry);
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid);

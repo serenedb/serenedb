@@ -79,6 +79,8 @@ std::optional<uint64_t> SchemaOid(const Session& session,
                                   irs::pg::SqlErrorData* soft_error);
 uint64_t ResolveRelation(const Session& session,
                          const duckdb::QualifiedName& name);
+duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
+  const Session& session, std::string_view text);
 OutText RelationName(const Session& session, std::string_view schema,
                      std::string_view name);
 

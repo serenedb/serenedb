@@ -46,7 +46,7 @@ query
 SELECT indkey, indnatts FROM pg_index WHERE indexrelid = 'view_alias_columns_idx'::regclass;
 ----
 indkey	indnatts
-1 2	2
+(empty)	2
 
 
 statement ok

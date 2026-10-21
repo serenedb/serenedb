@@ -224,15 +224,20 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       relation.type == duckdb::CatalogType::VIEW_ENTRY
         ? ViewColumns(Context(), relation.Cast<duckdb::ViewCatalogEntry>())
         : nullptr;
-    IndexColumnNames names;
+    const auto names =
+      IndexAttributeNames(relation, columns.get(), attnums, expressions);
     int16_t attnum = 0;
     for (const int16_t key : attnums) {
-      const auto column = IndexColumnAt(relation, columns.get(), key);
-      const auto name =
-        names.Add(key == 0 ? std::string_view{IndexExpressionName(
-                               *expressions[static_cast<size_t>(attnum)])}
-                           : column.name);
-      Emit<kColumn>({oid, name, ++attnum, column.type});
+      const auto& name = names[static_cast<size_t>(attnum)];
+      if (key != 0) {
+        Emit<kColumn>({oid, name, ++attnum,
+                       IndexColumnAt(relation, columns.get(), key).type});
+        continue;
+      }
+      const auto type =
+        IndexExpressionType(Context(), relation, columns.get(),
+                            *expressions[static_cast<size_t>(attnum)]);
+      Emit<kColumn>({oid, name, ++attnum, type});
     }
   }
 

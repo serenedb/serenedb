@@ -22,6 +22,7 @@
 
 #include <absl/status/status.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
@@ -54,14 +55,11 @@ class Creator {
               .conn},
       _schema{schema} {}
 
-  // A search table cannot gain an index once it holds rows, so re-running the
-  // DDL over an existing schema is not just wasteful, it fails. Presence of
-  // the logs table is the marker that the schema is already there.
-  bool Exists() {
+  bool Exists(std::string_view table) {
     auto result = _conn->Query(
       absl::StrCat("SELECT 1 FROM pg_tables WHERE schemaname = ",
-                   network::http::SqlLiteral(_schema), " AND tablename = ",
-                   network::http::SqlLiteral(connector::kOtelLogsTable)));
+                   network::http::SqlLiteral(_schema),
+                   " AND tablename = ", network::http::SqlLiteral(table)));
     return !result->HasError() && result->RowCount() == 1;
   }
 
@@ -73,7 +71,19 @@ class Creator {
     return absl::OkStatus();
   }
 
-  absl::Status Create() {
+  // A table that exists is left alone, indexes included, so a user's own
+  // indexes survive a restart. A missing one is created together with its
+  // index, so a crash can't leave it without one.
+  absl::Status Create(std::vector<std::string_view>& created) {
+    std::vector<const TableDdl*> missing;
+    for (const auto& table : kTables) {
+      if (!Exists(table.name)) {
+        missing.push_back(&table);
+      }
+    }
+    if (missing.empty()) {
+      return absl::OkStatus();
+    }
     const auto schema = network::http::SqlIdentifier(_schema);
     if (auto status = Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema));
         !status.ok()) {
@@ -83,10 +93,22 @@ class Creator {
         !status.ok()) {
       return status;
     }
-    for (const auto statement : kSchemaStatements) {
+    for (const auto statement : kSharedStatements) {
       if (auto status = Run(statement); !status.ok()) {
         return status;
       }
+    }
+    for (const auto* table : missing) {
+      for (const auto statement : {std::string_view{"BEGIN"}, table->table,
+                                   table->index, std::string_view{"COMMIT"}}) {
+        if (statement.empty()) {
+          continue;
+        }
+        if (auto status = Run(statement); !status.ok()) {
+          return status;
+        }
+      }
+      created.push_back(table->name);
     }
     return absl::OkStatus();
   }
@@ -153,14 +175,13 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
   Creator creator{name, oid, schema};
-  if (creator.Exists()) {
-    SDB_DEBUG(STARTUP, "OpenTelemetry schema already present in ", database,
-              ".", schema);
-  } else if (auto created = creator.Create(); !created.ok()) {
-    return created;
-  } else {
-    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database, ".",
-             schema);
+  std::vector<std::string_view> created;
+  if (auto status = creator.Create(created); !status.ok()) {
+    return status;
+  }
+  if (!created.empty()) {
+    SDB_INFO(STARTUP, "OpenTelemetry tables created in ", database, ".", schema,
+             ": ", absl::StrJoin(created, ", "));
   }
   auto status = creator.Check();
   if (status.ok()) {

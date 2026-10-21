@@ -164,9 +164,13 @@ class CancelRegistry {
     bool ambiguous;
   };
 
+  // Find by the pid half of the key alone (the high 32 bits sent in
+  // BackendKeyData / reported by pg_backend_pid). Unlike Cancel(), this needs
+  // no secret -- it backs the SQL pg_cancel_backend()/pg_terminate_backend(),
+  // which check the caller's role against the backend's, not the cancel key.
   // The pid is the high half of a RANDOM key, so it is not guaranteed unique
   // across live backends (unlike a real OS pid); if two share it the request is
-  // ambiguous and nothing may be signalled rather than risk the wrong backend.
+  // ambiguous and none is found rather than risk hitting the wrong backend.
   PidMatch FindByPid(uint32_t pid) {
     PidMatch match{nullptr, false};
     absl::MutexLock lock{&_mu};

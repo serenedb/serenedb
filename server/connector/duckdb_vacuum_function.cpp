@@ -641,12 +641,9 @@ void VacuumExecute(duckdb::ClientContext& context,
   }
 
   auto target = ResolveName(context, bind_data, verb->scope);
-  if (needs_name &&
-      LookupDatabase(context, target.database).GetAttached().IsReadOnly()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-      ERR_MSG("cannot run VACUUM (", bind_data.option, ") on database \"",
-              target.database, "\": it is attached read-only"));
+  if (needs_name) {
+    catalog::ThrowIfReadOnly(LookupDatabase(context, target.database),
+                             "VACUUM (", bind_data.option, ")");
   }
 
   pg::ProgressMetrics* progress = nullptr;

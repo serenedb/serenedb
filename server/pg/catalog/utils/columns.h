@@ -21,7 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <absl/container/inlined_vector.h>
+#include <absl/strings/str_cat.h>
 
 #include <array>
 #include <cstdint>
@@ -34,6 +34,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -121,17 +122,33 @@ struct IndexColumn {
 
 std::string IndexExpressionName(const duckdb::ParsedExpression& expression);
 
-class IndexColumnNames {
- public:
-  std::string_view Add(std::string_view name);
-
- private:
-  absl::InlinedVector<std::string, 4> _names;
-};
+duckdb::LogicalType IndexExpressionType(
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& relation,
+  const duckdb::ViewColumnInfo* columns,
+  const duckdb::ParsedExpression& expression);
 
 IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
                           const duckdb::ViewColumnInfo* columns,
                           int16_t attnum);
+
+template<typename R>
+std::vector<std::string> IndexAttributeNames(
+  const duckdb::CatalogEntry& relation, const duckdb::ViewColumnInfo* columns,
+  const R& attnums,
+  std::span<const duckdb::ParsedExpression* const> expressions) {
+  std::vector<std::string> names;
+  for (const int16_t attnum : attnums) {
+    const auto base =
+      attnum == 0 ? IndexExpressionName(*expressions[names.size()])
+                  : std::string{IndexColumnAt(relation, columns, attnum).name};
+    auto name = base;
+    for (size_t suffix = 1; absl::c_linear_search(names, name); ++suffix) {
+      name = absl::StrCat(base, suffix);
+    }
+    names.push_back(std::move(name));
+  }
+  return names;
+}
 
 std::vector<int16_t> ExpressionAttnums(
   const duckdb::TableCatalogEntry& table,

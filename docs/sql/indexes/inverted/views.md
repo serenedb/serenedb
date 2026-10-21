@@ -15,12 +15,12 @@ A view has no primary key of its own, so two things have to be resolved: a **row
 flowchart LR
     src["view source<br/>table · Parquet · CSV · JSON"] -->|"CREATE INDEX<br/>snapshot postings"| idx[("inverted index<br/>+ row identity")]
     q["query"] --> idx
-    idx -->|"counts · scores · indexed and INCLUDE columns"| fast["answered from the index"]
+    idx -->|"counts · scores · stored columns"| fast["answered from the index"]
     idx -->|"other columns: fetch by row identity"| mat["materialized live from source"]
     mat -.->|read live| src
 ```
 
-Counts, relevance scores and any indexed or `INCLUDE`d column come straight from the frozen index; any *other* column is fetched live from the source by row identity at query time. That split — frozen postings, live values — is the whole model.
+Counts, relevance scores and the columns the index stores come straight from the frozen index. It stores `INCLUDE`d columns, `included()` expressions, vector columns, and geo columns whose dictionary keeps the source value: `encode_geopoint`, or `encode_geojson` with its default `source` coding. Every *other* column, indexed text, numeric and temporal columns too, is fetched live from the source by row identity at query time. That split — stored columns frozen, the rest live — is the whole model.
 
 <DocCallout type="tip">
 
@@ -38,21 +38,20 @@ How the index derives a stable per-row identity depends on the view body:
 
 | View body | Row identity | Can be overridden |
 |---|---|---|
-| `SELECT … FROM base_table` (has `PRIMARY KEY`) | The base table's primary key | — |
-| `SELECT … FROM base_table` (no PK) | The hidden row id | — |
+| `SELECT … FROM base_table` | The hidden row id | — |
 | `SELECT … FROM read_parquet('file')` | The reader's `file_row_number` | — |
 | `read_csv` / `read_json` single file | The byte offset within the file | — |
 | Reader over a **glob** (`'…/*.parquet'`) | `(file_index, position)` pair | — |
 | Attached DuckDB / Iceberg table | The source row id / `(file_index, row)` | — |
 | Attached **PostgreSQL** table | The remote `ctid` | `WITH (key_columns = '…')` |
 | Attached **ClickHouse** table | The engine's primary-key columns | `WITH (key_columns = '…')` |
-| Generic body (inline `VALUES`, `UNION ALL`, joins) | A synthetic row id | — |
+| Generic body (inline `VALUES`, `UNION ALL`, joins) | None; see [Generic views](#generic-views) | — |
 
 Row identity is always derived automatically — there is no `pk` index option. The only sources that accept an explicit key are [attached external databases](./external-data.md#external-databases), via `key_columns`.
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_text`, Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_json_objects` / `read_json_objects_auto` / `read_ndjson_objects`, `read_text`, [`read_duckdb`](../../../cookbook/file_formats/read_duckdb.md), Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
 The view body may shape the source and still qualify as fast-path:
 
@@ -114,7 +113,7 @@ These queries are answered **entirely from the index**, never touching the sourc
 - full-text [`@@` filters](./full-text-search.md) and secondary scalar filters (`=`, `<`, `BETWEEN`, `IN`) that get pushed into the index scan;
 - relevance scores — [`BM25`](./ranking.md), `TFIDF` — and the index `tableoid`;
 - [`ts_offsets`](./full-text-search.md#highlighting);
-- projections of **indexed** columns and of [`INCLUDE`d](#include-columns) columns and aggregates over them.
+- projections of the columns the index stores — [`INCLUDE`d](#include-columns), vector and source-coded geo columns — and aggregates over them; an indexed text, numeric or temporal column is returned from the index only when it is `INCLUDE`d as well, as `id` is in the setup above.
 
 <SqlLogicTest id="sql/indexes/inverted/views/count_no_materialization" />
 
@@ -122,7 +121,7 @@ These queries are answered **entirely from the index**, never touching the sourc
 
 ## Materializing real columns
 
-Selecting a real source column that is neither indexed nor `INCLUDE`d **materializes** it: the index hands back the row identities for the matches, and SereneDB re-reads those columns from the source through the fast-path lookup. The column values are **not stored in the index** — they are fetched live at query time:
+Selecting a real source column that the index doesn't [store](#what-runs-without-materialization), an indexed text, numeric or temporal column too, **materializes** it: the index hands back the row identities for the matches, and SereneDB re-reads those columns from the source through the fast-path lookup. The column values are **not stored in the index** — they are fetched live at query time:
 
 <SqlLogicTest id="sql/indexes/inverted/views/materialize" />
 
@@ -132,17 +131,17 @@ Columns a file reader adds on its own materialize too, with the values the view 
 
 ## Generic views
 
-A generic view (no fast-path source) still indexes and answers the non-materializing queries — no extra options are needed, the postings key on a synthetic row id:
+A generic view (no fast-path source) still indexes and answers the non-materializing queries, with no extra options:
 
 <SqlLogicTest id="sql/indexes/inverted/views/generic_pk" />
 
-Selecting its real columns is not supported and raises an error:
+Its index keeps no row identity, so only the columns it stores can be read back: `INCLUDE`d, vector and source-coded geo columns. Selecting any other column, even an indexed text, numeric or temporal one, raises an error:
 
 <SqlLogicTest id="sql/indexes/inverted/views/generic_error" />
 
 ## `INCLUDE` columns
 
-`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup. A query that returns only indexed and `INCLUDE`d columns never touches the source at all: over a catalog-attached Iceberg table [named in full](#referencing-the-source) it does not even contact the catalog, so its latency does not depend on the server's `max_table_staleness`.
+`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup. A query that returns only columns the index stores, counts and scores never touches the source at all: over a catalog-attached Iceberg table [named in full](#referencing-the-source) it does not even contact the catalog, so its latency does not depend on the server's `max_table_staleness`.
 
 ## Refreshing the index
 

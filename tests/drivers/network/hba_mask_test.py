@@ -234,6 +234,57 @@ MATCH_CASES = [
         ],
     },
     {
+        "name": "role-membership-without-inherit",
+        # +blocked matches every (in)direct member of blocked, whether or not
+        # the membership inherits its privileges, as in PostgreSQL.
+        "setup": ("CREATE ROLE blocked LOGIN; "
+                  "CREATE ROLE n_inherit LOGIN IN ROLE blocked; "
+                  "CREATE ROLE n_noinherit LOGIN NOINHERIT IN ROLE blocked; "
+                  "CREATE ROLE n_grant LOGIN; "
+                  "GRANT blocked TO n_grant WITH INHERIT FALSE; "
+                  "CREATE ROLE n_mid NOINHERIT IN ROLE blocked; "
+                  "CREATE ROLE n_nested LOGIN IN ROLE n_mid; "
+                  "CREATE ROLE n_super LOGIN SUPERUSER; "
+                  "CREATE ROLE n_out LOGIN;"),
+        "hba": ("host all +blocked 127.0.0.0/8 reject\n"
+                "host all all      0.0.0.0/0   trust\n"),
+        "probes": [
+            ("127.0.0.9", "blocked", "postgres", REJECTED),
+            ("127.0.0.9", "n_inherit", "postgres", REJECTED),
+            ("127.0.0.9", "n_noinherit", "postgres", REJECTED),
+            ("127.0.0.9", "n_grant", "postgres", REJECTED),
+            ("127.0.0.9", "n_nested", "postgres", REJECTED),
+            ("127.0.0.9", "n_super", "postgres", TRUST),
+            ("127.0.0.9", "n_out", "postgres", TRUST),
+        ],
+    },
+    {
+        "name": "samerole-without-inherit",
+        # samerole matches a member of the role the database is named after,
+        # also through a membership that does not inherit.
+        "setup": ("CREATE ROLE sr_team; CREATE DATABASE sr_team; "
+                  "CREATE ROLE sr_member LOGIN NOINHERIT IN ROLE sr_team; "
+                  "CREATE ROLE sr_out LOGIN;"),
+        "hba": ("host samerole all 127.0.0.0/8 trust\n"
+                "host all      all 0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "sr_member", "sr_team", TRUST),
+            ("127.0.0.9", "sr_out", "sr_team", REJECTED),
+        ],
+    },
+    {
+        "name": "samegroup-is-samerole",
+        "setup": ("CREATE ROLE sg_team; CREATE DATABASE sg_team; "
+                  "CREATE ROLE sg_member LOGIN NOINHERIT IN ROLE sg_team; "
+                  "CREATE ROLE sg_out LOGIN;"),
+        "hba": ("host samegroup all 127.0.0.0/8 trust\n"
+                "host all       all 0.0.0.0/0   reject\n"),
+        "probes": [
+            ("127.0.0.9", "sg_member", "sg_team", TRUST),
+            ("127.0.0.9", "sg_out", "sg_team", REJECTED),
+        ],
+    },
+    {
         "name": "sameuser",
         # sameuser matches when the target database name equals the role name.
         "setup": "CREATE ROLE s_dev LOGIN; CREATE DATABASE s_dev;",

@@ -31,6 +31,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 
@@ -49,6 +50,7 @@ Session MakeSession(duckdb::ClientContext* context) {
     .transaction = std::nullopt,
     .retriever = std::nullopt,
     .search_path = {},
+    .temporary = std::nullopt,
     .reg_out = {},
     .reg_out_texts = {},
     .reg_out_recent = {}};
@@ -92,6 +94,23 @@ Session MakeSession(duckdb::ClientContext* context) {
     if (catalog.empty() || catalog == database.GetIdentifierName()) {
       add(entry.GetSchema().GetIdentifierName());
     }
+  }
+  auto& temporary =
+    duckdb::ClientData::Get(*context).temporary_objects->GetCatalog();
+  const auto transaction = temporary.GetCatalogTransaction(*context);
+  auto schema =
+    temporary.GetSchema(transaction, duckdb::Identifier::DefaultSchema(),
+                        duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!schema) {
+    return session;
+  }
+  for (const auto type : kRelationSets) {
+    schema->Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).Scan(
+      transaction, [&](duckdb::CatalogEntry& entry) {
+        if (!entry.internal && !session.temporary) {
+          session.temporary.emplace(transaction, *schema);
+        }
+      });
   }
   return session;
 }

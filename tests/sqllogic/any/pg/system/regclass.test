@@ -234,6 +234,64 @@ information_schema.tables	information_schema.sql_features	pg_class
 
 
 statement ok
+CREATE TABLE regclass_temp_table (id int);
+
+
+statement ok
+CREATE TABLE regclass_temp_seq (id int);
+
+
+statement ok
+CREATE TABLE regclass_temp_view (id int);
+
+
+query
+SELECT c.relname,
+       c.oid::regclass::text AS qualified,
+       pg_table_is_visible(c.oid) AS visible
+FROM pg_class c
+WHERE c.relnamespace = 'public'::regnamespace
+  AND c.relname IN ('regclass_temp_table', 'regclass_temp_seq', 'regclass_temp_view')
+ORDER BY c.relname;
+----
+relname	qualified	visible
+regclass_temp_seq	public.regclass_temp_seq	f
+regclass_temp_table	public.regclass_temp_table	f
+regclass_temp_view	public.regclass_temp_view	f
+
+
+query
+SELECT count(*) AS visible
+FROM pg_class c
+WHERE c.relnamespace = 'public'::regnamespace
+  AND c.relname IN ('regclass_temp_table', 'regclass_temp_seq', 'regclass_temp_view')
+  AND pg_table_is_visible(c.oid);
+----
+visible
+0
+
+
+query
+SELECT 'regclass_temp_table'::regclass = 'public.regclass_temp_table'::regclass AS same,
+       'regclass_temp_table'::regclass::text AS temp_name;
+----
+same	temp_name
+f	regclass_temp_table
+
+
+statement ok
+DROP TABLE public.regclass_temp_table;
+
+
+statement ok
+DROP TABLE public.regclass_temp_seq;
+
+
+statement ok
+DROP TABLE public.regclass_temp_view;
+
+
+statement ok
 DROP VIEW regclass_temp_view;
 
 

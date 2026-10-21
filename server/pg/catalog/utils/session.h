@@ -45,6 +45,11 @@ struct SessionSchema {
   bool system;
 };
 
+struct SessionTemporary {
+  duckdb::CatalogTransaction transaction;
+  duckdb::SchemaCatalogEntry& schema;
+};
+
 struct RegOutRecent {
   uint64_t oid = 0;
   uint8_t kind = 0;
@@ -59,6 +64,7 @@ struct Session {
   std::optional<duckdb::CatalogTransaction> transaction;
   mutable std::optional<duckdb::CatalogEntryRetriever> retriever;
   std::vector<SessionSchema> search_path;
+  std::optional<SessionTemporary> temporary;
   mutable irs::containers::FlatHashMap<std::pair<uint8_t, uint64_t>,
                                        std::string_view>
     reg_out;

@@ -65,6 +65,9 @@ inline constexpr std::array kIndexTypes{duckdb::CatalogType::TABLE_ENTRY,
                                         duckdb::CatalogType::INDEX_ENTRY};
 inline constexpr std::array kTokenizerTypes{
   duckdb::CatalogType::TOKENIZER_ENTRY};
+inline constexpr std::array kRelationSets{duckdb::CatalogType::TABLE_ENTRY,
+                                          duckdb::CatalogType::SEQUENCE_ENTRY,
+                                          duckdb::CatalogType::INDEX_ENTRY};
 
 duckdb::idx_t CatalogClassOid(duckdb::CatalogType type);
 

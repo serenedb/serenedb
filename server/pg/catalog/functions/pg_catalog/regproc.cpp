@@ -60,10 +60,6 @@
 namespace sdb::pg {
 namespace {
 
-constexpr std::array kRelationSets{duckdb::CatalogType::TABLE_ENTRY,
-                                   duckdb::CatalogType::SEQUENCE_ENTRY,
-                                   duckdb::CatalogType::INDEX_ENTRY};
-
 OutText OutName(std::string_view name) {
   if (RequiresQuotes(name)) {
     return QuoteIdentifier(name);
@@ -178,6 +174,22 @@ uint64_t RelationOid(const Session& session, const SessionSchema& schema,
   return entry ? UserRelationOid(session, *entry, name) : kInvalidOid;
 }
 
+uint64_t TemporaryRelationOid(const Session& session, std::string_view name) {
+  if (!session.temporary) {
+    return kInvalidOid;
+  }
+  const duckdb::Identifier identifier{name};
+  for (const auto type : kRelationSets) {
+    if (const auto member =
+          FindMember(session.temporary->transaction, session.temporary->schema,
+                     type, identifier);
+        member && !member->internal) {
+      return member->oid;
+    }
+  }
+  return kInvalidOid;
+}
+
 }  // namespace
 
 uint64_t ResolveRelation(const Session& session,
@@ -193,15 +205,9 @@ uint64_t ResolveRelation(const Session& session,
         .system = FindSystemObject(kSystemNamespaces, schema) != nullptr},
       relation);
   }
-  for (const auto type : kRelationSets) {
-    if (auto entry = session.retriever->GetEntry(
-          duckdb::EntryLookupInfo{
-            type, duckdb::QualifiedName{duckdb::Identifier::TempCatalog(),
-                                        duckdb::Identifier::DefaultSchema(),
-                                        name.Name()}},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
-      return entry->oid;
-    }
+  if (const auto oid = TemporaryRelationOid(session, relation);
+      oid != kInvalidOid) {
+    return oid;
   }
   for (const auto& schema : session.search_path) {
     if (const auto oid = RelationOid(session, schema, relation);
@@ -1790,6 +1796,9 @@ std::optional<uint64_t> RegIn(const Session& session, RegKind kind,
 
 bool RelationVisible(const Session& session, std::string_view schema,
                      std::string_view name) {
+  if (TemporaryRelationOid(session, name) != kInvalidOid) {
+    return false;
+  }
   for (const auto& path : session.search_path) {
     if (path.name == schema) {
       return true;

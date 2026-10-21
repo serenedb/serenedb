@@ -24,20 +24,18 @@
 
 namespace irs {
 
-// Pattern classification - used by the filter to pick fast paths
-// (ByTerm / ByPrefix) before falling back to a full automaton.
+// Pattern classification - used by the filter to pick the fast path
+// (ByTerm) before falling back to a full automaton.
 enum class RegexpType {
   LiteralEscaped,  // e.g. hello\.world (literal after unescape)
   Literal,         // e.g. hello (no metacharacters at all)
-  PrefixEscaped,   // e.g. hello\.world.* (prefix with escapes + .* suffix)
-  Prefix,          // e.g. hello.* (literal prefix + .* suffix)
   Complex,         // everything else - requires full automaton
 };
 
 // Regexp syntax dialect.  Controls how the pattern is parsed by RE2.
-// Only affects the Complex path - Literal/Prefix classification and
-// fast-path matching are syntax-agnostic (both dialects share the same
-// interpretation of literal characters and .*).
+// Only affects the Complex path - Literal classification and fast-path
+// matching are syntax-agnostic (both dialects share the same
+// interpretation of literal characters).
 enum class RegexpSyntax {
   // Perl-compatible dialect.  The default.  Supports the full RE2
   // feature set: \d \w \s, \b \B, (?:...), (?i:...), \Q...\E,
@@ -102,8 +100,6 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
 constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 
 RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
-
-bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
 

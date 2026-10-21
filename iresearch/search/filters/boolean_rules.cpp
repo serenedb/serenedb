@@ -833,7 +833,7 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   SDB_ASSERT(type == Type<ByRegexp>::id());
   const auto& options = irs::utils::downCast<ByRegexp>(child).options();
   return ExecuteRegexp(
-    buf, options.pattern, part(Kind::Term), part(Kind::Prefix),
+    buf, options.pattern, part(Kind::Term),
     part(options.syntax == RegexpSyntax::Perl ? Kind::Perl : Kind::PosixEre));
 }
 

@@ -187,16 +187,6 @@ TEST(by_regexp_test, type_of_prepared_query) {
   }
   counter.Reset();
   {
-    tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>("foo", "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{*OptimizedMove(MakeFilter("foo", "bar.*")),
-                              irs::SubReader::empty(), nullptr, counter};
-    auto& lhs_ref = *lhs.Query(0);
-    auto& rhs_ref = *rhs.Query(0);
-    ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
-  }
-  counter.Reset();
-  {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>("foo", ""),
                               irs::SubReader::empty(), nullptr, counter};
     tests::PreparedFilter rhs{*OptimizedMove(MakeFilter("foo", "")),
@@ -1587,12 +1577,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
-  // Literal and Prefix patterns take the ByTerm / ByPrefix fast paths
-  // in ComputeRegexpType, which operate on raw bytes and do not consult
-  // the RegexpSyntax at all.  The two modes must therefore produce
-  // identical results for such patterns.  This test guards against a
-  // future refactor that accidentally threads syntax into the fast
-  // path and breaks the invariant.
+  // Literal patterns take the ByTerm fast path in ComputeRegexpType,
+  // which operates on raw bytes and does not consult the RegexpSyntax
+  // at all.  The two modes must therefore produce identical results for
+  // such patterns.  This test guards against a future refactor that
+  // accidentally threads syntax into the fast path and breaks the
+  // invariant.
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1620,13 +1610,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
   {
     auto perl = run("term", "foobar", irs::RegexpSyntax::Perl);
     auto posix = run("term", "foobar", irs::RegexpSyntax::PosixEre);
-    ASSERT_EQ(perl, posix);
-    ASSERT_FALSE(perl.empty());
-  }
-  // Prefix pattern -> ByPrefix fast path
-  {
-    auto perl = run("term", "foo.*", irs::RegexpSyntax::Perl);
-    auto posix = run("term", "foo.*", irs::RegexpSyntax::PosixEre);
     ASSERT_EQ(perl, posix);
     ASSERT_FALSE(perl.empty());
   }

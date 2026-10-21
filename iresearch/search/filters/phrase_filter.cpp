@@ -762,9 +762,6 @@ bool ByPhraseOptions::LowerParts() {
         [](bytes_view term) -> PhrasePart {
           return ByTermOptions{bstring{term}};
         },
-        [](bytes_view prefix) -> PhrasePart {
-          return ByPrefixOptions{{bstring{prefix}}};
-        },
         [kind](bytes_view pattern) -> PhrasePart {
           return AutomatonOptions{pattern, kind};
         });

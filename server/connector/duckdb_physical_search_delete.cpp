@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
@@ -65,6 +66,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
   duckdb::vector<duckdb::idx_t> return_columns,
+  const duckdb::vector<duckdb::column_t>& returning_virtual_columns,
   duckdb::RowIdHandling row_id_handling)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
@@ -85,6 +87,28 @@ SereneDBSearchDelete::SereneDBSearchDelete(
         expressions[column]->Cast<duckdb::BoundReferenceExpression>().Index();
     }
   }
+  if (!_return_chunk) {
+    return;
+  }
+  const auto& output_types = GetTypes();
+  _returned_constants.reserve(output_types.size());
+  for (duckdb::idx_t i = 0; i < _return_columns.size(); ++i) {
+    _returned_constants.emplace_back(output_types[i]);
+  }
+  for (const auto column_id : returning_virtual_columns) {
+    auto from = duckdb::DConstants::INVALID_INDEX;
+    duckdb::Value constant{output_types[_return_columns.size()]};
+    if (column_id == kColumnIdentifierGeneratedPk) {
+      from = _pk_columns[0].input_col_idx;
+    } else if (column_id == kColumnIdentifierRowPosition) {
+      from = _pk_columns[1].input_col_idx;
+    } else if (column_id == kColumnIdentifierTableOid) {
+      constant = duckdb::Value::BIGINT(static_cast<int64_t>(table.oid));
+    }
+    _return_columns.emplace_back(from);
+    _returned_constants.emplace_back(std::move(constant));
+  }
+  SDB_ASSERT(_return_columns.size() == output_types.size());
 }
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
@@ -131,14 +155,12 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
     for (duckdb::idx_t i = 0; i < row.ColumnCount(); ++i) {
-      const auto from = i < _return_columns.size()
-                          ? _return_columns[i]
-                          : duckdb::DConstants::INVALID_INDEX;
-      if (from == duckdb::DConstants::INVALID_INDEX) {
-        row.data[i].Reference(duckdb::Value(row.data[i].GetType()),
-                              duckdb::count_t(num_rows));
-      } else {
+      if (const auto from = _return_columns[i];
+          from != duckdb::DConstants::INVALID_INDEX) {
         row.data[i].Reference(chunk.data[from]);
+      } else {
+        row.data[i].Reference(_returned_constants[i],
+                              duckdb::count_t(num_rows));
       }
     }
     row.SetCardinality(num_rows);

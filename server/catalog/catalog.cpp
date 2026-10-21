@@ -240,7 +240,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
-    op.return_chunk, std::move(op.return_columns), op.row_id_handling);
+    op.return_chunk, std::move(op.return_columns), op.returning_virtual_columns,
+    op.row_id_handling);
   del.children.emplace_back(plan);
   return del;
 }

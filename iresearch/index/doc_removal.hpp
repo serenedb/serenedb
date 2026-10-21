@@ -84,16 +84,16 @@ class DocRemovalResolver {
   std::span<const doc_id_t> PositionalDocs(const DocRemoval& removal,
                                            const SubReader& segment) const;
 
-  bool Keyed(const DocRemoval& removal) const noexcept {
-    return _keyed.contains(&removal);
+  bool ByKey(const DocRemoval& removal) const noexcept {
+    return _by_key.contains(&removal);
   }
 
-  std::vector<DocRange> KeyedDocs(const SubReader& segment) const;
+  std::vector<DocRange> ByKeyDocs(const SubReader& segment) const;
 
  private:
   field_id _key_column = field_limits::invalid();
   std::vector<KeyRange> _ranges;
-  irs::containers::FlatHashSet<const DocRemoval*> _keyed;
+  irs::containers::FlatHashSet<const DocRemoval*> _by_key;
 };
 
 }  // namespace irs

@@ -58,6 +58,7 @@ void FillRowPositions(uint32_t segment, duckdb::idx_t count, DocOf&& doc_of,
   for (duckdb::idx_t i = 0; i < count; ++i) {
     positions[i] = MakeRowPosition(segment, doc_of(i));
   }
+  duckdb::FlatVector::SetSize(out, count);
 }
 
 }  // namespace sdb::connector

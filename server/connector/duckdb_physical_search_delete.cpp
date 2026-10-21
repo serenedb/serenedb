@@ -24,6 +24,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -77,6 +78,7 @@ SereneDBSearchDelete::SereneDBSearchDelete(
     const auto& ref = expressions[i]->Cast<duckdb::BoundReferenceExpression>();
     _pk_columns.emplace_back(ref.Index(), ref.GetReturnType());
   }
+  SDB_ASSERT(_pk_columns.size() == 2);
   for (auto& column : _return_columns) {
     if (column != duckdb::DConstants::INVALID_INDEX) {
       column =
@@ -120,11 +122,10 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   // Buffered, not removed here. The removal reaches iresearch when the write
   // buffer is replayed, after exactly the rows that precede it, which is what
   // reproduces the ordering these statements would have had.
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> positions;
-  CollectRemovedRows(chunk, gstate.pk_columns, rows, positions);
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows,
-                                               positions);
+  const auto& columns = gstate.pk_columns;
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(
+    gstate.search_table, chunk.data[columns[0].input_col_idx],
+    chunk.data[columns[1].input_col_idx]);
 
   if (gstate.returned) {
     duckdb::DataChunk row;

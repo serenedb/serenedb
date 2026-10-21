@@ -345,11 +345,6 @@ std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
 std::shared_ptr<const irs::DocRemoval> MakeRowRangeRemoval(
   std::vector<irs::KeyRange> ranges);
 
-void CollectRemovedRows(const duckdb::DataChunk& chunk,
-                        std::span<const primary_key::PKColumn> columns,
-                        std::vector<int64_t>& rows,
-                        std::vector<uint64_t>& positions);
-
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:

@@ -258,23 +258,23 @@ void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
   absl::c_sort(numbers);
 
   for (const auto* removal : removals) {
-    bool keyed = !removal->ranges.empty();
+    bool by_key = !removal->ranges.empty();
     for (size_t group = 0; group < removal->segments.size(); ++group) {
       if (!absl::c_binary_search(numbers, removal->segments[group])) {
         AppendKeyRanges(_ranges, removal->Keys(group));
-        keyed = true;
+        by_key = true;
       }
     }
-    if (!keyed) {
+    if (!by_key) {
       continue;
     }
-    SDB_ENSURE(_keyed.empty() || removal->key_column == _key_column,
+    SDB_ENSURE(_by_key.empty() || removal->key_column == _key_column,
                "removals of one commit resolve keys in columns ", _key_column,
                " and ", removal->key_column);
     _key_column = removal->key_column;
     _ranges.insert(_ranges.end(), removal->ranges.begin(),
                    removal->ranges.end());
-    _keyed.insert(removal);
+    _by_key.insert(removal);
   }
   NormalizeKeyRanges(_ranges);
 }
@@ -292,7 +292,7 @@ std::span<const doc_id_t> DocRemovalResolver::PositionalDocs(
   return removal.Docs(group);
 }
 
-std::vector<DocRange> DocRemovalResolver::KeyedDocs(
+std::vector<DocRange> DocRemovalResolver::ByKeyDocs(
   const SubReader& segment) const {
   return CollectKeyRangeDocs(segment, _key_column, _ranges);
 }

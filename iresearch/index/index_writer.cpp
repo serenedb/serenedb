@@ -96,29 +96,47 @@ struct FlushedSegmentContext {
 
   void Remove(const IndexWriter::QueryContext& query);
 
-  void RemoveKeyed(uint64_t tick, const DocRemovalResolver& removals);
+  void RemoveByKey(uint64_t tick, const DocRemovalResolver& removals);
 };
 
-bool Keyed(const IndexWriter::QueryContext& query,
+bool ByKey(const IndexWriter::QueryContext& query,
            const DocRemovalResolver& removals) noexcept {
-  return query.removal && removals.Keyed(*query.removal);
+  return query.removal && removals.ByKey(*query.removal);
 }
+
+class NewRemovals {
+ public:
+  NewRemovals(DocumentMaskBuilder& removed, const SubReader& reader)
+    : _removed{removed}, _masked{reader.MaskedDocs()} {}
+
+  void Add(doc_id_t doc) {
+    if (!_masked.Contains(doc)) {
+      _modified |= _removed.Add(doc);
+    }
+  }
+
+  bool Modified() const noexcept { return _modified; }
+
+ private:
+  DocumentMaskBuilder& _removed;
+  DocumentMask::Iterator _masked;
+  bool _modified = false;
+};
 
 bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
                        const IndexWriter::QueryContext& query,
                        const SubReader& reader,
                        const DocRemovalResolver& removals) {
-  auto it_mask = reader.MaskedDocs();
-  bool modified = false;
+  NewRemovals removed{deleted_docs, reader};
 
   if (query.removal) {
     const auto end = doc_limits::min() + reader.docs_count();
     for (const auto doc : removals.PositionalDocs(*query.removal, reader)) {
-      if (doc < end && !it_mask.Contains(doc)) {
-        modified |= deleted_docs.Add(doc);
+      if (doc < end) {
+        removed.Add(doc);
       }
     }
-    return modified;
+    return removed.Modified();
   }
 
   // A deletion never scores, so nothing under it collects statistics. The
@@ -139,29 +157,22 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
 
   for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
        doc_id = plan->Next()) {
-    // if the indexed doc_id was already masked then it should be skipped
-    if (it_mask.Contains(doc_id)) {
-      continue;
-    }
-    modified |= deleted_docs.Add(doc_id);
+    removed.Add(doc_id);
   }
 
-  return modified;
+  return removed.Modified();
 }
 
-bool RemoveKeyedFromSegment(DocumentMaskBuilder& deleted_docs,
+bool RemoveByKeyFromSegment(DocumentMaskBuilder& deleted_docs,
                             const SubReader& reader,
                             const DocRemovalResolver& removals) {
-  auto it_mask = reader.MaskedDocs();
-  bool modified = false;
-  for (const auto range : removals.KeyedDocs(reader)) {
+  NewRemovals removed{deleted_docs, reader};
+  for (const auto range : removals.ByKeyDocs(reader)) {
     for (auto doc = range.begin; doc != range.end; ++doc) {
-      if (!it_mask.Contains(doc)) {
-        modified |= deleted_docs.Add(doc);
-      }
+      removed.Add(doc);
     }
   }
-  return modified;
+  return removed.Modified();
 }
 
 bool RemapRemoval(DocumentMaskBuilder& docs_mask, const DocRemoval& removal,
@@ -212,14 +223,14 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
   }
 }
 
-void FlushedSegmentContext::RemoveKeyed(uint64_t tick,
+void FlushedSegmentContext::RemoveByKey(uint64_t tick,
                                         const DocRemovalResolver& removals) {
   const auto bound = flushed.docs.UpperBound(tick);
   if (bound == 0) {
     return;
   }
   const auto limit = static_cast<doc_id_t>(bound + doc_limits::min());
-  for (const auto range : removals.KeyedDocs(*reader)) {
+  for (const auto range : removals.ByKeyDocs(*reader)) {
     if (range.begin < limit) {
       flushed.docs_mask.AddRange(range.begin, std::min(range.end, limit));
     }
@@ -533,14 +544,14 @@ PublishResult UpdateExisting(
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
-    bool keyed = false;
+    bool by_key = false;
     for (const auto* query : queries) {
       // FIXME(gnusi): optimize PK queries
       RemoveFromSegment(deleted_docs, *query, existing_segment, removals);
-      keyed |= Keyed(*query, removals);
+      by_key |= ByKey(*query, removals);
     }
-    if (keyed) {
-      RemoveKeyedFromSegment(deleted_docs, existing_segment, removals);
+    if (by_key) {
+      RemoveByKeyFromSegment(deleted_docs, existing_segment, removals);
     }
 
     // Write docs_mask if masks added
@@ -648,14 +659,14 @@ AddIncomingResult AddIncoming(
       // merged segment. Pending already adopted/compacted segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
-      bool keyed = false;
+      bool by_key = false;
       for (const auto* query : queries) {
         // skip queries which not affect this
         if (incoming.tick <= query->tick) {
           // FIXME(gnusi): optimize PK queries
           docs_mask_modified |=
             RemoveFromSegment(docs_mask, *query, *reader, removals);
-          keyed |= Keyed(*query, removals);
+          by_key |= ByKey(*query, removals);
           if (query->removal && incoming.compaction_ctx.remap) {
             docs_mask_modified |= RemapRemoval(
               docs_mask, *query->removal, incoming.compaction_ctx.candidates,
@@ -666,11 +677,11 @@ AddIncomingResult AddIncoming(
       if (incoming.removal) {
         docs_mask_modified |=
           RemoveFromSegment(docs_mask, incoming.removal, *reader, removals);
-        keyed |= Keyed(incoming.removal, removals);
+        by_key |= ByKey(incoming.removal, removals);
       }
-      if (keyed) {
+      if (by_key) {
         docs_mask_modified |=
-          RemoveKeyedFromSegment(docs_mask, *reader, removals);
+          RemoveByKeyFromSegment(docs_mask, *reader, removals);
       }
     }
 
@@ -756,21 +767,21 @@ std::vector<FlushedSegmentContext> OpenFlushed(
 
       // mask documents matching filters from all flushed segment_contexts
       // (i.e. from new operations)
-      std::optional<uint64_t> keyed_tick;
+      std::optional<uint64_t> by_key_tick;
       for (const auto* query : queries) {
         // skip queries which not affect this FlushedSegment
         if (flushed_first_tick <= query->tick) {
           if (!query->removal) {
             // FIXME(gnusi): optimize PK queries
             segment_ctx.Remove(*query);
-          } else if (removals.Keyed(*query->removal)) {
-            keyed_tick =
-              std::max(keyed_tick.value_or(query->tick), query->tick);
+          } else if (removals.ByKey(*query->removal)) {
+            by_key_tick =
+              std::max(by_key_tick.value_or(query->tick), query->tick);
           }
         }
       }
-      if (keyed_tick) {
-        segment_ctx.RemoveKeyed(*keyed_tick, removals);
+      if (by_key_tick) {
+        segment_ctx.RemoveByKey(*by_key_tick, removals);
       }
     }
   }

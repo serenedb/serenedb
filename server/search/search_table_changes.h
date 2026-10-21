@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/wal_entry.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -124,12 +125,13 @@ struct LocalTableChangesEntry {
     pk_segments.push_back({pk_base, chunk.size()});
   }
 
-  void AppendDeletes(std::span<const int64_t> rows,
-                     std::span<const uint64_t> positions) {
-    SDB_ENSURE(positions.size() == rows.size(),
-               "search table: ", positions.size(), " row positions for ",
-               rows.size(), " deleted rows");
-    if (rows.empty()) {
+  void AppendDeletes(const duckdb::Vector& rowids,
+                     const duckdb::Vector& positions) {
+    auto rows = rowids.Values<int64_t>();
+    const auto places = positions.Values<uint64_t>();
+    SDB_ENSURE(places.size() == rows.size(), "search table: ", places.size(),
+               " row positions for ", rows.size(), " deleted rows");
+    if (rows.size() == 0) {
       return;
     }
     const auto band = static_cast<uint32_t>(pk_segments.size());
@@ -138,8 +140,11 @@ struct LocalTableChangesEntry {
       ops.emplace_back().band_watermark = band;
     }
     auto& deletes = ops.back().deletes;
-    for (size_t i = 0; i < rows.size(); ++i) {
-      AppendRowRun(deletes, rows[i], positions[i]);
+    for (const auto& row : rows) {
+      const auto place = places[row.GetIndex()];
+      AppendRowRun(
+        deletes, row.GetValue(),
+        place.IsValid() ? place.GetValue() : connector::kNoRowPosition);
     }
   }
 

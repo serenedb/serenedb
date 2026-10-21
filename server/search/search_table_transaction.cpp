@@ -285,10 +285,10 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows,
-  std::span<const uint64_t> positions) {
+  const std::shared_ptr<SearchTable>& shard, const duckdb::Vector& rowids,
+  const duckdb::Vector& positions) {
   EnsureShardWrites(shard);
-  _changes[shard->GetTableId()].AppendDeletes(rows, positions);
+  _changes[shard->GetTableId()].AppendDeletes(rowids, positions);
 }
 
 void SearchTableTransaction::AddSearchTruncate(

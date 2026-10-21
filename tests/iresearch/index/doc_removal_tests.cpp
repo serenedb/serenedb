@@ -363,14 +363,14 @@ TEST(DocRemovalResolverTest, RemovalsOfLiveSegmentsArePositionalOnly) {
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   const std::array<const irs::SubReader*, 2> live{&three, &five};
   resolver.Prepare(removals, live);
-  EXPECT_FALSE(resolver.Keyed(removal));
+  EXPECT_FALSE(resolver.ByKey(removal));
   EXPECT_EQ((std::vector<irs::doc_id_t>{2, 1}),
             ToVector(resolver.PositionalDocs(removal, three)));
   EXPECT_EQ((std::vector<irs::doc_id_t>{7}),
             ToVector(resolver.PositionalDocs(removal, five)));
 }
 
-TEST(DocRemovalResolverTest, GroupsOfSegmentsGoneFromTheSnapshotAreKeyed) {
+TEST(DocRemovalResolverTest, GroupsOfSegmentsGoneFromTheSnapshotGoByKey) {
   const FakeSegment three{"_3", 10};
   const std::vector<irs::DocRemoval::Row> rows{{3, 2, 20}, {9, 7, 70}};
   const auto removal = irs::DocRemoval::Build(1, rows);
@@ -378,32 +378,32 @@ TEST(DocRemovalResolverTest, GroupsOfSegmentsGoneFromTheSnapshotAreKeyed) {
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   const std::array<const irs::SubReader*, 1> live{&three};
   resolver.Prepare(removals, live);
-  EXPECT_TRUE(resolver.Keyed(removal));
+  EXPECT_TRUE(resolver.ByKey(removal));
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
             ToVector(resolver.PositionalDocs(removal, three)));
-  EXPECT_TRUE(resolver.KeyedDocs(three).empty());
+  EXPECT_TRUE(resolver.ByKeyDocs(three).empty());
 }
 
-TEST(DocRemovalResolverTest, RangesMakeARemovalKeyed) {
+TEST(DocRemovalResolverTest, RangesMakeARemovalByKey) {
   const auto removal = irs::DocRemoval::Build(1, {}, {{1, 5}});
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   resolver.Prepare(removals, {});
-  EXPECT_TRUE(resolver.Keyed(removal));
+  EXPECT_TRUE(resolver.ByKey(removal));
 }
 
-TEST(DocRemovalResolverTest, EmptyRemovalIsNeitherPositionalNorKeyed) {
+TEST(DocRemovalResolverTest, EmptyRemovalIsNeitherPositionalNorByKey) {
   const FakeSegment three{"_3", 10};
   const auto removal = irs::DocRemoval::Build(1, {});
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   const std::array<const irs::SubReader*, 1> live{&three};
   resolver.Prepare(removals, live);
-  EXPECT_FALSE(resolver.Keyed(removal));
+  EXPECT_FALSE(resolver.ByKey(removal));
   EXPECT_TRUE(resolver.PositionalDocs(removal, three).empty());
 }
 
-TEST(DocRemovalResolverTest, KeyedRemovalsOfDifferentKeyColumnsFail) {
+TEST(DocRemovalResolverTest, ByKeyRemovalsOfDifferentKeyColumnsFail) {
   const auto first = irs::DocRemoval::Build(1, {}, {{1, 2}});
   const auto second = irs::DocRemoval::Build(2, {}, {{3, 4}});
   irs::DocRemovalResolver resolver;
@@ -417,24 +417,25 @@ TEST(DocRemovalResolverTest, PositionalRemovalsMayUseDifferentKeyColumns) {
   const std::vector<irs::DocRemoval::Row> rows{{3, 2, 20}};
   const auto first = irs::DocRemoval::Build(1, rows);
   const auto second = irs::DocRemoval::Build(2, rows);
-  const auto keyed = irs::DocRemoval::Build(3, {}, {{1, 2}});
+  const auto by_key = irs::DocRemoval::Build(3, {}, {{1, 2}});
   irs::DocRemovalResolver resolver;
-  const std::array<const irs::DocRemoval*, 3> removals{&first, &second, &keyed};
+  const std::array<const irs::DocRemoval*, 3> removals{&first, &second,
+                                                       &by_key};
   const std::array<const irs::SubReader*, 1> live{&three};
   EXPECT_NO_THROW(resolver.Prepare(removals, live));
-  EXPECT_FALSE(resolver.Keyed(first));
-  EXPECT_FALSE(resolver.Keyed(second));
-  EXPECT_TRUE(resolver.Keyed(keyed));
+  EXPECT_FALSE(resolver.ByKey(first));
+  EXPECT_FALSE(resolver.ByKey(second));
+  EXPECT_TRUE(resolver.ByKey(by_key));
 }
 
-TEST(DocRemovalResolverTest, RemovalLeftOutOfPrepareIsNotKeyed) {
+TEST(DocRemovalResolverTest, RemovalLeftOutOfPrepareIsNotByKey) {
   const auto prepared = irs::DocRemoval::Build(1, {}, {{1, 2}});
   const auto other = irs::DocRemoval::Build(1, {}, {{1, 2}});
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&prepared};
   resolver.Prepare(removals, {});
-  EXPECT_TRUE(resolver.Keyed(prepared));
-  EXPECT_FALSE(resolver.Keyed(other));
+  EXPECT_TRUE(resolver.ByKey(prepared));
+  EXPECT_FALSE(resolver.ByKey(other));
 }
 
 TEST(DocRemovalResolverTest, SegmentsNamedLikeTheSentinelAreNeverPositional) {
@@ -447,7 +448,7 @@ TEST(DocRemovalResolverTest, SegmentsNamedLikeTheSentinelAreNeverPositional) {
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   const std::array<const irs::SubReader*, 2> live{&sentinel, &bogus};
   resolver.Prepare(removals, live);
-  EXPECT_TRUE(resolver.Keyed(removal));
+  EXPECT_TRUE(resolver.ByKey(removal));
   EXPECT_TRUE(resolver.PositionalDocs(removal, sentinel).empty());
   EXPECT_TRUE(resolver.PositionalDocs(removal, bogus).empty());
 }
@@ -465,11 +466,11 @@ TEST(DocRemovalResolverTest, PositionalDocsAreTheGroupAsBuilt) {
             ToVector(resolver.PositionalDocs(removal, three)));
 }
 
-TEST(DocRemovalResolverTest, KeyedDocsOfASegmentWithoutColumnsAreEmpty) {
+TEST(DocRemovalResolverTest, ByKeyDocsOfASegmentWithoutColumnsAreEmpty) {
   const FakeSegment three{"_3", 10};
   const auto removal = irs::DocRemoval::Build(1, {}, {{0, 100}});
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
   resolver.Prepare(removals, {});
-  EXPECT_TRUE(resolver.KeyedDocs(three).empty());
+  EXPECT_TRUE(resolver.ByKeyDocs(three).empty());
 }

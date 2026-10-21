@@ -26,7 +26,6 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
-#include <duckdb/common/vector/vector_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -1162,23 +1161,6 @@ std::shared_ptr<const irs::DocRemoval> MakeRowRangeRemoval(
   }
   return std::make_shared<const irs::DocRemoval>(
     irs::DocRemoval::Build(kGeneratedPKId, {}, std::move(ranges)));
-}
-
-void CollectRemovedRows(const duckdb::DataChunk& chunk,
-                        std::span<const primary_key::PKColumn> columns,
-                        std::vector<int64_t>& rows,
-                        std::vector<uint64_t>& positions) {
-  SDB_ENSURE(columns.size() == 2, "search table: removed rows need the rowid ",
-             "and row position columns, got ", columns.size());
-  auto rowids = chunk.data[columns[0].input_col_idx].Values<int64_t>();
-  const auto places = chunk.data[columns[1].input_col_idx].Values<uint64_t>();
-  rows.reserve(rows.size() + rowids.size());
-  positions.reserve(positions.size() + rowids.size());
-  for (const auto& rowid : rowids) {
-    rows.emplace_back(rowid.GetValue());
-    const auto place = places[rowid.GetIndex()];
-    positions.emplace_back(place.IsValid() ? place.GetValue() : kNoRowPosition);
-  }
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

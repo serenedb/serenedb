@@ -123,7 +123,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   const auto row_ids = _table.GetRowIdColumns().size();
   const auto& input_types = children[0].get().GetTypes();
   const auto width = input_types.size();
-  SDB_ASSERT(row_ids <= width);
+  SDB_ASSERT(row_ids == 2 && row_ids <= width);
   state->old_pk_columns.reserve(row_ids);
   for (auto i = width - row_ids; i < width; ++i) {
     state->old_pk_columns.emplace_back(i, input_types[i]);
@@ -158,11 +158,10 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // buffer is replayed, ordered against exactly the rows that precede it. The
   // new row is buffered straight after, so it still outranks the removal of the
   // version it replaces.
-  std::vector<int64_t> old_rows;
-  std::vector<uint64_t> old_positions;
-  CollectRemovedRows(chunk, gstate.old_pk_columns, old_rows, old_positions);
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows,
-                                               old_positions);
+  const auto& old_columns = gstate.old_pk_columns;
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(
+    gstate.search_table, chunk.data[old_columns[0].input_col_idx],
+    chunk.data[old_columns[1].input_col_idx]);
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);

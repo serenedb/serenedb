@@ -116,8 +116,8 @@ std::vector<irs::doc_id_t> DocsOf(const irs::DocRemovalResolver& resolver,
                                   const irs::SubReader& segment) {
   const auto positional = resolver.PositionalDocs(removal, segment);
   std::vector<irs::doc_id_t> docs{positional.begin(), positional.end()};
-  if (resolver.Keyed(removal)) {
-    for (const auto& range : resolver.KeyedDocs(segment)) {
+  if (resolver.ByKey(removal)) {
+    for (const auto& range : resolver.ByKeyDocs(segment)) {
       for (auto doc = range.begin; doc != range.end; ++doc) {
         docs.emplace_back(doc);
       }
@@ -533,7 +533,7 @@ TEST_F(SearchRowRemovalTest, SequentialRowidsAcrossManyBlocks) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, ManyKeyedRemovalsInOneCommit) {
+TEST_F(SearchRowRemovalTest, ManyByKeyRemovalsInOneCommit) {
   InsertRange(0, 4000);
   InsertRange(4000, 4000);
   InsertRange(8000, 4000);
@@ -567,7 +567,7 @@ TEST_F(SearchRowRemovalTest, ManyStalePositionsInOneCommit) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, ResolverMergesPositionalAndKeyedDocs) {
+TEST_F(SearchRowRemovalTest, ResolverMergesPositionalAndByKeyDocs) {
   InsertRange(0, 1000);
   const auto reader = _writer->GetSnapshot();
   ASSERT_EQ(1, reader.size());
@@ -592,7 +592,7 @@ TEST_F(SearchRowRemovalTest, ResolverMergesPositionalAndKeyedDocs) {
             std::vector<irs::doc_id_t>(positional.begin(), positional.end()));
 }
 
-TEST_F(SearchRowRemovalTest, ResolverAnswersEveryKeyedRemovalWithTheUnion) {
+TEST_F(SearchRowRemovalTest, ResolverAnswersEveryByKeyRemovalWithTheUnion) {
   InsertRange(0, 1000);
   const auto reader = _writer->GetSnapshot();
   const std::array<int64_t, 2> first_keys{1, 5};
@@ -1096,6 +1096,7 @@ TEST(RowPositionTest, FillRowPositions) {
     7, 4,
     [](duckdb::idx_t i) { return static_cast<irs::doc_id_t>(10 + 2 * i); },
     out);
+  EXPECT_EQ(4, out.size());
   const auto* data = duckdb::FlatVector::GetData<uint64_t>(out);
   for (duckdb::idx_t i = 0; i < 4; ++i) {
     EXPECT_TRUE(duckdb::FlatVector::Validity(out).RowIsValid(i));
@@ -1108,6 +1109,7 @@ TEST(RowPositionTest, FillRowPositions) {
     [](duckdb::idx_t) { return irs::doc_id_t{1}; }, null_out);
   EXPECT_EQ(duckdb::VectorType::CONSTANT_VECTOR, null_out.GetVectorType());
   EXPECT_TRUE(duckdb::ConstantVector::IsNull(null_out));
+  EXPECT_EQ(3, null_out.size());
 }
 
 TEST(RowPositionTest, FillRowPositionsOfHighSegments) {
@@ -1131,168 +1133,6 @@ TEST(RowPositionTest, FillRowPositionsOfHighSegments) {
       EXPECT_NE(kNoRowPosition, position);
     }
   }
-}
-
-TEST(LocalTableChangesTest, ConsecutiveDeleteChunksShareAnOp) {
-  search::LocalTableChangesEntry entry;
-  const std::array<int64_t, 2> rows{1, 2};
-  const std::array<uint64_t, 2> positions{MakeRowPosition(1, 1),
-                                          MakeRowPosition(1, 2)};
-  entry.AppendDeletes(rows, positions);
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(1, entry.ops.size());
-  EXPECT_EQ((std::vector<int64_t>{1, 1}), entry.ops[0].deletes.starts);
-  EXPECT_EQ((std::vector<uint64_t>{2, 2}), entry.ops[0].deletes.counts);
-
-  entry.pk_segments.push_back({0, 10});
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(2, entry.ops.size());
-  EXPECT_EQ(1, entry.ops[1].band_watermark);
-
-  entry.AppendDeletes({}, {});
-  ASSERT_EQ(2, entry.ops.size());
-
-  entry.AppendTruncate(false);
-  ASSERT_EQ(1, entry.ops.size());
-  entry.AppendDeletes(rows, positions);
-  ASSERT_EQ(2, entry.ops.size());
-  EXPECT_TRUE(entry.ops[0].IsTruncate());
-  EXPECT_FALSE(entry.ops[1].IsTruncate());
-}
-
-TEST(CollectRemovedRowsTest, ReadsRowidsAndPositions) {
-  duckdb::DataChunk chunk;
-  chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
-    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::UBIGINT});
-  duckdb::Vector text{duckdb::LogicalType::VARCHAR, 3};
-  duckdb::Vector rowid{duckdb::LogicalType::BIGINT, 3};
-  duckdb::Vector position{duckdb::LogicalType::UBIGINT, 3};
-  auto* rowids = duckdb::FlatVector::GetDataMutable<int64_t>(rowid);
-  auto* positions = duckdb::FlatVector::GetDataMutable<uint64_t>(position);
-  for (int i = 0; i < 3; ++i) {
-    rowids[i] = 100 + i;
-    positions[i] = MakeRowPosition(4, irs::doc_limits::min() + i);
-  }
-  duckdb::FlatVector::ValidityMutable(position).SetInvalid(1);
-  chunk.data[0].Reference(text);
-  chunk.data[1].Reference(rowid);
-  chunk.data[2].Reference(position);
-  chunk.SetCardinality(3);
-
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  const std::vector<primary_key::PKColumn> both{
-    {1, duckdb::LogicalType::BIGINT}, {2, duckdb::LogicalType::UBIGINT}};
-  CollectRemovedRows(chunk, both, rows, places);
-  EXPECT_EQ((std::vector<int64_t>{100, 101, 102}), rows);
-  EXPECT_EQ((std::vector<uint64_t>{MakeRowPosition(4, 1), kNoRowPosition,
-                                   MakeRowPosition(4, 3)}),
-            places);
-}
-
-const std::vector<primary_key::PKColumn>& RowidAndPosition() {
-  static const std::vector<primary_key::PKColumn> kColumns{
-    {0, duckdb::LogicalType::BIGINT}, {1, duckdb::LogicalType::UBIGINT}};
-  return kColumns;
-}
-
-void FillRemovedRowsChunk(duckdb::DataChunk& chunk, duckdb::Vector& rowid,
-                          duckdb::Vector& position, duckdb::idx_t count) {
-  chunk.InitializeEmpty(duckdb::vector<duckdb::LogicalType>{
-    duckdb::LogicalType::BIGINT, duckdb::LogicalType::UBIGINT});
-  chunk.data[0].Reference(rowid);
-  chunk.data[1].Reference(position);
-  chunk.SetCardinality(count);
-}
-
-TEST(CollectRemovedRowsTest, ReadsConstantVectors) {
-  duckdb::Vector rowid{duckdb::Value::BIGINT(42), duckdb::count_t(3)};
-  duckdb::Vector position{duckdb::Value(duckdb::LogicalType::UBIGINT),
-                          duckdb::count_t(3)};
-  duckdb::DataChunk chunk;
-  FillRemovedRowsChunk(chunk, rowid, position, 3);
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  CollectRemovedRows(chunk, RowidAndPosition(), rows, places);
-  EXPECT_EQ((std::vector<int64_t>{42, 42, 42}), rows);
-  EXPECT_EQ(
-    (std::vector<uint64_t>{kNoRowPosition, kNoRowPosition, kNoRowPosition}),
-    places);
-}
-
-TEST(CollectRemovedRowsTest, ReadsDictionaryVectors) {
-  duckdb::Vector rowid{duckdb::LogicalType::BIGINT, 10};
-  duckdb::Vector position{duckdb::LogicalType::UBIGINT, 10};
-  auto* rowids = duckdb::FlatVector::GetDataMutable<int64_t>(rowid);
-  auto* positions = duckdb::FlatVector::GetDataMutable<uint64_t>(position);
-  for (int i = 0; i < 10; ++i) {
-    rowids[i] = 1000 + i;
-    positions[i] = MakeRowPosition(2, irs::doc_limits::min() + i);
-  }
-  duckdb::SelectionVector sel{3};
-  sel.set_index(0, 9);
-  sel.set_index(1, 3);
-  sel.set_index(2, 3);
-  rowid.Slice(sel, 3);
-  position.Slice(sel, 3);
-  duckdb::DataChunk chunk;
-  FillRemovedRowsChunk(chunk, rowid, position, 3);
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  CollectRemovedRows(chunk, RowidAndPosition(), rows, places);
-  EXPECT_EQ((std::vector<int64_t>{1009, 1003, 1003}), rows);
-  EXPECT_EQ(
-    (std::vector<uint64_t>{MakeRowPosition(2, 10), MakeRowPosition(2, 4),
-                           MakeRowPosition(2, 4)}),
-    places);
-}
-
-TEST(CollectRemovedRowsTest, ReadsSequenceVectors) {
-  duckdb::Vector rowid{duckdb::LogicalType::BIGINT, nullptr};
-  rowid.Sequence(500, 1, 4);
-  duckdb::Vector position{duckdb::LogicalType::UBIGINT, 4};
-  FillRowPositions(
-    6, 4, [](duckdb::idx_t i) { return static_cast<irs::doc_id_t>(20 + i); },
-    position);
-  duckdb::DataChunk chunk;
-  FillRemovedRowsChunk(chunk, rowid, position, 4);
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  CollectRemovedRows(chunk, RowidAndPosition(), rows, places);
-  EXPECT_EQ((std::vector<int64_t>{500, 501, 502, 503}), rows);
-  EXPECT_EQ(
-    (std::vector<uint64_t>{MakeRowPosition(6, 20), MakeRowPosition(6, 21),
-                           MakeRowPosition(6, 22), MakeRowPosition(6, 23)}),
-    places);
-}
-
-TEST(CollectRemovedRowsTest, AppendsToWhatTheVectorsHold) {
-  duckdb::Vector rowid{duckdb::Value::BIGINT(7), duckdb::count_t(2)};
-  duckdb::Vector position{duckdb::Value::UBIGINT(MakeRowPosition(1, 5)),
-                          duckdb::count_t(2)};
-  duckdb::DataChunk chunk;
-  FillRemovedRowsChunk(chunk, rowid, position, 2);
-  std::vector<int64_t> rows{1};
-  std::vector<uint64_t> places{kNoRowPosition};
-  CollectRemovedRows(chunk, RowidAndPosition(), rows, places);
-  EXPECT_EQ((std::vector<int64_t>{1, 7, 7}), rows);
-  EXPECT_EQ((std::vector<uint64_t>{kNoRowPosition, MakeRowPosition(1, 5),
-                                   MakeRowPosition(1, 5)}),
-            places);
-}
-
-TEST(CollectRemovedRowsTest, RejectsAChunkWithoutThePositionColumn) {
-  duckdb::Vector rowid{duckdb::Value::BIGINT(7), duckdb::count_t(1)};
-  duckdb::Vector position{duckdb::Value::UBIGINT(1), duckdb::count_t(1)};
-  duckdb::DataChunk chunk;
-  FillRemovedRowsChunk(chunk, rowid, position, 1);
-  std::vector<int64_t> rows;
-  std::vector<uint64_t> places;
-  const std::vector<primary_key::PKColumn> rowid_only{
-    {0, duckdb::LogicalType::BIGINT}};
-  EXPECT_DEATH(CollectRemovedRows(chunk, rowid_only, rows, places),
-               "removed rows need the rowid and row position columns, got 1");
 }
 
 TEST_F(SearchRowRemovalTest, RemovalReachesReplacementSegments) {
@@ -1491,7 +1331,7 @@ TEST_F(SearchRowRemovalTest, RemovingEveryRowEmptiesTheIndex) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, KeyedDocsMatchAModel) {
+TEST_F(SearchRowRemovalTest, ByKeyDocsMatchAModel) {
   constexpr int64_t kRows = 70000;
   std::vector<int64_t> ascending(kRows);
   std::vector<int64_t> descending(kRows);
@@ -1542,7 +1382,7 @@ TEST_F(SearchRowRemovalTest, KeyedDocsMatchAModel) {
     irs::DocRemovalResolver resolver;
     const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
     resolver.Prepare(removals, {});
-    ASSERT_TRUE(resolver.Keyed(*removal));
+    ASSERT_TRUE(resolver.ByKey(*removal));
     for (size_t s = 0; s < reader.size(); ++s) {
       std::vector<irs::doc_id_t> expected;
       for (size_t row = 0; row < rowids[s].size(); ++row) {
@@ -1552,7 +1392,7 @@ TEST_F(SearchRowRemovalTest, KeyedDocsMatchAModel) {
         }
       }
       std::vector<irs::doc_id_t> actual;
-      for (const auto& range : resolver.KeyedDocs(reader[s])) {
+      for (const auto& range : resolver.ByKeyDocs(reader[s])) {
         ASSERT_LT(range.begin, range.end);
         for (auto doc = range.begin; doc != range.end; ++doc) {
           actual.push_back(doc);

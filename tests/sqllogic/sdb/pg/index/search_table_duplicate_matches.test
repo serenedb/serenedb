@@ -130,6 +130,33 @@ SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'txn
 n	ids	txn
 3	3	3
 
+statement count 30
+DELETE FROM dm WHERE id IN (SELECT id + 1 FROM dm_src WHERE id BETWEEN 200 AND 290);
+
+statement count 30
+DELETE FROM dm_plain WHERE id IN (SELECT id + 1 FROM dm_src WHERE id BETWEEN 200 AND 290);
+
+statement count 31
+UPDATE dm SET v = 'sub' WHERE id IN (SELECT id + 2 FROM dm_src WHERE id BETWEEN 300 AND 390);
+
+statement count 31
+UPDATE dm_plain SET v = 'sub' WHERE id IN (SELECT id + 2 FROM dm_src WHERE id BETWEEN 300 AND 390);
+
+statement count 30
+DELETE FROM dm WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 1 AND dm_src.id BETWEEN 400 AND 490);
+
+statement count 30
+UPDATE dm SET v = 'exists' WHERE EXISTS (SELECT 1 FROM dm_src WHERE dm_src.id = dm.id - 2 AND dm_src.id BETWEEN 500 AND 590);
+
+statement ok
+VACUUM (REFRESH_TABLE) dm;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS ids, count(*) FILTER (WHERE v = 'sub') AS sub, count(*) FILTER (WHERE v = 'exists') AS exists_, count(*) FILTER (WHERE (id BETWEEN 202 AND 289 OR id BETWEEN 403 AND 490) AND id % 3 = 1) AS left_ FROM dm;
+----
+n	ids	sub	exists_	left_
+6590	6590	31	30	0
+
 statement ok
 DROP TABLE dm;
 

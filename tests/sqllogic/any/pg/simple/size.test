@@ -126,7 +126,142 @@ ok
 t
 
 
+# A sequence is a relation too
+
+statement ok
+CREATE SEQUENCE size_seq
+
+
+query
+SELECT pg_relation_size('size_seq') >= 0 AS rel,
+       pg_relation_size('size_seq'::regclass, 'main') >= 0 AS rel_main,
+       pg_table_size('size_seq') >= 0 AS tbl,
+       pg_total_relation_size('size_seq') >= 0 AS total,
+       pg_indexes_size('size_seq') AS idx;
+----
+rel	rel_main	tbl	total	idx
+t	t	t	t	0
+
+
+# pg_table_size takes any relation
+
+statement ok
+CREATE VIEW size_view AS SELECT * FROM size_test
+
+
+query
+SELECT pg_table_size('size_view') AS view_size, pg_total_relation_size('size_view') AS view_total;
+----
+view_size	view_total
+0	0
+
+
+query
+SELECT pg_relation_size('size_test_pkey') >= 0 AS rel,
+       pg_table_size('size_test_pkey') >= 0 AS tbl,
+       pg_total_relation_size('size_test_pkey') >= 0 AS total,
+       pg_indexes_size('size_test_pkey') AS idx;
+----
+rel	tbl	total	idx
+t	t	t	0
+
+
+query
+SELECT pg_relation_size('pg_class') >= 0 AS rel,
+       pg_table_size('pg_catalog.pg_class') >= 0 AS tbl,
+       pg_total_relation_size('pg_class'::regclass) >= 0 AS total,
+       pg_indexes_size('pg_class') >= 0 AS idx;
+----
+rel	tbl	total	idx
+t	t	t	t
+
+
+query
+SELECT pg_relation_size('information_schema.tables') AS rel,
+       pg_table_size('information_schema.tables') AS tbl,
+       pg_total_relation_size('information_schema.tables') AS total,
+       pg_indexes_size('information_schema.tables') AS idx;
+----
+rel	tbl	total	idx
+0	0	0	0
+
+
+statement ok
+CREATE TEMP TABLE size_temp (id INT)
+
+
+statement ok
+CREATE TEMP SEQUENCE size_temp_seq
+
+
+statement ok
+CREATE TEMP VIEW size_temp_view AS SELECT 1 AS x
+
+
+query
+SELECT pg_relation_size('size_temp') >= 0 AS rel,
+       pg_table_size('size_temp') >= 0 AS tbl,
+       pg_total_relation_size('size_temp') >= 0 AS total,
+       pg_indexes_size('size_temp') >= 0 AS idx,
+       pg_relation_size('size_temp_seq') >= 0 AS seq,
+       pg_table_size('size_temp_view') AS view_size;
+----
+rel	tbl	total	idx	seq	view_size
+t	t	t	t	t	0
+
+
+query
+SELECT pg_relation_size(2000000000) IS NULL AS rel,
+       pg_relation_size(2000000000, 'bogus') IS NULL AS rel_fork,
+       pg_table_size(2000000000) IS NULL AS tbl,
+       pg_total_relation_size(2000000000) IS NULL AS total,
+       pg_indexes_size(2000000000) IS NULL AS idx;
+----
+rel	rel_fork	tbl	total	idx
+t	t	t	t	t
+
+
+statement error
+SELECT pg_relation_size('size_test', 'bogus');
+----
+db error: ERROR: invalid fork name
+HINT: Valid fork names are "main", "fsm", "vm", and "init".
+
+
+statement error
+SELECT pg_relation_size('size_test', 'MAIN');
+----
+db error: ERROR: invalid fork name
+HINT: Valid fork names are "main", "fsm", "vm", and "init".
+
+
+statement error
+SELECT pg_database_size(2000000000::oid);
+----
+db error: ERROR: database with OID 2000000000 does not exist
+
+
+statement ok
+DROP VIEW size_temp_view
+
+
+statement ok
+DROP SEQUENCE size_temp_seq
+
+
+statement ok
+DROP TABLE size_temp
+
+
 # Cleanup
+
+statement ok
+DROP VIEW size_view
+
+
+statement ok
+DROP SEQUENCE size_seq
+
 
 statement ok
 DROP TABLE size_test

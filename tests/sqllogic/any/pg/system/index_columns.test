@@ -1,0 +1,63 @@
+statement ok
+CREATE TABLE ic_t (id int PRIMARY KEY, v text, w int, UNIQUE (v, w));
+
+
+statement ok
+CREATE INDEX ic_vw ON ic_t (v, w);
+
+
+statement ok
+CREATE INDEX ic_expr ON ic_t ((v || w::text), (lower(v)), w);
+
+
+statement ok
+CREATE INDEX ic_dup ON ic_t ((lower(v)), (lower(v || 'x')));
+
+
+query
+SELECT c.relname, c.relnatts, i.indnatts, i.indnkeyatts, array_to_string(i.indkey, ' ') AS indkey
+FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+WHERE c.relname IN ('ic_vw', 'ic_expr', 'ic_dup', 'ic_t_pkey', 'ic_t_v_w_key')
+ORDER BY c.relname;
+----
+relname	relnatts	indnatts	indnkeyatts	indkey
+ic_dup	2	2	2	0 0
+ic_expr	3	3	3	0 0 3
+ic_t_pkey	1	1	1	1
+ic_t_v_w_key	2	2	2	2 3
+ic_vw	2	2	2	2 3
+
+
+query
+SELECT c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull, a.atthasdef
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('ic_vw', 'ic_expr', 'ic_dup', 'ic_t_pkey', 'ic_t_v_w_key') AND a.attnum > 0
+ORDER BY c.relname, a.attnum;
+----
+relname	attnum	attname	type	attnotnull	atthasdef
+ic_dup	1	lower	text	f	f
+ic_dup	2	lower1	text	f	f
+ic_expr	1	expr	text	f	f
+ic_expr	2	lower	text	f	f
+ic_expr	3	w	integer	f	f
+ic_t_pkey	1	id	integer	f	f
+ic_t_v_w_key	1	v	text	f	f
+ic_t_v_w_key	2	w	integer	f	f
+ic_vw	1	v	text	f	f
+ic_vw	2	w	integer	f	f
+
+
+query
+SELECT a.attname, CASE WHEN a.attnum <= i.indnkeyatts THEN 'yes' ELSE 'no' END AS is_key,
+       pg_get_indexdef(a.attrelid, a.attnum, true) AS definition
+FROM pg_attribute a JOIN pg_index i ON i.indexrelid = a.attrelid
+WHERE a.attrelid = 'ic_vw'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+----
+attname	is_key	definition
+v	yes	v
+w	yes	w
+
+
+statement ok
+DROP TABLE ic_t;

@@ -1,0 +1,137 @@
+statement ok
+DROP TABLE IF EXISTS sigpriv_pids;
+
+statement ok
+DROP ROLE IF EXISTS sigpriv_reader;
+
+statement ok
+DROP ROLE IF EXISTS sigpriv_target;
+
+statement ok
+DROP ROLE IF EXISTS sigpriv_member;
+
+statement ok
+DROP ROLE IF EXISTS sigpriv_noinherit;
+
+statement ok
+CREATE ROLE sigpriv_reader LOGIN PASSWORD 'sigpriv_reader_pw';
+
+statement ok
+CREATE ROLE sigpriv_target LOGIN PASSWORD 'sigpriv_target_pw';
+
+statement ok
+CREATE ROLE sigpriv_member LOGIN PASSWORD 'sigpriv_member_pw';
+
+statement ok
+CREATE ROLE sigpriv_noinherit LOGIN PASSWORD 'sigpriv_noinherit_pw';
+
+statement ok
+GRANT sigpriv_target TO sigpriv_member;
+
+statement ok
+GRANT sigpriv_target TO sigpriv_noinherit WITH INHERIT FALSE;
+
+statement ok
+CREATE TABLE sigpriv_pids (who TEXT, pid INT);
+
+statement ok
+GRANT SELECT, INSERT ON sigpriv_pids TO sigpriv_reader;
+
+statement ok
+GRANT SELECT, INSERT ON sigpriv_pids TO sigpriv_target;
+
+statement ok
+GRANT SELECT, INSERT ON sigpriv_pids TO sigpriv_member;
+
+statement ok
+GRANT SELECT, INSERT ON sigpriv_pids TO sigpriv_noinherit;
+
+statement ok
+INSERT INTO sigpriv_pids SELECT 'superuser', pg_backend_pid();
+
+connection c_sigpriv_target user=sigpriv_target password=sigpriv_target_pw
+statement ok
+INSERT INTO sigpriv_pids SELECT 'target', pg_backend_pid();
+
+connection c_sigpriv_reader user=sigpriv_reader password=sigpriv_reader_pw
+statement error
+SELECT pg_cancel_backend(pid) FROM sigpriv_pids WHERE who = 'superuser';
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with the SUPERUSER attribute may cancel queries of roles with the SUPERUSER attribute.
+
+
+connection c_sigpriv_reader user=sigpriv_reader password=sigpriv_reader_pw
+statement error
+SELECT pg_terminate_backend(pid) FROM sigpriv_pids WHERE who = 'superuser';
+----
+db error: ERROR: permission denied to terminate process
+DETAIL: Only roles with the SUPERUSER attribute may terminate processes of roles with the SUPERUSER attribute.
+
+
+connection c_sigpriv_reader user=sigpriv_reader password=sigpriv_reader_pw
+statement error
+SELECT pg_cancel_backend(pid) FROM sigpriv_pids WHERE who = 'target';
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with privileges of the role whose query is being canceled or with privileges of the "pg_signal_backend" role may cancel this query.
+
+
+connection c_sigpriv_reader user=sigpriv_reader password=sigpriv_reader_pw
+statement error
+SELECT pg_terminate_backend(pid) FROM sigpriv_pids WHERE who = 'target';
+----
+db error: ERROR: permission denied to terminate process
+DETAIL: Only roles with privileges of the role whose process is being terminated or with privileges of the "pg_signal_backend" role may terminate this process.
+
+
+connection c_sigpriv_reader user=sigpriv_reader password=sigpriv_reader_pw
+query
+SELECT pg_cancel_backend(2147483000) AS cancelled, pg_terminate_backend(NULL) AS terminated;
+----
+cancelled	terminated
+f	NULL
+
+connection c_sigpriv_noinherit user=sigpriv_noinherit password=sigpriv_noinherit_pw
+statement error
+SELECT pg_cancel_backend(pid) FROM sigpriv_pids WHERE who = 'target';
+----
+db error: ERROR: permission denied to cancel query
+DETAIL: Only roles with privileges of the role whose query is being canceled or with privileges of the "pg_signal_backend" role may cancel this query.
+
+
+connection c_sigpriv_member user=sigpriv_member password=sigpriv_member_pw
+query
+SELECT pg_cancel_backend(pid) AS cancelled FROM sigpriv_pids WHERE who = 'target';
+----
+cancelled
+t
+
+connection c_sigpriv_member user=sigpriv_member password=sigpriv_member_pw
+query
+SELECT pg_terminate_backend(pid) AS terminated FROM sigpriv_pids WHERE who = 'target';
+----
+terminated
+t
+
+query
+SELECT who FROM sigpriv_pids ORDER BY who;
+----
+who
+superuser
+target
+
+statement ok
+DROP TABLE sigpriv_pids;
+
+statement ok
+DROP ROLE sigpriv_member;
+
+statement ok
+DROP ROLE sigpriv_noinherit;
+
+statement ok
+DROP ROLE sigpriv_target;
+
+statement ok
+DROP ROLE sigpriv_reader;

@@ -31,6 +31,18 @@ statement ok
 CREATE SEQUENCE postgres.public.sfr_seq START 7;
 
 statement ok
+CREATE TABLE postgres.public.sfr_base(id INTEGER PRIMARY KEY, label TEXT, score INTEGER);
+
+statement ok
+INSERT INTO postgres.public.sfr_base VALUES (1, 'alpha', 30), (2, 'beta', 25), (3, 'gamma', 30);
+
+statement ok
+CREATE VIEW postgres.public.sfr_base_v AS SELECT * FROM postgres.public.sfr_base;
+
+statement ok
+CREATE INDEX sfr_base_v_inv ON postgres.public.sfr_base_v USING inverted(score);
+
+statement ok
 CHECKPOINT postgres;
 
 system ok
@@ -95,6 +107,35 @@ SELECT count(*) AS n FROM sfr_snap.public.sfr_even;
 ----
 n
 50
+
+query
+SELECT id, label, score FROM sfr_snap.public.sfr_base_v_inv ORDER BY score, id;
+----
+id	label	score
+2	beta	25
+1	alpha	30
+3	gamma	30
+
+query
+SELECT id, label FROM sfr_snap.public.sfr_base_v_inv WHERE score = 30 ORDER BY id;
+----
+id	label
+1	alpha
+3	gamma
+
+statement ok
+USE sfr_snap;
+
+query
+SELECT schema_name, entry_type, name FROM sdb_catalog_sets() WHERE name LIKE 'sfr_base%' ORDER BY name;
+----
+schema_name	entry_type	name
+public	Table	sfr_base
+public	View	sfr_base_v
+public	Index	sfr_base_v_inv
+
+statement ok
+USE ${__DATABASE__};
 
 
 statement ok
@@ -185,6 +226,14 @@ SELECT count(*) AS n FROM sfr_snap.public.sfr_notes;
 ----
 n
 40
+
+connection after_restart
+query
+SELECT id, label FROM sfr_snap.public.sfr_base_v_inv WHERE score = 30 ORDER BY id;
+----
+id	label
+1	alpha
+3	gamma
 
 connection after_restart
 query

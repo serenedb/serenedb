@@ -80,6 +80,8 @@ struct ScoreDoc {
   bool operator==(const ScoreDoc& other) const = default;
 };
 
+void SortHits(std::span<ScoreDoc> hits);
+
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
 class LoserScoreCollector {

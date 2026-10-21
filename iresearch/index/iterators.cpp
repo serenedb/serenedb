@@ -22,6 +22,10 @@
 
 #include "iresearch/index/iterators.hpp"
 
+#include <absl/algorithm/container.h>
+
+#include <utility>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -67,7 +71,45 @@ struct EmptySeekTermIterator : SeekTermIterator {
 
 EmptySeekTermIterator gEmptySeekIterator;
 
+uint32_t DescendingKey(score_t score) noexcept {
+  const auto bits = std::bit_cast<uint32_t>(score + 0.0f);
+  const auto sign = static_cast<uint32_t>(static_cast<int32_t>(bits) >> 31);
+  return ~(bits ^ (sign | 0x80000000U));
+}
+
+bool Better(const ScoreDoc& l, const ScoreDoc& r) noexcept {
+  if (l.score != r.score) {
+    return l.score > r.score;
+  }
+  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+}
+
 }  // namespace
+
+void SortHits(std::span<ScoreDoc> hits) {
+  const auto n = hits.size();
+  std::vector<uint64_t> keys(n);
+  for (size_t i = 0; i != n; ++i) {
+    keys[i] = uint64_t{DescendingKey(hits[i].score)} << 32 | i;
+  }
+  absl::c_sort(keys);
+  std::vector<ScoreDoc> sorted(n);
+  for (size_t i = 0; i != n; ++i) {
+    sorted[i] = hits[static_cast<uint32_t>(keys[i])];
+  }
+  absl::c_copy(sorted, hits.begin());
+  for (size_t i = 0; i != n;) {
+    auto j = i + 1;
+    while (j != n && hits[j].score == hits[i].score) {
+      ++j;
+    }
+    if (j - i > 1) {
+      auto ties = hits.subspan(i, j - i);
+      absl::c_sort(ties, Better);
+    }
+    i = j;
+  }
+}
 
 SeekTermIterator::ptr SeekTermIterator::empty() noexcept {
   return memory::to_managed<SeekTermIterator>(gEmptySeekIterator);

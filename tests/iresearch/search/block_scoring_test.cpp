@@ -487,6 +487,36 @@ TEST(LoserScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
   EXPECT_EQ(96u, result[2].doc);
 }
 
+bool BetterHit(const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+  if (l.score != r.score) {
+    return l.score > r.score;
+  }
+  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+}
+
+TEST(SortHits, OrdersByScoreThenSegmentAndDoc) {
+  std::mt19937 rng{20261021};
+  constexpr irs::score_t kTies[]{-0.0f, 0.0f, 0.5f, 1.25f, 3.0f, -2.0f};
+  for (const size_t n : {0, 1, 2, 31, 32, 33, 100, 1000, 4097}) {
+    std::vector<irs::ScoreDoc> hits(n);
+    for (auto& hit : hits) {
+      hit.score = rng() % 4 == 0 ? kTies[rng() % std::size(kTies)]
+                                 : std::uniform_real_distribution<irs::score_t>{
+                                     -10, 10}(rng);
+      hit.doc = static_cast<irs::doc_id_t>(rng() % 100000);
+      hit.segment_idx = static_cast<uint32_t>(rng() % 4);
+    }
+    auto expected = hits;
+    absl::c_sort(expected, BetterHit);
+    irs::SortHits(hits);
+    for (size_t i = 0; i != n; ++i) {
+      ASSERT_EQ(expected[i].score, hits[i].score) << n << " " << i;
+      ASSERT_EQ(expected[i].segment_idx, hits[i].segment_idx) << n << " " << i;
+      ASSERT_EQ(expected[i].doc, hits[i].doc) << n << " " << i;
+    }
+  }
+}
+
 // Test TFIDF with topic field search (many matches) - verify actual values
 TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   CreateLargeIndex();

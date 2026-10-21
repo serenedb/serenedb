@@ -221,7 +221,7 @@ void Merge(ScanGlobalState& g) {
     std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
     all = all.first(want);
   }
-  absl::c_sort(all, BetterScore);
+  irs::SortHits(all);
   if (g.has_lookup_filter) {
     t.ranked = all;
     all = all.first(std::min<size_t>(all.size(), t.verify_first));
@@ -436,7 +436,7 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l,
     root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
     ranked.resize(base + collector.AcceptedCount());
   }
-  absl::c_sort(ranked, BetterScore);
+  irs::SortHits(ranked);
   return ranked;
 }
 

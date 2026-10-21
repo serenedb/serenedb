@@ -11,7 +11,7 @@ import DocCallout from "@site/src/components/DocCallout";
 
 <DocCallout type="tip">
 
-A scorer reads per-term statistics, so the indexed column must have the `frequency` [feature flag](./text-analysis.md#token-positions-and-feature-flags) enabled. Every scorer takes the index's `tableoid` as its first argument and returns a `FLOAT`.
+Most scorers weigh how often the query's terms occur in each row, which the index records only when the column's dictionary enables the `frequency` [feature flag](./text-analysis.md#token-positions-and-feature-flags). Without it, every row that matches a term scores the same for that term, so enable `frequency` to rank by how often terms occur. Every scorer takes the index's `tableoid` as its first argument and returns a `FLOAT`.
 
 </DocCallout>
 
@@ -36,6 +36,8 @@ SereneDB ships several scorers; [`TFIDF`](../../functions/search/scoring.md) is 
 | `indri_dirichlet` | `mu` (2000) | Indri-style Dirichlet (no floor clamp) |
 | `dfi` | `measure` (`'standardized'`) | Divergence-from-independence; also `'saturated'`, `'chi_squared'` |
 | `raw_tf` / `raw_boost` / `raw_dl` | — | Raw term frequency, boost and document length |
+| `idf` | — | Inverse document frequency of the matched terms: rows that match the same terms score the same |
+| `constant` | `value` (1) | The same `value` for every match, times its boost |
 
 ## Boosting
 
@@ -49,7 +51,7 @@ The common shape `ORDER BY <scorer> DESC LIMIT k` returns the best `k` matches. 
 
 ```sql
 CREATE INDEX movies_idx ON movies
-    USING inverted (id, description ranking_dict)
+    USING inverted (id, title ranking_dict, description ranking_dict, genre)
     WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ```
 
@@ -93,5 +95,5 @@ To blend a lexical (BM25) ranking with a [vector](./vector-search.md) ranking �
 
 - [Full-Text Search](./full-text-search.md) — matching and query construction
 - [Scoring functions](../../functions/search/scoring.md) — full scorer reference
-- [Text Analysis](./text-analysis.md#token-positions-and-feature-flags) — the `frequency` flag scoring requires
+- [Text Analysis](./text-analysis.md#token-positions-and-feature-flags) — the `frequency` and `norm` flags scorers read
 - [BM25/TFIDF Ranking](../../../cookbook/search/ranking.md) — parameter tuning

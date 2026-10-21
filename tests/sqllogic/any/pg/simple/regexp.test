@@ -322,3 +322,13 @@ statement error
 SELECT regexp_instr('abc', (1 / 0)::text);
 ----
 db error: ERROR: <slt:ignore>
+
+
+# An anchor with a character on the side it anchors never matches.
+query
+SELECT s, s ~ 'a^b' AS a1, s ~ 'a$b' AS a2, s ~ 'abc^' AS a3, s ~ '$abc' AS a4, s ~ ('a' || '^b') AS a5 FROM (VALUES ('xaby'), ('ab'), ('abc')) t(s) ORDER BY s;
+----
+s	a1	a2	a3	a4	a5
+ab	f	f	f	f	f
+abc	f	f	f	f	f
+xaby	f	f	f	f	f

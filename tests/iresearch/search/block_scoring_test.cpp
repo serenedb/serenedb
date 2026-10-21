@@ -487,32 +487,56 @@ TEST(LoserScoreCollectorPredicate, FiltersBatchedAddDocsAcrossChunks) {
   EXPECT_EQ(96u, result[2].doc);
 }
 
-bool BetterHit(const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
-  if (l.score != r.score) {
-    return l.score > r.score;
-  }
-  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-}
-
-TEST(SortHits, OrdersByScoreThenSegmentAndDoc) {
+TEST(LoserScoreCollectorSort, MatchesBruteForceTopK) {
   std::mt19937 rng{20261021};
-  constexpr irs::score_t kTies[]{-0.0f, 0.0f, 0.5f, 1.25f, 3.0f, -2.0f};
-  for (const size_t n : {0, 1, 2, 31, 32, 33, 100, 1000, 4097}) {
-    std::vector<irs::ScoreDoc> hits(n);
-    for (auto& hit : hits) {
-      hit.score = rng() % 4 == 0 ? kTies[rng() % std::size(kTies)]
-                                 : std::uniform_real_distribution<irs::score_t>{
-                                     -10, 10}(rng);
-      hit.doc = static_cast<irs::doc_id_t>(rng() % 100000);
-      hit.segment_idx = static_cast<uint32_t>(rng() % 4);
-    }
-    auto expected = hits;
-    absl::c_sort(expected, BetterHit);
-    irs::SortHits(hits);
-    for (size_t i = 0; i != n; ++i) {
-      ASSERT_EQ(expected[i].score, hits[i].score) << n << " " << i;
-      ASSERT_EQ(expected[i].segment_idx, hits[i].segment_idx) << n << " " << i;
-      ASSERT_EQ(expected[i].doc, hits[i].doc) << n << " " << i;
+  for (const size_t k : {1, 2, 3, 37, 100, 1000}) {
+    for (const size_t n : {size_t{0}, k / 2, k - 1, k, k + 1, 5 * k}) {
+      std::vector<irs::ScoreDoc> candidates(n);
+      for (size_t i = 0; i != n; ++i) {
+        candidates[i] = {
+          .score = rng() % 16 == 0
+                     ? -0.0f
+                     : static_cast<irs::score_t>(rng() % 2000) / 100.0f - 10.0f,
+          .doc = static_cast<irs::doc_id_t>(i),
+          .segment_idx = static_cast<uint32_t>(i * 4 / n),
+        };
+      }
+      std::vector<irs::ScoreDoc> hits(k);
+      std::atomic<irs::score_t> threshold{
+        std::numeric_limits<irs::score_t>::lowest()};
+      irs::LoserScoreCollector collector{threshold, std::span{hits}};
+      for (const auto& candidate : candidates) {
+        collector.SetSegment(candidate.segment_idx);
+        collector.Add(candidate.score, candidate.doc);
+      }
+      const auto accepted = collector.AcceptedCount();
+      ASSERT_EQ(std::min(k, n), accepted);
+      std::vector<irs::ScoreDoc> kept{hits.begin(), hits.begin() + accepted};
+      collector.SortHits();
+      std::vector<irs::ScoreDoc> sorted{hits.begin(), hits.begin() + accepted};
+
+      std::vector<irs::score_t> expected;
+      for (const auto& candidate : candidates) {
+        expected.push_back(candidate.score);
+      }
+      absl::c_sort(expected, std::greater<>{});
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(expected[i], sorted[i].score) << k << " " << n << " " << i;
+      }
+
+      const auto by_doc = [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+        return l.doc < r.doc;
+      };
+      absl::c_sort(kept, by_doc);
+      absl::c_sort(sorted, by_doc);
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(kept[i].doc, sorted[i].doc) << k << " " << n << " " << i;
+        ASSERT_EQ(kept[i].segment_idx, sorted[i].segment_idx)
+          << k << " " << n << " " << i;
+        ASSERT_EQ(std::bit_cast<uint32_t>(kept[i].score),
+                  std::bit_cast<uint32_t>(sorted[i].score))
+          << k << " " << n << " " << i;
+      }
     }
   }
 }

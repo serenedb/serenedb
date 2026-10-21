@@ -84,7 +84,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     plan->Run(doc_limits::min(), doc_limits::eof(), collector);
   }
 
-  SortHits(hits.first(collector.AcceptedCount()));
+  collector.SortHits();
   return collector.TotalMatches();
 }
 

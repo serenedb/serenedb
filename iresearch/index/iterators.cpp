@@ -24,7 +24,7 @@
 
 #include <absl/algorithm/container.h>
 
-#include <utility>
+#include <functional>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -71,43 +71,33 @@ struct EmptySeekTermIterator : SeekTermIterator {
 
 EmptySeekTermIterator gEmptySeekIterator;
 
-uint32_t DescendingKey(score_t score) noexcept {
-  const auto bits = std::bit_cast<uint32_t>(score + 0.0f);
-  const auto sign = static_cast<uint32_t>(static_cast<int32_t>(bits) >> 31);
-  return ~(bits ^ (sign | 0x80000000U));
-}
-
-bool Better(const ScoreDoc& l, const ScoreDoc& r) noexcept {
-  if (l.score != r.score) {
-    return l.score > r.score;
-  }
-  return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
-}
-
 }  // namespace
 
-void SortHits(std::span<ScoreDoc> hits) {
-  const auto n = hits.size();
-  std::vector<uint64_t> keys(n);
-  for (size_t i = 0; i != n; ++i) {
-    keys[i] = uint64_t{DescendingKey(hits[i].score)} << 32 | i;
-  }
-  absl::c_sort(keys);
-  std::vector<ScoreDoc> sorted(n);
-  for (size_t i = 0; i != n; ++i) {
-    sorted[i] = hits[static_cast<uint32_t>(keys[i])];
-  }
-  absl::c_copy(sorted, hits.begin());
-  for (size_t i = 0; i != n;) {
-    auto j = i + 1;
-    while (j != n && hits[j].score == hits[i].score) {
-      ++j;
+void LoserScoreCollector::SortHits() noexcept {
+  std::span keys{_tree.data(), _size};
+  if (_size == _k) {
+    keys[0] = _root;
+  } else {
+    for (uint32_t i = 0; i != _size; ++i) {
+      keys[i] = MakeNode(_hits[i].score, i);
     }
-    if (j - i > 1) {
-      auto ties = hits.subspan(i, j - i);
-      absl::c_sort(ties, Better);
+  }
+  absl::c_sort(keys, std::greater<>{});
+  for (size_t i = 0; i != _size; ++i) {
+    if (Leaf(keys[i]) == kNone) {
+      continue;
     }
-    i = j;
+    const auto first = _hits[i];
+    for (auto at = i;;) {
+      const auto from = Leaf(keys[at]);
+      keys[at] = kNone;
+      if (from == i) {
+        _hits[at] = first;
+        break;
+      }
+      _hits[at] = _hits[from];
+      at = from;
+    }
   }
 }
 

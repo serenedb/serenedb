@@ -51,3 +51,42 @@ DROP TABLE dcrk;
 
 statement ok
 DROP TABLE dcrk_pk;
+
+
+# A temporary table's key stops enforcing too, dropped as a constraint or as a
+# unique index.
+statement ok
+CREATE TEMP TABLE dcrk_tmp (a INTEGER, b INTEGER, CONSTRAINT dcrk_tmp_b_key UNIQUE (b));
+
+statement ok
+INSERT INTO dcrk_tmp VALUES (1, 10);
+
+statement ok
+ALTER TABLE dcrk_tmp DROP CONSTRAINT dcrk_tmp_b_key;
+
+statement ok
+INSERT INTO dcrk_tmp VALUES (2, 10);
+
+statement ok
+CREATE UNIQUE INDEX dcrk_tmp_a ON dcrk_tmp (a);
+
+statement error
+INSERT INTO dcrk_tmp VALUES (1, 11);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
+
+statement ok
+DROP INDEX dcrk_tmp_a;
+
+statement ok
+INSERT INTO dcrk_tmp VALUES (1, 11);
+
+query
+SELECT count(*) FROM dcrk_tmp;
+----
+count
+3
+
+statement ok
+DROP TABLE dcrk_tmp;

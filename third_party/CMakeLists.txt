@@ -680,14 +680,25 @@ option(
     "Build DuckDB's unittest binary for vendored-extension test suites"
     ON
 )
-set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
-set(ENABLE_UNITTEST_CPP_TESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
 option(
     SDB_BUILD_DUCKDB_BENCHMARKS
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+if(IRESEARCH_BENCH)
+    set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
+    set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+else()
+    set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS
+        ${SDB_BUILD_DUCKDB_UNITTESTS}
+        CACHE BOOL
+        ""
+        FORCE
+    )
+    set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+endif()
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
@@ -705,28 +716,34 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
-    CACHE STRING
-    ""
-    FORCE
-)
-set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
-    CACHE STRING
-    ""
-    FORCE
-)
-# Extensions whose build config lives NEXT TO the extension instead of as a
-# shim inside the duckdb fork (.github/config/extensions/): duckdb includes
-# these files after the BUILD_EXTENSIONS list is resolved.
-set(DUCKDB_EXTENSION_CONFIGS
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
-    CACHE STRING
-    ""
-    FORCE
-)
+if(IRESEARCH_BENCH)
+    set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
+    set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
+    set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
+else()
+    set(BUILD_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    set(STATICALLY_LINK_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    # Extensions whose build config lives NEXT TO the extension instead of as a
+    # shim inside the duckdb fork (.github/config/extensions/): duckdb includes
+    # these files after the BUILD_EXTENSIONS list is resolved.
+    set(DUCKDB_EXTENSION_CONFIGS
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        CACHE STRING
+        ""
+        FORCE
+    )
+endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -765,35 +782,42 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
 
-target_link_libraries(
-    iceberg_catalog_rest_storage_authorization
-    PRIVATE OpenSSL::Crypto
-)
-
 # Link extension objects that aren't automatically included in duckdb_static
 target_link_libraries(
     duckdb_static
     PUBLIC
-        core_functions_extension
-        parquet_extension
-        tpch_extension
-        tpcds_extension
-        json_extension
-        httpfs_extension
-        azure_extension
-        avro_extension
-        iceberg_extension
-        postgres_scanner_extension
-        autocomplete_extension
         icu_extension
-        inet_extension
-        markdown_extension
-        spatial_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).
         simdutf
 )
+
+if(NOT IRESEARCH_BENCH)
+    target_link_libraries(
+        iceberg_catalog_rest_storage_authorization
+        PRIVATE OpenSSL::Crypto
+    )
+
+    target_link_libraries(
+        duckdb_static
+        PUBLIC
+            core_functions_extension
+            parquet_extension
+            tpch_extension
+            tpcds_extension
+            json_extension
+            httpfs_extension
+            azure_extension
+            avro_extension
+            iceberg_extension
+            postgres_scanner_extension
+            autocomplete_extension
+            inet_extension
+            markdown_extension
+            spatial_extension
+    )
+endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at

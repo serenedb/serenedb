@@ -119,13 +119,18 @@ doc_id_t RarestOf(std::span<const Term> terms) noexcept {
 }
 
 template<typename Term>
-bool SubtractsPair(std::span<const Term> terms) noexcept {
+doc_id_t DensestOf(std::span<const Term> terms) noexcept {
+  SDB_ASSERT(terms.size() == 2);
+  return std::max(detail::CookieOf(terms.front()).docs_count,
+                  detail::CookieOf(terms.back()).docs_count);
+}
+
+template<typename Term>
+bool SubtractsPair(std::span<const Term> terms, doc_id_t docs_count) noexcept {
   if (terms.size() != 2) {
     return false;
   }
-  const auto densest = std::max(detail::CookieOf(terms.front()).docs_count,
-                                detail::CookieOf(terms.back()).docs_count);
-  return detail::SubtractsDisjunction(RarestOf(terms), densest);
+  return detail::ProbeBeatsFold(RarestOf(terms), DensestOf(terms), docs_count);
 }
 
 template<typename Term>

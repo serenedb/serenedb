@@ -100,6 +100,7 @@ set(iresearch-tests_sources
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
     ./search/bitset_docs_test.cpp
+    ./search/count_subtract_test.cpp
     ./search/document_mask_test.cpp
     ./search/docs_mask_plan_test.cpp
     ./search/col_filter_leaf_test.cpp

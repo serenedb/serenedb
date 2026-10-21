@@ -23,6 +23,7 @@
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/index/vector_distance.hpp"
 
 namespace irs::quantizers {
 namespace {

@@ -183,16 +183,6 @@ inline constexpr uint32_t kBitplaneMaxMatch = 2;
 
 inline constexpr uint64_t kDensityThresholdInverse = 32;
 
-inline bool SubtractsConjunction(doc_id_t rarest,
-                                 doc_id_t docs_count) noexcept {
-  return rarest >= docs_count / kDensityThresholdInverse;
-}
-
-inline bool SubtractsDisjunction(doc_id_t rarest, doc_id_t densest) noexcept {
-  constexpr uint64_t kSkew = 256;
-  return uint64_t{rarest} * kSkew <= densest;
-}
-
 template<typename Result>
 using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
                                       probe::Erased, lead::Erased>;

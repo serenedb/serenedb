@@ -21,17 +21,6 @@ target_include_directories(
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
         ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
-add_custom_command(
-    TARGET serenedb-bench-micro
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
-        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-build
-    COMMAND
-        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
-        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-query
-)
-
 function(add_bench NAME)
     set(MODULE ${NAME})
     if(ARGC GREATER 1)

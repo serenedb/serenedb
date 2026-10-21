@@ -91,7 +91,9 @@ Root::ptr Api::MakeNegation(
                  ? exclude_filters.front()->PlanCount(ctx)
                  : count::MakeTerm(exclude_terms.front(), segment, ctx);
   } else {
-    if (exclude_filters.empty() && SubtractsPair(exclude_terms)) {
+    if (exclude_filters.empty() &&
+        SubtractsPair(exclude_terms,
+                      static_cast<doc_id_t>(segment.docs_count()))) {
       excluded = MakeSubtractDisjunction(exclude_terms.front(),
                                          exclude_terms.back(), segment, ctx);
     }

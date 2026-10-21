@@ -26,6 +26,7 @@
 #include <re2/re2.h>
 
 #include <algorithm>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
@@ -214,6 +215,63 @@ TEST(Re2LiteralFinderTest, find_ignore_case_empty_and_single_byte_needles) {
   EXPECT_EQ(nullptr, find("y", text.data()));
   EXPECT_EQ(nullptr, find("xx", end - 1));
   EXPECT_EQ(end - 2, find("xx", end - 2));
+}
+
+TEST(Re2LiteralFinderTest, finds_at_every_position_of_short_texts) {
+  constexpr std::string_view kNeedles[] = {
+    "ab",   "qz",          "a@",        "0z",         "z{",
+    "aaaa", "quick brown", "\xD0\xBEq", "q\xC3\xB6l",
+  };
+  for (const auto needle : kNeedles) {
+    const auto lowered_needle = absl::AsciiStrToLower(needle);
+    const re2::LiteralFinder finder{needle};
+    const re2::LiteralFinder lowered_finder{lowered_needle};
+    for (size_t size = 0; size != 80; ++size) {
+      for (size_t filler = 0; filler != 2; ++filler) {
+        for (size_t at = 0; at <= size + 1; ++at) {
+          std::string text(size, '\xFF');
+          for (size_t i = 0; i != size; ++i) {
+            if (filler == 0) {
+              text[i] = needle[(i * 5 + 3) % needle.size()];
+            } else if (i % 3 == 0) {
+              text[i] = i % 2 == 0 ? needle.front() : needle.back();
+            }
+          }
+          if (at + needle.size() <= size) {
+            text.replace(at, needle.size(), needle);
+          }
+          auto flipped = text;
+          for (size_t i = 1; i < size; i += 2) {
+            if (absl::ascii_isalpha(flipped[i])) {
+              flipped[i] ^= 0x20;
+            }
+          }
+          const auto lowered = absl::AsciiStrToLower(flipped);
+          auto exact = std::make_unique_for_overwrite<char[]>(size);
+          auto cased = std::make_unique_for_overwrite<char[]>(size);
+          std::copy_n(text.data(), size, exact.get());
+          std::copy_n(flipped.data(), size, cased.get());
+          for (size_t from = 0; from <= size; ++from) {
+            const char* found =
+              finder.Find(needle, exact.get() + from, exact.get() + size);
+            ASSERT_EQ(std::string_view{text}.find(needle, from),
+                      found ? static_cast<size_t>(found - exact.get())
+                            : std::string_view::npos)
+              << "needle " << needle << " size " << size << " filler " << filler
+              << " at " << at << " from " << from;
+            const char* found_ignore_case = lowered_finder.FindIgnoreCase(
+              lowered_needle, cased.get() + from, cased.get() + size);
+            ASSERT_EQ(std::string_view{lowered}.find(lowered_needle, from),
+                      found_ignore_case
+                        ? static_cast<size_t>(found_ignore_case - cased.get())
+                        : std::string_view::npos)
+              << "needle " << needle << " size " << size << " filler " << filler
+              << " at " << at << " from " << from;
+          }
+        }
+      }
+    }
+  }
 }
 
 TEST(Re2LiteralFinderTest, byte_set_find_is_scan) {

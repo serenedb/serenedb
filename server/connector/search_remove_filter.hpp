@@ -33,6 +33,15 @@
 
 namespace sdb::connector {
 
+void ForEachLiveDoc(const irs::TermReader& field, irs::bytes_view term,
+                    const irs::DocumentMask::Iterator& segment_mask,
+                    const irs::DocumentMaskBuilder* pending,
+                    absl::FunctionRef<bool(irs::doc_id_t)> acceptor);
+
+irs::doc_id_t FirstLiveDoc(const irs::TermReader& field, irs::bytes_view term,
+                           const irs::DocumentMask::Iterator& segment_mask,
+                           const irs::DocumentMaskBuilder* pending);
+
 class SearchRemoveFilter : public irs::Filter, public irs::lead::Node {
  public:
   SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)

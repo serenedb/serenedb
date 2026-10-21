@@ -99,6 +99,31 @@ irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   return irs::memory::to_managed<irs::lead::Node>(self);
 }
 
+void ForEachLiveDoc(const irs::TermReader& field, irs::bytes_view term,
+                    const irs::DocumentMask::Iterator& segment_mask,
+                    const irs::DocumentMaskBuilder* pending,
+                    absl::FunctionRef<bool(irs::doc_id_t)> acceptor) {
+  field.ReadDocs(term, [&](irs::doc_id_t found_doc) {
+    if (segment_mask.Contains(found_doc) ||
+        (pending != nullptr && pending->Contains(found_doc))) {
+      return true;  // skip deleted, including by this batch's earlier queries
+    }
+    return acceptor(found_doc);
+  });
+}
+
+irs::doc_id_t FirstLiveDoc(const irs::TermReader& field, irs::bytes_view term,
+                           const irs::DocumentMask::Iterator& segment_mask,
+                           const irs::DocumentMaskBuilder* pending) {
+  auto doc = irs::doc_limits::eof();
+  ForEachLiveDoc(field, term, segment_mask, pending,
+                 [&](irs::doc_id_t found_doc) {
+                   doc = found_doc;
+                   return false;
+                 });
+  return doc;
+}
+
 irs::doc_id_t SearchRemoveFilter::Next() {
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
@@ -131,18 +156,7 @@ irs::doc_id_t SearchRemoveFilter::Next() {
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.
 
-    auto doc = irs::doc_limits::eof();
-    auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (_segment_mask.Contains(found_doc) ||
-          (_pending != nullptr && _pending->Contains(found_doc))) {
-        return true;  // skip deleted, including by this batch's earlier queries
-      }
-      // found alive document with this PK
-      doc = found_doc;
-      return false;
-    };
-
-    _pk_field->ReadDocs(pk, acceptor);
+    const auto doc = FirstLiveDoc(*_pk_field, pk, _segment_mask, _pending);
 
     if (irs::doc_limits::eof(doc)) {
       ++_pos;

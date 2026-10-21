@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <array>
@@ -1799,9 +1801,12 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
   // and csv stream straight through.
   const bool is_text = format == CopyFormat::Text;
-  absl::Cleanup done_guard = [this] {
+  absl::Cleanup done_guard = [this, task = this->_task] {
     _feeder_done.store(true, std::memory_order_release);
-    this->_task->RequestRun();
+    SDB_IF_FAILURE("copy_feeder_done_wake") {
+      absl::SleepFor(absl::Seconds(2));
+    }
+    task->RequestRun();
   };
   bool closed = false;
   const auto fail = [&](int code, auto&&... msg) {

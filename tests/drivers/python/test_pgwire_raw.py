@@ -1311,6 +1311,34 @@ def test_copy_feeder_error_ends_the_copy(conn):
         conn.run("drop table if exists t_copy_feeder")
 
 
+@pytest.mark.exclusive
+def test_copy_feeder_wake_outlives_the_session(conn):
+    if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
+        pytest.skip("fault injection not enabled in this build")
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_done_wake")
+        conn.run_ok("create table t_copy_done_wake(a int)")
+        c.send("Q", _cstr("copy t_copy_done_wake from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n")
+        time.sleep(0.5)
+        c.sock.close()
+        deadline = time.time() + 10
+        while first_field(conn.run(
+                "select count(*) from pg_stat_activity "
+                "where query like 'copy t_copy_done_wake%'")) != b"0":
+            assert time.time() < deadline, "the COPY session never ended"
+            time.sleep(0.1)
+        conn.run_ok("set sdb_faults='-copy_feeder_done_wake'")
+        time.sleep(3)
+        assert first_field(conn.run("select count(*) from t_copy_done_wake")) == b"0"
+    finally:
+        conn.run("set sdb_faults='-copy_feeder_done_wake'")
+        c.sock.close()
+        conn.run("drop table if exists t_copy_done_wake")
+
+
 def test_copy_to_stdout_extended(conn):
     # COPY ... TO STDOUT over the extended protocol: Parse/Bind/Execute must
     # route to the wire collector and emit CopyOutResponse(H) + CopyData(d) +

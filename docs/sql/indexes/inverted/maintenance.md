@@ -81,14 +81,16 @@ A [view- or external-data-backed index](./views.md) holds a snapshot of its sour
 
 ## Schema changes on an indexed table
 
-An inverted index pins every column it reads, including columns reached only through an [indexed expression](./modeling.md#indexing-expressions) -- for example a struct sub-field such as `(s['id']::INTEGER)` pins the whole `s` column.
+An inverted index pins every column it reads, including columns reached only through an [indexed expression](./modeling.md#indexing-expressions) -- for example a struct sub-field such as `(s['id']::INTEGER)` pins the whole `s` column. On a regular table:
 
-- **`RENAME` column, table or index** -- allowed; the index keys columns by id and follows the rename automatically.
-- **`ADD COLUMN`** -- allowed; it is index-neutral (existing rows are backfilled).
-- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected; the index stores values of the old type. Drop the index first, change the type, then recreate it.
+- **`RENAME` column, table or index** -- allowed; the index follows the rename.
+- **`ADD COLUMN`** -- allowed; the index is unaffected.
+- **`ALTER COLUMN ... TYPE`** on a pinned column -- rejected with `Cannot change the type of this column: an index depends on it!`; the index stores values of the old type. Drop the index first, change the type, then recreate it.
 - **`ADD` / `DROP` / `RENAME` of a struct field** on a pinned column -- rejected for the same reason, even when the indexed expression targets a *different* sub-field (the whole column is pinned). Drop the index first.
-- **`DROP COLUMN`** on a pinned column -- allowed; it cascade-drops every index that covers the column.
-- **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column; the index keeps its columns by stable id.
+- **`DROP COLUMN`** on a pinned column -- allowed; it drops every index that covers the column.
+- **`DROP COLUMN`** on any other column -- allowed, including one that comes before a pinned column.
+
+A search table's columns are fixed, whether or not it has indexes: `ADD COLUMN`, `DROP COLUMN` and `ALTER COLUMN ... TYPE` are rejected, while renaming the table or a column is allowed. See [Search tables](../../statements/alter_table/index.md#search-tables) in the `ALTER TABLE` reference.
 
 ## Performance
 
@@ -168,24 +170,24 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_005" />
 
-<DocCallout type="attention">
+<DocCallout type="info">
 
-`pg_indexes_size()` is not yet meaningful for inverted indexes -- it returns `0`. Use `sdb_indexes()` / `pg_indexes` for index metadata.
+`pg_relation_size()` of an inverted index returns its size on disk, counting the refreshed rows only, and `pg_indexes_size()` of a regular table adds the inverted indexes on it to its other indexes. An index on a search table has no storage of its own, so both count it as `0`; its data is part of `pg_relation_size()` of the table. `pg_indexes_size()` of a view returns `0`.
 
 </DocCallout>
 
-### Per-index statistics in `sdb_metrics` {#sdb-metrics}
+### Statistics in `sdb_metrics` {#sdb-metrics}
 
-The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each inverted index contributes a row per statistic**, tagged with the index's oid in the `relation_id` column -- describing its physical state and the health of its background maintenance.
+The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks) and carry a `NULL` `relation_id`. In addition, **each search table and each inverted index on a regular table or a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a search table has no storage of its own and contributes no rows: the search table's rows cover its indexes.
 
 | Column | Description |
 | :--- | :--- |
 | `metric` | Metric name |
 | `value` | Current value (`UBIGINT`) |
 | `description` | Human-readable description |
-| `relation_id` | Oid of the inverted index the row describes (an index is a relation in `pg_class`), or `NULL` for a process-wide gauge |
+| `relation_id` | Oid of the search table or inverted index the row describes (a relation in `pg_class`), or `NULL` for a process-wide gauge |
 
-The per-index metrics, modelled on the statistics an ArangoSearch / IResearch data store reports:
+The metrics of each search table and inverted index:
 
 | Metric | Meaning |
 | :--- | :--- |
@@ -202,24 +204,9 @@ The per-index metrics, modelled on the statistics an ArangoSearch / IResearch da
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
 
-The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the inverted indexes in the **current database**. Join `pg_class` to resolve the index name, or `pg_index` to reach the base table:
+The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the search tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by table, join `pg_index` as well: an index's rows reach its table through `indrelid`, while a search table's rows carry the table's own oid. Here `my_logs` is a regular table with the inverted index `logs_idx`, and `my_events` a search table:
 
-```sql
--- Per-index statistics, with index names
-SELECT c.relname AS index, m.metric, m.value
-FROM sdb_metrics m
-JOIN pg_class c ON c.oid = m.relation_id
-WHERE m.relation_id IS NOT NULL
-ORDER BY c.relname, m.metric;
-
--- Statistics for the indexes on one table
-SELECT m.metric, m.value
-FROM sdb_metrics m
-JOIN pg_index i ON i.indexrelid = m.relation_id
-JOIN pg_class t ON t.oid = i.indrelid
-WHERE t.relname = 'my_table'
-ORDER BY m.metric;
-```
+<SqlLogicTest id="sql/indexes/inverted/maintenance/sdb_metrics" />
 
 A persistently high `num_buffered_docs`, a growing `num_failed_*`, or a climbing `avg_commit_time_ms` are signs that maintenance is falling behind the write rate -- see [Background intervals](#background-intervals) and [Performance](#performance) for the knobs.
 

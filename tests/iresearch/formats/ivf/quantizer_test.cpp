@@ -29,6 +29,7 @@
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
 #include <iresearch/formats/ivf/quantizers/common.hpp>
+#include <iresearch/index/vector_distance.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>

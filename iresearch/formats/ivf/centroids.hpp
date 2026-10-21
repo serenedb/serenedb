@@ -28,7 +28,7 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/index/column_info.hpp"
+#include "iresearch/index/vector_distance.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"

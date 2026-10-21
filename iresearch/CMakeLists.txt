@@ -488,7 +488,20 @@ endif()
 # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
-add_library(iresearch-static STATIC ${IResearch_core_sources})
+if(IRESEARCH_BENCH)
+    set(IResearch_library iresearch-minimal)
+    list(
+        FILTER IResearch_core_sources
+        EXCLUDE
+        REGEX
+            "/analysis/|snowball_stemmer|geo|hnsw|/ivf/|_ivf\\.|vector_|_exact\\.|/offsets/|/scorers/(dfi|idf|indri_dirichlet|lm_dirichlet|lm_jelinek_mercer|raw_boost|raw_dl|raw_tf|tfidf)\\.|nested_filter|shingle_phrase"
+    )
+    list(APPEND IResearch_core_sources ./analysis/text_tokenizer.cpp)
+else()
+    set(IResearch_library iresearch-static)
+endif()
+
+add_library(${IResearch_library} STATIC ${IResearch_core_sources})
 
 set_source_files_properties(
     search/scorers/bm25.cpp
@@ -499,39 +512,34 @@ set_source_files_properties(
 )
 
 target_include_directories(
-    iresearch-static
+    ${IResearch_library}
     PUBLIC ${CMAKE_SOURCE_DIR}
     PUBLIC ${CMAKE_BINARY_DIR}
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
 )
 
 target_include_directories(
-    iresearch-static
+    ${IResearch_library}
     SYSTEM
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-    PUBLIC
-        $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
-    PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)
     target_compile_definitions(
-        iresearch-static
+        ${IResearch_library}
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
     target_compile_definitions(
-        iresearch-static
+        ${IResearch_library}
         PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
     )
 endif()
 
 target_link_libraries(
-    iresearch-static
+    ${IResearch_library}
     PUBLIC icu
     PUBLIC absl::flat_hash_map
     PUBLIC absl::flat_hash_set
@@ -549,26 +557,47 @@ target_link_libraries(
     PUBLIC yaclib
     PUBLIC zlib
     PUBLIC zstd::zstd
-    PUBLIC OpenSSL::Crypto
-    PUBLIC OpenSSL::SSL
     PRIVATE absl::failure_signal_handler
     PRIVATE absl::stacktrace
     PRIVATE absl::symbolize
     PUBLIC boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
-    PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC sse2neon
-    PUBLIC ${FAISS_LIB}
     PUBLIC pcg
     PUBLIC re2
     PUBLIC roaring::roaring
-    PUBLIC s2
     PUBLIC duckdb_static
-    PRIVATE lz4_static
-    PRIVATE stemmer-static
 )
 
+if(IRESEARCH_BENCH)
+    target_compile_definitions(
+        iresearch-minimal
+        PUBLIC IRESEARCH_NO_GEO IRESEARCH_NO_VECTOR
+    )
+else()
+    target_include_directories(
+        iresearch-static
+        SYSTEM
+        PUBLIC
+            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
+        PRIVATE
+            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
+        PUBLIC
+            ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+    )
+    target_link_libraries(
+        iresearch-static
+        PUBLIC OpenSSL::Crypto
+        PUBLIC OpenSSL::SSL
+        PUBLIC ${FASTTEXT_LIBRARY_STATIC}
+        PUBLIC ${FAISS_LIB}
+        PUBLIC s2
+        PRIVATE lz4_static
+        PRIVATE stemmer-static
+    )
+endif()
+
 if(uring_FOUND)
-    target_link_libraries(iresearch-static PRIVATE uring::uring)
+    target_link_libraries(${IResearch_library} PRIVATE uring::uring)
 endif()

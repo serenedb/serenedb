@@ -34,6 +34,8 @@
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/merge.hpp"
@@ -44,7 +46,6 @@
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"

@@ -35,8 +35,35 @@ def render_include():
     return "\n\n".join(blocks) + "\n"
 
 
+def raw(statement):
+    return f'R"OTELDDL({statement})OTELDDL"'
+
+
+def split_statements():
+    shared = []
+    tables = {}
+    for statement in statements():
+        table = TABLE.match(statement)
+        index = INDEX.match(statement)
+        if table is not None:
+            tables[table.group(1)] = [statement, None]
+        elif index is not None:
+            entry = tables.get(index.group(1))
+            if entry is None or entry[1] is not None:
+                sys.exit(f"{SCHEMA.relative_to(ROOT)}: the index on "
+                         f"{index.group(1)} must follow its table, one per table")
+            entry[1] = statement
+        else:
+            shared.append(statement)
+    return shared, tables
+
+
 def render_header():
-    body = "".join(f'  R"OTELDDL({s})OTELDDL",\n' for s in statements())
+    shared, tables = split_statements()
+    shared_body = "".join(f"  {raw(s)},\n" for s in shared)
+    tables_body = "".join(
+        f'  {{"{name}",\n   {raw(table)},\n   {raw(index) if index else "{}"}}},\n'
+        for name, (table, index) in tables.items())
     return (
         "#pragma once\n"
         "\n"
@@ -47,9 +74,19 @@ def render_header():
         "\n"
         "namespace sdb::otel {\n"
         "\n"
-        f"inline constexpr std::array<std::string_view, {len(statements())}>\n"
-        "  kSchemaStatements{{\n"
-        f"{body}"
+        "struct TableDdl {\n"
+        "  std::string_view name;\n"
+        "  std::string_view table;\n"
+        "  std::string_view index;\n"
+        "};\n"
+        "\n"
+        f"inline constexpr std::array<std::string_view, {len(shared)}>\n"
+        "  kSharedStatements{{\n"
+        f"{shared_body}"
+        "}};\n"
+        "\n"
+        f"inline constexpr std::array<TableDdl, {len(tables)}> kTables{{{{\n"
+        f"{tables_body}"
         "}};\n"
         "\n"
         "}  // namespace sdb::otel\n"
@@ -59,6 +96,7 @@ def render_header():
 
 
 TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*)\) WITH", re.S)
+INDEX = re.compile(r"CREATE INDEX IF NOT EXISTS \w+\s+ON (\w+)")
 COLUMN = re.compile(r'^\s*"?(\w+)"?\s+(.+?)(?:\s+NOT NULL)?,?\s*$')
 TYPES = {
     "TIMESTAMP_NS": "TimestampNs",

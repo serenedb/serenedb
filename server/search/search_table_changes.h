@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
 
 #include <algorithm>
@@ -49,20 +50,54 @@ struct InlinePk {
   uint64_t count;
 };
 
+struct RowRange {
+  int64_t begin;
+  int64_t end;
+};
+
+inline void AppendRowRanges(std::vector<RowRange>& ranges,
+                            std::span<const int64_t> rows) {
+  for (const auto row : rows) {
+    if (!ranges.empty() && ranges.back().end == row) {
+      ++ranges.back().end;
+    } else {
+      ranges.emplace_back(row, row + 1);
+    }
+  }
+}
+
+inline void NormalizeRowRanges(std::vector<RowRange>& ranges) {
+  const auto by_begin = [](const RowRange& l, const RowRange& r) {
+    return l.begin < r.begin;
+  };
+  if (!absl::c_is_sorted(ranges, by_begin)) {
+    absl::c_sort(ranges, by_begin);
+  }
+  size_t merged = 0;
+  for (const auto& range : ranges) {
+    if (merged != 0 && ranges[merged - 1].end >= range.begin) {
+      ranges[merged - 1].end = std::max(ranges[merged - 1].end, range.end);
+    } else {
+      ranges[merged++] = range;
+    }
+  }
+  ranges.resize(merged);
+}
+
 // Per-search-table, per-transaction write buffer.
 //
-// One collection of rows and one vector of delete rowids, both filled in issue
-// order; nothing reaches iresearch until the buffer is flushed. `ops` records
-// only the things that are not rows -- deletes and truncates -- each carrying
-// the number of insert bands that precede it, so replay can interleave them
-// back into the row stream. Rows between two ops are implicit.
+// One collection of rows and one vector of delete row ranges, both filled in
+// issue order; nothing reaches iresearch until the buffer is flushed. `ops`
+// records only the things that are not rows -- deletes and truncates -- each
+// carrying the number of insert bands that precede it, so replay can interleave
+// them back into the row stream. Rows between two ops are implicit.
 struct LocalTableChangesEntry {
   struct Op {
     // Insert bands of `pk_segments` that precede this op. Rows the flush
     // already promoted are gone from the buffer, so their ops sit at 0.
     uint32_t band_watermark = 0;
-    // Rowids to remove. Empty for a TRUNCATE.
-    std::vector<int64_t> delete_rows;
+    // Rowid ranges to remove. Empty for a TRUNCATE.
+    std::vector<RowRange> delete_ranges;
     bool truncate = false;
     bool clears_shard = false;
 
@@ -107,9 +142,12 @@ struct LocalTableChangesEntry {
     if (rows.empty()) {
       return;
     }
-    auto& op = ops.emplace_back();
-    op.band_watermark = static_cast<uint32_t>(pk_segments.size());
-    op.delete_rows.assign(rows.begin(), rows.end());
+    const auto band = static_cast<uint32_t>(pk_segments.size());
+    if (ops.size() == applied_ops || ops.back().truncate ||
+        ops.back().band_watermark != band) {
+      ops.emplace_back().band_watermark = band;
+    }
+    AppendRowRanges(ops.back().delete_ranges, rows);
   }
 
   // A truncate removes every row, including the ones this transaction has just
@@ -156,6 +194,7 @@ struct LocalTableChangesEntry {
     auto op = ops.begin() + first_op;
     auto apply_until = [&](size_t band) {
       for (; op != ops.end() && op->band_watermark <= band; ++op) {
+        NormalizeRowRanges(op->delete_ranges);
         apply(*op);
       }
     };

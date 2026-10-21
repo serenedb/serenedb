@@ -97,7 +97,7 @@ The following flags control how much information the index records about each to
 
 | Flag | Default | Description |
 |---|---|---|
-| `FREQUENCY` | `false` | Store term frequency (needed for relevance scoring) |
+| `FREQUENCY` | `false` | Store term frequency (lets scorers rank by how often terms occur) |
 | `POSITION` | `false` | Store term positions (lets the index answer phrase queries alone); requires `FREQUENCY` |
 | `NORM` | `false` | Store the field length normalization factor; requires `FREQUENCY` |
 | `OFFSET` | `false` | Store the byte offsets of each token in the source value; requires `POSITION` |

@@ -9,7 +9,7 @@ import DocCallout from "@site/src/components/DocCallout";
 
 The [inverted index](./index.md) also indexes **vector embeddings** for approximate nearest neighbor (ANN) search. This powers semantic search, recommendations and other similarity workloads over `FLOAT` vectors. Two index kinds are available: **IVF** (`ivf (...)`), which partitions the vectors into clusters, and **[HNSW](#hnsw)** (`hnsw (...)`), which links them into a navigable graph.
 
-IVF partitions the vectors into `nlist` coarse clusters (found by k-means at build time). A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* -- it trades a little recall for a large speed-up, and the number of clusters scanned (`nprobe`, a query-time setting) tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
+IVF groups the vectors of each index segment into clusters, sized by the `sdb_ivf_posting_size` setting (1024 vectors by default, read when the index is created), so the number of clusters follows the segment's row count. A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* -- it trades a little recall for a large speed-up, and the number of clusters scanned, set by the [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) session setting, tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
 
 ## Creating a vector index
 
@@ -17,13 +17,11 @@ A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class. Th
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 
-For `ivf`, the `metric` is required. Everything else is optional: the index is sized automatically from the row count and, for `l2`, `ip` and `cosine`, quantized with `sq8`:
+For `ivf`, the `metric` is required. Everything else is optional: no option sizes the clusters, and for `l2`, `ip` and `cosine` the vectors are quantized with `sq8` unless `quant` says otherwise:
 
 | Parameter | Description |
 |---|---|
 | `metric` | Distance metric: `l2` (Euclidean), `cosine`, `ip` (inner product) or `l1` (Manhattan) |
-| `nlist` | Number of coarse clusters. Higher values narrow each cluster (faster, more precise probes) at the cost of build time. Mutually exclusive with `nlist_factor` |
-| `nlist_factor` | Sizes `nlist` relative to the row count as `round(nlist_factor * sqrt(rows))`. Default `2.0`. Mutually exclusive with `nlist` |
 | `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) -- see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`. Must evenly divide the vector dimension `N`. Defaults to a value close to a 2-dimensional subvector |
 | `rabitq_bits` | Extra magnitude bits per dimension for `quant = 'rabitq'`, `1` to `9`. Default `1` (sign-only). Also spelled `nb_bits` |
@@ -104,7 +102,7 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
-Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq` and `bq`, integer arithmetic for `sq8`/`sq4` and `osq`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one -- the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
+Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
 ### Oversampling {#oversampling}
 

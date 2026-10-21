@@ -131,14 +131,36 @@ inline duckdb::LogicalType CTID() {
 #endif
 
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
+inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
+
+inline constexpr duckdb::idx_t kInetIpTypeChild = 0;
+inline constexpr duckdb::idx_t kInetAddressChild = 1;
+inline constexpr duckdb::idx_t kInetMaskChild = 2;
+inline constexpr duckdb::idx_t kInetChildCount = 3;
+
+inline constexpr uint64_t kInetV6SortBit = uint64_t{1} << 63;
 
 inline bool IsInet(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
          type.GetAlias() == kInetAlias;
 }
 
+inline bool IsCidr(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kCidrAlias;
+}
+
+inline bool IsInetOrCidr(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto alias = type.GetAlias();
+  return alias == kInetAlias || alias == kCidrAlias;
+}
+
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+inline duckdb::LogicalType CIDR() { return duckdb::make_cidr_type(); }
 #endif
 
 }  // namespace sdb::pg

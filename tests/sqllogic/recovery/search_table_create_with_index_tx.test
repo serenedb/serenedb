@@ -1,0 +1,50 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE torn (ts TIMESTAMP_NS, body VARCHAR) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX torn_idx ON torn USING inverted (ts, body);
+
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+statement error connection closed
+COMMIT;
+
+connection lost
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_tables WHERE tablename = 'torn';
+----
+n
+0
+
+connection lost
+statement ok
+BEGIN;
+
+connection lost
+statement ok
+CREATE TABLE whole (ts TIMESTAMP_NS, body VARCHAR) WITH (storage = 'search');
+
+connection lost
+statement ok
+CREATE INDEX whole_idx ON whole USING inverted (ts, body);
+
+connection lost
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection lost
+statement error connection closed
+COMMIT;
+
+connection kept
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT tablename, indexname FROM pg_indexes WHERE tablename IN ('torn', 'whole') ORDER BY 1;
+----
+tablename	indexname
+whole	whole_idx

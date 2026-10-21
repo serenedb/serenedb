@@ -54,6 +54,7 @@
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
+#include "connector/functions/metrics.h"
 #include "connector/functions/otel.h"
 #include "connector/functions/ruleutils.h"
 #include "connector/functions/search.h"
@@ -321,6 +322,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterEsFunctions(db);
 
   connector::RegisterOtelFunctions(db);
+
+  connector::RegisterMetricsFunctions(db);
 
   connector::RegisterCatalogIntrospectFunctions(db);
 

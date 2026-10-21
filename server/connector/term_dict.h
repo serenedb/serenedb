@@ -25,6 +25,7 @@
 #include <iresearch/types.hpp>
 
 #include "connector/column_id.h"
+#include "connector/pg_logical_types.h"
 
 namespace sdb::connector::term_dict {
 
@@ -44,6 +45,7 @@ enum class Kind : uint8_t {
   NumericI64,
   NumericF32,
   NumericF64,
+  Inet,
 };
 
 constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
@@ -83,6 +85,10 @@ constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
     default:
       return Kind::Unsupported;
   }
+}
+
+inline Kind Classify(const duckdb::LogicalType& type) {
+  return pg::IsInetOrCidr(type) ? Kind::Inet : Classify(type.id());
 }
 
 constexpr bool IsNumeric(Kind kind) noexcept {

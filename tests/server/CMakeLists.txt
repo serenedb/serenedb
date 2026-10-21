@@ -38,6 +38,7 @@ add_executable(
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
     scorer_bounds_test.cpp
+    search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
@@ -48,6 +49,7 @@ add_executable(
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp
+    connector/inet_terms_test.cpp
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
     connector/pgoutput_test.cpp

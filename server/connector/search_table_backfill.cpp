@@ -49,7 +49,6 @@
 
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
-#include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
@@ -140,24 +139,6 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     fed += chunk.size();
   }
   return fed;
-}
-
-std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
-  if (rowids.empty()) {
-    return nullptr;
-  }
-  // Sorted rowids encode to sorted terms, so the remove filter walks each
-  // segment's term dictionary sequentially.
-  absl::c_sort(rowids);
-  auto removal =
-    std::make_shared<SearchRemoveFilter>(rowids.size(), term_dict::kPKFieldId);
-  std::string key;
-  for (const auto rowid : rowids) {
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    removal->Add(key);
-  }
-  return removal;
 }
 
 struct Slice {
@@ -308,12 +289,13 @@ bool RebuildGroup(duckdb::ClientContext& context,
     shard.ReplaceSegments(
       replaced, adopted,
       [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
-        auto [rowids, truncate] = shard.DrainDeleteLog();
+        auto [rows, truncate] = shard.DrainDeleteLog();
         if (truncate > snapshot) {
           truncated = true;
           return false;
         }
-        removal = MakeRemoval(std::move(rowids));
+        search::NormalizeRowRanges(rows);
+        removal = MakeRowRangeRemoval(rows);
         return true;
       });
   } catch (const irs::SqlException& e) {

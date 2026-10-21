@@ -125,3 +125,45 @@ SELECT id, title FROM tickets;
 ----
 id	title
 1	third
+
+# DOCS_TEST: example_007
+
+statement ok
+DROP JOB IF EXISTS events_retention;
+
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (at TIMESTAMP, body TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO events VALUES
+    (now()::TIMESTAMP - INTERVAL '40 days', 'old'),
+    (now()::TIMESTAMP - INTERVAL '1 day', 'recent');
+
+statement ok
+VACUUM (REFRESH_TABLE) events;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB events_retention EVERY 1 HOUR AS
+    DELETE FROM events WHERE at < now() - INTERVAL '30 days';
+
+statement ok
+EXECUTE JOB events_retention;
+
+statement ok
+VACUUM (REFRESH_TABLE) events;
+
+query
+SELECT body FROM events ORDER BY body;
+----
+body
+recent
+
+# DOCS_TEST_END
+
+statement ok
+DROP JOB events_retention;

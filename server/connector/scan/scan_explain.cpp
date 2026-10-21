@@ -28,6 +28,7 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
+#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
@@ -39,7 +40,7 @@ namespace {
 
 void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
   using term_dict::Kind;
-  switch (term_dict::Classify(type.id())) {
+  switch (term_dict::Classify(type)) {
     case Kind::Null:
       name += "(null)";
       break;
@@ -54,6 +55,9 @@ void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
     case Kind::NumericF32:
     case Kind::NumericF64:
       name += "(numeric)";
+      break;
+    case Kind::Inet:
+      name += pg::IsCidr(type) ? "(cidr)" : "(inet)";
       break;
     case Kind::Unsupported:
       break;
@@ -119,7 +123,7 @@ term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
         leaf = &duckdb::ArrayType::GetChildType(*leaf);
         continue;
       default:
-        return term_dict::Classify(leaf->id());
+        return term_dict::Classify(*leaf);
     }
   }
 }

@@ -28,6 +28,7 @@
 
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs::quantizers {

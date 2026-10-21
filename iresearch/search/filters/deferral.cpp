@@ -31,10 +31,13 @@
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
-#include "iresearch/search/filters/geo_filter.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/utils/down_cast.hpp"
+
+#ifndef IRESEARCH_NO_GEO
+#include "iresearch/search/filters/geo_filter.hpp"
+#endif
 
 namespace irs::optimizer {
 namespace {
@@ -112,6 +115,7 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
   return true;
 }
 
+#ifndef IRESEARCH_NO_GEO
 template<typename GeoType, DeferredKind Kind>
 bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& geo = downCast<GeoType>(*slot);
@@ -130,6 +134,7 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   ctx.deferral->filters.emplace_back(Kind, &geo, column, std::move(type));
   return true;
 }
+#endif
 
 bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& wildcard = downCast<ByWildcardNGram>(*slot);
@@ -156,12 +161,14 @@ bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (type == Type<ByWildcardNGram>::id()) {
     return DeferWildcard(slot, ctx);
   }
+#ifndef IRESEARCH_NO_GEO
   if (type == Type<GeoFilter>::id()) {
     return DeferGeo<GeoFilter, DeferredKind::Geo>(slot, ctx);
   }
   if (type == Type<GeoDistanceFilter>::id()) {
     return DeferGeo<GeoDistanceFilter, DeferredKind::GeoDistance>(slot, ctx);
   }
+#endif
   return false;
 }
 

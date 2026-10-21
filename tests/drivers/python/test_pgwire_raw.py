@@ -3092,3 +3092,29 @@ def test_deallocate_all_releases_protocol_statements(conn):
     _parse_ok(conn, "ns_release_c", "select 3")
     assert not errors(conn.run("DEALLOCATE ALL"))
     assert all_fields(_simple(conn, handles)) == [b"1"]
+
+
+_ESCAPE_HINT = "Escape string must be empty or one character."
+
+
+@pytest.mark.parametrize(
+    "query, sqlstate, message, hint",
+    [
+        ("SELECT 'abc' LIKE 'ab\\'", "22025",
+         "LIKE pattern must not end with escape character", None),
+        ("SELECT 'abc' ILIKE 'ab#' ESCAPE '#'", "22025",
+         "LIKE pattern must not end with escape character", None),
+        ("SELECT 'abc' LIKE 'a' ESCAPE '##'", "22025", "invalid escape string",
+         _ESCAPE_HINT),
+        ("SELECT 'abc' SIMILAR TO 'abc' ESCAPE '##'", "22025",
+         "invalid escape string", _ESCAPE_HINT),
+        ("SELECT 'abc' SIMILAR TO 'a\\\"b\\\"c\\\"d'", "2200C",
+         "SQL regular expression may not contain more than two "
+         "escape-double-quote separators", None),
+    ],
+)
+def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint):
+    m = conn.run(query)
+    assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
+        (sqlstate, message, hint)
+    ]

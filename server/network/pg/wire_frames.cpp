@@ -127,6 +127,12 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const auto subtype_it = extra.find("error_subtype");
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
+  if (subtype == "INVALID_ESCAPE_SEQUENCE") {
+    return ERRCODE_INVALID_ESCAPE_SEQUENCE;
+  }
+  if (subtype == "INVALID_USE_OF_ESCAPE_CHARACTER") {
+    return ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

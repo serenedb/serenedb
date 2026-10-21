@@ -113,25 +113,25 @@ VACUUM (REFRESH_TABLE) lep_trail
 statement error
 SELECT id FROM lep_trail WHERE msg LIKE 'ab\'
 ----
-db error: ERROR: Like pattern must not end with escape character!
+db error: ERROR: LIKE pattern must not end with escape character
 
 
 statement error
 SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab\'
 ----
-db error: ERROR: Like pattern must not end with escape character!
+db error: ERROR: LIKE pattern must not end with escape character
 
 
 statement error
 SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab%\'
 ----
-db error: ERROR: Like pattern must not end with escape character!
+db error: ERROR: LIKE pattern must not end with escape character
 
 
 statement error
 SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab#' ESCAPE '#'
 ----
-db error: ERROR: Like pattern must not end with escape character!
+db error: ERROR: LIKE pattern must not end with escape character
 
 
 query
@@ -147,7 +147,7 @@ id
 statement error
 SELECT id FROM lep_logs WHERE msg LIKE 'do\'
 ----
-db error: ERROR: Like pattern must not end with escape character!
+db error: ERROR: LIKE pattern must not end with escape character
 
 
 query

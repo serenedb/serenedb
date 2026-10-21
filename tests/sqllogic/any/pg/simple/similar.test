@@ -270,3 +270,15 @@ SELECT 'a\b' SIMILAR TO 'a\b' ESCAPE '' AS literal_backslash,
 ----
 literal_backslash	no_escape	regex
 t	f	^(?:a\\\\b)$
+
+statement error
+SELECT 'abc' SIMILAR TO 'abc' ESCAPE '##'
+----
+db error: ERROR: invalid escape string
+HINT: Escape string must be empty or one character.
+
+
+statement error
+SELECT similar_to_escape('a\"b\"c\"d')
+----
+db error: ERROR: SQL regular expression may not contain more than two escape-double-quote separators

@@ -76,10 +76,11 @@ inline duckdb::string_t GeneratedKeyTerm(uint64_t generated_id) noexcept {
 std::string PkFilePrefix(uint64_t file_id);
 
 // The chunk slot a declared-key column arrives in, with the name to report it
-// under.
+// under and the type its values are keyed by.
 struct KeySlot {
   duckdb::idx_t input_col_idx;
   std::string name;
+  duckdb::LogicalType type;
 };
 
 std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry);

@@ -183,6 +183,23 @@ void SearchTableTransaction::AddInlineInsertChunk(
   duckdb::DataChunk& chunk, uint64_t pk_base) {
   _changes[shard->GetTableId()].AppendInsertChunk(
     buffer_manager, types, column_ids, catalog, chunk, pk_base);
+#ifdef SDB_DEV
+  EnsureShardWrites(shard).pk_runs.emplace_back(pk_base, chunk.size());
+#endif
+}
+
+void SearchTableTransaction::AddKeys(
+  const std::shared_ptr<SearchTable>& shard, duckdb::AttachedDatabase& db,
+  std::span<const connector::primary_key::KeySlot> slots,
+  duckdb::DataChunk& chunk, uint64_t pk_base) {
+  if (slots.empty()) {
+    return;
+  }
+  auto& w = EnsureShardWrites(shard);
+  if (!w.key_index) {
+    w.key_index = std::make_unique<connector::SearchKeyIndex>(db, slots);
+  }
+  w.key_index->Insert(chunk, pk_base);
 }
 
 // Replays a shard's buffer into `trx` in issue order: rows through a sink,
@@ -248,7 +265,17 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 
 void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
+#ifdef SDB_DEV
+  const auto& w = EnsureShardWrites(shard);
+  for (const auto row : rows) {
+    const auto id = static_cast<uint64_t>(row);
+    for (const auto& [base, count] : w.pk_runs) {
+      SDB_ASSERT(id < base || id >= base + count);
+    }
+  }
+#else
   EnsureShardWrites(shard);
+#endif
   _changes[shard->GetTableId()].AppendDeletes(rows);
 }
 
@@ -267,6 +294,9 @@ void SearchTableTransaction::AddSearchTruncate(
   }
   w.transactions.clear();
   w.buffer_trx = nullptr;
+  if (w.key_index) {
+    w.key_index->Clear();
+  }
   const bool clears = clears_shard && !shard->BuildInFlight();
   auto& changes = _changes[shard->GetTableId()];
   changes.AppendTruncate(clears);

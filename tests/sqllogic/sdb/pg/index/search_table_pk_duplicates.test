@@ -1,0 +1,99 @@
+# A declared PRIMARY KEY on a search-backed table rejects a duplicate the same
+# transaction wrote. The key index is fed as rows are produced, so the conflict
+# is raised by the statement that writes the second copy, not at commit.
+#
+# Duplicates against rows an EARLIER transaction committed are not caught yet;
+# that is the published-state probe, and the cases below stay inside one
+# transaction on purpose.
+
+statement ok
+CREATE TABLE pkd (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+# Two copies of a key in one statement.
+statement error
+INSERT INTO pkd VALUES (1, 'a'), (1, 'b');
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+
+
+statement ok
+INSERT INTO pkd VALUES (1, 'a');
+
+
+# Two statements, one transaction. The second cannot see the first's row, so
+# without the key index both would survive as separate documents.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkd VALUES (2, 'a');
+
+statement error
+INSERT INTO pkd VALUES (2, 'b');
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "2"
+
+
+statement ok
+ROLLBACK;
+
+
+# TRUNCATE discards the rows the transaction wrote, so the keys it recorded go
+# with them.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pkd VALUES (3, 'a');
+
+statement ok
+TRUNCATE pkd;
+
+statement ok
+INSERT INTO pkd VALUES (3, 'b');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pkd;
+
+query
+SELECT id, s FROM pkd ORDER BY id;
+----
+id	s
+3	b
+
+
+# A composite key conflicts only when every column repeats.
+statement ok
+CREATE TABLE pkd2 (a BIGINT, b TEXT, PRIMARY KEY (a, b))
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkd2 VALUES (1, 'x'), (1, 'y'), (2, 'x');
+
+statement error
+INSERT INTO pkd2 VALUES (9, 'z'), (9, 'z');
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "9, z"
+
+
+# Without a declared key there is no index and nothing to conflict with.
+statement ok
+CREATE TABLE pkd_nokey (id BIGINT, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+INSERT INTO pkd_nokey VALUES (1, 'a'), (1, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) pkd_nokey;
+
+query
+SELECT count(*) AS n FROM pkd_nokey;
+----
+n
+2

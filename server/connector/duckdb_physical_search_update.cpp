@@ -144,6 +144,9 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   const auto num_rows = chunk.size();
+  if (num_rows == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);
@@ -173,6 +176,9 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   auto& search_txn = gstate.sdb_txn->SearchTxn();
+  SDB_ASSERT(new_row.size() == num_rows);
+  search_txn.AddKeys(gstate.search_table, _table.catalog.GetAttached(),
+                     gstate.pk_slots, new_row, pk_base);
   search_txn.AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,

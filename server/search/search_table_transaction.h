@@ -34,6 +34,8 @@
 #include <vector>
 
 #include "connector/column_id.h"
+#include "connector/primary_key.h"
+#include "connector/search_key_index.h"
 #include "search/search_table_changes.h"
 
 namespace duckdb {
@@ -62,6 +64,10 @@ struct SearchShardWrites {
   // released when the transaction settles. -1 until it registers.
   int writer_slot = -1;
   bool truncate_claim = false;
+  std::unique_ptr<connector::SearchKeyIndex> key_index;
+#ifdef SDB_DEV
+  std::vector<std::pair<uint64_t, uint64_t>> pk_runs;
+#endif
   duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
   uint64_t first_tick = 0;
   irs::SourcePosition position;
@@ -105,6 +111,11 @@ class SearchTableTransaction {
                             std::span<const connector::ColumnId> column_ids,
                             duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
                             uint64_t pk_base);
+
+  void AddKeys(const std::shared_ptr<SearchTable>& shard,
+               duckdb::AttachedDatabase& db,
+               std::span<const connector::primary_key::KeySlot> slots,
+               duckdb::DataChunk& chunk, uint64_t pk_base);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {

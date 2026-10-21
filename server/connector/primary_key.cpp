@@ -62,7 +62,7 @@ std::vector<KeySlot> KeySlots(const duckdb::TableCatalogEntry& entry) {
   for (const auto index : KeyColumns(entry)) {
     const auto& column = columns.GetColumn(index);
     slots.emplace_back(static_cast<duckdb::idx_t>(index.index),
-                       column.Name().GetIdentifierName());
+                       column.Name().GetIdentifierName(), column.Type());
   }
   return slots;
 }

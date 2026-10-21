@@ -206,6 +206,9 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base,
                            gstate.table_id, context.client);
   } else {
+    SDB_ASSERT(chunk.size() == num_rows);
+    search_txn.AddKeys(gstate.search_table, gstate.catalog->GetAttached(),
+                       gstate.pk_slots, chunk, pk_base);
     // Buffer only. Nothing reaches iresearch until the buffer overruns or the
     // transaction commits, which is what lets a flush hand the WHOLE buffer to
     // one segment -- feeding as we go would leave a later flush with only the

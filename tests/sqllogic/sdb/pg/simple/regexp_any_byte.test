@@ -66,3 +66,46 @@ statement error
 SELECT regexp_replace('aéb', '^(a)\C(.*)', '[\1]');
 ----
 db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT regexp_extract('é', '(\C)', 1);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '(\C)'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '\C'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement ok
+CREATE TABLE rab (id INT, s VARCHAR, p VARCHAR);
+
+statement ok
+INSERT INTO rab VALUES (1, 'é', '(\C)'), (2, 'ab', '(b)');
+
+statement error
+SELECT id, regexp_match(s, p) FROM rab ORDER BY id;
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT id, regexp_match(s, p) AS m FROM rab WHERE id = 2;
+----
+id	m
+2	{b}
+
+query
+SELECT regexp_match('aé', '(\C\C\C)') AS m;
+----
+m
+{aé}

@@ -210,6 +210,37 @@ rel	tbl	total	idx	seq	view_size
 t	t	t	t	t	0
 
 
+query
+SELECT pg_relation_size(2000000000) IS NULL AS rel,
+       pg_relation_size(2000000000, 'bogus') IS NULL AS rel_fork,
+       pg_table_size(2000000000) IS NULL AS tbl,
+       pg_total_relation_size(2000000000) IS NULL AS total,
+       pg_indexes_size(2000000000) IS NULL AS idx;
+----
+rel	rel_fork	tbl	total	idx
+t	t	t	t	t
+
+
+statement error
+SELECT pg_relation_size('size_test', 'bogus');
+----
+db error: ERROR: invalid fork name
+HINT: Valid fork names are "main", "fsm", "vm", and "init".
+
+
+statement error
+SELECT pg_relation_size('size_test', 'MAIN');
+----
+db error: ERROR: invalid fork name
+HINT: Valid fork names are "main", "fsm", "vm", and "init".
+
+
+statement error
+SELECT pg_database_size(2000000000::oid);
+----
+db error: ERROR: database with OID 2000000000 does not exist
+
+
 statement ok
 DROP VIEW size_temp_view
 

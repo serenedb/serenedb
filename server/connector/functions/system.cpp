@@ -20,6 +20,7 @@
 
 #include "connector/functions/system.h"
 
+#include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -666,19 +667,6 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
-[[noreturn]] void ThrowNoRelationWithOid(uint64_t oid) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                  ERR_MSG("relation with OID ", oid, " does not exist"));
-}
-
-pg::Relation RelationWithOid(duckdb::ClientContext& context, uint64_t oid) {
-  auto relation = pg::RelationByOid(context, oid);
-  if (!relation) {
-    ThrowNoRelationWithOid(oid);
-  }
-  return relation;
-}
-
 duckdb::TableCatalogEntry* RelationTable(const pg::Relation& relation) {
   if (!relation.entry ||
       relation.entry->type != duckdb::CatalogType::TABLE_ENTRY) {
@@ -703,14 +691,22 @@ int64_t RelationMainForkBytes(duckdb::ClientContext& context,
   return 0;
 }
 
-int64_t GetRelationForkSize(duckdb::ClientContext& context, uint64_t oid,
-                            std::string_view fork) {
-  const auto relation = RelationWithOid(context, oid);
-  return fork == "main" ? RelationMainForkBytes(context, relation) : 0;
+int64_t RelationForkBytes(duckdb::ClientContext& context,
+                          const pg::Relation& relation, std::string_view fork) {
+  if (fork == "main") {
+    return RelationMainForkBytes(context, relation);
+  }
+  if (fork != "fsm" && fork != "vm" && fork != "init") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG("invalid fork name"),
+      ERR_HINT(
+        "Valid fork names are \"main\", \"fsm\", \"vm\", and \"init\"."));
+  }
+  return 0;
 }
 
-int64_t GetRelationTotalSize(duckdb::ClientContext& context, uint64_t oid) {
-  const auto relation = RelationWithOid(context, oid);
+int64_t RelationTotalBytes(duckdb::ClientContext& context,
+                           const pg::Relation& relation) {
   auto* table = RelationTable(relation);
   if (!table) {
     return RelationMainForkBytes(context, relation);
@@ -719,9 +715,27 @@ int64_t GetRelationTotalSize(duckdb::ClientContext& context, uint64_t oid) {
          catalog::TableIndexesTotalBytes(context, *table);
 }
 
-int64_t GetTableIndexesSize(duckdb::ClientContext& context, uint64_t oid) {
-  auto* table = RelationTable(RelationWithOid(context, oid));
+int64_t RelationIndexesBytes(duckdb::ClientContext& context,
+                             const pg::Relation& relation) {
+  auto* table = RelationTable(relation);
   return table ? catalog::TableIndexesTotalBytes(context, *table) : 0;
+}
+
+void RelationSizeFunction(
+  duckdb::DataChunk& args, duckdb::ExpressionState& state,
+  duckdb::Vector& result,
+  absl::FunctionRef<int64_t(duckdb::ClientContext&, const pg::Relation&)>
+    bytes) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<int64_t> {
+      const auto relation = pg::RelationByOid(context, pg::OidFromSql(oid));
+      if (!relation) {
+        return duckdb::nullopt;
+      }
+      return bytes(context, relation);
+    });
 }
 
 // pg_database_size(name) -> bigint
@@ -752,14 +766,10 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      // Try our catalog by OID first
       auto entry = FindDatabaseById(context, pg::OidFromSql(oid));
-      // DuckDB's pg_database OIDs don't match ours -- fall back to
-      // current database (covers the common pg_database_size(d.oid)
-      // WHERE d.datname = current_database() pattern)
       auto database = entry
                         ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-                        : SessionCatalog(context);
+                        : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database with OID ", oid, " does not exist"));
@@ -2176,11 +2186,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     "main");
-        });
+      RelationSizeFunction(args, state, result, RelationMainForkBytes);
     }});
 
   // pg_relation_size(regclass, text)
@@ -2190,12 +2196,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
+      auto& context = state.GetContext();
       duckdb::BinaryExecutor::Execute<int64_t, duckdb::string_t, int64_t>(
         args.data[0], args.data[1], result, args.size(),
-        [&](int64_t oid, duckdb::string_t fork) -> int64_t {
-          std::string_view f{fork.GetData(), fork.GetSize()};
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     f);
+        [&](int64_t oid, duckdb::string_t fork) -> duckdb::optional<int64_t> {
+          const auto relation = pg::RelationByOid(context, pg::OidFromSql(oid));
+          if (!relation) {
+            return duckdb::nullopt;
+          }
+          return RelationForkBytes(context, relation,
+                                   {fork.GetData(), fork.GetSize()});
         });
     }});
 
@@ -2206,11 +2216,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(), pg::OidFromSql(oid),
-                                     "main");
-        });
+      RelationSizeFunction(args, state, result, RelationMainForkBytes);
     }});
 
   // pg_total_relation_size(regclass)
@@ -2220,10 +2226,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationTotalSize(state.GetContext(), pg::OidFromSql(oid));
-        });
+      RelationSizeFunction(args, state, result, RelationTotalBytes);
     }});
 
   // pg_indexes_size(regclass)
@@ -2233,10 +2236,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
-      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetTableIndexesSize(state.GetContext(), pg::OidFromSql(oid));
-        });
+      RelationSizeFunction(args, state, result, RelationIndexesBytes);
     }});
 
   // Stub functions that throw "not supported"

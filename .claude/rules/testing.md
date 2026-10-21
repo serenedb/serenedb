@@ -50,3 +50,4 @@ BUILD_DIR=build_clangd ./tests/sqllogic/run_recovery_tests.sh recovery/<file>.te
 - **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or nothing runs it.
 - **A driver's dependency manifest:** the CI image installs from it ([ci.md](ci.md), "CI images").
 - **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`; its conformance fixtures: `scripts/otel/fixtures.py generate`.
+- **The randomized search-table DML tests** (`index/search_table_positional_dml_{random,background,long}`, `recovery/search_table_positional_removal_load`): change `scripts/generate_search_table_dml_tests.py` and run it; the files are its output.

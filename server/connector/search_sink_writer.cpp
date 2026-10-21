@@ -26,6 +26,7 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -38,6 +39,7 @@
 #include "connector/common.h"
 #include "connector/inet_terms.h"
 #include "connector/primary_key.h"
+#include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
 
@@ -1117,17 +1119,66 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
-void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
-                         std::span<const int64_t> rows) {
-  SearchSinkDeleteBaseImpl remover{trx};
-  remover.InitImpl(rows.size());
-  std::string key;
-  for (const auto row : rows) {
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
-    remover.DeleteRowImpl(key);
+std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
+  std::span<const int64_t> starts, std::span<const uint64_t> counts,
+  std::span<const uint64_t> positions) {
+  SDB_ENSURE(counts.size() == starts.size() &&
+               (positions.empty() || positions.size() == starts.size()),
+             "search table: ", starts.size(), " removed row runs with ",
+             counts.size(), " counts and ", positions.size(), " positions");
+  if (starts.empty()) {
+    return nullptr;
   }
-  remover.FinishImpl();
+  const auto placed = [&](size_t run) {
+    return !positions.empty() && positions[run] != kNoRowPosition;
+  };
+  size_t placed_rows = 0;
+  for (size_t i = 0; i < starts.size(); ++i) {
+    placed_rows += placed(i) ? counts[i] : 0;
+  }
+  std::vector<irs::DocRemoval::Row> rows;
+  rows.reserve(placed_rows);
+  std::vector<irs::KeyRange> unplaced;
+  for (size_t i = 0; i < starts.size(); ++i) {
+    const auto count = static_cast<int64_t>(counts[i]);
+    if (!placed(i)) {
+      unplaced.emplace_back(starts[i], starts[i] + count);
+      continue;
+    }
+    for (int64_t row = 0; row < count; ++row) {
+      const auto position = positions[i] + static_cast<uint64_t>(row);
+      rows.emplace_back(RowPositionSegment(position), RowPositionDoc(position),
+                        starts[i] + row);
+    }
+  }
+  return std::make_shared<const irs::DocRemoval>(
+    irs::DocRemoval::Build(kGeneratedPKId, rows, std::move(unplaced)));
+}
+
+std::shared_ptr<const irs::DocRemoval> MakeRowRangeRemoval(
+  std::vector<irs::KeyRange> ranges) {
+  if (ranges.empty()) {
+    return nullptr;
+  }
+  return std::make_shared<const irs::DocRemoval>(
+    irs::DocRemoval::Build(kGeneratedPKId, {}, std::move(ranges)));
+}
+
+void CollectRemovedRows(const duckdb::DataChunk& chunk,
+                        std::span<const primary_key::PKColumn> columns,
+                        std::vector<int64_t>& rows,
+                        std::vector<uint64_t>& positions) {
+  SDB_ENSURE(columns.size() == 2, "search table: removed rows need the rowid ",
+             "and row position columns, got ", columns.size());
+  auto rowids = chunk.data[columns[0].input_col_idx].Values<int64_t>();
+  const auto places = chunk.data[columns[1].input_col_idx].Values<uint64_t>();
+  rows.reserve(rows.size() + rowids.size());
+  positions.reserve(positions.size() + rowids.size());
+  for (const auto& rowid : rowids) {
+    rows.emplace_back(rowid.GetValue());
+    const auto place = places[rowid.GetIndex()];
+    positions.emplace_back(place.IsValid() ? place.GetValue() : kNoRowPosition);
+  }
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
@@ -1156,7 +1207,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       return tokenizers->Acquire(field_id);
     },
     std::move(entry_of),
-    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    PkPolicy{.index_term = false, .column = catalog::PkColumnKind::None},
     std::move(indexed_exprs), config.get());
 }
 
@@ -1167,7 +1218,7 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
                      const duckdb::Vector& gen_pk, duckdb::idx_t table_id,
                      duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.KeyTerms()});
+  sink.InitImpl(num_rows, PkChunk{});
   const auto write_column = [&](ColumnId col_id,
                                 const duckdb::LogicalType& type,
                                 const duckdb::Vector& vec) {
@@ -1196,16 +1247,8 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             std::span<const ColumnId> column_ids,
                             uint64_t pk_base, duckdb::idx_t table_id,
                             duckdb::ClientContext& context) {
-  const auto num_rows = chunk.size();
-  auto& key_terms = sink.KeyTerms();
-  key_terms.clear();
-  key_terms.reserve(num_rows);
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    key_terms.push_back(primary_key::GeneratedKeyTerm(pk_base + row));
-    ids[row] = static_cast<int64_t>(pk_base + row);
-  }
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, nullptr);
+  gen_pk.Sequence(static_cast<int64_t>(pk_base), 1, chunk.size());
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
 }
 
@@ -1215,23 +1258,9 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                                    duckdb::idx_t rowid_slot,
                                    duckdb::idx_t table_id,
                                    duckdb::ClientContext& context) {
-  const auto num_rows = chunk.size();
   SDB_ASSERT(rowid_slot < chunk.ColumnCount());
-  duckdb::UnifiedVectorFormat rowids;
-  chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
-  const auto* rowid_data =
-    duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
-  auto& key_terms = sink.KeyTerms();
-  key_terms.clear();
-  key_terms.reserve(num_rows);
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-  auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    const auto rowid = rowid_data[rowids.sel->get_index(row)];
-    key_terms.push_back(
-      primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid)));
-    ids[row] = rowid;
-  }
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, nullptr);
+  gen_pk.Reinterpret(chunk.data[rowid_slot]);
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
 }
 

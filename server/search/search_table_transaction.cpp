@@ -41,7 +41,6 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
@@ -52,7 +51,7 @@ namespace {
 uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
   uint64_t size = changes.BufferedBytes();
   for (const auto& op : changes.ops) {
-    size += op.delete_ranges.size() * 2 * sizeof(int64_t);
+    size += op.deletes.starts.size() * 3 * sizeof(int64_t);
   }
   return size;
 }
@@ -66,9 +65,14 @@ void RecordDeletesForBuild(SearchTable& shard,
   bool truncated = false;
   for (const auto& op : changes.ops) {
     truncated |= op.IsTruncate();
-    rows.insert(rows.end(), op.delete_ranges.begin(), op.delete_ranges.end());
+    const auto& deletes = op.deletes;
+    for (size_t i = 0; i < deletes.starts.size(); ++i) {
+      rows.emplace_back(
+        deletes.starts[i],
+        deletes.starts[i] + static_cast<int64_t>(deletes.counts[i]));
+    }
   }
-  shard.AppendDeleteLog(rows);
+  shard.AppendDeleteLog(std::move(rows));
   if (truncated) {
     shard.RecordTruncateForBuild(position);
   }
@@ -110,20 +114,24 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       },
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
+        const auto& deletes = op.deletes;
         SDB_IF_FAILURE("search_delete_wal_rowids") {
-          WriteDeletedRowids(op.delete_ranges);
+          WriteDeletedRowids(deletes);
           return;
         }
-        duckdb::vector<duckdb::row_t> starts;
-        duckdb::vector<duckdb::idx_t> counts;
-        starts.reserve(op.delete_ranges.size());
-        counts.reserve(op.delete_ranges.size());
-        for (const auto& range : op.delete_ranges) {
-          starts.push_back(range.begin);
-          counts.push_back(static_cast<duckdb::idx_t>(range.end - range.begin));
+        SDB_IF_FAILURE("search_delete_wal_empty_range") {
+          auto empty_range = deletes;
+          empty_range.counts.front() = 0;
+          _entries.WriteDeleteRowRanges(empty_range);
+          return;
         }
-        SDB_IF_FAILURE("search_delete_wal_empty_range") { counts.front() = 0; }
-        _entries.WriteDeleteRowRanges(std::move(starts), std::move(counts));
+        SDB_IF_FAILURE("search_delete_wal_extra_position") {
+          auto extra_position = deletes;
+          extra_position.positions.push_back(connector::kNoRowPosition);
+          _entries.WriteDeleteRowRanges(extra_position);
+          return;
+        }
+        _entries.WriteDeleteRowRanges(deletes);
       });
   }
 
@@ -133,11 +141,11 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
   }
 
  private:
-  void WriteDeletedRowids(std::span<const RowRange> ranges) {
+  void WriteDeletedRowids(const duckdb::WALDeleteRowRanges& deletes) {
     std::vector<int64_t> rowids;
-    for (const auto& range : ranges) {
-      for (auto row = range.begin; row != range.end; ++row) {
-        rowids.push_back(row);
+    for (size_t i = 0; i < deletes.starts.size(); ++i) {
+      for (uint64_t row = 0; row < deletes.counts[i]; ++row) {
+        rowids.push_back(deletes.starts[i] + static_cast<int64_t>(row));
       }
     }
     duckdb::DataChunk rows;
@@ -234,7 +242,9 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
-      if (auto removal = connector::MakeRowRangeRemoval(op.delete_ranges)) {
+      const auto& deletes = op.deletes;
+      if (auto removal = connector::MakeRowRunRemoval(
+            deletes.starts, deletes.counts, deletes.positions)) {
         trx.Remove(std::move(removal));
       }
     });
@@ -275,9 +285,10 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
+  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows,
+  std::span<const uint64_t> positions) {
   EnsureShardWrites(shard);
-  _changes[shard->GetTableId()].AppendDeletes(rows);
+  _changes[shard->GetTableId()].AppendDeletes(rows, positions);
 }
 
 void SearchTableTransaction::AddSearchTruncate(

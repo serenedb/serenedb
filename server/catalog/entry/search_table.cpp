@@ -44,6 +44,7 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
+#include <duckdb/storage/wal_entry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -405,13 +406,16 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
 duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   duckdb::virtual_column_map_t result;
   const auto keys = connector::primary_key::KeyColumns(*this);
-  result.reserve(keys.size() + 2);
+  result.reserve(keys.size() + 3);
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   result.insert({connector::kColumnIdentifierGeneratedPk,
                  duckdb::TableColumn{duckdb::Identifier{"rowid"},
                                      duckdb::LogicalType::ROW_TYPE}});
+  result.insert({connector::kColumnIdentifierRowPosition,
+                 duckdb::TableColumn{duckdb::Identifier{"sdb_row_position$"},
+                                     duckdb::LogicalType::UBIGINT}});
   for (size_t i = 0; i != keys.size(); ++i) {
     const auto& column = GetColumns().GetColumn(keys[i]);
     result.insert({connector::kColumnIdentifierPrimaryKeyBase + i,
@@ -421,7 +425,8 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
 }
 
 duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
-  return {connector::kColumnIdentifierGeneratedPk};
+  return {connector::kColumnIdentifierGeneratedPk,
+          connector::kColumnIdentifierRowPosition};
 }
 
 duckdb::optional_ptr<duckdb::SequenceCatalogEntry>
@@ -460,14 +465,9 @@ void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
 }
 
 void SearchTableEntry::ReplayDeleteRanges(
-  duckdb::ClientContext&, const duckdb::vector<duckdb::row_t>& starts,
-  const duckdb::vector<duckdb::idx_t>& counts) {
-  std::vector<search::RowRange> rows;
-  rows.reserve(starts.size());
-  for (size_t i = 0; i != starts.size(); ++i) {
-    rows.emplace_back(starts[i], starts[i] + static_cast<int64_t>(counts[i]));
-  }
-  _storage->ReplayDeleteRanges(catalog.GetAttached(), std::move(rows));
+  duckdb::ClientContext&, const duckdb::WALDeleteRowRanges& entry) {
+  _storage->ReplayDeleteRanges(catalog.GetAttached(), entry.starts,
+                               entry.counts, entry.positions);
 }
 
 void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {

@@ -130,7 +130,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                     duckdb::DataChunk& chunk, uint64_t row_start);
   void ReplayDelete(duckdb::AttachedDatabase& db, duckdb::DataChunk& chunk);
   void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                          std::vector<RowRange> rows);
+                          std::span<const int64_t> starts,
+                          std::span<const uint64_t> counts,
+                          std::span<const uint64_t> positions);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
@@ -246,7 +248,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _delete_log_open.load(std::memory_order_acquire);
   }
   void OpenDeleteLog();
-  void AppendDeleteLog(std::span<const RowRange> rows);
+  void AppendDeleteLog(std::vector<RowRange> rows);
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
     absl::MutexLock lock{&_delete_log_mutex};
@@ -276,8 +278,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-      removal_provider) {
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
     _durability.ReplaceSegments(*_writer, replaced, adopted_metas,
                                 removal_provider);
   }

@@ -54,7 +54,6 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -243,12 +242,16 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
+void SearchTable::AppendDeleteLog(std::vector<RowRange> rows) {
   if (rows.empty()) {
     return;
   }
   absl::MutexLock lock{&_delete_log_mutex};
   if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (_delete_log.empty()) {
+    _delete_log = std::move(rows);
     return;
   }
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
@@ -289,7 +292,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   }
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
-  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
@@ -487,6 +490,7 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
     if (!status.ok()) {
       return status;
     }
+    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;
     }
@@ -548,19 +552,24 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
   }
   auto& rows = chunk.data[0];
   SDB_ASSERT(rows.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
-  connector::RemoveGeneratedRows(
-    session->trx, std::span<const int64_t>{
-                    duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+  std::vector<RowRange> ranges;
+  irs::AppendKeyRanges(
+    ranges, std::span<const int64_t>{duckdb::FlatVector::GetData<int64_t>(rows),
+                                     chunk.size()});
+  if (auto removal = connector::MakeRowRangeRemoval(std::move(ranges))) {
+    session->trx.Remove(std::move(removal));
+  }
 }
 
 void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                                     std::vector<RowRange> rows) {
+                                     std::span<const int64_t> starts,
+                                     std::span<const uint64_t> counts,
+                                     std::span<const uint64_t> positions) {
   auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
-  NormalizeRowRanges(rows);
-  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
+  if (auto removal = connector::MakeRowRunRemoval(starts, counts, positions)) {
     session->trx.Remove(std::move(removal));
   }
 }

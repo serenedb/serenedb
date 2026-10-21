@@ -290,8 +290,7 @@ absl::Status IndexDurability::Refresh(
 void IndexDurability::ReplaceSegments(
   irs::IndexWriter& writer, std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-    removal_provider) {
+  absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
   std::unique_lock lock{_refresh_mutex};
   AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);

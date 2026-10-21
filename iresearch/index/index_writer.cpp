@@ -25,7 +25,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
-#include <fast_float/fast_float.h>
 
 #include <cstdint>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -96,11 +95,32 @@ struct FlushedSegmentContext {
   }
 
   void Remove(const IndexWriter::QueryContext& query);
+
+  void RemoveKeyed(uint64_t tick, const DocRemovalResolver& removals);
 };
+
+bool Keyed(const IndexWriter::QueryContext& query,
+           const DocRemovalResolver& removals) noexcept {
+  return query.removal && removals.Keyed(*query.removal);
+}
 
 bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
                        const IndexWriter::QueryContext& query,
-                       const SubReader& reader) {
+                       const SubReader& reader,
+                       const DocRemovalResolver& removals) {
+  auto it_mask = reader.MaskedDocs();
+  bool modified = false;
+
+  if (query.removal) {
+    const auto end = doc_limits::min() + reader.docs_count();
+    for (const auto doc : removals.PositionalDocs(*query.removal, reader)) {
+      if (doc < end && !it_mask.Contains(doc)) {
+        modified |= deleted_docs.Add(doc);
+      }
+    }
+    return modified;
+  }
+
   // A deletion never scores, so nothing under it collects statistics. The
   // batch's own deletions so far are handed over: a document an earlier query
   // of this batch removed is not alive, and the segment's mask predates it.
@@ -117,8 +137,6 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
     return false;  // skip a query kind that has no plan
   }
 
-  auto it_mask = reader.MaskedDocs();
-  bool modified = false;
   for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
@@ -128,6 +146,38 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
     modified |= deleted_docs.Add(doc_id);
   }
 
+  return modified;
+}
+
+bool RemoveKeyedFromSegment(DocumentMaskBuilder& deleted_docs,
+                            const SubReader& reader,
+                            const DocRemovalResolver& removals) {
+  auto it_mask = reader.MaskedDocs();
+  bool modified = false;
+  for (const auto range : removals.KeyedDocs(reader)) {
+    for (auto doc = range.begin; doc != range.end; ++doc) {
+      if (!it_mask.Contains(doc)) {
+        modified |= deleted_docs.Add(doc);
+      }
+    }
+  }
+  return modified;
+}
+
+bool RemapRemoval(DocumentMaskBuilder& docs_mask, const DocRemoval& removal,
+                  std::span<const SubReader* const> candidates,
+                  const MergeWriter& merger,
+                  const DocRemovalResolver& removals) {
+  bool modified = false;
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    const auto& remap = merger[i].remap;
+    const auto end = doc_limits::min() + candidates[i]->docs_count();
+    for (const auto doc : removals.PositionalDocs(removal, *candidates[i])) {
+      if (doc < end && !remap.IsMasked(doc)) {
+        modified |= docs_mask.Add(remap.Remap(doc));
+      }
+    }
+  }
   return modified;
 }
 
@@ -159,6 +209,20 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query) {
        !doc_limits::eof(doc) && doc - doc_limits::min() < bound;
        doc = plan->Next()) {
     document_mask.Add(doc);
+  }
+}
+
+void FlushedSegmentContext::RemoveKeyed(uint64_t tick,
+                                        const DocRemovalResolver& removals) {
+  const auto bound = flushed.docs.UpperBound(tick);
+  if (bound == 0) {
+    return;
+  }
+  const auto limit = static_cast<doc_id_t>(bound + doc_limits::min());
+  for (const auto range : removals.KeyedDocs(*reader)) {
+    if (range.begin < limit) {
+      flushed.docs_mask.AddRange(range.begin, std::min(range.end, limit));
+    }
   }
 }
 
@@ -398,16 +462,6 @@ Sync SyncOf(bool durable, bool meta_written) noexcept {
   return meta_written ? Sync::Meta : Sync::None;
 }
 
-bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
-  if (name.size() < 2 || name.front() != '_') {
-    return false;
-  }
-  const auto* begin = name.data() + 1;
-  const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
-  return ec == std::errc{} && (ptr == end || *ptr == '.');
-}
-
 uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.visit([&max_id](std::string_view name) {
@@ -453,7 +507,8 @@ struct PublishResult {
 PublishResult UpdateExisting(
   const DirectoryReaderImpl& committed_reader,
   const CompactingSegments& segment_mask,
-  std::span<const IndexWriter::QueryContext* const> queries, Directory& dir,
+  std::span<const IndexWriter::QueryContext* const> queries,
+  const DocRemovalResolver& removals, Directory& dir,
   const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
   const size_t committed_reader_size = committed_reader.size();
@@ -478,9 +533,14 @@ PublishResult UpdateExisting(
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
+    bool keyed = false;
     for (const auto* query : queries) {
       // FIXME(gnusi): optimize PK queries
-      RemoveFromSegment(deleted_docs, *query, existing_segment);
+      RemoveFromSegment(deleted_docs, *query, existing_segment, removals);
+      keyed |= Keyed(*query, removals);
+    }
+    if (keyed) {
+      RemoveKeyedFromSegment(deleted_docs, existing_segment, removals);
     }
 
     // Write docs_mask if masks added
@@ -520,7 +580,8 @@ struct AddIncomingResult : PublishResult {
 
 AddIncomingResult AddIncoming(
   auto& incoming_segments, std::span<const PublishedSegment> existing,
-  std::span<const IndexWriter::QueryContext* const> queries, Directory& dir,
+  std::span<const IndexWriter::QueryContext* const> queries,
+  const DocRemovalResolver& removals, Directory& dir,
   const ProgressReportCallback& progress) {
   size_t current_incoming_index = 0;
 
@@ -587,16 +648,29 @@ AddIncomingResult AddIncoming(
       // merged segment. Pending already adopted/compacted segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
+      bool keyed = false;
       for (const auto* query : queries) {
         // skip queries which not affect this
         if (incoming.tick <= query->tick) {
           // FIXME(gnusi): optimize PK queries
-          docs_mask_modified |= RemoveFromSegment(docs_mask, *query, *reader);
+          docs_mask_modified |=
+            RemoveFromSegment(docs_mask, *query, *reader, removals);
+          keyed |= Keyed(*query, removals);
+          if (query->removal && incoming.compaction_ctx.remap) {
+            docs_mask_modified |= RemapRemoval(
+              docs_mask, *query->removal, incoming.compaction_ctx.candidates,
+              *incoming.compaction_ctx.remap, removals);
+          }
         }
       }
       if (incoming.removal) {
-        docs_mask_modified |= RemoveFromSegment(
-          docs_mask, {incoming.removal, writer_limits::kMinTick}, *reader);
+        docs_mask_modified |=
+          RemoveFromSegment(docs_mask, incoming.removal, *reader, removals);
+        keyed |= Keyed(incoming.removal, removals);
+      }
+      if (keyed) {
+        docs_mask_modified |=
+          RemoveKeyedFromSegment(docs_mask, *reader, removals);
       }
     }
 
@@ -643,7 +717,8 @@ AddIncomingResult AddIncoming(
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
   std::span<const IndexWriter::QueryContext* const> queries,
-  const Directory& dir, const IndexReaderOptions& reader_options,
+  const DocRemovalResolver& removals, const Directory& dir,
+  const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
   size_t total_flushed_segments = 0;
@@ -681,12 +756,21 @@ std::vector<FlushedSegmentContext> OpenFlushed(
 
       // mask documents matching filters from all flushed segment_contexts
       // (i.e. from new operations)
+      std::optional<uint64_t> keyed_tick;
       for (const auto* query : queries) {
         // skip queries which not affect this FlushedSegment
         if (flushed_first_tick <= query->tick) {
-          // FIXME(gnusi): optimize PK queries
-          segment_ctx.Remove(*query);
+          if (!query->removal) {
+            // FIXME(gnusi): optimize PK queries
+            segment_ctx.Remove(*query);
+          } else if (removals.Keyed(*query->removal)) {
+            keyed_tick =
+              std::max(keyed_tick.value_or(query->tick), query->tick);
+          }
         }
+      }
+      if (keyed_tick) {
+        segment_ctx.RemoveKeyed(*keyed_tick, removals);
       }
     }
   }
@@ -1635,7 +1719,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
                        candidates.size());
-  const auto& pending_segment = ctx->incoming.emplace_back(
+  auto& pending_segment = ctx->incoming.emplace_back(
     std::move(compaction_segment), writer_limits::kMinTick,
     // removals must be applied to the compacted segment
     std::move(refs),             // do not forget to track refs
@@ -1643,6 +1727,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     std::move(pending_reader),   // compacted reader
     std::move(committed_reader)  // compaction context meta
   );
+  pending_segment.compaction_ctx.remap.emplace(std::move(merger));
   // noexcept part: mask compacted segments
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
@@ -1736,7 +1821,7 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 void IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider) {
+  absl::FunctionRef<bool(QueryContext&)> removal_provider) {
   if (replaced.empty() && adopted_metas.empty()) {
     return;
   }
@@ -1804,7 +1889,7 @@ void IndexWriter::ReplaceSegments(
     candidates.push_back(found);
   }
 
-  QueryContext::FilterPtr removal;
+  QueryContext removal;
   if (!removal_provider(removal)) {
     return;
   }
@@ -1978,13 +2063,41 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
-  auto existing =
-    UpdateExisting(committed_reader, ctx->segment_mask, queries, dir, progress);
+  DocRemovalResolver removals;
+  std::vector<const DocRemoval*> pending_removals;
+  for (const auto* query : queries) {
+    if (query->removal) {
+      pending_removals.emplace_back(query->removal.get());
+    }
+  }
+  for (const auto& incoming : ctx->incoming) {
+    if (incoming.removal.removal) {
+      pending_removals.emplace_back(incoming.removal.removal.get());
+    }
+  }
+  if (!pending_removals.empty()) {
+    std::vector<const SubReader*> live;
+    live.reserve(committed_reader.size());
+    for (const auto& segment : committed_reader.GetReaders()) {
+      if (!ctx->segment_mask.contains(segment.Meta().name)) {
+        live.emplace_back(&segment);
+      }
+    }
+    for (const auto& incoming : ctx->incoming) {
+      if (incoming.compaction_ctx.remap) {
+        live.insert(live.end(), incoming.compaction_ctx.candidates.begin(),
+                    incoming.compaction_ctx.candidates.end());
+      }
+    }
+    removals.Prepare(pending_removals, live);
+  }
+  auto existing = UpdateExisting(committed_reader, ctx->segment_mask, queries,
+                                 removals, dir, progress);
 
   // Stage 2
   // Add incoming segments registered by compaction, adoption or replacement
-  auto incoming =
-    AddIncoming(ctx->incoming, existing.segments, queries, dir, progress);
+  auto incoming = AddIncoming(ctx->incoming, existing.segments, queries,
+                              removals, dir, progress);
 
   // For pending compaction we need to filter out compaction
   // candidates after applying them
@@ -2005,7 +2118,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 3
   // create new segments
-  auto segment_ctxs = OpenFlushed(ctx->segments, queries, dir,
+  auto segment_ctxs = OpenFlushed(ctx->segments, queries, removals, dir,
                                   committed_reader.Options(), progress);
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
   segments.insert(segments.end(),

@@ -49,7 +49,6 @@
 
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
@@ -287,15 +286,15 @@ bool RebuildGroup(duckdb::ClientContext& context,
   bool truncated = false;
   try {
     shard.ReplaceSegments(
-      replaced, adopted,
-      [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
+      replaced, adopted, [&](irs::IndexWriter::QueryContext& removal) {
         auto [rows, truncate] = shard.DrainDeleteLog();
         if (truncate > snapshot) {
           truncated = true;
           return false;
         }
-        search::NormalizeRowRanges(rows);
-        removal = MakeRowRangeRemoval(rows);
+        if (auto rows_removal = MakeRowRangeRemoval(std::move(rows))) {
+          removal = {std::move(rows_removal), irs::writer_limits::kMinTick};
+        }
         return true;
       });
   } catch (const irs::SqlException& e) {

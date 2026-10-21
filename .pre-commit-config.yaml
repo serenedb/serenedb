@@ -95,6 +95,12 @@ repos:
         entry: python3 scripts/generate_system_table_claims.py --check
         pass_filenames: false
         files: (system_table_claims\.test|generate_system_table_claims\.py)$
+      - id: check-search-table-dml-tests
+        name: Check generated search-table DML tests
+        language: python
+        entry: python3 scripts/generate_search_table_dml_tests.py --check
+        pass_filenames: false
+        files: (search_table_positional_dml_.*|search_table_positional_removal_load\.test_slow|generate_search_table_dml_tests\.py)$
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python

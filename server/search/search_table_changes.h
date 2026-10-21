@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
 #include <absl/functional/any_invocable.h>
 
 #include <algorithm>
@@ -28,8 +27,11 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/wal_entry.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -37,6 +39,7 @@
 #include <vector>
 
 #include "connector/column_id.h"
+#include "connector/row_position.h"
 
 namespace duckdb {
 
@@ -50,38 +53,21 @@ struct InlinePk {
   uint64_t count;
 };
 
-struct RowRange {
-  int64_t begin;
-  int64_t end;
-};
+using RowRange = irs::KeyRange;
 
-inline void AppendRowRanges(std::vector<RowRange>& ranges,
-                            std::span<const int64_t> rows) {
-  for (const auto row : rows) {
-    if (!ranges.empty() && ranges.back().end == row) {
-      ++ranges.back().end;
-    } else {
-      ranges.emplace_back(row, row + 1);
-    }
+inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, int64_t rowid,
+                         uint64_t position) {
+  if (!runs.starts.empty() &&
+      rowid == runs.starts.back() + static_cast<int64_t>(runs.counts.back()) &&
+      (runs.positions.back() == connector::kNoRowPosition
+         ? position == connector::kNoRowPosition
+         : position == runs.positions.back() + runs.counts.back())) {
+    ++runs.counts.back();
+    return;
   }
-}
-
-inline void NormalizeRowRanges(std::vector<RowRange>& ranges) {
-  const auto by_begin = [](const RowRange& l, const RowRange& r) {
-    return l.begin < r.begin;
-  };
-  if (!absl::c_is_sorted(ranges, by_begin)) {
-    absl::c_sort(ranges, by_begin);
-  }
-  size_t merged = 0;
-  for (const auto& range : ranges) {
-    if (merged != 0 && ranges[merged - 1].end >= range.begin) {
-      ranges[merged - 1].end = std::max(ranges[merged - 1].end, range.end);
-    } else {
-      ranges[merged++] = range;
-    }
-  }
-  ranges.resize(merged);
+  runs.starts.emplace_back(rowid);
+  runs.counts.emplace_back(1);
+  runs.positions.emplace_back(position);
 }
 
 // Per-search-table, per-transaction write buffer.
@@ -97,7 +83,7 @@ struct LocalTableChangesEntry {
     // already promoted are gone from the buffer, so their ops sit at 0.
     uint32_t band_watermark = 0;
     // Rowid ranges to remove. Empty for a TRUNCATE.
-    std::vector<RowRange> delete_ranges;
+    duckdb::WALDeleteRowRanges deletes;
     bool truncate = false;
     bool clears_shard = false;
 
@@ -138,7 +124,11 @@ struct LocalTableChangesEntry {
     pk_segments.push_back({pk_base, chunk.size()});
   }
 
-  void AppendDeletes(std::span<const int64_t> rows) {
+  void AppendDeletes(std::span<const int64_t> rows,
+                     std::span<const uint64_t> positions) {
+    SDB_ENSURE(positions.size() == rows.size(),
+               "search table: ", positions.size(), " row positions for ",
+               rows.size(), " deleted rows");
     if (rows.empty()) {
       return;
     }
@@ -147,7 +137,10 @@ struct LocalTableChangesEntry {
         ops.back().band_watermark != band) {
       ops.emplace_back().band_watermark = band;
     }
-    AppendRowRanges(ops.back().delete_ranges, rows);
+    auto& deletes = ops.back().deletes;
+    for (size_t i = 0; i < rows.size(); ++i) {
+      AppendRowRun(deletes, rows[i], positions[i]);
+    }
   }
 
   // A truncate removes every row, including the ones this transaction has just
@@ -194,7 +187,6 @@ struct LocalTableChangesEntry {
     auto op = ops.begin() + first_op;
     auto apply_until = [&](size_t band) {
       for (; op != ops.end() && op->band_watermark <= band; ++op) {
-        NormalizeRowRanges(op->delete_ranges);
         apply(*op);
       }
     };

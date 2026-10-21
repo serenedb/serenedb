@@ -137,18 +137,41 @@ def test_schema_param_places_the_tables(tmp_path: Path) -> None:
         server.close()
 
 
-def test_otel_create_index_none_leaves_the_indexes_to_the_user(tmp_path: Path) -> None:
-    server = _Server(tmp_path, "api=otel&otel_create_index=none")
-    try:
-        tables = server.pg.execute(
-            "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' "
-            "AND tablename LIKE 'otel\\_%'").fetchone()[0]
-        assert tables == 7
-        indexes = server.pg.execute(
-            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
-            "AND tablename LIKE 'otel\\_%'").fetchone()[0]
-        assert indexes == 0
+def _otel_objects(server: _Server, catalog: str) -> int:
+    return server.pg.execute(
+        f"SELECT count(*) FROM {catalog} WHERE schemaname = 'public' "
+        "AND tablename LIKE 'otel\\_%'").fetchone()[0]
 
+
+def _indexes_of(server: _Server, table: str) -> list[str]:
+    return [row[0] for row in server.pg.execute(
+        "SELECT indexname FROM pg_indexes WHERE tablename = %s "
+        "ORDER BY indexname", (table,)).fetchall()]
+
+
+def test_missing_table_is_created_with_its_index(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _otel_objects(server, "pg_tables") == 7
+        assert _otel_objects(server, "pg_indexes") == 7
+        server.pg.execute("DROP INDEX otel_logs_idx")
+        server.pg.execute("DROP TABLE otel_metrics_summary")
+    finally:
+        server.close()
+
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _otel_objects(server, "pg_tables") == 7
+        assert _indexes_of(server, "otel_metrics_summary") == [
+            "otel_metrics_summary_idx"]
+        assert _indexes_of(server, "otel_logs") == []
+    finally:
+        server.close()
+
+
+def test_own_index_survives_restart(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
         def export(bodies: list[str]) -> bytes:
             return json.dumps({"resourceLogs": [{
                 "resource": {"attributes": [
@@ -165,6 +188,7 @@ def test_otel_create_index_none_leaves_the_indexes_to_the_user(tmp_path: Path) -
         ]), "application/json") == 200
         assert server.count("otel_logs") == 2
 
+        server.pg.execute("DROP INDEX otel_logs_idx")
         server.pg.execute(
             "CREATE TEXT SEARCH DICTIONARY otel_words AS "
             "split_by_non_alpha(case := 'lower', break := 'alnum') "
@@ -172,6 +196,12 @@ def test_otel_create_index_none_leaves_the_indexes_to_the_user(tmp_path: Path) -
         server.pg.execute(
             "CREATE INDEX otel_logs_words ON otel_logs USING inverted "
             '("timestamp", body otel_words, service_name)')
+    finally:
+        server.close()
+
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _indexes_of(server, "otel_logs") == ["otel_logs_words"]
         assert server.post("/v1/logs", export([
             "local_disconnect", "remote peer closed",
         ]), "application/json") == 200

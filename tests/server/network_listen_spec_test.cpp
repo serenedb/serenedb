@@ -109,32 +109,6 @@ TEST(ListenSpec, HttpDatabaseParam) {
   EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].database.empty());
 }
 
-TEST(ListenSpec, HttpOtelCreateIndexParam) {
-  EXPECT_FALSE(Parse({"http://127.0.0.1:4318?api=otel"})[0].otel_create_index);
-  EXPECT_EQ(
-    Parse({"http://127.0.0.1:4318?api=otel&otel_create_index=default"})[0]
-      .otel_create_index,
-    true);
-  EXPECT_EQ(Parse({"http://127.0.0.1:4318?otel_create_index=none&api=otel"})[0]
-              .otel_create_index,
-            false);
-}
-
-TEST(ListenSpec, HttpOtelCreateIndexWithoutOtelApiIsRejected) {
-  EXPECT_DEATH(
-    {
-      dup2(STDERR_FILENO, STDOUT_FILENO);
-      Parse({"http://127.0.0.1:9200?api=es&otel_create_index=none"});
-    },
-    "'otel_create_index' requires api=otel");
-  EXPECT_DEATH(
-    {
-      dup2(STDERR_FILENO, STDOUT_FILENO);
-      Parse({"http://127.0.0.1:9200?api=es&otel_create_index=default"});
-    },
-    "'otel_create_index' requires api=otel");
-}
-
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);

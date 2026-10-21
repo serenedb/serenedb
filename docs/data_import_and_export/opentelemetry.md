@@ -185,18 +185,9 @@ are still stored and retrievable; they are read with a columnstore scan.
 
 ### Your own indexes
 
-The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. `otel_create_index=none` on the listener creates the tables without any index, so you choose the tokenizer and the indexed columns and expressions before the first export:
+The shipped indexes are a default, not part of the schema: ingest checks the tables' columns, never their indexes. Startup creates each missing table together with its shipped index, and leaves a table that exists as it is, indexes included, so an index of your own survives restarts. To use your own, drop the shipped index and create yours.
 
-```bash
-serened ./data --listen 'postgres://0.0.0.0:7890,http://0.0.0.0:4318?api=otel&otel_create_index=none'
-```
-
-| `otel_create_index=` | The tables are created |
-|---|---|
-| `default` | with the shipped indexes; the default |
-| `none` | without indexes |
-
-The option applies only when startup creates the schema; an existing schema keeps the indexes it has. A table without an index still answers every query with a columnstore scan, which skips the parts of the table whose `"timestamp"` range a filter rules out, but it has no full-text search with `@@`, no BM25 and no facets, and an equality lookup such as `trace_id = '…'` reads the whole column.
+A table without an index still answers every query with a columnstore scan, which skips the parts of the table whose `"timestamp"` range a filter rules out, but it has no full-text search with `@@`, no BM25 and no facets, and an equality lookup such as `trace_id = '…'` reads the whole column.
 
 For example, to find `downstream_remote_disconnect` by `remote` or `disconnect`, index `body` with a dictionary that splits on `_`:
 
@@ -205,13 +196,15 @@ CREATE TEXT SEARCH DICTIONARY otel_words AS
     split_by_non_alpha(case := 'lower', break := 'alnum')
     WITH (frequency, position, norm);
 
+DROP INDEX otel_logs_idx;
+
 CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
     "timestamp", body otel_words, severity_text, severity_number,
     service_name, event_name, trace_id
 );
 ```
 
-An index created on a table that already holds rows indexes those rows too, which rewrites the table: on a large table, create the indexes before the first export, or drop and create them in a quiet period.
+An index created on a table that already holds rows indexes those rows too, which rewrites the table: on a large table, replace the index before the first export, or in a quiet period. Between the `DROP INDEX` and the `CREATE INDEX`, `@@` search on the table is unavailable.
 
 ## Timestamps
 
@@ -465,5 +458,5 @@ and it indexes the rows already in the table. To change the schema, create a
 new table with `CREATE TABLE ... AS SELECT`, switch writers to it, and rename.
 
 Re-running the DDL is safe — every statement is `IF NOT EXISTS`, including on
-a table that already holds rows. Startup checks for the schema before running
-any of it, so a restart does no work at all.
+a table that already holds rows. Startup creates only the tables that are
+missing, so a restart of a complete schema does no work at all.

@@ -393,6 +393,24 @@ SELECT a FROM tsq_idx WHERE b @@ ts_regexp('(abc');
 db error: ERROR: invalid regular expression: missing ): (abc
 
 
+# A pattern ending in a lone backslash is invalid, like any other RE2 error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('ab\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('a\.b\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('qu\.ck') ORDER BY a;
+----
+a
+
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'posix');
 ----

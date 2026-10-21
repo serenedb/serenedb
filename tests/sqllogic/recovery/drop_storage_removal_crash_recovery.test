@@ -1,0 +1,236 @@
+control substitution on
+
+# A dropped search table, inverted index or database has its directory removed
+# in the background after the commit. A crash in the middle of that removal
+# must leave a data directory that boots: replay creates the dropped object
+# again before it replays the drop, so it has to find the whole directory or
+# none of it.
+#
+# The fault point stops a removal once it deleted everything in the directory
+# but the segment list, and parks it there; the crash comes while it is parked.
+
+
+statement ok
+CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO dsr_keep VALUES (1, 'kept');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dsr_keep;
+
+
+# ----------------------------------------------------------------------
+# 1. A search table.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dsr_s;
+
+
+statement ok
+SET sdb_faults = 'storage_removal_interrupted';
+
+
+statement ok
+DROP TABLE dsr_s;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-storage_removal_interrupted:parked';
+
+
+# Under the extended protocol the Sync that follows the SET is already the
+# next packet, so the SET itself is what the connection dies on.
+skipif pg-wire-extended
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_table
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_s';
+----
+n
+0
+
+
+connection after_table
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept
+
+
+# ----------------------------------------------------------------------
+# 2. An inverted index on a table.
+# ----------------------------------------------------------------------
+
+connection after_table
+statement ok
+CREATE TABLE dsr_t (id INT, body TEXT);
+
+
+connection after_table
+statement ok
+INSERT INTO dsr_t VALUES (1, 'alpha'), (2, 'beta');
+
+
+connection after_table
+statement ok
+CREATE INDEX dsr_t_idx ON dsr_t USING inverted (body);
+
+
+connection after_table
+statement ok
+VACUUM (REFRESH_TABLE) dsr_t;
+
+
+connection after_table
+statement ok
+SET sdb_faults = 'storage_removal_interrupted';
+
+
+connection after_table
+statement ok
+DROP INDEX dsr_t_idx;
+
+
+connection after_table
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-storage_removal_interrupted:parked';
+
+
+skipif pg-wire-extended
+connection after_table
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_table
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_table
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_index
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_t_idx';
+----
+n
+0
+
+
+connection after_index
+query
+SELECT id, body FROM dsr_t ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+
+# ----------------------------------------------------------------------
+# 3. A database.
+# ----------------------------------------------------------------------
+
+connection after_index
+statement ok
+CREATE DATABASE dsr_db;
+
+
+connection after_index
+statement ok
+CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+connection after_index
+statement ok
+INSERT INTO dsr_db.public.s VALUES (1, 'alpha');
+
+
+connection after_index
+statement ok
+VACUUM (REFRESH_TABLE) dsr_db.public.s;
+
+
+connection after_index
+statement ok
+SET sdb_faults = 'storage_removal_interrupted';
+
+
+connection after_index
+statement ok
+DROP DATABASE dsr_db;
+
+
+connection after_index
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-storage_removal_interrupted:parked';
+
+
+skipif pg-wire-extended
+connection after_index
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_index
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_index
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_database
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'dsr_db';
+----
+n
+0
+
+
+connection after_database
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept

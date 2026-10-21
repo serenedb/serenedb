@@ -683,6 +683,9 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
+    if (IsSubsetOf(IndexFeatures::Vec, props.index_features)) {
+      continue;
+    }
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(field_itr.Meta().id);
@@ -832,6 +835,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   std::optional<ReadContext> ivf_ctx;
   const auto cluster_readers =
     PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
+  index_features &= ~IndexFeatures::Vec;
   for (const auto* reader : cluster_readers) {
     index_features |= reader->properties().index_features;
   }

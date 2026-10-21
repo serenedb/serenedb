@@ -83,9 +83,15 @@ MissingDatabases gMissingDatabases;
 
 constexpr std::string_view kEngineDir = "engine_v1";
 
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
+struct OidDirectory {
+  duckdb::idx_t oid = 0;
+  std::filesystem::path path;
+  bool dropped = false;
+};
+
+std::vector<OidDirectory> OidDirectories(
   const std::filesystem::path& directory) {
-  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
+  std::vector<OidDirectory> found;
   std::error_code ec;
   std::filesystem::directory_iterator entries{directory, ec};
   if (ec && ec != std::errc::no_such_file_or_directory) {
@@ -98,11 +104,16 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
       SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
                 "': ", ec.message());
     }
-    const auto name = entry.path().filename().string();
+    const auto filename = entry.path().filename().string();
+    std::string_view name = filename;
+    const bool dropped = name.ends_with(kDroppedSuffix);
+    if (dropped) {
+      name.remove_suffix(kDroppedSuffix.size());
+    }
     duckdb::idx_t oid = 0;
     if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
         absl::SimpleAtoi(name, &oid)) {
-      found.emplace_back(oid, entry.path());
+      found.push_back({.oid = oid, .path = entry.path(), .dropped = dropped});
     }
   }
   return found;
@@ -110,8 +121,8 @@ std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
 
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
-  for (const auto& [oid, path] : OidDirectories(directory)) {
-    if (owned.contains(oid)) {
+  for (const auto& [oid, path, dropped] : OidDirectories(directory)) {
+    if (!dropped && owned.contains(oid)) {
       continue;
     }
     std::error_code ec;
@@ -328,10 +339,13 @@ void InitCatalog(std::string_view directory) {
   }
   if (gMissingDatabases.fresh_cluster &&
       absl::c_any_of(OidDirectories(layout.EngineDir()), [](const auto& dir) {
+        if (dir.dropped) {
+          return false;
+        }
         std::error_code ec;
-        const bool empty = std::filesystem::is_empty(dir.second, ec);
+        const bool empty = std::filesystem::is_empty(dir.path, ec);
         if (ec) {
-          SDB_FATAL(STARTUP, "cannot list directory '", dir.second.string(),
+          SDB_FATAL(STARTUP, "cannot list directory '", dir.path.string(),
                     "': ", ec.message());
         }
         return !empty;

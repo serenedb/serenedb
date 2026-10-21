@@ -846,7 +846,7 @@ query
 SELECT pg_settings_get_flags('work_mem');
 ----
 pg_settings_get_flags
-{}
+NULL
 
 
 skipif serenedb

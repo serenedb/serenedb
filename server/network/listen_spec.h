@@ -131,4 +131,6 @@ struct ListenSpec {
 // empty. Fatal (SDB_FATAL) on any error -- this runs once at startup.
 std::vector<ListenSpec> ParseListenSpecs(const std::vector<std::string>& urls);
 
+uint32_t MaxConnections(std::optional<uint32_t> listener);
+
 }  // namespace sdb::network

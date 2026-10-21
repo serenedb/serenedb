@@ -47,6 +47,7 @@
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
+#include "query/config_variable_names.h"
 #include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(
@@ -96,7 +97,8 @@ ABSL_FLAG(uint64_t, io_threads, 0,
 ABSL_FLAG(uint64_t, max_connections, 0,
           "Max concurrent client connections across all listeners (0 = "
           "unlimited). Over-cap connections get 53300 (pg) / 503 (http) then "
-          "close. Per-listener override via ?max_connections=.");
+          "close. Per-listener override via ?max_connections=. `SET GLOBAL "
+          "max_connections = N` changes it at runtime.");
 
 ABSL_FLAG(std::string, http_cors_origins, "",
           "CORS allow-origin list for the HTTP/ES API: comma-separated origins "
@@ -182,8 +184,6 @@ Server::Server()
   }
   _max_message = static_cast<std::uint32_t>(std::min<std::uint64_t>(
     absl::GetFlag(FLAGS_pg_max_message_bytes), 0xFFFFFFFFull));
-  _max_connections = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-    absl::GetFlag(FLAGS_max_connections), 0xFFFFFFFFull));
   gInstance = this;
 }
 
@@ -281,7 +281,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
   deps.max_message_bytes = _max_message;
   deps.active = &_active;
   deps.sessions = &_sessions;
-  deps.max_connections = spec.max_connections.value_or(_max_connections);
+  deps.max_connections = spec.max_connections;
   deps.auth_timeout = _auth_timeout;
   deps.proxy = spec.proxy;
   auto acceptor = std::make_shared<
@@ -323,7 +323,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
     deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
+    deps.max_connections = spec.max_connections;
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
     if (ssl) {
@@ -346,7 +346,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.active = &_active;
     deps.cancel = &_cancel;
     deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
+    deps.max_connections = spec.max_connections;
     deps.max_body_bytes = network::http::MaxBodyBytes(spec.apis);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
@@ -394,6 +394,13 @@ void Server::StartIoPool() {
 void Server::StartListeners() {
   const auto specs = network::ParseListenSpecs(_listen);
   SetupAuth();
+  if (const auto max_connections = absl::GetFlag(FLAGS_max_connections);
+      max_connections != 0) {
+    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance())
+      .SetOptionByName(duckdb::Identifier{kMaxConnectionsSetting},
+                       duckdb::Value::UINTEGER(static_cast<uint32_t>(
+                         std::min<uint64_t>(max_connections, 0xFFFFFFFFull))));
+  }
   for (const auto& spec : specs) {
     if (spec.protocol != network::ListenProtocol::Http) {
       continue;

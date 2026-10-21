@@ -19,10 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
-#include <cmath>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
@@ -59,18 +57,6 @@ std::optional<std::string> Display(duckdb::ClientContext& context,
     return std::nullopt;
   }
   return duckdb::Settings::FormatDisplayValue(context, value).ToString();
-}
-
-std::optional<SystemText> InBaseUnit(const std::optional<std::string>& text,
-                                     std::string_view unit) {
-  if (!text) {
-    return std::nullopt;
-  }
-  if (const auto value =
-        unit.empty() ? std::nullopt : PgBaseValue(unit, *text)) {
-    return SystemText{absl::StrCat(std::llround(*value))};
-  }
-  return SystemText{std::string_view{*text}};
 }
 
 struct SettingNames {
@@ -113,21 +99,15 @@ struct Setting {
   const duckdb::Identifier& name;
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const duckdb::ExtensionOption& extension;
-  const VariableDescription* variable;
   mutable std::optional<std::optional<std::string>> boot;
   mutable std::optional<duckdb::Value> current;
   mutable std::optional<std::optional<std::string>> displayed;
-  mutable bool session;
-
-  const PgSetting& Pg() const { return variable->pg; }
+  mutable bool session = false;
 
   const std::optional<std::string>& Boot() const {
     if (!boot) {
       auto initial = extension.default_value;
       duckdb::DBConfig::TryGetDefaultValue(option, initial);
-      if (initial.IsNull() && variable && variable->default_value) {
-        initial = variable->default_value();
-      }
       boot.emplace(Display(context, initial));
     }
     return *boot;
@@ -138,7 +118,6 @@ struct Setting {
       auto& value = current.emplace();
       if (option && option->get_setting) {
         value = option->get_setting(context);
-        session = variable && Displayed() != Boot();
       } else if (auto lookup = context.TryGetCurrentSetting(name, value)) {
         session = lookup.GetScope() == duckdb::SettingScope::LOCAL;
       }
@@ -159,20 +138,6 @@ struct Setting {
   }
 };
 
-constexpr std::tuple kSettingColumns{
-  Col<"name">([](const auto& row) -> const auto& { return row.name; }),
-  Col<"short_desc">([](const auto& row) {
-    if (row.variable) {
-      return row.variable->description;
-    }
-    return row.option ? std::string_view{row.option->description}
-                      : std::string_view{row.extension.description};
-  }),
-  Col<"source">([](const auto& row) {
-    return std::string_view{row.Session() ? "session" : "default"};
-  }),
-  Col<"pending_restart">([](const auto&) { return false; })};
-
 class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -184,27 +149,18 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
   static constexpr std::tuple kSources{
     ArraySource<duckdb::Identifier>{&LoadSettings, kKeys, {}}};
 
-  static constexpr auto kPg = Shape<kSql, const Setting>(
-    kSettingColumns, Col<"setting">([](const auto& row) {
-      return InBaseUnit(row.Displayed(), row.Pg().unit);
+  static constexpr auto kSetting = Shape<kSql, const Setting>(
+    Col<"name">([](const auto& row) -> const auto& { return row.name; }),
+    Col<"short_desc">([](const auto& row) {
+      return row.option ? std::string_view{row.option->description}
+                        : std::string_view{row.extension.description};
     }),
-    Col<"boot_val">(
-      [](const auto& row) { return InBaseUnit(row.Boot(), row.Pg().unit); }),
-    Col<"reset_val">(
-      [](const auto& row) { return InBaseUnit(row.Boot(), row.Pg().unit); }),
-    Col<"unit">([](const auto& row) { return NonEmpty(row.Pg().unit); }),
-    Col<"category">([](const auto& row) { return row.Pg().category; }),
-    Col<"context">([](const auto& row) { return row.Pg().context; }),
-    Col<"vartype">([](const auto& row) { return row.Pg().vartype; }),
-    Col<"min_val">([](const auto& row) { return NonEmpty(row.Pg().min_val); }),
-    Col<"max_val">([](const auto& row) { return NonEmpty(row.Pg().max_val); }),
-    Col<"enumvals">(
-      [](const auto& row) { return NonEmpty(row.Pg().enumvals); }));
-
-  static constexpr auto kCustom = Shape<kSql, const Setting>(
-    kSettingColumns, Col<"setting">([](const auto& row) -> const auto& {
-      return row.Displayed();
+    Col<"source">([](const auto& row) {
+      return std::string_view{row.Session() ? "session" : "default"};
     }),
+    Col<"pending_restart">([](const auto&) { return false; }),
+    Col<"setting">(
+      [](const auto& row) -> const auto& { return row.Displayed(); }),
     Col<"boot_val">([](const auto& row) -> const auto& { return row.Boot(); }),
     Col<"reset_val">([](const auto& row) -> const auto& { return row.Boot(); }),
     Col<"category">(
@@ -234,19 +190,10 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
          !context.setting_visibility(context, name.GetIdentifierName()))) {
       return;
     }
-    const auto* variable = FindVariable(name.GetIdentifierName());
-    const Setting setting{.context = context,
-                          .name = name,
-                          .option = option,
-                          .extension = extension,
-                          .variable = variable && !variable->pg.vartype.empty()
-                                        ? variable
-                                        : nullptr};
-    if (setting.variable) {
-      Emit<kPg>(setting);
-    } else {
-      Emit<kCustom>(setting);
-    }
+    Emit<kSetting>({.context = context,
+                    .name = name,
+                    .option = option,
+                    .extension = extension});
   }
 };
 

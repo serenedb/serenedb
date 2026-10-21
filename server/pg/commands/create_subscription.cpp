@@ -44,7 +44,6 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "pg/sql_utils.h"
-#include "query/config.h"
 #include "replication/conninfo.h"
 #include "replication/publisher_session.h"
 #include "replication/subscription_engine.h"
@@ -200,8 +199,14 @@ SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
     }
     if (name == "synchronous_commit" &&
         Has(allowed, Allowed::SynchronousCommit)) {
-      auto level = value.ToString();
-      NormalizePgValue(name, FindVariable(name)->pg, level);
+      auto level = absl::AsciiStrToLower(value.ToString());
+      if (level != "off" && level != "local" && level != "remote_write" &&
+          level != "remote_apply" && level != "on") {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("invalid value for parameter \"synchronous_commit\": \"",
+                  level, "\""));
+      }
       result.synchronous_commit = std::move(level);
       continue;
     }

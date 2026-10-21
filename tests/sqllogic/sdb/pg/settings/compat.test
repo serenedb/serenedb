@@ -1,15 +1,13 @@
-query
+query error
 SHOW work_mem;
 ----
-work_mem
-4MB
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
 
 
-query
+query error
 SELECT current_setting('lock_timeout') AS lock_timeout, current_setting('max_connections') AS max_connections;
 ----
-lock_timeout	max_connections
-0	0
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
 query
@@ -21,45 +19,40 @@ not_showable
 0
 
 
-statement ok
+statement error
 SET lock_timeout = '5s';
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
 query
 SELECT setting, source FROM pg_settings WHERE name = 'lock_timeout';
 ----
 setting	source
-5000	session
 
 
-query
+query error
 SHOW lock_timeout;
 ----
-lock_timeout
-5s
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
-statement ok
+statement error
 RESET lock_timeout;
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
-query
+query error
 SHOW lock_timeout;
 ----
-lock_timeout
-0
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
 
 
 statement error
 SET max_identifier_length = 100;
 ----
 db error: ERROR: parameter "max_identifier_length" cannot be changed
-
-
-statement error
-SET max_connections = 10;
-----
-db error: ERROR: parameter "max_connections" cannot be changed
 
 
 statement error
@@ -75,7 +68,5 @@ WHERE name IN ('lock_timeout', 'max_connections', 'max_identifier_length', 'work
 ORDER BY name;
 ----
 name	context	setting
-lock_timeout	user	0
-max_connections	postmaster	0
+max_connections	user	0
 max_identifier_length	internal	63
-work_mem	user	4096

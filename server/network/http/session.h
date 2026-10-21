@@ -81,10 +81,11 @@ struct HttpServerContext {
   const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
   const http::BearerValidator* bearer = nullptr;
-  // Shared live-connection counter + the cap this listener enforces (0 =
-  // unlimited). Over-cap connections get a 503 then close.
+  // Shared live-connection counter + this listener's own cap; without one the
+  // max_connections setting applies. Over-cap connections get a 503 then
+  // close.
   std::atomic<uint32_t>* active = nullptr;
-  uint32_t max_connections = 0;
+  std::optional<uint32_t> max_connections;
   uint64_t max_body_bytes = H1Limits{}.max_body_bytes;
   // Same cancel registry as the pg endpoint: http sessions register the same
   // tokens, so SQL pg_cancel/terminate_backend and server shutdown reach them.
@@ -359,7 +360,7 @@ class HttpSession final
   std::shared_ptr<CancelToken> _cancel_token;
   uint64_t _cancel_key = 0;
   yaclib::WaitGroup<>* _sessions = nullptr;
-  uint32_t _max_conn = 0;
+  std::optional<uint32_t> _max_conn;
   std::string_view _cors_origins;
   std::string_view _database;
   std::string_view _schema;
@@ -578,6 +579,7 @@ template<SocketKind Kind>
 yaclib::Future<> HttpSession<Kind>::SessionMain() {
   co_await _task->Park();
   absl::Cleanup finish_guard = [this] { _task->Finish(); };
+  const auto max_conn = MaxConnections(_max_conn);
   try {
     for (;;) {
       const auto event = co_await ReadHead();
@@ -635,8 +637,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           break;
         }
         writer.SetContentCoding(negotiated.coding, negotiated.level);
-        if (_max_conn != 0 && _active &&
-            _active->load(std::memory_order_relaxed) > _max_conn) {
+        if (max_conn != 0 && _active &&
+            _active->load(std::memory_order_relaxed) > max_conn) {
           writer.Fixed(http::HttpStatus::ServiceUnavailable,
                        http::kJsonContentType,
                        R"({"error":"too_many_connections"})", "");

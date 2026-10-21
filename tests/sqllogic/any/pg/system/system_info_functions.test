@@ -715,12 +715,22 @@ db error: ERROR: collations are not supported by type integer
 
 # pg_settings_get_flags
 
+skipif serenedb # SereneDB has no work_mem setting
 query
 SELECT pg_settings_get_flags('work_mem') IS NOT NULL AS work_mem, pg_settings_get_flags('search_path') IS NOT NULL AS search_path,
        pg_settings_get_flags('sif_nosuch') AS unknown, pg_settings_get_flags(NULL) AS null_input;
 ----
 work_mem	search_path	unknown	null_input
 t	t	NULL	NULL
+
+
+onlyif serenedb
+query
+SELECT pg_settings_get_flags('work_mem') IS NOT NULL AS work_mem, pg_settings_get_flags('search_path') IS NOT NULL AS search_path,
+       pg_settings_get_flags('sif_nosuch') AS unknown, pg_settings_get_flags(NULL) AS null_input;
+----
+work_mem	search_path	unknown	null_input
+f	t	NULL	NULL
 
 
 # pg_tablespace_databases

@@ -54,7 +54,6 @@ namespace sdb::pg {
 
 inline constexpr std::string_view kPgServerVersion = "18.6";
 inline constexpr int32_t kPgServerVersionNum = 180006;
-inline constexpr std::string_view kPgServerVersionNumText = "180006";
 
 class CopyInBatches;
 

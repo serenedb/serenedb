@@ -174,7 +174,7 @@
           "flag": "--max_connections",
           "type": "",
           "defaultValue": "0",
-          "description": "Max concurrent client connections across all listeners (0 = unlimited). Over-cap connections get 53300 (pg) / 503 (http) then close. Per-listener override via ?max_connections=.",
+          "description": "Max concurrent client connections across all listeners (0 = unlimited). Over-cap connections get 53300 (pg) / 503 (http) then close. Per-listener override via ?max_connections=. `SET GLOBAL max_connections = N` changes it at runtime.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

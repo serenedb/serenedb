@@ -120,10 +120,11 @@ struct PgServerContext {
   AuthMethod auth_method = AuthMethod::Scram;
   CancelRegistry* cancel = nullptr;
   uint32_t max_message_bytes = kDefaultMaxMessageBytes;
-  // Shared live-connection counter + the cap this listener enforces (0 =
-  // unlimited). Over-cap connections get 53300 then close.
+  // Shared live-connection counter + this listener's own cap; without one the
+  // max_connections setting applies. Over-cap connections get 53300 then
+  // close.
   std::atomic<uint32_t>* active = nullptr;
-  uint32_t max_connections = 0;
+  std::optional<uint32_t> max_connections;
   // Session Run() futures land here (slot taken by the acceptor at spawn) so
   // Server::stop() can wait for every session to complete.
   yaclib::WaitGroup<>* sessions = nullptr;
@@ -419,7 +420,7 @@ class PgWireSession
   uint32_t _max_message = kDefaultMaxMessageBytes;
   std::atomic<uint32_t>* _active = nullptr;
   yaclib::WaitGroup<>* _sessions = nullptr;
-  uint32_t _max_conn = 0;
+  std::optional<uint32_t> _max_conn;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
   // Client peer IP, captured once from the socket before auth. Unspecified

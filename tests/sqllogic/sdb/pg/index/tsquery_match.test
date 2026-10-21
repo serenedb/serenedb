@@ -2764,6 +2764,101 @@ a
 3
 6
 
+# A regex of literals rewritten to LIKE reaches the index with its '_', '%'
+# and '\' still literal.
+statement ok
+CREATE TABLE tsq_rw (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_rw_idx ON tsq_rw USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_rw VALUES (1, 'a_b'), (2, 'axb'), (3, 'a%b'), (4, 'aXYb'), (5, 'C:\Windows'), (6, 'C:Windows'), (7, 'xa_bx'), (8, 'a_bc'), (9, 'axbc');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_rw;
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b' ORDER BY id;
+----
+id
+1
+7
+8
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ 'a%b' ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b' ORDER BY id;
+----
+id
+1
+8
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^C:\\W' ORDER BY id;
+----
+id
+5
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b$' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %a\\_b%    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: a_b        │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^C:\\W';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: C:\\W       │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
 # ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------

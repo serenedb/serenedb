@@ -287,11 +287,13 @@ class LoserScoreCollector {
     const auto leaf = Leaf(_root);
     _hits[leaf] = hit;
     auto cur = MakeNode(hit.score, leaf);
+    auto cur_key = cur & kKeyMask;
     for (size_t node = Match(leaf); node != 0; node >>= 1) {
       const auto loser = tree[node];
-      const bool win = KeyLess(loser, cur);
+      const bool win = loser < cur_key;
       tree[node] = win ? cur : loser;
       cur = win ? loser : cur;
+      cur_key = win ? loser & kKeyMask : cur_key;
     }
     _root = cur;
   }

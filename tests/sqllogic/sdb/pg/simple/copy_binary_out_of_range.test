@@ -132,7 +132,7 @@ COPY (SELECT 1000.00::DECIMAL(7, 2) AS a) TO '${__TEST_DIR__}/oor_dec_high.bin' 
 statement error
 COPY oor_dec FROM '${__TEST_DIR__}/oor_dec_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 1000.00 to DECIMAL(5,2)
 
 
 statement ok
@@ -141,7 +141,7 @@ COPY (SELECT -12345.67::DECIMAL(7, 2) AS a) TO '${__TEST_DIR__}/oor_dec_low.bin'
 statement error
 COPY oor_dec FROM '${__TEST_DIR__}/oor_dec_low.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value -12345.67 to DECIMAL(5,2)
 
 
 statement ok
@@ -156,7 +156,7 @@ COPY (SELECT 1000000000000000000.00::DECIMAL(25, 2) AS a) TO '${__TEST_DIR__}/oo
 statement error
 COPY oor_wide_dec FROM '${__TEST_DIR__}/oor_wide_dec_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 1000000000000000000.00 to DECIMAL(20,2)
 
 
 statement ok
@@ -249,7 +249,7 @@ COPY (SELECT 123.4::DECIMAL(4, 1) AS a) TO '${__TEST_DIR__}/oor_small_dec_high.b
 statement error
 COPY oor_small_dec FROM '${__TEST_DIR__}/oor_small_dec_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 123.4 to DECIMAL(3,1)
 
 
 statement ok
@@ -267,7 +267,7 @@ COPY (SELECT 1000000000000000000::DECIMAL(19, 0) AS a) TO '${__TEST_DIR__}/oor_d
 statement error
 COPY oor_dec18 FROM '${__TEST_DIR__}/oor_dec18_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 1000000000000000000 to DECIMAL(18,0)
 
 
 statement ok
@@ -276,7 +276,7 @@ COPY (SELECT -1000000000000000000::DECIMAL(19, 0) AS a) TO '${__TEST_DIR__}/oor_
 statement error
 COPY oor_dec18 FROM '${__TEST_DIR__}/oor_dec18_low.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value -1000000000000000000 to DECIMAL(18,0)
 
 
 statement ok
@@ -294,7 +294,7 @@ COPY (SELECT 100000000000000000000000000000000000000::HUGEINT AS a) TO '${__TEST
 statement error
 COPY oor_dec38 FROM '${__TEST_DIR__}/oor_dec38_high.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 100000000000000000000000000000000000000 to DECIMAL(38,0)
 
 
 statement ok
@@ -303,7 +303,7 @@ COPY (SELECT -100000000000000000000000000000000000000::HUGEINT AS a) TO '${__TES
 statement error
 COPY oor_dec38 FROM '${__TEST_DIR__}/oor_dec38_low.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value -100000000000000000000000000000000000000 to DECIMAL(38,0)
 
 
 query
@@ -361,31 +361,46 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_dec FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value Infinity to DECIMAL(10,2)
 
 
 statement error
 COPY oor_num_dec FROM '${__TEST_DIR__}/oor_num_ninf.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value -Infinity to DECIMAL(10,2)
 
 
 statement error
 COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_ninf.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value -Infinity to type INT128
 
 
 statement error
 COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value Infinity to type UINT128
 
 
 statement error
 COPY oor_num_ubig FROM '${__TEST_DIR__}/oor_num_inf.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value Infinity to type UINT64
+
+
+system ok
+printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\000\000\010\000\000\000\000\300\000\000\000\377\377' > $__TEST_DIR__/oor_num_nan.bin
+
+statement error
+COPY oor_num_dec FROM '${__TEST_DIR__}/oor_num_nan.bin' (FORMAT binary);
+----
+db error: ERROR: Could not cast value NaN to DECIMAL(10,2)
+
+
+statement error
+COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_nan.bin' (FORMAT binary);
+----
+db error: ERROR: Failed to cast decimal value NaN to type INT128
 
 
 query
@@ -404,19 +419,19 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_dec38 FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Could not cast value 340282366920938463463374607431768211498 to DECIMAL(38,0)
 
 
 statement error
 COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value 340282366920938463463374607431768211498 to type INT128
 
 
 statement error
 COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_wrap.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value 340282366920938463463374607431768211498 to type UINT128
 
 
 system ok
@@ -431,7 +446,7 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_uhuge FROM '${__TEST_DIR__}/oor_num_umax1.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value 340282366920938463463374607431768211456 to type UINT128
 
 
 system ok
@@ -446,7 +461,7 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_hmin1.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value -170141183460469231731687303715884105729 to type INT128
 
 
 system ok
@@ -455,7 +470,7 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_e400.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: Failed to cast decimal value 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 to type INT128
 
 
 system ok
@@ -464,7 +479,7 @@ printf 'PGCOPY\012\377\015\012\000\000\000\000\000\000\000\000\000\000\001\000\0
 statement error
 COPY oor_num_huge FROM '${__TEST_DIR__}/oor_num_group.bin' (FORMAT binary);
 ----
-db error: ERROR: COPY FROM: invalid binary value in column 1
+db error: ERROR: invalid digit in external "numeric" value
 
 
 system ok

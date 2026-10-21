@@ -779,3 +779,51 @@ def test_prepared_multi_statement_command_runs_every_execute():
         finally:
             c.execute(f'DROP TABLE IF EXISTS "{a}"')
             c.execute(f'DROP TABLE IF EXISTS "{b}"')
+
+
+@pytest.mark.parametrize(
+    "query, sqlstate",
+    [
+        ("SELECT '1e40'::NUMERIC(10, 2)", "22003"),
+        ("SELECT '-Infinity'::NUMERIC(10, 2)", "22003"),
+        ("SELECT 'abc'::NUMERIC(10, 2)", "22P02"),
+        ("SELECT 12345.678::NUMERIC(5, 2)", "22003"),
+        ("SELECT 123456::NUMERIC(5, 2)", "22003"),
+        ("SELECT 0.99999::NUMERIC(5, 5)::NUMERIC(4, 4)", "22003"),
+        ("SELECT 1e40::FLOAT8::NUMERIC(10, 2)", "22003"),
+        ("SELECT 'Infinity'::FLOAT8::NUMERIC(10, 2)", "22003"),
+    ],
+)
+def test_numeric_cast_errors_report_postgresql_sqlstates(query, sqlstate):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with pytest.raises(psycopg.Error) as err:
+            c.execute(query)
+        assert err.value.sqlstate == sqlstate, query
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["SELECT 'NaN'::NUMERIC(10, 2)", "SELECT 'NaN'::FLOAT8::NUMERIC(10, 2)"],
+)
+def test_numeric_nan_is_refused_as_not_supported(query):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with pytest.raises(psycopg.errors.FeatureNotSupported):
+            c.execute(query)
+
+
+def test_numeric_text_input_reports_postgresql_sqlstates():
+    table = "numeric_text_input"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.execute(f'CREATE TABLE "{table}" (a NUMERIC(10, 2))')
+        try:
+            for text, sqlstate in (("1e40", "22003"), ("abc", "22P02")):
+                with pytest.raises(psycopg.Error) as err:
+                    c.execute(f'INSERT INTO "{table}" VALUES (%t)', (text,))
+                assert err.value.sqlstate == sqlstate, text
+                with pytest.raises(psycopg.Error) as err:
+                    with c.cursor().copy(f'COPY "{table}" FROM STDIN') as copy:
+                        copy.write(f"{text}\n")
+                assert err.value.sqlstate == sqlstate, text
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{table}"')

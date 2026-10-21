@@ -786,21 +786,52 @@ def _column_text(conn, table):
     return first_field(conn.drain_to_ready()).decode()
 
 
+def _error(msgs):
+    (e,) = errors(msgs)
+    return e.get("C"), e.get("M"), e.get("D")
+
+
 def test_binary_numeric_param_rejects_nan_and_infinity(conn):
+    sign = ("22P03", 'invalid sign in external "numeric" value', None)
     tables = {
-        "bin_num_dec": ("decimal(10, 2)", "42.00"),
-        "bin_num_huge": ("hugeint", "42"),
-        "bin_num_uhuge": ("uhugeint", "42"),
-        "bin_num_ubig": ("ubigint", "42"),
+        "bin_num_dec": (
+            "decimal(10, 2)",
+            "42.00",
+            "Could not cast value {} to DECIMAL(10,2)",
+            "22003",
+        ),
+        "bin_num_huge": (
+            "hugeint",
+            "42",
+            "Failed to cast decimal value {} to type INT128",
+            "0A000",
+        ),
+        "bin_num_uhuge": (
+            "uhugeint",
+            "42",
+            "Failed to cast decimal value {} to type UINT128",
+            "0A000",
+        ),
+        "bin_num_ubig": (
+            "ubigint",
+            "42",
+            "Failed to cast decimal value {} to type UINT64",
+            "0A000",
+        ),
     }
-    for table, (column_type, _) in tables.items():
+    for table, (column_type, *_) in tables.items():
         conn.run_ok(f"drop table if exists {table}")
         conn.run_ok(f"create table {table} (a {column_type})")
     try:
-        for table, (_, stored) in tables.items():
-            for sign in (0xD000, 0xF000, 0xC000, 0x1234):
-                m = _bind_insert(conn, table, _pg_numeric([], 0, sign))
-                assert sqlstates(m) == ["22P03"], (table, hex(sign), errors(m))
+        for table, (_, stored, message, infinity) in tables.items():
+            for word, expected in (
+                (0xD000, (infinity, message.format("Infinity"), None)),
+                (0xF000, (infinity, message.format("-Infinity"), None)),
+                (0xC000, ("0A000", message.format("NaN"), None)),
+                (0x1234, sign),
+            ):
+                m = _bind_insert(conn, table, _pg_numeric([], 0, word))
+                assert _error(m) == expected, (table, hex(word))
             m = _bind_insert(conn, table, _pg_numeric_int(42))
             assert not errors(m), (table, errors(m))
             assert _column_text(conn, table) == stored, table
@@ -817,14 +848,30 @@ def test_binary_numeric_param_rejects_out_of_range(conn):
         "bin_num_huge": "hugeint",
         "bin_num_uhuge": "uhugeint",
     }
+    wrapped = (1 << 128) + 42
+
+    def huge(value):
+        return ("22003", f"Failed to cast decimal value {value} to type INT128", None)
+
+    def uhuge(value):
+        return ("22003", f"Failed to cast decimal value {value} to type UINT128", None)
+
     refused = [
-        ("bin_num_dec38", _pg_numeric_int((1 << 128) + 42)),
-        ("bin_num_huge", _pg_numeric_int((1 << 128) + 42)),
-        ("bin_num_uhuge", _pg_numeric_int((1 << 128) + 42)),
-        ("bin_num_uhuge", _pg_numeric_int(uhuge_max + 1)),
-        ("bin_num_huge", _pg_numeric_int(huge_min - 1)),
-        ("bin_num_huge", _pg_numeric([1], 100)),
-        ("bin_num_huge", _pg_numeric([10000], 0)),
+        (
+            "bin_num_dec38",
+            _pg_numeric_int(wrapped),
+            ("22003", f"Could not cast value {wrapped} to DECIMAL(38,0)", None),
+        ),
+        ("bin_num_huge", _pg_numeric_int(wrapped), huge(wrapped)),
+        ("bin_num_uhuge", _pg_numeric_int(wrapped), uhuge(wrapped)),
+        ("bin_num_uhuge", _pg_numeric_int(uhuge_max + 1), uhuge(uhuge_max + 1)),
+        ("bin_num_huge", _pg_numeric_int(huge_min - 1), huge(huge_min - 1)),
+        ("bin_num_huge", _pg_numeric([1], 100), huge(10**400)),
+        (
+            "bin_num_huge",
+            _pg_numeric([10000], 0),
+            ("22P03", 'invalid digit in external "numeric" value', None),
+        ),
     ]
     stored = [
         ("bin_num_uhuge", _pg_numeric_int(uhuge_max)),
@@ -835,9 +882,9 @@ def test_binary_numeric_param_rejects_out_of_range(conn):
         conn.run_ok(f"drop table if exists {table}")
         conn.run_ok(f"create table {table} (a {column_type})")
     try:
-        for table, value in refused:
+        for table, value, expected in refused:
             m = _bind_insert(conn, table, value)
-            assert sqlstates(m) == ["22P03"], (table, value.hex(), errors(m))
+            assert _error(m) == expected, (table, value.hex())
         for table, value in stored:
             m = _bind_insert(conn, table, value)
             assert not errors(m), (table, value.hex(), errors(m))

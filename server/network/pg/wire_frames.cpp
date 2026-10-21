@@ -133,6 +133,12 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "INVALID_USE_OF_ESCAPE_CHARACTER") {
     return ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER;
   }
+  if (subtype == "NUMERIC_VALUE_OUT_OF_RANGE") {
+    return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
+  }
+  if (subtype == "FEATURE_NOT_SUPPORTED") {
+    return ERRCODE_FEATURE_NOT_SUPPORTED;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

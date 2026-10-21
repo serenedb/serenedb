@@ -24,6 +24,7 @@
 #include <absl/numeric/int128.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
@@ -49,6 +50,8 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -460,35 +463,68 @@ struct IntervalBin {
   }
 };
 
+constexpr uint16_t kNumericPositive = 0x0000;
+constexpr uint16_t kNumericNegative = 0x4000;
+constexpr uint16_t kNumericNaN = 0xC000;
+constexpr uint16_t kNumericPositiveInfinity = 0xD000;
+constexpr uint16_t kNumericNegativeInfinity = 0xF000;
+constexpr uint16_t kNumericBase = 10000;
+constexpr int kNumericDigitPow10[] = {1, 10, 100, 1000};
+
+struct PgNumeric {
+  int16_t weight;
+  uint16_t sign;
+  uint16_t dscale;
+  std::string_view digits;
+};
+
+uint16_t ReadNumericWord(std::string_view data, size_t& offset) {
+  if (data.size() - offset < sizeof(uint16_t)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
+                    ERR_MSG("insufficient data left in message"));
+  }
+  const uint16_t word = absl::big_endian::Load16(data.data() + offset);
+  offset += sizeof(uint16_t);
+  return word;
+}
+
+bool ReadPgNumeric(std::string_view data, PgNumeric& value) {
+  size_t offset = 0;
+  const uint16_t ndigits = ReadNumericWord(data, offset);
+  value.weight = static_cast<int16_t>(ReadNumericWord(data, offset));
+  value.sign = ReadNumericWord(data, offset);
+  if (value.sign != kNumericPositive && value.sign != kNumericNegative &&
+      value.sign != kNumericNaN && value.sign != kNumericPositiveInfinity &&
+      value.sign != kNumericNegativeInfinity) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                    ERR_MSG("invalid sign in external \"numeric\" value"));
+  }
+  value.dscale = ReadNumericWord(data, offset);
+  const auto digits = offset;
+  for (uint16_t i = 0; i < ndigits; ++i) {
+    if (ReadNumericWord(data, offset) >= kNumericBase) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+                      ERR_MSG("invalid digit in external \"numeric\" value"));
+    }
+  }
+  value.digits = data.substr(digits, offset - digits);
+  return offset == data.size();
+}
+
 // PG NUMERIC binary -> an unsigned magnitude (a base-10 integer scaled by
-// `scale`) plus a sign flag; the inverse of WriteAsNumericBinary. The wire is
-// base-10000 digit groups, most significant first, at power-of-10000 `weight`.
-// uint128 holds the full range -- a signed int128 cannot represent 2^127, the
-// magnitude of HUGEINT's minimum. false on NaN, infinity or malformed.
-bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
+// `scale`); the inverse of WriteAsNumericBinary. The wire is base-10000 digit
+// groups, most significant first, at power-of-10000 `weight`. uint128 holds
+// the full range -- a signed int128 cannot represent 2^127, the magnitude of
+// HUGEINT's minimum.
+bool PgNumericMagnitude(const PgNumeric& value, int32_t scale,
                         absl::uint128& magnitude) {
-  if (data.size() < 8) {
-    return false;
-  }
-  const auto ndigits =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data()));
-  const auto weight =
-    static_cast<int16_t>(absl::big_endian::Load16(data.data() + 2));
-  const uint16_t sign = absl::big_endian::Load16(data.data() + 4);
-  // NaN and infinities have no integer/decimal representation
-  if (sign != 0x0000 && sign != 0x4000) {
-    return false;
-  }
-  negative = sign == 0x4000;
-  if (ndigits < 0 || data.size() < static_cast<size_t>(8 + ndigits * 2)) {
-    return false;
-  }
+  const auto ndigits = static_cast<int32_t>(value.digits.size() / 2);
+  const int32_t weight = value.weight;
   // Accumulate value*10^scale MSB-first, taking only the decimal digits at
   // exponent >= -scale; the running total never exceeds the final magnitude
   // (concat-then-divide would overflow uint128 on a full-precision
   // DECIMAL(38)). The first digit below -scale feeds half-away-from-zero
   // rounding.
-  static constexpr int kPow10[] = {1, 10, 100, 1000};
   constexpr auto kMax = std::numeric_limits<absl::uint128>::max();
   constexpr auto kMaxTenth =
     absl::MakeUint128(0x1999999999999999, 0x9999999999999999);
@@ -496,14 +532,12 @@ bool PgNumericMagnitude(std::string_view data, int32_t scale, bool& negative,
   const bool checked = 4 * (weight + 1) + scale > 38;
   int round_digit = 0;
   bool have_round = false;
-  for (int16_t i = 0; i < ndigits; ++i) {
-    const uint16_t group = absl::big_endian::Load16(data.data() + 8 + i * 2);
-    if (group >= 10000) {
-      return false;
-    }
+  for (int32_t i = 0; i < ndigits; ++i) {
+    const uint16_t group =
+      absl::big_endian::Load16(value.digits.data() + i * 2);
     for (int k = 3; k >= 0; --k) {
       const int target = 4 * (weight - i) + k + scale;
-      const int digit = (group / kPow10[k]) % 10;
+      const int digit = (group / kNumericDigitPow10[k]) % 10;
       if (target >= 0) {
         if (checked && (acc > kMaxTenth || (acc == kMaxTenth && digit > 5))) {
           return false;
@@ -547,29 +581,104 @@ bool MagnitudeToHugeint(bool negative, absl::uint128 magnitude,
   return true;
 }
 
+std::string PgNumericText(const PgNumeric& value) {
+  if (value.sign == kNumericNaN) {
+    return "NaN";
+  }
+  if (value.sign == kNumericPositiveInfinity) {
+    return "Infinity";
+  }
+  if (value.sign == kNumericNegativeInfinity) {
+    return "-Infinity";
+  }
+  const auto ndigits = static_cast<int32_t>(value.digits.size() / 2);
+  const auto group = [&](int32_t i) -> uint16_t {
+    return i < 0 || i >= ndigits
+             ? 0
+             : absl::big_endian::Load16(value.digits.data() + i * 2);
+  };
+  std::string text = value.sign == kNumericNegative ? "-" : "";
+  if (value.weight < 0) {
+    text += '0';
+  }
+  for (int32_t i = 0; i <= value.weight; ++i) {
+    if (i == 0) {
+      absl::StrAppend(&text, group(i));
+    } else {
+      absl::StrAppend(&text, absl::Dec(group(i), absl::kZeroPad4));
+    }
+  }
+  if (value.dscale > 0) {
+    text += '.';
+    const auto end = text.size() + value.dscale;
+    for (int32_t i = value.weight + 1; text.size() < end; ++i) {
+      absl::StrAppend(&text, absl::Dec(group(i), absl::kZeroPad4));
+    }
+    text.resize(end);
+  }
+  return text;
+}
+
+bool IsFinite(const PgNumeric& value) {
+  return value.sign == kNumericPositive || value.sign == kNumericNegative;
+}
+
+bool PgDecimalMagnitude(std::string_view data, const duckdb::LogicalType& type,
+                        bool& negative, absl::uint128& magnitude) {
+  PgNumeric value;
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  const auto& limit =
+    duckdb::Hugeint::POWERS_OF_TEN[duckdb::DecimalType::GetWidth(type)];
+  if (!IsFinite(value) ||
+      !PgNumericMagnitude(value, duckdb::DecimalType::GetScale(type),
+                          magnitude) ||
+      magnitude >=
+        absl::MakeUint128(static_cast<uint64_t>(limit.upper), limit.lower)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(value.sign == kNumericNaN ? ERRCODE_FEATURE_NOT_SUPPORTED
+                                         : ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+      ERR_MSG("Could not cast value ", PgNumericText(value), " to ",
+              type.ToString()));
+  }
+  negative = value.sign == kNumericNegative;
+  return true;
+}
+
+[[noreturn]] void ThrowIntegerCastError(const PgNumeric& value,
+                                        duckdb::PhysicalType type) {
+  THROW_SQL_ERROR(ERR_CODE(IsFinite(value) ? ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE
+                                           : ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("Failed to cast decimal value ", PgNumericText(value),
+                          " to type ", duckdb::TypeIdToString(type)));
+}
+
+bool PgIntegerMagnitude(std::string_view data, duckdb::PhysicalType type,
+                        PgNumeric& value, absl::uint128& magnitude) {
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  if (!IsFinite(value) || !PgNumericMagnitude(value, 0, magnitude)) {
+    ThrowIntegerCastError(value, type);
+  }
+  return true;
+}
+
 template<typename Phys>
 struct DecimalIntBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
-    const auto scale = duckdb::DecimalType::GetScale(type);
     bool negative;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, scale, negative, magnitude) ||
-        magnitude > absl::uint128{static_cast<uint64_t>(
-                      std::numeric_limits<int64_t>::max())}) {
+    if (!PgDecimalMagnitude(data, type, negative, magnitude)) {
       return false;
     }
-    int64_t value = static_cast<int64_t>(absl::Uint128Low64(magnitude));
-    if (negative) {
-      value = -value;
-    }
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto limit = duckdb::NumericHelper::POWERS_OF_TEN[width];
-    if (value <= -limit || value >= limit) {
-      return false;
-    }
-    sink.template Decimal<Phys>(static_cast<Phys>(value), width, scale);
+    const auto value = static_cast<int64_t>(absl::Uint128Low64(magnitude));
+    sink.template Decimal<Phys>(static_cast<Phys>(negative ? -value : value),
+                                duckdb::DecimalType::GetWidth(type),
+                                duckdb::DecimalType::GetScale(type));
     return true;
   }
 };
@@ -581,18 +690,13 @@ struct DecimalHugeintBin {
     bool negative;
     absl::uint128 magnitude;
     duckdb::hugeint_t value;
-    if (!PgNumericMagnitude(data, duckdb::DecimalType::GetScale(type), negative,
-                            magnitude) ||
+    if (!PgDecimalMagnitude(data, type, negative, magnitude) ||
         !MagnitudeToHugeint(negative, magnitude, value)) {
       return false;
     }
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto& limit = duckdb::Hugeint::POWERS_OF_TEN[width];
-    if (value <= -limit || value >= limit) {
-      return false;
-    }
     sink.template Decimal<duckdb::hugeint_t>(
-      value, width, duckdb::DecimalType::GetScale(type));
+      value, duckdb::DecimalType::GetWidth(type),
+      duckdb::DecimalType::GetScale(type));
     return true;
   }
 };
@@ -600,12 +704,16 @@ struct DecimalHugeintBin {
 struct HugeintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
     duckdb::hugeint_t value;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) ||
-        !MagnitudeToHugeint(negative, magnitude, value)) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::INT128, numeric,
+                            magnitude)) {
       return false;
+    }
+    if (!MagnitudeToHugeint(numeric.sign == kNumericNegative, magnitude,
+                            value)) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::INT128);
     }
     sink.Fixed(value);
     return true;
@@ -615,10 +723,14 @@ struct HugeintBin {
 struct UhugeintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) || negative) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::UINT128, numeric,
+                            magnitude)) {
       return false;
+    }
+    if (numeric.sign == kNumericNegative && magnitude != 0) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::UINT128);
     }
     sink.Fixed(duckdb::uhugeint_t{absl::Uint128High64(magnitude),
                                   absl::Uint128Low64(magnitude)});
@@ -629,11 +741,15 @@ struct UhugeintBin {
 struct UbigintBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    bool negative;
+    PgNumeric numeric;
     absl::uint128 magnitude;
-    if (!PgNumericMagnitude(data, 0, negative, magnitude) || negative ||
-        magnitude > absl::uint128{std::numeric_limits<uint64_t>::max()}) {
+    if (!PgIntegerMagnitude(data, duckdb::PhysicalType::UINT64, numeric,
+                            magnitude)) {
       return false;
+    }
+    if ((numeric.sign == kNumericNegative && magnitude != 0) ||
+        magnitude > absl::uint128{std::numeric_limits<uint64_t>::max()}) {
+      ThrowIntegerCastError(numeric, duckdb::PhysicalType::UINT64);
     }
     sink.Fixed(static_cast<uint64_t>(absl::Uint128Low64(magnitude)));
     return true;

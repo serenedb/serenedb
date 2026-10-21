@@ -53,6 +53,8 @@ To select the rows to update, `UPDATE` statements can use the `FROM` clause and 
 
 <SqlLogicTest id="sql/statements/update/index/example_008" />
 
+A row that the join matches more than once is updated once, with the values of one of its matches; which match is not defined. It is counted and returned by `RETURNING` once.
+
 To increase the revenue of all cities in France, join the `city` and the `country` tables, and filter on the latter:
 
 <SqlLogicTest id="sql/statements/update/index/example_009" />

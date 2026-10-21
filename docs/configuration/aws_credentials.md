@@ -17,7 +17,7 @@ SereneDB can read and write AWS resources — files in S3, and Iceberg tables in
 | S3-compatible stores (MinIO, Cloudflare R2, Tigris, ...)           | [Custom endpoints](#s3-compatible-stores), or the dedicated [`r2` secret type](../cookbook/network_cloud_storage/cloudflare_r2_import.md) |
 
 <DocCallout type="attention">
-    Automatic credential discovery (<code>PROVIDER credential_chain</code> — environment variables, SSO sessions, EC2 instance roles) comes from DuckDB's <code>aws</code> extension, which SereneDB does not currently bundle; attempting it fails with <em>"Secret provider 'credential_chain' for type 's3' does not exist"</em>. Configure explicit keys as shown below.
+    <code>PROVIDER credential_chain</code> (SSO sessions, EC2 instance roles and other automatic discovery) is not available for <code>s3</code> secrets: creating such a secret fails with <em>Secret provider "credential_chain" for type "s3" does not exist in SereneDB</em>. Configure explicit keys as shown below. The server also reads <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>, <code>AWS_SESSION_TOKEN</code> and <code>AWS_REGION</code> (or <code>AWS_DEFAULT_REGION</code>) from its own environment when it starts, and uses them for <code>s3://</code> access wherever a secret does not set those keys, while <code>enable_global_s3_configuration</code> is on (the default).
 </DocCallout>
 
 ## Access keys
@@ -40,7 +40,7 @@ For the policy, start from AWS's managed policies and narrow down: [`AmazonS3Tab
 
 Keep `s3:ListBucket` next to `s3:GetObject`: without it S3 answers a request for a missing object with 403 instead of 404. SereneDB treats only a 404 as a missing file, so the 403 fails the statement with that error rather than reading the object as absent.
 
-Configure the keys as an `S3` secret — `REGION` is required (Iceberg catalog attaches derive their endpoint region from it):
+Configure the keys as an `S3` secret. Attaching a Glue catalog needs the `REGION` in the secret; S3 Tables take the region from the table bucket's ARN:
 
 <SqlLogicTest id="configuration/aws_credentials/example_config" />
 

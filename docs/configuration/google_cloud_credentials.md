@@ -53,15 +53,11 @@ gcloud iam service-accounts keys create key.json \
 
 ### Using it
 
-Open `key.json` and copy three of its fields into a secret. The `private_key` value can be pasted exactly as it appears in the file, `\n` sequences included:
+Open `key.json` and copy three of its fields into a secret. The `private_key` value can be pasted exactly as it appears in the file, `\n` sequences included: SereneDB turns them into newlines. Quoting the key as `E'...'`, which turns the `\n` sequences into newlines itself, works too:
 
 <SqlLogicTest id="cookbook/network_cloud_storage/biglake_iceberg/example_secret_sa" />
 
-<DocCallout type="attention">
-    Paste the key inside plain <code>'...'</code> quotes. PostgreSQL's escape-string syntax (<code>E'...'</code>) would consume the <code>\n</code> sequences and corrupt the key.
-</DocCallout>
-
-`PRIVATE_KEY_ID` is optional — it tells Google which of the account's keys (up to 10 can exist, e.g. during rotation) signed the request. `TOKEN_URI` (defaults to Google's token endpoint) and `OAUTH2_SCOPE` (defaults to `https://www.googleapis.com/auth/cloud-platform`) are also accepted. The `private_key` is stored redacted: it never appears in `sdb_secrets()` output or catalog dumps.
+`PRIVATE_KEY_ID` is optional — it tells Google which of the account's keys (up to 10 can exist, e.g. during rotation) signed the request. `TOKEN_URI` (defaults to Google's token endpoint) and `OAUTH2_SCOPE` (defaults to `https://www.googleapis.com/auth/cloud-platform`) are also accepted. `sdb_secrets()` shows the `private_key` redacted, but a [persistent secret](./secrets_manager.md#persistent-secrets) stores it unencrypted.
 
 ## Attached service account
 

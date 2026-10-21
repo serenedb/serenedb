@@ -90,13 +90,6 @@ SELECT * FROM sdb_logs WHERE type = 'QueryLog';
 statement ok
 SELECT * FROM sdb_settings() WHERE name LIKE '%logging%';
 
-# DOCS_TEST: example_011
-
-# DOCS_TEST_BODY
-
-statement ok
-SET enable_progress_bar = true;
-
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY

@@ -24,6 +24,8 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <re2/re2.h>
+#include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -1347,11 +1349,30 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
+template<bool Start>
+bool AnchoredAtText(re2::Regexp* re) {
+  while (re->op() == re2::kRegexpCapture ||
+         (re->op() == re2::kRegexpConcat && re->nsub() > 0)) {
+    re =
+      re->sub()[Start || re->op() == re2::kRegexpCapture ? 0 : re->nsub() - 1];
+  }
+  return re->op() == (Start ? re2::kRegexpBeginText : re2::kRegexpEndText);
+}
+
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
+  const re2::RE2 parsed{literal, re2::RE2::Quiet};
+  const std::string_view head =
+    parsed.ok() && AnchoredAtText<true>(parsed.Regexp()) ? "(?:" : "(?s:.*)(?:";
+  const std::string_view tail =
+    parsed.ok() && AnchoredAtText<false>(parsed.Regexp()) ? ")" : ")(?s:.*)";
+  auto pattern = absl::StrCat(head, literal, tail);
+  if (literal.contains("\\Q") && !re2::RE2{pattern, re2::RE2::Quiet}.ok()) {
+    pattern = absl::StrCat(head, literal, "\\E", tail);
+  }
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(literal))));
+                  duckdb::Value(std::move(pattern)))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(

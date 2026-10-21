@@ -19,11 +19,13 @@ import re
 import struct
 import threading
 import time
+from decimal import Decimal
 
 import psycopg
 import pytest
 from psycopg.adapt import Loader
 from psycopg.pq import Format, TransactionStatus
+from psycopg.types.json import Jsonb
 from spec_loader import (
     PROTOCOL_MODES,
     TypeSpec,
@@ -781,6 +783,61 @@ def test_prepared_multi_statement_command_runs_every_execute():
             c.execute(f'DROP TABLE IF EXISTS "{b}"')
 
 
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_decimal_parameter_keeps_its_digits(fmt):
+    values = [
+        Decimal("1.5"),
+        Decimal("-0.000123"),
+        Decimal("0"),
+        Decimal("1E+20"),
+        Decimal("12345678901234567890.123456789012345678"),
+    ]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        for value in values:
+            (got,) = c.execute(f"SELECT {fmt}", (value,)).fetchone()
+            assert got == value, value
+        assert c.execute(f"SELECT {fmt} * 2", (Decimal("1.25"),)).fetchone() == (
+            Decimal("2.50"),
+        )
+        assert c.execute(
+            f"SELECT {fmt}", ([Decimal("1.5"), None, Decimal("-2.25")],)
+        ).fetchone() == ([Decimal("1.5"), None, Decimal("-2.25")],)
+
+
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_decimal_parameter_rounds_once_into_a_column(fmt):
+    table = "decimal_param_column"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.execute(f'CREATE TABLE "{table}" (a NUMERIC(10, 2))')
+        try:
+            c.execute(
+                f'INSERT INTO "{table}" VALUES ({fmt}), ({fmt}), ({fmt})',
+                (Decimal("1.005"), Decimal("1.2345"), Decimal("7")),
+            )
+            assert c.execute(f'SELECT a FROM "{table}" ORDER BY a').fetchall() == [
+                (Decimal("1.01"),),
+                (Decimal("1.23"),),
+                (Decimal("7.00"),),
+            ]
+            for value, count in (
+                (Decimal("1.005"), 0),
+                (Decimal("1.010"), 1),
+            ):
+                assert c.execute(
+                    f'SELECT count(*) FROM "{table}" WHERE a = {fmt}', (value,)
+                ).fetchone() == (count,), value
+            assert c.execute(
+                f'SELECT count(*) FROM "{table}" WHERE a < {fmt}',
+                (Decimal("1.0100001"),),
+            ).fetchone() == (1,)
+            for value in (Decimal("1E+40"), Decimal("99999999.995")):
+                with pytest.raises(psycopg.errors.NumericValueOutOfRange):
+                    c.execute(f'INSERT INTO "{table}" VALUES ({fmt})', (value,))
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
 @pytest.mark.parametrize(
     "query, sqlstate",
     [
@@ -827,3 +884,14 @@ def test_numeric_text_input_reports_postgresql_sqlstates():
                 assert err.value.sqlstate == sqlstate, text
         finally:
             c.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_jsonb_parameter(fmt):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        assert c.execute(f"SELECT {fmt}", (Jsonb({"a": [1, "x"]}),)).fetchone() == (
+            {"a": [1, "x"]},
+        )
+        assert c.execute(
+            f"SELECT {fmt}", ([Jsonb({"a": 1}), Jsonb([2])],)
+        ).fetchone() == ([{"a": 1}, [2]],)

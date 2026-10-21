@@ -311,6 +311,7 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kXid, XID())
     SDB_OID2TYPE(kCid, CID())
     SDB_OID2TYPE(kJson, LogicalType::JSON())
+    SDB_OID2TYPE(kJsonb, LogicalType::JSON())
     SDB_OID2TYPE(kXid8, XID8())
     SDB_OID2TYPE(kFloat4, LogicalType::FLOAT)
     SDB_OID2TYPE(kFloat8, LogicalType::DOUBLE)

@@ -66,21 +66,66 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 // KiB).
 inline constexpr uint32_t kMaxSaslMessage = 1024;
 
+inline bool PlannedParamType(const duckdb::PreparedStatement& prepared,
+                             uint16_t id, duckdb::LogicalType& type) {
+  return prepared.TryGetParameterType(absl::AlphaNum(id + 1).Piece(), type) &&
+         type.id() != duckdb::LogicalTypeId::UNKNOWN &&
+         type.id() != duckdb::LogicalTypeId::INVALID;
+}
+
 inline duckdb::LogicalType ResolveExpectedType(
   const duckdb::PreparedStatement& prepared,
   const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
   uint16_t id) {
-  const auto key = absl::StrCat(id + 1);
   duckdb::LogicalType type;
-  if (prepared.TryGetParameterType(duckdb::Identifier{key}, type) &&
-      type.id() != duckdb::LogicalTypeId::UNKNOWN &&
-      type.id() != duckdb::LogicalTypeId::INVALID) {
+  if (PlannedParamType(prepared, id, type)) {
     return type;
   }
-  if (const auto hint = hints.find(key); hint != hints.end()) {
+  if (const auto hint = hints.find(absl::AlphaNum(id + 1).Piece());
+      hint != hints.end()) {
     return hint->second;
   }
   return duckdb::LogicalTypeId::VARCHAR;
+}
+
+inline bool IsNumericOid(uint64_t oid) {
+  return oid == sdb::pg::kNumeric || oid == sdb::pg::kNumericArray;
+}
+
+inline bool IsDeclaredNumeric(const Statement& stmt, size_t id) {
+  const auto& oids = stmt.ParamOids();
+  return id < oids.size() && IsNumericOid(oids[id]);
+}
+
+duckdb::LogicalType DeclaredNumericParamType(
+  const duckdb::PreparedStatement& prepared, const Statement& stmt, uint16_t id,
+  std::span<const duckdb::Value> values) {
+  if (id < values.size() && !values[id].IsNull()) {
+    return values[id].type();
+  }
+  duckdb::LogicalType type;
+  if (PlannedParamType(prepared, id, type)) {
+    return type;
+  }
+  type = duckdb::LogicalType::DECIMAL(18, 3);
+  return stmt.ParamOids()[id] == sdb::pg::kNumericArray
+           ? duckdb::LogicalType::LIST(type)
+           : type;
+}
+
+bool DeclaredNumericValueRetyped(const duckdb::PreparedStatement& prepared,
+                                 const Statement& stmt,
+                                 std::span<const duckdb::Value> values) {
+  for (uint16_t id = 0; id < values.size(); ++id) {
+    if (!IsDeclaredNumeric(stmt, id) || values[id].IsNull()) {
+      continue;
+    }
+    duckdb::LogicalType type;
+    if (!PlannedParamType(prepared, id, type) || type != values[id].type()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Rethrow a DuckDB result's error iff it carries one. ErrorData::Throw()
@@ -1975,7 +2020,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0) {
+    if (oid != 0 && !IsNumericOid(oid)) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -2134,13 +2179,19 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
-    const auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
+    auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
-    const auto fn =
-      sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format);
     duckdb::Value out;
-    sdb::pg::ValueSink sink{type, out};
-    if (!fn(dctx, field, sink)) {
+    bool decoded =
+      !IsDeclaredNumeric(stmt, i) ||
+      sdb::pg::DeclaredNumericType(
+        field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray, type);
+    if (decoded) {
+      sdb::pg::ValueSink sink{type, out};
+      decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format)(
+        dctx, field, sink);
+    }
+    if (!decoded) {
       if (format == sdb::pg::VarFormat::Binary) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
@@ -2320,7 +2371,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   // Describe what the next Bind would run, not what the last one did.
   RevalidatePlan(stmt);
-  const auto plan = ResolvePlan(stmt, stmt.Plan());
+  const auto plan = ResolvePlan(stmt, stmt.Plan(), {});
   auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   // A data-returning Describe can't run in an aborted block (RowDescription
@@ -2361,7 +2412,8 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  const auto plan = ResolvePlan(*portal.stmt, portal.plan);
+  const auto plan =
+    ResolvePlan(*portal.stmt, portal.plan, portal.bind_info.param_values);
   auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
@@ -2380,16 +2432,21 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
 }
 
 template<SocketKind Kind>
-PlanPtr PgWireSession<Kind>::ResolvePlan(Statement& stmt, const PlanPtr& plan) {
-  if (!plan || plan->GetStatementProperties().bound_all_parameters ||
+PlanPtr PgWireSession<Kind>::ResolvePlan(
+  Statement& stmt, const PlanPtr& plan, std::span<const duckdb::Value> values) {
+  if (!plan ||
+      (plan->GetStatementProperties().bound_all_parameters &&
+       !DeclaredNumericValueRetyped(*plan, stmt, values)) ||
       !stmt.Source()) {
     return plan;
   }
   auto hints = stmt.TypeHints();
   const auto param_count = plan->GetNamedParameterMap().size();
-  for (size_t i = 0; i < param_count; ++i) {
-    hints.emplace(absl::StrCat(i + 1),
-                  ResolveExpectedType(*plan, stmt.TypeHints(), i));
+  for (uint16_t i = 0; i < param_count; ++i) {
+    hints.try_emplace(absl::AlphaNum(i + 1).Piece(),
+                      IsDeclaredNumeric(stmt, i)
+                        ? DeclaredNumericParamType(*plan, stmt, i, values)
+                        : ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
   auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {
@@ -2512,7 +2569,8 @@ void PgWireSession<Kind>::PlanPortal(Portal& portal) {
   // Bind. Nothing to re-plan once the portal is driving: the pipeline is
   // already running against the plan it started with.
   RevalidatePlan(*portal.stmt);
-  portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan());
+  portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan(),
+                            portal.bind_info.param_values);
   if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
     // PG's plancache guard (fixed_result): a re-plan changed the row type
     // away from the one the client was last told, and it has not asked

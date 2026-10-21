@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/container/node_hash_map.h>
 
 #include <cstdint>
@@ -57,6 +58,22 @@ class WireSinkContext;
 // the statement re-plans, and the old plan has to outlive the last execution
 // still driving it.
 using PlanPtr = std::shared_ptr<duckdb::PreparedStatement>;
+
+inline bool SameColumnType(const duckdb::LogicalType& lhs,
+                           const duckdb::LogicalType& rhs) {
+  if (lhs.id() != rhs.id()) {
+    return false;
+  }
+  if (lhs.id() == duckdb::LogicalTypeId::DECIMAL) {
+    return true;
+  }
+  if (lhs.id() == duckdb::LogicalTypeId::LIST) {
+    return SameColumnType(duckdb::ListType::GetChildType(lhs),
+                          duckdb::ListType::GetChildType(rhs));
+  }
+  return lhs == rhs;
+}
+
 // The catalog identity a bound plan stands on: a plan is revalidated when the
 // session's view has moved since it was bound (see Config::CatalogEpoch).
 using CatalogEpoch = uint64_t;
@@ -175,8 +192,9 @@ class Statement {
   // fixed_result check, which a protocol-level prepared statement fails with
   // "cached plan must not change result type".
   bool DescribedShapeMatches(duckdb::PreparedStatement& plan) const {
-    return !_described || (plan.GetTypes() == _described_types &&
-                           plan.GetNames() == _described_names);
+    return !_described ||
+           (absl::c_equal(plan.GetTypes(), _described_types, SameColumnType) &&
+            plan.GetNames() == _described_names);
   }
   // One user command the parser expanded into several statements (ALTER TABLE
   // ADD COLUMN ... DEFAULT <volatile> -> [ADD; UPDATE; SET DEFAULT]). The body

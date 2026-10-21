@@ -210,6 +210,19 @@ struct VarcharBin {
   }
 };
 
+constexpr char kJsonbVersion = 1;
+
+struct JsonBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    if (data.starts_with(kJsonbVersion)) {
+      data.remove_prefix(1);
+    }
+    sink.Varchar(data);
+    return true;
+  }
+};
+
 struct BlobBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
@@ -2223,6 +2236,9 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<LoadBin<double>, NumberText<double>, Sink>(binary);
     case VARCHAR:
     case CHAR:
+      if (binary && type.IsJSONType()) {
+        return &JsonBin::template Decode<Sink>;
+      }
       return SelectDecoder<VarcharBin, VarcharText, Sink>(binary);
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
@@ -2286,5 +2302,233 @@ template DeserializationFunction<VectorSink> GetDeserialization<VectorSink>(
   const duckdb::LogicalType&, VarFormat);
 template DeserializationFunction<ValueSink> GetDeserialization<ValueSink>(
   const duckdb::LogicalType&, VarFormat);
+
+namespace {
+
+struct NumericShape {
+  int32_t integral = 0;
+  int32_t scale = 0;
+  bool decimal = true;
+};
+
+void Widen(NumericShape& shape, const NumericShape& element) {
+  shape.integral = std::max(shape.integral, element.integral);
+  shape.scale = std::max(shape.scale, element.scale);
+  shape.decimal = shape.decimal && element.decimal;
+}
+
+bool BinaryNumericShape(std::string_view data, NumericShape& shape) {
+  PgNumeric value;
+  if (!ReadPgNumeric(data, value)) {
+    return false;
+  }
+  if (!IsFinite(value)) {
+    shape = {.decimal = false};
+    return true;
+  }
+  shape = {.scale = value.dscale};
+  const int32_t weight = value.weight;
+  for (int32_t i = 0; i < static_cast<int32_t>(value.digits.size() / 2); ++i) {
+    const uint16_t group =
+      absl::big_endian::Load16(value.digits.data() + i * 2);
+    for (int k = 3; k >= 0; --k) {
+      const int32_t exponent = 4 * (weight - i) + k;
+      if (exponent < -shape.scale) {
+        return true;
+      }
+      if ((group / kNumericDigitPow10[k]) % 10 != 0) {
+        shape.integral = std::max(exponent + 1, 0);
+        return true;
+      }
+    }
+  }
+  return true;
+}
+
+struct NumericText {
+  int32_t integer_digits = 0;
+  int32_t first_integer = -1;
+  int32_t fraction_digits = 0;
+  int32_t first_fraction = -1;
+  int32_t exponent = 0;
+};
+
+struct NumericTextOperation {
+  template<typename T, bool Negative>
+  static bool HandleDigit(T& state, uint8_t digit) {
+    if (digit != 0 && state.first_integer < 0) {
+      state.first_integer = state.integer_digits;
+    }
+    ++state.integer_digits;
+    return true;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleHexDigit(T&, uint8_t) {
+    return false;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleBinaryDigit(T&, uint8_t) {
+    return false;
+  }
+
+  template<typename T, bool Negative>
+  static bool HandleExponent(T& state, int32_t exponent) {
+    state.exponent = exponent;
+    return true;
+  }
+
+  template<typename T, bool Negative, bool AllowExponent>
+  static bool HandleDecimal(T& state, uint8_t digit) {
+    if (digit != 0 && state.first_fraction < 0) {
+      state.first_fraction = state.fraction_digits;
+    }
+    ++state.fraction_digits;
+    return true;
+  }
+
+  template<typename T, bool Negative>
+  static bool Finalize(T&) {
+    return true;
+  }
+};
+
+void TextNumericShape(std::string_view data, NumericShape& shape) {
+  NumericText text;
+  if (!duckdb::TryIntegerCast<NumericText, true, true, NumericTextOperation,
+                              false>(data.data(), data.size(), text, false)) {
+    shape = {.decimal = false};
+    return;
+  }
+  shape = {.scale = std::max(text.fraction_digits - text.exponent, 0)};
+  if (text.first_integer >= 0) {
+    shape.integral =
+      std::max(text.integer_digits - text.first_integer + text.exponent, 0);
+  } else if (text.first_fraction >= 0) {
+    shape.integral = std::max(text.exponent - text.first_fraction, 0);
+  }
+}
+
+bool BinaryNumericArrayShape(std::string_view data, NumericShape& shape,
+                             int32_t& depth) {
+  if (data.size() < 12) {
+    return false;
+  }
+  const auto ndim = absl::big_endian::Load<int32_t>(data.data());
+  if (ndim < 0 || data.size() < 12 + static_cast<size_t>(ndim) * 8) {
+    return false;
+  }
+  depth = std::max(ndim, 1);
+  for (size_t offset = 12 + static_cast<size_t>(ndim) * 8;
+       offset < data.size();) {
+    if (data.size() - offset < sizeof(int32_t)) {
+      return false;
+    }
+    const auto length = absl::big_endian::Load<int32_t>(data.data() + offset);
+    offset += sizeof(int32_t);
+    if (length == -1) {
+      continue;
+    }
+    if (length < 0 || static_cast<size_t>(length) > data.size() - offset) {
+      return false;
+    }
+    NumericShape element;
+    if (!BinaryNumericShape(data.substr(offset, length), element)) {
+      return false;
+    }
+    Widen(shape, element);
+    offset += length;
+  }
+  return true;
+}
+
+bool TextNumericArrayShape(std::string_view data, NumericShape& shape,
+                           int32_t& depth) {
+  std::string_view body = data;
+  if (!StripWrap(body, '{', '}')) {
+    return false;
+  }
+  int32_t inner = 0;
+  bool ok = true;
+  std::string scratch;
+  const bool scanned =
+    ScanArrayItems(body, [&](std::string_view raw, bool group) {
+      if (!ok) {
+        return;
+      }
+      if (group) {
+        int32_t nested = 0;
+        ok = TextNumericArrayShape(raw, shape, nested);
+        inner = std::max(inner, nested);
+        return;
+      }
+      bool is_null = false;
+      const auto leaf = ResolveArrayLeaf(raw, scratch, is_null);
+      if (!is_null) {
+        NumericShape element;
+        TextNumericShape(leaf, element);
+        Widen(shape, element);
+      }
+    });
+  depth = inner + 1;
+  return scanned && ok;
+}
+
+duckdb::LogicalType ShapeType(const NumericShape& shape,
+                              const duckdb::LogicalType& expected) {
+  constexpr int32_t kMaxWidth = duckdb::Decimal::MAX_WIDTH_DECIMAL;
+  const bool decimal = expected.id() == duckdb::LogicalTypeId::DECIMAL;
+  if (!shape.decimal || shape.integral > kMaxWidth) {
+    return decimal ? expected : duckdb::LogicalType::DECIMAL(kMaxWidth, 0);
+  }
+  if (decimal &&
+      shape.integral <= duckdb::DecimalType::GetWidth(expected) -
+                          duckdb::DecimalType::GetScale(expected) &&
+      shape.scale <= duckdb::DecimalType::GetScale(expected)) {
+    return expected;
+  }
+  const auto scale = std::min(shape.scale, kMaxWidth - shape.integral);
+  return duckdb::LogicalType::DECIMAL(
+    static_cast<uint8_t>(std::max(shape.integral + scale, 1)),
+    static_cast<uint8_t>(scale));
+}
+
+}  // namespace
+
+bool DeclaredNumericType(std::string_view data, VarFormat format, bool array,
+                         duckdb::LogicalType& type) {
+  const bool binary = format == VarFormat::Binary;
+  NumericShape shape;
+  if (!array) {
+    if (binary) {
+      if (!BinaryNumericShape(data, shape)) {
+        return false;
+      }
+    } else {
+      TextNumericShape(data, shape);
+    }
+    type = ShapeType(shape, type);
+    return true;
+  }
+  const auto* element = &type;
+  int32_t levels = 0;
+  while (element->id() == duckdb::LogicalTypeId::LIST) {
+    element = &duckdb::ListType::GetChildType(*element);
+    ++levels;
+  }
+  int32_t depth = 0;
+  if (!(binary ? BinaryNumericArrayShape(data, shape, depth)
+               : TextNumericArrayShape(data, shape, depth))) {
+    return false;
+  }
+  auto result =
+    ShapeType(shape, levels == depth ? *element : duckdb::LogicalType{});
+  for (int32_t i = 0; i < depth; ++i) {
+    result = duckdb::LogicalType::LIST(result);
+  }
+  type = std::move(result);
+  return true;
+}
 
 }  // namespace sdb::pg

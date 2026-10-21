@@ -934,6 +934,33 @@ def test_binary_numeric_param_drops_digits_past_its_dscale(conn):
         conn.run_ok("drop table if exists bin_num_dscale")
 
 
+def test_declared_numeric_parameter_keeps_the_described_row_type(conn):
+    conn.parse("dnum", "select $1 as v", oids=(1700,))
+    conn.describe("S", "dnum")
+    for value in (b"1.5", b"2.25", b"-7"):
+        conn.bind("", "dnum", params=(value,))
+        conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    values = []
+    for r in rows(m):
+        (length,) = struct.unpack("!i", r[2:6])
+        values.append(r[6 : 6 + length])
+    assert values == [b"1.5", b"2.25", b"-7"]
+    conn.run_ok("deallocate dnum")
+
+
+def test_binary_jsonb_parameter(conn):
+    conn.parse("", "select $1::text", oids=(3802,))
+    conn.bind("", "", params=(b'\x01{"a": [1, "x"]}',), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert first_field(m) == b'{"a": [1, "x"]}'
+
+
 def test_float_special_values_text(conn):
     # PG renders float infinity/NaN as Infinity / -Infinity / NaN in text.
     def textval(sql):

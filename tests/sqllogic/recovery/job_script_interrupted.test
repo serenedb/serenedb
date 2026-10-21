@@ -23,8 +23,8 @@ EXECUTE JOB jsi_dropped;
 
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_job_after_statement:parked';
+statement ok
+CALL sdb_wait_fault('pause_job_after_statement');
 
 
 connection default
@@ -78,8 +78,8 @@ EXECUTE JOB jsi_replaced;
 
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_job_after_statement:parked';
+statement ok
+CALL sdb_wait_fault('pause_job_after_statement');
 
 
 connection default
@@ -145,8 +145,8 @@ EXECUTE JOB jsi_altered;
 
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_job_after_statement:parked';
+statement ok
+CALL sdb_wait_fault('pause_job_after_statement');
 
 
 connection default
@@ -201,8 +201,8 @@ CREATE JOB jsi_scheduled AFTER 1 SECOND AS 'INSERT INTO jsi_log VALUES (40); INS
 
 
 connection default
-statement ok retry 80 backoff 250ms
-SET sdb_faults = '-pause_job_after_statement:parked';
+statement ok
+CALL sdb_wait_fault('pause_job_after_statement');
 
 
 connection default
@@ -212,15 +212,30 @@ DROP JOB jsi_scheduled;
 
 connection default
 statement ok
+SET sdb_faults = 'pause_job_after_run';
+
+
+connection default
+statement ok
 SET sdb_faults = 'pause_job_after_statement:release';
 
 
 connection default
-query ok retry 80 backoff 250ms
+statement ok
+CALL sdb_wait_fault('pause_job_after_run');
+
+
+connection default
+query
 SELECT trigger, success, error FROM sdb_job_runs() WHERE job_name = 'jsi_scheduled';
 ----
 trigger	success	error
 schedule	f	Interrupted!
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_job_after_run:release';
 
 
 connection default

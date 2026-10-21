@@ -6,6 +6,7 @@ target_sources(
         duckdb_aliases.cpp
         encode_key.cpp
         es.cpp
+        faults.cpp
         hash.cpp
         inout.cpp
         jobs.cpp

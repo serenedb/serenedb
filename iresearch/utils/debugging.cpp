@@ -139,5 +139,22 @@ void ParkOnceOnFailurePointDebugging(std::string_view value) {
   }
 }
 
+bool AwaitParkedFailurePointDebugging(std::string_view value,
+                                      absl::Duration timeout) {
+  auto parked = absl::StrCat(value, ":parked");
+  const auto is_parked =
+    +[](std::string* v) noexcept { return gFailurePoints.contains(*v); };
+  absl::MutexLock lock{&gFailurePointsLock};
+  if (!gFailurePointsLock.AwaitWithTimeout(absl::Condition{is_parked, &parked},
+                                           timeout)) {
+    return false;
+  }
+  gFailurePoints.erase(parked);
+  if (gFailurePoints.empty()) {
+    gHasFailurePoints.store(false, std::memory_order_relaxed);
+  }
+  return true;
+}
+
 }  // namespace irs
 #endif

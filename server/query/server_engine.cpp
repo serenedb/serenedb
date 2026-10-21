@@ -43,6 +43,7 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/faults.h"
 #include "connector/functions/hash.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
@@ -323,6 +324,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   docs::RegisterDocsFunctions(db);
 
   connector::RegisterJobFunctions(db);
+
+  connector::RegisterFaultFunctions(db);
 
   connector::RegisterDuckDBAliases(db);
 

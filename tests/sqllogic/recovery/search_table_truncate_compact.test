@@ -42,8 +42,8 @@ statement async ok
 TRUNCATE tcm;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection compactor
 statement ok
@@ -113,8 +113,8 @@ statement async error connection closed
 TRUNCATE tcm;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection compactor
 statement ok

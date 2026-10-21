@@ -77,8 +77,8 @@ statement async ok
 INSERT INTO cwi VALUES (3, 'c');
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection checkpointer
 statement async ok
@@ -99,8 +99,8 @@ statement async ok
 DELETE FROM cwd WHERE id = 1;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection checkpointer
 statement async ok
@@ -137,8 +137,8 @@ statement async ok
 COMMIT;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection checkpointer
 statement async ok
@@ -163,8 +163,8 @@ statement async ok
 INSERT INTO cwb SELECT 100 + i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection checkpointer
 statement async ok
@@ -185,8 +185,8 @@ statement async ok
 TRUNCATE cw1, cw2;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection checkpointer
 statement async ok

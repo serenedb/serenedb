@@ -24,8 +24,8 @@ statement async error connection closed
 TRUNCATE trc;
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_delete_log');
 
 connection default
 statement ok

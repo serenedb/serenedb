@@ -21,8 +21,8 @@ statement async ok
 CREATE INDEX bfs_idx ON bfs USING inverted (tag);
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_backfill_before_publish:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_backfill_before_publish');
 
 connection truncater
 statement ok
@@ -82,8 +82,8 @@ statement async ok
 CREATE INDEX bfu_idx ON bfu USING inverted (tag);
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_backfill_before_publish:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_backfill_before_publish');
 
 connection truncater
 statement ok

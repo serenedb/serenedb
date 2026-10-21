@@ -31,8 +31,8 @@ INSERT INTO st_rparked.public.docs VALUES (3, 'c');
 
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 
 connection checkpointer

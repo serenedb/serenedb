@@ -75,8 +75,8 @@ statement async error connection closed
 INSERT INTO cpb SELECT 100 + i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
 
 connection default
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection default
 statement ok
@@ -119,8 +119,8 @@ statement async error connection closed
 DELETE FROM cpd WHERE id = 2;
 
 connection after_bulk
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection after_bulk
 statement ok
@@ -148,8 +148,8 @@ statement async error connection closed
 TRUNCATE cpt;
 
 connection after_delete
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_delete_log');
 
 connection after_delete
 query
@@ -215,8 +215,8 @@ statement async error connection closed
 COMMIT;
 
 connection after_clear
-statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_irs:parked';
+statement ok
+CALL sdb_wait_fault('pause_search_commit_before_irs');
 
 connection after_clear
 statement ok

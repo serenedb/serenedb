@@ -7,7 +7,7 @@ SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
 FROM pg_class WHERE oid = 'pg_hba_file_rules'::regclass;
 ----
 oid	relname	relkind	nsp	relnatts
-12114	pg_hba_file_rules	v	pg_catalog	11
+12072	pg_hba_file_rules	v	pg_catalog	11
 
 
 query

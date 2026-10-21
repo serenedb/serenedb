@@ -136,6 +136,21 @@ bool	boolin	boolout
 int4	int4in	int4out
 _int4	array_in	array_out
 record	record_in	record_out
+
+
+query
+SELECT t.typname, p.proname AS input, q.proname AS output
+FROM pg_type t
+JOIN pg_proc p ON p.oid = t.typinput
+JOIN pg_proc q ON q.oid = t.typoutput
+WHERE t.oid IN (16, 23, 1007, 2249, 'information_schema.cardinal_number'::regtype)
+ORDER BY t.oid;
+----
+typname	input	output
+bool	boolin	boolout
+int4	int4in	int4out
+_int4	array_in	array_out
+record	record_in	record_out
 cardinal_number	domain_in	int4out
 
 

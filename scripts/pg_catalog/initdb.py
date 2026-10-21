@@ -1,7 +1,6 @@
 import re
 
 from . import source
-from .initdb_oids import OIDS
 
 CREATE_VIEW = re.compile(
     r'^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)'
@@ -122,6 +121,8 @@ class Initdb:
         system_functions = source.read('src', 'backend', 'catalog',
                                        'system_functions.sql')
         initdb = source.read('src', 'bin', 'initdb', 'initdb.c')
+        self.next_oid = source.define('access/transam.h',
+                                      'FirstUnpinnedObjectId')
         self.views = []
         self.tables = {}
         self.domains = []
@@ -138,36 +139,32 @@ class Initdb:
         self.revoked_functions = set(
             REVOKE_EXECUTE.findall(system_views + system_functions))
 
-    @staticmethod
-    def oid(identity):
-        if identity not in OIDS:
-            raise SystemExit(f'{identity} has no OID in '
-                             f'scripts/pg_catalog/initdb_oids.py')
-        return OIDS[identity]
+    def allocate(self, count):
+        oid = self.next_oid
+        self.next_oid += count
+        return oid
 
     def add(self, statement, schema):
         if match := CREATE_VIEW.search(statement):
             name = match.group(1)
             self.views.append(View(
                 schema, name, match.group(2),
-                statement[match.end():].strip('\n'),
-                self.oid(f'{schema}.{name}')))
+                statement[match.end():].strip('\n'), self.allocate(3)))
         elif match := CREATE_TABLE.search(statement):
             name = match.group(1)
             self.tables[name] = Table(
                 name,
                 [tuple(column.split()) for column
                  in split_list(match.group(2))],
-                self.oid(f'{schema}.{name}'))
+                self.allocate(3))
         elif match := CREATE_DOMAIN.search(statement):
             name, spec, collation, function, argument = match.groups()
             default = (f'{function.upper()}({argument})' if function
                        else '')
             self.domains.append(Domain(
-                name, spec, collation, default,
-                self.oid(f'{schema}.{name}')))
+                name, spec, collation, default, self.allocate(2) + 1))
         elif match := CREATE_SCHEMA.search(statement):
-            self.namespace = self.oid(match.group(1))
+            self.namespace = self.allocate(1)
 
     def superuser_only(self, schema, name):
         if schema == 'information_schema':

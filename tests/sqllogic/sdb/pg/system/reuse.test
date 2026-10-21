@@ -3,13 +3,13 @@ select * from pg_namespace as t1, pg_namespace as t2;
 ----
 oid	nspname	nspowner	nspacl	oid	nspname	nspowner	nspacl
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-2200	public	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+2200	public	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
 
 
@@ -18,13 +18,13 @@ select * from pg_namespace as t1(a, b, c, d), pg_namespace as t2(x, y, z, w);
 ----
 a	b	c	d	x	y	z	w
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-2200	public	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+2200	public	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
 
 
@@ -33,11 +33,11 @@ select * from pg_namespace as t1(x, y, z, w), pg_namespace as t2(x, y, z, w);
 ----
 x	y	z	w	x	y	z	w
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}
-11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
-2200	public	16384	{postgres=UC/postgres,=U/postgres}	13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
+2200	public	16384	{postgres=UC/postgres,=U/postgres}	12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}
 11	pg_catalog	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
-13293	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
+12240	information_schema	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}
 2200	public	16384	{postgres=UC/postgres,=U/postgres}	2200	public	16384	{postgres=UC/postgres,=U/postgres}

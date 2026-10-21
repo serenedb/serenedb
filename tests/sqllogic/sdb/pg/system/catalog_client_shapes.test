@@ -83,6 +83,15 @@ WHERE oid IN (13318, 13320, 13307)
 ORDER BY typname;
 ----
 typname	typtypmod	typdefault	typnotnull
+
+
+query
+SELECT typname, typtypmod, typdefault, typnotnull
+FROM pg_type
+WHERE oid IN ('information_schema.time_stamp'::regtype, 'information_schema.yes_or_no'::regtype, 'information_schema.cardinal_number'::regtype)
+ORDER BY typname;
+----
+typname	typtypmod	typdefault	typnotnull
 cardinal_number	-1	NULL	f
 time_stamp	2	CURRENT_TIMESTAMP(2)	f
 yes_or_no	7	NULL	f

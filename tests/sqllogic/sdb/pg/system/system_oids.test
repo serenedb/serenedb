@@ -23,6 +23,16 @@ t	0	t
 
 
 query
+SELECT count(*) FILTER (WHERE oid < 16384) > 0 AS postgres,
+       count(*) FILTER (WHERE oid >= 16384 AND oid < 65536) AS outside,
+       count(*) FILTER (WHERE oid >= 65536 AND oid < 393216) > 0 AS serenedb
+FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace);
+----
+postgres	outside	serenedb
+t	0	t
+
+
+query
 SELECT count(*) FILTER (WHERE oid < 16384) AS postgres,
        count(*) FILTER (WHERE oid >= 16384 AND oid < 32768) AS outside,
        count(*) FILTER (WHERE oid >= 32768 AND oid < 65536) > 0 AS serenedb
@@ -65,6 +75,15 @@ proc	type	class	namespace	collation	am	opclass	language	authid	database
 
 
 query
+SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS proc,
+       (SELECT count(*) FROM pg_type WHERE typnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS type,
+       (SELECT count(*) FROM pg_class WHERE relnamespace IN (11, 'information_schema'::regnamespace) AND oid >= 524288) AS class;
+----
+proc	type	class
+0	0	0
+
+
+query
 SELECT 'pg_roles'::regclass::oid AS pg_roles,
        'pg_stat_activity'::regclass::oid AS pg_stat_activity,
        'pg_settings'::regclass::oid AS pg_settings,
@@ -75,7 +94,7 @@ SELECT 'pg_roles'::regclass::oid AS pg_roles,
        'information_schema'::regnamespace::oid AS information_schema;
 ----
 pg_roles	pg_stat_activity	pg_settings	pg_stats	tables	columns	sql_features	information_schema
-12000	12226	12104	12053	13510	13381	13476	13293
+12000	12150	12066	12033	12371	12290	12350	12240
 
 
 query
@@ -90,11 +109,11 @@ ORDER BY c.oid;
 ----
 nspname	relname	oid	reltype	typarray
 pg_catalog	pg_roles	12000	12002	12001
-pg_catalog	pg_views	12028	12030	12029
-information_schema	columns	13381	13383	13382
-information_schema	sql_sizing	13491	13493	13492
-information_schema	views	13568	13570	13569
-information_schema	user_mappings	13639	13641	13640
+pg_catalog	pg_views	12018	12020	12019
+information_schema	columns	12290	12292	12291
+information_schema	sql_sizing	12359	12361	12360
+information_schema	views	12407	12409	12408
+information_schema	user_mappings	12455	12457	12456
 
 
 query
@@ -106,7 +125,7 @@ FROM pg_class c JOIN pg_type t ON t.oid = c.reltype
 WHERE c.oid >= 12000 AND c.oid < 16384;
 ----
 relations	row_type_elsewhere	array_type_elsewhere	first	last
-149	0	0	12000	13639
+149	0	0	12000	12455
 
 
 query
@@ -116,11 +135,11 @@ WHERE t.typnamespace = 'information_schema'::regnamespace AND t.typtype = 'd'
 ORDER BY t.oid;
 ----
 typname	oid	typarray	base
-cardinal_number	13307	13306	int4
-character_data	13310	13309	varchar
-sql_identifier	13312	13311	name
-time_stamp	13318	13317	timestamptz
-yes_or_no	13320	13319	varchar
+cardinal_number	12242	12241	int4
+character_data	12244	12243	varchar
+sql_identifier	12246	12245	name
+time_stamp	12251	12250	timestamptz
+yes_or_no	12253	12252	varchar
 
 
 query

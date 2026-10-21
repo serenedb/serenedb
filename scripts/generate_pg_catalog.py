@@ -13,8 +13,8 @@ hand, from the PostgreSQL source in third_party/postgres:
   src/include/parser/kwlist.h      keywords
 
 PostgreSQL numbers the objects initdb creates while it runs, so the source
-holds no OIDs for them; scripts/pg_catalog/initdb_oids.py holds the ones
-the initdb of that PostgreSQL gives them.
+holds no OIDs for them; they are numbered here in the order the SQL files
+create them, from FirstUnpinnedObjectId.
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
 objects SereneDB names), in server/pg/types/mapping.cpp (which PostgreSQL

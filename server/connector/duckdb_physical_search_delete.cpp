@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/row_id_deduplicator.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <memory>
 #include <optional>
@@ -43,6 +44,7 @@ namespace {
 struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<primary_key::PKColumn> pk_columns;
+  std::optional<duckdb::RowIdDeduplicator> deleted_rows;
   duckdb::idx_t delete_count = 0;
   std::shared_ptr<search::SearchTable> search_table;
   std::shared_lock<std::shared_mutex> table_lock;
@@ -61,12 +63,14 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
   duckdb::vector<duckdb::LogicalType> types,
   duckdb::idx_t estimated_cardinality, bool return_chunk,
-  duckdb::vector<duckdb::idx_t> return_columns)
+  duckdb::vector<duckdb::idx_t> return_columns,
+  duckdb::RowIdHandling row_id_handling)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(&table),
     _return_chunk(return_chunk),
-    _return_columns(std::move(return_columns)) {
+    _return_columns(std::move(return_columns)),
+    _row_id_handling(row_id_handling) {
   _pk_columns.reserve(expressions.size());
   for (const auto& expr : expressions) {
     const auto& ref = expr->Cast<duckdb::BoundReferenceExpression>();
@@ -83,6 +87,10 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   conn_ctx.SearchTxn().RegisterWriter(state->search_table, *_table);
 
   state->pk_columns = _pk_columns;
+  if (_row_id_handling != duckdb::RowIdHandling::ASSUME_UNIQUE) {
+    state->deleted_rows.emplace(context, duckdb::vector<duckdb::LogicalType>{
+                                           state->pk_columns.front().type});
+  }
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {
@@ -95,6 +103,11 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
+  if (gstate.deleted_rows &&
+      primary_key::KeepFirstRowIds(*gstate.deleted_rows, chunk,
+                                   gstate.pk_columns.front()) == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
   const auto num_rows = chunk.size();
 
   // Buffered, not removed here. The removal reaches iresearch when the write

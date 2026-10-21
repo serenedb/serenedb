@@ -6541,7 +6541,7 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_eq_AtAtTsRegexp) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AddRegexpFilter(expected, 1, "(?s:.*)(?:[a-z]+[0-9]+)(?s:.*)");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);
@@ -6551,7 +6551,7 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AliasRegexpLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AddRegexpFilter(expected, 1, "(?s:.*)(?:[a-z]+[0-9]+)(?s:.*)");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_like(b, '[a-z]+[0-9]+')",
                columns, true);
@@ -6561,8 +6561,8 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddRegexpFilter(expected, 1, "[a-z]+");
-  AddRegexpFilter(expected, 1, "[0-9]+");
+  AddRegexpFilter(expected, 1, "(?s:.*)(?:[a-z]+)(?s:.*)");
+  AddRegexpFilter(expected, 1, "(?s:.*)(?:[0-9]+)(?s:.*)");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+') AND "
                "regexp_matches(b, '[0-9]+')",
@@ -6574,7 +6574,7 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_Negated) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
-  AddRegexpFilter(not_filter, 1, "[a-z]+[0-9]+");
+  AddRegexpFilter(not_filter, 1, "(?s:.*)(?:[a-z]+[0-9]+)(?s:.*)");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);
@@ -6584,7 +6584,7 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
-  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+").SetBoost(1.5f);
+  AddRegexpFilter(expected, 1, "(?s:.*)(?:[a-z]+[0-9]+)(?s:.*)").SetBoost(1.5f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE (regexp_matches(b, "
                "'[a-z]+[0-9]+'))::boost(1.5)",
@@ -6630,7 +6630,7 @@ TEST_F(SearchFilterBuilderTest, test_BuiltinMix_OrEndsWithRegexp) {
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
   AddLikeFilter(or_filter, 1, "%bar");
-  AddRegexpFilter(or_filter, 1, "[a-z]+[0-9]+");
+  AddRegexpFilter(or_filter, 1, "(?s:.*)(?:[a-z]+[0-9]+)(?s:.*)");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE ends_with(b, 'bar') OR "
                "regexp_matches(b, '[a-z]+[0-9]+')",

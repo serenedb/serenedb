@@ -461,6 +461,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
 
 void ColumnReader::NewOutputVector(ScanState& s) const {
   s.st.previous_states.clear();
+  s.retired_fetches.clear();
   if (s.segments.size() > 1) {
     s.segments.erase(s.segments.begin(), s.segments.end() - 1);
   }
@@ -552,12 +553,70 @@ void ColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
   }
 }
 
+void ColumnReader::FetchInto(ScanState& s, uint64_t row, duckdb::Vector& out,
+                             duckdb::idx_t at) const {
+  if (!s.fetch.segment || row < s.fetch_window.begin ||
+      row >= s.fetch_window.end) {
+    if (s.fetch.segment) {
+      s.retired_fetches.push_back(std::move(s.fetch));
+      s.fetch = {};
+    }
+    s.fetch_window = Locate(row, s.window);
+    s.fetch.segment = Open(s.fetch_window, *s.ctx);
+  }
+  s.fetch.segment->FetchRow(
+    s.fetch.state, static_cast<duckdb::row_t>(row - s.fetch_window.begin), out,
+    at);
+}
+
+bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
+                               const duckdb::SelectionVector& sel,
+                               duckdb::idx_t hits, duckdb::Vector& out,
+                               duckdb::idx_t at) const {
+  constexpr duckdb::idx_t kMaxFetchHits = 64;
+  const uint64_t first = anchor + sel.get_index(0);
+  const uint64_t last = anchor + sel.get_index(hits - 1);
+  if (hits >= kMaxFetchHits || last >= _row_count) {
+    return false;
+  }
+  const uint64_t cur = ColumnReader::GatherCursor(s);
+  SDB_ASSERT(first >= cur, "FetchSparse requires ascending rows");
+  const auto window = Locate(first, s.window);
+  if (last >= window.end || (s.initialized && window.block == s.window.block) ||
+      (s.fetch.segment && s.fetch_window.block == window.block)) {
+    return false;
+  }
+  if (first > cur) {
+    ColumnReader::Skip(s, first - cur);
+  }
+  if (at == 0) {
+    out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  }
+  auto& mask = duckdb::FlatVector::ValidityMutable(out);
+  for (duckdb::idx_t i = 0; i < hits; ++i) {
+    const uint64_t row = anchor + sel.get_index(i);
+    mask.SetValid(at + i);
+    if (_validity) {
+      _validity->FetchInto(s.child_states[0], row, out, at + i);
+      if (!mask.RowIsValid(at + i)) {
+        continue;
+      }
+    }
+    FetchInto(s, row, out, at + i);
+  }
+  ColumnReader::Skip(s, last + 1 - first);
+  return true;
+}
+
 void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                  const duckdb::SelectionVector& sel,
                                  duckdb::idx_t hits, duckdb::Vector& out,
                                  duckdb::idx_t at) const {
   if (at == 0) {
     NewOutputVector(s);
+  }
+  if (FetchSparse(s, anchor, sel, hits, out, at)) {
+    return;
   }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
@@ -568,6 +627,9 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
                                duckdb::Vector& out) const {
   SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE);
   NewOutputVector(s);
+  if (FetchSparse(s, anchor, sel, hits, out, 0)) {
+    return;
+  }
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherDense requires ascending rows");
   if (anchor > cur) {

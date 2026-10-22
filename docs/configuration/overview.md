@@ -337,10 +337,9 @@ Local paths, remote object stores and the external file cache.
 | `enable_fsst_vectors` | Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
 | `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
-| `external_file_cache_local_max_block_size` | Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `16384` |
-| `external_file_cache_remote_max_block_size` | Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `2097152` |
-| `external_file_cache_remote_min_block_size` | Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `4096` |
-| `external_file_cache_spill` | Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so they are re-read from there rather than re-fetched. | `BOOLEAN` | `GLOBAL` | `false` |
+| `external_file_cache_size` | The memory the external file cache may use for blocks of remote and in-memory files (e.g. `4GB`). The buffer pool takes memory back from the cache when queries need it. A value above the size the cache started with takes effect after a restart. | `VARCHAR` | `GLOBAL` | a quarter of `memory_limit` |
+| `external_file_cache_spill_path` | The file evicted cache blocks spill to. Empty spills only blocks of in-memory files, into the temporary directory. | `VARCHAR` | `GLOBAL` |  |
+| `external_file_cache_spill_size` | The disk space evicted cache blocks of remote files may take in the spill file (e.g. `50GB`); `0` drops them instead, so they are fetched again. | `VARCHAR` | `GLOBAL` | `0` |
 | `extra_http_headers` | Extra HTTP headers added to every request. | `MAP(VARCHAR, VARCHAR)` | `GLOBAL` | `{}` |
 | `file_search_path` | A comma separated list of directories to search for input files | `VARCHAR` | `SESSION` |  |
 | `force_download` | Forces upfront download of file | `BOOLEAN` | `SESSION` | `false` |
@@ -368,6 +367,7 @@ Local paths, remote object stores and the external file cache.
 | `s3_session_token` | S3 Session Token | `VARCHAR` | `SESSION` | NULL |
 | `s3_uploader_max_filesize` | Maximum size of a file written to S3. It must be above zero, fit in `s3_uploader_max_parts_per_file` parts and stay within the provider's largest object size. | `VARCHAR` | `SESSION` | `80GB` |
 | `s3_uploader_max_parts_per_file` | S3 Uploader max parts per file (between 1 and 10000) | `UBIGINT` | `SESSION` | `10000` |
+| `s3_uploader_parts_in_flight` | Parts of one S3 multipart upload sent at the same time, on the async threads; `1` sends each part from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `s3_url_compatibility_mode` | Disable Globs and Query Parameters on S3 URLs | `BOOLEAN` | `SESSION` | `false` |
 | `s3_url_scheme_aliases` | Additional URL schemes routed to the S3-compatible filesystem (e.g. `['oss', 'cos']`). Can only be set globally; secrets for aliased schemes need an explicit `SCOPE`. | `VARCHAR[]` | `GLOBAL` | `[]` |
 | `s3_url_style` | S3 URL style | `VARCHAR` | `SESSION` | `vhost` |

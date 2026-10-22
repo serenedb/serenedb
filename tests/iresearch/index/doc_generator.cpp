@@ -35,7 +35,6 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <numeric>
 #include <sstream>

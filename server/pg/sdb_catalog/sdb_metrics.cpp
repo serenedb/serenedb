@@ -24,6 +24,9 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -110,6 +113,29 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   values.emplace_back("catalog_wal_size_on_disk",
                       wal ? storage_manager.GetWALSize() : 0,
                       "current catalog wal file size in bytes");
+  if (const auto cache = _context.db->TryGetBlockCache()) {
+    const auto stats = cache->GetStatistics();
+    values.emplace_back("block_cache_capacity_bytes", stats.capacity,
+                        "memory the cache of remote and in-memory index "
+                        "files may use, in bytes");
+    values.emplace_back("block_cache_used_bytes", stats.used,
+                        "memory the cache of remote and in-memory index "
+                        "files uses, in bytes");
+    values.emplace_back("block_cache_hits", stats.hits,
+                        "block reads served from the cache since start");
+    values.emplace_back("block_cache_misses", stats.misses,
+                        "block reads that went to storage since start");
+    values.emplace_back("block_cache_fetches", stats.fetches,
+                        "storage reads that filled the cache since start");
+    values.emplace_back("block_cache_fetched_bytes", stats.fetched_bytes,
+                        "bytes read from storage into the cache since start");
+    values.emplace_back("block_cache_evictions", stats.evictions,
+                        "blocks evicted from memory since start");
+    values.emplace_back("block_cache_spilled_blocks", stats.spilled,
+                        "evicted blocks kept in the spill file since start");
+    values.emplace_back("block_cache_spill_reads", stats.spill_reads,
+                        "blocks read back from the spill file since start");
+  }
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   auto& context = _context;

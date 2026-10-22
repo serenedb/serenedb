@@ -168,7 +168,6 @@ struct SegmentReaderMock final : irs::SubReader {
     _meta.docs_count = docs_count;
     _meta.live_docs_count = docs_count;
   }
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final { return {}; }

@@ -51,8 +51,7 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/directory.hpp>
-#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -198,82 +197,19 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-class SpanDirectory final : public irs::Directory {
- public:
-  SpanDirectory(std::span<const IndexFile> files,
-                const irs::ResourceManagementOptions& resource_manager) noexcept
-    : Directory{resource_manager}, _files{files} {}
-
-  irs::IndexInput::ptr open(std::string_view name, irs::IOAdvice) const final {
-    const auto* file = Find(name);
-    if (!file) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("could not open file \"", name,
-                              "\" of the documentation index: no such file"));
-    }
-    return std::make_unique<irs::BytesViewInput>(
-      irs::bytes_view{file->bytes.data(), file->bytes.size()});
+std::vector<irs::LinkedFile> LinkedFiles(std::span<const IndexFile> files) {
+  std::vector<irs::LinkedFile> linked;
+  linked.reserve(files.size());
+  for (const auto& file : files) {
+    linked.push_back({file.name, {file.bytes.data(), file.bytes.size()}});
   }
-
-  bool exists(bool& result, std::string_view name) const noexcept final {
-    result = absl::c_any_of(
-      _files, [&](const IndexFile& file) { return file.name == name; });
-    return true;
-  }
-
-  bool length(uint64_t& result, std::string_view name) const noexcept final {
-    const auto* file = Find(name);
-    if (!file) {
-      return false;
-    }
-    result = file->bytes.size();
-    return true;
-  }
-
-  bool visit(const visitor_f& visitor) const final {
-    return absl::c_all_of(
-      _files, [&](const IndexFile& file) { return visitor(file.name); });
-  }
-
-  irs::DirectoryAttributes& attributes() noexcept final { return _attributes; }
-
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("could not create file \"", name,
-                            "\": the documentation index is read-only"));
-  }
-
-  irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-    return nullptr;
-  }
-
-  bool mtime(std::time_t&, std::string_view) const noexcept final {
-    return false;
-  }
-
-  bool remove(std::string_view) noexcept final { return false; }
-
-  bool rename(std::string_view, std::string_view) noexcept final {
-    return false;
-  }
-
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
-
- private:
-  const IndexFile* Find(std::string_view name) const noexcept {
-    const auto it = absl::c_find_if(
-      _files, [&](const IndexFile& file) { return file.name == name; });
-    return it == _files.end() ? nullptr : &*it;
-  }
-
-  std::span<const IndexFile> _files;
-  irs::DirectoryAttributes _attributes;
-};
+  return linked;
+}
 
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{files, kResourceManager},
+    : _dir{db, LinkedFiles(files)},
       _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
                 search::IndexStamp::Read(payload);
               }} {}
@@ -281,15 +217,13 @@ class EmbeddedIndex {
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 
  private:
-  static inline const irs::ResourceManagementOptions kResourceManager;
-
   static irs::IndexReaderOptions Options(duckdb::DatabaseInstance& db) {
     irs::IndexReaderOptions options;
     options.db = &db;
     return options;
   }
 
-  SpanDirectory _dir;
+  irs::IndexFiles _dir;
   irs::DirectoryReader _reader;
 };
 

@@ -23,149 +23,22 @@
 
 #pragma once
 
-#include <fcntl.h>  // open/_wopen
-
 #include <atomic>
-#include <cstdio>
-#include <filesystem>
-#include <functional>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <span>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/shared.hpp"
 
-#ifdef _WIN32
-#include <io.h>  // _close
-#include <tchar.h>
-#define file_path_delimiter L'\\'
-#define file_stat_t struct _stat64
-#define mode_t unsigned short
-
-#define posix_create _wcreat
-#define posix_open _wopen
-#define posix_close _close
-#define file_fstat _fstat64
-#define file_stat _wstat64
-
-#define handle_cast(f) f
-#define IR_WSTR(x) L##x  // cannot use _T(...) macro when _MBCS is defined
-#define IR_DEVNULL IR_WSTR("NUL:")
-
-#define IR_FADVICE_NORMAL 0
-#define IR_FADVICE_SEQUENTIAL FILE_FLAG_SEQUENTIAL_SCAN
-#define IR_FADVICE_RANDOM FILE_FLAG_RANDOM_ACCESS
-#define IR_FADVICE_DONTNEED 0
-#define IR_FADVICE_NOREUSE 0
-#else
-#include <sys/types.h>  // for blksize_t
-#include <unistd.h>     // close
-#define FILE_PATH_DELIMITER '/'
-#define FILE_STAT_T struct stat
-
-#define FILE_STAT stat
-#define FILE_FSTAT fstat
-#define POSIX_CREATE creat
-#define POSIX_OPEN open
-#define POSIX_CLOSE close
-
-#define HANDLE_CAST(f) static_cast<int>(reinterpret_cast<size_t>(f))
-#define IR_DEVNULL "/dev/null"
-#ifndef __APPLE__
-#define IR_FADVICE_NORMAL POSIX_FADV_NORMAL
-#define IR_FADVICE_SEQUENTIAL POSIX_FADV_SEQUENTIAL
-#define IR_FADVICE_RANDOM POSIX_FADV_RANDOM
-#define IR_FADVICE_DONTNEED POSIX_FADV_DONTNEED
-#define IR_FADVICE_NOREUSE POSIX_FADV_NOREUSE
-#else
-#define IR_FADVICE_NORMAL 0
-#define IR_FADVICE_SEQUENTIAL 0
-#define IR_FADVICE_RANDOM 0
-#define IR_FADVICE_DONTNEED 0
-#define IR_FADVICE_NOREUSE 0
-#endif
-#endif
-
-#ifdef _WIN32
-#define GET_ERROR() GetLastError()
-#else
-#define GET_ERROR() errno
-#endif
-
-namespace irs {
-
-using path_char_t = std::filesystem::path::value_type;
-
-// pid_t glue used by the lockfile primitives below + iresearch tests.
-pid_t GetPid();
-bool IsRunning(pid_t pid);
-bool IsValidPid(const char* buf);
-
-}  // namespace irs
 namespace irs::file_utils {
-
-inline auto ToStr(const path_char_t* path) {
-  if constexpr (std::is_same_v<path_char_t, char>) {
-    return path;
-  } else {
-    return std::filesystem::path{path}.string();
-  }
-}
-
-struct LockFileDeleter {
-  void operator()(void* handle) const;
-};
-
-typedef std::unique_ptr<void, LockFileDeleter> lock_handle_t;
-
-lock_handle_t CreateLockFile(const path_char_t* file);
-bool VerifyLockFile(const path_char_t* file);
-
-bool ByteSize(uint64_t& result, const path_char_t* file) noexcept;
-bool ByteSize(uint64_t& result, int fd) noexcept;
-bool ByteSize(uint64_t& result, void* fd) noexcept;
-
-bool Exists(bool& result, const path_char_t* file) noexcept;
-bool ExistsDirectory(bool& result, const path_char_t* file) noexcept;
-bool ExistsFile(bool& result, const path_char_t* file) noexcept;
-
-bool Mtime(time_t& result, const path_char_t* file) noexcept;
-
-enum class OpenMode : uint16_t {
-  Invalid = 0,
-  Read = 1,
-  Write = 2,
-  Direct = 4,
-};
-
-ENABLE_BITMASK_ENUM(OpenMode);
-
-struct FileDeleter {
-  void operator()(void* f) const noexcept;
-};
-
-typedef std::unique_ptr<void, FileDeleter> handle_t;
-
-handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept;
-handle_t Open(void* file, OpenMode mode, int advice) noexcept;
-
-bool Mkdir(const path_char_t* path,
-           bool create_new) noexcept;  // recursive directory creation
-
-bool Move(const path_char_t* src_path, const path_char_t* dst_path) noexcept;
-
-size_t Fread(void* fd, void* buf, size_t size);
-size_t Fwrite(void* fd, const void* buf, size_t size);
-void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
 inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
-void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
 size_t Residency(const void* addr, size_t size,
                  std::span<unsigned char> pages) noexcept;
@@ -228,38 +101,5 @@ class ResidencyMap {
   size_t _pages = 0;
   mutable std::atomic<uint32_t> _epoch{0};
 };
-
-IRS_FORCE_INLINE inline bool Write(void* fd, const void* buf, size_t size) {
-  return Fwrite(fd, buf, size) == size;
-}
-int Fseek(void* fd, long pos, int origin);
-int Ferror(void*);
-long Ftell(void* fd);
-
-struct PathPartsT {
-  using ref_t = std::basic_string_view<path_char_t>;
-  ref_t basename;   // path component after the last path delimiter (ref_t{}
-                    // if not present)
-  ref_t dirname;    // path component before the last path delimiter (ref_t{}
-                    // if not present)
-  ref_t extension;  // basename extension (ref_t{} if not present)
-  ref_t stem;       // basename without extension (ref_t{} if not present)
-};
-
-PathPartsT PathParts(const path_char_t* path) noexcept;
-
-bool ReadCwd(std::basic_string<path_char_t>& result) noexcept;
-
-void EnsureAbsolute(std::filesystem::path& path);
-
-bool Remove(const path_char_t* path) noexcept;
-
-bool SetCwd(const path_char_t* path) noexcept;
-
-bool VisitDirectory(const path_char_t* name,
-                    const std::function<bool(const path_char_t* name)>& visitor,
-                    bool include_dot_dir = true);
-
-bool FileSync(const path_char_t* name) noexcept;
 
 }  // namespace irs::file_utils

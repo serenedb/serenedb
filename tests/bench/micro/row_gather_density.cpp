@@ -31,7 +31,7 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
@@ -115,7 +115,7 @@ std::string Key(uint64_t i) {
 }
 
 struct Column {
-  irs::MemoryDirectory dir{};
+  irs::IndexFiles dir{irs::IndexFiles::PrivateMemory(CsDb())};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;
@@ -165,8 +165,9 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   return c;
 }
 
+std::unique_ptr<Column> gColumns[std::size(kShapes)];
+
 const Column& Get(size_t shape) {
-  static std::unique_ptr<Column> gColumns[std::size(kShapes)];
   if (!gColumns[shape]) {
     gColumns[shape] = Build(kShapes[shape]);
   }
@@ -256,6 +257,9 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  for (auto& column : gColumns) {
+    column.reset();
+  }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

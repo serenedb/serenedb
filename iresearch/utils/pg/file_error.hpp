@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2017 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,25 +15,15 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include "iresearch/store/fs_directory.hpp"
+#include <duckdb/common/exception.hpp>
 
 namespace irs {
 
-class MMapDirectory : public FSDirectory {
- public:
-  explicit MMapDirectory(
-    std::filesystem::path dir,
-    DirectoryAttributes attrs = DirectoryAttributes{},
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-
-  IndexInput::ptr open(std::string_view name, IOAdvice advice) const override;
-};
+[[noreturn]] void ThrowFileError(const duckdb::IOException& error);
 
 }  // namespace irs

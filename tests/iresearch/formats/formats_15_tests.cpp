@@ -261,7 +261,7 @@ class Format15TestCase : public tests::FormatTestCase {
     std::unique_ptr<irs::byte_type[]> inline_bytes;
   };
 
-  ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
+  ReadMeta WriteReadMeta(const irs::IndexFiles& dir, DocsView docs,
                          irs::ScorerPtr scorer, irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
@@ -332,7 +332,7 @@ class Format15TestCase : public tests::FormatTestCase {
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
-  irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
+  const irs::IndexFiles& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
   irs::PostingsWriter writer;
@@ -348,7 +348,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .index_features = features,
     };
 
-    auto out = dir.create("attributes");
+    auto out = dir.Create("attributes");
     EXPECT_FALSE(!out);
     irs::WriteStr(*out, std::string_view("file_header"));
 
@@ -374,7 +374,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   const irs::ReaderState state{.dir = &dir, .meta = &meta};
 
-  auto in = dir.open("attributes", irs::IOAdvice::NORMAL);
+  auto in = dir.Open("attributes", irs::IOAdvice::NORMAL);
   EXPECT_FALSE(!in);
   [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
 

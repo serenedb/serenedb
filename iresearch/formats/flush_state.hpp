@@ -27,14 +27,14 @@
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/store/index_files.hpp"
 
 namespace irs {
 
-struct Directory;
 struct NormProvider;
 
 struct FlushState {
-  Directory* const dir{};
+  const IndexFiles* const dir{};
   // In-flight norm reader source (SegmentWriter during initial flush,
   // null during merge). Posting writers consult it to read per-doc norms
   // for score bounds while the segment is still being written.

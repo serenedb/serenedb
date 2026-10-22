@@ -28,16 +28,15 @@
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-struct Directory;
-
 namespace index_meta {
 
 inline constexpr std::string_view kPrefix = "segments_";
@@ -72,14 +71,15 @@ class IndexMetaWriter final {
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
-  bool prepare(Directory& dir, IndexMeta& meta, std::string& pending_filename,
-               std::string& filename, const SourcePosition& position);
+  bool prepare(const IndexFiles& dir, IndexMeta& meta,
+               std::string& pending_filename, std::string& filename,
+               const SourcePosition& position);
   bool commit();
   void rollback() noexcept;
 
  private:
   MetaPayloadWriter _payload;
-  Directory* _dir{};
+  std::optional<IndexFiles> _dir;
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit
 };
 

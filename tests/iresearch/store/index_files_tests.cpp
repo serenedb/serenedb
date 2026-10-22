@@ -21,22 +21,34 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cstdio>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
-#include <iresearch/utils/directory_utils.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/misc.hpp>
-#include <iresearch/utils/network_utils.hpp>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
+#include "hook_file_system.hpp"
+#include "index/doc_generator.hpp"
+#include "index/index_tests.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -44,27 +56,27 @@ namespace {
 
 using namespace irs;
 
-class DirectoryTestCase : public tests::DirectoryTestCaseBase<> {};
+class IndexFilesTestCase : public ::tests::DirectoryTestCaseBase<> {};
 
-TEST_P(DirectoryTestCase, rename) {
+TEST_P(IndexFilesTestCase, rename) {
   {
     bool res = true;
-    ASSERT_TRUE(_dir->exists(res, "foo"));
+    ASSERT_TRUE(_dir->Exists(res, "foo"));
     ASSERT_FALSE(res);
   }
 
   {
     bool res = true;
-    ASSERT_TRUE(_dir->exists(res, "bar"));
+    ASSERT_TRUE(_dir->Exists(res, "bar"));
     ASSERT_FALSE(res);
   }
 
   {
-    auto stream0 = _dir->create("foo");
+    auto stream0 = _dir->Create("foo");
     ASSERT_NE(nullptr, stream0);
     stream0->WriteByte(0);
     stream0->Flush();
-    auto stream1 = _dir->create("bar");
+    auto stream1 = _dir->Create("bar");
     ASSERT_NE(nullptr, stream1);
     stream1->WriteU32(2);
     stream1->Flush();
@@ -72,151 +84,86 @@ TEST_P(DirectoryTestCase, rename) {
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->exists(res, "foo"));
+    ASSERT_TRUE(_dir->Exists(res, "foo"));
     ASSERT_TRUE(res);
   }
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->exists(res, "bar"));
+    ASSERT_TRUE(_dir->Exists(res, "bar"));
     ASSERT_TRUE(res);
   }
 
-  ASSERT_TRUE(_dir->rename("foo", "foo1"));
-  ASSERT_TRUE(_dir->rename("bar", "bar1"));
+  ASSERT_TRUE(_dir->Rename("foo", "foo1"));
+  ASSERT_TRUE(_dir->Rename("bar", "bar1"));
 
   {
     bool res = true;
-    ASSERT_TRUE(_dir->exists(res, "foo"));
+    ASSERT_TRUE(_dir->Exists(res, "foo"));
     ASSERT_FALSE(res);
   }
 
   {
     bool res = true;
-    ASSERT_TRUE(_dir->exists(res, "bar"));
+    ASSERT_TRUE(_dir->Exists(res, "bar"));
     ASSERT_FALSE(res);
   }
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->exists(res, "foo1"));
+    ASSERT_TRUE(_dir->Exists(res, "foo1"));
     ASSERT_TRUE(res);
   }
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->exists(res, "bar1"));
+    ASSERT_TRUE(_dir->Exists(res, "bar1"));
     ASSERT_TRUE(res);
   }
 
   {
-    auto stream0 = _dir->open("foo1", irs::IOAdvice::NORMAL);
+    auto stream0 = _dir->Open("foo1", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream0);
     ASSERT_EQ(1, stream0->Length());
     ASSERT_EQ(0, stream0->ReadByte());
-    auto stream1 = _dir->open("bar1", irs::IOAdvice::NORMAL);
+    auto stream1 = _dir->Open("bar1", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream1);
     ASSERT_EQ(4, stream1->Length());
     ASSERT_EQ(2, stream1->ReadI32());
   }
 
-  ASSERT_FALSE(_dir->rename("invalid", "foo1"));
-  ASSERT_TRUE(_dir->rename("bar1", "foo1"));
+  ASSERT_FALSE(_dir->Rename("invalid", "foo1"));
+  ASSERT_TRUE(_dir->Rename("bar1", "foo1"));
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->exists(res, "foo1"));
+    ASSERT_TRUE(_dir->Exists(res, "foo1"));
     ASSERT_TRUE(res);
   }
 
   {
     bool res = true;
-    ASSERT_TRUE(_dir->exists(res, "bar1"));
+    ASSERT_TRUE(_dir->Exists(res, "bar1"));
     ASSERT_FALSE(res);
   }
 
   {
     bool res = false;
-    ASSERT_TRUE(_dir->rename("foo1", "foo1"));
-    ASSERT_TRUE(_dir->exists(res, "foo1"));
+    ASSERT_TRUE(_dir->Rename("foo1", "foo1"));
+    ASSERT_TRUE(_dir->Exists(res, "foo1"));
     ASSERT_TRUE(res);
   }
 
   {
-    auto stream1 = _dir->open("foo1", irs::IOAdvice::NORMAL);
+    auto stream1 = _dir->Open("foo1", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream1);
     ASSERT_EQ(4, stream1->Length());
     ASSERT_EQ(2, stream1->ReadI32());
-  }
-}
-
-TEST_P(DirectoryTestCase, lock_obtain_release) {
-  {
-    // single lock
-    auto lock0 = _dir->make_lock("lock0");
-    ASSERT_FALSE(!lock0);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_FALSE(lock0->lock());  // lock is not recursive
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-
-    // another single lock
-    auto lock1 = _dir->make_lock("lock11");
-    ASSERT_FALSE(!lock1);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->try_lock(3000));
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_FALSE(lock1->unlock());  // double release
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-  }
-
-  // two different locks
-  {
-    auto lock0 = _dir->make_lock("lock0");
-    auto lock1 = _dir->make_lock("lock1");
-    ASSERT_FALSE(!lock0);
-    ASSERT_FALSE(!lock1);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_TRUE(lock1->lock());
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_TRUE(lock1->unlock());
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-  }
-
-  // two locks with the same identifier
-  {
-    auto lock0 = _dir->make_lock("lock");
-    auto lock1 = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock0);
-    ASSERT_FALSE(!lock1);
-    bool locked;
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock0->lock());
-    ASSERT_FALSE(lock1->lock());
-    ASSERT_FALSE(lock1->try_lock(3000));  // wait 5sec
-    ASSERT_TRUE(lock0->is_locked(locked) && locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && locked);
-    ASSERT_TRUE(lock0->unlock());
-    ASSERT_FALSE(lock1->unlock());  // unlocked by identifier lock0
-    ASSERT_TRUE(lock0->is_locked(locked) && !locked);
-    ASSERT_TRUE(lock1->is_locked(locked) && !locked);
   }
 }
 
 #ifndef _WIN32
-TEST_P(DirectoryTestCase, create_many_files) {
+TEST_P(IndexFilesTestCase, create_many_files) {
   std::vector<IndexOutput::ptr> opened_files;
   std::vector<std::string> names;
   constexpr size_t kCount = 2048;
@@ -231,21 +178,21 @@ TEST_P(DirectoryTestCase, create_many_files) {
   opened_files.reserve(kCount);
   for (size_t i = 0; i < kCount; ++i) {
     SCOPED_TRACE(testing::Message("File count ") << i);
-    auto out = _dir->create(names[i]);
+    auto out = _dir->Create(names[i]);
     ASSERT_FALSE(!out);
     opened_files.push_back(std::move(out));
   }
   opened_files.clear();
   for (size_t i = 0; i < kCount; ++i) {
-    _dir->remove(names[i]);
+    _dir->Remove(names[i]);
   }
 }
 #endif
 
-TEST_P(DirectoryTestCase, read_multiple_streams) {
+TEST_P(IndexFilesTestCase, read_multiple_streams) {
   // write data
   {
-    auto out = _dir->create("test");
+    auto out = _dir->Create("test");
     ASSERT_FALSE(!out);
     out->WriteV32(0);
     out->WriteV32(1);
@@ -257,10 +204,10 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->Open("test", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in0);
     ASSERT_FALSE(in0->IsEOF());
-    auto in1 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in1 = _dir->Open("test", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in1);
     ASSERT_FALSE(in1->IsEOF());
     ASSERT_EQ(0, in0->ReadV32());
@@ -291,7 +238,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data using dup
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->Open("test", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in0);
     auto in1 = in0->Dup();
     ASSERT_FALSE(!in1);
@@ -325,7 +272,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
 
   // read data using reopen
   {
-    auto in0 = _dir->open("test", irs::IOAdvice::NORMAL);
+    auto in0 = _dir->Open("test", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in0);
     auto in1 = in0->Reopen();
     ASSERT_FALSE(!in1);
@@ -360,7 +307,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
   // read data using reopen async
   {
     {
-      auto out = _dir->create("test_async");
+      auto out = _dir->Create("test_async");
       ASSERT_FALSE(!out);
 
       for (uint32_t i = 0; i < 10000; ++i) {
@@ -368,7 +315,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
       }
     }
 
-    auto in = _dir->open("test_async", irs::IOAdvice::NORMAL);
+    auto in = _dir->Open("test_async", irs::IOAdvice::NORMAL);
     std::mutex in_mtx;
     std::mutex mutex;
     irs::async_utils::ThreadPool<> pool(16);
@@ -407,7 +354,7 @@ TEST_P(DirectoryTestCase, read_multiple_streams) {
   }
 }
 
-TEST_P(DirectoryTestCase, string_read_write) {
+TEST_P(IndexFilesTestCase, string_read_write) {
   using namespace irs;
 
   auto u32crc = [](irs::Crc32c& crc, uint32_t v) {
@@ -422,7 +369,6 @@ TEST_P(DirectoryTestCase, string_read_write) {
     crc.process_bytes(str.c_str(), str.size());
   };
 
-  // strings are smaller than internal buffer size
   {
     // size=50
     std::vector<std::string> strings{
@@ -530,7 +476,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
     // write strings
     {
       irs::Crc32c crc;
-      auto out = _dir->create("test");
+      auto out = _dir->Create("test");
       ASSERT_FALSE(!out);
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
@@ -543,7 +489,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->Open("test", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -555,9 +501,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
     }
   }
 
-  // strings are equal to the internal buffer size
   {
-    // size=buffered_index_input::DEFAULT_BUF_SIZE
     std::vector<std::string> strings{
       "ulRp3vG5NbK6BCW6VKW3ItbvlUzkuPjwCwvvWtR1kJvhKxjlbI8y1QwyjookVQYCP1yUvZ"
       "IshRCwMGitOhGvus8IyXBU3og98AtlO3w3svEOnfrLnFxIeigukQkVTtrVt556yaPNqSHN"
@@ -2064,7 +2008,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
     // write strings
     {
       irs::Crc32c crc;
-      auto out = _dir->create("test");
+      auto out = _dir->Create("test");
       ASSERT_FALSE(!out);
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
@@ -2077,7 +2021,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->Open("test", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -2089,9 +2033,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
     }
   }
 
-  // strings are bigger than internal buffer size
   {
-    // size=buffered_index_input::DEFAULT_BUF_SIZE+50
     std::vector<std::string> strings{
       "Igz181Mal2fF1nIp0k0fFQbrkNeJDgGDM9OhswJmGuy50Zs4cP2qRJbwE1BhassfXoNrJb"
       "qUtJH62obFpNFcTNkWtLuOQs2PHMeuGzMItMlCRm86mwLLooRVV7CqWFJRWbxYDHmgchgl"
@@ -3697,7 +3639,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
     // write strings
     {
       irs::Crc32c crc;
-      auto out = _dir->create("test");
+      auto out = _dir->Create("test");
       ASSERT_FALSE(!out);
       out->WriteV32(strings.size());
       u32crc(crc, static_cast<uint32_t>(strings.size()));
@@ -3710,7 +3652,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
 
     // read strings
     {
-      auto in = _dir->open("test", irs::IOAdvice::NORMAL);
+      auto in = _dir->Open("test", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(!in);
       ASSERT_FALSE(in->IsEOF());
       EXPECT_EQ(strings.size(), in->ReadV32());
@@ -3723,7 +3665,7 @@ TEST_P(DirectoryTestCase, string_read_write) {
   }
 }
 
-TEST_P(DirectoryTestCase, visit) {
+TEST_P(IndexFilesTestCase, visit) {
   using namespace irs;
 
   std::set<std::string_view> names{
@@ -3773,13 +3715,13 @@ TEST_P(DirectoryTestCase, visit) {
       ++calls_count;
       return true;
     };
-    ASSERT_TRUE(_dir->visit(visitor));
+    ASSERT_TRUE(_dir->Visit(visitor));
     ASSERT_EQ(0, calls_count);
   }
 
   // add files
   for (const auto& name : names) {
-    ASSERT_FALSE(!_dir->create(name));
+    ASSERT_FALSE(!_dir->Create(name));
   }
 
   // visit directory
@@ -3790,12 +3732,12 @@ TEST_P(DirectoryTestCase, visit) {
       }
       return true;
     };
-    ASSERT_TRUE(_dir->visit(visitor));
+    ASSERT_TRUE(_dir->Visit(visitor));
     ASSERT_TRUE(names.empty());
   }
 }
 
-TEST_P(DirectoryTestCase, list) {
+TEST_P(IndexFilesTestCase, list) {
   using namespace irs;
 
   std::vector<std::string> files;
@@ -3803,7 +3745,7 @@ TEST_P(DirectoryTestCase, list) {
     files.emplace_back(std::move(name));
     return true;
   };
-  ASSERT_TRUE(_dir->visit(list_files));
+  ASSERT_TRUE(_dir->Visit(list_files));
   ASSERT_TRUE(files.empty());
 
   std::vector<std::string_view> names{
@@ -3847,11 +3789,11 @@ TEST_P(DirectoryTestCase, list) {
     "UKb3uiFuGEi7m9", "yeRCnG0EEZ8Vrr"};
 
   for (const auto& name : names) {
-    ASSERT_FALSE(!_dir->create(name));
+    ASSERT_FALSE(!_dir->Create(name));
   }
 
   files.clear();
-  ASSERT_TRUE(_dir->visit(list_files));
+  ASSERT_TRUE(_dir->Visit(list_files));
   EXPECT_EQ(names.size(), files.size());
 
   EXPECT_TRUE(
@@ -3860,7 +3802,7 @@ TEST_P(DirectoryTestCase, list) {
     }));
 }
 
-TEST_P(DirectoryTestCase, smoke_index_io) {
+TEST_P(IndexFilesTestCase, smoke_index_io) {
   using namespace irs;
 
   const std::string name = "test";
@@ -3869,7 +3811,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
 
   // write to file
   {
-    auto out = _dir->create(name);
+    auto out = _dir->Create(name);
     ASSERT_FALSE(!out);
     out->WriteData(payload.c_str(), payload.size());
     out->WriteByte(27);
@@ -3909,7 +3851,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
 
   // read from file
   {
-    auto in = _dir->open(name, irs::IOAdvice::NORMAL);
+    auto in = _dir->Open(name, irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in);
     EXPECT_FALSE(in->IsEOF());
 
@@ -3996,7 +3938,7 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
   }
 }
 
-TEST_P(DirectoryTestCase, smoke_store) {
+TEST_P(IndexFilesTestCase, smoke_store) {
   auto& dir = *this->_dir;
 
   constexpr std::string_view kNames[]{
@@ -4048,7 +3990,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     --it;
     irs::Crc32c crc;
 
-    auto file = dir.create(name);
+    auto file = dir.Create(name);
     ASSERT_FALSE(!file);
     EXPECT_EQ(0, file->Position());
 
@@ -4075,10 +4017,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
     files_to_sync.emplace_back(*it);
     return true;
   };
-  ASSERT_TRUE(dir.visit(list_files));
+  ASSERT_TRUE(dir.Visit(list_files));
   ASSERT_EQ((std::set<std::string>{std::begin(kNames), std::end(kNames)}),
             files);
-  ASSERT_TRUE(dir.sync(files_to_sync));
+  dir.Sync(files_to_sync);
 
   // Read contents
   it = std::end(kNames);
@@ -4093,12 +4035,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
     irs::byte_type readbuf[64 * 1024];
     const auto expected_length = it->size() + sizeof readbuf + 1;
 
-    ASSERT_TRUE(dir.exists(exists, name) && exists);
-    uint64_t length;
-    EXPECT_TRUE(dir.length(length, name));
-    EXPECT_EQ(expected_length, length);
+    ASSERT_TRUE(dir.Exists(exists, name) && exists);
+    EXPECT_EQ(expected_length, dir.Open(name, irs::IOAdvice::NORMAL)->Length());
 
-    auto file = dir.open(name, irs::IOAdvice::NORMAL);
+    auto file = dir.Open(name, irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!file);
     EXPECT_FALSE(file->IsEOF());
     EXPECT_EQ(0, file->Position());
@@ -4158,9 +4098,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       //   ASSERT_EQ(file->Length() - 1, file->Position());
       // }
 
-      if (dynamic_cast<MMapDirectory*>(&dir) ||
-          dynamic_cast<MemoryDirectory*>(&dir) ||
-          dynamic_cast<FSDirectory*>(&dir)) {
+      {
         const auto fp = file->Position();
         Finally cleanup = [fp, &file]() noexcept {
           try {
@@ -4190,7 +4128,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       }
 
       // mmap direct buffer access
-      if (dynamic_cast<MMapDirectory*>(&dir)) {
+      if (dir.Kind() == irs::StorageKind::Local) {
         const auto fp = file->Position();
         Finally cleanup = [fp, &file]() noexcept {
           try {
@@ -4284,19 +4222,19 @@ TEST_P(DirectoryTestCase, smoke_store) {
   }
 
   for (const auto& name : kNames) {
-    ASSERT_TRUE(dir.remove(name));
+    ASSERT_TRUE(dir.Remove(name));
     bool exists;
-    ASSERT_TRUE(dir.exists(exists, name) && !exists);
+    ASSERT_TRUE(dir.Exists(exists, name) && !exists);
   }
 
   // Check files count
   files.clear();
-  ASSERT_TRUE(dir.visit(list_files));
+  ASSERT_TRUE(dir.Visit(list_files));
   EXPECT_EQ(0, files.size());
 
   // Try to open non existing input
   try {
-    dir.open("invalid_file_name", irs::IOAdvice::NORMAL);
+    dir.Open("invalid_file_name", irs::IOAdvice::NORMAL);
     FAIL() << "opening a missing file must throw";
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_UNDEFINED_FILE);
@@ -4306,27 +4244,18 @@ TEST_P(DirectoryTestCase, smoke_store) {
       << what;
   }
 
-  // Check locking logic
-  auto l = dir.make_lock("sample_lock");
-  ASSERT_FALSE(!l);
-  ASSERT_TRUE(l->lock());
-  bool locked;
-  ASSERT_TRUE(l->is_locked(locked) && locked);
-  ASSERT_TRUE(l->unlock());
-  ASSERT_TRUE(l->is_locked(locked) && !locked);
-
   // empty file
   {
     byte_type buf[10];
 
     // create file
     {
-      auto out = dir.create("empty_file");
+      auto out = dir.Create("empty_file");
       ASSERT_FALSE(!out);
     }
 
     {
-      auto in = dir.open("empty_file", irs::IOAdvice::NORMAL);
+      auto in = dir.Open("empty_file", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(!in);
       ASSERT_TRUE(in->IsEOF());
 
@@ -4336,7 +4265,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       ASSERT_EQ(0, in->Checksum(42));
     }
 
-    ASSERT_TRUE(dir.remove("empty_file"));
+    ASSERT_TRUE(dir.Remove("empty_file"));
   }
 
   // Check ReadData after the end of file
@@ -4345,7 +4274,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
     // write to file
     {
       byte_type buf[1024]{};
-      auto out = dir.create(name);
+      auto out = dir.Create(name);
       ASSERT_FALSE(!out);
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, sizeof buf);
@@ -4355,13 +4284,13 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
     {
       std::vector<std::string_view> to_sync{name};
-      ASSERT_TRUE(dir.sync(to_sync));
+      dir.Sync(to_sync);
     }
 
     // read from file
     {
       byte_type buf[1024 + 691]{};  // 1024 + 691 from above
-      auto in = dir.open("nonempty_file", irs::IOAdvice::NORMAL);
+      auto in = dir.Open("nonempty_file", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(in->IsEOF());
       ASSERT_FALSE(!in);
       in->ReadData(buf, sizeof buf);
@@ -4372,14 +4301,14 @@ TEST_P(DirectoryTestCase, smoke_store) {
       ASSERT_TRUE(in->IsEOF());
     }
 
-    ASSERT_TRUE(dir.remove("nonempty_file"));
+    ASSERT_TRUE(dir.Remove("nonempty_file"));
   }
 }
 
-TEST_P(DirectoryTestCase, directory_size) {
+TEST_P(IndexFilesTestCase, directory_size) {
   // write integer to file
   {
-    auto file = _dir->create("test_file");
+    auto file = _dir->Create("test_file");
 
     ASSERT_FALSE(!file);
     ASSERT_EQ(0, file->Position());
@@ -4393,23 +4322,17 @@ TEST_P(DirectoryTestCase, directory_size) {
     size_t accumulated_size = 0;
 
     auto visitor = [this, &accumulated_size](std::string_view name) {
-      uint64_t size = 0;
-
-      if (!_dir->length(size, name)) {
-        return false;
-      }
-
-      accumulated_size += size;
+      accumulated_size += _dir->Open(name, irs::IOAdvice::NORMAL)->Length();
       return true;
     };
 
-    ASSERT_TRUE(_dir->visit(visitor));
+    ASSERT_TRUE(_dir->Visit(visitor));
     ASSERT_EQ(sizeof(uint32_t), accumulated_size);
   }
 }
 
-TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
-  auto out = _dir->create("checksum");
+TEST_P(IndexFilesTestCase, checksum_covers_bytes_since_previous_call) {
+  auto out = _dir->Create("checksum");
   ASSERT_FALSE(!out);
 
   const std::vector<irs::byte_type> data(100000, 7);
@@ -4428,178 +4351,1025 @@ TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
   EXPECT_EQ(irs::Crc32c{}.checksum(), out->Checksum());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+TEST_P(IndexFilesTestCase, input_type_follows_storage) {
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+    out->WriteU32(42);
+  }
 
-INSTANTIATE_TEST_SUITE_P(directory_test, DirectoryTestCase,
+  const auto type = _dir->Kind() == irs::StorageKind::Local
+                      ? irs::DataInput::Type::BytesViewInput
+                      : irs::DataInput::Type::Generic;
+
+  for (const auto advice : {irs::IOAdvice::NORMAL, irs::IOAdvice::SEQUENTIAL,
+                            irs::IOAdvice::RANDOM}) {
+    auto in = _dir->Open("file", advice);
+    ASSERT_FALSE(!in);
+    EXPECT_EQ(type, in->GetType());
+    EXPECT_EQ(type, in->Dup()->GetType());
+    EXPECT_EQ(type, in->Reopen()->GetType());
+    EXPECT_EQ(42, in->ReadI32());
+  }
+}
+
+TEST_P(IndexFilesTestCase, reads_across_cache_blocks) {
+  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint64_t kSize = 3 * kBlock + 1000;
+  std::vector<irs::byte_type> data(kSize);
+  for (uint64_t i = 0; i != kSize; ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
+  }
+  {
+    auto out = _dir->Create("blocks");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+  const auto expected = [&](uint64_t offset, uint64_t count) {
+    return irs::bytes_view{data.data() + offset, count};
+  };
+
+  auto in = _dir->Open("blocks", irs::IOAdvice::NORMAL);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(kSize, in->Length());
+
+  irs::bstring buf(kSize, 0);
+  in->ReadData(buf.data(), buf.size());
+  EXPECT_EQ(expected(0, kSize), irs::bytes_view{buf});
+  EXPECT_EQ(kSize, in->Position());
+  EXPECT_TRUE(in->IsEOF());
+
+  buf.resize(20);
+  in->ReadData(kBlock - 10, buf.data(), buf.size());
+  EXPECT_EQ(expected(kBlock - 10, 20), irs::bytes_view{buf});
+  EXPECT_EQ(kBlock + 10, in->Position());
+
+  in->Seek(2 * kBlock - 2);
+  for (uint64_t pos = 2 * kBlock - 2; pos != 2 * kBlock + 2; ++pos) {
+    EXPECT_EQ(data[pos], in->ReadByte());
+  }
+  EXPECT_EQ(2 * kBlock + 2, in->Position());
+
+  const auto* straddling = in->ReadVolatile(kBlock - 5, 10);
+  ASSERT_NE(nullptr, straddling);
+  EXPECT_EQ(expected(kBlock - 5, 10), irs::bytes_view(straddling, 10));
+  EXPECT_EQ(kBlock + 5, in->Position());
+
+  in->Seek(kBlock + 100);
+  const auto* inside = in->ReadVolatile(50);
+  ASSERT_NE(nullptr, inside);
+  EXPECT_EQ(expected(kBlock + 100, 50), irs::bytes_view(inside, 50));
+  EXPECT_EQ(kBlock + 150, in->Position());
+
+  in->Seek(5);
+  EXPECT_EQ(data[5], in->ReadByte());
+  in->Seek(kSize - 1);
+  EXPECT_EQ(data[kSize - 1], in->ReadByte());
+  EXPECT_TRUE(in->IsEOF());
+
+  in->Seek(3 * kBlock - 3);
+  auto dup = in->Dup();
+  ASSERT_FALSE(!dup);
+  auto reopened = in->Reopen();
+  ASSERT_FALSE(!reopened);
+  for (auto* input : {in.get(), dup.get(), reopened.get()}) {
+    EXPECT_EQ(3 * kBlock - 3, input->Position());
+    buf.resize(6);
+    input->ReadData(buf.data(), buf.size());
+    EXPECT_EQ(expected(3 * kBlock - 3, 6), irs::bytes_view{buf});
+  }
+
+  in->Seek(kBlock - 7);
+  irs::Crc32c crc;
+  crc.process_bytes(data.data() + kBlock - 7, 2 * kBlock);
+  EXPECT_EQ(crc.checksum(), in->Checksum(2 * kBlock));
+  EXPECT_EQ(kBlock - 7, in->Position());
+}
+
+TEST_P(IndexFilesTestCase, numbers_across_cache_blocks) {
+  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  constexpr uint32_t kV32 = std::numeric_limits<uint32_t>::max();
+  constexpr uint64_t kV64 = std::numeric_limits<uint64_t>::max();
+  constexpr uint64_t kU64 = 0x0123456789ABCDEF;
+  constexpr uint32_t kU32 = 0xDEADBEEF;
+  const std::vector<irs::byte_type> filler(kBlock, 0x5A);
+  {
+    auto out = _dir->Create("numbers");
+    ASSERT_FALSE(!out);
+    out->WriteData(filler.data(), kBlock - 2);
+    out->WriteV32(kV32);
+    out->WriteData(filler.data(), kBlock - 7);
+    out->WriteV64(kV64);
+    out->WriteData(filler.data(), kBlock - 9);
+    out->WriteU64(kU64);
+    out->WriteData(filler.data(), kBlock - 6);
+    out->WriteU32(kU32);
+  }
+
+  auto in = _dir->Open("numbers", irs::IOAdvice::NORMAL);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(4 * kBlock + 3, in->Length());
+
+  in->Skip(kBlock - 2);
+  EXPECT_EQ(kV32, in->ReadV32());
+  EXPECT_EQ(kBlock + 3, in->Position());
+  in->Skip(kBlock - 7);
+  EXPECT_EQ(kV64, in->ReadV64());
+  EXPECT_EQ(2 * kBlock + 6, in->Position());
+  in->Skip(kBlock - 9);
+  EXPECT_EQ(kU64, static_cast<uint64_t>(in->ReadI64()));
+  EXPECT_EQ(3 * kBlock + 5, in->Position());
+  in->Skip(kBlock - 6);
+  EXPECT_EQ(kU32, static_cast<uint32_t>(in->ReadI32()));
+  EXPECT_TRUE(in->IsEOF());
+
+  in->Seek(kBlock - 2);
+  in->SkipV32();
+  EXPECT_EQ(kBlock + 3, in->Position());
+  in->Seek(2 * kBlock - 4);
+  in->SkipV64();
+  EXPECT_EQ(2 * kBlock + 6, in->Position());
+}
+
+TEST_P(IndexFilesTestCase, stable_reads_follow_storage) {
+  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  std::vector<irs::byte_type> data(2 * kBlock);
+  for (uint64_t i = 0; i != data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
+  }
+  {
+    auto out = _dir->Create("stable");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  auto in = _dir->Open("stable", irs::IOAdvice::NORMAL);
+  ASSERT_FALSE(!in);
+  const auto* first = in->ReadStable(10, 100);
+  const auto* second = in->ReadStable(kBlock + 7, 30);
+  if (_dir->Kind() == irs::StorageKind::Remote) {
+    EXPECT_EQ(nullptr, first);
+    EXPECT_EQ(nullptr, second);
+    return;
+  }
+  ASSERT_NE(nullptr, first);
+  ASSERT_NE(nullptr, second);
+  EXPECT_EQ(kBlock + 37, in->Position());
+  EXPECT_EQ((irs::bytes_view{data.data() + 10, 100}),
+            (irs::bytes_view{first, 100}));
+  EXPECT_EQ((irs::bytes_view{data.data() + kBlock + 7, 30}),
+            (irs::bytes_view{second, 30}));
+}
+
+TEST_P(IndexFilesTestCase, readonce_open) {
+  constexpr uint64_t kSize = duckdb::BlockCache::BLOCK_SIZE + 100;
+  std::vector<irs::byte_type> data(kSize);
+  for (uint64_t i = 0; i != kSize; ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 7);
+  }
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  for (const auto advice :
+       {irs::IOAdvice::READONCE, irs::IOAdvice::ReadonceSequential,
+        irs::IOAdvice::ReadonceRandom}) {
+    auto in = _dir->Open("file", advice);
+    ASSERT_FALSE(!in);
+    EXPECT_EQ(irs::DataInput::Type::BytesViewInput, in->GetType());
+    ASSERT_EQ(kSize, in->Length());
+    irs::bstring buf(kSize, 0);
+    in->ReadData(buf.data(), buf.size());
+    EXPECT_EQ((irs::bytes_view{data.data(), data.size()}),
+              irs::bytes_view{buf});
+    EXPECT_TRUE(in->IsEOF());
+  }
+}
+
+TEST_P(IndexFilesTestCase, create_truncates_existing_file) {
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(1000, 1);
+    out->WriteData(data.data(), data.size());
+  }
+  ASSERT_EQ(1000, _dir->Open("file", irs::IOAdvice::NORMAL)->Length());
+
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+    out->WriteU32(42);
+  }
+  {
+    auto in = _dir->Open("file", irs::IOAdvice::NORMAL);
+    ASSERT_FALSE(!in);
+    EXPECT_EQ(4, in->Length());
+    EXPECT_EQ(42, in->ReadI32());
+    EXPECT_TRUE(in->IsEOF());
+  }
+
+  {
+    auto out = _dir->Create("file");
+    ASSERT_FALSE(!out);
+  }
+  EXPECT_EQ(0, _dir->Open("file", irs::IOAdvice::NORMAL)->Length());
+}
+
+TEST_P(IndexFilesTestCase, open_missing_file) {
+  ASSERT_SQL_ERROR(_dir->Open("missing", irs::IOAdvice::NORMAL),
+                   ERRCODE_UNDEFINED_FILE);
+  ASSERT_SQL_ERROR(_dir->Open("missing", irs::IOAdvice::READONCE),
+                   ERRCODE_UNDEFINED_FILE);
+}
+
+auto MakeByTerm(irs::field_id field_id, std::string_view value) {
+  auto filter = std::make_unique<irs::ByTerm>();
+  *filter->mutable_field_id() = field_id;
+  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+  return filter;
+}
+
+template<typename Visitor>
+bool VisitFiles(const IndexMeta& meta, Visitor&& visitor) {
+  for (auto& curr_segment : meta.segments) {
+    if (!visitor(curr_segment.filename)) {
+      return false;
+    }
+
+    for (auto& file : curr_segment.meta.files) {
+      if (!visitor(file)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+std::function<bool(std::string_view)> RemoveExceptCurrentSegments(
+  const IndexFiles& dir) {
+  const auto acceptor = [](std::string_view filename,
+                           const absl::flat_hash_set<std::string>& retain) {
+    return !retain.contains(filename);
+  };
+
+  IndexMeta meta;
+
+  std::string segment_file;
+  const bool index_exists = index_meta::LastFile(dir, segment_file);
+
+  if (!index_exists) {
+    // can't find segments file
+    return [](std::string_view) -> bool { return true; };
+  }
+
+  index_meta::Read(dir, meta, segment_file);
+
+  absl::flat_hash_set<std::string> retain;
+
+  VisitFiles(meta, [&retain](std::string_view file) {
+    retain.emplace(file);
+    return true;
+  });
+
+  retain.emplace(std::move(segment_file));
+
+  return std::bind(acceptor, std::placeholders::_1, std::move(retain));
+}
+
+TEST_P(IndexFilesTestCase, remove_unreferenced) {
+  auto& dir = this->dir();
+
+  // add a dummy files
+  {
+    irs::IndexOutput::ptr tmp;
+    tmp = dir.Create("dummy.file.1");
+    ASSERT_FALSE(!tmp);
+    tmp = dir.Create("dummy.file.2");
+    ASSERT_FALSE(!tmp);
+  }
+
+  // test clean before initializing directory
+  {
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
+  }
+
+  // add a more dummy files
+  {
+    irs::IndexOutput::ptr tmp;
+    tmp = dir.Create("dummy.file.3");
+    ASSERT_FALSE(!tmp);
+    tmp = dir.Create("dummy.file.4");
+    ASSERT_FALSE(!tmp);
+  }
+
+  auto& refs = dir.Refs();
+
+  // add tracked files
+  auto ref1 = refs.add("tracked.file.1");
+  auto ref2 = refs.add("tracked.file.2");
+  {
+    irs::IndexOutput::ptr tmp;
+    tmp = dir.Create("tracked.file.1");
+    ASSERT_FALSE(!tmp);
+    tmp = dir.Create("tracked.file.2");
+    ASSERT_FALSE(!tmp);
+  }
+
+  // test initial directory state
+  {
+    std::unordered_set<std::string> expected = {
+      "dummy.file.1", "dummy.file.2",   "dummy.file.3",
+      "dummy.file.4", "tracked.file.1", "tracked.file.2"};
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    ASSERT_TRUE(dir.Visit(list_files));
+
+    for (auto& file : files) {
+      ASSERT_EQ(1, expected.erase(file));
+    }
+
+    ASSERT_TRUE(expected.empty());
+  }
+
+  // test clean without any changes (refs still active)
+  {
+    std::unordered_set<std::string> expected = {
+      "dummy.file.1", "dummy.file.2",   "dummy.file.3",
+      "dummy.file.4", "tracked.file.1", "tracked.file.2"};
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
+    ASSERT_TRUE(dir.Visit(list_files));
+
+    for (auto& file : files) {
+      ASSERT_EQ(1, expected.erase(file));
+    }
+
+    ASSERT_TRUE(expected.empty());
+  }
+
+  // test clean without any changes (due to 'keep')
+  {
+    std::unordered_set<std::string_view> retain = {"tracked.file.1",
+                                                   "tracked.file.2"};
+    auto acceptor = [&retain](std::string_view filename) -> bool {
+      return retain.find(filename) == retain.end();
+    };
+    std::unordered_set<std::string_view> expected = {
+      "dummy.file.1", "dummy.file.2",   "dummy.file.3",
+      "dummy.file.4", "tracked.file.1", "tracked.file.2"};
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    ref2.reset();
+    ASSERT_EQ(0, dir.RemoveUnreferenced(acceptor));
+    ASSERT_TRUE(dir.Visit(list_files));
+
+    for (auto& file : files) {
+      ASSERT_EQ(1, expected.erase(file));
+    }
+
+    ASSERT_TRUE(expected.empty());
+  }
+
+  // test clean removing tracked files without references (no 'tracked.file.2')
+  {
+    std::unordered_set<std::string> expected = {"dummy.file.1", "dummy.file.2",
+                                                "dummy.file.3", "dummy.file.4",
+                                                "tracked.file.1"};
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    ASSERT_EQ(1, dir.RemoveUnreferenced());
+    ASSERT_TRUE(dir.Visit(list_files));
+
+    for (auto& file : files) {
+      ASSERT_EQ(1, expected.erase(file));
+    }
+
+    ASSERT_TRUE(expected.empty());
+  }
+
+  // test clean removing tracked files without references (no 'tracked.file.1')
+  {
+    std::unordered_set<std::string_view> retain = {
+      "dummy.file.1", "dummy.file.2", "dummy.file.3", "dummy.file.4"};
+    auto acceptor = [&retain](std::string_view filename) -> bool {
+      return retain.find(filename) == retain.end();
+    };
+    std::unordered_set<std::string_view> expected = {
+      "dummy.file.1", "dummy.file.2", "dummy.file.3", "dummy.file.4"};
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    ref1.reset();
+    ASSERT_EQ(1, dir.RemoveUnreferenced(acceptor));
+    ASSERT_TRUE(dir.Visit(list_files));
+
+    for (auto& file : files) {
+      ASSERT_EQ(1, expected.erase(file));
+    }
+
+    ASSERT_TRUE(expected.empty());
+  }
+
+  // test empty references removed too
+  ASSERT_TRUE(refs.refs().empty());
+}
+
+TEST_P(IndexFilesTestCase, remove_unreferenced_current_segment) {
+  auto& dir = this->dir();
+  ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                                &::tests::GenericJsonFieldFactory);
+  const ::tests::Document* doc1 = gen.next();
+  const ::tests::Document* doc2 = gen.next();
+  Filter::ptr query_doc1 = MakeByTerm(irs::field_id{1}, "A");
+
+  // writer commit tracks files that are in active segments
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+
+    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
+    writer->RefreshCommit();
+    ::tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    std::unordered_set<std::string> file_set;
+    ASSERT_TRUE(dir.Visit(list_files));
+    ASSERT_FALSE(files.empty());
+    file_set.insert(files.begin(), files.end());
+
+    ::tests::Remove(*writer, std::move(query_doc1));
+    ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
+    writer->RefreshCommit();
+    ::tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+
+    dir.RemoveUnreferenced(RemoveExceptCurrentSegments(dir));
+    files.clear();
+    ASSERT_TRUE(dir.Visit(list_files));
+    ASSERT_FALSE(files.empty());
+
+    // With the unified .idx format, the first segment's content files
+    // (`.idx`, `.col`, ...) are not rewritten when the second commit only
+    // adds a new segment and/or bumps the first segment's docs_mask
+    // version; only the `segments_N` index meta is replaced (and, if
+    // docs_mask changed, the per-segment `.sm` is rewritten with a new
+    // version suffix). The old disjointness invariant (which assumed
+    // segment 0 was fully rewritten) no longer holds. Instead, verify
+    // that the obsolete `segments_N` index meta from the first commit
+    // was cleaned up.
+    std::unordered_set<std::string> current_set(files.begin(), files.end());
+    bool obsolete_segments_file_cleaned = false;
+    for (const auto& f : file_set) {
+      if (f.starts_with("segments_") &&
+          current_set.find(f) == current_set.end()) {
+        obsolete_segments_file_cleaned = true;
+        break;
+      }
+    }
+    ASSERT_TRUE(obsolete_segments_file_cleaned);
+  }
+
+  std::unordered_set<std::string> file_set;
+
+  // remember files used for first/single segment
+  {
+    std::string segments_file;
+
+    irs::IndexMeta index_meta;
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
+
+    ASSERT_TRUE(index_exists);
+    irs::index_meta::Read(dir, index_meta, segments_file);
+
+    file_set.insert(segments_file);
+
+    VisitFiles(index_meta, [&file_set](std::string_view file) {
+      file_set.emplace(file);
+      return true;
+    });
+  }
+
+  // no active refs keeps files from latest segments
+  {
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    std::unordered_set<std::string> current_files(file_set);
+    dir.RemoveUnreferenced(RemoveExceptCurrentSegments(dir));
+    ASSERT_TRUE(dir.Visit(list_files));
+    ASSERT_FALSE(files.empty());
+
+    // new list should be exactly the files listed in index_meta
+    for (auto& file : files) {
+      ASSERT_EQ(1, current_files.erase(file));
+    }
+
+    ASSERT_TRUE(current_files.empty());
+  }
+
+  // remember files used for first/single segment
+  {
+    std::string segments_file;
+
+    irs::IndexMeta index_meta;
+    const auto index_exists = irs::index_meta::LastFile(dir, segments_file);
+
+    ASSERT_TRUE(index_exists);
+    irs::index_meta::Read(dir, index_meta, segments_file);
+
+    file_set.insert(segments_file);
+
+    VisitFiles(index_meta, [&file_set](std::string_view file) {
+      file_set.emplace(file);
+      return true;
+    });
+  }
+
+  // active reader refs keeps files referenced by reader
+  {
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    std::unordered_set<std::string> current_files(file_set);
+    auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
+    dir.RemoveUnreferenced();
+    ASSERT_TRUE(dir.Visit(list_files));
+    ASSERT_FALSE(files.empty());
+
+    // new list should be exactly the files listed in index_meta
+    for (auto& file : files) {
+      ASSERT_EQ(1, file_set.erase(file));
+    }
+
+    ASSERT_TRUE(file_set.empty());
+  }
+
+  // no refs and no current segment removes all files
+  {
+    std::vector<std::string> files;
+    auto list_files = [&files](std::string_view name) {
+      files.emplace_back(std::move(name));
+      return true;
+    };
+    dir.RemoveUnreferenced();
+    ASSERT_TRUE(dir.Visit(list_files));
+    ASSERT_TRUE(files.empty());  // current segment should have been removed too
+  }
+}
+
+TEST_P(IndexFilesTestCase, reference) {
+  auto& dir = this->dir();
+  ASSERT_FALSE(!dir.Create("abc"));
+  ASSERT_TRUE(static_cast<bool>(dir.Reference("abc")));
+
+  auto& refs = dir.Refs();
+
+  ASSERT_FALSE(refs.refs().empty());
+  ASSERT_TRUE(refs.refs().contains("abc"));
+  ASSERT_FALSE(refs.refs().contains("def"));
+}
+
+TEST_P(IndexFilesTestCase, ref_tracker) {
+  auto& dir = this->dir();
+
+  // test move constructor
+  {
+    irs::RefTracker tracker1{dir.Refs(), true};
+    {
+      auto file = dir.Tracking(tracker1).Create("abc");
+      ASSERT_FALSE(!file);
+    }
+    irs::RefTracker tracker2{std::move(tracker1)};
+
+    ASSERT_TRUE(tracker2.TrackOpen());
+    ASSERT_EQ(1, tracker2.GetRefs().size());
+  }
+
+  // test dereference and attributes
+  {
+    irs::RefTracker tracker{dir.Refs()};
+    auto track_dir = dir.Tracking(tracker);
+
+    ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
+    ASSERT_EQ(&tracker, track_dir.GetRefTracker());
+    ASSERT_EQ(nullptr, track_dir.Untracked().GetRefTracker());
+  }
+
+  // test open
+  {
+    irs::RefTracker tracker{dir.Refs()};
+    auto track_dir = dir.Tracking(tracker);
+    const std::string_view file{"abc"};
+    auto file1 = dir.Create(file);
+
+    ASSERT_FALSE(!file1);
+    file1->WriteByte(42);
+    file1.reset();
+
+    auto file2 = track_dir.Open(file, irs::IOAdvice::NORMAL);
+
+    ASSERT_FALSE(!file2);
+    track_dir.Sync({&file, 1});
+    ASSERT_EQ(1, file2->Length());
+    ASSERT_TRUE(track_dir.Rename(file, "def"));
+    file2.reset();  // release before remove
+    ASSERT_FALSE(track_dir.Remove(file));
+    bool exists;
+    ASSERT_TRUE(dir.Exists(exists, file) && !exists);
+    ASSERT_TRUE(dir.Exists(exists, "def") && exists);
+    ASSERT_TRUE(track_dir.Remove("def"));
+    ASSERT_TRUE(dir.Exists(exists, "def") && !exists);
+  }
+
+  // test visit refs visitor complete
+  {
+    irs::RefTracker tracker{dir.Refs()};
+    auto track_dir = dir.Tracking(tracker);
+    auto file1 = track_dir.Create("abc");
+    ASSERT_FALSE(!file1);
+    auto file2 = track_dir.Create("def");
+    ASSERT_FALSE(!file2);
+
+    ASSERT_EQ(2, tracker.GetRefs().size());
+  }
+
+  // test visit refs visitor (no-track-open)
+  {
+    irs::RefTracker tracker{dir.Refs()};
+    auto track_dir = dir.Tracking(tracker);
+    auto file1 = dir.Create("abc");
+    ASSERT_FALSE(!file1);
+    auto file2 = track_dir.Open("abc", irs::IOAdvice::NORMAL);
+    ASSERT_FALSE(!file2);
+
+    ASSERT_EQ(0, tracker.GetRefs().size());
+  }
+
+  // test visit refs visitor (track-open)
+  {
+    irs::RefTracker tracker{dir.Refs(), true};
+    auto track_dir = dir.Tracking(tracker);
+    auto file1 = dir.Create("abc");
+    ASSERT_FALSE(!file1);
+    auto file2 = track_dir.Open("abc", irs::IOAdvice::NORMAL);
+    ASSERT_FALSE(!file2);
+
+    ASSERT_EQ(1, tracker.GetRefs().size());
+  }
+
+  {
+    irs::RefTracker tracker{dir.Refs()};
+    auto track_dir = dir.Tracking(tracker);
+    auto file1 = track_dir.Create("abc");
+    ASSERT_FALSE(!file1);
+    auto file2 = track_dir.Create("def");
+    ASSERT_FALSE(!file2);
+
+    ASSERT_EQ(2, tracker.GetRefs().size());
+  }
+}
+
+TEST_P(IndexFilesTestCase, file_tracker) {
+  auto& dir = this->dir();
+
+  // test dereference and attributes
+  {
+    irs::FileTracker tracker;
+    auto track_dir = dir.Tracking(tracker);
+
+    ASSERT_EQ(dir.Root(), track_dir.Root());
+    ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
+  }
+
+  // test create
+  {
+    irs::FileTracker tracker;
+    auto track_dir = dir.Tracking(tracker);
+    const std::string_view file{"abc"};
+    {
+      auto file1 = track_dir.Create(file);
+      ASSERT_FALSE(!file1);
+      file1->WriteByte(42);
+      file1->Flush();
+    }
+    track_dir.Sync({&file, 1});
+    ASSERT_EQ(1, track_dir.Open(file, irs::IOAdvice::NORMAL)->Length());
+    bool exists{false};
+    ASSERT_TRUE(dir.Exists(exists, file) && exists);
+    ASSERT_TRUE(track_dir.Rename(file, "def"));
+    ASSERT_TRUE(dir.Exists(exists, file) && !exists);
+    ASSERT_TRUE(dir.Exists(exists, "def") && exists);
+
+    uint64_t byte_size{0};
+    auto files = tracker.Flush(byte_size);
+    ASSERT_EQ(1, files.size());
+    ASSERT_EQ("def", files.front());
+    ASSERT_EQ(1, byte_size);
+
+    // Tracked files are cleared
+    files = tracker.Flush(byte_size);
+    ASSERT_EQ(0, files.size());
+    ASSERT_EQ(0, byte_size);
+  }
+}
+
+TEST_P(IndexFilesTestCase, file_tracker_remove) {
+  auto& dir = this->dir();
+  irs::FileTracker tracker;
+  auto track_dir = dir.Tracking(tracker);
+  const std::string_view file{"abc"};
+  {
+    auto file1 = track_dir.Create(file);
+    ASSERT_FALSE(!file1);
+    file1->WriteByte(42);
+    file1->Flush();
+  }
+  bool exists{false};
+  ASSERT_TRUE(dir.Exists(exists, file) && exists);
+
+  ASSERT_TRUE(track_dir.Remove(file));
+  ASSERT_TRUE(dir.Exists(exists, file) && !exists);
+
+  uint64_t byte_size{0};
+  auto files = tracker.Flush(byte_size);
+  ASSERT_TRUE(files.empty());
+
+  ASSERT_FALSE(track_dir.Remove("def"));
+}
+
+static constexpr auto kTestDirs =
+  ::tests::GetDirectories<::tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(index_files_test, IndexFilesTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
-                         tests::DirectoryTestCaseBase<>::to_string);
+                         ::tests::DirectoryTestCaseBase<>::to_string);
 
-class FsDirectoryTest : public TestBase {
- public:
-  FsDirectoryTest() : _name("directory") {}
+void WriteOneDocument(const irs::IndexFiles& files) {
+  ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                                &::tests::GenericJsonFieldFactory);
+  const ::tests::Document* doc = gen.next();
+  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+  writer->RefreshCommit();
+}
 
-  void SetUp() final {
-    TestBase::SetUp();
-    _path = test_case_dir() / _name;
-
-    irs::file_utils::Mkdir(_path.c_str(), false);
-    _dir = std::make_shared<FSDirectory>(_path);
-  }
-
-  void TearDown() final {
-    _dir = nullptr;
-    irs::file_utils::Remove(_path.c_str());
-    TestBase::TearDown();
-  }
-
- protected:
-  std::string _name;
-  std::filesystem::path _path;
-  std::shared_ptr<FSDirectory> _dir;
-};
-
-TEST_F(FsDirectoryTest, orphaned_lock) {
-  // orhpaned lock file with orphaned pid, same hostname
+TEST(IndexFilesTest, memory_files_removed_with_last_copy) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& memory = db.GetMemoryFileSystem();
+  auto files = std::make_unique<irs::IndexFiles>(db, irs::MemoryIndexRoot());
+  ASSERT_EQ(irs::StorageKind::Memory, files->Kind());
   {
-    // create lock file
-    {
-      char hostname[256] = {};
-      ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-
-      const std::string pid = std::to_string(std::numeric_limits<int>::max());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
-    }
-
-    // try to obtain lock
-    {
-      auto lock = _dir->make_lock("lock");
-      ASSERT_FALSE(!lock);
-      ASSERT_TRUE(lock->lock());
-    }
-
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
-
-  // orphaned lock file with invalid pid (not a number), same hostname
-
-  // create lock file
-  {
-    char hostname[256] = {0};
-    ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-
-    const std::string pid = "invalid_pid";
-    auto out = _dir->create("lock");
+    auto out = files->Create("file");
     ASSERT_FALSE(!out);
-    out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                   strlen(hostname));
-    out->WriteByte(0);
-    out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()), pid.size());
+    out->WriteU32(42);
   }
+  const auto path = files->Path("file");
+  ASSERT_TRUE(memory.FileExists(path));
 
-  // try to obtain lock
+  auto copy = std::make_unique<irs::IndexFiles>(*files);
+  files.reset();
+  ASSERT_TRUE(memory.FileExists(path));
+  EXPECT_EQ(42, copy->Open("file", irs::IOAdvice::NORMAL)->ReadI32());
+
+  copy.reset();
+  EXPECT_FALSE(memory.FileExists(path));
+}
+
+TEST(IndexFilesTest, memory_files_kept_by_reader) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& memory = db.GetMemoryFileSystem();
+  irs::DirectoryReader reader;
+  std::vector<std::string> paths;
   {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
+    irs::IndexFiles files{db, irs::MemoryIndexRoot()};
+    WriteOneDocument(files);
+    reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
+    ASSERT_TRUE(files.Visit([&](std::string_view name) {
+      paths.emplace_back(files.Path(name));
+      return true;
+    }));
   }
+  ASSERT_FALSE(paths.empty());
+  for (const auto& path : paths) {
+    EXPECT_TRUE(memory.FileExists(path)) << path;
+  }
+  ASSERT_EQ(1, reader.docs_count());
+  EXPECT_TRUE(reader == reader.Reopen());
 
-  // orphaned empty lock file
-  // create lock file
+  reader = {};
+  for (const auto& path : paths) {
+    EXPECT_FALSE(memory.FileExists(path)) << path;
+  }
+}
+
+TEST(IndexFilesTest, private_memory) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const auto files = irs::IndexFiles::PrivateMemory(db);
+  ASSERT_EQ(irs::StorageKind::Memory, files.Kind());
+
+  constexpr std::string_view kData = "private memory bytes";
+  const auto data = irs::ViewCast<irs::byte_type>(kData);
+  bool exists = true;
+  ASSERT_TRUE(files.Exists(exists, "file") && !exists);
   {
-    auto out = _dir->create("lock");
+    auto out = files.Create("file");
     ASSERT_FALSE(!out);
-    out->Flush();
+    out->WriteData(data.data(), data.size());
   }
+  ASSERT_TRUE(files.Exists(exists, "file") && exists);
+  EXPECT_FALSE(db.GetMemoryFileSystem().FileExists(files.Path("file")));
+  EXPECT_FALSE(
+    duckdb::FileSystem::GetFileSystem(db).FileExists(files.Path("file")));
 
-  // try to obtain lock
-  {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
+  std::vector<std::string> names;
+  ASSERT_TRUE(files.Visit([&](std::string_view name) {
+    names.emplace_back(name);
+    return true;
+  }));
+  EXPECT_EQ(std::vector<std::string>{"file"}, names);
 
-  // orphaned lock file with hostname only
-  // create lock file
-  {
-    char hostname[256] = {};
-    ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-    auto out = _dir->create("lock");
+  auto in = files.Open("file", irs::IOAdvice::NORMAL);
+  ASSERT_FALSE(!in);
+  ASSERT_EQ(irs::DataInput::Type::BytesViewInput, in->GetType());
+  ASSERT_EQ(data.size(), in->Length());
+  const auto* stable = in->ReadStable(0, data.size());
+  ASSERT_NE(nullptr, stable);
+  EXPECT_EQ(data.size(), in->Position());
+  in->Seek(0);
+  EXPECT_EQ(data.front(), in->ReadByte());
+  auto other = files.Open("file", irs::IOAdvice::NORMAL);
+  ASSERT_FALSE(!other);
+  const auto* other_stable = other->ReadStable(0, data.size());
+  ASSERT_NE(nullptr, other_stable);
+  EXPECT_EQ(data, irs::bytes_view(other_stable, data.size()));
+  EXPECT_EQ(data, irs::bytes_view(stable, data.size()));
+
+  ASSERT_TRUE(files.Rename("file", "renamed"));
+  ASSERT_TRUE(files.Exists(exists, "file") && !exists);
+  ASSERT_TRUE(files.Exists(exists, "renamed") && exists);
+  EXPECT_EQ(data.size(),
+            files.Open("renamed", irs::IOAdvice::NORMAL)->Length());
+  ASSERT_TRUE(files.Remove("renamed"));
+  ASSERT_TRUE(files.Exists(exists, "renamed") && !exists);
+  ASSERT_FALSE(files.Remove("renamed"));
+}
+
+TEST(IndexFilesTest, private_memory_open_missing_file) {
+  const auto files =
+    irs::IndexFiles::PrivateMemory(irs::DuckDBEngine::Instance().instance());
+  ASSERT_SQL_ERROR(files.Open("missing", irs::IOAdvice::NORMAL),
+                   ERRCODE_UNDEFINED_FILE);
+  ASSERT_SQL_ERROR(files.Open("missing", irs::IOAdvice::READONCE),
+                   ERRCODE_UNDEFINED_FILE);
+}
+
+TEST(IndexFilesTest, private_memory_roots_are_separate) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const auto lhs = irs::IndexFiles::PrivateMemory(db);
+  const auto rhs = irs::IndexFiles::PrivateMemory(db);
+  const auto write = [](const irs::IndexFiles& files, std::string_view name,
+                        uint32_t value) {
+    auto out = files.Create(name);
     ASSERT_FALSE(!out);
-    out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                   strlen(hostname));
-  }
+    out->WriteU32(value);
+  };
+  write(lhs, "file", 1);
+  write(lhs, "lhs", 1);
+  write(rhs, "file", 2);
+  write(rhs, "rhs", 2);
 
-  // try to obtain lock
-  {
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_TRUE(lock->lock());
-    ASSERT_TRUE(lock->unlock());
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && !exists);
-  }
+  const auto list = [](const irs::IndexFiles& files) {
+    std::vector<std::string> names;
+    EXPECT_TRUE(files.Visit([&](std::string_view name) {
+      names.emplace_back(name);
+      return true;
+    }));
+    absl::c_sort(names);
+    return names;
+  };
+  EXPECT_EQ((std::vector<std::string>{"file", "lhs"}), list(lhs));
+  EXPECT_EQ((std::vector<std::string>{"file", "rhs"}), list(rhs));
 
-  // orphaned lock file with valid pid, same hostname
+  bool exists = true;
+  ASSERT_TRUE(lhs.Exists(exists, "rhs") && !exists);
+  ASSERT_TRUE(rhs.Exists(exists, "lhs") && !exists);
+  EXPECT_EQ(1, lhs.Open("file", irs::IOAdvice::NORMAL)->ReadI32());
+  EXPECT_EQ(2, rhs.Open("file", irs::IOAdvice::NORMAL)->ReadI32());
+}
+
+TEST(IndexFilesTest, private_memory_reader_outlives_files) {
+  irs::DirectoryReader reader;
   {
-    // create lock file
-    {
-      char hostname[256] = {};
-      ASSERT_EQ(0, GetHostName(hostname, sizeof hostname));
-      const std::string pid = std::to_string(irs::GetPid());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
+    const auto files =
+      irs::IndexFiles::PrivateMemory(irs::DuckDBEngine::Instance().instance());
+    WriteOneDocument(files);
+    reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
+  }
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(1, reader.docs_count());
+  EXPECT_TRUE(reader == reader.Reopen());
+}
+
+class IndexFilesHookTest : public TestBase {};
+
+TEST_F(IndexFilesHookTest, ref_tracker_open_survives_cleanup) {
+  struct CleanupOnOpen final : ::tests::HookFileSystem {
+    using ::tests::HookFileSystem::HookFileSystem;
+
+    void OnOpen(std::string_view) final {
+      if (files) {
+        files->RemoveAllUnreferenced();
+      }
     }
 
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && exists);
+    const irs::IndexFiles* files = nullptr;
+  } fs{::tests::DatabaseFileSystem()};
 
-    // try to obtain lock, after closing stream
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_FALSE(lock->lock());  // still have different hostname
+  auto local = ::tests::LocalDirectory(this);
+  ASSERT_NE(nullptr, local);
+  auto hooked = ::tests::OverFileSystem(*local, fs);
+  fs.files = &hooked;
+
+  irs::RefTracker tracker{hooked.Refs(), true};
+  auto track_dir = hooked.Tracking(tracker);
+  ASSERT_NE(nullptr, local->Create("unreferenced"));
+  auto file1 = local->Create("abc");
+  ASSERT_NE(nullptr, file1);
+  auto file2 = track_dir.Open("abc", irs::IOAdvice::NORMAL);
+  ASSERT_NE(nullptr, file2);
+
+  ASSERT_EQ(1, tracker.GetRefs().size());
+  bool exists;
+  ASSERT_TRUE(local->Exists(exists, "unreferenced") && !exists);
+
+  auto file3 = local->Open("abc", irs::IOAdvice::NORMAL);
+  ASSERT_NE(nullptr, file3);
+}
+
+TEST_F(IndexFilesHookTest, ref_tracker_failures) {
+  struct FailingFileSystem final : ::tests::HookFileSystem {
+    using ::tests::HookFileSystem::HookFileSystem;
+
+    void OnCreate(std::string_view) final {
+      throw duckdb::IOException("injected");
+    }
+    void OnOpen(std::string_view) final {
+      throw duckdb::IOException("injected");
+    }
+  } fs{::tests::DatabaseFileSystem()};
+
+  auto local = ::tests::LocalDirectory(this);
+  ASSERT_NE(nullptr, local);
+  auto hooked = ::tests::OverFileSystem(*local, fs);
+
+  // test create failure
+  {
+    irs::RefTracker tracker{hooked.Refs()};
+
+    ASSERT_SQL_ERROR(hooked.Tracking(tracker).Create("abc"), ERRCODE_IO_ERROR);
+
+    ASSERT_TRUE(tracker.GetRefs().empty());
   }
 
-  // orphaned lock file with valid pid, different hostname
+  // test open failure
   {
-    // create lock file
-    {
-      char hostname[] = "not_a_valid_hostname_//+&*(%$#@! }";
+    irs::RefTracker tracker{hooked.Refs(), true};
 
-      const std::string pid = std::to_string(irs::GetPid());
-      auto out = _dir->create("lock");
-      ASSERT_FALSE(!out);
-      out->WriteData(reinterpret_cast<const byte_type*>(hostname),
-                     strlen(hostname));
-      out->WriteByte(0);
-      out->WriteData(reinterpret_cast<const byte_type*>(pid.c_str()),
-                     pid.size());
-    }
+    ASSERT_SQL_ERROR(
+      hooked.Tracking(tracker).Open("abc", irs::IOAdvice::NORMAL),
+      ERRCODE_IO_ERROR);
 
-    bool exists;
-    ASSERT_TRUE(_dir->exists(exists, "lock") && exists);
-
-    // try to obtain lock, after closing stream
-    auto lock = _dir->make_lock("lock");
-    ASSERT_FALSE(!lock);
-    ASSERT_FALSE(lock->lock());  // still have different hostname
+    ASSERT_TRUE(tracker.GetRefs().empty());
   }
 }
 

@@ -177,6 +177,8 @@ class BooleanFilter final : public FilterWithType<BooleanFilter> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
+  bool Prefetch(const SubReader& segment) const final;
+
  protected:
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

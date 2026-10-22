@@ -26,8 +26,9 @@
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -409,7 +410,8 @@ TEST(GeoDistanceFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -919,7 +921,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data

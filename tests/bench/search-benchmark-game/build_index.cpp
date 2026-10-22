@@ -27,15 +27,48 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/remap_executable.hpp>
 #include <iresearch/utils/timer_utils.hpp>
+#include <string_view>
 
 #include "executor.h"
 #include "index_builder.h"
 #include "insert_field.hpp"
 
 int main(int argc, const char* argv[]) {
-  size_t threads = 1;
-  if (argc > 1 && (!absl::SimpleAtoi(argv[1], &threads) || threads == 0)) {
-    absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
+  bench::IndexBuilderOptions builder_options{
+    .batch_size = 100000,
+    .refresh_interval_ms = 0,
+    .compaction_interval_ms = 5000,
+    .compaction_threads = 0,
+    .compact_all = true,
+    .row_group_size = 10'000'000,
+  };
+  const std::string_view layout = argc > 2 ? argv[2] : "single";
+  constexpr std::string_view kSegmentDocs = "segment_docs=";
+  if (layout == "tiered") {
+    builder_options.refresh_interval_ms = 1000;
+    builder_options.compaction_interval_ms = 1000;
+    builder_options.compaction_threads = 1;
+    builder_options.compact_all = false;
+    builder_options.settle = true;
+  } else if (layout.starts_with(kSegmentDocs)) {
+    builder_options.compact_all = false;
+  }
+  const bool valid =
+    (argc <= 1 ||
+     (absl::SimpleAtoi(argv[1], &builder_options.indexer_threads) &&
+      builder_options.indexer_threads != 0)) &&
+    (layout == "single" || layout == "tiered" ||
+     (layout.starts_with(kSegmentDocs) &&
+      absl::SimpleAtoi(layout.substr(kSegmentDocs.size()),
+                       &builder_options.segment_docs_max) &&
+      builder_options.segment_docs_max != 0)) &&
+    (argc <= 3 || (absl::SimpleAtoi(argv[3], &builder_options.row_group_size) &&
+                   builder_options.row_group_size != 0));
+  if (!valid) {
+    absl::FPrintF(stderr,
+                  "usage: %s [indexer threads] [single|tiered|segment_docs=N] "
+                  "[row group size] < corpus\n",
+                  argv[0]);
     return 1;
   }
   irs::RemapExecutable(true);
@@ -82,16 +115,6 @@ int main(int argc, const char* argv[]) {
     };
 
     bench::BenchConfig config;
-    bench::IndexBuilderOptions builder_options{
-      .batch_size = 100000,
-      .indexer_threads = threads,
-      .refresh_interval_ms = 0,
-      .compaction_interval_ms = 5000,
-      .compaction_threads = 0,
-      .compact_all = true,
-      .row_group_size = 10'000'000,
-    };
-
     bench::IndexBuilder builder{"idx", builder_options, config};
     bench::LineSource input{STDIN_FILENO};
     builder.IndexFrom(input, [] -> std::unique_ptr<bench::IBatchHandler> {
@@ -99,6 +122,7 @@ int main(int argc, const char* argv[]) {
     });
 
     absl::PrintF("Number of documents: %d\n", builder.GetReader().docs_count());
+    absl::PrintF("Number of segments: %d\n", builder.GetReader().size());
   } catch (const std::exception& ex) {
     absl::FPrintF(stderr, "fatal: %s\n", ex.what());
     exit_code = 1;

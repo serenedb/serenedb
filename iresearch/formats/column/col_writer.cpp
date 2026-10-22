@@ -81,7 +81,7 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
+ColWriter::ColWriter(const IndexFiles& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
   : _dir{&dir},
     _segment_name{segment_name},
@@ -98,7 +98,7 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir->create(_filename);
+  _out = _dir->Create(_filename);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 

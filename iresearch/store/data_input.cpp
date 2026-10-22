@@ -22,12 +22,7 @@
 
 #include "data_input.hpp"
 
-#include <memory>
-
-#include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
-#include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
@@ -56,87 +51,6 @@ InputBuf::int_type InputBuf::uflow() {
 
 std::streamsize InputBuf::showmanyc() {
   return _in->Length() - _in->Position();
-}
-
-byte_type BufferedIndexInput::ReadByte() {
-  if (_begin >= _end) {
-    Refill();
-  }
-
-  return *_begin++;
-}
-
-const byte_type* BufferedIndexInput::ReadVolatile(uint64_t count) {
-  if (count <= Remain()) {
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  if (count <= std::min(_buf_size, Length() - Position())) {
-    SeekInternal(Position());
-    Refill();
-
-    auto begin = _begin;
-    _begin += count;
-    return begin;
-  }
-
-  return nullptr;
-}
-
-void BufferedIndexInput::ReadData(byte_type* b, uint64_t count) {
-  SDB_ASSERT(_begin <= _end);
-
-  // read remaining data from buffer
-  const auto read = std::min(count, Remain());
-  if (read) {
-    std::memcpy(b, _begin, sizeof(byte_type) * read);
-    _begin += read;
-  }
-
-  if (read == count) {
-    return;  // it's enough for us
-  }
-
-  auto size = count - read;
-  b += read;
-  if (size < _buf_size) {  // refill buffer & copy
-    size = std::min(size, Refill());
-    std::memcpy(b, _begin, sizeof(byte_type) * size);
-    _begin += size;
-  } else {  // read directly to output buffer if possible
-    size = ReadInternal(b, size);
-    _start += (Offset() + size);
-    _begin = _end = _buf;  // will trigger refill on the next read
-  }
-}
-
-uint64_t BufferedIndexInput::Refill() {
-  const auto data_start = this->Position();
-  const auto data_end = std::min(data_start + _buf_size, Length());
-
-  const ptrdiff_t data_size = data_end - data_start;
-  if (data_size <= 0) {
-    return 0;  // read past eof
-  }
-
-  SDB_ASSERT(_buf);
-  _begin = _buf;
-  _end = _begin + ReadInternal(_buf, data_size);
-  _start = data_start;
-
-  return data_size;
-}
-
-void BufferedIndexInput::Seek(uint64_t pos) {
-  if (pos >= _start && pos < (_start + Size())) {
-    _begin = _buf + pos - _start;
-  } else {
-    SeekInternal(pos);
-    _begin = _end = _buf;
-    _start = pos;
-  }
 }
 
 }  // namespace irs

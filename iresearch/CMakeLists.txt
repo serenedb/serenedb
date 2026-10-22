@@ -1,9 +1,5 @@
 add_compile_warnings_flags()
 
-if(uring_FOUND)
-    add_definitions(-DIRESEARCH_URING)
-endif()
-
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -395,17 +391,15 @@ set(IResearch_core_sources
     ./search/scorers/constant_score.cpp
     ./search/scorers/raw_tf.cpp
     ./search/scorers/raw_dl.cpp
+    ./store/block_input.cpp
     ./store/data_input.cpp
-    ./store/directory.cpp
-    ./store/directory_attributes.cpp
-    ./store/directory_cleaner.cpp
-    ./store/fs_directory.cpp
-    ./store/mmap_directory.cpp
-    ./store/memory_directory.cpp
+    ./store/file_output.cpp
+    ./store/index_files.cpp
+    ./store/mapped_input.cpp
+    ./store/memory_file.cpp
+    ./store/simulated_object_store.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
-    ./utils/directory_utils.cpp
-    ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
@@ -435,6 +429,7 @@ set(IResearch_core_sources
     ./utils/log.cpp
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
+    ./utils/pg/file_error.cpp
     ./utils/remap_executable.cpp
     ./utils/string_utils.cpp
 )
@@ -479,10 +474,6 @@ else()
     )
     unset(_missing_tools)
     unset(_missing_tools_str)
-endif()
-
-if(uring_FOUND)
-    list(APPEND IResearch_core_sources ./store/async_directory.cpp)
 endif()
 
 # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
@@ -596,8 +587,4 @@ else()
         PRIVATE lz4_static
         PRIVATE stemmer-static
     )
-endif()
-
-if(uring_FOUND)
-    target_link_libraries(${IResearch_library} PRIVATE uring::uring)
 endif()

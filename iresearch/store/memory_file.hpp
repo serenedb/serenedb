@@ -23,10 +23,10 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/store/data_input.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/container_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
@@ -37,14 +37,10 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
   using Base = container_utils::RawBlockVector<16, 8>;
 
  public:
-  explicit MemoryFile(IResourceManager& rm) noexcept : Base{rm} {
-    _meta.mtime = now();
-  }
+  explicit MemoryFile(IResourceManager& rm) noexcept : Base{rm} {}
 
   MemoryFile(MemoryFile&& rhs) noexcept
-    : Base{static_cast<Base&&>(rhs)},
-      _meta{rhs._meta},
-      _len{std::exchange(rhs._len, 0)} {}
+    : Base{static_cast<Base&&>(rhs)}, _len{std::exchange(rhs._len, 0)} {}
 
   MemoryFile& operator>>(DataOutput& out) {
     Visit([&](const byte_type* b, size_t len) {
@@ -56,12 +52,7 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 
   size_t Length() const noexcept { return _len; }
 
-  void Length(size_t length) noexcept {
-    _len = length;
-    _meta.mtime = now();
-  }
-
-  std::time_t mtime() const noexcept { return _meta.mtime; }
+  void Length(size_t length) noexcept { _len = length; }
 
   void Reset() noexcept { _len = 0; }
 
@@ -84,17 +75,6 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
   }
 
  private:
-  // metadata for a memory_file
-  struct Meta {
-    std::time_t mtime;
-  };
-
-  static std::time_t now() noexcept {
-    return std::chrono::system_clock::to_time_t(
-      std::chrono::system_clock::now());
-  }
-
-  Meta _meta;
   size_t _len = 0;
 };
 
@@ -228,55 +208,6 @@ class MemoryIndexOutput : public IndexOutput {
   void WriteDirect(const byte_type* b, size_t len) override;
 
   MemoryFile& _file;
-};
-
-class MemoryDirectory final : public Directory {
- public:
-  explicit MemoryDirectory(
-    DirectoryAttributes attributes = DirectoryAttributes{},
-    const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-
-  ~MemoryDirectory() noexcept final;
-
-  DirectoryAttributes& attributes() noexcept final { return _attrs; }
-
-  IndexOutput::ptr create(std::string_view name) final;
-
-  bool exists(bool& result, std::string_view name) const noexcept final;
-
-  bool length(uint64_t& result, std::string_view name) const noexcept final;
-
-  IndexLock::ptr make_lock(std::string_view name) noexcept final;
-
-  bool mtime(std::time_t& result, std::string_view name) const noexcept final;
-
-  IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
-
-  bool remove(std::string_view name) noexcept final;
-
-  bool rename(std::string_view src, std::string_view dst) noexcept final;
-
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
-
-  bool visit(const visitor_f& visitor) const final;
-
- private:
-  friend class SingleInstanceLock;
-
-  using FilesAllocator = ManagedTypedAllocator<
-    std::pair<const std::string, std::unique_ptr<MemoryFile>>>;
-  using FileMap = absl::flat_hash_map<
-    std::string, std::unique_ptr<MemoryFile>,
-    absl::container_internal::hash_default_hash<std::string>,
-    absl::container_internal::hash_default_eq<std::string>,
-    FilesAllocator>;  // unique_ptr because of rename
-  using LockMap = absl::flat_hash_set<std::string>;
-
-  DirectoryAttributes _attrs;
-  mutable absl::Mutex _flock;
-  absl::Mutex _llock;
-  FileMap _files;
-  LockMap _locks;
 };
 
 struct MemoryOutput {

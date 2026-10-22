@@ -23,8 +23,7 @@
 #include <fstream>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/memory_file.hpp>
 #include <iresearch/utils/fst/fst_builder.hpp>
 #include <iresearch/utils/fst/fst_matcher.hpp>
 #include <iresearch/utils/fst/fst_string_ref_weight.hpp>

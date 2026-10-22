@@ -29,7 +29,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
@@ -85,7 +85,7 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IndexFiles> dir;
   irs::DirectoryReader reader;
 };
 
@@ -98,9 +98,9 @@ const Index& IndexOf() {
     std::filesystem::temp_directory_path() / "serenedb-bench-exclude-costs";
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
-  index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  index.dir = std::make_unique<irs::IndexFiles>(*db, index.path.string());
+
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;

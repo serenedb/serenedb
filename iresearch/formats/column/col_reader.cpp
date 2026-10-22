@@ -42,18 +42,13 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
+IndexInput::ptr OpenColFile(const IndexFiles& dir,
+                            std::string_view segment_name, bool present,
                             IOAdvice advice) {
-  const std::string filename = FileName(segment_name);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("col reader: cannot stat .col file: ", filename));
-  }
-  if (!exists) {
+  if (!present) {
     return nullptr;
   }
-  return dir.open(filename, advice);
+  return dir.Open(FileName(segment_name), advice);
 }
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
@@ -151,9 +146,14 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 
 }  // namespace
 
-ColReader::ColReader(const Directory& dir, std::string_view segment_name,
+ColReader::ColReader(const IndexFiles& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
+  : ColReader{dir, segment_name, db, dir.Has(FileName(segment_name)), advice} {}
+
+ColReader::ColReader(const IndexFiles& dir, std::string_view segment_name,
+                     duckdb::DatabaseInstance& db, bool present,
+                     IOAdvice advice)
+  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, present, advice)} {
   if (!_ctx.HasIn()) {
     return;
   }

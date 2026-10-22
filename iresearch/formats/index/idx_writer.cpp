@@ -30,7 +30,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -51,7 +51,7 @@ struct TermDictEntry {
 };
 
 struct IdxWriter::Impl {
-  Directory* dir;
+  const IndexFiles* dir;
   std::string filename;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
@@ -59,7 +59,7 @@ struct IdxWriter::Impl {
   std::vector<TermDictEntry> term_dict_entries;
 };
 
-IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
+IdxWriter::IdxWriter(const IndexFiles& dir, std::string_view segment_name)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
   _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
@@ -75,7 +75,7 @@ void IdxWriter::EnsureOut() {
   if (_impl->out) {
     return;
   }
-  _impl->out = _impl->dir->create(_impl->filename);
+  _impl->out = _impl->dir->Create(_impl->filename);
 }
 
 IndexOutput& IdxWriter::BlocksOut() {

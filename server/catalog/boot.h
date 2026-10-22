@@ -47,8 +47,10 @@ struct DataDirectory final : duckdb::StorageExtensionInfo {
   std::string CatalogLogFile() const;
   std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
   std::string DatabaseFile(duckdb::idx_t oid) const;
+  std::string StorageRoot(duckdb::idx_t oid) const;
 
   std::string directory;
+  std::string index_root;
 };
 
 void RequestSereneDBStorageVersion(duckdb::AttachOptions& options);

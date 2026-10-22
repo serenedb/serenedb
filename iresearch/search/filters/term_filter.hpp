@@ -58,6 +58,8 @@ class ByTerm : public FilterWithField<ByTermOptions> {
                                           const irs::field_id field,
                                           const bytes_view term);
 
+  bool Prefetch(const SubReader& segment) const final;
+
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;

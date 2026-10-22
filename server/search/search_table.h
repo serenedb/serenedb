@@ -30,12 +30,11 @@
 #include <cstdint>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/column_list.hpp>
-#include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <limits>
@@ -112,9 +111,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::filesystem::path Path() const {
-    return _directory->StoragePath(GetTableId());
-  }
+  std::string Path() const { return _directory->StoragePath(GetTableId()); }
   bool Absent() const noexcept { return _absent; }
   void OpenReader();
 
@@ -316,7 +313,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
-  std::unique_ptr<irs::Directory> _dir;
+  std::unique_ptr<irs::IndexFiles> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;

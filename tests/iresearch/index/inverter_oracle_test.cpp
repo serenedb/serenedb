@@ -29,7 +29,8 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/fs_directory.hpp>
+#include <iresearch/store/index_files.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <vector>
 
@@ -120,7 +121,7 @@ TEST(InverterOracleTest, WriteDeterministicIndex) {
   std::filesystem::remove_all(out_dir);
   std::filesystem::create_directories(out_dir);
 
-  FSDirectory dir{out_dir};
+  IndexFiles dir{DuckDBEngine::Instance().instance(), out_dir};
   auto writer =
     IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);

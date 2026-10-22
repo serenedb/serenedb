@@ -38,10 +38,6 @@
 	path = third_party/fmt
 	url = https://github.com/serenedb/fmt.git
 	shallow = true
-[submodule "third_party/liburing"]
-	path = third_party/liburing
-	url = https://github.com/serenedb/liburing.git
-	shallow = true
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git

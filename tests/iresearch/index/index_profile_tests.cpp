@@ -24,10 +24,7 @@
 #include <absl/synchronization/notification.h>
 
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
@@ -351,7 +348,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     out.close();
 
-    irs::file_utils::EnsureAbsolute(path);
+    path = std::filesystem::absolute(path);
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
     auto reader =
@@ -395,7 +392,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     thread_pool.run([cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
-        irs::DirectoryCleaner::clean(*directory);
+        directory->RemoveUnreferenced();
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }

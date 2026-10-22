@@ -72,6 +72,7 @@ struct IndexBuilderOptions {
   bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   uint32_t segment_docs_max = 0;
+  bool settle = false;
 };
 
 class IndexBuilder {
@@ -81,17 +82,18 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::MMapDirectory& GetDirectory() { return _dir; }
+  irs::IndexFiles& GetDirectory() { return _dir; }
   irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:
   void CompactAll();
+  void Settle();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::MMapDirectory _dir;
+  irs::IndexFiles _dir;
   irs::IndexWriter::ptr _writer;
 };
 

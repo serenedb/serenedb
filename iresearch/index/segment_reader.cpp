@@ -27,10 +27,6 @@
 
 namespace irs {
 
-uint64_t SegmentReader::CountMappedMemory() const {
-  return _impl->CountMappedMemory();
-}
-
 std::span<const field_id> SegmentReader::field_ids() const {
   return _impl->field_ids();
 }

@@ -1,0 +1,32 @@
+# Configuration: index storage.
+# The secret targets an external object store, so its body is a noop; the RAW
+# block is what the site renders.
+
+# DOCS_TEST: example_secret
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET index_store (
+#|     TYPE S3,
+#|     KEY_ID '⟨AKIA...⟩',
+#|     SECRET '⟨secret⟩',
+#|     REGION '⟨eu-central-1⟩',
+#|     SCOPE 's3://⟨bucket⟩/⟨prefix⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_index_storage_001 (i INTEGER);
+
+# DOCS_TEST: example_cache_settings
+
+query
+SELECT name
+FROM duckdb_settings()
+WHERE name LIKE 'external_file_cache%'
+ORDER BY name;
+----
+name
+external_file_cache_size
+external_file_cache_spill_path
+external_file_cache_spill_size

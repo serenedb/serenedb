@@ -20,7 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>

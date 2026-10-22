@@ -22,14 +22,15 @@
 
 #pragma once
 
+#include "iresearch/store/index_files.hpp"
+
 namespace irs {
 
-struct Directory;
 class IdxReader;
 struct SegmentMeta;
 
 struct ReaderState {
-  const Directory* dir;
+  const IndexFiles* dir;
   const SegmentMeta* meta;
   IdxReader* idx = nullptr;
 };

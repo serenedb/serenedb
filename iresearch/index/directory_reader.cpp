@@ -34,7 +34,7 @@
 namespace irs {
 
 DirectoryReader::DirectoryReader(
-  const Directory& dir,
+  const IndexFiles& dir,
   const IndexReaderOptions& opts /*= directory_reader_options()*/,
   MetaPayloadReader payload)
   : _impl{DirectoryReaderImpl::Open(dir, opts, nullptr, std::move(payload))} {}
@@ -61,10 +61,6 @@ DirectoryReader& DirectoryReader::operator=(
 
 const SubReader& DirectoryReader::operator[](size_t i) const {
   return (*_impl)[i];
-}
-
-uint64_t DirectoryReader::CountMappedMemory() const {
-  return _impl->CountMappedMemory();
 }
 
 uint64_t DirectoryReader::docs_count() const { return _impl->docs_count(); }

@@ -26,9 +26,10 @@
 #include <string>
 #include <string_view>
 
+#include "iresearch/store/index_files.hpp"
+
 namespace irs {
 
-struct Directory;
 struct SegmentMeta;
 
 namespace segment_meta {
@@ -38,10 +39,15 @@ inline constexpr std::string_view kExt = "sm";
 inline constexpr duckdb::field_id_t kFieldFiles = 1;
 inline constexpr duckdb::field_id_t kFieldDocsCount = 2;
 inline constexpr duckdb::field_id_t kFieldByteSize = 3;
+inline constexpr duckdb::field_id_t kFieldFileInfos = 4;
+
+inline constexpr duckdb::field_id_t kFileInfoFieldSize = 0;
+inline constexpr duckdb::field_id_t kFileInfoFieldTailSize = 1;
+inline constexpr duckdb::field_id_t kFileInfoFieldTail = 2;
 
 std::string FileName(const SegmentMeta& meta);
 
-void Write(Directory& dir, std::string& filename, SegmentMeta& meta);
+void Write(const IndexFiles& dir, std::string& filename, SegmentMeta& meta);
 
 }  // namespace segment_meta
 }  // namespace irs

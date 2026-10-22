@@ -18,13 +18,19 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/utils/pg/file_error.hpp"
+
+#include <fast_float/fast_float.h>
 
 #include <cerrno>
+#include <duckdb/common/error_data.hpp>
+#include <system_error>
 
 #include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-namespace irs::pg {
+namespace irs {
+namespace {
 
 constexpr int ErrcodeForFileAccess(int error) noexcept {
   switch (error) {
@@ -56,4 +62,21 @@ constexpr int ErrcodeForFileAccess(int error) noexcept {
   }
 }
 
-}  // namespace irs::pg
+}  // namespace
+
+void ThrowFileError(const duckdb::IOException& error) {
+  const duckdb::ErrorData data{error};
+  auto code = ERRCODE_IO_ERROR;
+  if (const auto it = data.ExtraInfo().find("errno");
+      it != data.ExtraInfo().end()) {
+    const auto& text = it->second;
+    int value = 0;
+    if (fast_float::from_chars(text.data(), text.data() + text.size(), value)
+          .ec == std::errc{}) {
+      code = ErrcodeForFileAccess(value);
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(code), ERR_MSG(data.RawMessage()));
+}
+
+}  // namespace irs

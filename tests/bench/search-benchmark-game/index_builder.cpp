@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstdio>
 #include <duckdb/main/database.hpp>
+#include <filesystem>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -57,12 +58,17 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   return writer_opts;
 }
 
+static irs::IndexFiles MakeIndexFiles(std::string_view path) {
+  std::filesystem::create_directories(path);
+  return irs::IndexFiles{::irs::DuckDBEngine::Instance().instance(), path};
+}
+
 IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
     _scorer{irs::BM25::Make(irs::BM25::Options{})},
-    _dir{path},
+    _dir{MakeIndexFiles(path)},
     _writer{irs::IndexWriter::Make(
       _dir, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
@@ -212,7 +218,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
           _writer->Compact(policy);
         }
 
-        irs::directory_utils::RemoveAllUnreferenced(_dir);
+        _dir.RemoveAllUnreferenced();
       }
     });
   }
@@ -244,8 +250,12 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     absl::PrintF("Compacting all segments:\n");
     std::fflush(stdout);
     CompactAll();
+  } else if (_opts.settle) {
+    absl::PrintF("Settling segments:\n");
+    std::fflush(stdout);
+    Settle();
   } else if (_opts.compaction_threads) {
-    irs::directory_utils::RemoveAllUnreferenced(_dir);
+    _dir.RemoveAllUnreferenced();
   }
 }
 
@@ -253,7 +263,22 @@ void IndexBuilder::CompactAll() {
   _writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
   _writer->RefreshCommit();
-  irs::directory_utils::RemoveAllUnreferenced(_dir);
+  _dir.RemoveAllUnreferenced();
+}
+
+void IndexBuilder::Settle() {
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionTier{});
+  for (auto segments = GetReader().size(); segments > 1;) {
+    _writer->Compact(policy);
+    _writer->RefreshCommit();
+    const auto left = GetReader().size();
+    if (left >= segments) {
+      break;
+    }
+    segments = left;
+  }
+  _dir.RemoveAllUnreferenced();
 }
 
 bool TextField::Write(irs::DataOutput& out) const {

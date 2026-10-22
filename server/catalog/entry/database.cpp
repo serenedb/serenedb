@@ -36,7 +36,8 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
     _directory{directory
                  ? std::move(directory)
                  : std::make_shared<DatabaseDirectory>(
-                     ClusterLayout(catalog.GetAttached()).DatabaseDir(oid))} {
+                     ClusterLayout(catalog.GetAttached()).DatabaseDir(oid),
+                     ClusterLayout(catalog.GetAttached()).StorageRoot(oid))} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;

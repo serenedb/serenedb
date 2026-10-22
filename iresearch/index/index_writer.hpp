@@ -62,11 +62,10 @@ class DatabaseInstance;
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-struct Directory;
 
 enum OpenMode {
   kOmCreate = 1,
@@ -383,8 +382,6 @@ class IndexWriter : private util::Noncopyable {
 
   using ptr = std::shared_ptr<IndexWriter>;
 
-  static constexpr std::string_view kWriteLockName = "write.lock";
-
   ~IndexWriter() noexcept;
 
   auto GetSnapshot() const noexcept {
@@ -451,7 +448,7 @@ class IndexWriter : private util::Noncopyable {
     std::span<const std::string_view> adopted_metas,
     absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
 
-  static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
+  static IndexWriter::ptr Make(const IndexFiles& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
@@ -468,7 +465,13 @@ class IndexWriter : private util::Noncopyable {
 
   void RefreshFinish() {
     std::lock_guard lock{_commit_lock};
-    Finish();
+    Finish(true);
+  }
+
+  void RefreshFinishRetryable() {
+    _commit_lock.ForgetDeadlockInfo();
+    std::lock_guard lock{_commit_lock};
+    Finish(false);
   }
 
   bool RefreshCommit(const CommitInfo& info = {}) {
@@ -480,8 +483,7 @@ class IndexWriter : private util::Noncopyable {
 
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
-  IndexWriter(ConstructToken, IndexLock::ptr&& lock,
-              IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
+  IndexWriter(ConstructToken, const IndexFiles& dir, bool owns_root,
               size_t segment_pool_size, const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
@@ -568,7 +570,8 @@ class IndexWriter : private util::Noncopyable {
     using ptr = std::unique_ptr<SegmentContext>;
 
     std::atomic_size_t buffered_docs{0};
-    RefTrackingDirectory dir;
+    RefTracker refs;
+    IndexFiles dir;
 
     ManagedVector<QueryContext> queries;
     ManagedVector<FlushedSegment> flushed;
@@ -585,10 +588,11 @@ class IndexWriter : private util::Noncopyable {
     IndexSegment writer_meta;
 
     static std::unique_ptr<SegmentContext> make(
-      Directory& dir, segment_meta_generator_t&& meta_generator,
+      const IndexFiles& dir, segment_meta_generator_t&& meta_generator,
       const SegmentWriterOptions& options);
 
-    SegmentContext(Directory& dir, segment_meta_generator_t&& meta_generator,
+    SegmentContext(const IndexFiles& dir,
+                   segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
     void Rollback() noexcept;
@@ -656,7 +660,7 @@ class IndexWriter : private util::Noncopyable {
   };
 
   struct FlushContext {
-    RefTrackingDirectory::ptr dir;
+    std::unique_ptr<RefTracker> refs;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
 
@@ -759,7 +763,7 @@ class IndexWriter : private util::Noncopyable {
   void InitMeta(IndexMeta& meta) const;
 
   bool Start(const CommitInfo& info);
-  void Finish();
+  void Finish(bool abort_on_failure = true);
   void Abort() noexcept;
 
   IndexFeatures _score_bound_features{};
@@ -774,7 +778,7 @@ class IndexWriter : private util::Noncopyable {
     CompactingSegments segments;
     uint64_t floor = 0;
   } _compacting;
-  Directory& _dir;
+  IndexFiles _dir;
   std::atomic<FlushContext*> _flush_context;
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
   PendingState _pending_state;
@@ -785,8 +789,7 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
   IndexMetaWriter _writer;
-  IndexLock::ptr _write_lock;
-  IndexFileRefs::ref_t _write_lock_file_ref;
+  bool _owns_root;
   std::array<FlushContext, 2> _flush_contexts;
 };
 

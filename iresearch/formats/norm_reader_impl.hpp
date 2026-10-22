@@ -152,6 +152,7 @@ class NormReaderBase : public NormReader {
   }
 
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
+    SDB_ASSERT(docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc);
     if (_bytes == 0) {
       return;
     }

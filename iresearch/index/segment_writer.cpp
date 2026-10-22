@@ -65,7 +65,7 @@ doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
 }
 
 std::unique_ptr<SegmentWriter> SegmentWriter::make(
-  Directory& dir, const SegmentWriterOptions& options) {
+  const IndexFiles& dir, const SegmentWriterOptions& options) {
   return std::make_unique<SegmentWriter>(ConstructToken{}, dir, options);
 }
 
@@ -89,9 +89,9 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
   return _docs_mask.Add(doc_id);
 }
 
-SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
+SegmentWriter::SegmentWriter(ConstructToken, const IndexFiles& dir,
                              const SegmentWriterOptions& options) noexcept
-  : _dir{dir},
+  : _dir{dir.Tracking(_tracker)},
     _scorer{options.scorer},
     _docs_context{options.resource_manager},
     _fields{InverterMemory{
@@ -167,7 +167,7 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
-  meta.files = _dir.FlushTracked(meta.byte_size);
+  meta.files = _tracker.Flush(meta.byte_size);
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -189,7 +189,7 @@ void SegmentWriter::SetFieldOptions(
 
 void SegmentWriter::ResetState() noexcept {
   _initialized = false;
-  _dir.ClearTracked();
+  _tracker.Clear();
   _docs_context.Clear();
   _docs_mask.Clear();
   _batch_first_doc_id = doc_limits::eof();

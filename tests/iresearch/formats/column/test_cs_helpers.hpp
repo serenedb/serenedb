@@ -34,7 +34,7 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
@@ -80,13 +80,13 @@ inline IndexReaderOptions DefaultReaderOptions() {
 // Convenience: construct a new-cs Writer over `dir`/`segment_name`, wired
 // to the process-wide DuckDBEngine instance. Matches the production
 // constructor.
-std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+std::unique_ptr<ColWriter> MakeCsWriter(const IndexFiles& dir,
                                         std::string_view segment_name);
 
 // Convenience: construct a new-cs Reader. Returns nullptr if the `.col`
 // file does not exist (test still needs to react -- the production
 // SegmentReader does the same check via `Has*` on the result).
-std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
+std::unique_ptr<ColReader> MakeCsReader(const IndexFiles& dir,
                                         std::string_view segment_name);
 
 // Open a BLOB column on the given writer; convenience wrapper around

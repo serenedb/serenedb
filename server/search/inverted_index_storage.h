@@ -28,11 +28,10 @@
 #include <absl/time/time.h>
 
 #include <atomic>
-#include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <limits>
@@ -75,7 +74,7 @@ struct InvertedIndexSnapshot {
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
 struct StorageDirectory {
-  std::unique_ptr<irs::Directory> directory;
+  std::unique_ptr<irs::IndexFiles> directory;
   bool on_disk = false;
   bool absent = false;
 };
@@ -107,9 +106,7 @@ class InvertedIndexStorage final
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::filesystem::path Path() const {
-    return _directory->StoragePath(_index_id);
-  }
+  std::string Path() const { return _directory->StoragePath(_index_id); }
   bool Absent() const noexcept { return _absent; }
 
   // `db_id` is passed in rather than derived from the catalog: an index
@@ -278,7 +275,7 @@ class InvertedIndexStorage final
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   std::shared_ptr<const FileManifest> _file_manifest;
-  std::unique_ptr<irs::Directory> _dir;
+  std::unique_ptr<irs::IndexFiles> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   absl::Mutex _reindex_mutex;

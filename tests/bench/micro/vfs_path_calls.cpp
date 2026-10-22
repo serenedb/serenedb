@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2016 by EMC Corporation, All Rights Reserved
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,17 +15,30 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is EMC Corporation
-///
-/// @author Andrey Abramov
-/// @author Vasiliy Nabatchikov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "directory_attributes.hpp"
+#include <benchmark/benchmark.h>
 
-namespace irs {
+#include <duckdb/common/virtual_file_system.hpp>
+#include <string>
 
-DirectoryAttributes::DirectoryAttributes()
-  : _refs{std::make_unique<IndexFileRefs>()} {}
+namespace {
 
-}  // namespace irs
+duckdb::VirtualFileSystem& Vfs() {
+  static duckdb::VirtualFileSystem vfs;
+  return vfs;
+}
+
+void BmIsDisabledForPath(benchmark::State& state) {
+  auto& vfs = Vfs();
+  const std::string path = "/tmp/vfs_path_calls";
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(vfs.IsDisabledForPath(path));
+  }
+  state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
+}
+
+BENCHMARK(BmIsDisabledForPath)->ThreadRange(1, 32)->UseRealTime();
+
+}  // namespace

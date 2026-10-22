@@ -34,7 +34,7 @@
 #include <iresearch/formats/posting_meta.hpp>
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/field_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/bit_packing.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -69,7 +69,7 @@ class Format10TestCase : public tests::FormatTestCase {
         .index_features = field.index_features,
       };
 
-      auto out = dir->create("attributes");
+      auto out = dir->Create("attributes");
       ASSERT_FALSE(!out);
       irs::WriteStr(*out, std::string_view("file_header"));
 
@@ -106,7 +106,7 @@ class Format10TestCase : public tests::FormatTestCase {
       state.dir = dir.get();
       state.meta = &meta;
 
-      auto in = dir->open("attributes", irs::IOAdvice::NORMAL);
+      auto in = dir->Open("attributes", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(!in);
       const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -270,7 +270,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create("attributes");
+    auto out = dir().Create("attributes");
     ASSERT_FALSE(!out);
 
     // prepare writer
@@ -333,7 +333,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().Open("attributes", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -423,7 +423,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create("attributes");
+    auto out = dir().Create("attributes");
     ASSERT_FALSE(!out);
 
     // prepare writer
@@ -471,7 +471,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().Open("attributes", irs::IOAdvice::NORMAL);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -576,7 +576,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -606,7 +606,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -635,7 +635,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -664,7 +664,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -692,7 +692,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -718,7 +718,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .doc_count = 10000,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out = dir().Create(std::string("postings") + state.name.data());
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -956,7 +956,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
           .index_features = field.index_features,
         };
 
-        auto out = dir->create("attributes");
+        auto out = dir->Create("attributes");
         ASSERT_FALSE(!out);
         irs::WriteStr(*out, std::string_view("file_header"));
 
@@ -982,7 +982,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         state.dir = dir.get();
         state.meta = &meta;
 
-        auto in = dir->open("attributes", irs::IOAdvice::NORMAL);
+        auto in = dir->Open("attributes", irs::IOAdvice::NORMAL);
         ASSERT_FALSE(!in);
         const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -1095,7 +1095,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
   const auto prepare = [&](std::string_view name, bool unknown_field) {
     meta.name = name;
     {
-      auto out = dir->create(absl::StrCat(name, ".doc"));
+      auto out = dir->Create(absl::StrCat(name, ".doc"));
       EXPECT_NE(nullptr, out);
       if (unknown_field) {
         irs::format_utils::WriteFooter(

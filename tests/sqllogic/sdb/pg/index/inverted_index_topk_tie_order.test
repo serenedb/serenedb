@@ -1,0 +1,141 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY tto_en AS split_text_csv(' ')
+  WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE tto (id INT PRIMARY KEY, body TEXT)
+
+
+statement ok
+CREATE INDEX tto_idx ON tto USING inverted (id, body tto_en)
+  WITH (compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX tto_wand ON tto USING inverted (id, body tto_en)
+  WITH (compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)')
+
+
+statement ok
+INSERT INTO tto
+SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
+               WHEN i % 100000 = 20000 THEN repeat('fox ', 3)
+               ELSE 'fox' END
+FROM generate_series(1, 100000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tto
+
+
+statement ok
+INSERT INTO tto
+SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
+               WHEN i % 100000 = 20000 THEN repeat('fox ', 3)
+               ELSE 'fox' END
+FROM generate_series(100001, 200000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tto
+
+
+statement ok
+INSERT INTO tto
+SELECT i, CASE WHEN i % 100000 IN (10, 50010) THEN repeat('fox ', 5)
+               WHEN i % 100000 = 20000 THEN repeat('fox ', 3)
+               ELSE 'fox' END
+FROM generate_series(200001, 300000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tto
+
+
+query
+EXPLAIN SELECT id FROM tto_idx WHERE body @@ 'fox'
+        ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 6;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tto_idx              │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 6                      │
+│ Projections: id             │
+│ ~60,000 rows                │
+╰─────────────────────────────╯
+
+
+query
+SELECT id FROM tto_idx WHERE body @@ 'fox'
+ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 6;
+----
+id
+10
+50010
+100010
+150010
+200010
+250010
+
+
+query
+SELECT id FROM tto_idx WHERE body @@ 'fox'
+ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 9;
+----
+id
+10
+50010
+100010
+150010
+200010
+250010
+20000
+120000
+220000
+
+
+query
+SELECT id FROM tto_idx WHERE body @@ 'fox'
+ORDER BY bm25(tto_idx.tableoid) DESC LIMIT 3 OFFSET 6;
+----
+id
+20000
+120000
+220000
+
+
+query
+SELECT id FROM tto_wand WHERE body @@ 'fox'
+ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 6;
+----
+id
+10
+50010
+100010
+150010
+200010
+250010
+
+
+query
+SELECT id FROM tto_wand WHERE body @@ 'fox'
+ORDER BY bm25(tto_wand.tableoid) DESC LIMIT 9;
+----
+id
+10
+50010
+100010
+150010
+200010
+250010
+20000
+120000
+220000

@@ -22,6 +22,10 @@
 
 #include "iresearch/index/iterators.hpp"
 
+#include <absl/algorithm/container.h>
+
+#include <functional>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -68,6 +72,34 @@ struct EmptySeekTermIterator : SeekTermIterator {
 EmptySeekTermIterator gEmptySeekIterator;
 
 }  // namespace
+
+void LoserScoreCollector::SortHits() noexcept {
+  std::span keys{_tree.data(), _size};
+  if (_size == _k) {
+    keys[0] = _root;
+  } else {
+    for (uint32_t i = 0; i != _size; ++i) {
+      keys[i] = MakeNode(_hits[i].score, i);
+    }
+  }
+  absl::c_sort(keys, std::greater<>{});
+  for (size_t i = 0; i != _size; ++i) {
+    if (Leaf(keys[i]) == kNone) {
+      continue;
+    }
+    const auto first = _hits[i];
+    for (auto at = i;;) {
+      const auto from = Leaf(keys[at]);
+      keys[at] = kNone;
+      if (from == i) {
+        _hits[at] = first;
+        break;
+      }
+      _hits[at] = _hits[from];
+      at = from;
+    }
+  }
+}
 
 SeekTermIterator::ptr SeekTermIterator::empty() noexcept {
   return memory::to_managed<SeekTermIterator>(gEmptySeekIterator);

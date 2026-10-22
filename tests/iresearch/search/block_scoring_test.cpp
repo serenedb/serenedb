@@ -556,6 +556,60 @@ TEST(LoserScoreCollectorWindow, MatchesBruteForceTopK) {
   }
 }
 
+TEST(LoserScoreCollectorSort, MatchesBruteForceTopK) {
+  std::mt19937 rng{20261021};
+  for (const size_t k : {1, 2, 3, 37, 100, 1000}) {
+    for (const size_t n : {size_t{0}, k / 2, k - 1, k, k + 1, 5 * k}) {
+      std::vector<irs::ScoreDoc> candidates(n);
+      for (size_t i = 0; i != n; ++i) {
+        candidates[i] = {
+          .score = rng() % 16 == 0
+                     ? -0.0f
+                     : static_cast<irs::score_t>(rng() % 2000) / 100.0f - 10.0f,
+          .doc = static_cast<irs::doc_id_t>(i),
+          .segment_idx = static_cast<uint32_t>(i * 4 / n),
+        };
+      }
+      std::vector<irs::ScoreDoc> hits(k);
+      std::atomic<irs::score_t> threshold{
+        std::numeric_limits<irs::score_t>::lowest()};
+      irs::LoserScoreCollector collector{threshold, std::span{hits}};
+      for (const auto& candidate : candidates) {
+        collector.SetSegment(candidate.segment_idx);
+        collector.Add(candidate.score, candidate.doc);
+      }
+      const auto accepted = collector.AcceptedCount();
+      ASSERT_EQ(std::min(k, n), accepted);
+      std::vector<irs::ScoreDoc> kept{hits.begin(), hits.begin() + accepted};
+      collector.SortHits();
+      std::vector<irs::ScoreDoc> sorted{hits.begin(), hits.begin() + accepted};
+
+      std::vector<irs::score_t> expected;
+      for (const auto& candidate : candidates) {
+        expected.push_back(candidate.score);
+      }
+      absl::c_sort(expected, std::greater<>{});
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(expected[i], sorted[i].score) << k << " " << n << " " << i;
+      }
+
+      const auto by_doc = [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+        return l.doc < r.doc;
+      };
+      absl::c_sort(kept, by_doc);
+      absl::c_sort(sorted, by_doc);
+      for (size_t i = 0; i != accepted; ++i) {
+        ASSERT_EQ(kept[i].doc, sorted[i].doc) << k << " " << n << " " << i;
+        ASSERT_EQ(kept[i].segment_idx, sorted[i].segment_idx)
+          << k << " " << n << " " << i;
+        ASSERT_EQ(std::bit_cast<uint32_t>(kept[i].score),
+                  std::bit_cast<uint32_t>(sorted[i].score))
+          << k << " " << n << " " << i;
+      }
+    }
+  }
+}
+
 // Test TFIDF with topic field search (many matches) - verify actual values
 TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   CreateLargeIndex();

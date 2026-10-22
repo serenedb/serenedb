@@ -734,8 +734,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
     const auto& expr = *op.expressions[i];
     if (projected
-          .emplace(NormalizedExpression(unbound, op.table.oid, column_ids,
-                                        input.context))
+          .emplace(NormalizedIndexKey(unbound, op.table.oid, column_ids,
+                                      input.context))
           .second) {
       projected_exprs.emplace_back(expr.Copy());
     } else {

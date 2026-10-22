@@ -59,6 +59,11 @@ std::string NormalizedExpression(
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
   const StoredExpressionOf& stored_expression = {});
 
+std::string NormalizedIndexKey(const duckdb::Expression& expr,
+                               duckdb::idx_t table_id,
+                               std::span<const ColumnId> col_index_to_id,
+                               duckdb::ClientContext& context);
+
 bool ComputedFromRowAlone(const duckdb::Expression& expr);
 
 }  // namespace sdb::connector

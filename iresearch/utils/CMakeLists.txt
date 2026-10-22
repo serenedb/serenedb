@@ -29,16 +29,18 @@ target_sources(
         wildcard_utils.cpp
 )
 
-if(NOT SDB_IRESEARCH_BENCH)
-    target_sources(
-        iresearch
-        PRIVATE
-            geo/coding.cpp
-            geo/geo_json.cpp
-            geo/s2/multi_point_region.cpp
-            geo/s2/multi_polyline_region.cpp
-            geo/shape_container.cpp
-            geo/wkb.cpp
-            snowball_stemmer.cpp
-    )
+if(SDB_IRESEARCH_BENCH)
+    return()
 endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        geo/coding.cpp
+        geo/geo_json.cpp
+        geo/s2/multi_point_region.cpp
+        geo/s2/multi_polyline_region.cpp
+        geo/shape_container.cpp
+        geo/wkb.cpp
+        snowball_stemmer.cpp
+)

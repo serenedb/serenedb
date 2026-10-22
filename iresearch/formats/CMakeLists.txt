@@ -22,25 +22,27 @@ target_sources(
         segment_meta_writer.cpp
 )
 
-if(NOT SDB_IRESEARCH_BENCH)
-    target_sources(
-        iresearch
-        PRIVATE
-            hnsw/hnsw_bases.cpp
-            hnsw/hnsw_graph.cpp
-            hnsw/hnsw_reader.cpp
-            hnsw/hnsw_writer.cpp
-            ivf/centroids.cpp
-            ivf/clustering.cpp
-            ivf/ivf_reader.cpp
-            ivf/ivf_writer.cpp
-            ivf/quantizer.cpp
-            ivf/quantizers/bq.cpp
-            ivf/quantizers/osq.cpp
-            ivf/quantizers/panorama.cpp
-            ivf/quantizers/pq.cpp
-            ivf/quantizers/rabitq.cpp
-            ivf/quantizers/scalar.cpp
-            ivf/quantizers/tq.cpp
-    )
+if(SDB_IRESEARCH_BENCH)
+    return()
 endif()
+
+target_sources(
+    iresearch
+    PRIVATE
+        hnsw/hnsw_bases.cpp
+        hnsw/hnsw_graph.cpp
+        hnsw/hnsw_reader.cpp
+        hnsw/hnsw_writer.cpp
+        ivf/centroids.cpp
+        ivf/clustering.cpp
+        ivf/ivf_reader.cpp
+        ivf/ivf_writer.cpp
+        ivf/quantizer.cpp
+        ivf/quantizers/bq.cpp
+        ivf/quantizers/osq.cpp
+        ivf/quantizers/panorama.cpp
+        ivf/quantizers/pq.cpp
+        ivf/quantizers/rabitq.cpp
+        ivf/quantizers/scalar.cpp
+        ivf/quantizers/tq.cpp
+)

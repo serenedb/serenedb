@@ -94,16 +94,17 @@ if(SDB_IRESEARCH_BENCH)
         iresearch
         PUBLIC IRESEARCH_NO_GEO IRESEARCH_NO_VECTOR
     )
-else()
-    target_include_directories(
-        iresearch
-        SYSTEM
-        PUBLIC
-            ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
-    )
-    target_link_libraries(
-        iresearch
-        PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
-        PRIVATE lz4_static stemmer-static
-    )
+    return()
 endif()
+
+target_include_directories(
+    iresearch
+    SYSTEM
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+)
+target_link_libraries(
+    iresearch
+    PUBLIC OpenSSL::Crypto OpenSSL::SSL fasttext-static faiss s2
+    PRIVATE lz4_static stemmer-static
+)

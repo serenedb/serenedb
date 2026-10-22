@@ -29,6 +29,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
@@ -90,6 +91,21 @@ void AppendDeletes(LocalTableChangesEntry& changes,
   changes.AppendDeletes(MakePositions(positions));
 }
 
+std::vector<uint64_t> Positions(const irs::DocRemoval& removal) {
+  std::vector<uint64_t> positions;
+  for (size_t group = 0; group < removal.segments.size(); ++group) {
+    removal.Docs(group).ForEach([&](irs::doc_id_t doc) {
+      positions.push_back(MakeRowPosition(removal.segments[group], doc));
+    });
+  }
+  return positions;
+}
+
+std::vector<uint64_t> Pending(const LocalTableChangesEntry::Op& op) {
+  auto positions = op.positions;
+  return Positions(std::move(positions).Finish());
+}
+
 TEST_F(SearchTableChangesRows, DeletesShareAnOpUntilRowsOrAFlushComeBetween) {
   LocalTableChangesEntry changes;
   const std::vector<uint64_t> first{7, 8, 9};
@@ -97,8 +113,7 @@ TEST_F(SearchTableChangesRows, DeletesShareAnOpUntilRowsOrAFlushComeBetween) {
   AppendDeletes(changes, first);
   AppendDeletes(changes, second);
   ASSERT_EQ(changes.ops.size(), 1);
-  EXPECT_EQ(changes.ops[0].deletes.starts, (std::vector<uint64_t>{7, 1}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{3, 2}));
+  EXPECT_EQ(Pending(changes.ops[0]), (std::vector<uint64_t>{1, 2, 7, 8, 9}));
 
   AppendRows(changes, 2);
   const std::vector<uint64_t> third{3};
@@ -110,8 +125,7 @@ TEST_F(SearchTableChangesRows, DeletesShareAnOpUntilRowsOrAFlushComeBetween) {
   const std::vector<uint64_t> fourth{4};
   AppendDeletes(changes, fourth);
   ASSERT_EQ(changes.ops.size(), 3);
-  EXPECT_EQ(changes.ops[2].deletes.starts, (std::vector<uint64_t>{4}));
-  EXPECT_EQ(changes.ops[2].deletes.counts, (std::vector<uint64_t>{1}));
+  EXPECT_EQ(Pending(changes.ops[2]), (std::vector<uint64_t>{4}));
 }
 
 TEST(SearchTableChanges, EmptyDeleteAddsNoOp) {
@@ -120,30 +134,63 @@ TEST(SearchTableChanges, EmptyDeleteAddsNoOp) {
   EXPECT_TRUE(changes.ops.empty());
 }
 
-TEST(SearchTableChanges, RunsContinueAcrossDeleteChunks) {
+TEST(SearchTableChanges, DeleteChunksJoinInTheirOp) {
   LocalTableChangesEntry changes;
-  const std::vector<uint64_t> first{11, 12};
-  const std::vector<uint64_t> second{13, 14};
+  const std::vector<uint64_t> first{11, 12, 20};
+  const std::vector<uint64_t> second{13, 14, 12};
   AppendDeletes(changes, first);
   AppendDeletes(changes, second);
   ASSERT_EQ(changes.ops.size(), 1);
-  EXPECT_EQ(changes.ops[0].deletes.starts, (std::vector<uint64_t>{11}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{4}));
+  EXPECT_EQ(Pending(changes.ops[0]),
+            (std::vector<uint64_t>{11, 12, 13, 14, 20}));
 }
 
-TEST(SearchTableChanges, RunsStopAtTheEndOfASegment) {
+TEST(SearchTableChanges, PositionsKeepTheirSegments) {
   LocalTableChangesEntry changes;
   const auto last = irs::doc_limits::eof() - 1;
   const std::vector<uint64_t> positions{
     MakeRowPosition(3, last - 1), MakeRowPosition(3, last),
-    MakeRowPosition(4, irs::doc_limits::min())};
+    MakeRowPosition(4, irs::doc_limits::min()), MakeRowPosition(3, 2)};
   AppendDeletes(changes, positions);
   ASSERT_EQ(changes.ops.size(), 1);
+  const auto& removal = changes.ops[0].Removal();
+  EXPECT_EQ((std::vector<uint32_t>{3, 4}), removal.segments);
   EXPECT_EQ(
-    changes.ops[0].deletes.starts,
-    (std::vector<uint64_t>{MakeRowPosition(3, last - 1),
+    Positions(removal),
+    (std::vector<uint64_t>{MakeRowPosition(3, 2), MakeRowPosition(3, last - 1),
+                           MakeRowPosition(3, last),
                            MakeRowPosition(4, irs::doc_limits::min())}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{2, 1}));
+}
+
+TEST(SearchTableChanges, AnOpBuildsItsRemovalOnce) {
+  LocalTableChangesEntry changes;
+  const std::vector<uint64_t> positions{MakeRowPosition(2, 7),
+                                        MakeRowPosition(1, 3)};
+  AppendDeletes(changes, positions);
+  auto& op = changes.ops[0];
+  const auto* docs = &op.Removal().Docs(0);
+  EXPECT_TRUE(op.positions.Empty());
+  EXPECT_EQ(docs, &op.Removal().Docs(0));
+  EXPECT_EQ(
+    Positions(op.Removal()),
+    (std::vector<uint64_t>{MakeRowPosition(1, 3), MakeRowPosition(2, 7)}));
+}
+
+TEST(SearchTableChanges, AMillionRowDeleteFreezesToAFewBytes) {
+  LocalTableChangesEntry changes;
+  std::vector<uint64_t> chunk(STANDARD_VECTOR_SIZE);
+  uint64_t next = MakeRowPosition(5, irs::doc_limits::min());
+  for (size_t rows = 0; rows < 1000000; rows += chunk.size()) {
+    for (auto& position : chunk) {
+      position = next++;
+    }
+    AppendDeletes(changes, chunk);
+  }
+  ASSERT_EQ(changes.ops.size(), 1);
+  const auto& removal = changes.ops[0].Removal();
+  ASSERT_EQ(1, removal.docs.size());
+  EXPECT_LE(1000000, removal.Docs(0).Count());
+  EXPECT_GT(1024, removal.Docs(0).FrozenSize());
 }
 
 TEST(SearchTableChanges, DeletedRowWithoutPositionFailsAndAddsNoOp) {
@@ -171,9 +218,7 @@ TEST(SearchTableChanges, DeletesReadConstantVectors) {
     duckdb::Value::BIGINT(static_cast<int64_t>(position)), duckdb::count_t(3)};
   changes.AppendDeletes(positions);
   ASSERT_EQ(changes.ops.size(), 1);
-  EXPECT_EQ(changes.ops[0].deletes.starts,
-            (std::vector<uint64_t>{position, position, position}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{1, 1, 1}));
+  EXPECT_EQ(Pending(changes.ops[0]), (std::vector<uint64_t>{position}));
 }
 
 TEST(SearchTableChanges, DeletesReadDictionaryVectors) {
@@ -191,13 +236,11 @@ TEST(SearchTableChanges, DeletesReadDictionaryVectors) {
   changes.AppendDeletes(positions);
   ASSERT_EQ(changes.ops.size(), 1);
   EXPECT_EQ(
-    changes.ops[0].deletes.starts,
-    (std::vector<uint64_t>{MakeRowPosition(2, 10), MakeRowPosition(2, 4),
-                           MakeRowPosition(2, 4)}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{1, 1, 1}));
+    Pending(changes.ops[0]),
+    (std::vector<uint64_t>{MakeRowPosition(2, 4), MakeRowPosition(2, 10)}));
 }
 
-TEST(SearchTableChanges, DeletesReadFilledPositionsAsOneRun) {
+TEST(SearchTableChanges, DeletesReadFilledPositions) {
   LocalTableChangesEntry changes;
   duckdb::Vector positions{duckdb::LogicalType::ROW_TYPE};
   FillRowPositions(
@@ -205,9 +248,10 @@ TEST(SearchTableChanges, DeletesReadFilledPositionsAsOneRun) {
     positions);
   changes.AppendDeletes(positions);
   ASSERT_EQ(changes.ops.size(), 1);
-  EXPECT_EQ(changes.ops[0].deletes.starts,
-            (std::vector<uint64_t>{MakeRowPosition(6, 20)}));
-  EXPECT_EQ(changes.ops[0].deletes.counts, (std::vector<uint64_t>{4}));
+  EXPECT_EQ(
+    Pending(changes.ops[0]),
+    (std::vector<uint64_t>{MakeRowPosition(6, 20), MakeRowPosition(6, 21),
+                           MakeRowPosition(6, 22), MakeRowPosition(6, 23)}));
 }
 
 TEST(SearchTableChanges, TruncateDropsTheDeletesBeforeIt) {
@@ -217,11 +261,11 @@ TEST(SearchTableChanges, TruncateDropsTheDeletesBeforeIt) {
   changes.AppendTruncate(false);
   ASSERT_EQ(changes.ops.size(), 1);
   EXPECT_TRUE(changes.ops[0].IsTruncate());
-  EXPECT_TRUE(changes.ops[0].deletes.starts.empty());
+  EXPECT_TRUE(changes.ops[0].positions.Empty());
   AppendDeletes(changes, positions);
   ASSERT_EQ(changes.ops.size(), 2);
   EXPECT_FALSE(changes.ops[1].IsTruncate());
-  EXPECT_EQ(changes.ops[1].deletes.counts, (std::vector<uint64_t>{2}));
+  EXPECT_EQ(Pending(changes.ops[1]), (std::vector<uint64_t>{11, 12}));
 }
 
 TEST(SearchTableChanges, VisitAppliesEveryOpInOrderWithoutRows) {
@@ -236,8 +280,9 @@ TEST(SearchTableChanges, VisitAppliesEveryOpInOrderWithoutRows) {
   changes.Visit(
     0, [](duckdb::DataChunk&) { FAIL(); },
     [&](LocalTableChangesEntry::Op& op) {
-      applied.push_back(op.deletes.starts.front());
-      EXPECT_EQ(op.deletes.counts, (std::vector<uint64_t>{2}));
+      const auto positions = Positions(op.Removal());
+      ASSERT_EQ(2, positions.size());
+      applied.push_back(positions.front());
     });
   EXPECT_EQ(applied, (std::vector<uint64_t>{100, 200, 300}));
 }
@@ -263,7 +308,8 @@ TEST_F(SearchTableChangesRows, VisitInterleavesOpsWithTheRowsBeforeThem) {
       }
     },
     [&](LocalTableChangesEntry::Op& op) {
-      events.emplace_back("op " + std::to_string(op.deletes.starts.front()));
+      events.emplace_back("op " +
+                          std::to_string(Positions(op.Removal()).front()));
     });
   EXPECT_EQ(events, (std::vector<std::string>{"row 0", "row 1", "row 2",
                                               "op 100", "row 3", "row 4",
@@ -302,7 +348,7 @@ TEST_F(SearchTableChangesRows, VisitStartsAtTheGivenOp) {
       }
     },
     [&](LocalTableChangesEntry::Op& op) {
-      applied.push_back(op.deletes.starts.front());
+      applied.push_back(Positions(op.Removal()).front());
     });
   EXPECT_EQ(applied, (std::vector<uint64_t>{200}));
   EXPECT_EQ(rows, (std::vector<int64_t>{1}));

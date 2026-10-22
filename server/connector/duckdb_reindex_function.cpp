@@ -833,7 +833,7 @@ std::optional<irs::DocRemoval> ResolveRemoves(
   if (files.empty() && keys.empty()) {
     return std::nullopt;
   }
-  std::vector<irs::DocRemoval::Row> rows;
+  irs::DocRemovalBuilder removal;
   for (size_t i = 0; i < snapshot.size(); ++i) {
     const auto& segment = snapshot[i];
     const auto* field = segment.field(term_dict::kPKFieldId);
@@ -846,7 +846,7 @@ std::optional<irs::DocRemoval> ResolveRemoves(
     const auto masked = segment.MaskedDocs();
     const auto add = [&](irs::doc_id_t doc) {
       if (!masked.Contains(doc)) {
-        rows.push_back({.segment = number, .doc = doc});
+        removal.Add(number, doc);
       }
     };
     for (auto& file : files) {
@@ -860,10 +860,10 @@ std::optional<irs::DocRemoval> ResolveRemoves(
                       });
     }
   }
-  if (rows.empty()) {
+  if (removal.Empty()) {
     return std::nullopt;
   }
-  return irs::DocRemoval::Build(rows);
+  return std::move(removal).Finish();
 }
 
 // Old manifest minus dying files, plus fresh ids for the scans: a scan

@@ -44,7 +44,6 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
-#include <duckdb/storage/wal_entry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -421,10 +420,9 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
   _storage->ReplayInsert(context, catalog, column_ids, chunk);
 }
 
-void SearchTableEntry::ReplayDeleteRanges(
-  duckdb::ClientContext&, const duckdb::WALDeleteRowRanges& entry) {
-  _storage->ReplayDeleteRanges(catalog.GetAttached(), entry.starts,
-                               entry.counts);
+void SearchTableEntry::ReplayDeleteRowPositions(duckdb::ClientContext&,
+                                                std::string positions) {
+  _storage->ReplayDeleteRowPositions(catalog.GetAttached(), positions);
 }
 
 void SearchTableEntry::ReplayRowPositionMaps(duckdb::ClientContext&,

@@ -166,12 +166,18 @@ class DocumentMaskBuilder final {
   void AddRange(doc_id_t first, doc_id_t last);
   void Merge(const DocumentMaskBuilder& other);
   void Merge(const DocumentMask& published);
+  bool MergeLive(const DocumentMask& docs, const DocumentMask* masked,
+                 doc_id_t end);
+  bool MergeLiveRange(doc_id_t first, doc_id_t last,
+                      const DocumentMask* masked);
   void Clear() noexcept;
 
   DocumentMask Finish(uint32_t bitset_from = kBitsetFrom) && noexcept;
 
  private:
   DocumentMaskBuilder(const roaring::api::roaring_bitmap_t& set, size_t count);
+
+  bool MergeOwned(roaring::api::roaring_bitmap_t* live, doc_id_t end);
 
   roaring::api::roaring_bitmap_t _set;
   size_t _count = 0;

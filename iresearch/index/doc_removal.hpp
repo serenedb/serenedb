@@ -66,13 +66,6 @@ using DocMapList = std::vector<std::shared_ptr<const DocMap>>;
 struct DocRemoval {
   static constexpr uint32_t kNoSegment = std::numeric_limits<uint32_t>::max();
 
-  struct Row {
-    uint32_t segment;
-    doc_id_t doc;
-  };
-
-  static DocRemoval Build(std::span<const Row> rows);
-
   static DocRemoval All() { return DocRemoval{.all = true}; }
 
   static DocRemoval Keys(field_id field, std::vector<bstring> keys) {
@@ -83,18 +76,32 @@ struct DocRemoval {
 
   size_t Find(uint32_t segment) const noexcept;
 
-  std::span<const doc_id_t> Docs(size_t group) const noexcept {
-    return {docs.data() + offsets[group], docs.data() + offsets[group + 1]};
-  }
+  const DocumentMask& Docs(size_t group) const noexcept { return *docs[group]; }
 
   bool all = false;
   std::vector<uint32_t> segments;
-  std::vector<uint32_t> offsets;
-  std::vector<doc_id_t> docs;
+  std::vector<std::shared_ptr<const DocumentMask>> docs;
   std::shared_ptr<const DocMapList> maps;
   field_id field = field_limits::invalid();
   std::vector<bstring> keys;
   uint64_t tick = 0;
+};
+
+class DocRemovalBuilder {
+ public:
+  void Add(uint32_t segment, doc_id_t doc);
+  void AddRange(uint32_t segment, doc_id_t first, doc_id_t last);
+  void Add(uint32_t segment, const DocumentMask& docs);
+
+  bool Empty() const noexcept { return _groups.empty(); }
+
+  DocRemoval Finish() &&;
+
+ private:
+  DocumentMaskBuilder& Group(uint32_t segment);
+
+  std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;
+  size_t _last = 0;
 };
 
 void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
@@ -108,6 +115,9 @@ std::optional<doc_id_t> AbsorbedDoc(std::span<const AbsorbedStep> steps,
 
 std::string WriteDocMaps(const DocMapList& maps);
 DocMapList ReadDocMaps(std::string_view bytes);
+
+std::string WriteDocRemoval(const DocRemoval& removal);
+DocRemoval ReadDocRemoval(std::string_view bytes);
 
 class DocRemovalResolver;
 
@@ -137,8 +147,8 @@ class DocRemovalResolver {
   void Prepare(std::span<const DocRemoval* const> removals,
                std::span<const uint32_t> targets, const DocMaps& maps);
 
-  std::span<const doc_id_t> PositionalDocs(const DocRemoval& removal,
-                                           const SubReader& segment) const;
+  const DocumentMask* PositionalDocs(const DocRemoval& removal,
+                                     const SubReader& segment) const;
 
   bool Used(uint32_t absorbed) const noexcept {
     return _used.contains(absorbed);

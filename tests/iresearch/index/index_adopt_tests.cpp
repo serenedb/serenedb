@@ -753,25 +753,24 @@ irs::AbsorbedSegment TakesAll(const irs::DirectoryReader& snapshot,
 irs::DocRemoval Positions(
   const std::map<std::string, std::vector<irs::doc_id_t>>& docs,
   std::shared_ptr<const irs::DocMapList> maps = nullptr) {
-  std::vector<irs::DocRemoval::Row> rows;
+  irs::DocRemovalBuilder builder;
   for (const auto& [name, segment_docs] : docs) {
     for (const auto doc : segment_docs) {
-      rows.emplace_back(NumberOf(name), doc);
+      builder.Add(NumberOf(name), doc);
     }
   }
-  auto removal = irs::DocRemoval::Build(rows);
+  auto removal = std::move(builder).Finish();
   removal.maps = std::move(maps);
   return removal;
 }
 
 irs::DocRemoval FirstDocsEverywhere(irs::doc_id_t count) {
-  std::vector<irs::DocRemoval::Row> rows;
+  irs::DocRemovalBuilder builder;
   for (uint32_t segment = 0; segment < 64; ++segment) {
-    for (irs::doc_id_t doc = 0; doc < count; ++doc) {
-      rows.emplace_back(segment, irs::doc_limits::min() + doc);
-    }
+    builder.AddRange(segment, irs::doc_limits::min(),
+                     irs::doc_limits::min() + count);
   }
-  return irs::DocRemoval::Build(rows);
+  return std::move(builder).Finish();
 }
 
 const irs::CompactionPolicy& FullMerge() {

@@ -37,20 +37,31 @@
 namespace irs {
 namespace {
 
-[[noreturn]] void Malformed(std::string_view what) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                  ERR_MSG("Malformed doc map: ", what));
-}
-
 void Put32(std::string& out, uint32_t value) {
   char buf[sizeof(uint32_t)];
   absl::little_endian::Store32(buf, value);
   out.append(buf, sizeof(buf));
 }
 
-class MapReader {
+void PutMask(std::string& out, const DocumentMask* mask) {
+  const auto size = mask ? static_cast<uint32_t>(mask->FrozenSize()) : 0;
+  Put32(out, size);
+  if (size != 0) {
+    const auto offset = out.size();
+    out.resize(offset + size);
+    mask->WriteFrozen(out.data() + offset);
+  }
+}
+
+class ByteReader {
  public:
-  explicit MapReader(std::string_view bytes) noexcept : _bytes{bytes} {}
+  ByteReader(std::string_view bytes, std::string_view what) noexcept
+    : _bytes{bytes}, _what{what} {}
+
+  [[noreturn]] void Malformed(std::string_view why) const {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("Malformed ", _what, ": ", why));
+  }
 
   uint32_t Get32() {
     return absl::little_endian::Load32(Take(sizeof(uint32_t)).data());
@@ -65,10 +76,16 @@ class MapReader {
     return taken;
   }
 
+  DocumentMask GetMask(uint32_t size) {
+    BytesViewInput mask{ViewCast<byte_type>(Take(size))};
+    return DocumentMask::ReadFrozen(mask, size);
+  }
+
   bool Done() const noexcept { return _bytes.empty(); }
 
  private:
   std::string_view _bytes;
+  std::string_view _what;
 };
 
 }  // namespace
@@ -106,40 +123,48 @@ void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
   }
 }
 
-DocRemoval DocRemoval::Build(std::span<const Row> rows) {
-  containers::FlatHashMap<uint32_t, uint32_t> cursors;
-  uint32_t* cursor = nullptr;
-  uint32_t cursor_segment = kNoSegment;
-  const auto cursor_of = [&](uint32_t segment) -> uint32_t& {
-    SDB_ASSERT(segment != kNoSegment);
-    if (cursor == nullptr || segment != cursor_segment) {
-      cursor = &cursors[segment];
-      cursor_segment = segment;
-    }
-    return *cursor;
-  };
-  for (const auto& row : rows) {
-    ++cursor_of(row.segment);
+DocumentMaskBuilder& DocRemovalBuilder::Group(uint32_t segment) {
+  SDB_ASSERT(segment != DocRemoval::kNoSegment);
+  if (_last < _groups.size() && _groups[_last].first == segment) {
+    return _groups[_last].second;
   }
+  auto it = absl::c_lower_bound(
+    _groups, segment,
+    [](const auto& group, uint32_t number) { return group.first < number; });
+  if (it == _groups.end() || it->first != segment) {
+    it = _groups.emplace(it, segment, DocumentMaskBuilder{});
+  }
+  _last = static_cast<size_t>(it - _groups.begin());
+  return it->second;
+}
 
+void DocRemovalBuilder::Add(uint32_t segment, doc_id_t doc) {
+  Group(segment).Add(doc);
+}
+
+void DocRemovalBuilder::AddRange(uint32_t segment, doc_id_t first,
+                                 doc_id_t last) {
+  Group(segment).AddRange(first, last);
+}
+
+void DocRemovalBuilder::Add(uint32_t segment, const DocumentMask& docs) {
+  Group(segment).Merge(docs);
+}
+
+DocRemoval DocRemovalBuilder::Finish() && {
   DocRemoval removal;
-  removal.segments.reserve(cursors.size());
-  for (const auto& [segment, count] : cursors) {
+  removal.segments.reserve(_groups.size());
+  removal.docs.reserve(_groups.size());
+  for (auto& [segment, docs] : _groups) {
+    if (docs.Empty()) {
+      continue;
+    }
     removal.segments.emplace_back(segment);
+    removal.docs.emplace_back(std::make_shared<const DocumentMask>(
+      std::move(docs).Finish(DocumentMaskBuilder::kCanonical)));
   }
-  absl::c_sort(removal.segments);
-  removal.offsets.reserve(removal.segments.size() + 1);
-  uint32_t offset = 0;
-  for (const auto segment : removal.segments) {
-    removal.offsets.emplace_back(offset);
-    offset += std::exchange(cursors[segment], offset);
-  }
-  removal.offsets.emplace_back(offset);
-
-  removal.docs.resize(rows.size());
-  for (const auto& row : rows) {
-    removal.docs[cursor_of(row.segment)++] = row.doc;
-  }
+  _groups = {};
+  _last = 0;
   return removal;
 }
 
@@ -189,14 +214,7 @@ std::string WriteDocMaps(const DocMapList& maps) {
       Put32(out, step.rank_begin);
       Put32(out, step.rank_end);
       Put32(out, step.base);
-      const auto mask_size =
-        step.mask ? static_cast<uint32_t>(step.mask->FrozenSize()) : 0;
-      Put32(out, mask_size);
-      if (mask_size != 0) {
-        const auto offset = out.size();
-        out.resize(offset + mask_size);
-        step.mask->WriteFrozen(out.data() + offset);
-      }
+      PutMask(out, step.mask.get());
     }
   }
   return out;
@@ -207,7 +225,7 @@ DocMapList ReadDocMaps(std::string_view bytes) {
   if (bytes.empty()) {
     return maps;
   }
-  MapReader in{bytes};
+  ByteReader in{bytes, "doc map"};
   const auto count = in.Get32();
   for (uint32_t i = 0; i < count; ++i) {
     DocMap map;
@@ -215,11 +233,11 @@ DocMapList ReadDocMaps(std::string_view bytes) {
     map.target = in.Get32();
     if (map.source == DocRemoval::kNoSegment ||
         map.target == DocRemoval::kNoSegment) {
-      Malformed("a segment number is out of range");
+      in.Malformed("a segment number is out of range");
     }
     const auto steps = in.Get32();
     if (steps == 0) {
-      Malformed("a map has no steps");
+      in.Malformed("a map has no steps");
     }
     for (uint32_t j = 0; j < steps; ++j) {
       auto& step = map.steps.emplace_back();
@@ -228,20 +246,60 @@ DocMapList ReadDocMaps(std::string_view bytes) {
       step.base = in.Get32();
       if (step.rank_begin > step.rank_end || !doc_limits::valid(step.base) ||
           step.rank_end - step.rank_begin > doc_limits::eof() - step.base) {
-        Malformed("a step is out of range");
+        in.Malformed("a step is out of range");
       }
       if (const auto mask_size = in.Get32(); mask_size != 0) {
-        BytesViewInput mask{ViewCast<byte_type>(in.Take(mask_size))};
-        step.mask = std::make_shared<const DocumentMask>(
-          DocumentMask::ReadFrozen(mask, mask_size));
+        step.mask = std::make_shared<const DocumentMask>(in.GetMask(mask_size));
       }
     }
     maps.push_back(std::make_shared<const DocMap>(std::move(map)));
   }
   if (!in.Done()) {
-    Malformed("it has trailing bytes");
+    in.Malformed("it has trailing bytes");
   }
   return maps;
+}
+
+std::string WriteDocRemoval(const DocRemoval& removal) {
+  SDB_ASSERT(!removal.all && !removal.Keyed());
+  std::string out;
+  Put32(out, static_cast<uint32_t>(removal.segments.size()));
+  for (size_t group = 0; group < removal.segments.size(); ++group) {
+    Put32(out, removal.segments[group]);
+    PutMask(out, &removal.Docs(group));
+  }
+  return out;
+}
+
+DocRemoval ReadDocRemoval(std::string_view bytes) {
+  ByteReader in{bytes, "doc removal"};
+  const auto count = in.Get32();
+  if (count == 0) {
+    in.Malformed("it names no segment");
+  }
+  DocRemoval removal;
+  removal.segments.reserve(count);
+  removal.docs.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    const auto segment = in.Get32();
+    if (segment == DocRemoval::kNoSegment) {
+      in.Malformed("a segment number is out of range");
+    }
+    if (!removal.segments.empty() && removal.segments.back() >= segment) {
+      in.Malformed("its segments are out of order");
+    }
+    const auto size = in.Get32();
+    if (size == 0) {
+      in.Malformed("a segment names no rows");
+    }
+    removal.segments.emplace_back(segment);
+    removal.docs.emplace_back(
+      std::make_shared<const DocumentMask>(in.GetMask(size)));
+  }
+  if (!in.Done()) {
+    in.Malformed("it has trailing bytes");
+  }
+  return removal;
 }
 
 void DocMaps::Absorb(std::span<const DocMap> direct) {
@@ -315,32 +373,29 @@ void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
                                  std::span<const uint32_t> targets,
                                  const DocMaps& maps) {
   const containers::FlatHashSet<uint32_t> live{targets.begin(), targets.end()};
-  std::vector<DocRemoval::Row> rows;
   for (const auto* removal : removals) {
     if (absl::c_all_of(removal->segments, [&](uint32_t segment) {
           return live.contains(segment);
         })) {
       continue;
     }
-    rows.clear();
+    DocRemovalBuilder resolved;
     for (size_t group = 0; group < removal->segments.size(); ++group) {
       const auto segment = removal->segments[group];
-      const auto docs = removal->Docs(group);
+      const auto& docs = removal->Docs(group);
       if (live.contains(segment)) {
-        for (const auto doc : docs) {
-          rows.emplace_back(segment, doc);
-        }
+        resolved.Add(segment, docs);
         continue;
       }
       const auto map_docs = [&](const DocMap& map) {
         if (!live.contains(map.target)) {
           return;
         }
-        for (const auto doc : docs) {
+        docs.ForEach([&](doc_id_t doc) {
           if (const auto mapped = AbsorbedDoc(map.steps, doc)) {
-            rows.emplace_back(map.target, *mapped);
+            resolved.Add(map.target, *mapped);
           }
-        }
+        });
       };
       if (const auto absorbed = maps.Of(segment); !absorbed.empty()) {
         _used.insert(segment);
@@ -356,23 +411,23 @@ void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
         }
       }
     }
-    _resolved.emplace(removal, DocRemoval::Build(rows));
+    _resolved.emplace(removal, std::move(resolved).Finish());
   }
 }
 
-std::span<const doc_id_t> DocRemovalResolver::PositionalDocs(
+const DocumentMask* DocRemovalResolver::PositionalDocs(
   const DocRemoval& removal, const SubReader& segment) const {
   const auto number = SegmentNumber(segment.Meta().name);
   if (number == DocRemoval::kNoSegment) {
-    return {};
+    return nullptr;
   }
   const auto it = _resolved.find(&removal);
   const auto& resolved = it == _resolved.end() ? removal : it->second;
   const auto group = resolved.Find(number);
   if (group == resolved.segments.size()) {
-    return {};
+    return nullptr;
   }
-  return resolved.Docs(group);
+  return &resolved.Docs(group);
 }
 
 }  // namespace irs

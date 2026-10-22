@@ -335,10 +335,6 @@ class SearchSinkDeleteBaseImpl {
   std::vector<irs::bstring> _keys;
 };
 
-std::optional<irs::DocRemoval> MakeRowRunRemoval(
-  std::span<const uint64_t> starts, std::span<const uint64_t> counts,
-  std::shared_ptr<const irs::DocMapList> maps = nullptr);
-
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:

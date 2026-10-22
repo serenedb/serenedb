@@ -56,7 +56,6 @@
 #include "connector/row_position.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "search/search_table_changes.h"
 
 namespace {
 
@@ -82,19 +81,41 @@ catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
 
 constexpr ColumnId kValueColumn{1};
 
-duckdb::WALDeleteRowRanges RunsOf(std::span<const uint64_t> positions) {
-  duckdb::WALDeleteRowRanges runs;
-  for (const auto position : positions) {
-    search::AppendRowRun(runs, position);
-  }
-  return runs;
-}
-
 std::optional<irs::DocRemoval> MakeRemoval(
   std::span<const uint64_t> positions,
   std::shared_ptr<const irs::DocMapList> maps = nullptr) {
-  const auto runs = RunsOf(positions);
-  return MakeRowRunRemoval(runs.starts, runs.counts, std::move(maps));
+  irs::DocRemovalBuilder builder;
+  for (const auto position : positions) {
+    builder.Add(RowPositionSegment(position), RowPositionDoc(position));
+  }
+  if (builder.Empty()) {
+    return std::nullopt;
+  }
+  auto removal = std::move(builder).Finish();
+  removal.maps = std::move(maps);
+  return removal;
+}
+
+std::optional<irs::DocRemoval> ReplayedRemoval(
+  std::span<const uint64_t> positions,
+  std::shared_ptr<const irs::DocMapList> maps = nullptr) {
+  const auto removal = MakeRemoval(positions);
+  if (!removal) {
+    return std::nullopt;
+  }
+  auto replayed = irs::ReadDocRemoval(irs::WriteDocRemoval(*removal));
+  replayed.maps = std::move(maps);
+  return replayed;
+}
+
+std::vector<uint64_t> RemovedPositions(const irs::DocRemoval& removal) {
+  std::vector<uint64_t> positions;
+  for (size_t group = 0; group < removal.segments.size(); ++group) {
+    removal.Docs(group).ForEach([&](irs::doc_id_t doc) {
+      positions.push_back(MakeRowPosition(removal.segments[group], doc));
+    });
+  }
+  return positions;
 }
 
 const irs::CompactionPolicy& FullMerge() {
@@ -239,11 +260,10 @@ class SearchRowRemovalTest : public ::testing::Test {
     return PositionsOf(_writer->GetSnapshot(), rowids);
   }
 
-  void Remove(std::span<const uint64_t> positions,
-              std::span<const int64_t> victims,
-              std::shared_ptr<const irs::DocMapList> maps = nullptr) {
+  void Commit(std::optional<irs::DocRemoval> removal,
+              std::span<const int64_t> victims) {
     auto trx = _writer->GetBatch();
-    if (auto removal = MakeRemoval(positions, std::move(maps))) {
+    if (removal) {
       trx.Remove(std::move(*removal));
     }
     ASSERT_TRUE(trx.Commit());
@@ -251,6 +271,18 @@ class SearchRowRemovalTest : public ::testing::Test {
     for (const auto rowid : victims) {
       _model.erase(rowid);
     }
+  }
+
+  void Remove(std::span<const uint64_t> positions,
+              std::span<const int64_t> victims,
+              std::shared_ptr<const irs::DocMapList> maps = nullptr) {
+    Commit(MakeRemoval(positions, std::move(maps)), victims);
+  }
+
+  void RemoveReplayed(std::span<const uint64_t> positions,
+                      std::span<const int64_t> victims,
+                      std::shared_ptr<const irs::DocMapList> maps = nullptr) {
+    Commit(ReplayedRemoval(positions, std::move(maps)), victims);
   }
 
   void Remove(std::span<const int64_t> victims) {
@@ -365,46 +397,60 @@ TEST(RowPositionTest, FillRowPositionsOfHighSegments) {
   }
 }
 
-TEST(RowRunsTest, JoinConsecutivePositions) {
-  const std::array<uint64_t, 6> positions{
-    MakeRowPosition(1, 1), MakeRowPosition(1, 2), MakeRowPosition(1, 3),
-    MakeRowPosition(1, 5), MakeRowPosition(2, 1), MakeRowPosition(2, 2)};
-  const auto runs = RunsOf(positions);
-  EXPECT_EQ((std::vector<uint64_t>{MakeRowPosition(1, 1), MakeRowPosition(1, 5),
-                                   MakeRowPosition(2, 1)}),
-            runs.starts);
-  EXPECT_EQ((std::vector<uint64_t>{3, 1, 2}), runs.counts);
+TEST(RowRemovalTest, PositionsGroupBySegmentSortedOnce) {
+  const std::array<uint64_t, 7> positions{
+    MakeRowPosition(2, 5), MakeRowPosition(1, 3), MakeRowPosition(2, 40),
+    MakeRowPosition(1, 1), MakeRowPosition(2, 5), MakeRowPosition(1, 2),
+    MakeRowPosition(2, 6)};
+  const auto removal = MakeRemoval(positions);
+  ASSERT_TRUE(removal);
+  EXPECT_FALSE(removal->all);
+  EXPECT_EQ((std::vector<uint32_t>{1, 2}), removal->segments);
+  EXPECT_EQ(
+    (std::vector<uint64_t>{MakeRowPosition(1, 1), MakeRowPosition(1, 2),
+                           MakeRowPosition(1, 3), MakeRowPosition(2, 5),
+                           MakeRowPosition(2, 6), MakeRowPosition(2, 40)}),
+    RemovedPositions(*removal));
 }
 
-TEST(RowRunsTest, StartANewRunInAnotherSegment) {
+TEST(RowRemovalTest, NoPositionsMakeNoRemoval) {
+  EXPECT_FALSE(MakeRemoval({}));
+}
+
+TEST(RowRemovalTest, TheLastDocOfASegmentAndTheFirstOfTheNextStayApart) {
   const auto last = irs::doc_limits::eof() - 1;
   const std::array<uint64_t, 2> positions{
     MakeRowPosition(1, last), MakeRowPosition(2, irs::doc_limits::min())};
-  const auto runs = RunsOf(positions);
-  EXPECT_EQ((std::vector<uint64_t>{1, 1}), runs.counts);
+  const auto removal = ReplayedRemoval(positions);
+  ASSERT_TRUE(removal);
+  EXPECT_EQ((std::vector<uint32_t>{1, 2}), removal->segments);
+  EXPECT_EQ(std::vector<uint64_t>(positions.begin(), positions.end()),
+            RemovedPositions(*removal));
 }
 
-TEST(RowRunsTest, KeepDuplicatesAndDescendingPositionsApart) {
-  const std::array<uint64_t, 3> positions{
-    MakeRowPosition(1, 5), MakeRowPosition(1, 5), MakeRowPosition(1, 4)};
-  const auto runs = RunsOf(positions);
-  EXPECT_EQ((std::vector<uint64_t>{MakeRowPosition(1, 5), MakeRowPosition(1, 5),
-                                   MakeRowPosition(1, 4)}),
-            runs.starts);
-  EXPECT_EQ((std::vector<uint64_t>{1, 1, 1}), runs.counts);
-}
-
-TEST(RowRunsTest, JoinALongRun) {
-  std::vector<uint64_t> positions(10000);
+TEST(RowRemovalTest, ARunOfAMillionRowsTakesAFewWalBytes) {
+  std::vector<uint64_t> positions(1000000);
   for (size_t i = 0; i < positions.size(); ++i) {
     positions[i] = MakeRowPosition(3, static_cast<irs::doc_id_t>(1 + i));
   }
-  const auto runs = RunsOf(positions);
-  EXPECT_EQ((std::vector<uint64_t>{MakeRowPosition(3, 1)}), runs.starts);
-  EXPECT_EQ((std::vector<uint64_t>{10000}), runs.counts);
+  const auto removal = MakeRemoval(positions);
+  ASSERT_TRUE(removal);
+  EXPECT_GT(1024, irs::WriteDocRemoval(*removal).size());
 }
 
-TEST(RowRunsTest, ExpandBackToThePositionsInOrder) {
+TEST(RowRemovalTest, ScatteredRowsTakeAtMostAboutTwoWalBytesEach) {
+  std::mt19937_64 rng{3};
+  std::vector<uint64_t> positions(100000);
+  for (auto& position : positions) {
+    position = MakeRowPosition(static_cast<uint32_t>(rng() % 4),
+                               static_cast<irs::doc_id_t>(1 + rng() % 2000000));
+  }
+  const auto removal = MakeRemoval(positions);
+  ASSERT_TRUE(removal);
+  EXPECT_GT(2 * positions.size() + 4096, irs::WriteDocRemoval(*removal).size());
+}
+
+TEST(RowRemovalTest, WalBytesGiveBackTheSortedPositions) {
   std::mt19937_64 rng{11};
   for (int round = 0; round < 200; ++round) {
     std::vector<uint64_t> positions;
@@ -412,95 +458,44 @@ TEST(RowRunsTest, ExpandBackToThePositionsInOrder) {
     for (uint64_t streak = 0; streak < streaks; ++streak) {
       const auto position =
         MakeRowPosition(static_cast<uint32_t>(rng() % 4),
-                        static_cast<irs::doc_id_t>(1 + rng() % 1000));
+                        static_cast<irs::doc_id_t>(1 + rng() % 100000));
       const auto length = 1 + rng() % 20;
       for (uint64_t row = 0; row < length; ++row) {
         positions.push_back(position + row);
       }
     }
-    const auto runs = RunsOf(positions);
-    ASSERT_EQ(runs.starts.size(), runs.counts.size());
-    ASSERT_LE(runs.starts.size(), static_cast<size_t>(streaks));
-    std::vector<uint64_t> expanded;
-    for (size_t i = 0; i < runs.starts.size(); ++i) {
-      for (uint64_t row = 0; row < runs.counts[i]; ++row) {
-        expanded.push_back(runs.starts[i] + row);
-      }
-    }
-    ASSERT_EQ(positions, expanded) << round;
-  }
-}
-
-TEST(RowRunRemovalTest, NoRunsMakeNoRemoval) {
-  EXPECT_FALSE(MakeRowRunRemoval({}, {}));
-}
-
-TEST(RowRunRemovalTest, RejectsMismatchedRuns) {
-  const std::array<uint64_t, 2> starts{1, 5};
-  const std::array<uint64_t, 1> counts{1};
-  EXPECT_DEATH(MakeRowRunRemoval(starts, counts),
-               "2 removed row runs with 1 counts");
-}
-
-TEST(RowRunRemovalTest, RunsGroupBySegment) {
-  const std::array<uint64_t, 3> starts{
-    MakeRowPosition(2, 5), MakeRowPosition(1, 1), MakeRowPosition(2, 40)};
-  const std::array<uint64_t, 3> counts{2, 3, 1};
-  const auto removal = MakeRowRunRemoval(starts, counts);
-  ASSERT_TRUE(removal);
-  EXPECT_FALSE(removal->all);
-  EXPECT_EQ((std::vector<uint32_t>{1, 2}), removal->segments);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{1, 2, 3}),
-            std::vector<irs::doc_id_t>(removal->Docs(0).begin(),
-                                       removal->Docs(0).end()));
-  EXPECT_EQ((std::vector<irs::doc_id_t>{5, 6, 40}),
-            std::vector<irs::doc_id_t>(removal->Docs(1).begin(),
-                                       removal->Docs(1).end()));
-}
-
-TEST(RowRunRemovalTest, MatchesAModelOnRandomPositions) {
-  std::mt19937_64 rng{23};
-  for (int round = 0; round < 100; ++round) {
-    std::vector<uint64_t> positions(rng() % 3000);
-    std::map<uint32_t, std::vector<irs::doc_id_t>> expected;
-    for (auto& position : positions) {
-      const auto segment = static_cast<uint32_t>(rng() % 5);
-      const auto doc = static_cast<irs::doc_id_t>(1 + rng() % 10000);
-      position = MakeRowPosition(segment, doc);
-      expected[segment].emplace_back(doc);
-    }
-    const auto removal = MakeRemoval(positions);
+    std::shuffle(positions.begin(), positions.end(), rng);
+    const auto removal = ReplayedRemoval(positions);
     if (positions.empty()) {
       ASSERT_FALSE(removal);
       continue;
     }
     ASSERT_TRUE(removal);
-    ASSERT_EQ(expected.size(), removal->segments.size());
-    size_t group = 0;
-    for (const auto& [segment, docs] : expected) {
-      ASSERT_EQ(segment, removal->segments[group]);
-      const auto actual = removal->Docs(group);
-      ASSERT_EQ(docs, std::vector<irs::doc_id_t>(actual.begin(), actual.end()))
-        << round;
-      ++group;
-    }
+    std::sort(positions.begin(), positions.end());
+    positions.erase(std::unique(positions.begin(), positions.end()),
+                    positions.end());
+    ASSERT_EQ(positions, RemovedPositions(*removal)) << round;
   }
 }
 
-TEST(WalDeleteEntryTest, RoundTripsRuns) {
-  duckdb::WALDeleteRowRanges entry;
-  entry.starts = {MakeRowPosition(4, 9), MakeRowPosition(0, 1),
-                  MakeRowPosition(1, 2)};
-  entry.counts = {3, 1, 2};
+TEST(WalDeleteEntryTest, RoundTripsThePositions) {
+  const std::array<uint64_t, 4> positions{
+    MakeRowPosition(4, 9), MakeRowPosition(0, 1), MakeRowPosition(1, 2),
+    MakeRowPosition(4, 10)};
+  const duckdb::WALDeleteRowPositions entry{
+    irs::WriteDocRemoval(*MakeRemoval(positions))};
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(entry, stream);
   stream.Rewind();
   duckdb::BinaryDeserializer deserializer{stream};
   deserializer.Begin();
-  const auto back = duckdb::WALDeleteRowRanges::Deserialize(deserializer);
+  const auto back = duckdb::WALDeleteRowPositions::Deserialize(deserializer);
   deserializer.End();
-  EXPECT_EQ(entry.starts, back.starts);
-  EXPECT_EQ(entry.counts, back.counts);
+  EXPECT_EQ(entry.positions, back.positions);
+  EXPECT_EQ(
+    (std::vector<uint64_t>{MakeRowPosition(0, 1), MakeRowPosition(1, 2),
+                           MakeRowPosition(4, 9), MakeRowPosition(4, 10)}),
+    RemovedPositions(irs::ReadDocRemoval(back.positions)));
 }
 
 TEST(WalRowPositionMapsTest, RoundTripsTheMaps) {
@@ -602,10 +597,11 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
   ASSERT_FALSE(record.empty());
   Reopen();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
-  Remove(positions, {});
+  RemoveReplayed(positions, {});
   ExpectModel();
-  Remove(positions, victims,
-         std::make_shared<const irs::DocMapList>(irs::ReadDocMaps(record)));
+  RemoveReplayed(
+    positions, victims,
+    std::make_shared<const irs::DocMapList>(irs::ReadDocMaps(record)));
   ExpectModel();
 }
 
@@ -904,7 +900,10 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
   std::vector<int64_t> victims(9000);
   std::iota(victims.begin(), victims.end(), 5500);
   const auto positions = PositionsOf(victims);
-  EXPECT_EQ(2, RunsOf(positions).starts.size());
+  const auto removal = MakeRemoval(positions);
+  ASSERT_TRUE(removal);
+  EXPECT_EQ(2, removal->segments.size());
+  EXPECT_GT(128, irs::WriteDocRemoval(*removal).size());
   Remove(positions, victims);
   ExpectModel();
 }
@@ -1011,7 +1010,11 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
     if (rng() % 4 == 0) {
       _writer->RefreshCommit();
     }
-    Remove(positions, victims);
+    if (round % 2 == 0) {
+      Remove(positions, victims);
+    } else {
+      RemoveReplayed(positions, victims);
+    }
     ExpectModel();
   }
   _writer->RefreshCommit();

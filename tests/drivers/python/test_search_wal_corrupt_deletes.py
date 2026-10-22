@@ -1,4 +1,4 @@
-"""Replay refuses a search-table row-range delete record it can't trust."""
+"""Replay refuses a search-table delete record it can't trust."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ SERENED_BIN = os.environ.get(
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
 )
 
-EMPTY_RANGE_FAULT = "search_delete_wal_empty_range"
-OUTSIDE_SEGMENT_FAULT = "search_delete_wal_outside_segment"
+TRUNCATED_POSITIONS_FAULT = "search_delete_wal_truncated_positions"
+NO_SEGMENT_FAULT = "search_delete_wal_no_segment"
 MALFORMED_MAPS_FAULT = "search_delete_wal_malformed_maps"
 
 pytestmark = pytest.mark.skipif(
@@ -28,15 +28,15 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.parametrize(
     ("fault", "error"),
     [
-        (EMPTY_RANGE_FAULT, "Corrupt WAL: row range out of bounds"),
+        (TRUNCATED_POSITIONS_FAULT, "Malformed doc removal: it ends early"),
         (
-            OUTSIDE_SEGMENT_FAULT,
-            "Corrupt WAL: search-table row range leaves its segment",
+            NO_SEGMENT_FAULT,
+            "Malformed doc removal: a segment number is out of range",
         ),
         (MALFORMED_MAPS_FAULT, "Malformed doc map: it ends early"),
     ],
 )
-def test_corrupt_row_range_refuses_replay(tmp_path: Path, fault: str, error: str) -> None:
+def test_corrupt_delete_refuses_replay(tmp_path: Path, fault: str, error: str) -> None:
     server = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "serened.log"))
     try:

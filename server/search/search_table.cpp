@@ -54,7 +54,6 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
-#include "connector/row_position.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -529,28 +528,15 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                     _table_id, context);
 }
 
-void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                                     std::span<const uint64_t> starts,
-                                     std::span<const uint64_t> counts) {
-  for (size_t i = 0; i < starts.size(); ++i) {
-    const auto doc = connector::RowPositionDoc(starts[i]);
-    if (connector::RowPositionSegment(starts[i]) ==
-          irs::DocRemoval::kNoSegment ||
-        !irs::doc_limits::valid(doc) ||
-        counts[i] > irs::doc_limits::eof() - doc) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DATA_CORRUPTED),
-        ERR_MSG("Corrupt WAL: search-table row range leaves its segment"));
-    }
-  }
+void SearchTable::ReplayDeleteRowPositions(duckdb::AttachedDatabase& db,
+                                           std::string_view positions) {
+  auto removal = irs::ReadDocRemoval(positions);
   auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
-  if (auto removal =
-        connector::MakeRowRunRemoval(starts, counts, session->maps)) {
-    session->trx.Remove(std::move(*removal));
-  }
+  removal.maps = session->maps;
+  session->trx.Remove(std::move(removal));
 }
 
 void SearchTable::ReplayRowPositionMaps(duckdb::AttachedDatabase& db,

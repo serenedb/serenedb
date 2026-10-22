@@ -132,9 +132,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk);
-  void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                          std::span<const uint64_t> starts,
-                          std::span<const uint64_t> counts);
+  void ReplayDeleteRowPositions(duckdb::AttachedDatabase& db,
+                                std::string_view positions);
   void ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
                              std::string_view maps);
   void ReplayTruncate(duckdb::AttachedDatabase& db);

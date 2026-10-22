@@ -655,6 +655,65 @@ TEST(document_mask_test, builder_copies_and_merges_a_frozen_mask) {
   ASSERT_EQ(mask, RoundTrip(mask));
 }
 
+TEST(document_mask_test, builder_merges_the_live_docs_below_an_end) {
+  const auto removed =
+    Join({Every(1, 65536, 3), Every(70000, 70100, 1), {200000}});
+  const auto masked_docs = std::vector<doc_id_t>{1, 4, 70000, 70001, 200000};
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto docs = Build(removed);
+    auto masked = Build(masked_docs);
+    if (frozen) {
+      docs = RoundTrip(docs);
+      masked = RoundTrip(masked);
+    }
+    auto builder = Builder({7, 300000});
+    ASSERT_TRUE(builder.MergeLive(docs, &masked, 70050));
+    std::vector<doc_id_t> expected{300000};
+    for (const auto doc : removed) {
+      if (doc < 70050 && !masked.Contains(doc)) {
+        expected.push_back(doc);
+      }
+    }
+    expected = Join({expected});
+    ASSERT_EQ(expected.size(), builder.Count());
+    for (const auto doc : expected) {
+      ASSERT_TRUE(builder.Contains(doc)) << doc;
+    }
+    ASSERT_FALSE(builder.Contains(1));
+    ASSERT_FALSE(builder.Contains(70050));
+    ASSERT_FALSE(builder.Contains(200000));
+    ASSERT_FALSE(builder.MergeLive(docs, &masked, 70050));
+    ASSERT_EQ(expected.size(), builder.Count());
+    const auto empty = Build({});
+    ASSERT_TRUE(builder.MergeLive(docs, &empty, 70050));
+    ASSERT_EQ(expected.size() + 4, builder.Count());
+    ASSERT_TRUE(builder.MergeLive(docs, nullptr, kEof));
+    ASSERT_TRUE(builder.Contains(200000));
+    ASSERT_FALSE(builder.MergeLive(docs, nullptr, kEof));
+  }
+}
+
+TEST(document_mask_test, builder_merges_a_live_range) {
+  const auto masked = Build(Join({Every(10, 20, 1), {65536, 99999}}));
+  irs::DocumentMaskBuilder builder;
+  ASSERT_FALSE(builder.MergeLiveRange(5, 5, &masked));
+  ASSERT_TRUE(builder.Empty());
+  ASSERT_TRUE(builder.MergeLiveRange(1, 100000, &masked));
+  ASSERT_EQ(99999 - 12, builder.Count());
+  ASSERT_TRUE(builder.Contains(1));
+  ASSERT_TRUE(builder.Contains(9));
+  ASSERT_FALSE(builder.Contains(10));
+  ASSERT_FALSE(builder.Contains(19));
+  ASSERT_TRUE(builder.Contains(65535));
+  ASSERT_FALSE(builder.Contains(65536));
+  ASSERT_FALSE(builder.Contains(99999));
+  ASSERT_FALSE(builder.Contains(100000));
+  ASSERT_FALSE(builder.MergeLiveRange(1, 100000, &masked));
+  ASSERT_TRUE(builder.MergeLiveRange(1, 100001, nullptr));
+  ASSERT_EQ(100000, builder.Count());
+}
+
 TEST(document_mask_test, read_frozen_rejects_corruption) {
   const auto blob = FrozenBlob(Build(Join(
     {Every(1, 65536, 3), Every(70000, 70100, 1), Every(140000, 140010, 7)})));

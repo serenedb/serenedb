@@ -28,7 +28,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/wal_entry.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "connector/column_id.h"
+#include "connector/row_position.h"
 
 namespace duckdb {
 
@@ -46,19 +47,9 @@ class Catalog;
 }  // namespace duckdb
 namespace sdb::search {
 
-inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, uint64_t position) {
-  if (!runs.starts.empty() &&
-      position == runs.starts.back() + runs.counts.back()) {
-    ++runs.counts.back();
-    return;
-  }
-  runs.starts.emplace_back(position);
-  runs.counts.emplace_back(1);
-}
-
 // Per-search-table, per-transaction write buffer.
 //
-// One collection of rows and one vector of delete row ranges, both filled in
+// One collection of rows and the positions of the removed rows, both filled in
 // issue order; nothing reaches iresearch until the buffer is flushed. `ops`
 // records only the things that are not rows -- deletes and truncates -- each
 // carrying the number of buffered rows that precede it, so replay can
@@ -68,12 +59,20 @@ struct LocalTableChangesEntry {
     // Buffered rows that precede this op. Rows the flush already promoted are
     // gone from the buffer, so their ops sit at 0.
     uint64_t row_watermark = 0;
-    // Runs of row positions to remove. Empty for a TRUNCATE.
-    duckdb::WALDeleteRowRanges deletes;
+    irs::DocRemovalBuilder positions;
+    irs::DocRemoval removal;
     bool truncate = false;
     bool clears_shard = false;
 
     bool IsTruncate() const noexcept { return truncate; }
+
+    const irs::DocRemoval& Removal() {
+      if (!positions.Empty()) {
+        SDB_ASSERT(removal.segments.empty());
+        removal = std::move(positions).Finish();
+      }
+      return removal;
+    }
   };
 
   using EmitFn = absl::AnyInvocable<void(duckdb::DataChunk&) const>;
@@ -125,9 +124,22 @@ struct LocalTableChangesEntry {
         ops.back().row_watermark != rows) {
       ops.emplace_back().row_watermark = rows;
     }
-    auto& deletes = ops.back().deletes;
-    for (const auto& place : places) {
-      AppendRowRun(deletes, static_cast<uint64_t>(place.GetValue()));
+    auto& deletes = ops.back().positions;
+    for (duckdb::idx_t i = 0; i < places.size();) {
+      const auto first = static_cast<uint64_t>(places.GetValueUnsafe(i));
+      auto end = first + 1;
+      while (++i < places.size() &&
+             static_cast<uint64_t>(places.GetValueUnsafe(i)) == end) {
+        ++end;
+      }
+      const auto segment = connector::RowPositionSegment(first);
+      const auto doc = connector::RowPositionDoc(first);
+      if (end - first == 1) {
+        deletes.Add(segment, doc);
+      } else {
+        deletes.AddRange(segment, doc,
+                         static_cast<irs::doc_id_t>(doc + (end - first)));
+      }
     }
   }
 

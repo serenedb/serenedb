@@ -44,7 +44,6 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/row_position.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table.h"
 #include "server/utils/primary_key.h"
@@ -55,7 +54,9 @@ namespace {
 uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
   uint64_t size = changes.BufferedBytes();
   for (const auto& op : changes.ops) {
-    size += op.deletes.starts.size() * 2 * sizeof(uint64_t);
+    for (const auto& docs : op.removal.docs) {
+      size += docs->FrozenSize();
+    }
   }
   return size;
 }
@@ -106,24 +107,19 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       [&](duckdb::DataChunk& rows) { _entries.WriteInsert(rows); },
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
-        const auto& deletes = op.deletes;
-        for (const auto start : deletes.starts) {
-          _segments.push_back(connector::RowPositionSegment(start));
+        const auto& removal = op.Removal();
+        _segments.insert(_segments.end(), removal.segments.begin(),
+                         removal.segments.end());
+        auto positions = irs::WriteDocRemoval(removal);
+        SDB_IF_FAILURE("search_delete_wal_truncated_positions") {
+          positions.pop_back();
         }
-        SDB_IF_FAILURE("search_delete_wal_empty_range") {
-          auto empty_range = deletes;
-          empty_range.counts.front() = 0;
-          _entries.WriteDeleteRowRanges(empty_range);
-          return;
+        SDB_IF_FAILURE("search_delete_wal_no_segment") {
+          auto corrupt = removal;
+          corrupt.segments.front() = irs::DocRemoval::kNoSegment;
+          positions = irs::WriteDocRemoval(corrupt);
         }
-        SDB_IF_FAILURE("search_delete_wal_outside_segment") {
-          auto outside_segment = deletes;
-          outside_segment.counts.front() = uint64_t{1}
-                                           << connector::kRowPositionDocBits;
-          _entries.WriteDeleteRowRanges(outside_segment);
-          return;
-        }
-        _entries.WriteDeleteRowRanges(deletes);
+        _entries.WriteDeleteRowPositions(std::move(positions));
       });
     absl::c_sort(_segments);
     _segments.erase(std::unique(_segments.begin(), _segments.end()),
@@ -233,9 +229,8 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
     },
     [&](LocalTableChangesEntry::Op& op) {
       SDB_ASSERT(!op.IsTruncate());
-      if (auto removal = connector::MakeRowRunRemoval(op.deletes.starts,
-                                                      op.deletes.counts)) {
-        trx.Remove(std::move(*removal));
+      if (const auto& removal = op.Removal(); !removal.segments.empty()) {
+        trx.Remove(removal);
       }
     });
   entry.applied_ops = entry.ops.size();

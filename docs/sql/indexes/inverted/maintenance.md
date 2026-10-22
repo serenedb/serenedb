@@ -120,7 +120,7 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 <DocCallout type="tip">
 
-`DELETE` sits outside this bound, but costs little: each removed row holds only its storage position until the removal is applied, and a run of consecutive rows holds one, so even a million-row `DELETE` stays within a few tens of megabytes.
+`DELETE` sits outside this bound, but costs little: until the removal is applied, a removed row takes at most a few bytes and a run of consecutive rows almost none, so even a million-row `DELETE` stays within a few megabytes.
 
 </DocCallout>
 

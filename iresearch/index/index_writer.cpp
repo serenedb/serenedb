@@ -121,25 +121,21 @@ class NewRemovals {
 bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs, DocRemoval& removal,
                        const SubReader& reader,
                        const DocRemovalResolver& removals) {
-  NewRemovals removed{deleted_docs, reader};
-  const auto end = doc_limits::min() + reader.docs_count();
+  const auto end =
+    static_cast<doc_id_t>(doc_limits::min() + reader.docs_count());
   if (removal.all) {
-    for (auto doc = doc_limits::min(); doc < end; ++doc) {
-      removed.Add(doc);
-    }
-    return removed.Modified();
+    return deleted_docs.MergeLiveRange(doc_limits::min(), end,
+                                       reader.docs_mask());
   }
   if (removal.Keyed()) {
+    NewRemovals removed{deleted_docs, reader};
     RemoveKeyedDocs(removal, reader, &deleted_docs, doc_limits::eof(),
                     [&](doc_id_t doc) { removed.Add(doc); });
     return removed.Modified();
   }
-  for (const auto doc : removals.PositionalDocs(removal, reader)) {
-    if (doc < end) {
-      removed.Add(doc);
-    }
-  }
-  return removed.Modified();
+  const auto* docs = removals.PositionalDocs(removal, reader);
+  return docs != nullptr &&
+         deleted_docs.MergeLive(*docs, reader.docs_mask(), end);
 }
 
 void FlushedSegmentContext::Remove(DocRemoval& removal) {

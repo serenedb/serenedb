@@ -38,7 +38,6 @@
 #include "connector/common.h"
 #include "connector/inet_terms.h"
 #include "connector/primary_key.h"
-#include "connector/row_position.h"
 #include "connector/term_dict.h"
 
 namespace sdb::connector {
@@ -1113,27 +1112,6 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
       irs::DocRemoval::Keys(term_dict::kPKFieldId, std::move(_keys)));
   }
   _keys = {};
-}
-
-std::optional<irs::DocRemoval> MakeRowRunRemoval(
-  std::span<const uint64_t> starts, std::span<const uint64_t> counts,
-  std::shared_ptr<const irs::DocMapList> maps) {
-  SDB_ENSURE(counts.size() == starts.size(), "search table: ", starts.size(),
-             " removed row runs with ", counts.size(), " counts");
-  if (starts.empty()) {
-    return std::nullopt;
-  }
-  std::vector<irs::DocRemoval::Row> rows;
-  rows.reserve(absl::c_accumulate(counts, size_t{0}));
-  for (size_t i = 0; i < starts.size(); ++i) {
-    for (uint64_t row = 0; row < counts[i]; ++row) {
-      const auto position = starts[i] + row;
-      rows.emplace_back(RowPositionSegment(position), RowPositionDoc(position));
-    }
-  }
-  auto removal = irs::DocRemoval::Build(rows);
-  removal.maps = std::move(maps);
-  return removal;
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

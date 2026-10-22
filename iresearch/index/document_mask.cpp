@@ -20,6 +20,7 @@
 
 #include "iresearch/index/document_mask.hpp"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <roaring/containers/containers.h>
 
@@ -312,8 +313,10 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   if (first == last) {
     return;
   }
+  const auto present =
+    roaring::api::roaring_bitmap_range_cardinality(&_set, first, last);
   roaring::api::roaring_bitmap_add_range(&_set, first, last);
-  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+  _count += (last - first) - present;
 }
 
 void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
@@ -330,6 +333,45 @@ void DocumentMaskBuilder::Merge(const DocumentMask& published) {
   }
   roaring::api::roaring_bitmap_or_inplace(&_set, &published._set.roaring);
   _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+}
+
+bool DocumentMaskBuilder::MergeLive(const DocumentMask& docs,
+                                    const DocumentMask* masked, doc_id_t end) {
+  if (masked == nullptr || masked->Empty()) {
+    return MergeOwned(roaring::api::roaring_bitmap_copy(&docs._set.roaring),
+                      end);
+  }
+  return MergeOwned(roaring::api::roaring_bitmap_andnot(&docs._set.roaring,
+                                                        &masked->_set.roaring),
+                    end);
+}
+
+bool DocumentMaskBuilder::MergeLiveRange(doc_id_t first, doc_id_t last,
+                                         const DocumentMask* masked) {
+  SDB_ASSERT(doc_limits::valid(first));
+  if (first >= last) {
+    return false;
+  }
+  auto* live = roaring::api::roaring_bitmap_from_range(first, last, 1);
+  if (live != nullptr && masked != nullptr && !masked->Empty()) {
+    roaring::api::roaring_bitmap_andnot_inplace(live, &masked->_set.roaring);
+  }
+  return MergeOwned(live, last);
+}
+
+bool DocumentMaskBuilder::MergeOwned(roaring::api::roaring_bitmap_t* live,
+                                     doc_id_t end) {
+  if (live == nullptr) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate the documents to remove"));
+  }
+  absl::Cleanup free = [live] { roaring::api::roaring_bitmap_free(live); };
+  roaring::api::roaring_bitmap_remove_range(live, end,
+                                            uint64_t{doc_limits::eof()} + 1);
+  const auto before = _count;
+  roaring::api::roaring_bitmap_or_inplace(&_set, live);
+  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+  return _count != before;
 }
 
 void DocumentMaskBuilder::Clear() noexcept {

@@ -262,18 +262,18 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
     const auto snapshot = writer->GetSnapshot();
     for (const auto& [field, value] : removals) {
-      std::vector<irs::DocRemoval::Row> rows;
+      irs::DocRemovalBuilder removal;
       for (const auto& segment : snapshot) {
         const auto number = irs::SegmentNumber(segment.Meta().name);
         segment.field(field)->ReadDocs(
           irs::ViewCast<irs::byte_type>(std::string_view{value}),
           [&](doc_id_t doc) {
-            rows.push_back({number, doc});
+            removal.Add(number, doc);
             return true;
           });
       }
       auto trx = writer->GetBatch();
-      trx.Remove(irs::DocRemoval::Build(rows));
+      trx.Remove(std::move(removal).Finish());
       trx.Commit();
     }
     writer->RefreshCommit();

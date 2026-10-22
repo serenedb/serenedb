@@ -30,6 +30,7 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/optimizer/expression_rewriter.hpp>
 #include <duckdb/optimizer/rule/concat_flattening.hpp>
+#include <duckdb/optimizer/rule/constant_folding.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -75,9 +76,14 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                      stream.GetPosition()};
 }
 
-duckdb::unique_ptr<duckdb::Expression> FlattenConcats(
-  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
+duckdb::unique_ptr<duckdb::Expression> ApplyOptimizerRules(
+  duckdb::unique_ptr<duckdb::Expression> expr, bool fold_constants,
+  duckdb::ClientContext& context) {
   duckdb::ExpressionRewriter rewriter{context};
+  if (fold_constants) {
+    rewriter.rules.push_back(
+      duckdb::make_uniq<duckdb::ConstantFoldingRule>(rewriter));
+  }
   rewriter.rules.push_back(
     duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
@@ -111,8 +117,10 @@ void ClearSource(duckdb::Expression& expr) {
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FlattenConcats(FoldConstantCasts(expr.Copy(), context), context);
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
+  bool fold_constants) {
+  auto copy = ApplyOptimizerRules(FoldConstantCasts(expr.Copy(), context),
+                                  fold_constants, context);
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       ClearSource(e);
@@ -195,11 +203,19 @@ std::string NormalizedExpression(
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
   const catalog::InvertedIndexConfig* stored_expressions) {
   auto normalized =
-    NormalizeBoundExpression(expr, table_id, col_index_to_id, context);
+    NormalizeBoundExpression(expr, table_id, col_index_to_id, context, false);
   if (stored_expressions && stored_expressions->StoresExpressions()) {
     ExpandStoredExpressions(normalized, *stored_expressions, context);
   }
   return SerializeBoundExpression(*normalized);
+}
+
+std::string NormalizedIndexKey(const duckdb::Expression& expr,
+                               duckdb::idx_t table_id,
+                               std::span<const ColumnId> col_index_to_id,
+                               duckdb::ClientContext& context) {
+  return SerializeBoundExpression(
+    *NormalizeBoundExpression(expr, table_id, col_index_to_id, context, true));
 }
 
 namespace {

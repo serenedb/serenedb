@@ -189,6 +189,7 @@ sdb_update_module(${GIT_EXECUTABLE} "abseil-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
 add_subdirectory(abseil-cpp)
+sdb_suppress_warnings(abseil-cpp -Wno-unused-parameter)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
@@ -357,6 +358,7 @@ sdb_suppress_warnings(
     -Wno-sign-compare
     -Wno-sometimes-uninitialized
     -Wno-pointer-sign
+    -Wno-absolute-value
 )
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)

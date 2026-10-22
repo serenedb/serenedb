@@ -226,13 +226,18 @@ elseif(SDB_USE_PGO)
 endif()
 
 if(USE_COVERAGE STREQUAL "SourceBased")
-    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_compile_options(
+        -fprofile-instr-generate
+        -fcoverage-mapping
+        -Wno-pass-failed
+    )
     add_link_options(-fprofile-instr-generate -fcoverage-mapping)
 elseif(USE_COVERAGE STREQUAL "SourceBasedMCDC")
     add_compile_options(
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        -Wno-pass-failed
     )
     add_link_options(
         -fprofile-instr-generate
@@ -626,7 +631,11 @@ include(Runtime)
 if(NOT SDB_SANITIZE STREQUAL "")
     # if will be some strange link error just enable this
     # add_compile_options(-fPIC -fPIE)
-    add_compile_options(${SDB_SANITIZE_FLAGS} ${SDB_SANITIZE_EXTRA})
+    add_compile_options(
+        ${SDB_SANITIZE_FLAGS}
+        ${SDB_SANITIZE_EXTRA}
+        -Wno-pass-failed
+    )
 endif()
 
 if(SDB_SANITIZE_UNWINDER)

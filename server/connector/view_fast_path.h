@@ -183,4 +183,6 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept;
 
 std::string FormatLookupLabel(const ViewFastPath& fp);
 
+std::string FormatSourceRowId(const ViewFastPath& fp);
+
 }  // namespace sdb::connector

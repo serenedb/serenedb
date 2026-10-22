@@ -30,6 +30,7 @@
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "connector/view_fast_path.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -211,6 +212,8 @@ bool IResearchSupportsLookup(duckdb::ClientContext& context,
   }
   if (by_pk) {
     info.source_row_id_columns = {kColumnIdentifierGeneratedPk};
+    info.source_row_id_names = {
+      bind.view ? FormatSourceRowId(*bind.view->fast_path) : "rowid"};
     info.prefer_source_lookup =
       GetBoolSetting(context, "sdb_lookup_join_source_hop");
   }

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/strings/strip.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -686,6 +687,31 @@ std::string FormatLookupLabel(const ViewFastPath& fp) {
     return absl::StrCat("glob ", name);
   }
   return std::string{name};
+}
+
+std::string FormatSourceRowId(const ViewFastPath& fp) {
+  switch (fp.pk_spec) {
+    case PkSpec::DuckDBRowId:
+      return "rowid";
+    case PkSpec::FileRowNumber:
+      return "file_row_number";
+    case PkSpec::FileIndexPlusRowNumber:
+      return "file_index, file_row_number";
+    case PkSpec::FileOffset:
+      return "file_offset";
+    case PkSpec::FileIndexPlusOffset:
+      return "file_index, file_offset";
+    case PkSpec::FileIndexPlusDuckDBRowId:
+      return "file_index, rowid";
+    case PkSpec::ExternalPostgresCtid:
+      return "ctid";
+    case PkSpec::ExternalColumnKey:
+      return absl::StrJoin(fp.key_columns, ", ",
+                           [](std::string* out, const ExternalKeyColumn& key) {
+                             absl::StrAppend(out, key.name);
+                           });
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::connector

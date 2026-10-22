@@ -12,6 +12,17 @@ concurrency:
 
 jobs:
   handle:
+    if: >-
+      (github.event_name == 'pull_request_target' && (
+        github.event.action == 'opened' ||
+        (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
+      )) || (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.event.comment.user.login == 'github-actions[bot]' &&
+        contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
+        contains(github.event.comment.body, '- [x] **Trigger Jobs**')
+      )
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -20,11 +31,7 @@ jobs:
       statuses: write
     steps:
       - name: Post build triggers comment
-        if: >-
-          github.event_name == 'pull_request_target' && (
-            github.event.action == 'opened' ||
-            (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
-          )
+        if: github.event_name == 'pull_request_target'
         uses: actions/github-script@v8
         with:
           script: |
@@ -62,12 +69,7 @@ jobs:
 
       - name: Get PR info
         id: pr-info
-        if: >-
-          github.event_name == 'issue_comment' &&
-          github.event.issue.pull_request &&
-          github.event.comment.user.login == 'github-actions[bot]' &&
-          contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
-          contains(github.event.comment.body, '- [x] **Trigger Jobs**')
+        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v8
         with:
           script: |

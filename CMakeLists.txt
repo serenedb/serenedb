@@ -374,7 +374,9 @@ if(SDB_VTUNE)
 endif()
 
 set(SDB_FRAME_POINTERS_OFF "-fomit-frame-pointer -momit-leaf-frame-pointer")
-set(SDB_FRAME_POINTERS_ON "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer")
+set(SDB_FRAME_POINTERS_ON
+    "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+)
 
 set(SDB_DEBUG_INFO_NONE "-g0")
 # no-limit-debug-info to produce symbols for glibc/libc++/etc

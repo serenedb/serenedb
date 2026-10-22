@@ -86,7 +86,8 @@ function(sdb_embed_docs_index TARGET)
         TARGET ${TARGET}
         POST_BUILD
         COMMAND
-            ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
+            ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
             ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
         VERBATIM
     )

@@ -12,10 +12,16 @@ target_include_directories(
 )
 
 add_executable(search-benchmark-game-build build_index.cpp)
-target_link_libraries(search-benchmark-game-build PRIVATE search-benchmark-common)
+target_link_libraries(
+    search-benchmark-game-build
+    PRIVATE search-benchmark-common
+)
 
 add_executable(search-benchmark-game-query do_query.cpp)
-target_link_libraries(search-benchmark-game-query PRIVATE search-benchmark-common)
+target_link_libraries(
+    search-benchmark-game-query
+    PRIVATE search-benchmark-common
+)
 
 add_custom_target(search-benchmark-game)
 add_dependencies(

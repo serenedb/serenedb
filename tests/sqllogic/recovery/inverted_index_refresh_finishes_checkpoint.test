@@ -41,7 +41,7 @@ CHECKPOINT ckpt_refresh_finish;
 
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_checkpoint_before_index_finish:parked';
 
 

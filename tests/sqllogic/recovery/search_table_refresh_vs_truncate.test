@@ -21,7 +21,7 @@ statement async ok
 VACUUM (REFRESH_TABLE) rvt;
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_index_refresh:parked';
 
 connection truncater

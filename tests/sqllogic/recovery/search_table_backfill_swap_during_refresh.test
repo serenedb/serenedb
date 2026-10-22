@@ -52,7 +52,7 @@ VACUUM (REFRESH_TABLE) bsr;
 
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_index_refresh_begun:parked';
 
 

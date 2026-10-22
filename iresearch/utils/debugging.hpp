@@ -25,10 +25,6 @@
 #include <string_view>
 #include <vector>
 
-#ifdef SDB_FAULT_INJECTION
-#include <absl/time/time.h>
-#endif
-
 /// macro SDB_IF_FAILURE
 /// this macro can be used in maintainer mode to make the server fail at
 /// certain locations in the C code. The points at which a failure is actually
@@ -103,10 +99,6 @@ constexpr void WaitWhileFailurePointDebugging(std::string_view) noexcept {}
 void ParkOnceOnFailurePointDebugging(std::string_view value);
 #else
 constexpr void ParkOnceOnFailurePointDebugging(std::string_view) noexcept {}
-#endif
-
-#ifdef SDB_FAULT_INJECTION
-bool AwaitFailurePointDebugging(std::string_view value, absl::Duration timeout);
 #endif
 
 constexpr bool CanUseFailurePointsDebugging() {

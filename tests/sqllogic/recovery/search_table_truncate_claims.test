@@ -21,7 +21,7 @@ statement async ok
 TRUNCATE tcl;
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection other

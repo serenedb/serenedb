@@ -24,7 +24,7 @@ statement async ok
 INSERT INTO rtp VALUES (2, 'q');
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection default
@@ -36,7 +36,7 @@ statement async ok
 VACUUM (REFRESH_TABLE) rtp;
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection a

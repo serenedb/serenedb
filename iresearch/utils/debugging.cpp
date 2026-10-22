@@ -139,21 +139,5 @@ void ParkOnceOnFailurePointDebugging(std::string_view value) {
   }
 }
 
-bool AwaitFailurePointDebugging(std::string_view value,
-                                absl::Duration timeout) {
-  const auto is_set =
-    +[](std::string_view* v) noexcept { return gFailurePoints.contains(*v); };
-  absl::MutexLock lock{&gFailurePointsLock};
-  if (!gFailurePointsLock.AwaitWithTimeout(absl::Condition{is_set, &value},
-                                           timeout)) {
-    return false;
-  }
-  gFailurePoints.erase(value);
-  if (gFailurePoints.empty()) {
-    gHasFailurePoints.store(false, std::memory_order_relaxed);
-  }
-  return true;
-}
-
 }  // namespace irs
 #endif

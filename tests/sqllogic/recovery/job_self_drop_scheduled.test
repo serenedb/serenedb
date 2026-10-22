@@ -14,7 +14,7 @@ statement ok
 CREATE JOB jsds_after AFTER 1 SECOND AS DROP JOB jsds_after;
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_after_run:parked';
 
 
@@ -44,7 +44,7 @@ statement ok
 CREATE JOB jsds_every EVERY 1 SECOND AS DROP JOB jsds_every;
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_after_run:parked';
 
 
@@ -74,7 +74,7 @@ statement ok
 CREATE JOB jsds_script AFTER 1 SECOND AS $$BEGIN; INSERT INTO jsds_log VALUES (1, 'scheduled'); DROP JOB jsds_script; COMMIT;$$;
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_after_run:parked';
 
 
@@ -105,7 +105,7 @@ statement ok
 CREATE JOB jsds_concurrent EVERY 1 SECOND CONCURRENT AS DROP JOB IF EXISTS jsds_concurrent;
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_before_run:parked';
 
 
@@ -121,7 +121,7 @@ statement ok
 SET sdb_faults = 'pause_job_before_run:release';
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_after_run:parked';
 
 
@@ -143,7 +143,7 @@ statement ok
 SET sdb_faults = 'pause_job_after_run:release';
 
 
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_job_before_run:parked';
 
 

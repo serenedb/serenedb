@@ -34,7 +34,7 @@ statement async error connection closed
 TRUNCATE xt_local, xt_other.public.xt_remote;
 
 connection default
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
@@ -99,7 +99,7 @@ statement async error connection closed
 COMMIT;
 
 connection after_autocommit
-statement ok
+statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
 
 connection after_autocommit

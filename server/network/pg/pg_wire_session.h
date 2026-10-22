@@ -82,6 +82,7 @@
 #include "network/credentials.h"
 #include "network/gate.h"
 #include "network/io_executor.h"
+#include "network/listen_spec.h"
 #include "network/pg/frame_reader.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/protocol_state.h"
@@ -124,7 +125,7 @@ struct PgServerContext {
   // max_connections setting applies. Over-cap connections get 53300 then
   // close.
   std::atomic<uint32_t>* active = nullptr;
-  std::optional<uint32_t> max_connections;
+  uint32_t max_connections = kMaxConnectionsFromSetting;
   // Session Run() futures land here (slot taken by the acceptor at spawn) so
   // Server::stop() can wait for every session to complete.
   yaclib::WaitGroup<>* sessions = nullptr;
@@ -437,7 +438,7 @@ class PgWireSession
   uint32_t _max_message = kDefaultMaxMessageBytes;
   std::atomic<uint32_t>* _active = nullptr;
   yaclib::WaitGroup<>* _sessions = nullptr;
-  std::optional<uint32_t> _max_conn;
+  uint32_t _max_conn = kMaxConnectionsFromSetting;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
   // Client peer IP, captured once from the socket before auth. Unspecified

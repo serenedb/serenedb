@@ -155,7 +155,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
-        sequence_info.tags[std::string{kGeneratedPkSequenceTag}] =
+        sequence_info.tags[kGeneratedPkSequenceTag] =
           entry->name.GetIdentifierName();
         sequence_info.permissions.owner = info.Base().permissions.owner;
         info.Base().dependencies.AddOwnedDependency(
@@ -460,16 +460,16 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
-std::shared_ptr<const CatalogSnapshot> SnapshotCatalog::Snapshot(
+std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(
   duckdb::ClientContext& context, duckdb::CatalogSet& set) {
-  const auto version = GetCatalogVersion(context).GetIndex();
+  const auto version = _catalog.GetCatalogVersion(context).GetIndex();
   if (version >= duckdb::TRANSACTION_ID_START) {
     return nullptr;
   }
   std::shared_ptr<const CatalogSnapshot> cached;
   {
-    absl::ReaderMutexLock lock{&_snapshots_mutex};
-    if (_snapshots_version == version) {
+    absl::ReaderMutexLock lock{&_mutex};
+    if (_version == version) {
       if (const auto it = _snapshots.find(&set); it != _snapshots.end()) {
         cached = it->second;
       }
@@ -477,18 +477,19 @@ std::shared_ptr<const CatalogSnapshot> SnapshotCatalog::Snapshot(
   }
   if (cached) {
     SDB_ASSERT(cached->entries ==
-               VisibleEntries(GetCatalogTransaction(context), set));
+               VisibleEntries(_catalog.GetCatalogTransaction(context), set));
     return cached;
   }
   auto snapshot = std::make_shared<CatalogSnapshot>();
-  snapshot->entries = VisibleEntries(GetCatalogTransaction(context), set);
-  absl::MutexLock lock{&_snapshots_mutex};
-  if (_snapshots_version > version) {
+  snapshot->entries =
+    VisibleEntries(_catalog.GetCatalogTransaction(context), set);
+  absl::MutexLock lock{&_mutex};
+  if (_version > version) {
     return snapshot;
   }
-  if (_snapshots_version < version) {
+  if (_version < version) {
     _snapshots.clear();
-    _snapshots_version = version;
+    _version = version;
   }
   return _snapshots.try_emplace(&set, std::move(snapshot)).first->second;
 }

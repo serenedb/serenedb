@@ -161,7 +161,7 @@ def type_constants(types, by_oid):
 
 def generate(gen):
     types, by_oid, procs = supported_types(gen)
-    constants = type_constants(types, by_oid)
+    constants = type_constants(sorted(by_oid.values()), by_oid)
     collations = sorted(
         (int(row['oid']), row['collname'], row['collprovider'],
          row['collcollate'] or '') for row in gen.rows['pg_collation']

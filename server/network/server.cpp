@@ -281,7 +281,8 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
   deps.max_message_bytes = _max_message;
   deps.active = &_active;
   deps.sessions = &_sessions;
-  deps.max_connections = spec.max_connections;
+  deps.max_connections =
+    spec.max_connections.value_or(network::kMaxConnectionsFromSetting);
   deps.auth_timeout = _auth_timeout;
   deps.proxy = spec.proxy;
   auto acceptor = std::make_shared<
@@ -323,7 +324,8 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
     deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections;
+    deps.max_connections =
+      spec.max_connections.value_or(network::kMaxConnectionsFromSetting);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
     if (ssl) {
@@ -346,7 +348,8 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.active = &_active;
     deps.cancel = &_cancel;
     deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections;
+    deps.max_connections =
+      spec.max_connections.value_or(network::kMaxConnectionsFromSetting);
     deps.max_body_bytes = network::http::MaxBodyBytes(spec.apis);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;

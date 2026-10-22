@@ -56,13 +56,22 @@ std::string_view ScanPrefix(const SystemCondition<std::string>& condition) {
   return lower.substr(0, common);
 }
 
-catalog::SnapshotCatalog& CatalogOf(duckdb::ClientContext& context,
-                                    duckdb::DuckCatalog& database,
-                                    SystemCatalog catalog) {
+duckdb::DuckCatalog& CatalogOf(duckdb::ClientContext& context,
+                               duckdb::DuckCatalog& database,
+                               SystemCatalog catalog) {
   if (catalog == SystemCatalog::Cluster) {
     return catalog::ClusterOf(context);
   }
-  return database.Cast<catalog::SnapshotCatalog>();
+  return database;
+}
+
+catalog::CatalogSnapshots& SnapshotsOf(duckdb::ClientContext& context,
+                                       duckdb::DuckCatalog& database,
+                                       SystemCatalog catalog) {
+  if (catalog == SystemCatalog::Cluster) {
+    return catalog::ClusterOf(context).Snapshots();
+  }
+  return database.Cast<catalog::SereneDBCatalog>().Snapshots();
 }
 
 }  // namespace
@@ -226,9 +235,9 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
 }
 
 SystemSet SystemScan::SetOf(
-  catalog::SnapshotCatalog& catalog, duckdb::CatalogSet& set,
+  catalog::CatalogSnapshots& snapshots, duckdb::CatalogSet& set,
   const duckdb::CatalogTransaction& transaction) const {
-  auto snapshot = catalog.Snapshot(_context, set);
+  auto snapshot = snapshots.Get(_context, set);
   if (!snapshot) {
     auto scanned = std::make_shared<catalog::CatalogSnapshot>();
     set.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
@@ -244,7 +253,7 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
                                 duckdb::CatalogType type,
                                 const SystemPrefix* prefix) const {
   auto result = SetOf(
-    _database.Cast<catalog::SnapshotCatalog>(),
+    _database.Cast<catalog::SereneDBCatalog>().Snapshots(),
     schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type), Transaction());
   if (prefix) {
     const duckdb::IdentifierCompare compare{
@@ -343,7 +352,8 @@ SystemEntries SystemScan::Resolve(const CatalogSetSource& source) const {
     return result;
   }
   auto& catalog = CatalogOf(_context, _database, source.catalog);
-  result.listed = SetOf(catalog, catalog.GetCatalogSet(source.type),
+  result.listed = SetOf(SnapshotsOf(_context, _database, source.catalog),
+                        catalog.GetCatalogSet(source.type),
                         catalog.GetCatalogTransaction(_context));
   return result;
 }

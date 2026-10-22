@@ -507,6 +507,46 @@
   skip:
     all: ["TODO: triage PgDdlCommand"]
 
+- oid: 71
+  name: pg_type
+  pg_typname: pg_type
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgType"]
+
+- oid: 75
+  name: pg_attribute
+  pg_typname: pg_attribute
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAttribute"]
+
+- oid: 81
+  name: pg_proc
+  pg_typname: pg_proc
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgProc"]
+
+- oid: 83
+  name: pg_class
+  pg_typname: pg_class
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgClass"]
+
 - oid: 142
   name: xml
   pg_typname: xml
@@ -545,6 +585,16 @@
   skip:
     all: ["TODO: triage JsonArray"]
 
+- oid: 210
+  name: pg_type_array
+  pg_typname: pg_type_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgTypeArray"]
+
 - oid: 269
   name: table_am_handler
   pg_typname: table_am_handler
@@ -555,6 +605,16 @@
   skip:
     all: ["TODO: triage TableAmHandler"]
 
+- oid: 270
+  name: pg_attribute_array
+  pg_typname: pg_attribute_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAttributeArray"]
+
 - oid: 271
   name: xid8_array
   pg_typname: xid8_array
@@ -564,6 +624,26 @@
   samples: []
   skip:
     all: ["TODO: triage Xid8Array"]
+
+- oid: 272
+  name: pg_proc_array
+  pg_typname: pg_proc_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgProcArray"]
+
+- oid: 273
+  name: pg_class_array
+  pg_typname: pg_class_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgClassArray"]
 
 - oid: 325
   name: index_am_handler

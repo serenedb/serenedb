@@ -33,6 +33,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -97,6 +98,18 @@ inline bool IsNumericOid(uint64_t oid) {
 inline bool IsDeclaredNumeric(const Statement& stmt, size_t id) {
   const auto& oids = stmt.ParamOids();
   return id < oids.size() && IsNumericOid(oids[id]);
+}
+
+uint64_t PlanEpoch(const duckdb::PreparedStatement& prepared,
+                   duckdb::ClientContext& context, uint64_t epoch) {
+  const auto& databases = prepared.GetStatementProperties().read_databases;
+  if (const auto database =
+        databases.find(duckdb::DatabaseManager::TryGetDefaultDatabase(context));
+      database != databases.end() &&
+      database->second.catalog_version.IsValid()) {
+    return database->second.catalog_version.GetIndex();
+  }
+  return epoch;
 }
 
 duckdb::LogicalType DeclaredNumericParamType(
@@ -2028,11 +2041,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0 && !IsNumericOid(oid)) {
-      auto type = sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext());
-      if (type.id() != duckdb::LogicalTypeId::UNKNOWN) {
-        type_hints.emplace(absl::StrCat(i + 1), std::move(type));
-      }
+    if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
+      type_hints.emplace(
+        absl::StrCat(i + 1),
+        sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
     }
   }
 
@@ -2108,10 +2120,6 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     extracted.erase(extracted.begin());
   }
   if (extracted.size() == 1) {
-    // The temp-DDL scaffolding above ran full query lifecycles whose statement
-    // end released the Parse-time snapshot.
-    _connection_ctx->RefreshCatalogEpoch();
-    const auto bind_epoch = _connection_ctx->CatalogEpoch();
     const duckdb::Identifier alias{statement_name};
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints,
@@ -2123,6 +2131,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
       _proto.statements.Undefine(statement_name);
       error.Throw();
     }
+    const auto bind_epoch =
+      PlanEpoch(*prepared, *_conn->context, _connection_ctx->CatalogEpoch());
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));
@@ -2261,7 +2271,8 @@ void PgWireSession<Kind>::RevalidatePlan(Statement& stmt) {
       alias->second = handle->second;
     }
   }
-  stmt.SetPrepared(std::move(prepared), epoch);
+  const auto bind_epoch = PlanEpoch(*prepared, *_conn->context, epoch);
+  stmt.SetPrepared(std::move(prepared), bind_epoch);
 }
 
 template<SocketKind Kind>

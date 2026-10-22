@@ -367,9 +367,9 @@ std::vector<ListenSpec> ParseListenSpecs(
   return out;
 }
 
-uint32_t MaxConnections(std::optional<uint32_t> listener) {
-  if (listener) {
-    return *listener;
+uint32_t MaxConnections(uint32_t listener) {
+  if (listener != kMaxConnectionsFromSetting) {
+    return listener;
   }
   return GetGlobalSetting(duckdb::DBConfig::GetConfig(
                             irs::DuckDBEngine::Instance().instance()),

@@ -41,13 +41,13 @@
 
 namespace sdb::catalog {
 
-class ClusterCatalog final : public SnapshotCatalog {
+class ClusterCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "sdb_cluster";
   static constexpr const char* kDatabaseName = "sdb_cluster";
 
   explicit ClusterCatalog(duckdb::AttachedDatabase& db)
-    : SnapshotCatalog{db, true} {}
+    : duckdb::DuckCatalog{db, true} {}
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::idx_t DefaultSchemaOid() const final;
@@ -95,6 +95,7 @@ class ClusterCatalog final : public SnapshotCatalog {
                     duckdb::DropInfo& info) final;
 
   auth::RoleCache& Roles() noexcept { return _roles; }
+  CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
   void CompactCatalogLog();
@@ -105,6 +106,7 @@ class ClusterCatalog final : public SnapshotCatalog {
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
   auth::RoleCache _roles;
+  CatalogSnapshots _snapshots{*this};
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

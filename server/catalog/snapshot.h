@@ -72,16 +72,17 @@ struct CatalogSnapshot {
     subjects;
 };
 
-class SnapshotCatalog : public duckdb::DuckCatalog {
+class CatalogSnapshots final {
  public:
-  using duckdb::DuckCatalog::DuckCatalog;
+  explicit CatalogSnapshots(duckdb::DuckCatalog& catalog) : _catalog{catalog} {}
 
-  std::shared_ptr<const CatalogSnapshot> Snapshot(
-    duckdb::ClientContext& context, duckdb::CatalogSet& set);
+  std::shared_ptr<const CatalogSnapshot> Get(duckdb::ClientContext& context,
+                                             duckdb::CatalogSet& set);
 
  private:
-  absl::Mutex _snapshots_mutex;
-  duckdb::idx_t _snapshots_version = 0;
+  duckdb::DuckCatalog& _catalog;
+  absl::Mutex _mutex;
+  duckdb::idx_t _version = 0;
   irs::containers::FlatHashMap<const duckdb::CatalogSet*,
                                std::shared_ptr<const CatalogSnapshot>>
     _snapshots;

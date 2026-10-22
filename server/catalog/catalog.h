@@ -57,18 +57,19 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::DatabaseModificationType type =
                        duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
 
-class SereneDBCatalog final : public SnapshotCatalog {
+class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
   static constexpr const char* kReadOnlyStorageType = "serenedb_readonly";
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : SnapshotCatalog{db, true}, _directory{std::move(directory)} {}
+    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
   }
+  CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
   std::string GetCatalogType() final;
 
@@ -195,6 +196,7 @@ class SereneDBCatalog final : public SnapshotCatalog {
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
+  CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
   std::atomic_bool _detached{false};
 };

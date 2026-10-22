@@ -738,7 +738,7 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  SystemSet SetOf(catalog::SnapshotCatalog& catalog, duckdb::CatalogSet& set,
+  SystemSet SetOf(catalog::CatalogSnapshots& snapshots, duckdb::CatalogSet& set,
                   const duckdb::CatalogTransaction& transaction) const;
 
   std::span<const catalog::CatalogEdge> WalkedSubjects(

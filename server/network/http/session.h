@@ -65,6 +65,7 @@
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
 #include "network/io_executor.h"
+#include "network/listen_spec.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
 #include "server/utils/asio_ns.h"
@@ -85,7 +86,7 @@ struct HttpServerContext {
   // max_connections setting applies. Over-cap connections get a 503 then
   // close.
   std::atomic<uint32_t>* active = nullptr;
-  std::optional<uint32_t> max_connections;
+  uint32_t max_connections = kMaxConnectionsFromSetting;
   uint64_t max_body_bytes = H1Limits{}.max_body_bytes;
   // Same cancel registry as the pg endpoint: http sessions register the same
   // tokens, so SQL pg_cancel/terminate_backend and server shutdown reach them.
@@ -360,7 +361,7 @@ class HttpSession final
   std::shared_ptr<CancelToken> _cancel_token;
   uint64_t _cancel_key = 0;
   yaclib::WaitGroup<>* _sessions = nullptr;
-  std::optional<uint32_t> _max_conn;
+  uint32_t _max_conn = kMaxConnectionsFromSetting;
   std::string_view _cors_origins;
   std::string_view _database;
   std::string_view _schema;

@@ -455,7 +455,7 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
   const auto snapshot =
     storage == catalog::SereneDBCatalog::kStorageType ||
         storage == catalog::SereneDBCatalog::kReadOnlyStorageType
-      ? catalog.Cast<catalog::SnapshotCatalog>().Snapshot(
+      ? catalog.Cast<catalog::SereneDBCatalog>().Snapshots().Get(
           context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
                      duckdb::CatalogType::TABLE_ENTRY))
       : nullptr;

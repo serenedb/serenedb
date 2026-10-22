@@ -253,6 +253,10 @@ bool PinsTimeZone(const duckdb::BoundFunctionExpression& func) {
 }  // namespace
 
 bool ComputedFromRowAlone(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    return ComputedFromRowAlone(
+      *expr.Cast<duckdb::BoundLambdaExpression>().LambdaExpr());
+  }
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
     if (DependsOnSession(func.GetReturnType()) ||

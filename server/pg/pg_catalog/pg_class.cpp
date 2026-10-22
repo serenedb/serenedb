@@ -209,6 +209,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           row.relacl = {table->permissions.acl};
           if (const auto* search =
                 dynamic_cast<const catalog::SearchTableEntry*>(table)) {
+            row.reltablespace = search->Tablespace();
             if (const auto pk_sequence = search->GeneratedPkSequence(context)) {
               generated_pk_sequences.insert(pk_sequence->oid);
             }
@@ -267,6 +268,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
+      row.reltablespace = inverted->Tablespace();
       auto& strings = reloptions_storage.emplace_back();
       auto& views = reloptions_views.emplace_back();
       for (const auto name : catalog::kInvertedIndexSettings) {

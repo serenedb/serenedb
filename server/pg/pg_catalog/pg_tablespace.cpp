@@ -20,39 +20,41 @@
 
 #include "pg/pg_catalog/pg_tablespace.h"
 
+#include <span>
+#include <vector>
+
+#include "catalog/cluster.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr auto kSampleData = std::to_array<PgTablespace>({
-  {
-    .oid = 1663,
-    .spcname = "pg_default",
-    .spcowner = pg::kRootUser,
-  },
-  {
-    .oid = 1664,
-    .spcname = "pg_global",
-    .spcowner = pg::kRootUser,
-  },
-});
-
 constexpr uint64_t kNullMask = MaskFromNulls({
-  GetIndex(&PgTablespace::spcacl),
   GetIndex(&PgTablespace::spcoptions),
 });
 
 }  // namespace
 
-// TODO: emit user rows here once CREATE TABLESPACE is implemented.
 template<>
 MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
-  auto result = CreateColumns<PgTablespace>(kSampleData.size());
-  for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row, Roles());
+  std::vector<PgTablespace> values;
+  auto& cluster = catalog::ClusterOf(_context);
+  cluster.GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(_context),
+          [&](duckdb::CatalogEntry& tablespace) {
+            values.push_back(PgTablespace{
+              .oid = tablespace.oid,
+              .spcname = tablespace.name.GetIdentifierName(),
+              .spcowner = tablespace.permissions.owner,
+              .spcacl = {std::span<const duckdb::AclItem>{
+                tablespace.permissions.acl}},
+            });
+          });
+  auto result = CreateColumns<PgTablespace>(values.size());
+  for (size_t row = 0; row < values.size(); ++row) {
+    WriteData(result, values[row], kNullMask, row, Roles());
   }
-  return {std::move(result), kSampleData.size()};
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

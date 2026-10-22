@@ -909,7 +909,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
    R"((role_oid) AS COALESCE(
         (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
         ('unknown (OID=' || role_oid || ')')))"},
-  {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
 
   // Recovery status: SereneDB is always a primary (no WAL-replay standby
   // mode), so both are constant false. pgAdmin calls these on every connect.
@@ -1085,14 +1084,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // built-in languages -- PG returns true too. (A nonexistent language oid would
   // be NULL in PG, but SereneDB has no CREATE LANGUAGE so that is unreachable.)
   {"pg_catalog", "has_language_privilege", "(a, b) AS true, (a, b, c) AS true"},
-
-  // has_tablespace_privilege: SereneDB has only the hardcoded pg_default (oid
-  // 1663), whose default ACL grants nothing to PUBLIC (world_default =
-  // NO_RIGHTS). PG: superuser -> true; non-superuser on pg_default -> false (no
-  // PUBLIC create); non-superuser on a nonexistent oid -> NULL. Matches PG.
-  {"pg_catalog", "has_tablespace_privilege",
-   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true WHEN a::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END, "
-   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true WHEN b::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END"},
 
   // Real: name||'_'||oid, matching PG's nameconcatoid.
   {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},

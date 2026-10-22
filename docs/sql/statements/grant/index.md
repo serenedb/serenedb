@@ -65,6 +65,7 @@ Granting to a role that does not exist is an error:
 | `FUNCTION` | `EXECUTE` |
 | `DATABASE` | `CREATE`, `CONNECT`, `TEMPORARY` |
 | `SCHEMA` | `CREATE`, `USAGE` |
+| `TABLESPACE` | `CREATE` |
 | `TYPE` | `USAGE` |
 
 ## Notes

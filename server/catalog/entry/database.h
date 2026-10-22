@@ -24,10 +24,13 @@
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "catalog/database_directory.h"
 
 namespace sdb::catalog {
+
+inline constexpr std::string_view kTablespaceOption = "tablespace_oid";
 
 class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  public:
@@ -52,9 +55,11 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
 
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
+  duckdb::idx_t _tablespace;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

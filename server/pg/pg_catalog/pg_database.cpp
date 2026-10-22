@@ -69,11 +69,10 @@ MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
               .datconnlimit = -1,
               .datfrozenxid = 0,
               .datminmxid = 0,
-              // pg_default; always 1663 (no CREATE TABLESPACE) and must be a
-              // real pg_tablespace oid -- \l inner-joins pg_tablespace and
-              // would otherwise drop the row. TODO: derive from a real
-              // tablespace once CREATE TABLESPACE exists.
-              .dattablespace = 1663,
+              .dattablespace =
+                db.Cast<catalog::DatabaseCatalogEntry>().Tablespace() == 0
+                  ? kPgDefaultTablespace
+                  : db.Cast<catalog::DatabaseCatalogEntry>().Tablespace(),
               .datcollate = "C.UTF-8",
               .datctype = "C.UTF-8",
               .datacl = {std::span<const duckdb::AclItem>{db.permissions.acl}},

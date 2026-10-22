@@ -71,6 +71,7 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
@@ -318,25 +319,30 @@ const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
   return entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
-  duckdb::ClientContext& context, std::string_view name) {
+duckdb::optional_ptr<duckdb::CatalogEntry> FindClusterEntry(
+  duckdb::ClientContext& context, duckdb::CatalogType type,
+  std::string_view name) {
   auto& cluster = catalog::ClusterOf(context);
-  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .GetEntry(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
+  return cluster.GetCatalogSet(type).GetEntry(
+    cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
-  duckdb::ClientContext& context, duckdb::idx_t id) {
+duckdb::optional_ptr<duckdb::CatalogEntry> FindClusterEntryById(
+  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t id) {
   auto& cluster = catalog::ClusterOf(context);
   duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(cluster.GetCatalogTransaction(context),
-          [&](duckdb::CatalogEntry& entry) {
-            if (!result && entry.oid == id) {
-              result = &entry;
-            }
-          });
+  cluster.GetCatalogSet(type).Scan(cluster.GetCatalogTransaction(context),
+                                   [&](duckdb::CatalogEntry& entry) {
+                                     if (!result && entry.oid == id) {
+                                       result = &entry;
+                                     }
+                                   });
   return result;
+}
+
+bool IsClusterObject(duckdb::CatalogType type) {
+  return type == duckdb::CatalogType::DATABASE_ENTRY ||
+         type == duckdb::CatalogType::TABLESPACE_ENTRY;
 }
 
 // The session's own database: the catalog every name and oid below resolves
@@ -766,7 +772,8 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto entry = FindDatabaseById(context, pg::OidFromSql(oid));
+      auto entry = FindClusterEntryById(
+        context, duckdb::CatalogType::DATABASE_ENTRY, pg::OidFromSql(oid));
       auto database = entry
                         ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
                         : nullptr;
@@ -776,6 +783,23 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
       }
       return static_cast<int64_t>(
         catalog::DatabaseStorageSize(context, *database, {}).bytes);
+    });
+}
+
+// pg_tablespace_location(oid) -> text
+void PgTablespaceLocationFunction(duckdb::DataChunk& args,
+                                  duckdb::ExpressionState& state,
+                                  duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t>(
+    args, result, [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
+      auto entry = FindClusterEntryById(
+        context, duckdb::CatalogType::TABLESPACE_ENTRY, pg::OidFromSql(oid));
+      if (!entry) {
+        return duckdb::nullopt;
+      }
+      return duckdb::StringVector::AddString(
+        result, entry->Cast<catalog::TablespaceCatalogEntry>().Location());
     });
 }
 
@@ -1131,6 +1155,8 @@ const char* ObjectClassWord(duckdb::CatalogType type) {
       return "function";
     case duckdb::CatalogType::DATABASE_ENTRY:
       return "database";
+    case duckdb::CatalogType::TABLESPACE_ENTRY:
+      return "tablespace";
     default:
       return "object";
   }
@@ -1141,16 +1167,18 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
                               duckdb::CatalogType type, duckdb::idx_t role_id,
                               std::string_view obj_name,
                               std::string_view priv_text) {
-  // A database is not in the snapshot -- its entry is the object -- so its
-  // owner and ACL come off the entry the cluster-global set holds.
-  if (type == duckdb::CatalogType::DATABASE_ENTRY) {
-    auto database = FindDatabase(context, obj_name);
-    if (!database) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("database \"", obj_name, "\" does not exist"));
+  // A database or a tablespace is not in the snapshot -- its entry is the
+  // object -- so its owner and ACL come off the entry the cluster-global set
+  // holds.
+  if (IsClusterObject(type)) {
+    auto object = FindClusterEntry(context, type, obj_name);
+    if (!object) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG(ObjectClassWord(type), " \"", obj_name, "\" does not exist"));
     }
     try {
-      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+      return HasAnyPermissionsPrivilegeText(context, role_id, *object, type,
                                             priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
@@ -1314,14 +1342,14 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
                                  duckdb::idx_t role_id, duckdb::idx_t obj_id,
                                  std::string_view priv_text, bool& is_null) {
   is_null = false;
-  if (type == duckdb::CatalogType::DATABASE_ENTRY) {
-    auto database = FindDatabaseById(context, obj_id);
-    if (!database) {
+  if (IsClusterObject(type)) {
+    auto object = FindClusterEntryById(context, type, obj_id);
+    if (!object) {
       is_null = true;
       return false;
     }
     try {
-      return HasAnyPermissionsPrivilegeText(context, role_id, *database, type,
+      return HasAnyPermissionsPrivilegeText(context, role_id, *object, type,
                                             priv_text);
     } catch (const irs::SqlException& e) {
       ThrowInvalidPrivilege(e);
@@ -1419,6 +1447,31 @@ void HasObjectPrivilegeOidName3Function(duckdb::DataChunk& args,
       return HasObjectPrivilegeByName(
         state.GetContext(), kType, pg::OidFromSql(roid),
         {obj.GetData(), obj.GetSize()}, {priv.GetData(), priv.GetSize()});
+    });
+}
+
+template<duckdb::CatalogType kType>
+void HasObjectPrivilegeNameOid3Function(duckdb::DataChunk& args,
+                                        duckdb::ExpressionState& state,
+                                        duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, int64_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](duckdb::string_t rname, int64_t ooid,
+        duckdb::string_t priv) -> duckdb::optional<bool> {
+      auto role_id = ResolveRoleOrPublic(state.GetContext(),
+                                         {rname.GetData(), rname.GetSize()});
+      if (!role_id) {
+        ThrowRoleNotFound({rname.GetData(), rname.GetSize()});
+      }
+      bool is_null = false;
+      bool r = HasObjectPrivilegeByOidImpl(
+        state.GetContext(), kType, *role_id, pg::OidFromSql(ooid),
+        {priv.GetData(), priv.GetSize()}, is_null);
+      if (is_null) {
+        return duckdb::nullopt;
+      }
+      return r;
     });
 }
 
@@ -2315,6 +2368,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                            {duckdb::LogicalType::BIGINT},
                                            duckdb::LogicalType::BIGINT,
                                            PgDatabaseSizeOidFunction});
+  register_stable(duckdb::ScalarFunction{"pg_tablespace_location",
+                                         {pg::OID()},
+                                         duckdb::LogicalType::VARCHAR,
+                                         PgTablespaceLocationFunction});
 
   // pg_schema_size(text) and pg_schema_size(oid) -- non-standard helper.
   register_volatile(duckdb::ScalarFunction{"pg_schema_size",
@@ -2422,6 +2479,15 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
         register_stable(func);
       }
+      {
+        duckdb::ScalarFunction func{duckdb::Identifier{name},
+                                    {duckdb::LogicalType::VARCHAR, pg::OID(),
+                                     duckdb::LogicalType::VARCHAR},
+                                    duckdb::LogicalType::BOOLEAN,
+                                    HasObjectPrivilegeNameOid3Function<kType>};
+        func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+        register_stable(func);
+      }
     };
   register_object_priv.operator()<duckdb::CatalogType::SCHEMA_ENTRY>(
     "has_schema_privilege");
@@ -2431,6 +2497,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     "has_function_privilege");
   register_object_priv.operator()<duckdb::CatalogType::DATABASE_ENTRY>(
     "has_database_privilege");
+  register_object_priv.operator()<duckdb::CatalogType::TABLESPACE_ENTRY>(
+    "has_tablespace_privilege");
   register_object_priv.operator()<duckdb::CatalogType::TYPE_ENTRY>(
     "has_type_privilege");
 

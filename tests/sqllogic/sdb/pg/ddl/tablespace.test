@@ -1,0 +1,400 @@
+control substitution on
+
+query
+SELECT oid, spcname, pg_tablespace_location(oid) = '' AS in_data_directory
+FROM pg_tablespace WHERE spcname IN ('pg_default', 'pg_global') ORDER BY oid;
+----
+oid	spcname	in_data_directory
+1663	pg_default	t
+1664	pg_global	t
+
+statement error
+CREATE TABLESPACE ts_${__DATABASE__} LOCATION 'relative/path';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE pg_ts LOCATION '${__TEST_DIR__}/pg_ts';
+----
+db error: ERROR: unacceptable tablespace name "pg_ts"
+DETAIL: The prefix "pg_" is reserved for system tablespaces.
+
+
+statement ok
+BEGIN;
+
+statement error
+CREATE TABLESPACE ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts';
+----
+db error: ERROR: CREATE TABLESPACE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+CREATE TABLESPACE ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts/';
+
+query
+SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/ts' AS located,
+       spcowner = (SELECT oid FROM pg_authid WHERE rolname = current_user) AS owned
+FROM pg_tablespace WHERE spcname = 'ts_${__DATABASE__}';
+----
+located	owned
+t	t
+
+statement error
+CREATE TABLESPACE ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/other';
+----
+db error: ERROR: tablespace "<slt:ignore>" already exists
+
+
+statement error
+CREATE TABLESPACE other_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+
+
+statement error
+CREATE TABLESPACE other_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts/engine_v1/inside';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ts_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE ts_${__DATABASE__};
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick brown fox'), (2, 'lazy dog');
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+statement ok
+INSERT INTO notes VALUES (1, 'red fox'), (2, 'blue whale');
+
+statement ok
+CREATE INDEX notes_idx ON notes USING inverted(body ts_english) TABLESPACE ts_${__DATABASE__};
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+query
+SELECT c.relname, t.spcname = 'ts_${__DATABASE__}' AS in_ts
+FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('docs', 'notes', 'notes_idx') ORDER BY c.relname;
+----
+relname	in_ts
+docs	t
+notes_idx	t
+
+query
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick brown fox
+2	lazy dog
+
+query
+SELECT id FROM notes_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+query
+SELECT count(*) > 0 AS stored_in_ts FROM glob('${__TEST_DIR__}/ts/engine_v1/*/*/*');
+----
+stored_in_ts
+t
+
+statement error
+CREATE TABLE plain (id INT) TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: only a table created WITH (storage = 'search') can be placed in a tablespace
+
+
+statement ok
+CREATE TABLE plain (id INT) TABLESPACE pg_default;
+
+statement error
+CREATE INDEX plain_id ON plain (id) TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: only a search index (USING inverted) can be placed in a tablespace
+
+
+statement error
+CREATE INDEX docs_idx ON docs USING inverted(body ts_english) TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: an index on a search-backed table is stored with the table and cannot be placed in a tablespace
+
+
+statement error
+CREATE TABLE in_global (id INT) WITH (storage = 'search') TABLESPACE pg_global;
+----
+db error: ERROR: only shared relations can be placed in pg_global tablespace
+
+
+statement error
+CREATE TABLE in_missing (id INT) WITH (storage = 'search') TABLESPACE missing_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" does not exist
+
+
+statement error
+SET default_tablespace = 'missing_ts';
+----
+db error: ERROR: invalid value for parameter "default_tablespace": "missing_ts"
+DETAIL: Tablespace "missing_ts" does not exist.
+
+
+statement ok
+SET default_tablespace = 'ts_${__DATABASE__}';
+
+statement ok
+CREATE TABLE implicit_search (id INT) WITH (storage = 'search');
+
+statement ok
+CREATE TABLE implicit_plain (id INT);
+
+statement ok
+CREATE TABLE explicit_default (id INT) WITH (storage = 'search') TABLESPACE pg_default;
+
+statement ok
+RESET default_tablespace;
+
+query
+SELECT relname, reltablespace <> 0 AS placed FROM pg_class
+WHERE relname IN ('implicit_search', 'implicit_plain', 'explicit_default') ORDER BY relname;
+----
+relname	placed
+explicit_default	f
+implicit_plain	f
+implicit_search	t
+
+statement error
+DROP TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" is not empty
+
+
+statement error
+DROP TABLESPACE pg_default;
+----
+db error: ERROR: cannot drop tablespace pg_default because it is required by the database system
+
+
+statement ok
+CREATE ROLE ts_user_${__DATABASE__};
+
+statement ok
+GRANT ALL ON SCHEMA public TO ts_user_${__DATABASE__};
+
+statement ok
+SET ROLE ts_user_${__DATABASE__};
+
+statement error
+CREATE TABLE user_docs (id INT) WITH (storage = 'search') TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: permission denied for tablespace <slt:ignore>
+
+
+statement error
+CREATE TABLESPACE user_ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/user_ts';
+----
+db error: ERROR: permission denied to create tablespace "<slt:ignore>"
+HINT: Must be superuser to create a tablespace.
+
+
+statement error
+ALTER TABLESPACE ts_${__DATABASE__} RENAME TO user_renamed_${__DATABASE__};
+----
+db error: ERROR: must be owner of tablespace <slt:ignore>
+
+
+statement error
+DROP TABLESPACE ts_${__DATABASE__};
+----
+db error: ERROR: must be owner of tablespace <slt:ignore>
+
+
+statement ok
+RESET ROLE;
+
+statement ok
+GRANT CREATE ON TABLESPACE ts_${__DATABASE__} TO ts_user_${__DATABASE__};
+
+query
+SELECT has_tablespace_privilege('ts_user_${__DATABASE__}', 'ts_${__DATABASE__}', 'CREATE') AS on_ts,
+       has_tablespace_privilege('ts_user_${__DATABASE__}', 'pg_default', 'CREATE') AS on_default;
+----
+on_ts	on_default
+t	f
+
+statement ok
+SET ROLE ts_user_${__DATABASE__};
+
+statement ok
+CREATE TABLE user_docs (id INT) WITH (storage = 'search') TABLESPACE ts_${__DATABASE__};
+
+statement ok
+DROP TABLE user_docs;
+
+statement ok
+RESET ROLE;
+
+statement ok
+REVOKE CREATE ON TABLESPACE ts_${__DATABASE__} FROM ts_user_${__DATABASE__};
+
+query
+SELECT has_tablespace_privilege('ts_user_${__DATABASE__}', 'ts_${__DATABASE__}', 'CREATE') AS on_ts;
+----
+on_ts
+f
+
+statement ok
+ALTER TABLESPACE ts_${__DATABASE__} RENAME TO renamed_${__DATABASE__};
+
+statement error
+ALTER TABLESPACE renamed_${__DATABASE__} RENAME TO pg_renamed;
+----
+db error: ERROR: unacceptable tablespace name "pg_renamed"
+DETAIL: The prefix "pg_" is reserved for system tablespaces.
+
+
+statement error
+ALTER TABLESPACE pg_default RENAME TO my_default;
+----
+db error: ERROR: tablespace "pg_default" is a system tablespace
+DETAIL: A system tablespace cannot be renamed, given to another owner or granted on.
+
+
+statement error
+GRANT CREATE ON TABLESPACE pg_default TO ts_user_${__DATABASE__};
+----
+db error: ERROR: tablespace "pg_default" is a system tablespace
+DETAIL: A system tablespace cannot be renamed, given to another owner or granted on.
+
+
+statement ok
+ALTER TABLESPACE renamed_${__DATABASE__} OWNER TO ts_user_${__DATABASE__};
+
+query
+SELECT r.rolname = 'ts_user_${__DATABASE__}' AS owned_by_user
+FROM pg_tablespace t JOIN pg_authid r ON r.oid = t.spcowner
+WHERE t.spcname = 'renamed_${__DATABASE__}';
+----
+owned_by_user
+t
+
+query
+SELECT c.relname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE t.spcname = 'renamed_${__DATABASE__}' ORDER BY c.relname;
+----
+relname
+docs
+implicit_search
+notes_idx
+
+statement ok
+DROP TABLE docs;
+
+statement ok
+DROP INDEX notes_idx;
+
+statement ok
+DROP TABLE implicit_search;
+
+statement ok
+BEGIN;
+
+statement error
+DROP TABLESPACE renamed_${__DATABASE__};
+----
+db error: ERROR: DROP TABLESPACE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+statement ok
+DROP TABLESPACE renamed_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE IF EXISTS renamed_${__DATABASE__};
+
+statement error
+DROP TABLESPACE renamed_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" does not exist
+
+
+statement ok
+CREATE TABLESPACE db_ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/db_ts';
+
+statement ok
+CREATE DATABASE ts_db_${__DATABASE__} TABLESPACE db_ts_${__DATABASE__};
+
+statement ok
+CREATE DATABASE default_db_${__DATABASE__} WITH TABLESPACE = pg_default;
+
+statement error
+CREATE DATABASE global_db_${__DATABASE__} TABLESPACE pg_global;
+----
+db error: ERROR: pg_global cannot be used as default tablespace
+
+
+query
+SELECT d.datname = 'ts_db_${__DATABASE__}' AS in_ts_db, t.spcname = 'db_ts_${__DATABASE__}' AS in_db_ts
+FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname IN ('ts_db_${__DATABASE__}', 'default_db_${__DATABASE__}') ORDER BY d.datname;
+----
+in_ts_db	in_db_ts
+f	f
+t	t
+
+query
+SELECT count(*) AS data_files FROM glob('${__TEST_DIR__}/db_ts/engine_v1/*/data.db');
+----
+data_files
+1
+
+statement error
+DROP TABLESPACE db_ts_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" is not empty
+
+
+statement ok
+DROP DATABASE ts_db_${__DATABASE__};
+
+statement ok
+DROP DATABASE default_db_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE db_ts_${__DATABASE__};
+
+statement ok
+DROP TABLE plain;
+
+statement ok
+DROP TABLE implicit_plain;
+
+statement ok
+DROP TABLE explicit_default;
+
+statement ok
+DROP TABLE notes;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ts_english;
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM ts_user_${__DATABASE__};
+
+statement ok
+DROP ROLE ts_user_${__DATABASE__};

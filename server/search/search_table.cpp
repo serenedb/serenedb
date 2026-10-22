@@ -85,14 +85,14 @@ struct SearchTable::ReplaySession {
   std::vector<PendingAdopt> adopts;
 };
 
-SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
+SearchTable::SearchTable(std::shared_ptr<catalog::StorageArea> area,
                          bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
   : _db_id{db_id},
     _table_id{table_id},
-    _directory{std::move(directory)},
+    _area{std::move(area)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
@@ -119,13 +119,13 @@ SearchTable::~SearchTable() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
+  catalog::StorageArea::RemoveStorage(std::move(_area), _table_id);
 }
 
 void SearchTable::OpenWriter(bool in_memory) {
   irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
-                                     in_memory, resource_manager);
+  auto opened = OpenStorageDirectory(*_area, GetTableId(), _is_new, in_memory,
+                                     resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -163,8 +163,8 @@ void SearchTable::OpenWriter(bool in_memory) {
 
 void SearchTable::OpenDirectory() {
   irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(*_directory, GetTableId(), false, false,
-                                     resource_manager);
+  auto opened =
+    OpenStorageDirectory(*_area, GetTableId(), false, false, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 }

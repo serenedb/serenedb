@@ -288,6 +288,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   const auto& Storage() const noexcept { return _storage; }
   const auto& SearchStore() const noexcept { return _search_table; }
   const auto& Config() const noexcept { return _config; }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
   IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const {
     return {context, catalog, *_config};
   }
@@ -310,6 +311,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   std::shared_ptr<search::SearchTable> _search_table;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
+  duckdb::idx_t _tablespace;
 };
 
 std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(

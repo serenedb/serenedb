@@ -1,14 +1,11 @@
-"""Where search index files live: --index_location.
-
-A cluster keeps its index files in the location it was first started with,
-the data directory by default. A later start with another location, or
-without the one it was created with, is refused instead of booting with its
-indexes missing.
+"""Search index files in a tablespace: a local directory, an S3 bucket or an
+Azure container, reached with the secret whose scope covers the location.
 """
 
 from __future__ import annotations
 
 import collections
+import contextlib
 import os
 import socket
 import subprocess
@@ -40,13 +37,13 @@ def _free_port() -> int:
 
 
 class _Server:
-    def __init__(self, datadir: Path, *flags: str) -> None:
+    def __init__(self, datadir: Path) -> None:
         self.port = _free_port()
         self.log = datadir.parent / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
                 [SERENED_BIN, str(datadir),
-                 f"--listen=postgres://127.0.0.1:{self.port}", *flags],
+                 f"--listen=postgres://127.0.0.1:{self.port}"],
                 stdout=out, stderr=subprocess.STDOUT)
 
     def connect(self) -> psycopg.Connection:
@@ -75,7 +72,16 @@ class _Server:
         return self.log.read_text()
 
 
-def _create_index(server: _Server) -> None:
+CREATE_INDEX = ("CREATE INDEX docs_body ON docs USING inverted(body words) "
+                "TABLESPACE idx")
+
+
+def _create_tablespace(server: _Server, location: str) -> None:
+    with server.connect() as conn:
+        conn.execute(f"CREATE TABLESPACE idx LOCATION '{location}'")
+
+
+def _create_index(server: _Server, tablespace: bool = True) -> None:
     with server.connect() as conn:
         conn.execute(
             "CREATE TEXT SEARCH DICTIONARY words AS "
@@ -83,7 +89,8 @@ def _create_index(server: _Server) -> None:
         conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
         conn.execute(
             "INSERT INTO docs VALUES (1, 'quick brown fox'), (2, 'lazy dog')")
-        conn.execute("CREATE INDEX docs_body ON docs USING inverted(body words)")
+        conn.execute(CREATE_INDEX if tablespace else
+                     CREATE_INDEX.removesuffix(" TABLESPACE idx"))
 
 
 def _matches(server: _Server) -> list[int]:
@@ -94,8 +101,8 @@ def _matches(server: _Server) -> list[int]:
     return [row[0] for row in rows]
 
 
-def _refused(datadir: Path, *flags: str) -> str:
-    server = _Server(datadir, *flags)
+def _refused(datadir: Path) -> str:
+    server = _Server(datadir)
     try:
         assert not server.wait_ready(timeout=30)
         assert server.proc.wait(timeout=30) != 0
@@ -104,74 +111,53 @@ def _refused(datadir: Path, *flags: str) -> str:
         server.stop()
 
 
-def test_index_files_in_their_own_directory(tmp_path: Path) -> None:
+def test_index_files_in_a_local_tablespace(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     location = tmp_path / "indexes"
-    flag = f"--index_location={location}"
 
-    server = _Server(datadir, flag)
+    server = _Server(datadir)
     try:
         assert server.wait_ready(), server.output()
+        _create_tablespace(server, str(location))
         _create_index(server)
         assert _matches(server) == [1]
     finally:
         server.stop()
-    assert any(path.is_file() for path in location.rglob("*"))
+    assert any(path.is_file() for path in (location / "engine_v1").rglob("*"))
     assert not any(
         path.is_dir() and any(path.iterdir())
         for database in (datadir / "engine_v1").glob("[0-9]*")
         for path in database.glob("[0-9]*"))
 
-    again = _Server(datadir, flag)
-    try:
-        assert again.wait_ready(), again.output()
-        assert _matches(again) == [1]
-    finally:
-        again.stop()
-
-    output = _refused(datadir)
-    assert f"live in '{location}'" in output
-    assert f"--index_location={location}" in output
-
-    output = _refused(datadir, f"--index_location={tmp_path / 'elsewhere'}")
-    assert f"live in '{location}'" in output
-
-
-def test_existing_cluster_keeps_the_data_directory(tmp_path: Path) -> None:
-    datadir = tmp_path / "data"
-    server = _Server(datadir)
-    try:
-        assert server.wait_ready(), server.output()
-        _create_index(server)
-    finally:
-        server.stop()
-
-    output = _refused(datadir, f"--index_location={tmp_path / 'indexes'}")
-    assert "start it without --index_location" in output
-
     again = _Server(datadir)
     try:
         assert again.wait_ready(), again.output()
         assert _matches(again) == [1]
+        with again.connect() as conn:
+            conn.execute("DROP INDEX docs_body")
+            conn.execute("DROP TABLESPACE idx")
     finally:
         again.stop()
+    assert not (location / "engine_v1").exists()
 
 
-@pytest.mark.parametrize("flags", [(), ("--index_location=indexes",)],
-                         ids=["default", "relative"])
+@pytest.mark.parametrize("tablespace", [False, True],
+                         ids=["data_directory", "tablespace"])
 def test_moved_data_directory_keeps_its_indexes(
-        tmp_path: Path, flags: tuple[str, ...]) -> None:
+        tmp_path: Path, tablespace: bool) -> None:
     datadir = tmp_path / "data"
-    server = _Server(datadir, *flags)
+    server = _Server(datadir)
     try:
         assert server.wait_ready(), server.output()
-        _create_index(server)
+        if tablespace:
+            _create_tablespace(server, str(tmp_path / "indexes"))
+        _create_index(server, tablespace)
     finally:
         server.stop()
 
     moved = tmp_path / "moved"
     datadir.rename(moved)
-    again = _Server(moved, *flags)
+    again = _Server(moved)
     try:
         assert again.wait_ready(), again.output()
         assert _matches(again) == [1]
@@ -204,6 +190,11 @@ def s3_store():
         yield _Store(fake.endpoint, "key", "secret", "bucket", fake)
 
 
+def _index_files(fake: FakeS3, prefix: str) -> list[str]:
+    return [key for key in fake.keys("bucket", prefix)
+            if not key.endswith((".storage", "/engine_v1/tablespace"))]
+
+
 def _create_secret(server: _Server, store: _Store, location: str) -> None:
     with server.connect() as conn:
         conn.execute(
@@ -211,14 +202,15 @@ def _create_secret(server: _Server, store: _Store, location: str) -> None:
             f"KEY_ID '{store.key_id}', SECRET '{store.secret}', "
             f"ENDPOINT '{store.endpoint}', URL_STYLE 'path', USE_SSL false, "
             f"SCOPE '{location}')")
+    _create_tablespace(server, location)
 
 
 def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
-    location = f"s3://{s3_store.bucket}/index-location-{tmp_path.name}"
+    prefix = f"tablespace-{tmp_path.name}"
+    location = f"s3://{s3_store.bucket}/{prefix}"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
 
-    server = _Server(datadir, flag)
+    server = _Server(datadir)
     try:
         assert server.wait_ready(), server.output()
         _create_secret(server, s3_store, location)
@@ -227,21 +219,34 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
         with server.connect() as conn:
             conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
             conn.execute("VACUUM (REFRESH_TABLE) docs")
+            conn.execute("CREATE TABLE notes(id INTEGER, body TEXT) "
+                         "WITH (storage = 'search') TABLESPACE idx")
+            conn.execute("INSERT INTO notes VALUES (1, 'kept on s3')")
+            conn.execute("CREATE DATABASE placed TABLESPACE idx")
         assert _matches(server) == [1, 3]
     finally:
         server.stop()
+    assert len(list((datadir / "engine_v1").glob("*/data.db"))) == 2, list(
+        datadir.rglob("*"))
 
-    again = _Server(datadir, flag)
+    again = _Server(datadir)
     try:
         assert again.wait_ready(), again.output()
         assert _matches(again) == [1, 3]
         with again.connect() as conn:
+            assert conn.execute("SELECT body FROM notes").fetchall() == [
+                ("kept on s3",)]
+            with pytest.raises(psycopg.Error, match="is not empty"):
+                conn.execute("DROP TABLESPACE idx")
+            conn.execute("DROP DATABASE placed")
+            conn.execute("DROP TABLE notes")
             conn.execute("DROP INDEX docs_body")
+            conn.execute("DROP TABLESPACE idx")
     finally:
         again.stop()
     if s3_store.fake:
-        assert not [key for key in s3_store.fake.keys(s3_store.bucket)
-                    if not key.endswith(".storage")], s3_store.fake.keys(s3_store.bucket)
+        assert not s3_store.fake.keys(s3_store.bucket, f"{prefix}/"), \
+            s3_store.fake.keys(s3_store.bucket)
 
 
 AZURITE = ("AZURITE_CONNECTION_STRING", "AZURITE_BLOB_CONTAINER")
@@ -267,9 +272,8 @@ def azure_container():
 def test_index_files_on_azure(tmp_path: Path, azure_container: _Container) -> None:
     location = f"az://{azure_container.name}/cluster-{tmp_path.name}"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
     fake = azure_container.fake
-    server = _Server(datadir, flag)
+    server = _Server(datadir)
     try:
         assert server.wait_ready(), server.output()
         with server.connect() as conn:
@@ -277,6 +281,7 @@ def test_index_files_on_azure(tmp_path: Path, azure_container: _Container) -> No
                 "CREATE PERSISTENT SECRET index_store (TYPE azure, "
                 f"CONNECTION_STRING '{azure_container.connection_string}', "
                 f"SCOPE '{location}')")
+        _create_tablespace(server, location)
         _create_index(server)
         assert _matches(server) == [1]
         with server.connect() as conn:
@@ -288,18 +293,19 @@ def test_index_files_on_azure(tmp_path: Path, azure_container: _Container) -> No
     if fake:
         assert fake.requests["COPY"] > 0, fake.requests
 
-    again = _Server(datadir, flag)
+    again = _Server(datadir)
     try:
         assert again.wait_ready(), again.output()
         assert _matches(again) == [1, 3]
         with again.connect() as conn:
             conn.execute("DROP INDEX docs_body")
+            conn.execute("DROP TABLESPACE idx")
     finally:
         again.stop()
     if fake:
         prefix = f"cluster-{tmp_path.name}/"
-        assert not [name for name in fake.names(azure_container.name, prefix)
-                    if not name.endswith(".storage")], fake.names(azure_container.name)
+        assert not fake.names(azure_container.name, prefix), fake.names(
+            azure_container.name)
 
 
 def _large_table(server: _Server, store: _Store, location: str) -> None:
@@ -324,14 +330,14 @@ def _count_fox(server: _Server) -> int:
 def test_large_index_files_upload_parts_at_once(tmp_path: Path) -> None:
     location = f"s3://bucket/parts-{tmp_path.name}"
     with FakeS3(latency=0.05) as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
                          location)
             with server.connect() as conn:
                 conn.execute(
-                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                    CREATE_INDEX)
             assert _count_fox(server) == 300000
         finally:
             server.stop()
@@ -343,7 +349,7 @@ def test_large_index_files_upload_parts_at_once(tmp_path: Path) -> None:
 def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:
     location = f"s3://bucket/trickle-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -359,7 +365,7 @@ def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:
                     "INSERT INTO docs SELECT i, concat_ws(' ', 'fox', md5(i::VARCHAR)) "
                     "FROM range(30000) t(i)")
                 conn.execute(
-                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                    CREATE_INDEX)
                 conn.execute("SET GLOBAL enable_external_file_cache = false")
                 conn.execute("SET GLOBAL enable_external_file_cache = true")
                 fake.trickle = 2048
@@ -376,7 +382,7 @@ def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:
 def test_reads_refuse_an_object_replaced_after_its_upload(tmp_path: Path) -> None:
     location = f"s3://bucket/replaced-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -403,7 +409,7 @@ def test_reads_refuse_an_object_replaced_after_its_upload(tmp_path: Path) -> Non
 def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
     location = f"s3://bucket/failed-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -413,13 +419,13 @@ def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
                 conn.execute("SET GLOBAL http_retries = 0")
                 with pytest.raises(psycopg.Error):
                     conn.execute(
-                        "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                        CREATE_INDEX)
             assert fake.requests["ABORT_UPLOAD"] > 0, fake.requests
             assert not fake.uploads
             fake.failing_parts.clear()
             with server.connect() as conn:
                 conn.execute(
-                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                    CREATE_INDEX)
             assert _count_fox(server) == 300000
         finally:
             server.stop()
@@ -428,14 +434,19 @@ def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
 COPY_FAULT = "object_store_copy_fails"
 
 
+def _simulated_tablespace(server: _Server, location: str) -> None:
+    assert server.wait_ready(), server.output()
+    try:
+        _create_tablespace(server, location)
+    except psycopg.Error:
+        pytest.skip("the simulated object store exists in dev builds")
+
+
 def test_failed_commit_is_retried(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
-    server = _Server(datadir, "--index_location=sim://bucket/retried")
+    server = _Server(datadir)
     try:
-        if not server.wait_ready():
-            if "sim://" in server.output():
-                pytest.skip("the simulated object store exists in dev builds")
-            pytest.fail(server.output())
+        _simulated_tablespace(server, "sim://bucket/retried")
         _create_index(server)
         with server.connect() as conn:
             try:
@@ -457,7 +468,7 @@ def test_failed_commit_is_retried(tmp_path: Path) -> None:
 def test_throttled_requests_are_retried(tmp_path: Path) -> None:
     location = f"s3://bucket/throttled-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -478,9 +489,8 @@ def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
         tmp_path: Path) -> None:
     location = f"s3://bucket/lost-{tmp_path.name}"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
     with FakeS3() as fake:
-        server = _Server(datadir, flag)
+        server = _Server(datadir)
         try:
             assert server.wait_ready(), server.output()
             _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -489,14 +499,14 @@ def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
             with server.connect() as conn:
                 with pytest.raises(psycopg.Error, match="multipart upload"):
                     conn.execute(
-                        "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                        CREATE_INDEX)
                 conn.execute(
-                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                    CREATE_INDEX)
             assert _count_fox(server) == 300000
         finally:
             server.stop()
         assert fake.dropped, fake.requests
-        again = _Server(datadir, flag)
+        again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
             assert _count_fox(again) == 300000
@@ -508,7 +518,7 @@ def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
 def test_a_lost_copy_response_is_retried(tmp_path: Path) -> None:
     location = f"s3://bucket/copy-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -527,9 +537,8 @@ def test_a_lost_copy_response_is_retried(tmp_path: Path) -> None:
 def test_a_store_down_at_startup_refuses_the_start(tmp_path: Path) -> None:
     location = f"s3://bucket/down-{tmp_path.name}"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
     with FakeS3() as fake:
-        server = _Server(datadir, flag)
+        server = _Server(datadir)
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -537,7 +546,7 @@ def test_a_store_down_at_startup_refuses_the_start(tmp_path: Path) -> None:
             _create_index(server)
         finally:
             server.stop()
-    output = _refused(datadir, flag)
+    output = _refused(datadir)
     assert f"/bucket/down-{tmp_path.name}/" in output and "Could not connect" in output, output
 
 
@@ -545,9 +554,8 @@ def test_a_crash_while_creating_an_index_leaves_no_objects(tmp_path: Path) -> No
     location = f"s3://bucket/crash-{tmp_path.name}"
     prefix = f"crash-{tmp_path.name}/"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
     with FakeS3() as fake:
-        server = _Server(datadir, flag)
+        server = _Server(datadir)
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -565,13 +573,12 @@ def test_a_crash_while_creating_an_index_leaves_no_objects(tmp_path: Path) -> No
                     pytest.skip("built without fault injection")
                 with pytest.raises(psycopg.OperationalError):
                     conn.execute(
-                        "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                        CREATE_INDEX)
             server.proc.wait(timeout=60)
-            assert [key for key in fake.keys("bucket", prefix)
-                    if not key.endswith(".storage")], fake.keys("bucket")
+            assert _index_files(fake, prefix), fake.keys("bucket")
         finally:
             server.stop()
-        again = _Server(datadir, flag)
+        again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
             with again.connect() as conn:
@@ -579,16 +586,98 @@ def test_a_crash_while_creating_an_index_leaves_no_objects(tmp_path: Path) -> No
                     conn.execute("SELECT * FROM docs_body")
         finally:
             again.stop()
-        assert not [key for key in fake.keys("bucket", prefix)
-                    if not key.endswith(".storage")], fake.keys("bucket")
+        assert not _index_files(fake, prefix), fake.keys("bucket")
+
+
+def _kill_while_stalled(server: _Server, fake: FakeS3, statement) -> None:
+    def run() -> None:
+        with contextlib.suppress(psycopg.Error), server.connect() as conn:
+            statement(conn)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert fake.stalled.wait(120), fake.requests
+        server.proc.kill()
+        server.proc.wait(timeout=60)
+    finally:
+        fake.release.set()
+        worker.join(timeout=60)
+
+
+def _crash_while_committing(tmp_path: Path, kind: str, key: str) -> None:
+    location = f"s3://bucket/commit-{tmp_path.name}"
+    prefix = f"commit-{tmp_path.name}/"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            fake.stall(kind, key)
+
+            def refresh(conn: psycopg.Connection) -> None:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+
+            _kill_while_stalled(server, fake, refresh)
+        finally:
+            server.stop()
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _matches(again) == [1, 3]
+        finally:
+            again.stop()
+        assert not [name for name in fake.keys("bucket", prefix)
+                    if "pending_segments_" in name], fake.keys("bucket", prefix)
+
+
+def test_a_crash_before_the_commit_copy_keeps_the_last_commit(
+        tmp_path: Path) -> None:
+    _crash_while_committing(tmp_path, "COPY", "/segments_")
+
+
+def test_a_crash_between_the_commit_copy_and_its_delete_keeps_the_new_commit(
+        tmp_path: Path) -> None:
+    _crash_while_committing(tmp_path, "DELETE", "pending_segments_")
+
+
+def test_a_crash_during_an_upload_leaves_no_index_files(tmp_path: Path) -> None:
+    location = f"s3://bucket/upload-{tmp_path.name}"
+    prefix = f"upload-{tmp_path.name}/"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                         location)
+            fake.stall("PUT_PART", prefix)
+            _kill_while_stalled(server, fake,
+                                lambda conn: conn.execute(CREATE_INDEX))
+        finally:
+            server.stop()
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert not _index_files(fake, prefix), fake.keys("bucket", prefix)
+            with again.connect() as conn:
+                with pytest.raises(psycopg.Error):
+                    conn.execute("SELECT * FROM docs_body")
+                conn.execute(CREATE_INDEX)
+            assert _count_fox(again) == 300000
+        finally:
+            again.stop()
 
 
 def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> None:
     location = f"s3://bucket/orphan-{tmp_path.name}"
     datadir = tmp_path / "data"
-    flag = f"--index_location={location}"
     with FakeS3() as fake:
-        server = _Server(datadir, flag)
+        server = _Server(datadir)
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -601,7 +690,7 @@ def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> Non
         assert commits, fake.keys("bucket")
         orphan = commits[0].rsplit("/", 1)[0] + "/_99.doc"
         fake.replace("bucket", orphan, b"written by an upload no commit names")
-        again = _Server(datadir, flag)
+        again = _Server(datadir)
         try:
             assert again.wait_ready(), again.output()
             assert _matches(again) == [1]
@@ -620,7 +709,7 @@ def _pending_uploads(conn: psycopg.Connection) -> dict[str, int]:
 def test_pending_uploads_are_reported(tmp_path: Path) -> None:
     location = f"s3://bucket/pending-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -631,7 +720,7 @@ def test_pending_uploads_are_reported(tmp_path: Path) -> None:
                 try:
                     with server.connect() as conn:
                         conn.execute(
-                            "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                            CREATE_INDEX)
                 except Exception as e:  # noqa: BLE001
                     errors.append(e)
 
@@ -662,7 +751,7 @@ def test_pending_uploads_are_reported(tmp_path: Path) -> None:
 def test_store_requests_are_logged(tmp_path: Path) -> None:
     location = f"s3://bucket/logged-{tmp_path.name}"
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
@@ -697,7 +786,7 @@ def test_cold_top_k_reads_postings_and_columns_in_one_round(
     location = f"s3://bucket/rounds-{tmp_path.name}"
     segments = 4
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret",
@@ -710,7 +799,7 @@ def test_cold_top_k_reads_postings_and_columns_in_one_round(
                 conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
                 conn.execute(
                     "CREATE INDEX docs_body ON docs USING inverted(id, body words) "
-                    "WITH (compaction_interval = 0)")
+                    "WITH (compaction_interval = 0) TABLESPACE idx")
                 for segment in range(segments):
                     conn.execute(
                         "INSERT INTO docs SELECT i, CASE i % 10 WHEN 0 THEN 'alpha' "
@@ -738,7 +827,7 @@ def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
     location = f"s3://bucket/counts-{tmp_path.name}"
     segments = 4
     with FakeS3() as fake:
-        server = _Server(tmp_path / "data", f"--index_location={location}")
+        server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
             _create_secret(server, _Store(fake.endpoint, "key", "secret",
@@ -751,7 +840,7 @@ def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
                 conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
                 conn.execute(
                     "CREATE INDEX docs_body ON docs USING inverted(id, body words) "
-                    "WITH (compaction_interval = 0)")
+                    "WITH (compaction_interval = 0) TABLESPACE idx")
                 for segment in range(segments):
                     conn.execute(
                         "INSERT INTO docs SELECT i, CASE i % 10 WHEN 0 THEN 'alpha beta' "
@@ -793,12 +882,9 @@ def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
 
 def test_index_files_on_an_object_store(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
-    server = _Server(datadir, "--index_location=sim://bucket/cluster")
+    server = _Server(datadir)
     try:
-        if not server.wait_ready():
-            if "sim://" in server.output():
-                pytest.skip("the simulated object store exists in dev builds")
-            pytest.fail(server.output())
+        _simulated_tablespace(server, "sim://bucket/cluster")
         _create_index(server)
         assert _matches(server) == [1]
         with server.connect() as conn:
@@ -808,7 +894,7 @@ def test_index_files_on_an_object_store(tmp_path: Path) -> None:
         with server.connect() as conn:
             conn.execute("DROP INDEX docs_body")
             conn.execute(
-                "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                CREATE_INDEX)
         assert _matches(server) == [1, 3]
     finally:
         server.stop()

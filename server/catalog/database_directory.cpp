@@ -37,6 +37,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "catalog/cluster.h"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
 
@@ -46,6 +47,10 @@ namespace {
 duckdb::FileSystem& Files() {
   return duckdb::FileSystem::GetFileSystem(
     irs::DuckDBEngine::Instance().instance());
+}
+
+bool IsRemote(std::string_view path) {
+  return duckdb::Path::FromString(std::string{path}).IsRemote();
 }
 
 bool CreateDirectory(const std::filesystem::path& path) {
@@ -139,42 +144,89 @@ void RemoveUnowned(const std::string& root,
   }
 }
 
-DatabaseDirectory::DatabaseDirectory(std::filesystem::path path,
-                                     std::string storage_root)
-  : _path{std::move(path)},
-    _storage_root{std::move(storage_root)},
-    _remote{duckdb::Path::FromString(_storage_root).IsRemote()} {}
+TablespaceRoot::TablespaceRoot(std::string path)
+  : _path{std::move(path)}, _remote{IsRemote(_path)} {}
 
-DatabaseDirectory::~DatabaseDirectory() {
-  if (!_dropped.load(std::memory_order_acquire)) {
+TablespaceRoot::~TablespaceRoot() {
+  if (!_removed.load(std::memory_order_acquire)) {
     return;
   }
-  RunRemoval([path = _path.string(), storage_root = std::move(_storage_root)] {
-    RemoveTree(path);
-    if (storage_root != path) {
-      RemoveTree(storage_root);
+  RunRemoval([path = std::move(_path)] { RemoveTree(path); });
+}
+
+void TablespaceRoot::Claim() {
+  const auto in_use = [&] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("directory \"", _path, "\" already in use as a tablespace"));
+  };
+  auto& fs = Files();
+  if (!_remote) {
+    const std::filesystem::path path{_path};
+    fs.CreateDirectoriesRecursive(path.parent_path().string());
+    if (!CreateDirectory(path)) {
+      in_use();
     }
-  });
+  } else {
+    const auto marker = absl::StrCat(_path, "/", kTablespaceMarker);
+    if (fs.FileExists(marker)) {
+      in_use();
+    }
+    fs.OpenFile(marker, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW)
+      ->Close();
+  }
+  _claimed.store(true, std::memory_order_release);
 }
 
-std::string DatabaseDirectory::DataFile() const {
-  return (_path / kDataFile).string();
+std::shared_ptr<void> TablespaceRoot::Pin() {
+  {
+    absl::MutexLock lock{&_mutex};
+    if (_removed.load(std::memory_order_acquire) || !_drop.expired()) {
+      return nullptr;
+    }
+    ++_pins;
+  }
+  auto self = shared_from_this();
+  auto* pinned = self.get();
+  return std::shared_ptr<void>{
+    pinned, [self = std::move(self)](void*) { self->Unpin(); }};
 }
 
-std::string DatabaseDirectory::StoragePath(duckdb::idx_t oid) const {
-  return absl::StrCat(_storage_root, "/", oid);
+void TablespaceRoot::Unpin() noexcept {
+  absl::MutexLock lock{&_mutex};
+  --_pins;
 }
 
-std::string DatabaseDirectory::MarkerPath(duckdb::idx_t oid) const {
-  return absl::StrCat(_storage_root, "/", oid, kStorageMarker);
+bool TablespaceRoot::BeginDrop(const std::shared_ptr<void>& drop) {
+  absl::MutexLock lock{&_mutex};
+  if (_pins != 0 || !_drop.expired() ||
+      _removed.load(std::memory_order_acquire)) {
+    return false;
+  }
+  _drop = drop;
+  return true;
 }
 
-void DatabaseDirectory::Create() const { CreateNewDirectory(_path); }
+StorageArea::StorageArea(std::shared_ptr<DatabaseDirectory> database,
+                         std::shared_ptr<TablespaceRoot> root, std::string path)
+  : _database{std::move(database)},
+    _root{std::move(root)},
+    _path{std::move(path)},
+    _remote{IsRemote(_path)} {}
 
-std::string DatabaseDirectory::CreateStorage(duckdb::idx_t oid) const {
+std::string StorageArea::StoragePath(duckdb::idx_t oid) const {
+  return absl::StrCat(_path, "/", oid);
+}
+
+std::string StorageArea::MarkerPath(duckdb::idx_t oid) const {
+  return absl::StrCat(_path, "/", oid, kStorageMarker);
+}
+
+std::string StorageArea::CreateStorage(duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
   if (!_remote) {
-    CreateDirectory(_storage_root);
+    CreateDirectory(_path);
     CreateNewDirectory(path);
     return path;
   }
@@ -191,8 +243,7 @@ std::string DatabaseDirectory::CreateStorage(duckdb::idx_t oid) const {
   return path;
 }
 
-std::optional<std::string> DatabaseDirectory::OpenStorage(
-  duckdb::idx_t oid) const {
+std::optional<std::string> StorageArea::OpenStorage(duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
   auto& fs = Files();
   if (_remote ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
@@ -201,14 +252,84 @@ std::optional<std::string> DatabaseDirectory::OpenStorage(
   return std::nullopt;
 }
 
-void DatabaseDirectory::RemoveStorage(
-  std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid) {
-  RunRemoval([directory = std::move(directory), oid] {
-    RemoveTree(directory->StoragePath(oid));
-    if (directory->_remote) {
-      RemoveObject(directory->MarkerPath(oid));
+void StorageArea::RemoveStorage(std::shared_ptr<StorageArea> area,
+                                duckdb::idx_t oid) {
+  RunRemoval([area = std::move(area), oid] {
+    RemoveTree(area->StoragePath(oid));
+    if (area->_remote) {
+      RemoveObject(area->MarkerPath(oid));
     }
   });
+}
+
+DatabaseDirectory::DatabaseDirectory(duckdb::idx_t oid,
+                                     std::shared_ptr<TablespaceRoot> root,
+                                     std::filesystem::path path)
+  : _oid{oid}, _root{std::move(root)}, _path{std::move(path)} {}
+
+DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
+  : _oid{0}, _path{std::move(path)} {}
+
+DatabaseDirectory::~DatabaseDirectory() {
+  if (!_dropped.load(std::memory_order_acquire)) {
+    return;
+  }
+  std::vector<std::string> areas;
+  const auto add = [&](const std::shared_ptr<TablespaceRoot>& root) {
+    if (!root) {
+      return;
+    }
+    auto area = absl::StrCat(root->Path(), "/", _oid);
+    if (area != _path.string() && !absl::c_contains(areas, area)) {
+      areas.push_back(std::move(area));
+    }
+  };
+  add(_root);
+  {
+    absl::MutexLock lock{&_mutex};
+    for (const auto& root : _roots) {
+      add(root.lock());
+    }
+  }
+  RunRemoval([path = _path.string(), areas = std::move(areas)] {
+    RemoveTree(path);
+    for (const auto& area : areas) {
+      RemoveTree(area);
+    }
+  });
+}
+
+std::string DatabaseDirectory::DataFile() const {
+  return (_path / kDataFile).string();
+}
+
+void DatabaseDirectory::Create() const { CreateNewDirectory(_path); }
+
+std::shared_ptr<TablespaceRoot> DatabaseDirectory::RootOf(
+  duckdb::idx_t tablespace) const {
+  if (tablespace == 0) {
+    return _root;
+  }
+  return ClusterOf().TablespaceRootOf(tablespace);
+}
+
+std::shared_ptr<StorageArea> DatabaseDirectory::Area(duckdb::idx_t tablespace) {
+  if (!_root) {
+    return std::make_shared<StorageArea>(shared_from_this(), nullptr,
+                                         _path.string());
+  }
+  auto root = RootOf(tablespace);
+  if (root != _root) {
+    absl::MutexLock lock{&_mutex};
+    std::erase_if(_roots, [](const auto& known) { return known.expired(); });
+    if (!absl::c_any_of(
+          _roots, [&](const auto& known) { return known.lock() == root; })) {
+      _roots.emplace_back(root);
+    }
+  }
+  auto path = absl::StrCat(root->Path(), "/", _oid);
+  return std::make_shared<StorageArea>(shared_from_this(), std::move(root),
+                                       std::move(path));
 }
 
 }  // namespace sdb::catalog

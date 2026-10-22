@@ -77,6 +77,10 @@ class Transaction : public Config {
     _on_commit.push_back(std::move(action));
   }
 
+  void HoldUntilEnd(std::shared_ptr<void> object) {
+    _held.push_back(std::move(object));
+  }
+
   void AddCreatedIndex(duckdb::idx_t database,
                        std::shared_ptr<search::InvertedIndexStorage> storage) {
     _created_indexes.emplace_back(database, std::move(storage));
@@ -196,6 +200,7 @@ class Transaction : public Config {
   // lazily via SearchTxn(); reset in Destroy.
   std::optional<search::SearchTableTransaction> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
+  std::vector<std::shared_ptr<void>> _held;
   std::vector<
     std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
     _created_indexes;

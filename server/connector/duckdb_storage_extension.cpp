@@ -75,8 +75,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  auto directory =
-    std::make_shared<catalog::DatabaseDirectory>(path, path.string());
+  auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
@@ -111,9 +110,16 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   const auto transaction = cluster.GetCatalogTransaction(context);
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
                  .GetEntry(transaction, info.name);
+  duckdb::idx_t tablespace = 0;
+  if (const auto option = options.options.find(catalog::kTablespaceOption);
+      option != options.options.end()) {
+    tablespace = option->second.GetValue<duckdb::idx_t>();
+    options.options.erase(option);
+  }
   if (!entry) {
     duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
+    database.tablespace_oid = tablespace;
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);
           option != options.options.end()) {

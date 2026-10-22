@@ -12,6 +12,7 @@
 #|     REGION '⟨eu-central-1⟩',
 #|     SCOPE 's3://⟨bucket⟩/⟨prefix⟩'
 #| );
+#| CREATE TABLESPACE search_store LOCATION 's3://⟨bucket⟩/⟨prefix⟩';
 
 # DOCS_TEST_BODY
 

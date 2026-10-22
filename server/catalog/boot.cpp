@@ -31,9 +31,6 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/numeric_utils.hpp>
-#include <duckdb/common/path.hpp>
-#include <duckdb/common/query_context.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
@@ -61,6 +58,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry/tablespace.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/wal_recovery.h"
@@ -70,30 +68,8 @@ ABSL_FLAG(std::string, missing_database, "refuse",
           "'refuse' (default) stops the server, 'skip' leaves it unattached, "
           "'drop' removes it from the catalog.");
 
-ABSL_DECLARE_FLAG(std::string, index_location);
-
 namespace sdb::catalog {
 namespace {
-
-constexpr std::string_view kIndexLocationFile = "index_location";
-
-std::string IndexRoot(const std::string& directory, std::string location,
-                      std::string_view engine_dir) {
-  if (location.empty()) {
-    return (std::filesystem::path{directory} / engine_dir).string();
-  }
-  while (location.size() > 1 && location.back() == '/') {
-    location.pop_back();
-  }
-  if (duckdb::Path::FromString(location).IsRemote()) {
-    return location;
-  }
-  std::filesystem::path path{location};
-  if (path.is_relative()) {
-    path = std::filesystem::path{directory} / path;
-  }
-  return path.lexically_normal().string();
-}
 
 duckdb::FileSystem& StorageFileSystem() {
   return duckdb::FileSystem::GetFileSystem(
@@ -109,8 +85,6 @@ struct MissingDatabases {
 };
 
 MissingDatabases gMissingDatabases;
-
-constexpr std::string_view kEngineDir = "engine_v1";
 
 std::vector<StorageEntry> ListStoragesOrDie(const std::string& directory) {
   try {
@@ -165,69 +139,44 @@ absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
   return oids;
 }
 
-void RemoveUnownedDatabases(const DataDirectory& layout,
-                            ClusterCatalog& cluster) {
+std::vector<std::shared_ptr<TablespaceRoot>> TablespaceRoots(
+  ClusterCatalog& cluster) {
+  std::vector<std::shared_ptr<TablespaceRoot>> roots;
+  cluster.GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .Scan(cluster.LoginTransaction(), [&](duckdb::CatalogEntry& entry) {
+      if (const auto& root = entry.Cast<TablespaceCatalogEntry>().Root()) {
+        roots.push_back(root);
+      }
+    });
+  return roots;
+}
+
+void RemoveUnownedDatabases(ClusterCatalog& cluster) {
   absl::flat_hash_set<duckdb::idx_t> databases;
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
-  RemoveUnownedOrDie(layout.EngineDir().string(), databases);
-  if (layout.index_root != layout.EngineDir().string() &&
-      !gMissingDatabases.fresh_cluster) {
-    RemoveUnownedOrDie(layout.index_root, databases);
+  for (const auto& root : TablespaceRoots(cluster)) {
+    RemoveUnownedOrDie(root->Path(), databases);
   }
 }
 
-void RemoveUnownedStorages(const DataDirectory& layout,
+void RemoveUnownedStorages(ClusterCatalog& cluster,
                            duckdb::DatabaseManager& manager) {
   if (gMissingDatabases.fresh_cluster) {
     return;
   }
+  const auto roots = TablespaceRoots(cluster);
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !catalog.InMemory()) {
-      RemoveUnownedOrDie(layout.StorageRoot(db->oid),
-                         StorageOids(catalog.Cast<SereneDBCatalog>()));
+    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType ||
+        catalog.InMemory()) {
+      continue;
     }
-  }
-}
-
-void CheckIndexLocation(const DataDirectory& layout, bool fresh_cluster) {
-  const auto record = (layout.EngineDir() / kIndexLocationFile).string();
-  auto& fs =
-    duckdb::FileSystem::GetLocal(irs::DuckDBEngine::Instance().instance());
-  const auto default_root = layout.EngineDir().string();
-  std::string recorded;
-  if (auto handle = fs.OpenFile(
-        record, duckdb::FileFlags::FILE_FLAGS_READ |
-                  duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS)) {
-    recorded.assign(duckdb::NumericCast<size_t>(handle->GetFileSize()), '\0');
-    handle->Read(duckdb::QueryContext{}, recorded.data(), recorded.size(), 0);
-  } else if (!fresh_cluster && layout.index_root != default_root) {
-    SDB_FATAL(STARTUP, "the search indexes of this cluster live in '",
-              default_root, "', not in '", layout.index_root,
-              "': start it without --index_location");
-  } else {
-    const auto pending = absl::StrCat(record, ".tmp");
-    auto out =
-      fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    auto text = absl::GetFlag(FLAGS_index_location);
-    out->Write(duckdb::QueryContext{}, text.data(), text.size(), 0);
-    out->Sync();
-    out.reset();
-    fs.MoveFile(pending, record);
-    SyncDirectory(layout.EngineDir());
-    return;
-  }
-  if (const auto root = IndexRoot(layout.directory, recorded, kEngineDir);
-      root != layout.index_root) {
-    SDB_FATAL(STARTUP, "the search indexes of this cluster live in '", root,
-              "', not in '", layout.index_root, "': start it ",
-              recorded.empty()
-                ? std::string{"without --index_location"}
-                : absl::StrCat("with --index_location=", recorded));
+    const auto owned = StorageOids(catalog.Cast<SereneDBCatalog>());
+    for (const auto& root : roots) {
+      RemoveUnownedOrDie(absl::StrCat(root->Path(), "/", db->oid), owned);
+    }
   }
 }
 
@@ -251,10 +200,10 @@ const DataDirectory& Layout(duckdb::AttachedDatabase& db) {
     *db.GetStorageExtension()->storage_info);
 }
 
-void ApplyMissingDatabasePolicy(duckdb::AttachedDatabase& cluster,
-                                const duckdb::Identifier& name,
-                                duckdb::idx_t oid) {
-  const auto file = Layout(cluster).DatabaseFile(oid);
+void ApplyMissingDatabasePolicy(const DatabaseCatalogEntry& database) {
+  const auto& name = database.name;
+  const auto oid = database.oid;
+  const auto file = database.Directory()->DataFile();
   const auto& policy = gMissingDatabases.policy;
   if (policy == "refuse") {
     SDB_FATAL(STARTUP, "database '", name.GetIdentifierName(), "' (oid ", oid,
@@ -277,9 +226,7 @@ void ApplyMissingDatabasePolicy(duckdb::AttachedDatabase& cluster,
 }  // namespace
 
 DataDirectory::DataDirectory(std::string directory_p)
-  : directory{std::move(directory_p)},
-    index_root{
-      IndexRoot(directory, absl::GetFlag(FLAGS_index_location), kEngineDir)} {}
+  : directory{std::move(directory_p)} {}
 
 void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
   static_assert(
@@ -304,14 +251,6 @@ std::filesystem::path DataDirectory::DatabaseDir(duckdb::idx_t oid) const {
   return EngineDir() / absl::StrCat(oid);
 }
 
-std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {
-  return (DatabaseDir(oid) / kDataFile).string();
-}
-
-std::string DataDirectory::StorageRoot(duckdb::idx_t oid) const {
-  return absl::StrCat(index_root, "/", oid);
-}
-
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
             duckdb::AttachVisibility visibility, bool defer_storage_load) {
@@ -333,7 +272,11 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
     manager.DetachDatabase(context, name, duckdb::OnEntryNotFound::RETURN_NULL);
   }
   auto& cluster = ClusterOf(context);
-  const auto file = Layout(cluster.GetAttached()).DatabaseFile(oid);
+  const auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                       .GetEntry(cluster.GetCatalogTransaction(context), name);
+  SDB_ASSERT(entry);
+  const auto& database = entry->Cast<DatabaseCatalogEntry>();
+  const auto file = database.Directory()->DataFile();
   duckdb::AttachInfo info;
   info.name = name;
   auto visibility = duckdb::AttachVisibility::SHOWN;
@@ -345,11 +288,8 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
     gMissingDatabases.missing.insert(oid);
     info.path = IN_MEMORY_PATH;
     visibility = duckdb::AttachVisibility::HIDDEN;
-  } else if (const auto entry =
-               cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                 .GetEntry(cluster.GetCatalogTransaction(context), name)) {
-    for (const auto& [key, value] :
-         entry->Cast<DatabaseCatalogEntry>().Options()) {
+  } else {
+    for (const auto& [key, value] : database.Options()) {
       info.options.emplace(key, value);
     }
   }
@@ -401,10 +341,6 @@ void InitCatalog(std::string_view directory) {
               "' holds database directories: refusing to start without the "
               "catalog that owns them");
   }
-  CheckIndexLocation(layout, gMissingDatabases.fresh_cluster);
-  if (!duckdb::Path::FromString(layout.index_root).IsRemote()) {
-    StorageFileSystem().CreateDirectoriesRecursive(layout.index_root);
-  }
   gMissingDatabases.policy = absl::GetFlag(FLAGS_missing_database);
   const auto& missing_policy = gMissingDatabases.policy;
   if (missing_policy != "refuse" && missing_policy != "skip" &&
@@ -435,7 +371,7 @@ void InitCatalog(std::string_view directory) {
                              duckdb::OnEntryNotFound::RETURN_NULL);
     }
   }
-  RemoveUnownedDatabases(layout, cluster);
+  RemoveUnownedDatabases(cluster);
   context.RunFunctionInTransaction([&] { cluster.Bootstrap(context); });
   std::vector<std::pair<duckdb::Identifier, duckdb::idx_t>> databases;
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
@@ -446,7 +382,7 @@ void InitCatalog(std::string_view directory) {
     context.RunFunctionInTransaction(
       [&] { AttachDatabaseCatalog(context, name, oid); });
     if (gMissingDatabases.missing.contains(oid)) {
-      ApplyMissingDatabasePolicy(cluster.GetAttached(), name, oid);
+      ReadDatabase(name.GetIdentifierName(), ApplyMissingDatabasePolicy);
     }
   }
   for (const auto& name : gMissingDatabases.skipped) {
@@ -462,7 +398,7 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  RemoveUnownedStorages(layout, manager);
+  RemoveUnownedStorages(cluster, manager);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
       db->GetStorageManager().FinishLoad(context);

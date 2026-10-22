@@ -227,7 +227,8 @@ SearchTableEntry::SearchTableEntry(
   : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
                               std::move(inherited_triggers)},
     _columns{std::move(info.Base().columns)},
-    _storage{std::move(inherited_storage)} {
+    _storage{std::move(inherited_storage)},
+    _tablespace{info.Base().tablespace_oid} {
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
@@ -242,9 +243,10 @@ SearchTableEntry::SearchTableEntry(
   }
   if (!_storage) {
     _storage = search::SearchTable::Create(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, search::SearchTable::DeclaredCompression(GetColumns()));
+      catalog.Cast<SereneDBCatalog>().Directory()->Area(_tablespace),
+      catalog.InMemory(), catalog.GetAttached().IsReadOnly(), catalog.GetOid(),
+      oid, base.oid == 0, _options,
+      search::SearchTable::DeclaredCompression(GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -539,6 +541,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }
+  info->tablespace_oid = _tablespace;
   return info;
 }
 

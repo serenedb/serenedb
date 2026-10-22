@@ -7,7 +7,10 @@ connections and the most part uploads in flight at once; `latency` delays every 
 sends the bodies of reads at that many bytes a second, and the part numbers in `failing_parts` are
 refused with a 500. The next `throttle` requests are refused with 503 SlowDown, and the next
 `drop[kind]` requests of a kind (COMPLETE_UPLOAD, COPY) take effect but get no response: the
-connection closes, and their keys are listed in `dropped`.
+connection closes, and their keys are listed in `dropped`. `stall(kind, key)` holds the next
+request of a kind (PUT_PART, COPY, DELETE) whose key contains `key` before it takes effect, sets
+`stalled`, and after `release` is set closes the connection without applying it: a test kills the
+server while the request is held.
 
 A CRC32C checksum sent with an upload is checked as S3 checks it: the body of
 a PUT or a part up to `checksum_limit` bytes against its own checksum, and a
@@ -145,6 +148,9 @@ class FakeS3:
         self.throttle = 0
         self.drop: collections.Counter[str] = collections.Counter()
         self.dropped: list[str] = []
+        self.stalling: tuple[str, str] | None = None
+        self.stalled = threading.Event()
+        self.release = threading.Event()
         self.log: list[dict] | None = None
         store = self
 
@@ -180,6 +186,12 @@ class FakeS3:
     def replace(self, bucket: str, key: str, data: bytes) -> None:
         with self.lock:
             self.objects[(bucket, key)] = _Object(data)
+
+    def stall(self, kind: str, key: str) -> None:
+        self.stalled.clear()
+        self.release.clear()
+        with self.lock:
+            self.stalling = (kind, key)
 
     def count(self, kind: str) -> None:
         with self.lock:
@@ -284,6 +296,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._body()
         self._xml(503, "<Error><Code>SlowDown</Code><Message>Please reduce your request rate."
                        "</Message></Error>")
+        return True
+
+    def _stalled(self, kind: str, key: str) -> bool:
+        with self.fake.lock:
+            stalling = self.fake.stalling
+            if stalling is None or stalling[0] != kind or stalling[1] not in key:
+                return False
+            self.fake.stalling = None
+        self.fake.stalled.set()
+        self.fake.release.wait(120)
+        self.close_connection = True
         return True
 
     def _dropped(self, kind: str, key: str) -> bool:
@@ -428,11 +451,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self._admin(bucket, key, query) or self._throttled():
             return
         if "partNumber" in query and "uploadId" in query:
+            if self._stalled("PUT_PART", key):
+                return
             self._put_part(int(query["partNumber"][0]), query["uploadId"][0])
             return
         source = self.headers.get("x-amz-copy-source")
         body = self._body()
         if source:
+            if self._stalled("COPY", key):
+                return
             self.fake.count("COPY")
             self._wait()
             src_bucket, _, src_key = urllib.parse.unquote(source).lstrip("/").partition("/")
@@ -574,6 +601,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             with self.fake.lock:
                 self.fake.uploads.pop(query["uploadId"][0], None)
             self._reply(204)
+            return
+        if self._stalled("DELETE", key):
             return
         self.fake.count("DELETE")
         self._wait()

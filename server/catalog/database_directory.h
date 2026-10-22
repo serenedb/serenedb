@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
@@ -34,9 +36,11 @@
 
 namespace sdb::catalog {
 
+inline constexpr std::string_view kEngineDir = "engine_v1";
 inline constexpr std::string_view kDataFile = "data.db";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
 inline constexpr std::string_view kStorageMarker = ".storage";
+inline constexpr std::string_view kTablespaceMarker = "tablespace";
 
 void SyncDirectory(const std::filesystem::path& directory);
 
@@ -51,31 +55,90 @@ std::vector<StorageEntry> ListStorages(const std::string& root);
 void RemoveUnowned(const std::string& root,
                    const absl::flat_hash_set<duckdb::idx_t>& owned);
 
-class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
+class TablespaceRoot final
+  : public std::enable_shared_from_this<TablespaceRoot> {
  public:
-  DatabaseDirectory(std::filesystem::path path, std::string storage_root);
+  explicit TablespaceRoot(std::string path);
+  ~TablespaceRoot();
+
+  const std::string& Path() const noexcept { return _path; }
+  bool Remote() const noexcept { return _remote; }
+
+  void Claim();
+  [[nodiscard]] std::shared_ptr<void> Pin();
+  [[nodiscard]] bool BeginDrop(const std::shared_ptr<void>& drop);
+  void MarkRemoved() noexcept {
+    _removed.store(true, std::memory_order_release);
+  }
+  void Abandon() noexcept {
+    if (_claimed.load(std::memory_order_acquire)) {
+      MarkRemoved();
+    }
+  }
+
+ private:
+  void Unpin() noexcept;
+
+  absl::Mutex _mutex;
+  size_t _pins ABSL_GUARDED_BY(_mutex) = 0;
+  std::weak_ptr<void> _drop ABSL_GUARDED_BY(_mutex);
+  std::atomic_bool _claimed{false};
+  std::atomic_bool _removed{false};
+  std::string _path;
+  bool _remote;
+};
+
+class DatabaseDirectory;
+
+class StorageArea final {
+ public:
+  StorageArea(std::shared_ptr<DatabaseDirectory> database,
+              std::shared_ptr<TablespaceRoot> root, std::string path);
+
+  const std::string& Path() const noexcept { return _path; }
+  std::string StoragePath(duckdb::idx_t oid) const;
+
+  std::string CreateStorage(duckdb::idx_t oid) const;
+  std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
+  static void RemoveStorage(std::shared_ptr<StorageArea> area,
+                            duckdb::idx_t oid);
+
+ private:
+  std::string MarkerPath(duckdb::idx_t oid) const;
+
+  std::shared_ptr<DatabaseDirectory> _database;
+  std::shared_ptr<TablespaceRoot> _root;
+  std::string _path;
+  bool _remote;
+};
+
+class DatabaseDirectory final
+  : public duckdb::StorageExtensionInfo,
+    public std::enable_shared_from_this<DatabaseDirectory> {
+ public:
+  DatabaseDirectory(duckdb::idx_t oid, std::shared_ptr<TablespaceRoot> root,
+                    std::filesystem::path path);
+  explicit DatabaseDirectory(std::filesystem::path path);
   ~DatabaseDirectory() final;
 
   const std::filesystem::path& Path() const noexcept { return _path; }
   std::string DataFile() const;
-  std::string StoragePath(duckdb::idx_t oid) const;
 
   void Create() const;
-  std::string CreateStorage(duckdb::idx_t oid) const;
-  std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
-  static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,
-                            duckdb::idx_t oid);
+  std::shared_ptr<StorageArea> Area(duckdb::idx_t tablespace);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
 
  private:
-  std::string MarkerPath(duckdb::idx_t oid) const;
+  std::shared_ptr<TablespaceRoot> RootOf(duckdb::idx_t tablespace) const;
 
+  duckdb::idx_t _oid;
+  std::shared_ptr<TablespaceRoot> _root;
   std::filesystem::path _path;
-  std::string _storage_root;
-  bool _remote;
+  absl::Mutex _mutex;
+  std::vector<std::weak_ptr<TablespaceRoot>> _roots ABSL_GUARDED_BY(_mutex);
   std::atomic_bool _dropped{false};
 };
 

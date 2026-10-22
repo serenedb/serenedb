@@ -14,7 +14,7 @@ This page describes which SereneDB releases can read search indexes, meaning inv
 
 Search tables write their changes to the write-ahead log of the database file they belong to, so the rules for database files below cover those changes too. Rows that a transaction has already written out as index files, as a parallel insert does, or a serial write once its buffered rows exceed `checkpoint_threshold`, are logged only by the names of those files, so the index-file rules above apply to them.
 
-Database files hold the rows of tables. The catalog, meaning the definitions of roles, databases, schemas, tables, text search dictionaries, foreign servers, indexes and sequences, is one log for the whole instance: `engine_v1/catalog.wal` in the data directory, written in the same format as the write-ahead log of a database file. Database files, their write-ahead logs and the catalog log follow these rules:
+Database files hold the rows of tables. The catalog, meaning the definitions of roles, tablespaces, databases, schemas, tables, text search dictionaries, foreign servers, indexes and sequences, is one log for the whole instance: `engine_v1/catalog.wal` in the data directory, written in the same format as the write-ahead log of a database file. Database files, their write-ahead logs and the catalog log follow these rules:
 
 - **Newer release, older database:** a release opens database files written by earlier releases since the last break, and upgrades them when it writes to them. An upgraded file can no longer be opened by the older release.
 - **Older release, newer database:** an older release opens a database file written by a newer one as long as the file uses no feature the older release lacks. Otherwise the older release refuses to open it; it never reads it wrongly. A text search dictionary or an index definition that uses an option the older release does not know is refused the same way.
@@ -29,8 +29,9 @@ The catalog log belongs to the whole instance: if a release refuses it or cannot
 A server keeps its catalog and its databases under `engine_v1` in its data directory:
 
 - `engine_v1/catalog.wal`: the catalog log.
-- `engine_v1/index_location`: the [index location](../configuration/index_storage.md) the cluster was created with, empty for the data directory.
-- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, the write-ahead logs that checkpoints [kept for search tables](../sql/indexes/inverted/maintenance.md#durability) (`data.db.wal.retained.<n>`), and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`. A cluster with an index location keeps these directories at that location instead, under `<location>/<oid>/`.
+- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, the write-ahead logs that checkpoints [kept for search tables](../sql/indexes/inverted/maintenance.md#durability) (`data.db.wal.retained.<n>`), and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
+
+A [tablespace](../sql/statements/create_tablespace/index.md) keeps the same layout under `engine_v1` at its location: `<location>/engine_v1/<oid>/` holds the directories of a database's search tables and indexes placed in it, and the database's `data.db` and write-ahead logs when the database was created in it and the location is a local directory. On an object store, `<location>/engine_v1/tablespace` marks the location as used, and each object directory has a `<oid>.storage` marker beside it.
 
 Beside `engine_v1`, the root of the data directory holds:
 
@@ -40,8 +41,8 @@ Beside `engine_v1`, the root of the data directory holds:
 - `extensions/`: the extension directory (the `extension_directory` setting).
 - `LOCK`: held while the server runs, so that a second server does not start on the same data directory.
 
-`engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well, and the index files at the cluster's index location when it has one. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
+`engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well, and the `engine_v1` directory of every tablespace location. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
 
-Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
+Dropping a database, a table or an index removes its directories once no query uses it any more, in every tablespace that holds them, and dropping a tablespace removes `<location>/engine_v1`. If the server stops before that, or crashes while an object is being created, it removes the leftover directories when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

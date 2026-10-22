@@ -55,6 +55,10 @@ The trailing `WITH (...)` clause sets index-level options.
 
 An index on a search table (`CREATE TABLE … WITH (storage = 'search')`) takes none of these options. It has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it, and the table keeps the score bounds that `optimize_top_k` prunes with. So `CREATE INDEX` rejects all five on a search table, with an error that names the option, such as `row_group_size is a table option on a search-backed table`. Set them on the table instead; see [Background intervals](../../indexes/inverted/maintenance.md#background-intervals).
 
+## Tablespace
+
+`TABLESPACE name`, after the `WITH (...)` options and before `WHERE`, puts the index's files in a [tablespace](../create_tablespace/index.md): another local directory or an object store. Without it, the index goes to the tablespace `default_tablespace` names, else to its database's. An index on a search table lives with the table, so it takes no `TABLESPACE` other than its database's.
+
 ## Partial indexes
 
 A trailing `WHERE <predicate>` builds a **partial index** containing only the rows that satisfy the predicate:

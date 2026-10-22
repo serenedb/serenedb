@@ -104,6 +104,10 @@ Or:
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
 
+## Tablespace
+
+`TABLESPACE name` puts the files of a search table, one created `WITH (storage = 'search')`, in a [tablespace](../create_tablespace/index.md): after `WITH (...)` and `ON COMMIT`, or before `AS` in a CTAS. Without it, a search table goes to the tablespace `default_tablespace` names, else to its database's. Other tables live in the database file, so they take no `TABLESPACE` other than their database's.
+
 ## Check Constraints
 
 A `CHECK` constraint is an expression that must be satisfied by the values of every row in the table.

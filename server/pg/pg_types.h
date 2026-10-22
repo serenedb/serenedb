@@ -77,6 +77,8 @@ inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;
 inline constexpr duckdb::idx_t kPgPublicSchema = 2200;
 inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
 inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
+inline constexpr duckdb::idx_t kPgDefaultTablespace = 1663;
+inline constexpr duckdb::idx_t kPgGlobalTablespace = 1664;
 
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 

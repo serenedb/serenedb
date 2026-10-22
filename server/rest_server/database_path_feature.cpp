@@ -43,14 +43,6 @@ ABSL_FLAG(std::string, hba_config, "",
           "default) uses <datadir>/pg_hba.conf; a relative path is resolved "
           "against the data directory.");
 
-ABSL_FLAG(std::string, index_location, "",
-          "Where search index files live: a local directory or an object "
-          "store URL such as s3://bucket/prefix or az://container/prefix. "
-          "Empty (the default) keeps "
-          "them in the data directory; a relative path is resolved against "
-          "the data directory. A cluster keeps the location it was first "
-          "started with: starting it with another one is refused.");
-
 namespace sdb {
 
 DatabasePathFeature::DatabasePathFeature()

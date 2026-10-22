@@ -504,7 +504,8 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
   : duckdb::DuckIndexEntry{catalog, schema, info, DataTableInfoOf(table)},
-    _relation_name{info.table} {
+    _relation_name{info.table},
+    _tablespace{info.tablespace_oid} {
   if (table && !table->IsDuckTable()) {
     _search_table = table->Cast<SearchTableEntry>().Storage();
   }
@@ -519,6 +520,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
   info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
     kPayloadOption, Pack(ToPersisted()));
+  info->tablespace_oid = _tablespace;
   return info;
 }
 

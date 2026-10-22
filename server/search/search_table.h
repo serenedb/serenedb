@@ -73,23 +73,22 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-              bool in_memory, bool read_only, duckdb::idx_t db_id,
-              duckdb::idx_t table_id, bool is_new,
-              const catalog::SearchTableOptions& options,
+  SearchTable(std::shared_ptr<catalog::StorageArea> area, bool in_memory,
+              bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id,
+              bool is_new, const catalog::SearchTableOptions& options,
               catalog::CompressionByColumn compression);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
-    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-    bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
+    std::shared_ptr<catalog::StorageArea> area, bool in_memory, bool read_only,
+    duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
     catalog::CompressionByColumn compression) {
-    return std::make_shared<SearchTable>(std::move(directory), in_memory,
-                                         read_only, db_id, table_id, is_new,
-                                         options, std::move(compression));
+    return std::make_shared<SearchTable>(std::move(area), in_memory, read_only,
+                                         db_id, table_id, is_new, options,
+                                         std::move(compression));
   }
 
   static catalog::CompressionByColumn DeclaredCompression(
@@ -111,7 +110,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::string Path() const { return _directory->StoragePath(GetTableId()); }
+  std::string Path() const { return _area->StoragePath(GetTableId()); }
   bool Absent() const noexcept { return _absent; }
   void OpenReader();
 
@@ -301,7 +300,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  std::shared_ptr<catalog::StorageArea> _area;
   bool _is_new;
   bool _absent = false;
   uint64_t _segment_memory_max;

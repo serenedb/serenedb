@@ -305,6 +305,7 @@ void Transaction::Destroy() noexcept {
   _feed_columns = {};
   _search_txn.reset();
   _on_commit.clear();
+  _held.clear();
   _created_indexes.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;

@@ -5,30 +5,26 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The files of inverted indexes and search tables live in the data directory by default, next to the databases they belong to. The `--index_location` flag of `serened` puts them elsewhere: on another local disk, or in an object store.
+The files of inverted indexes and search tables live in the [tablespace](../sql/statements/create_tablespace/index.md) they are created in: the data directory by default, another local disk, or an object store.
 
 ## Choosing the location
 
-`--index_location` takes a local directory or an object store URL:
+A tablespace's location is a local directory or an object store URL:
 
-| Value | Index files live in |
-| ----- | ------------------- |
-| empty (the default) | the data directory |
-| `/mnt/fast/indexes` | that directory; a relative path is resolved against the data directory |
+| Location | Index files live in |
+| -------- | ------------------- |
+| `pg_default`, the default tablespace | the data directory |
+| `/mnt/fast/indexes` | that directory |
 | `s3://bucket/prefix` | an S3 bucket, or a bucket of an S3-compatible store, under that prefix |
 | `az://container/prefix` | an Azure Blob Storage container, under that prefix |
 
-```bash
-serened /var/lib/serenedb --index_location=s3://search-indexes/production
-```
-
-A cluster keeps the location it was first started with. Starting it with another location, or without the location it was created with, is refused at startup, and the error names the location the cluster uses. A cluster created without `--index_location` keeps its index files in the data directory. The default and a relative location are resolved against the data directory at every start, so such a cluster can be moved with its data directory.
+A search table or an inverted index goes to the tablespace its `CREATE` names, else to the one `default_tablespace` names, else to the tablespace of its database; a database created with `CREATE DATABASE ... TABLESPACE` keeps its search tables and indexes there by default. See [CREATE TABLESPACE](../sql/statements/create_tablespace/index.md) for how to create a tablespace and place objects in it.
 
 Local storage is the fastest: index files are read in place. On an object store, every read that misses the cache is a request to the store.
 
 ## Object store credentials
 
-The server reads and writes index files with the credentials of a persistent secret whose scope covers the location. Create it before the first index, with a scope that matches the location's bucket and prefix:
+The server reads and writes index files with the credentials of a persistent secret whose scope covers the tablespace's location. Create it before the tablespace, with a scope that matches the location's bucket and prefix:
 
 <SqlLogicTest id="configuration/index_storage/example_secret" />
 
@@ -72,7 +68,7 @@ What costs requests to the object store:
 | Each commit of an index | a copy, two size checks and a delete of one small file |
 | Opening an index at startup | a listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel |
 | Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore |
-| Startup | listings of the location, to remove files that belong to no index |
+| Startup | listings of every tablespace location, to remove files that belong to no index |
 
 The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them on S3 and `azure_write_blocks_in_flight` on Azure, 20 by default; setting it to `1` uploads one part at a time.
 

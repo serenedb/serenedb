@@ -54,13 +54,13 @@
 namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
-  std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-  bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
+  std::shared_ptr<catalog::StorageArea> area, bool in_memory, bool read_only,
+  duckdb::idx_t db_id, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
     _db_id{db_id},
-    _directory{std::move(directory)},
+    _area{std::move(area)},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);
@@ -73,8 +73,8 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(*_directory, index_id, is_new, in_memory,
-                                     resource_manager);
+  auto opened =
+    OpenStorageDirectory(*_area, index_id, is_new, in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -139,11 +139,11 @@ void InvertedIndexStorage::OpenReader() {
 }
 
 StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
+  const catalog::StorageArea& area, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources) {
   std::optional<std::string> path;
   if (!in_memory) {
-    path = is_new ? database.CreateStorage(oid) : database.OpenStorage(oid);
+    path = is_new ? area.CreateStorage(oid) : area.OpenStorage(oid);
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
@@ -159,7 +159,7 @@ InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
   if (_dropped.load(std::memory_order_acquire)) {
-    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _index_id);
+    catalog::StorageArea::RemoveStorage(std::move(_area), _index_id);
   }
 }
 

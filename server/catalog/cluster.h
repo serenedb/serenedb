@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
@@ -30,13 +33,16 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 
 #include "auth/role_closure.h"
+#include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/tablespace.h"
 
 namespace sdb::catalog {
 
@@ -50,6 +56,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::idx_t DefaultSchemaOid() const final;
+  void Initialize(bool load_builtin) final;
 
   bool UsesCatalogLog() const final { return true; }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final {
@@ -69,9 +76,9 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateRoleInfo& info) final;
   bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
-    duckdb::CreateDatabaseInfo& info) final {
-    return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
-  }
+    duckdb::CreateDatabaseInfo& info) final;
+  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeTablespaceEntry(
+    duckdb::CreateTablespaceInfo& info) final;
 
   void Bootstrap(duckdb::ClientContext& context);
   void Alter(duckdb::CatalogTransaction transaction,
@@ -92,13 +99,27 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info);
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTablespace(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateTablespaceInfo& info) final;
+  void DropTablespace(duckdb::CatalogTransaction transaction,
+                      duckdb::DropInfo& info) final;
+
+  std::shared_ptr<TablespaceRoot> TablespaceRootOf(duckdb::idx_t oid);
+  std::shared_ptr<DatabaseDirectory> MakeDatabaseDirectory(
+    duckdb::idx_t oid, duckdb::idx_t tablespace);
 
   auth::RoleCache& Roles() noexcept { return _roles; }
 
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
+  bool HoldsTablespaceObjects(duckdb::idx_t tablespace);
 
+  absl::Mutex _tablespace_creation_mutex;
+  absl::Mutex _tablespaces_mutex;
+  absl::flat_hash_map<duckdb::idx_t, std::weak_ptr<TablespaceRoot>>
+    _tablespace_roots ABSL_GUARDED_BY(_tablespaces_mutex);
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;

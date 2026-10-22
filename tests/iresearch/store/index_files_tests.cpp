@@ -40,6 +40,7 @@
 #include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <string>
 #include <unordered_set>
@@ -5190,6 +5191,77 @@ TEST(IndexFilesTest, memory_files_kept_by_reader) {
   for (const auto& path : paths) {
     EXPECT_FALSE(memory.FileExists(path)) << path;
   }
+}
+
+TEST(IndexFilesTest, compacted_memory_files_map_in_place) {
+  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& memory = db.GetMemoryFileSystem();
+  const irs::IndexFiles files{db, irs::MemoryIndexRoot()};
+  std::vector<irs::byte_type> data(2 * kBlock + 17);
+  for (uint64_t i = 0; i != data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
+  }
+  {
+    auto out = files.Create("file");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+  auto blocks = files.Open("file", irs::IOAdvice::NORMAL);
+  ASSERT_EQ(irs::DataInput::Type::Generic, blocks->GetType());
+
+  files.Compact("file");
+  EXPECT_FALSE(memory.GetBlockFile(files.Path("file")));
+  auto mapped = files.Open("file", irs::IOAdvice::NORMAL);
+  ASSERT_EQ(irs::DataInput::Type::BytesViewInput, mapped->GetType());
+  ASSERT_EQ(data.size(), mapped->Length());
+  const auto* stable = mapped->ReadStable(0, data.size());
+  ASSERT_NE(nullptr, stable);
+  EXPECT_EQ((irs::bytes_view{data.data(), data.size()}),
+            (irs::bytes_view{stable, data.size()}));
+  std::vector<irs::byte_type> read(data.size());
+  blocks->ReadData(0, read.data(), read.size());
+  EXPECT_EQ(data, read);
+
+  files.Compact("file");
+  EXPECT_EQ(irs::DataInput::Type::BytesViewInput,
+            files.Open("file", irs::IOAdvice::NORMAL)->GetType());
+}
+
+TEST(IndexFilesTest, merged_memory_segments_are_compacted) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& memory = db.GetMemoryFileSystem();
+  const irs::IndexFiles files{db, irs::MemoryIndexRoot()};
+  ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                                &::tests::GenericJsonFieldFactory);
+  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  for (size_t i = 0; i != 2; ++i) {
+    const ::tests::Document* doc = gen.next();
+    ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    writer->RefreshCommit();
+  }
+  const auto in_blocks = [&](const irs::DirectoryReader& reader) {
+    size_t count = 0;
+    for (const auto& segment : reader.Meta().index_meta.segments) {
+      for (const auto& file : segment.meta.files) {
+        count += memory.GetBlockFile(files.Path(file)) ? 1 : 0;
+      }
+    }
+    return count;
+  };
+  const auto flushed = writer->GetSnapshot();
+  ASSERT_EQ(2, flushed.size());
+  EXPECT_LT(0, in_blocks(flushed));
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1, merged.size());
+  EXPECT_EQ(2, merged.live_docs_count());
+  EXPECT_EQ(0, in_blocks(merged));
 }
 
 TEST(IndexFilesTest, private_memory) {

@@ -101,18 +101,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   return reader;
 }
 
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
-  const IndexFiles& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options) const {
-  SDB_ASSERT(meta == _info);
-  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = _refs;
-  reader->_field_reader = _field_reader;
-  reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options);
-  return reader;
-}
-
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const IndexFiles& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);

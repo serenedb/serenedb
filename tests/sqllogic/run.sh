@@ -474,6 +474,11 @@ launch_s3() {
 }
 
 launch_azure() {
+	# Preset connection env: nothing to launch.
+	if [[ -n "${AZURITE_CONNECTION_STRING:-}" ]]; then
+		echo "Azurite provided by the environment (container=$AZURITE_BLOB_CONTAINER)."
+		return
+	fi
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	AZURITE_CONTAINER_NAME="${prefix}-serenedb-test-azurite-$$"

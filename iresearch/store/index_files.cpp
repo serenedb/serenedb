@@ -425,7 +425,7 @@ IndexInput::ptr IndexFiles::Open(std::string_view name, IOAdvice advice) const
   } else if (_state->input == InputKind::Mapped) {
     input = OpenMapped(path, advice);
   } else {
-    input = OpenBlocks(path, name);
+    input = OpenBlocks(path, name, advice);
   }
   if (ref) {
     _ref_tracker->Keep(std::move(ref));
@@ -493,11 +493,15 @@ IndexInput::ptr IndexFiles::OpenMapped(const std::string& path,
 }
 
 IndexInput::ptr IndexFiles::OpenBlocks(const std::string& path,
-                                       std::string_view name) const {
+                                       std::string_view name,
+                                       IOAdvice advice) const {
   auto& cache = Cache();
   if (Kind() == StorageKind::Memory) {
-    return std::make_unique<BlockInput>(cache,
-                                        MemoryFiles().GetBlockFile(path));
+    auto blocks = MemoryFiles().GetBlockFile(path);
+    if (!blocks) {
+      return OpenMapped(path, advice);
+    }
+    return std::make_unique<BlockInput>(cache, std::move(blocks));
   }
   const auto known = Info(name);
   duckdb::shared_ptr<duckdb::FileHandle> handle =
@@ -618,6 +622,15 @@ void IndexFiles::SyncDirectory() const try {
     return;
   }
   _state->fs.SyncDirectory(_state->root);
+} catch (const duckdb::IOException& e) {
+  ThrowFileError(e);
+}
+
+void IndexFiles::Compact(std::string_view name) const try {
+  if (Kind() != StorageKind::Memory || _state->heap) {
+    return;
+  }
+  MemoryFiles().Compact(Path(name));
 } catch (const duckdb::IOException& e) {
   ThrowFileError(e);
 }

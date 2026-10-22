@@ -54,15 +54,18 @@
 namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
-  std::shared_ptr<catalog::StorageArea> area, bool in_memory, bool read_only,
-  duckdb::idx_t db_id, duckdb::idx_t index_id,
+  std::shared_ptr<catalog::StorageArea> area,
+  duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
-    _db_id{db_id},
+    _db_id{database.oid},
+    _database{database.shared_from_this()},
     _area{std::move(area)},
     _search{GetSearchEngine()},
-    _durability{db_id, absl::StrCat("inverted index ", index_id)} {
+    _durability{database.oid, absl::StrCat("inverted index ", index_id)} {
+  const bool in_memory = database.GetStorageManager().InMemory();
+  const bool read_only = database.IsReadOnly();
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
@@ -73,8 +76,8 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened =
-    OpenStorageDirectory(*_area, index_id, is_new, in_memory, resource_manager);
+  auto opened = OpenStorageDirectory(_area.get(), index_id, is_new, in_memory,
+                                     resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -139,11 +142,12 @@ void InvertedIndexStorage::OpenReader() {
 }
 
 StorageDirectory OpenStorageDirectory(
-  const catalog::StorageArea& area, duckdb::idx_t oid, bool is_new,
+  const catalog::StorageArea* area, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources) {
+  SDB_ASSERT(area || in_memory);
   std::optional<std::string> path;
   if (!in_memory) {
-    path = is_new ? area.CreateStorage(oid) : area.OpenStorage(oid);
+    path = is_new ? area->CreateStorage(oid) : area->OpenStorage(oid);
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
@@ -158,7 +162,7 @@ StorageDirectory OpenStorageDirectory(
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
-  if (_dropped.load(std::memory_order_acquire)) {
+  if (_area && _dropped.load(std::memory_order_acquire)) {
     catalog::StorageArea::RemoveStorage(std::move(_area), _index_id);
   }
 }
@@ -218,6 +222,17 @@ absl::Status InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
   return RefreshUnsafe(/*wait=*/true, progress, code).res;
+}
+
+absl::Status InvertedIndexStorage::OptimizeInMemory() {
+  SDB_ASSERT(_writer);
+  if (auto status = Refresh(); !status.ok()) {
+    return status;
+  }
+  if (auto status = _durability.CompactFiles(*_writer); !status.ok()) {
+    return status;
+  }
+  return Refresh();
 }
 
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(

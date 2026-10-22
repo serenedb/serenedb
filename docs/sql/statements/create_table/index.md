@@ -54,6 +54,8 @@ They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE
 
 Temporary tables reside in memory rather than on disk even when connecting to a persistent SereneDB, but if the `temp_directory` [configuration](../../../configuration/overview.md) is set, data will be spilled to disk if memory becomes constrained.
 
+A temporary table can have [inverted indexes](../create_index/inverted.md). They are kept in memory too, are visible only to the session, and are dropped with the table; [`VACUUM (OPTIMIZE_IN_MEMORY_TABLE)`](../vacuum/index.md#optimizing-in-memory-indexes--optimize_in_memory_table) makes queries on them faster. Their text search dictionaries come from the session's database, and dropping a dictionary that such an index uses makes queries on the index fail. A temporary table cannot be a search table (`WITH (storage = 'search')`), and neither it nor its indexes can be placed in a [tablespace](../create_tablespace/index.md).
+
 Create a temporary table from a CSV file (automatically detecting column names and types):
 
 <SqlLogicTest id="sql/statements/create_table/index/example_009" />

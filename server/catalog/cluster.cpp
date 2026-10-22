@@ -291,9 +291,8 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
     const auto& tablespace = entry->Cast<TablespaceCatalogEntry>();
     if (tablespace.internal) {
       THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-        ERR_MSG("cannot drop tablespace ", name.GetIdentifierName(),
-                " because it is required by the database system"));
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for tablespace ", name.GetIdentifierName()));
     }
     auto drop = std::make_shared<bool>();
     if (!tablespace.Root()->BeginDrop(drop)) {

@@ -30,6 +30,8 @@ The server reads and writes index files with the credentials of a persistent sec
 
 The secret has to be persistent: the server opens indexes at startup and maintains them in the background, outside any session. See [AWS Credentials](./aws_credentials.md) for the keys to use and for S3-compatible endpoints. For Azure, create a persistent secret of `TYPE azure` whose scope covers the container and prefix, for example with a `CONNECTION_STRING`; the container has to exist.
 
+Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared access signature, by replacing the secret with `CREATE OR REPLACE PERSISTENT SECRET` before they expire. A request the store refuses with the old credentials is sent again with the replaced secret, for files that are already open and for background refreshes and merges as well. If a refresh cannot write its files, for example because the credentials expired before the secret was replaced, the index stops publishing new rows and its database stops checkpointing until the server restarts; the index then catches up from the write-ahead log.
+
 ## Caching
 
 Index files on an object store are read through the external file cache, in blocks of 256 KiB. A refresh or a merge keeps the files it writes in the cache, so the first queries over new data read memory. A query that touches a part of an index that is not cached reads it from the store and caches it; later queries read it from memory until the cache evicts it. A read that goes through a file in order fetches the blocks ahead of it, in requests of up to 16 MiB, and a large read fetches all of its blocks with one request.

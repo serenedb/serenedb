@@ -179,6 +179,7 @@ class IndexFiles {
   bool Rename(std::string_view src, std::string_view dst) const noexcept;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
+  void Compact(std::string_view name) const;
   bool Visit(const Visitor& visitor) const;
   void ForEach(size_t count, absl::FunctionRef<void(size_t)> visit) const;
 
@@ -227,8 +228,8 @@ class IndexFiles {
   bool RemoveFile(std::string_view name) const noexcept;
   size_t RemoveFiles(std::span<const std::string> names) const noexcept;
   IndexInput::ptr OpenMapped(const std::string& path, IOAdvice advice) const;
-  IndexInput::ptr OpenBlocks(const std::string& path,
-                             std::string_view name) const;
+  IndexInput::ptr OpenBlocks(const std::string& path, std::string_view name,
+                             IOAdvice advice) const;
   IndexInput::ptr ReadWhole(const std::string& path,
                             std::string_view name) const;
   duckdb::BlockCache& Cache() const;

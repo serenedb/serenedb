@@ -292,12 +292,21 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
-  auto& serene = catalog.Cast<SereneDBCatalog>();
+  const bool temporary = catalog.GetAttached().IsTemporary();
+  auto dictionaries = temporary ? DefaultSereneDBCatalog(context)
+                                : &catalog.Cast<SereneDBCatalog>();
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict =
-        serene.FindIn<TokenizerCatalogEntry>(&context, field.text_dictionary);
+      const auto dict = dictionaries
+                          ? dictionaries->FindIn<TokenizerCatalogEntry>(
+                              &context, field.text_dictionary)
+                          : nullptr;
+      if (!dict && temporary) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("text search dictionary with OID ",
+                                field.text_dictionary, " does not exist"));
+      }
       if (!dict) {
         continue;
       }

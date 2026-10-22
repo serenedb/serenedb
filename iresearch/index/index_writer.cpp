@@ -1551,6 +1551,9 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // Nothing to compact or compaction failure
     co_return result;
   }
+  for (const auto& file : compaction_segment.meta.files) {
+    _dir.Compact(file);
+  }
 
   auto opts = committed_reader->Options();
   auto pending_reader =
@@ -2017,7 +2020,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   if (info.reopen_reader) {
     for (auto& entry : segments) {
-      entry.reader = SegmentReader{entry.reader.GetImpl()->ReopenReader(
+      entry.reader = SegmentReader{SegmentReaderImpl::Open(
         dir, entry.segment.meta, committed_reader.Options())};
     }
   }

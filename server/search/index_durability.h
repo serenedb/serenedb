@@ -89,6 +89,7 @@ class IndexDurability {
     irs::IndexWriter& writer);
 
   absl::Status Cleanup(const irs::IndexFiles& dir);
+  absl::Status CompactFiles(irs::IndexWriter& writer);
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }
@@ -118,6 +119,7 @@ class IndexDurability {
   bool _on_disk = false;
   std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _out_of_sync{false};
+  std::atomic<bool> _reopen{false};
   absl::Mutex _refresh_mutex;
   irs::SourcePosition _position;
   mutable absl::Mutex _positions_mutex;

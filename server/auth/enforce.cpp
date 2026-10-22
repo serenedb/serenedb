@@ -1267,6 +1267,14 @@ class Enforcer {
     if (tablespace->oid == (own == 0 ? pg::kPgDefaultTablespace : own)) {
       return 0;
     }
+    if (catalog.GetAttached().IsTemporary()) {
+      if (!named) {
+        return 0;
+      }
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("temporary objects cannot be placed in a tablespace"));
+    }
     if (!own_files || !serenedb) {
       if (!named) {
         return 0;

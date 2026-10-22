@@ -63,19 +63,24 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+    : duckdb::DuckCatalog{db, !db.IsTemporary()},
+      _directory{std::move(directory)} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
+  }
+  std::shared_ptr<StorageArea> Area(duckdb::idx_t tablespace) const {
+    return _directory ? _directory->Area(tablespace) : nullptr;
   }
 
   std::string GetCatalogType() final;
 
   duckdb::SqlCompatibility Compatibility() const final {
-    return duckdb::SqlCompatibility::POSTGRES;
+    return GetAttached().IsTemporary() ? duckdb::DuckCatalog::Compatibility()
+                                       : duckdb::SqlCompatibility::POSTGRES;
   }
 
-  bool UsesCatalogLog() const final { return true; }
+  bool UsesCatalogLog() const final { return !GetAttached().IsTemporary(); }
   bool IsDropped() const final {
     return _detached.load(std::memory_order_acquire);
   }
@@ -96,6 +101,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
              duckdb::AlterInfo& info) final;
 
   duckdb::optional<duckdb::Identifier> GetDefaultSchema() const final {
+    if (GetAttached().IsTemporary()) {
+      return duckdb::DuckCatalog::GetDefaultSchema();
+    }
     return duckdb::Identifier{irs::StaticStrings::kPublic};
   }
 
@@ -205,6 +213,9 @@ duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   duckdb::ClientContext& context);
 
 bool IsSereneDB(duckdb::Catalog& catalog);
+
+duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
+  duckdb::AttachedDatabase& db);
 
 void ThrowIfReadOnly(const duckdb::Catalog& catalog, const auto&... command) {
   if (catalog.GetAttached().IsReadOnly()) {

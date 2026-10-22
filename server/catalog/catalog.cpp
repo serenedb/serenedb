@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -44,6 +45,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -138,6 +140,11 @@ bool IsSereneDB(duckdb::Catalog& catalog) {
          type == SereneDBCatalog::kReadOnlyStorageType;
 }
 
+duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
+  duckdb::AttachedDatabase& db) {
+  return duckdb::make_uniq<SereneDBCatalog>(db, nullptr);
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -185,8 +192,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      _directory->Area(entry->Tablespace()), InMemory(),
-      GetAttached().IsReadOnly(), GetOid(), entry->oid,
+      Area(entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -195,6 +201,9 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateTokenizerInfo& info) {
+  if (GetAttached().IsTemporary()) {
+    return duckdb::DuckCatalog::MakeTokenizerEntry(transaction, schema, info);
+  }
   if (info.config.empty()) {
     pg::CompileTokenizer(transaction.GetContext(), info);
   }
@@ -204,6 +213,9 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
+  if (GetAttached().IsTemporary()) {
+    return duckdb::DuckCatalog::MakeJobEntry(transaction, schema, info);
+  }
   VerifySchedule(info.schedule);
   auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
                                                 std::make_shared<JobState>());
@@ -402,6 +414,11 @@ SereneDBCatalog::BindCreateViewIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (GetAttached().IsTemporary()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot create an index on temporary view \"",
+                            view.name.GetIdentifierName(), "\""));
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
@@ -427,6 +444,20 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
+  if (GetAttached().IsTemporary()) {
+    const auto& base = info.Base().Cast<duckdb::CreateTableInfo>();
+    const std::string_view clause = !base.partition_keys.empty()
+                                      ? "PARTITIONED BY"
+                                    : !base.sort_keys.empty() ? "SORTED BY"
+                                    : !base.options.empty()   ? "WITH clause"
+                                                              : "";
+    if (clause.empty()) {
+      return {};
+    }
+    return duckdb::ErrorData{
+      duckdb::ExceptionType::CATALOG,
+      absl::StrCat(clause, " is not supported for temporary tables")};
+  }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
@@ -445,7 +476,8 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || GetAttached().IsTemporary() ||
+      _detached.load(std::memory_order_acquire)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -505,6 +537,9 @@ bool SereneDBCatalog::AppendLocalIndexes(
 
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
+  if (GetAttached().IsTemporary()) {
+    return;
+  }
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(duckdb::QualifiedName(
@@ -525,6 +560,9 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 }
 
 duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
+  if (GetAttached().IsTemporary()) {
+    return duckdb::DuckCatalog::DefaultSchemaOid();
+  }
   return pg::kPgMainSchema;
 }
 

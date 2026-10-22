@@ -87,14 +87,61 @@ int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
   return *middle;
 }
 
+// The index at `path`, or a copy of it in memory: in cache blocks, or with
+// every file compacted into one span.
+irs::IndexFiles OpenIndex(std::string_view path, std::string_view memory) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  irs::IndexFiles local{db, path};
+  if (memory.empty()) {
+    return local;
+  }
+  irs::IndexFiles copy{db, irs::MemoryIndexRoot()};
+  std::vector<std::string> names;
+  local.Visit([&](std::string_view name) {
+    names.emplace_back(name);
+    return true;
+  });
+  std::vector<irs::byte_type> buffer(1 << 20);
+  for (const auto& name : names) {
+    auto in = local.Open(name, irs::IOAdvice::SEQUENTIAL);
+    auto out = copy.Create(name);
+    for (auto left = in->Length(); left != 0;) {
+      const auto chunk = std::min<uint64_t>(left, buffer.size());
+      in->ReadData(buffer.data(), chunk);
+      out->WriteData(buffer.data(), chunk);
+      left -= chunk;
+    }
+    out->Close();
+    if (memory == "compacted") {
+      copy.Compact(name);
+    }
+  }
+  return copy;
+}
+
 }  // namespace
 
 int main(int argc, const char* argv[]) {
   size_t repeat = 0;
-  if (argc < 2 ||
-      (argc > 2 && (argc != 4 || std::string_view{argv[2]} != "--repeat" ||
-                    !absl::SimpleAtoi(argv[3], &repeat) || repeat == 0))) {
-    absl::FPrintF(stderr, "usage: %s <index dir> [--repeat N] < queries\n",
+  std::string_view memory;
+  bool usage = argc < 2;
+  for (int i = 2; i < argc && !usage; i += 2) {
+    const std::string_view flag{argv[i]};
+    if (i + 1 == argc) {
+      usage = true;
+    } else if (flag == "--repeat") {
+      usage = !absl::SimpleAtoi(argv[i + 1], &repeat) || repeat == 0;
+    } else if (flag == "--memory") {
+      memory = argv[i + 1];
+      usage = memory != "blocks" && memory != "compacted";
+    } else {
+      usage = true;
+    }
+  }
+  if (usage) {
+    absl::FPrintF(stderr,
+                  "usage: %s <index dir> [--memory blocks|compacted] "
+                  "[--repeat N] < queries\n",
                   argv[0]);
     return 1;
   }
@@ -112,7 +159,7 @@ int main(int argc, const char* argv[]) {
     irs::DefaultPDP(2, false);
     irs::DefaultPDP(2, true);
 
-    bench::Executor executor{argv[1]};
+    bench::Executor executor{OpenIndex(argv[1], memory)};
 
     bench::LineSource input{STDIN_FILENO};
     std::string_view line;

@@ -185,7 +185,7 @@ db error: ERROR: tablespace "<slt:ignore>" is not empty
 statement error
 DROP TABLESPACE pg_default;
 ----
-db error: ERROR: cannot drop tablespace pg_default because it is required by the database system
+db error: ERROR: permission denied for tablespace pg_default
 
 
 statement ok

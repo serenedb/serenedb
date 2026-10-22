@@ -2,10 +2,12 @@
 
 Path-style URLs under one storage account, containers that exist on first use, block blobs
 staged and committed by block lists, ranged reads with conditions, blob listings, same-account
-copies, single and batched deletes. Requests are not authenticated. It counts requests by kind;
-`latency` delays every request.
+copies, single and batched deletes. Requests are not authenticated, except that while
+`sas_signatures` is set, a request whose SAS signature is not one of them is refused with 403
+AuthenticationFailed, as an expired SAS is. It counts requests by kind; `latency` delays every
+request.
 
-Point a secret at it with `connection_string`.
+Point a secret at it with `connection_string`, or with `sas_connection_string(signature)`.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ class _Blob:
 class FakeAzure:
     def __init__(self, latency: float = 0.0, port: int = 0) -> None:
         self.latency = latency
+        self.sas_signatures: set[str] | None = None
         self.lock = threading.Lock()
         self.blobs: dict[tuple[str, str], _Blob] = {}
         self.staged: dict[tuple[str, str], dict[str, bytes]] = {}
@@ -59,6 +62,10 @@ class FakeAzure:
     def connection_string(self) -> str:
         return (f"DefaultEndpointsProtocol=http;AccountName={ACCOUNT};AccountKey={KEY};"
                 f"BlobEndpoint={self.endpoint};")
+
+    def sas_connection_string(self, signature: str) -> str:
+        return (f"BlobEndpoint={self.endpoint};SharedAccessSignature=sv=2022-11-02&ss=b&srt=sco"
+                f"&sp=rwdlacx&se=2099-12-31T00:00:00Z&sig={signature}")
 
     def __enter__(self) -> FakeAzure:
         self.thread.start()
@@ -116,6 +123,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.fake.latency:
             time.sleep(self.fake.latency)
 
+    def _forbidden(self) -> bool:
+        signatures = self.fake.sas_signatures
+        if signatures is None:
+            return False
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if query.get("sig", [""])[0] in signatures:
+            return False
+        self.fake.count("FORBIDDEN")
+        self._body()
+        self._error(403, "AuthenticationFailed")
+        return True
+
     def _reply(self, status: int, body: bytes = b"", headers: dict[str, str] | None = None,
                content_length: int | None = None) -> None:
         self.send_response(status)
@@ -156,6 +175,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return bool(if_match) and if_match != "*" and if_match != blob.etag
 
     def do_HEAD(self) -> None:
+        if self._forbidden():
+            return
         container, name, _ = self._target()
         self.fake.count("HEAD")
         self._wait()
@@ -166,6 +187,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._reply(200, headers=self._properties(blob), content_length=len(blob.data))
 
     def do_GET(self) -> None:
+        if self._forbidden():
+            return
         container, name, query = self._target()
         if query.get("comp", [""])[0] == "list":
             self.fake.count("LIST")
@@ -219,6 +242,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._reply(200, "".join(body).encode(), {"Content-Type": "application/xml"})
 
     def do_PUT(self) -> None:
+        if self._forbidden():
+            return
         container, name, query = self._target()
         body = self._body()
         comp = query.get("comp", [""])[0]
@@ -278,6 +303,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                                   "x-ms-request-server-encrypted": "true"})
 
     def do_DELETE(self) -> None:
+        if self._forbidden():
+            return
         container, name, _ = self._target()
         self.fake.count("DELETE")
         self._wait()
@@ -289,6 +316,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._reply(202, headers={"x-ms-delete-type-permanent": "true"})
 
     def do_POST(self) -> None:
+        if self._forbidden():
+            return
         container, _, query = self._target()
         body = self._body()
         if query.get("comp", [""])[0] != "batch":
@@ -325,6 +354,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                           f"Content-ID: {content_id}\r\n\r\nHTTP/1.1 {status}\r\n"
                           f"x-ms-request-id: {uuid.uuid4()}\r\nx-ms-version: 2026-06-06\r\n"
                           "x-ms-delete-type-permanent: true\r\n\r\n")
-        chunks.append(f"--{response_boundary}--\r\n")
+        chunks.append(f"--{response_boundary}--")
         self._reply(202, "".join(chunks).encode(),
                     {"Content-Type": f"multipart/mixed; boundary={response_boundary}"})

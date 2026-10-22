@@ -30,9 +30,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <exception>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -116,24 +114,23 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
   // Cloned for this merge: the merge encodes against what it took for its
   // whole length, and an ALTER writes a new configuration rather than mutating
   // this one, while a DROP destroys the bound index but not this clone.
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    if (attached->oid != idx.GetDatabaseId()) {
-      continue;
-    }
-    const auto entry =
-      attached->GetCatalog()
-        .Cast<catalog::SereneDBCatalog>()
-        .FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
-    if (!entry) {
-      break;
-    }
-    std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
-    const auto* raw = options.get();
-    return {
-      .alive = true, .keepalive = std::move(options), .field_options = raw};
+  const auto attached =
+    duckdb::AttachedDatabase::TryGetReference(idx.Database());
+  if (!attached) {
+    return {};
   }
-  return {};
+  auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
+  if (catalog.IsDropped()) {
+    return {};
+  }
+  const auto entry =
+    catalog.FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
+  if (!entry) {
+    return {};
+  }
+  std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
+  const auto* raw = options.get();
+  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& table) {

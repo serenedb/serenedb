@@ -243,7 +243,7 @@ absl::Status IndexDurability::Refresh(
     try {
       were_changes = writer.RefreshBegin({
         .progress = progress,
-        .reopen_reader = /* TODO(codeworse) */ false,
+        .reopen_reader = _reopen.exchange(false, std::memory_order_acq_rel),
       });
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
@@ -445,6 +445,23 @@ absl::Status IndexDurability::Cleanup(const irs::IndexFiles& dir) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name));
   }
+  return absl::OkStatus();
+}
+
+absl::Status IndexDurability::CompactFiles(irs::IndexWriter& writer) {
+  try {
+    const auto reader = writer.GetSnapshot();
+    for (const auto& segment : reader.Meta().index_meta.segments) {
+      for (const auto& file : segment.meta.files) {
+        _files->Compact(file);
+      }
+    }
+  } catch (const std::exception& e) {
+    return absl::InternalError(
+      absl::StrCat("caught exception while compacting the files of ", _name,
+                   ": ", duckdb::ErrorData{e}.RawMessage()));
+  }
+  _reopen.store(true, std::memory_order_release);
   return absl::OkStatus();
 }
 

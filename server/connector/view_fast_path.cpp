@@ -377,6 +377,9 @@ std::optional<ViewFastPath> ResolveTableSource(
   }
   auto& table = entry->Cast<duckdb::TableCatalogEntry>();
   auto& catalog = table.ParentCatalog();
+  if (catalog.IsTemporaryCatalog()) {
+    return std::nullopt;
+  }
   auto out = CatalogFastPath(catalog, table.ParentSchema(binder.context).name,
                              table.name, std::move(body.projection_columns));
   const auto cat_type = catalog.GetCatalogType();

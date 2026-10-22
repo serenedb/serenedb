@@ -116,7 +116,7 @@ SearchTable::~SearchTable() {
   _writer.reset();
   _reader = {};
   _dir.reset();
-  if (!_dropped.load(std::memory_order_acquire)) {
+  if (!_area || !_dropped.load(std::memory_order_acquire)) {
     return;
   }
   catalog::StorageArea::RemoveStorage(std::move(_area), _table_id);
@@ -124,8 +124,8 @@ SearchTable::~SearchTable() {
 
 void SearchTable::OpenWriter(bool in_memory) {
   irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(*_area, GetTableId(), _is_new, in_memory,
-                                     resource_manager);
+  auto opened = OpenStorageDirectory(_area.get(), GetTableId(), _is_new,
+                                     in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -163,8 +163,8 @@ void SearchTable::OpenWriter(bool in_memory) {
 
 void SearchTable::OpenDirectory() {
   irs::ResourceManagementOptions resource_manager;
-  auto opened =
-    OpenStorageDirectory(*_area, GetTableId(), false, false, resource_manager);
+  auto opened = OpenStorageDirectory(_area.get(), GetTableId(), false, false,
+                                     resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 }
@@ -439,6 +439,17 @@ absl::Status SearchTable::VacuumRefresh() {
     return res;
   }
   return CleanupUnsafe().res;
+}
+
+absl::Status SearchTable::OptimizeInMemory() {
+  RefreshResult code = RefreshResult::Undefined;
+  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+    return res;
+  }
+  if (auto res = _durability.CompactFiles(*_writer); !res.ok()) {
+    return res;
+  }
+  return RefreshUnsafe(/*wait=*/true, nullptr, code).res;
 }
 
 absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {

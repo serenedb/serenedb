@@ -57,9 +57,6 @@ class SegmentReaderImpl final : public SubReader {
     const IndexFiles& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
-  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
-    const IndexFiles& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
     const IndexFiles& dir, const SegmentMeta& meta) const;
 

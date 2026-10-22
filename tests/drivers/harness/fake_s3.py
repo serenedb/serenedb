@@ -10,7 +10,9 @@ refused with a 500. The next `throttle` requests are refused with 503 SlowDown, 
 connection closes, and their keys are listed in `dropped`. `stall(kind, key)` holds the next
 request of a kind (PUT_PART, COPY, DELETE) whose key contains `key` before it takes effect, sets
 `stalled`, and after `release` is set closes the connection without applying it: a test kills the
-server while the request is held.
+server while the request is held. While `session_tokens` is set, a request whose
+X-Amz-Security-Token is not one of them is refused with 400 ExpiredToken, as a store refuses a
+request signed with an expired session token.
 
 A CRC32C checksum sent with an upload is checked as S3 checks it: the body of
 a PUT or a part up to `checksum_limit` bytes against its own checksum, and a
@@ -146,6 +148,7 @@ class FakeS3:
         self.max_parts_in_flight = 0
         self.failing_parts: set[int] = set()
         self.throttle = 0
+        self.session_tokens: set[str] | None = None
         self.drop: collections.Counter[str] = collections.Counter()
         self.dropped: list[str] = []
         self.stalling: tuple[str, str] | None = None
@@ -287,6 +290,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _bad_digest(self) -> None:
         self._xml(400, "<Error><Code>BadDigest</Code></Error>")
 
+    def _expired(self) -> bool:
+        tokens = self.fake.session_tokens
+        if tokens is None or self.headers.get("x-amz-security-token") in tokens:
+            return False
+        self.fake.count("EXPIRED")
+        self._body()
+        self._xml(400, "<Error><Code>ExpiredToken</Code><Message>The provided token has expired."
+                       "</Message></Error>")
+        return True
+
     def _throttled(self) -> bool:
         with self.fake.lock:
             if self.fake.throttle == 0:
@@ -352,7 +365,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         bucket, key, _ = self._target()
-        if self._throttled():
+        if self._expired() or self._throttled():
             return
         self.fake.count("HEAD")
         self._wait()
@@ -369,7 +382,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query) or self._throttled():
+        if self._admin(bucket, key, query) or self._expired() or self._throttled():
             return
         if not key and "list-type" in query:
             self.fake.count("LIST")
@@ -448,7 +461,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query) or self._throttled():
+        if self._admin(bucket, key, query) or self._expired() or self._throttled():
             return
         if "partNumber" in query and "uploadId" in query:
             if self._stalled("PUT_PART", key):
@@ -524,7 +537,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query) or self._throttled():
+        if self._admin(bucket, key, query) or self._expired() or self._throttled():
             return
         body = self._body()
         if "uploads" in query:
@@ -593,7 +606,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         bucket, key, query = self._target()
-        if self._throttled():
+        if self._expired() or self._throttled():
             return
         if "uploadId" in query:
             self.fake.count("ABORT_UPLOAD")

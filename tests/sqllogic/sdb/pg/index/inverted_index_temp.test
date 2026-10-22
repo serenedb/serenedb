@@ -1,11 +1,6 @@
+control substitution on
+
 hash-threshold 100
-
-# Inverted index over a TEMPORARY table. DuckDB's TEMP tables live in the
-# in-memory catalog (the `memory` database, `temp` schema) — separate from
-# the regular rocksdb-backed catalog where persistent tables live. Test
-# that serenedb can build an inverted index on such a table and query it
-# end-to-end, including INCLUDE'd columns.
-
 
 statement ok
 CREATE TEMPORARY TABLE temp_docs (
@@ -28,13 +23,218 @@ INSERT INTO temp_docs VALUES
 statement ok
 CREATE TEXT SEARCH DICTIONARY temp_en AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
-    WITH (frequency, position);
+    WITH (frequency, position, norm);
 
 
-# TEMP tables live in DuckDB's in-memory catalog, which serenedb's
-# CREATE INDEX implementation doesn't support today (serenedb's
-# inverted/secondary indexes assume a SereneDB-managed catalog with
-# rocksdb-backed storage). Reject with a clean error rather than
-# triggering an internal assertion.
-statement error cannot CREATE INDEX on temp\.temp_docs: its catalog differs from the current one
-CREATE INDEX temp_idx ON temp_docs USING inverted(body temp_en) INCLUDE (tag, views);
+statement ok
+CREATE INDEX temp_idx ON temp_docs USING inverted(body temp_en) INCLUDE (tag, views)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+query
+SELECT id, tag, views FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	tag	views
+1	gameplay	1200
+3	gameplay	870
+5	family	12
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('ranked match') ORDER BY id;
+----
+id
+3
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(temp_idx.tableoid) DESC, id LIMIT 2;
+----
+id
+5
+1
+
+
+statement count 2
+INSERT INTO temp_docs VALUES
+  (6, 'pudge hooks the courier again', 'gameplay', 4),
+  (7, 'a quiet weekend with tea',      'family',   9);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) temp_docs;
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+5
+6
+
+
+statement count 1
+DELETE FROM temp_docs WHERE id = 5;
+
+
+statement count 1
+UPDATE temp_docs SET body = 'anchin plays pudge for once' WHERE id = 2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) temp_docs;
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+2
+3
+6
+
+
+statement ok
+VACUUM (COMPACT_TABLE) temp_docs;
+
+
+query
+SELECT count(*) AS weekends FROM temp_idx WHERE body @@ ts_phrase('weekend');
+----
+weekends
+1
+
+
+statement ok
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) temp_docs;
+
+
+query
+SELECT id, tag FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	tag
+1	gameplay
+2	reading
+3	gameplay
+6	gameplay
+
+
+statement count 1
+INSERT INTO temp_docs VALUES (8, 'pudge again after the vacuum', 'gameplay', 1);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) temp_docs;
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(temp_idx.tableoid) DESC, id LIMIT 10;
+----
+id
+2
+6
+8
+1
+3
+
+
+connection other
+statement error
+SELECT count(*) FROM temp_idx;
+----
+db error: ERROR: Table with name temp_idx does not exist!
+Did you mean "pg_index"?
+
+
+statement ok
+CREATE TABLE plain_docs (id INTEGER, body TEXT);
+
+
+statement error
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) plain_docs;
+----
+db error: ERROR: "plain_docs" is not an in-memory table
+DETAIL: VACUUM (OPTIMIZE_IN_MEMORY_TABLE) applies to temporary tables.
+
+
+statement ok
+CREATE TABLESPACE temp_ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/temp_ts';
+
+
+statement error
+CREATE INDEX temp_ts_idx ON temp_docs USING inverted(tag temp_en) TABLESPACE temp_ts_${__DATABASE__};
+----
+db error: ERROR: temporary objects cannot be placed in a tablespace
+
+
+statement ok
+SET default_tablespace = 'temp_ts_${__DATABASE__}';
+
+
+statement ok
+CREATE INDEX temp_tag_idx ON temp_docs USING inverted(tag temp_en);
+
+
+statement ok
+RESET default_tablespace;
+
+
+query
+SELECT id FROM temp_tag_idx WHERE tag @@ ts_phrase('family') ORDER BY id;
+----
+id
+7
+
+
+statement ok
+DROP TABLESPACE temp_ts_${__DATABASE__};
+
+
+statement error
+CREATE TEMPORARY TABLE temp_search (id INTEGER, body TEXT) WITH (storage = 'search');
+----
+db error: ERROR: WITH clause is not supported for temporary tables
+
+
+statement ok
+CREATE TEMPORARY VIEW temp_view AS SELECT id, body FROM temp_docs;
+
+
+statement error
+CREATE INDEX temp_view_idx ON temp_view USING inverted(body temp_en);
+----
+db error: ERROR: cannot create an index on temporary view "temp_view"
+
+
+statement ok
+DROP INDEX temp_tag_idx;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY temp_en;
+
+
+statement error
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+db error: ERROR: text search dictionary with OID <slt:ignore> does not exist
+
+
+statement ok
+DISCARD TEMP;
+
+
+statement error
+SELECT count(*) FROM temp_idx;
+----
+db error: ERROR: Table with name temp_idx does not exist!
+Did you mean "pg_index"?
+
+
+statement ok
+DROP TABLE plain_docs;

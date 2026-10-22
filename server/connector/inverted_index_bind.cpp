@@ -55,6 +55,7 @@
 #include <string>
 #include <utility>
 
+#include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
@@ -1040,7 +1041,9 @@ void ValidateInvertedIndexKey(std::string_view label,
 
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
-// reader's search path -- and otherwise resolves like any other name.
+// reader's search path -- and otherwise resolves like any other name. A
+// temporary schema holds no dictionaries: its indexes use the session
+// database's.
 duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
@@ -1050,7 +1053,14 @@ duckdb::optional_ptr<const TokenizerCatalogEntry> ResolveOpclassTokenizer(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!dict || &dict->ParentCatalog() != &schema.ParentCatalog()) {
+  if (!dict) {
+    return nullptr;
+  }
+  const duckdb::Catalog* owner = &schema.ParentCatalog();
+  if (owner->GetAttached().IsTemporary()) {
+    owner = catalog::DefaultSereneDBCatalog(context).get();
+  }
+  if (&dict->ParentCatalog() != owner) {
     return nullptr;
   }
   return &dict->Cast<TokenizerCatalogEntry>();

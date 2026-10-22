@@ -127,10 +127,14 @@ Command ParseCommand(std::string_view name) {
 }
 
 Executor::Executor(std::string_view path)
+  : Executor{
+      irs::IndexFiles{::irs::DuckDBEngine::Instance().instance(), path}} {}
+
+Executor::Executor(irs::IndexFiles dir)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{::irs::DuckDBEngine::Instance().instance(), path},
+    _dir{std::move(dir)},
     _reader{irs::DirectoryReader(
       _dir, {.scorer = _scorer_ptr,
              .db = &::irs::DuckDBEngine::Instance().instance()})} {}

@@ -85,6 +85,7 @@ struct EmitResult {
 class Executor {
  public:
   explicit Executor(std::string_view path);
+  explicit Executor(irs::IndexFiles dir);
 
   size_t ExecuteTopK(size_t k, std::string_view query);
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);

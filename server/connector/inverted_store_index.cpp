@@ -983,9 +983,8 @@ PublishedInvertedIndex PublishInvertedIndex(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs) {
   const auto options = catalog::ResolveSettings(entry.options);
   auto storage = search::InvertedIndexStorage::Create(
-    entry.catalog.Cast<catalog::SereneDBCatalog>().Directory()->Area(
-      entry.Tablespace()),
-    entry.catalog.InMemory(), false, entry.catalog.GetOid(), entry.oid, options,
+    entry.catalog.Cast<catalog::SereneDBCatalog>().Area(entry.Tablespace()),
+    entry.catalog.GetAttached(), entry.oid, options,
     entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);

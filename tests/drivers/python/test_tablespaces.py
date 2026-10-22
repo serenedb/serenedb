@@ -699,6 +699,165 @@ def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> Non
         assert orphan not in fake.keys("bucket"), fake.keys("bucket")
 
 
+def _token_secret(store: _Store, location: str, token: str) -> str:
+    return ("CREATE OR REPLACE PERSISTENT SECRET index_store (TYPE s3, "
+            f"KEY_ID '{store.key_id}', SECRET '{store.secret}', "
+            f"SESSION_TOKEN '{token}', ENDPOINT '{store.endpoint}', "
+            f"URL_STYLE 'path', USE_SSL false, SCOPE '{location}')")
+
+
+def _eventually(check, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.1)
+    return check()
+
+
+def test_a_rotated_secret_reaches_files_opened_before_it(tmp_path: Path) -> None:
+    location = f"s3://bucket/token-{tmp_path.name}"
+    with FakeS3() as fake:
+        fake.session_tokens = {"first"}
+        store = _Store(fake.endpoint, "key", "secret", "bucket", fake)
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(_token_secret(store, location, "first"))
+            _create_tablespace(server, location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "INSERT INTO docs SELECT i, concat_ws(' ', 'fox', "
+                    "md5(i::VARCHAR)) FROM range(20000) t(i)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(body words) "
+                    "WITH (refresh_interval = 100, compaction_interval = 0) "
+                    "TABLESPACE idx")
+            assert _count_fox(server) == 20000
+
+            fake.session_tokens = {"first", "second"}
+            with server.connect() as conn:
+                conn.execute(_token_secret(store, location, "second"))
+            fake.session_tokens = {"second"}
+
+            with server.connect() as conn:
+                conn.execute(
+                    "INSERT INTO docs SELECT i, 'fox' FROM range(20000, 20100) t(i)")
+            assert _eventually(lambda: _count_fox(server) == 20100), \
+                server.output()
+
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+            assert _count_fox(server) == 20100, server.output()
+            assert fake.stats()["requests"].get("EXPIRED", 0) > 0
+        finally:
+            server.stop()
+
+
+def test_an_expired_token_holds_refreshes_until_a_restart(tmp_path: Path) -> None:
+    location = f"s3://bucket/expired-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    with FakeS3() as fake:
+        fake.session_tokens = {"first"}
+        store = _Store(fake.endpoint, "key", "secret", "bucket", fake)
+        server = _Server(datadir)
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(_token_secret(store, location, "first"))
+            _create_tablespace(server, location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "INSERT INTO docs SELECT i, 'fox' FROM range(1000) t(i)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(body words) "
+                    "WITH (refresh_interval = 100, compaction_interval = 0) "
+                    "TABLESPACE idx")
+            assert _count_fox(server) == 1000
+
+            fake.session_tokens = {"second"}
+            with server.connect() as conn:
+                conn.execute(
+                    "INSERT INTO docs SELECT i, 'fox' FROM range(1000, 1100) t(i)")
+            assert _eventually(
+                lambda: fake.stats()["requests"].get("EXPIRED", 0) > 0)
+            with server.connect() as conn:
+                conn.execute(_token_secret(store, location, "second"))
+            time.sleep(1)
+            assert server.proc.poll() is None, server.output()
+            assert _count_fox(server) == 1000
+        finally:
+            server.stop()
+
+        again = _Server(datadir)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count_fox(again) == 1100
+        finally:
+            again.stop()
+
+
+def _sas_secret(fake: FakeAzure, location: str, signature: str) -> str:
+    return ("CREATE OR REPLACE PERSISTENT SECRET index_store (TYPE azure, "
+            f"CONNECTION_STRING '{fake.sas_connection_string(signature)}', "
+            f"SCOPE '{location}')")
+
+
+def test_a_rotated_azure_secret_reaches_files_opened_before_it(
+        tmp_path: Path) -> None:
+    location = f"az://indexes/token-{tmp_path.name}"
+    with FakeAzure() as fake:
+        fake.sas_signatures = {"first"}
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(_sas_secret(fake, location, "first"))
+            _create_tablespace(server, location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "INSERT INTO docs SELECT i, concat_ws(' ', 'fox', "
+                    "md5(i::VARCHAR)) FROM range(20000) t(i)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(body words) "
+                    "WITH (refresh_interval = 100, compaction_interval = 0) "
+                    "TABLESPACE idx")
+            assert _count_fox(server) == 20000
+
+            fake.sas_signatures = {"first", "second"}
+            with server.connect() as conn:
+                conn.execute(_sas_secret(fake, location, "second"))
+            fake.sas_signatures = {"second"}
+
+            with server.connect() as conn:
+                conn.execute(
+                    "INSERT INTO docs SELECT i, 'fox' FROM range(20000, 20100) t(i)")
+            assert _eventually(lambda: _count_fox(server) == 20100), \
+                server.output()
+
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+            assert _count_fox(server) == 20100, server.output()
+            assert fake.requests["FORBIDDEN"] > 0, fake.requests
+        finally:
+            server.stop()
+
+
 def _pending_uploads(conn: psycopg.Connection) -> dict[str, int]:
     return dict(conn.execute(
         "SELECT metric, value FROM sdb_metrics "

@@ -254,6 +254,7 @@ void RegisterSereneDBStorage(
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);
   duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
+  config.create_temporary_catalog = &catalog::MakeTemporaryCatalog;
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {

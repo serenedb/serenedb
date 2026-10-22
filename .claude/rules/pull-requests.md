@@ -8,16 +8,16 @@
 - **Description:** why, not what. The problem and who hits it (for a fix, the failing behaviour and the root cause); the approach, and the alternative it beat when that isn't obvious; the tests; for `perf:`, end-to-end numbers against main with the build and the machine load; the `docs/` page changed; the companion fork PRs. One line per paragraph, no hard wraps.
 - **Links:** our own repositories link as `owner/repo#N`, and a PR and its fork PRs link each other. Another project's issues and PRs are plain text (`duckdb/duckdb PR 123`) or a `redirect.github.com` link: GitHub notifies the target of every `owner/repo#N` and `github.com` link. Code is linked by commit SHA, never by branch.
 - `pre-commit` runs on every push; `serenedb | build & test` runs when **Trigger Jobs** is ticked in the PR's "CI Triggers" comment. Claude ticks it, and none of the other boxes, only when the user asks and after the change passes locally ([ci.md](ci.md)).
-- serenedb PRs are merged by a maintainer, after an approval and a green `build & test`.
+- serenedb PRs are merged by a maintainer, after an approval and a green `build & test` and `serenedb | gitlinks`.
 
 ## Forks
 
 Every submodule under `third_party/` is our fork; the in-tree directories there are ordinary serenedb code.
 
-- A fork change is a PR into the fork's current version branch (`vYYYY.MM.DD`, the one main's gitlink is on), and the serenedb PR points the gitlink at that PR's head: CI builds both together, and `check-submodule-pointers` fails until the fork PR merges, as expected.
-- Fork PRs are rebase-merged, so the fork history is what reviewers keep: one concern per commit, complete across every path it spans, a conventional subject with a scope (`fix(planner): ...`), every message final.
+- A fork change is a PR into the fork's current version branch (`vYYYY.MM.DD`, the one main's gitlink is on), and the serenedb PR points the gitlink at that PR's head: CI builds both together. Until the fork PR lands, `check-submodule-pointers` reports the gitlink as pending and passes, and the `serenedb | gitlinks` status stays pending, which blocks the merge.
+- Fork PRs land by fast-forward, so their commits, with the hashes CI built, are the fork history reviewers keep: one concern per commit, complete across every path it spans, a conventional subject with a scope (`fix(planner): ...`), every message final.
 - A fix to lines one of our fork commits introduced is a `fixup! <that commit's subject>` commit, found by blaming those lines, so the next update folds it into its commit.
-- Merge only when the user says to: fast-forward the version branch to the fork PR's head, so the gitlink stays valid, then rerun the serenedb PR's `pre-commit` job. If the version branch moved since CI ran, rebase the fork PR onto it and usually the serenedb PR onto main, point the gitlink at the new head and run CI again: a green run proves only the tree it built.
+- Land only when the user says to, with `scripts/land.sh <serenedb PR>`: a dry run prints the plan, `--yes` fast-forwards each version branch to its fork PR's head, reruns `serenedb | gitlinks` and squash-merges the PR. It stops when a fork PR no longer fast-forwards its version branch: rebase the fork PR onto it and usually the serenedb PR onto main, point the gitlink at the new head and run CI again: a green run proves only the tree it built.
 
 ## Pushing
 

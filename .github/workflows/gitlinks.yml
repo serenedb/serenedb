@@ -1,0 +1,64 @@
+name: auto | gitlinks
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      PR_NUMBER:
+        description: serenedb PR to check
+        required: true
+
+concurrency:
+  group: gitlinks-${{ github.event.pull_request.number || inputs.PR_NUMBER }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gitlinks:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+        submodules: false
+    - name: Check the gitlinks the PR changes
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number || inputs.PR_NUMBER }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        api() {
+          for delay in 5 15 0; do
+            gh api "$@" && return
+            sleep $delay
+          done
+          return 1
+        }
+        head=$(api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)
+        status() {
+          api "repos/$GITHUB_REPOSITORY/statuses/$head" -f state="$1" \
+            -f context='serenedb | gitlinks' -f description="${2:0:140}" \
+            -f target_url="$RUN_URL" >/dev/null
+        }
+        trap 'status error "The check did not finish"' ERR
+        status pending 'Checking the gitlinks'
+        base=$(api "repos/$GITHUB_REPOSITORY/compare/main...$head" --jq .merge_base_commit.sha)
+        git fetch --quiet --no-tags --depth=1 origin "$head" "$base"
+        rc=0
+        python3 scripts/check_submodule_pointers.py --rev "$head" --base "$base" 2>&1 | tee check.log || rc=$?
+        case $rc in
+        0) status success 'Every gitlink is on a version branch' ;;
+        3) status pending "Waiting for $(sed -n 's/.* is pending: head of open \([^ ]*\) .*/\1/p' check.log | paste -sd' ')" ;;
+        *)
+          status failure 'A gitlink is neither on a version branch nor the head of an open fork PR'
+          exit 1
+          ;;
+        esac

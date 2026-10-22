@@ -62,10 +62,6 @@ std::shared_ptr<irs::Directory> FsDirectory(const TestBase*,
                                             irs::DirectoryAttributes attrs);
 std::shared_ptr<irs::Directory> MmapDirectory(const TestBase*,
                                               irs::DirectoryAttributes attrs);
-#ifdef IRESEARCH_URING
-std::shared_ptr<irs::Directory> AsyncDirectory(const TestBase*,
-                                               irs::DirectoryAttributes attrs);
-#endif
 
 using dir_generator_f = std::shared_ptr<irs::Directory> (*)(
   const TestBase*, irs::DirectoryAttributes);
@@ -94,8 +90,6 @@ constexpr auto GetDirectories() {
   constexpr auto kCount = std::popcount(Type);
 #ifdef IRS_TEST_ONLY_MEMORY_DIR
   std::array<dir_param_f, kCount * 1> data;
-#elif defined(IRESEARCH_URING)
-  std::array<dir_param_f, kCount * 4> data;
 #else
   std::array<dir_param_f, kCount * 3> data;
 #endif
@@ -103,9 +97,6 @@ constexpr auto GetDirectories() {
   if constexpr (Type & kTypesDefault) {
     *p++ = &tests::Directory<&tests::MemoryDirectory>;
 #ifndef IRS_TEST_ONLY_MEMORY_DIR
-#ifdef IRESEARCH_URING
-    *p++ = &tests::directory<&tests::AsyncDirectory>;
-#endif
     *p++ = &tests::Directory<&tests::MmapDirectory>;
     *p++ = &tests::Directory<&tests::FsDirectory>;
 #endif

@@ -1,0 +1,868 @@
+statement ok
+CREATE TABLE counters (series VARCHAR, ts TIMESTAMP_NS, value DOUBLE);
+
+statement ok
+INSERT INTO counters VALUES
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:30', 5),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:00', 10),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:20', 35),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:40', 25),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:10', 20),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:20', 30),
+  ('a', TIMESTAMP_NS '2026-01-01 00:00:50', NULL),
+  ('a', NULL, 100),
+  ('a', TIMESTAMP_NS '2026-01-01 00:01:00', 'NaN'::DOUBLE),
+  ('b', TIMESTAMP_NS '2026-01-01 00:00:00', 7),
+  ('c', TIMESTAMP_NS '2026-01-01 00:00:00', 1),
+  ('c', TIMESTAMP_NS '2026-01-01 00:00:30', 4);
+
+query
+SELECT series,
+       otel_increase(value, ts) AS increase,
+       otel_rate(value, ts) AS rate,
+       otel_irate(value, ts) AS irate
+FROM counters
+GROUP BY series
+ORDER BY series;
+----
+series	increase	rate	irate
+a	50	1.25	2
+b	NULL	NULL	NULL
+c	3	0.1	0.1
+
+query
+SELECT otel_rate(value, ts::TIMESTAMP) AS micros,
+       otel_rate(value, ts::TIMESTAMPTZ) AS tz
+FROM counters
+WHERE series = 'a';
+----
+micros	tz
+1.25	1.25
+
+query
+SELECT otel_increase(value, ts) AS increase, otel_rate(value, ts) AS rate
+FROM counters
+WHERE false;
+----
+increase	rate
+NULL	NULL
+
+query
+SELECT ts,
+       otel_increase(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS delta
+FROM counters
+WHERE series = 'a' AND ts <= TIMESTAMP_NS '2026-01-01 00:00:40' AND value <> 30
+ORDER BY ts;
+----
+ts	delta
+2026-01-01 00:00:00	NULL
+2026-01-01 00:00:10	10
+2026-01-01 00:00:20	15
+2026-01-01 00:00:30	5
+2026-01-01 00:00:40	20
+
+statement ok
+CREATE TABLE histograms (ts TIMESTAMP_NS, counts BIGINT[]);
+
+statement ok
+INSERT INTO histograms VALUES
+  (TIMESTAMP_NS '2026-01-01 00:00:20', [3, 4, 5]),
+  (TIMESTAMP_NS '2026-01-01 00:00:00', [1, 2, 3]),
+  (TIMESTAMP_NS '2026-01-01 00:00:30', [1, 0, 1]),
+  (TIMESTAMP_NS '2026-01-01 00:00:10', [2, 4, 3]),
+  (TIMESTAMP_NS '2026-01-01 00:00:40', NULL);
+
+query
+SELECT otel_increase(counts, ts) AS increase
+FROM histograms;
+----
+increase
+{3,2,3}
+
+query
+SELECT otel_increase(counts, ts::TIMESTAMP) AS micros,
+       otel_increase(counts, ts::TIMESTAMPTZ) AS tz
+FROM histograms;
+----
+micros	tz
+{3,2,3}	{3,2,3}
+
+query
+SELECT otel_increase(counts, ts) AS increase
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', [1, NULL]),
+             (TIMESTAMP '2026-01-01 00:00:10', [0, 0]),
+             (TIMESTAMP '2026-01-01 00:00:10', [2, 5]),
+             (TIMESTAMP '2026-01-01 00:00:20', [4, 6])) AS t(ts, counts);
+----
+increase
+{3,6}
+
+query
+SELECT otel_increase(counts, ts) AS increase
+FROM histograms
+WHERE ts = TIMESTAMP_NS '2026-01-01 00:00:00';
+----
+increase
+NULL
+
+query
+SELECT round(otel_histogram_quantile(q, [10, 20, 10, 0], [1, 2, 4]), 6) AS value
+FROM (VALUES (0.25), (0.5), (0.95), (1.0)) AS t(q)
+GROUP BY q
+ORDER BY q;
+----
+value
+1
+1.5
+3.6
+4
+
+query
+SELECT otel_histogram_quantile(0.99, [10, 20, 10, 10], [1, 2, 4]) AS inf_bucket,
+       otel_histogram_quantile(0.25, [5, 5, 0], [-1, 10]) AS nonpositive_first,
+       otel_histogram_quantile(1.5, [1, 1], [1]) AS above,
+       otel_histogram_quantile(-0.5, [1, 1], [1]) AS below,
+       otel_histogram_quantile('NaN'::DOUBLE, [1, 1], [1]) AS nan;
+----
+inf_bucket	nonpositive_first	above	below	nan
+4	-1	Infinity	-Infinity	NaN
+
+query
+SELECT otel_histogram_quantile(0.5, []::BIGINT[], []::DOUBLE[]) AS no_buckets,
+       otel_histogram_quantile(0.5, [0, 0], [1]) AS no_observations,
+       otel_histogram_quantile(0.5, [5], []::DOUBLE[]) AS no_bounds;
+----
+no_buckets	no_observations	no_bounds
+NULL	NULL	NULL
+
+query
+SELECT round(otel_histogram_quantile(0.5, counts, [1, 2, 4]), 6) AS value
+FROM (VALUES ([5, 10, 5, 0]), ([5, 10, 5, 0]), (NULL)) AS t(counts);
+----
+value
+1.5
+
+statement error
+SELECT otel_histogram_quantile(0.5, [1, 2, 3], [1, 2, 4]);
+----
+db error: ERROR: otel_histogram_quantile(): bucket_counts must have one element more than explicit_bounds, got 3 and 3
+
+
+statement error
+SELECT otel_histogram_quantile(0.5, counts, bounds)
+FROM (VALUES ([1, 2], [1.0]), ([1, 2], [2.0])) AS t(counts, bounds);
+----
+db error: ERROR: otel_histogram_quantile(): all rows of a group must have the same quantile and explicit_bounds
+
+
+statement error
+SELECT otel_histogram_quantile(0.5, [1, 2, 3], [1.0, NULL]);
+----
+db error: ERROR: otel_histogram_quantile(): explicit_bounds must not contain NULL
+
+
+query
+SELECT round(otel_histogram_quantile(q, counts, bounds), 6) AS p50
+FROM (VALUES (0.5, [1, 1, 0], [1.0, 2.0]),
+             (NULL, [5, 5, 5], [1.0, 2.0]),
+             (0.5, [3, 3, 3], NULL),
+             (0.5, [NULL, 2, 0], [1.0, 2.0])) AS t(q, counts, bounds);
+----
+p50
+1.333333
+
+query
+SELECT round(otel_histogram_quantile(0.5, counts, [1.0, 2.0]), 6) AS p50
+FROM (VALUES ([1, 3, 0]), (['NaN'::DOUBLE, 1, 1])) AS t(counts);
+----
+p50
+1.333333
+
+query
+SELECT otel_histogram_quantile(0, [0, 5], [1.0]) AS empty_first,
+       otel_histogram_quantile(0, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS zero_q;
+----
+empty_first	zero_q
+0	0
+
+query
+SELECT otel_increase(value, ts) AS increase, otel_rate(value, ts) AS rate
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 1.0),
+             (TIMESTAMP '2026-01-01 00:00:10', 3.0),
+             ('infinity'::TIMESTAMP, 100.0),
+             ('-infinity'::TIMESTAMP, 0.0)) AS t(ts, value);
+----
+increase	rate
+2	0.2
+
+query
+SELECT otel_increase(value, ts) AS increase,
+       otel_rate(value, ts) AS rate,
+       otel_irate(value, ts) AS irate,
+       otel_resets(value, ts) AS resets,
+       otel_delta(value, ts) AS delta
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 10.0),
+             (TIMESTAMP '2026-01-01 00:00:10', 30.0),
+             (TIMESTAMP '2026-01-01 00:00:20', 5.0)) AS t(ts, value);
+----
+increase	rate	irate	resets	delta
+25	1.25	0.5	1	-5
+
+query
+SELECT round(otel_rate(value, ts) * (epoch(TIMESTAMP '2262-01-01') - epoch(TIMESTAMP '1678-01-01')), 6) AS rate,
+       round(otel_irate(value, ts) * (epoch(TIMESTAMP '2262-01-01') - epoch(TIMESTAMP '1678-01-01')), 6) AS irate,
+       round(otel_deriv(value, ts) * (epoch(TIMESTAMP '2262-01-01') - epoch(TIMESTAMP '1678-01-01')), 6) AS deriv,
+       round(otel_predict_linear(value, ts, 0), 6) AS at_last
+FROM (VALUES (TIMESTAMP_NS '1678-01-01 00:00:00', 0.0),
+             (TIMESTAMP_NS '2262-01-01 00:00:00', 100.0)) AS t(ts, value);
+----
+rate	irate	deriv	at_last
+100	100	100	100
+
+query
+SELECT otel_increase(counts, ts) AS increase
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', [1.0, 2.0]),
+             (TIMESTAMP '2026-01-01 00:00:10', ['NaN'::DOUBLE, 0.0]),
+             (TIMESTAMP '2026-01-01 00:00:20', [3.0, 5.0]),
+             ('infinity'::TIMESTAMP, [9.0, 9.0])) AS t(ts, counts);
+----
+increase
+{2,3}
+
+query
+SELECT otel_increase(counts, ts) AS increase
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', [1, 2]),
+             (TIMESTAMP '2026-01-01 00:00:10', [2, 3]),
+             (TIMESTAMP '2026-01-01 00:00:20', [1, 1, 1]),
+             (TIMESTAMP '2026-01-01 00:00:30', [2, 2, 2])) AS t(ts, counts);
+----
+increase
+{2,2,2}
+
+query
+SELECT ts,
+       otel_increase(value, ts) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS delta
+FROM counters
+WHERE series = 'a' AND ts <= TIMESTAMP_NS '2026-01-01 00:00:40' AND value <> 30
+ORDER BY ts;
+----
+ts	delta
+2026-01-01 00:00:00	NULL
+2026-01-01 00:00:10	10
+2026-01-01 00:00:20	25
+2026-01-01 00:00:30	20
+2026-01-01 00:00:40	25
+
+statement ok
+CREATE TABLE big_counter AS
+SELECT i % 4 AS g, TIMESTAMP '2026-01-01' + to_seconds(i) AS ts, i::DOUBLE AS value
+FROM range(1000000) t(i);
+
+query
+SELECT g, otel_increase(value, ts) AS increase, otel_rate(value, ts) AS rate
+FROM big_counter
+GROUP BY g
+ORDER BY g;
+----
+g	increase	rate
+0	999996	1
+1	999996	1
+2	999996	1
+3	999996	1
+
+statement ok
+CREATE TABLE big_histograms AS
+SELECT i, [2, 1] AS counts, CASE WHEN i = 999999 THEN [2.0] ELSE [1.0] END AS bounds
+FROM range(1000000) t(i);
+
+query
+SELECT round(otel_histogram_quantile(0.5, counts, bounds), 6) AS p50
+FROM big_histograms
+WHERE i <> 999999;
+----
+p50
+0.75
+
+statement error
+SELECT otel_histogram_quantile(0.5, counts, bounds)
+FROM big_histograms;
+----
+db error: ERROR: otel_histogram_quantile(): all rows of a group must have the same quantile and explicit_bounds
+
+
+include schema.inc
+
+statement ok
+INSERT INTO otel_metrics_sum ("timestamp", service_name, metric_name, attributes, value,
+                              aggregation_temporality, is_monotonic)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.request.count', '{"code":"200"}', 100, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:15', 'checkout', 'http.server.request.count', '{"code":"200"}', 130, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.request.count', '{"code":"200"}', 160, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:45', 'checkout', 'http.server.request.count', '{"code":"200"}', 190, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:01:00', 'checkout', 'http.server.request.count', '{"code":"200"}', 220, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:01:30', 'checkout', 'http.server.request.count', '{"code":"200"}', 280, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.request.count', '{"code":"500"}', 10, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.request.count', '{"code":"500"}', 2, 'Cumulative', true),
+       (TIMESTAMP_NS '2026-09-08 12:00:45', 'checkout', 'http.server.request.count', '{"code":"500"}', 5, 'Cumulative', true);
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_sum;
+
+query
+SELECT minute, service_name, round(sum(per_second), 6) AS requests_per_second
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, service_name,
+         resource_attributes, attributes,
+         otel_rate(value, "timestamp") AS per_second
+  FROM otel_metrics_sum
+  WHERE metric_name = 'http.server.request.count'
+  GROUP BY ALL
+)
+GROUP BY ALL
+ORDER BY ALL;
+----
+minute	service_name	requests_per_second
+2026-09-08 12:00:00	checkout	2.111111
+2026-09-08 12:01:00	checkout	2
+
+statement ok
+INSERT INTO otel_metrics_histogram ("timestamp", service_name, metric_name, attributes,
+                                    bucket_counts, explicit_bounds, aggregation_temporality)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', '{}', [1, 1, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'http.server.duration', '{}', [5, 3, 2, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:59', 'checkout', 'http.server.duration', '{}', [9, 5, 4, 2], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'http.server.duration', '{"route":"/b"}', [0, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'http.server.duration', '{"route":"/b"}', [2, 0, 0, 0], [10.0, 100.0, 1000.0], 'Cumulative');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_histogram;
+
+query
+SELECT minute,
+       otel_histogram_quantile(0.5, buckets, explicit_bounds) AS p50,
+       otel_histogram_quantile(0.75, buckets, explicit_bounds) AS p75
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute,
+         resource_attributes, attributes, explicit_bounds,
+         otel_increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+)
+GROUP BY minute
+ORDER BY minute;
+----
+minute	p50	p75
+2026-09-08 12:00:00	10	325
+
+query
+SELECT round(otel_histogram_fraction('-inf'::DOUBLE, 100, buckets, explicit_bounds), 6) AS under_100,
+       round(otel_histogram_stddev(buckets, explicit_bounds), 6) AS stddev,
+       otel_histogram_stdvar(buckets, explicit_bounds) AS stdvar
+FROM (
+  SELECT resource_attributes, attributes, explicit_bounds,
+         otel_increase(bucket_counts, "timestamp") AS buckets
+  FROM otel_metrics_histogram
+  WHERE metric_name = 'http.server.duration'
+  GROUP BY ALL
+);
+----
+under_100	stddev	stdvar
+0.7	333.414532	111165.25
+
+statement ok
+CREATE TABLE gauges (series VARCHAR, ts TIMESTAMP, value DOUBLE);
+
+statement ok
+INSERT INTO gauges VALUES
+  ('a', TIMESTAMP '2026-01-01 00:00:20', 7),
+  ('a', TIMESTAMP '2026-01-01 00:00:00', 5),
+  ('a', TIMESTAMP '2026-01-01 00:00:10', 7),
+  ('a', TIMESTAMP '2026-01-01 00:00:40', 10),
+  ('a', TIMESTAMP '2026-01-01 00:00:30', 3),
+  ('a', TIMESTAMP '2026-01-01 00:00:50', 'NaN'::DOUBLE),
+  ('a', NULL, 100),
+  ('b', TIMESTAMP '2026-01-01 00:00:00', 4),
+  ('c', TIMESTAMP '2026-01-01 00:00:00', 2),
+  ('c', TIMESTAMP '2026-01-01 00:00:30', 2);
+
+query
+SELECT series,
+       otel_delta(value, ts) AS delta,
+       otel_idelta(value, ts) AS idelta,
+       round(otel_deriv(value, ts), 6) AS deriv,
+       round(otel_predict_linear(value, ts, 60), 6) AS predicted,
+       otel_changes(value, ts) AS changes,
+       otel_resets(value, ts) AS resets
+FROM gauges
+GROUP BY series
+ORDER BY series;
+----
+series	delta	idelta	deriv	predicted	changes	resets
+a	5	7	0.06	11.2	3	1
+b	NULL	NULL	NULL	NULL	0	0
+c	0	0	0	2	0	0
+
+query
+SELECT round(otel_deriv(value, ts::TIMESTAMP_NS), 6) AS nanos,
+       round(otel_predict_linear(value, ts::TIMESTAMPTZ, 60), 6) AS tz,
+       otel_changes(value, ts::TIMESTAMP_NS) AS changes
+FROM gauges
+WHERE series = 'a';
+----
+nanos	tz	changes
+0.06	11.2	3
+
+query
+SELECT otel_delta(value, ts) AS delta, otel_changes(value, ts) AS changes
+FROM gauges
+WHERE false;
+----
+delta	changes
+NULL	NULL
+
+query
+SELECT ts,
+       otel_changes(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS changes,
+       otel_idelta(value, ts) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS idelta
+FROM gauges
+WHERE series = 'a' AND ts <= TIMESTAMP '2026-01-01 00:00:40'
+ORDER BY ts;
+----
+ts	changes	idelta
+2026-01-01 00:00:00	0	NULL
+2026-01-01 00:00:10	1	2
+2026-01-01 00:00:20	0	0
+2026-01-01 00:00:30	1	-4
+2026-01-01 00:00:40	1	7
+
+statement error
+SELECT otel_predict_linear(value, ts, CASE WHEN value > 5 THEN 60 ELSE 30 END)
+FROM gauges
+WHERE series = 'a';
+----
+db error: ERROR: otel_predict_linear(): all rows of a group must have the same seconds
+
+
+query
+SELECT round(otel_predict_linear(value, ts, seconds), 6) AS predicted
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 1.0, 60.0),
+             (TIMESTAMP '2026-01-01 00:00:10', 3.0, 60.0),
+             (TIMESTAMP '2026-01-01 00:00:20', 50.0, NULL),
+             ('infinity'::TIMESTAMP, 100.0, 60.0),
+             (NULL, 100.0, 60.0)) AS t(ts, value, seconds);
+----
+predicted
+15
+
+query
+SELECT round(otel_predict_linear(value, ts, -10), 6) AS past
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 1.0),
+             (TIMESTAMP '2026-01-01 00:00:10', 3.0)) AS t(ts, value);
+----
+past
+1
+
+query
+SELECT otel_deriv(value, ts) AS deriv, otel_predict_linear(value, ts, 60) AS predicted
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 'inf'::DOUBLE),
+             (TIMESTAMP '2026-01-01 00:00:10', 'inf'::DOUBLE)) AS t(ts, value);
+----
+deriv	predicted
+NaN	NaN
+
+query
+SELECT otel_histogram_fraction(0, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS f02,
+       otel_histogram_fraction('-inf'::DOUBLE, 1.5, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS below,
+       otel_histogram_fraction(3, 'inf'::DOUBLE, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS above,
+       otel_histogram_fraction(2, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS empty,
+       otel_histogram_fraction('NaN'::DOUBLE, 2, [10, 20, 10, 0], [1.0, 2.0, 4.0]) AS nan,
+       round(otel_histogram_fraction(5, 'inf'::DOUBLE, [10, 20, 10, 6], [1.0, 2.0, 4.0]), 6) AS last;
+----
+f02	below	above	empty	nan	last
+0.75	0.5	0.125	0	NaN	0.130435
+
+query
+SELECT otel_histogram_fraction('-inf'::DOUBLE, -2, [2, 2, 2, 2], [-1.0, 0.0, 1.0]) AS first,
+       otel_histogram_fraction(-0.5, 0.5, [2, 2, 2, 2], [-1.0, 0.0, 1.0]) AS middle,
+       otel_histogram_fraction(0, 1, [0, 0], [1.0]) AS empty;
+----
+first	middle	empty
+0.25	0.25	NULL
+
+query
+SELECT round(otel_histogram_stddev([10, 20, 10, 0], [1.0, 2.0, 4.0]), 6) AS stddev,
+       otel_histogram_stdvar([10, 20, 10, 0], [1.0, 2.0, 4.0]) AS stdvar,
+       otel_histogram_stddev([0, 0], [1.0]) AS empty;
+----
+stddev	stdvar	empty
+0.892679	0.796875	NULL
+
+query
+SELECT round(otel_histogram_stddev([2, 2, 2], [-2.0, 2.0]), 6) AS nonpositive_first;
+----
+nonpositive_first
+1.632993
+
+statement error
+SELECT otel_histogram_fraction(0, 1, b, e)
+FROM (VALUES ([1, 1], [1.0]), ([1, 1], [2.0])) t(b, e);
+----
+db error: ERROR: otel_histogram_fraction(): all rows of a group must have the same lower, upper and explicit_bounds
+
+
+statement error
+SELECT otel_histogram_stddev(b, e)
+FROM (VALUES ([1, 1], [1.0]), ([1, 1], [2.0])) t(b, e);
+----
+db error: ERROR: otel_histogram_stddev(): all rows of a group must have the same explicit_bounds
+
+
+statement error
+SELECT otel_histogram_fraction(0, 1, [1, 1, 1], [1.0]);
+----
+db error: ERROR: otel_histogram_fraction(): bucket_counts must have one element more than explicit_bounds, got 3 and 1
+
+
+statement error
+SELECT otel_histogram_quantile(0.5, [1, 1, 1], [2.0, 1.0]);
+----
+db error: ERROR: otel_histogram_quantile(): explicit_bounds must be strictly ascending numbers
+
+
+statement error
+SELECT otel_histogram_fraction(0, 1, [1, 1, 1], [1.0, 1.0]);
+----
+db error: ERROR: otel_histogram_fraction(): explicit_bounds must be strictly ascending numbers
+
+
+statement error
+SELECT otel_histogram_stddev(b, e)
+FROM (VALUES ([1, 1], ['NaN'::DOUBLE]), ([1, 1], ['NaN'::DOUBLE])) t(b, e);
+----
+db error: ERROR: otel_histogram_stddev(): explicit_bounds must be strictly ascending numbers
+
+
+query
+SELECT q, round(otel_histogram_quantile(q, otel_exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2])), 6) AS value
+FROM (SELECT unnest([0, 0.1, 0.25, 0.5, 0.9, 1, -1, 2]::DOUBLE[]) AS q)
+GROUP BY q
+ORDER BY q;
+----
+q	value
+-1	-Infinity
+0	-4
+0.1	-2.828427
+0.25	0
+0.5	2.828427
+0.9	6.727171
+1	8
+2	Infinity
+
+query
+SELECT otel_histogram_fraction(0, 4, h) AS f04,
+       round(otel_histogram_fraction('-inf'::DOUBLE, 3, h), 6) AS below_3,
+       round(otel_histogram_fraction(-3, 0, h), 6) AS negative,
+       otel_histogram_fraction('-inf'::DOUBLE, 'inf'::DOUBLE, h) AS everything,
+       round(otel_histogram_stddev(h), 6) AS stddev,
+       round(otel_histogram_stdvar(h), 6) AS stdvar
+FROM (SELECT otel_exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
+----
+f04	below_3	negative	everything	stddev	stdvar
+0.3	0.516993	0.216993	1	3.228002	10.42
+
+query
+SELECT round(otel_histogram_quantile(0.5, h), 6) AS p50,
+       otel_histogram_fraction(2, 4, h) AS inside
+FROM (VALUES (otel_exponential_histogram(1, 0, 2, [1, 1], 0, [])),
+             (otel_exponential_histogram(0, 0, 1, [2], 0, [])),
+             (NULL),
+             (otel_exponential_histogram(NULL, 5, 0, [5], 0, []))) t(h);
+----
+p50	inside
+2.828427	1
+
+query
+SELECT otel_histogram_quantile(0.5, otel_exponential_histogram(0, 0, 0, [], 0, [])) AS empty,
+       otel_histogram_quantile(0.5, otel_exponential_histogram(0, NULL, 0, NULL, 0, NULL)) AS nulls;
+----
+empty	nulls
+NULL	NULL
+
+query
+SELECT otel_histogram_quantile(0.5, h) AS p50
+FROM (VALUES (otel_exponential_histogram(0, 0, 0, [1.0, 1.0], 0, [])),
+             (otel_exponential_histogram(0, 'NaN'::DOUBLE, 0, [5.0], 0, [])),
+             (otel_exponential_histogram(0, 0, 0, ['NaN'::DOUBLE], 0, []))) AS t(h);
+----
+p50
+2
+
+query
+SELECT otel_histogram_quantile(0.5, h) AS p50, otel_histogram_fraction(0, 4, h) AS under_4
+FROM (SELECT otel_exponential_histogram(0, NULL, NULL, [1, NULL, 1], 0, NULL) AS h);
+----
+p50	under_4
+2	0.5
+
+query
+SELECT otel_histogram_quantile('NaN'::DOUBLE, h) AS nan_q,
+       otel_histogram_fraction('NaN'::DOUBLE, 1, h) AS nan_bound,
+       otel_histogram_fraction(4, 2, h) AS reversed
+FROM (SELECT otel_exponential_histogram(0, 1, 0, [1, 2, 4], 1, [2]) AS h);
+----
+nan_q	nan_bound	reversed
+NaN	NaN	0
+
+query
+SELECT round(otel_histogram_quantile(0.5, h), 6) AS p50
+FROM (VALUES (otel_exponential_histogram(3, 0, 0, [1], 0, [])),
+             (otel_exponential_histogram(3, 0, 5000, [1], 0, []))) AS t(h);
+----
+p50
+1.189207
+
+statement error
+SELECT otel_histogram_fraction(lower, 4, otel_exponential_histogram(0, 0, 0, [1], 0, []))
+FROM (VALUES (1.0), (2.0)) AS t(lower);
+----
+db error: ERROR: otel_histogram_fraction(): all rows of a group must have the same lower and upper
+
+
+statement error
+SELECT otel_histogram_quantile(q, otel_exponential_histogram(0, 0, 0, [1], 0, []))
+FROM (VALUES (0.5), (0.9)) t(q);
+----
+db error: ERROR: otel_histogram_quantile(): all rows of a group must have the same quantile
+
+
+statement error
+SELECT otel_histogram_quantile(0.5, otel_exponential_histogram(21, 0, 0, [1], 0, []));
+----
+db error: ERROR: otel_histogram_quantile(): scale must be between -10 and 20, got 21
+
+
+statement error
+SELECT otel_histogram_stddev(otel_exponential_histogram(-2147483648, 0, 0, [1], 0, []));
+----
+db error: ERROR: otel_histogram_stddev(): scale must be between -10 and 20, got -2147483648
+
+
+statement error
+SELECT otel_histogram_quantile(0.5, otel_exponential_histogram(0, 0, 2147483647, [1, 1], 0, []));
+----
+db error: ERROR: otel_histogram_quantile(): buckets beyond the range of DOUBLE at scale 0
+
+
+statement error
+SELECT otel_histogram_fraction(0, 1, otel_exponential_histogram(-10, 0, 0, [], -3, [1]));
+----
+db error: ERROR: otel_histogram_fraction(): buckets beyond the range of DOUBLE at scale -10
+
+
+statement error
+SELECT otel_increase(otel_exponential_histogram(0, 0, 1023, [1, 1], 0, []), ts)
+FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00'), (TIMESTAMP '2026-01-01 00:00:30')) t(ts);
+----
+db error: ERROR: otel_increase(): buckets beyond the range of DOUBLE at scale 0
+
+
+query
+SELECT otel_histogram_fraction('-inf'::DOUBLE, 'inf'::DOUBLE, h) AS everything,
+       otel_histogram_quantile(1, h) AS max,
+       otel_histogram_quantile(0, h) AS min
+FROM (VALUES (otel_exponential_histogram(20, 0, 1073741823, [1], 0, [])),
+             (otel_exponential_histogram(20, 0, -1127219200, [1], 0, [])),
+             (otel_exponential_histogram(-10, 0, -2, [1, 1, 1], -2, [1, 1, 1]))) t(h);
+----
+everything	max	min
+1	Infinity	-Infinity
+
+
+statement ok
+CREATE TABLE exp_series (series VARCHAR, ts TIMESTAMP, scale INTEGER, zero_count BIGINT,
+                         positive_offset INTEGER, positive_bucket_counts BIGINT[],
+                         negative_offset INTEGER, negative_bucket_counts BIGINT[]);
+
+statement ok
+INSERT INTO exp_series VALUES
+  ('grow', TIMESTAMP '2026-01-01 00:00:30', 0, 2, 0, [3, 1, 2], 0, []),
+  ('grow', TIMESTAMP '2026-01-01 00:00:00', 0, 1, 0, [1, 1], 0, []),
+  ('rescaled', TIMESTAMP '2026-01-01 00:00:00', 1, 0, 0, [2, 2], 0, []),
+  ('rescaled', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [5], 0, []),
+  ('reset', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [5, 5], 0, []),
+  ('reset', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [1, 1], 0, []),
+  ('negative', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [], 2, [1]),
+  ('negative', TIMESTAMP '2026-01-01 00:00:30', 0, 0, 0, [], 2, [4, 1]),
+  ('single', TIMESTAMP '2026-01-01 00:00:00', 0, 0, 0, [1], 0, []);
+
+query
+SELECT series, h.scale, h.zero_count, h.positive_offset, h.positive_bucket_counts,
+       h.negative_offset, h.negative_bucket_counts
+FROM (
+  SELECT series,
+         otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                  negative_offset, negative_bucket_counts), ts) AS h
+  FROM exp_series
+  GROUP BY series
+)
+ORDER BY series;
+----
+series	scale	zero_count	positive_offset	positive_bucket_counts	negative_offset	negative_bucket_counts
+grow	0	1	0	{2,0,2}	0	{}
+negative	0	0	0	{}	2	{3,1}
+rescaled	0	0	0	{1}	0	{}
+reset	0	0	0	{1,1}	0	{}
+single	NULL	NULL	NULL	NULL	NULL	NULL
+
+query
+SELECT (otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                 negative_offset, negative_bucket_counts),
+                      ts::TIMESTAMP_NS)).positive_bucket_counts AS nanos,
+       (otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                 negative_offset, negative_bucket_counts),
+                      ts::TIMESTAMPTZ)).positive_bucket_counts AS tz
+FROM exp_series
+WHERE series = 'grow';
+----
+nanos	tz
+{2,0,2}	{2,0,2}
+
+query
+SELECT series, h.zero_count, h.positive_bucket_counts
+FROM (
+  SELECT series, otel_increase(otel_exponential_histogram(0, zero, 0, counts, 0, []), ts) AS h
+  FROM (VALUES ('dup', TIMESTAMP '2026-01-01 00:00:00', 0.0, [1.0]),
+               ('dup', TIMESTAMP '2026-01-01 00:00:00', 0.0, [3.0]),
+               ('dup', TIMESTAMP '2026-01-01 00:00:30', 0.0, [5.0]),
+               ('skips', TIMESTAMP '2026-01-01 00:00:00', 0.0, [1.0]),
+               ('skips', NULL, 0.0, [100.0]),
+               ('skips', 'infinity'::TIMESTAMP, 0.0, [100.0]),
+               ('skips', TIMESTAMP '2026-01-01 00:00:10', 0.0, ['NaN'::DOUBLE]),
+               ('skips', TIMESTAMP '2026-01-01 00:00:30', 0.0, [4.0]),
+               ('zero_drop', TIMESTAMP '2026-01-01 00:00:00', 5.0, [1.0]),
+               ('zero_drop', TIMESTAMP '2026-01-01 00:00:30', 2.0, [2.0])) AS t(series, ts, zero, counts)
+  GROUP BY series
+)
+ORDER BY series;
+----
+series	zero_count	positive_bucket_counts
+dup	0	{2}
+skips	0	{3}
+zero_drop	2	{2}
+
+query
+SELECT h.scale, h.positive_offset, h.positive_bucket_counts
+FROM (
+  SELECT otel_increase(otel_exponential_histogram(3, 0, o, [1], 0, []), ts) AS h
+  FROM (VALUES (TIMESTAMP '2026-01-01 00:00:00', 0),
+               (TIMESTAMP '2026-01-01 00:00:30', 5000)) AS t(ts, o)
+);
+----
+scale	positive_offset	positive_bucket_counts
+2	2500	{1}
+
+statement ok
+INSERT INTO otel_metrics_exponential_histogram ("timestamp", service_name, metric_name, attributes,
+    scale, zero_count, positive_offset, positive_bucket_counts, negative_offset,
+    negative_bucket_counts, aggregation_temporality)
+VALUES (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{}', 1, 0, 0, [2, 2], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:30', 'checkout', 'rpc.duration', '{}', 0, 1, 0, [6, 2], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:00', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [1], 0, [], 'Cumulative'),
+       (TIMESTAMP_NS '2026-09-08 12:00:40', 'checkout', 'rpc.duration', '{"route":"/b"}', 0, 0, 1, [5], 0, [], 'Cumulative');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_metrics_exponential_histogram;
+
+query
+SELECT minute,
+       round(otel_histogram_quantile(0.5, h), 6) AS p50,
+       round(otel_histogram_fraction('-inf'::DOUBLE, 2, h), 6) AS under_2
+FROM (
+  SELECT date_trunc('minute', "timestamp") AS minute, resource_attributes, attributes,
+         otel_increase(otel_exponential_histogram(scale, zero_count, positive_offset, positive_bucket_counts,
+                                                  negative_offset, negative_bucket_counts), "timestamp") AS h
+  FROM otel_metrics_exponential_histogram
+  WHERE metric_name = 'rpc.duration'
+  GROUP BY ALL
+)
+GROUP BY minute
+ORDER BY minute;
+----
+minute	p50	under_2
+2026-09-08 12:00:00	2.378414	0.333333
+
+statement ok
+CREATE TABLE big AS
+SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second' AS ts
+FROM range(0, 1000000) r(i);
+
+query
+SELECT otel_histogram_quantile(0.5, h) AS p50,
+       round(otel_histogram_quantile(0.75, h), 6) AS p75,
+       otel_histogram_fraction('-inf'::DOUBLE, 2, h) AS under_2
+FROM (
+  SELECT CASE WHEN i % 2 = 0
+              THEN otel_exponential_histogram(0, 0, 0, [1, 1], 0, [])
+              ELSE otel_exponential_histogram(1, 0, 0, [1, 1, 1, 1], 0, [])
+         END AS h
+  FROM big
+);
+----
+p50	p75	under_2
+2	2.828427	0.5
+
+query
+SELECT round(otel_deriv(3.0 * i, ts), 6) AS deriv,
+       round(otel_predict_linear(3.0 * i, ts, 10), 6) AS predicted,
+       otel_delta(3.0 * i, ts) AS delta
+FROM big;
+----
+deriv	predicted	delta
+3	3000027	2999997
+
+query
+SELECT otel_changes(i // 10, ts) AS changes, otel_resets(i % 1000, ts) AS resets
+FROM big;
+----
+changes	resets
+99999	999
+
+query
+SELECT otel_increase([i, 2 * i], ts) AS buckets,
+       (otel_increase(otel_exponential_histogram(0, 0, 0, [i], 0, []), ts)).positive_bucket_counts AS exponential
+FROM big
+WHERE i % 8 = 0;
+----
+buckets	exponential
+{999992,1999984}	{999992}
+
+query
+SELECT i % 2 AS g,
+       round(otel_predict_linear(2.0 * i, ts, 0), 6) AS predicted,
+       otel_histogram_quantile(1, otel_exponential_histogram(0, 0, (i % 7)::INTEGER, [1.0], 0, [])) AS max,
+       otel_histogram_quantile(0.5, [1, 1], [i % 2 + 1.0]) AS explicit
+FROM big
+GROUP BY g
+ORDER BY g;
+----
+g	predicted	max	explicit
+0	1999996	128	1
+1	1999998	128	2
+
+query
+SELECT i,
+       round(otel_predict_linear(2.0 * i, ts, 10) OVER w, 6) AS predicted,
+       otel_histogram_quantile(1, otel_exponential_histogram(0, 0, i::INTEGER, [1.0], 0, [])) OVER w AS max
+FROM big
+WHERE i < 6
+WINDOW w AS (ORDER BY i ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+ORDER BY i;
+----
+i	predicted	max
+0	NULL	2
+1	22	4
+2	24	8
+3	26	16
+4	28	32
+5	30	64

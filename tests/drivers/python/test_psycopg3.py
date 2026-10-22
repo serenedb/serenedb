@@ -19,11 +19,13 @@ import re
 import struct
 import threading
 import time
+from decimal import Decimal
 
 import psycopg
 import pytest
 from psycopg.adapt import Loader
 from psycopg.pq import Format, TransactionStatus
+from psycopg.types.json import Jsonb
 from spec_loader import (
     PROTOCOL_MODES,
     TypeSpec,
@@ -690,7 +692,7 @@ def test_pg_cancel_backend_cancels_running_query():
         def run_long():
             try:
                 victim.execute(
-                    "select count(*) from generate_series(1, 100000000000) g(i)"
+                    "select count(*) from generate_series(1, 200000000000) g(i)"
                 )
                 outcome["sqlstate"] = "completed"
             except psycopg.Error as e:
@@ -726,3 +728,170 @@ def test_binary_parameters_after_an_untyped_null_in_a_transaction():
     with psycopg.connect(**conn_kwargs()) as c:
         assert c.execute("SELECT %s, %b::INTEGER", (None, 7)).fetchone() == (None, 7)
         c.rollback()
+
+
+def _protocol_statements(c: psycopg.Connection) -> list[str]:
+    rows = c.execute(
+        "SELECT name FROM pg_prepared_statements WHERE NOT from_sql ORDER BY name",
+        prepare=False,
+    ).fetchall()
+    return [name for (name,) in rows]
+
+
+def test_prepared_statement_cache_flush_releases_server_statements():
+    with psycopg.connect(**conn_kwargs(), prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER + 1", (41,)).fetchone() == (42,)
+        assert c.execute("SELECT %s::TEXT", ("x",)).fetchone() == ("x",)
+        assert len(_protocol_statements(c)) == 2
+        c.rollback()
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER + 1", (1,)).fetchone() == (2,)
+        assert len(_protocol_statements(c)) == 1
+        c.rollback()
+
+
+def test_discard_all_drops_driver_prepared_statements():
+    with psycopg.connect(**conn_kwargs(), autocommit=True, prepare_threshold=0) as c:
+        assert c.execute("SELECT %s::INTEGER", (5,)).fetchone() == (5,)
+        c.execute("DISCARD ALL", prepare=False)
+        assert _protocol_statements(c) == []
+        assert c.execute("SELECT %s::INTEGER", (6,)).fetchone() == (6,)
+
+
+def test_prepared_multi_statement_command_runs_every_execute():
+    # A command the parser expands into several statements runs on every
+    # Execute of its prepared statement, not only on the first.
+    a, b = "prep_multi_a", "prep_multi_b"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{a}"')
+        c.execute(f'DROP TABLE IF EXISTS "{b}"')
+        c.execute(f'CREATE TABLE "{a}" (x INT)')
+        c.execute(f'CREATE TABLE "{b}" (y INT)')
+        try:
+            for attempt in range(3):
+                for truncate in (f'TRUNCATE "{a}", "{b}"',
+                                 f'TRUNCATE "{a}", "{b}" RESTART IDENTITY'):
+                    c.execute(f'INSERT INTO "{a}" VALUES (1)')
+                    c.execute(f'INSERT INTO "{b}" VALUES (2)')
+                    c.execute(truncate, prepare=True)
+                    counts = c.execute(
+                        f'SELECT (SELECT count(*) FROM "{a}"), '
+                        f'(SELECT count(*) FROM "{b}")').fetchone()
+                    assert counts == (0, 0), (attempt, truncate)
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{a}"')
+            c.execute(f'DROP TABLE IF EXISTS "{b}"')
+
+
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_decimal_parameter_keeps_its_digits(fmt):
+    values = [
+        Decimal("1.5"),
+        Decimal("-0.000123"),
+        Decimal("0"),
+        Decimal("1E+20"),
+        Decimal("12345678901234567890.123456789012345678"),
+    ]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        for value in values:
+            (got,) = c.execute(f"SELECT {fmt}", (value,)).fetchone()
+            assert got == value, value
+        assert c.execute(f"SELECT {fmt} * 2", (Decimal("1.25"),)).fetchone() == (
+            Decimal("2.50"),
+        )
+        assert c.execute(
+            f"SELECT {fmt}", ([Decimal("1.5"), None, Decimal("-2.25")],)
+        ).fetchone() == ([Decimal("1.5"), None, Decimal("-2.25")],)
+
+
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_decimal_parameter_rounds_once_into_a_column(fmt):
+    table = "decimal_param_column"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.execute(f'CREATE TABLE "{table}" (a NUMERIC(10, 2))')
+        try:
+            c.execute(
+                f'INSERT INTO "{table}" VALUES ({fmt}), ({fmt}), ({fmt})',
+                (Decimal("1.005"), Decimal("1.2345"), Decimal("7")),
+            )
+            assert c.execute(f'SELECT a FROM "{table}" ORDER BY a').fetchall() == [
+                (Decimal("1.01"),),
+                (Decimal("1.23"),),
+                (Decimal("7.00"),),
+            ]
+            for value, count in (
+                (Decimal("1.005"), 0),
+                (Decimal("1.010"), 1),
+            ):
+                assert c.execute(
+                    f'SELECT count(*) FROM "{table}" WHERE a = {fmt}', (value,)
+                ).fetchone() == (count,), value
+            assert c.execute(
+                f'SELECT count(*) FROM "{table}" WHERE a < {fmt}',
+                (Decimal("1.0100001"),),
+            ).fetchone() == (1,)
+            for value in (Decimal("1E+40"), Decimal("99999999.995")):
+                with pytest.raises(psycopg.errors.NumericValueOutOfRange):
+                    c.execute(f'INSERT INTO "{table}" VALUES ({fmt})', (value,))
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+@pytest.mark.parametrize(
+    "query, sqlstate",
+    [
+        ("SELECT '1e40'::NUMERIC(10, 2)", "22003"),
+        ("SELECT '-Infinity'::NUMERIC(10, 2)", "22003"),
+        ("SELECT 'abc'::NUMERIC(10, 2)", "22P02"),
+        ("SELECT 12345.678::NUMERIC(5, 2)", "22003"),
+        ("SELECT 123456::NUMERIC(5, 2)", "22003"),
+        ("SELECT 0.99999::NUMERIC(5, 5)::NUMERIC(4, 4)", "22003"),
+        ("SELECT 1e40::FLOAT8::NUMERIC(10, 2)", "22003"),
+        ("SELECT 'Infinity'::FLOAT8::NUMERIC(10, 2)", "22003"),
+    ],
+)
+def test_numeric_cast_errors_report_postgresql_sqlstates(query, sqlstate):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with pytest.raises(psycopg.Error) as err:
+            c.execute(query)
+        assert err.value.sqlstate == sqlstate, query
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["SELECT 'NaN'::NUMERIC(10, 2)", "SELECT 'NaN'::FLOAT8::NUMERIC(10, 2)"],
+)
+def test_numeric_nan_is_refused_as_not_supported(query):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        with pytest.raises(psycopg.errors.FeatureNotSupported):
+            c.execute(query)
+
+
+def test_numeric_text_input_reports_postgresql_sqlstates():
+    table = "numeric_text_input"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        c.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.execute(f'CREATE TABLE "{table}" (a NUMERIC(10, 2))')
+        try:
+            for text, sqlstate in (("1e40", "22003"), ("abc", "22P02")):
+                with pytest.raises(psycopg.Error) as err:
+                    c.execute(f'INSERT INTO "{table}" VALUES (%t)', (text,))
+                assert err.value.sqlstate == sqlstate, text
+                with pytest.raises(psycopg.Error) as err:
+                    with c.cursor().copy(f'COPY "{table}" FROM STDIN') as copy:
+                        copy.write(f"{text}\n")
+                assert err.value.sqlstate == sqlstate, text
+        finally:
+            c.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+@pytest.mark.parametrize("fmt", ["%s", "%b"])
+def test_jsonb_parameter(fmt):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as c:
+        assert c.execute(f"SELECT {fmt}", (Jsonb({"a": [1, "x"]}),)).fetchone() == (
+            {"a": [1, "x"]},
+        )
+        assert c.execute(
+            f"SELECT {fmt}", ([Jsonb({"a": 1}), Jsonb([2])],)
+        ).fetchone() == ([{"a": 1}, [2]],)

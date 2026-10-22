@@ -26,7 +26,7 @@ curl https://install.serenedb.com | sh
 Or run the image directly:
 
 ```sh
-docker run -d --name serenedb -p 7890:7890 serenedb/serenedb
+docker run -d --name serenedb -p 7890:7890 -e SERENEDB_HOST_AUTH_METHOD=trust serenedb/serenedb
 ```
 
 </TabItem>
@@ -46,7 +46,7 @@ Direct downloads are available on the [GitHub releases page](https://github.com/
 SereneDB speaks the PostgreSQL wire protocol. Connect with `psql` or any PostgreSQL-compatible client:
 
 ```sh
-psql -h localhost -p 7890
+psql -h localhost -p 7890 -U postgres
 ```
 
 No credentials are required by default.
@@ -119,7 +119,7 @@ Query types:
 
 - [Full-Text Search](sql/indexes/inverted/full-text-search.md) — the `@@` operator, phrases, fuzzy, boolean queries
 - [Ranking](sql/indexes/inverted/ranking.md) — BM25 and other scorers, boosting, top-K / WAND
-- [Vector Search](sql/indexes/inverted/vector-search.md) — IVF indexing, kNN and range search
+- [Vector Search](sql/indexes/inverted/vector-search.md) — IVF and HNSW indexing, kNN and range search
 - [Hybrid Search](sql/indexes/inverted/hybrid-search.md) — combine full-text filters with vector ranking
 - [Geospatial Search](sql/indexes/inverted/geospatial-search.md) — `ST_*` predicates over GeoJSON / `GEOMETRY`
 

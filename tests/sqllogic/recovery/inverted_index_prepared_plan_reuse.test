@@ -1,0 +1,113 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pru_dict AS split_text(case := 'lower')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE pru (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX pru_idx ON pru
+  USING inverted(pk, v, b pru_dict, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO pru SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pru;
+
+statement ok
+PREPARE pru_knn AS SELECT pk FROM pru_idx WHERE v = $1::INTEGER
+  ORDER BY emb <-> $2::FLOAT[2] LIMIT $3::INTEGER;
+
+statement ok
+PREPARE pru_bm25 AS SELECT pk FROM pru_idx WHERE b @@ $1::VARCHAR
+  ORDER BY bm25(tableoid) DESC LIMIT $2::INTEGER;
+
+query
+EXECUTE pru_knn(3, [150, 0]::FLOAT[2], 2);
+----
+pk
+93
+83
+
+query
+EXECUTE pru_bm25('zeta', 3);
+----
+pk
+7
+
+statement ok
+SET sdb_faults = 'connector::ScanBind';
+
+query
+EXECUTE pru_knn(5, [0, 0]::FLOAT[2], 2);
+----
+pk
+5
+15
+
+query
+EXECUTE pru_bm25('zeta', 1);
+----
+pk
+7
+
+statement ok
+SET sdb_faults = '-connector::ScanBind';
+
+statement ok
+INSERT INTO pru VALUES (200, 3, 'omega', [149, 0]);
+
+statement ok
+VACUUM (REFRESH_TABLE) pru;
+
+statement ok
+SET sdb_faults = 'connector::ScanBind';
+
+statement error
+EXECUTE pru_knn(3, [150, 0]::FLOAT[2], 2);
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET sdb_faults = '-connector::ScanBind';
+
+query
+EXECUTE pru_knn(3, [150, 0]::FLOAT[2], 2);
+----
+pk
+200
+93
+
+statement ok
+SET sdb_faults = 'connector::ScanBind';
+
+query
+EXECUTE pru_knn(3, [150, 0]::FLOAT[2], 2);
+----
+pk
+200
+93
+
+statement ok
+SET sdb_faults = '-connector::ScanBind';
+
+query
+EXECUTE pru_bm25('omega', 3);
+----
+pk
+200
+
+statement ok
+SET sdb_faults = 'connector::ScanBind';
+
+query
+EXECUTE pru_bm25('zeta', 3);
+----
+pk
+7
+
+statement ok
+SET sdb_faults = '-connector::ScanBind';

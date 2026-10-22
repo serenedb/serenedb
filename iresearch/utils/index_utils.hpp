@@ -88,7 +88,4 @@ CompactionPolicy MakePolicy(const CompactionTier& options);
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,
                        bool increment_version = true);
 
-void FlushIndexSegmentPatch(Directory& dir, IndexSegment& segment,
-                            const DocumentMask& patch);
-
 }  // namespace irs::index_utils

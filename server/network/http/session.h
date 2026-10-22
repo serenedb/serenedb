@@ -196,12 +196,14 @@ class HttpSession final
       const auto& role = login.role;
 
       _conn = irs::DuckDBEngine::Instance().CreateConnection();
+      _conn->context->SetSchedulerAccount(_task->Account());
       _connection_ctx = std::make_shared<ConnectionContext>(
         *_conn->context, user, role, dbname, database_id, nullptr,
         static_cast<int32_t>(_cancel_key >> 32), _cancel);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
@@ -266,13 +268,6 @@ class HttpSession final
     duckdb::unique_ptr<duckdb::QueryResult> pending) {
     try {
       if (!pending->HasError()) {
-        // In debug interleave queries more often to see more bugs.
-#ifdef SDB_DEV
-        static constexpr int kInlineSliceBudget = 0;
-#else
-        static constexpr int kInlineSliceBudget = 8;
-#endif
-        int inline_slices = 0;
         for (;;) {
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
@@ -280,13 +275,10 @@ class HttpSession final
             break;
           }
           if (status == duckdb::QueryResultState::NOT_READY) {
-            if (++inline_slices < kInlineSliceBudget) {
-              continue;
+            if (duckdb::TaskScheduler::ShouldYield()) {
+              co_await _task->Yield();
             }
-            inline_slices = 0;
-            co_await _task->Yield();
           } else {
-            inline_slices = 0;
             co_await _task->Park();
           }
         }

@@ -46,8 +46,8 @@ echo ":: Generating HTML coverage report..."
 ./scripts/prepare_coverage.py \
     --unified-report \
     --compilation-dir . \
-    llvm-profdata-21 \
-    llvm-cov-21 \
+    llvm-profdata-23 \
+    llvm-cov-23 \
     ./out/coverage/profiles \
     ./out/coverage/llvm_html \
     "${ALL_BINARIES[@]}"
@@ -63,6 +63,7 @@ echo "Build directory: ${BUILD_DIR}"
 echo "=========================================="
 
 if docker run --rm \
+	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
 	--user "$(id -u):$(id -g)" \
 	-e HOME=/serenedb \
 	--ulimit core=-1 \

@@ -18,10 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <dirent.h>
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
-#include <sched.h>
 
+#ifdef __linux__
+#include <dirent.h>
+#include <sched.h>
+#endif
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <duckdb.hpp>
@@ -29,42 +34,57 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/parallel/task_scheduler_queue.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
-#include <mutex>
-#include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
 constexpr int64_t kRows = 10'000'000;
 
-std::mutex gSeenLock;
-std::set<std::thread::id> gSeen;
+std::atomic<size_t> gRunning{0};
+std::atomic<size_t> gPeak{0};
 
 void RecordThread(duckdb::DataChunk&, duckdb::ExpressionState&,
                   duckdb::Vector& result) {
-  {
-    std::lock_guard guard{gSeenLock};
-    gSeen.insert(std::this_thread::get_id());
+  const auto running = ++gRunning;
+  for (auto peak = gPeak.load();
+       running > peak && !gPeak.compare_exchange_weak(peak, running);) {
   }
+  const auto until =
+    std::chrono::steady_clock::now() + std::chrono::microseconds(20);
+  while (std::chrono::steady_clock::now() < until) {
+  }
+  --gRunning;
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::GetData<bool>(result)[0] = true;
 }
 
-size_t ThreadsSeen(duckdb::Connection& con) {
-  {
-    std::lock_guard guard{gSeenLock};
-    gSeen.clear();
+std::atomic<size_t> gProbers{0};
+
+void NeverMatches(duckdb::DataChunk&, duckdb::ExpressionState&,
+                  duckdb::Vector& result) {
+  thread_local bool counted = false;
+  if (!counted) {
+    counted = true;
+    ++gProbers;
   }
+  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::ConstantVector::GetData<bool>(result)[0] = false;
+}
+
+size_t PeakThreads(duckdb::Connection& con) {
+  gPeak = 0;
   auto result = con.Query("SELECT count(*) FROM s.t WHERE record_thread(i)");
   EXPECT_FALSE(result->HasError()) << result->GetError();
   EXPECT_EQ(result->Collection().GetValue(0, 0), duckdb::Value::BIGINT(kRows));
-  std::lock_guard guard{gSeenLock};
-  return gSeen.size();
+  return gPeak;
 }
 
 void Exec(duckdb::Connection& con, const std::string& sql) {
@@ -101,12 +121,12 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   EXPECT_EQ(db.NumberOfThreads(), 8U);
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 1U);
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*other.context), 8U);
-  EXPECT_EQ(ThreadsSeen(con), 1U);
-  EXPECT_GT(ThreadsSeen(other), 1U);
+  EXPECT_EQ(PeakThreads(con), 1U);
+  EXPECT_GT(PeakThreads(other), 1U);
 
   Exec(con, "SET SESSION threads = 3");
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 3U);
-  EXPECT_LE(ThreadsSeen(con), 3U);
+  EXPECT_LE(PeakThreads(con), 3U);
 
   Exec(con, "SET threads = 100");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(100));
@@ -120,7 +140,7 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(100));
   EXPECT_EQ(CurrentThreads(other), duckdb::Value::BIGINT(4));
   EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 4U);
-  EXPECT_LE(ThreadsSeen(other), 4U);
+  EXPECT_LE(PeakThreads(other), 4U);
 
   Exec(con, "RESET threads");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(4));
@@ -140,6 +160,7 @@ class FunctionTask final : public duckdb::Task {
   std::function<void()> _fn;
 };
 
+#ifdef __linux__
 struct ThreadInfo {
   std::string name;
   std::string cpus;
@@ -173,8 +194,10 @@ std::map<std::string, ThreadInfo> Threads() {
   closedir(dir);
   return threads;
 }
+#endif
 
 TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
+#ifdef __linux__
   cpu_set_t mask;
   if (sched_getaffinity(0, sizeof(mask), &mask) != 0 || CPU_COUNT(&mask) < 4) {
     GTEST_SKIP();
@@ -213,6 +236,9 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
   for (const auto& [cpu, count] : per_cpu) {
     EXPECT_EQ(count, 1U) << "cpu " << cpu;
   }
+#else
+  GTEST_SKIP() << "Requires Linux CPU affinity and /proc";
+#endif
 }
 
 TEST(DuckDBThreads, RelaunchWhileAnotherWorkerRelaunchesDoesNotDeadlock) {
@@ -246,6 +272,244 @@ TEST(DuckDBThreads, RelaunchWhileAnotherWorkerRelaunchesDoesNotDeadlock) {
   ASSERT_EQ(done.load(), 2);
   EXPECT_EQ(scheduler.NumberOfThreads(), 3U);
   delete db;
+}
+
+struct SpinState {
+  std::atomic<bool> stop{false};
+  std::atomic<int64_t> chunks{0};
+  std::atomic<int64_t> yields{0};
+  std::atomic<int64_t> running{0};
+  std::atomic<int64_t> finished{0};
+};
+
+class SpinTask final : public duckdb::Task {
+ public:
+  explicit SpinTask(SpinState& state) : _state{state} {}
+
+  duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode mode) final {
+    ++_state.running;
+    while (!_state.stop) {
+      const auto until =
+        std::chrono::steady_clock::now() + std::chrono::microseconds(20);
+      while (std::chrono::steady_clock::now() < until) {
+      }
+      ++_state.chunks;
+      if (duckdb::TaskScheduler::ShouldYield(mode)) {
+        ++_state.yields;
+        --_state.running;
+        return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
+      }
+    }
+    --_state.running;
+    ++_state.finished;
+    return duckdb::TaskExecutionResult::TASK_FINISHED;
+  }
+
+ private:
+  SpinState& _state;
+};
+
+struct SpinQuery {
+  SpinQuery(duckdb::TaskScheduler& scheduler, size_t tasks)
+    : producer{scheduler.CreateProducer(
+        scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND))},
+      count{tasks} {
+    duckdb::vector<duckdb::shared_ptr<duckdb::Task>> list;
+    for (size_t i = 0; i < tasks; ++i) {
+      list.push_back(duckdb::make_shared_ptr<SpinTask>(state));
+    }
+    scheduler.ScheduleTasks(*producer, list);
+  }
+
+  ~SpinQuery() {
+    state.stop = true;
+    const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (state.finished < static_cast<int64_t>(count) &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(state.finished.load(), static_cast<int64_t>(count));
+  }
+
+  SpinState state;
+  duckdb::unique_ptr<duckdb::ProducerToken> producer;
+  size_t count;
+};
+
+duckdb::unique_ptr<duckdb::DuckDB> SchedulerDB(size_t threads) {
+  duckdb::DBConfig config;
+  config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
+  config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
+  return duckdb::make_uniq<duckdb::DuckDB>(nullptr, &config);
+}
+
+bool WaitFor(const std::function<bool()>& condition) {
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!condition()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return true;
+}
+
+TEST(DuckDBScheduler, QueryAloneIsNotInterrupted) {
+  auto db = SchedulerDB(4);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  SpinQuery query{scheduler, 4};
+  ASSERT_TRUE(WaitFor([&] { return query.state.running == 4; }));
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_EQ(query.state.yields.load(), 0);
+}
+
+TEST(DuckDBScheduler, LightTaskDoesNotWaitForHeavyTasks) {
+  auto db = SchedulerDB(4);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  SpinQuery heavy{scheduler, 4};
+  ASSERT_TRUE(WaitFor([&] { return heavy.state.running == 4; }));
+  for (int i = 0; i < 20; ++i) {
+    auto producer = scheduler.CreateProducer(
+      scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+    std::atomic<bool> ran{false};
+    const auto start = std::chrono::steady_clock::now();
+    scheduler.ScheduleTask(
+      *producer, duckdb::make_shared_ptr<FunctionTask>([&] { ran = true; }));
+    ASSERT_TRUE(WaitFor([&] { return ran.load(); }));
+    EXPECT_LT(std::chrono::steady_clock::now() - start,
+              std::chrono::milliseconds(100));
+  }
+}
+
+TEST(DuckDBScheduler, LightTaskDoesNotWaitForJoinWithoutOutput) {
+  auto db = SchedulerDB(4);
+  duckdb::Connection con{*db};
+  duckdb::ScalarFunction never{"never_matches",
+                               {duckdb::LogicalType::BIGINT},
+                               duckdb::LogicalType::BOOLEAN,
+                               NeverMatches};
+  never.SetVolatile();
+  duckdb::CreateScalarFunctionInfo info{never};
+  con.context->RegisterFunction(info);
+  Exec(con, "CREATE TABLE big AS SELECT i FROM range(1000000) t(i)");
+  gProbers = 0;
+  std::vector<duckdb::unique_ptr<duckdb::Connection>> heavy_cons;
+  std::vector<std::thread> heavy;
+  absl::Cleanup stop = [&] {
+    for (auto& heavy_con : heavy_cons) {
+      heavy_con->Interrupt();
+    }
+    for (auto& thread : heavy) {
+      thread.join();
+    }
+  };
+  for (int i = 0; i < 2; ++i) {
+    auto& heavy_con =
+      *heavy_cons.emplace_back(duckdb::make_uniq<duckdb::Connection>(*db));
+    heavy.emplace_back([&heavy_con] {
+      heavy_con.Query(
+        "SELECT count(*) FROM big a, (SELECT i FROM range(1000000) t(i)) b "
+        "WHERE never_matches(a.i + b.i)");
+    });
+  }
+  ASSERT_TRUE(WaitFor([] { return gProbers >= 4; }));
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  for (int i = 0; i < 20; ++i) {
+    auto producer = scheduler.CreateProducer(
+      scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+    auto ran = std::make_shared<std::atomic<bool>>(false);
+    const auto start = std::chrono::steady_clock::now();
+    scheduler.ScheduleTask(
+      *producer, duckdb::make_shared_ptr<FunctionTask>([ran] { *ran = true; }));
+    ASSERT_TRUE(WaitFor([&] { return ran->load(); }));
+    EXPECT_LT(std::chrono::steady_clock::now() - start,
+              std::chrono::milliseconds(100));
+  }
+}
+
+TEST(DuckDBScheduler, ArrivalTakenWithoutSelectDoesNotHideNextArrival) {
+  duckdb::TaskSchedulerQueue queue;
+  auto first = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
+    queue, duckdb::SchedulerClass::FOREGROUND);
+  queue.Publish(*first);
+  ASSERT_TRUE(queue.HasArrivals());
+  ASSERT_TRUE(queue.TakeArrival());
+  EXPECT_FALSE(queue.HasArrivals());
+  EXPECT_FALSE(queue.TakeArrival());
+  auto second = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
+    queue, duckdb::SchedulerClass::FOREGROUND);
+  queue.Publish(*second);
+  EXPECT_TRUE(queue.HasArrivals());
+  EXPECT_TRUE(queue.TakeArrival());
+}
+
+TEST(DuckDBScheduler, AccountGivenAWorkerIsNoLongerAnArrival) {
+  duckdb::TaskSchedulerQueue queue;
+  auto account = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
+    queue, duckdb::SchedulerClass::FOREGROUND);
+  queue.Publish(*account);
+  ASSERT_TRUE(queue.HasArrivals());
+  queue.Attach(*account);
+  EXPECT_FALSE(queue.HasArrivals());
+  EXPECT_FALSE(queue.TakeArrival());
+  queue.Detach(*account);
+}
+
+TEST(DuckDBScheduler, ListedAccountWithoutWorkerArrivesWithItsNextTask) {
+  auto db = SchedulerDB(1);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  duckdb::TaskSchedulerQueue queue;
+  auto account = duckdb::make_shared_ptr<duckdb::SchedulerAccount>(
+    queue, duckdb::SchedulerClass::FOREGROUND);
+  duckdb::ProducerToken producer{scheduler, account};
+  duckdb::shared_ptr<duckdb::Task> task =
+    duckdb::make_shared_ptr<FunctionTask>([] {});
+  queue.Attach(*account);
+  ASSERT_TRUE(queue.Enqueue(producer, &task, 1, false));
+  queue.Publish(*account);
+  EXPECT_FALSE(queue.HasArrivals());
+  ASSERT_TRUE(queue.Dequeue(*account, task));
+  queue.Detach(*account);
+  task = duckdb::make_shared_ptr<FunctionTask>([] {});
+  EXPECT_FALSE(queue.Enqueue(producer, &task, 1, false));
+  EXPECT_TRUE(queue.HasArrivals());
+  EXPECT_TRUE(queue.TakeArrival());
+}
+
+TEST(DuckDBScheduler, TwoHeavyQueriesShareWorkers) {
+  auto db = SchedulerDB(4);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  SpinQuery first{scheduler, 4};
+  ASSERT_TRUE(WaitFor([&] { return first.state.running == 4; }));
+  SpinQuery second{scheduler, 4};
+  ASSERT_TRUE(WaitFor([&] { return second.state.chunks > 0; }));
+  const auto first_start = first.state.chunks.load();
+  const auto second_start = second.state.chunks.load();
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  const auto first_done = first.state.chunks - first_start;
+  const auto second_done = second.state.chunks - second_start;
+  EXPECT_GT(first_done * 2, second_done);
+  EXPECT_GT(second_done * 2, first_done);
+}
+
+TEST(DuckDBScheduler, MoreQueriesThanWorkersAllProgress) {
+  auto db = SchedulerDB(2);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  std::vector<duckdb::unique_ptr<SpinQuery>> queries;
+  for (int i = 0; i < 6; ++i) {
+    queries.push_back(duckdb::make_uniq<SpinQuery>(scheduler, 1));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  int64_t least = std::numeric_limits<int64_t>::max();
+  int64_t most = 0;
+  for (auto& query : queries) {
+    least = std::min<int64_t>(least, query->state.chunks);
+    most = std::max<int64_t>(most, query->state.chunks);
+  }
+  EXPECT_GT(least * 3, most);
 }
 
 }  // namespace

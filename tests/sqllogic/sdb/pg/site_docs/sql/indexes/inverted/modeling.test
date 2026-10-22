@@ -92,4 +92,4 @@ db error: ERROR: aggregate functions are not allowed in index expressions
 statement error
 CREATE INDEX metrics_idx2 ON metrics USING inverted (id, (n + random()));
 ----
-db error: ERROR: Index keys cannot contain expressions with side effects.
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.

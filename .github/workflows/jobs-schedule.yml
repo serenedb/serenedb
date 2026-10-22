@@ -37,6 +37,7 @@ jobs:
       LOCATION: linux-amd64
       CONFIG: dev
       IRESEARCH: true
+      RE2: true
       DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
       SQLITE: true
       SQLSMITH: true

@@ -1,0 +1,69 @@
+statement ok
+SET application_name TO 'before';
+
+
+statement ok
+EXPLAIN SELECT set_config('application_name', 'explained', false);
+
+
+query
+SHOW application_name;
+----
+application_name
+before
+
+
+statement ok
+PREPARE set_app AS SELECT set_config('application_name', 'prepared', false);
+
+
+statement ok
+SET application_name TO 'other';
+
+
+statement ok
+EXECUTE set_app;
+
+
+query
+SHOW application_name;
+----
+application_name
+prepared
+
+
+statement ok
+DEALLOCATE set_app;
+
+
+query
+SELECT max(set_config('application_name', i::text, false)) AS max_value FROM generate_series(1, 1000000) t(i);
+----
+max_value
+999999
+
+
+query
+SHOW application_name;
+----
+application_name
+1000000
+
+
+query
+SELECT count(*) AS matched FROM generate_series(1, 1000000) t(i)
+WHERE set_config('application_name', (1000001 - i)::text, false) <> '';
+----
+matched
+1000000
+
+
+query
+SHOW application_name;
+----
+application_name
+1
+
+
+statement ok
+RESET application_name;

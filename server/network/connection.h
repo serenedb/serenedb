@@ -123,12 +123,12 @@ class Transport : public TransportBase {
  public:
   explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp || Kind == SocketKind::Unix)
-    : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
+    : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer()} {}
 
   Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
     requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls ||
              Kind == SocketKind::Client)
-    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
+    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer()} {}
 
   void Close() noexcept { _socket.Close(); }
   auto& Lowest() noexcept { return _socket.Lowest(); }
@@ -368,11 +368,10 @@ class Transport : public TransportBase {
   bool _handed_off = false;
 
  private:
-  static duckdb::shared_ptr<CpuResumer> MakeResumer(IoExecutor& exec) {
+  static duckdb::shared_ptr<CpuResumer> MakeResumer() {
     return duckdb::make_shared_ptr<CpuResumer>(
       duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()),
-      exec);
+        irs::DuckDBEngine::Instance().instance()));
   }
 };
 

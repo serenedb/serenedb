@@ -133,7 +133,7 @@ Match indexed tokens against a SQL `LIKE` pattern.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character. The pattern is matched against terms as they are stored in the index. |
+| `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character, and `\` makes the next character literal (`\%`, `\_`, `\\`). A pattern that ends in an unpaired `\` is an error. The pattern is matched against terms as they are stored in the index. |
 
 **How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern.
 
@@ -175,7 +175,7 @@ Match indexed tokens against a regular expression.
 
 **How it works.** The pattern is applied to each indexed term and a row matches when any term matches. Because terms are stored in their analyzed form (lower-cased by the dictionary in our setup), write the pattern against that form — `ts_regexp('QUICK')` finds nothing, but the inline flag `ts_regexp('(?i)QUICK')` does (in `'perl'` mode). The `'posix'` dialect is handy for bracket-class patterns such as `gr[ae]y`.
 
-A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile.
+A pattern that is not valid in its dialect, such as `ts_regexp('(abc')` or `ts_regexp('\d+', 'posix')`, fails the query with `invalid regular expression: …`, and so does one too large to compile. On a [`generate_wildcard_ngrams`](./tokenizers/generate_wildcard_ngrams.md#searching) column, an invalid pattern matches no row instead, and one too large fails with `pattern cannot be verified: …`.
 
 A pattern's size never changes its answer: a long alternation — hundreds of generated names, synonyms or term lists — returns exactly the terms it matches, only more slowly past the point where the index can no longer prune the dictionary with it. Alternatives that begin or end the same way are merged before matching, so thousands of `^(the\s+)?<name>\b.*` branches cost about as much as the distinct names they spell. A pattern that can only match a short list of words (up to 1024), such as `x|y|zz` or `gr[ae]y`, looks those words up directly, as `ts_any` does. A prepared statement compiles its patterns once; to reuse compiled patterns across queries as well, set [`sdb_pattern_cache_size`](../../../configuration/overview.md#search-and-indexing) to the number of bytes the server may keep for them.
 
@@ -632,6 +632,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `+a` | `a` is required. |
 | `-a` | `a` is excluded. |
 | `a*` | Prefix (wildcard) match. |
+| `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |

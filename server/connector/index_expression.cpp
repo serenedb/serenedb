@@ -31,9 +31,13 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/function/lambda_functions.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
+#include <duckdb/optimizer/rule/concat_flattening.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -43,12 +47,15 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "connector/column_id.h"
+#include "connector/pg_logical_types.h"
 
 namespace sdb::connector {
 namespace {
@@ -78,10 +85,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
+                       duckdb::vector<duckdb::LogicalType> t)
+    : duckdb::ColumnBindingResolver(std::move(b), std::move(t)) {}
   void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
     VisitExpression(&expr);
   }
@@ -94,14 +99,55 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr) {
                      stream.GetPosition()};
 }
 
+duckdb::unique_ptr<duckdb::Expression> FlattenConcats(
+  duckdb::unique_ptr<duckdb::Expression> expr, duckdb::ClientContext& context) {
+  duckdb::ExpressionRewriter rewriter{context};
+  rewriter.rules.push_back(
+    duckdb::make_uniq<duckdb::ConcatFlatteningRule>(rewriter));
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
+  select_list.push_back(std::move(expr));
+  duckdb::LogicalProjection projection{duckdb::TableIndex{0},
+                                       std::move(select_list)};
+  rewriter.VisitOperator(projection);
+  return std::move(projection.expressions[0]);
+}
+
+void ClearSource(duckdb::Expression& expr);
+
+duckdb::shared_ptr<duckdb::Expression> WithoutSource(
+  const duckdb::Expression& body) {
+  auto copy = body.Copy();
+  duckdb::ExpressionIterator::EnumerateExpression(copy, ClearSource);
+  return duckdb::shared_ptr<duckdb::Expression>{std::move(copy)};
+}
+
+void ClearSource(duckdb::Expression& expr) {
+  expr.SetAlias("");
+  expr.SetQueryLocation(duckdb::optional_idx{});
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_LAMBDA) {
+    auto& lambda = expr.Cast<duckdb::BoundLambdaExpression>();
+    lambda.SetLambdaExpr(WithoutSource(*lambda.LambdaExpr()));
+  } else if (expr.GetExpressionClass() ==
+             duckdb::ExpressionClass::BOUND_FUNCTION) {
+    auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
+    function.IsOperatorMutable() = false;
+    if (function.Function().HasBindLambdaCallback() && function.BindInfo()) {
+      auto& data =
+        function.BindInfoMutable()->Cast<duckdb::LambdaFunctionData>();
+      if (const auto body = data.GetLambdaExpression()) {
+        data.SetLambdaExpression(WithoutSource(*body));
+      }
+    }
+  }
+}
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FoldConstantCasts(expr.Copy(), context);
+  auto copy = FlattenConcats(FoldConstantCasts(expr.Copy(), context), context);
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
-      e.SetAlias("");
-      e.SetQueryLocation(duckdb::optional_idx{});
+      ClearSource(e);
       if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
         auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
         const auto idx = cref.Binding().column_index.GetIndex();
@@ -110,9 +156,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
         cref.BindingMutable() = duckdb::ColumnBinding(
           duckdb::TableIndex(table_id),
           duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
-      } else if (e.GetExpressionClass() ==
-                 duckdb::ExpressionClass::BOUND_FUNCTION) {
-        e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
       }
     });
   return copy;
@@ -189,6 +232,51 @@ std::string NormalizedExpression(const duckdb::Expression& expr,
     ExpandStoredExpressions(normalized, stored_expression, context);
   }
   return SerializeBoundExpression(*normalized);
+}
+
+namespace {
+
+bool DependsOnSession(const duckdb::LogicalType& type) {
+  return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
+    return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
+           t.id() == duckdb::LogicalTypeId::TIME_TZ ||
+           t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
+  });
+}
+
+bool PinsTimeZone(const duckdb::BoundFunctionExpression& func) {
+  return func.GetChildren().size() == 2 &&
+         func.Function().GetName().GetIdentifierName() == "timezone";
+}
+
+}  // namespace
+
+bool ComputedFromRowAlone(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    if (DependsOnSession(func.GetReturnType()) ||
+        (!PinsTimeZone(func) &&
+         absl::c_any_of(func.GetChildren(), [](const auto& arg) {
+           return DependsOnSession(arg->GetReturnType());
+         }))) {
+      return false;
+    }
+    if (duckdb::BoundCastExpression::IsCast(func) &&
+        duckdb::TypeVisitor::Contains(
+          duckdb::BoundCastExpression::SourceType(func),
+          duckdb::LogicalTypeId::BLOB) &&
+        duckdb::TypeVisitor::Contains(func.GetReturnType(),
+                                      duckdb::LogicalTypeId::VARCHAR)) {
+      return false;
+    }
+  }
+  bool alone = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      alone = alone && ComputedFromRowAlone(child);
+    });
+  return alone;
 }
 
 }  // namespace sdb::connector

@@ -28,11 +28,21 @@ option(USE_FAIL_ON_WARNINGS "treat warnings as errors" ON)
 
 option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
-option(SDB_IOURING "allow to use iouring" ON)
-
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
+
+option(
+    IRESEARCH_BENCH
+    "build only search-benchmark-game, against iresearch-minimal: no server, vector, geo, fastText or DuckDB extensions besides icu"
+    OFF
+)
+if(IRESEARCH_BENCH AND SDB_GTEST)
+    message(
+        FATAL_ERROR
+        "IRESEARCH_BENCH builds only search-benchmark-game: turn SDB_GTEST off"
+    )
+endif()
 
 set(SDB_ALLOC
     ""
@@ -254,6 +264,7 @@ find_package(Python3 REQUIRED)
 get_filename_component(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" REALPATH)
 
 set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
@@ -267,7 +278,6 @@ include(OptimizeForArchitecture)
 
 if(APPLE)
     set(OS_DARWIN 1)
-    set(SDB_IOURING OFF CACHE BOOL "" FORCE)
     if(NOT CMAKE_CXX_COMPILER_AR)
         message(
             FATAL_ERROR
@@ -670,9 +680,13 @@ include(SereneDBInstall)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_subdirectory(iresearch)
-add_subdirectory(server/utils)
-add_subdirectory(server)
+if(NOT IRESEARCH_BENCH)
+    add_subdirectory(server/utils)
+    add_subdirectory(server)
+endif()
 add_subdirectory(tests)
-add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
+if(NOT IRESEARCH_BENCH)
+    add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
 
-add_custom_target(serenedb DEPENDS serened)
+    add_custom_target(serenedb DEPENDS serened)
+endif()

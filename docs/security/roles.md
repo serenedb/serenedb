@@ -64,9 +64,11 @@ Creating a role whose name is already taken is an error:
 
 ## Dropping roles
 
-A role cannot be dropped while it still owns objects — the dependency is reported and the drop is refused. Reassign or drop the objects first:
+A role cannot be dropped while it still owns objects, or while a grant on them names it, as grantee or as grantor — the dependency is reported and the drop is refused. Reassign or drop the objects and revoke the grants first:
 
 <SqlLogicTest id="security/roles/example_006" />
+
+<SqlLogicTest id="security/roles/example_009" />
 
 `DROP ROLE` accepts a comma-separated list, and `IF EXISTS` makes a missing role a no-op instead of an error:
 
@@ -74,7 +76,7 @@ A role cannot be dropped while it still owns objects — the dependency is repor
 
 <DocCallout type="attention">
 
-Privileges the role holds on *other* objects are revoked automatically when it is dropped — only ownership blocks the drop. PostgreSQL's bulk helpers `DROP OWNED BY` and `REASSIGN OWNED BY` are not supported yet, so transfer ownership with `ALTER ... OWNER TO` per object.
+Default privileges that name the role block the drop too. `DROP OWNED BY` and `REASSIGN OWNED BY` are not supported, so transfer ownership with `ALTER ... OWNER TO` and remove the grants with [`REVOKE`](../sql/statements/revoke/index.md), object by object.
 
 </DocCallout>
 

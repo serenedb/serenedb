@@ -46,6 +46,7 @@ Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations);
 inline Node::ptr Make(const HnswQuery&, uint64_t) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&, uint64_t) { return {}; }
+inline Node::ptr Make(const ExactVectorQuery&, uint64_t) { return {}; }
 Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations);
 inline Node::ptr Make(const EmptyQueryBuilder&, uint64_t) { return {}; }
 Node::ptr Make(const BooleanQuery& query, uint64_t interrogations);
@@ -81,6 +82,10 @@ inline Node::ptr Make(const KnnVectorQuery&, const detail::ScoredCtx&,
                       uint64_t) {
   return {};
 }
+inline Node::ptr Make(const ExactVectorQuery&, const detail::ScoredCtx&,
+                      uint64_t) {
+  return {};
+}
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 inline Node::ptr Make(const EmptyQueryBuilder&, const detail::ScoredCtx&,
@@ -97,6 +102,7 @@ Node::ptr MakePostingDocs(const detail::PostingClause& posting,
                           const SubReader& segment);
 
 Node::ptr MakeAllDocs(const SubReader& segment);
+Node::ptr MakeLiveDocs(const SubReader& segment);
 
 Node::ptr MakeSparseConjunctionDocs(
   std::span<const detail::PostingClause> terms,

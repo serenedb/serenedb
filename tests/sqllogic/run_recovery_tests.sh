@@ -173,7 +173,7 @@ fi
 # is still functional (which then surfaces as a passing test reported as a
 # failure). Workers honour SDB_SKIP_SQLLOGIC_BUILD and skip cargo entirely.
 SQLLOGIC_RUNNER="${RUNNER_ARGS[1]:-$(realpath "$SCRIPT_DIR/../../third_party/sqllogictest-rs")}"
-SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$(realpath "$SCRIPT_DIR/../../.cache/cargo-target")}"
+SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$SCRIPT_DIR/../../.cache/cargo-target}"
 mkdir -p "$SQLLOGIC_TARGET"
 echo "Pre-building sqllogictest..."
 # cargo's crates.io fetch flakes intermittently on the CI runners (HTTP/2
@@ -212,7 +212,8 @@ start_fresh_serened() {
 	fresh_datadir=$(mktemp -d "${TMPDIR:-/tmp}/recovery-worker-${worker_id}-XXXXXX")
 	printf -v "$dir_var" '%s' "$fresh_datadir"
 
-	PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$fresh_datadir" >"$log_file" 2>&1 &
+	: >"$log_file.exits"
+	PORT=$port SERENED_EXITS="$log_file.exits" "$SCRIPT_DIR/run_serened_loop.sh" "$fresh_datadir" >"$log_file" 2>&1 &
 	local loop_pid=$!
 	printf -v "$pid_var" '%s' "$loop_pid"
 
@@ -246,17 +247,26 @@ start_fresh_serened() {
 
 stop_serened() {
 	local pid=$1
-	[[ -z "$pid" ]] && return
-	local start_ts
+	[[ -z "$pid" ]] && return 0
+	local start_ts i stuck=0
 	start_ts=$(date +%s.%N)
-	# Kill children FIRST (serened) -- once the parent bash dies, its children
-	# are reparented to init and pkill -P can no longer find them, leaving
-	# orphaned serened processes holding the port. Since each test uses a
-	# unique port + datadir, we don't need to wait for graceful shutdown.
-	pkill -KILL -P "$pid" 2>/dev/null
-	kill -KILL "$pid" 2>/dev/null
+	kill -TERM "$pid" 2>/dev/null
+	for ((i = 0; i < 600; i++)); do
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 0.1
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		echo "  serened did not stop within 60s"
+		stuck=1
+		# Kill children FIRST (serened) -- once the parent bash dies, its children
+		# are reparented to init and pkill -P can no longer find them, leaving
+		# orphaned serened processes holding the port.
+		pkill -KILL -P "$pid" 2>/dev/null
+		kill -KILL "$pid" 2>/dev/null
+	fi
 	wait "$pid" 2>/dev/null
 	echo "  serened stopped in $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $start_ts}")s"
+	return $stuck
 }
 
 declare -a heavy=() light=()
@@ -377,15 +387,21 @@ run_worker() {
 			"${RUNNER_ARGS[@]}" 2>&1 | sed "s/^/[test] /"
 
 		local exit_code=${PIPESTATUS[0]}
+		local why="" unplanned
 
 		if [[ "$EXTERNAL_MODE" == "false" ]]; then
-			stop_serened "$pid"
+			stop_serened "$pid" || why+=", serened did not stop"
+			unplanned=$(grep -vxE '0|75' "$serened_log.exits" | sort -u | paste -sd, -)
+			[[ -n "$unplanned" ]] && why+=", serened exited with $unplanned"
 			[[ -n "$datadir" ]] && rm -rf "$datadir"
+		fi
+		if [[ -n "$why" && $exit_code == 0 ]]; then
+			exit_code=1
 		fi
 
 		if [[ $exit_code != 0 ]]; then
 			echo "------------------------------------------------------------------------"
-			echo "[worker $worker_id] FAIL $test_file (exit $exit_code)"
+			echo "[worker $worker_id] FAIL $test_file (exit $exit_code$why)"
 			if [[ -f "$serened_log" ]]; then
 				echo "--- serened log ---"
 				sed "s/^/[srvd] /" "$serened_log"
@@ -396,7 +412,7 @@ run_worker() {
 		else
 			echo "[worker $worker_id] PASS $test_file"
 			# Keep logs only on failure to avoid clutter
-			rm -f "$serened_log" "$serened_log.test"
+			rm -f "$serened_log" "$serened_log.test" "$serened_log.exits"
 		fi
 
 		test_idx=$((test_idx + 1))

@@ -27,10 +27,10 @@
 
 namespace sdb::otel {
 
-// Creates `database` when it is missing, then the OpenTelemetry tables and
-// indexes in it when they are missing, and checks that the tables match the
-// built-in schema. Called at startup for every listener that serves
-// ?api=otel, so the first export lands in a schema that exists and fits.
+// Creates `database` when it is missing, then each OpenTelemetry table that is
+// missing in it, with its index, and checks that the tables match the built-in
+// schema. Called at startup for every listener that serves ?api=otel, so the
+// first export lands in a schema that exists and fits.
 absl::Status EnsureSchema(std::string_view database, std::string_view schema);
 
 std::string InsertSql(std::string_view schema, std::string_view table,

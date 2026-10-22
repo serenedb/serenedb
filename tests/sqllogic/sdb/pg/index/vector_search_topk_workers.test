@@ -1,0 +1,90 @@
+statement ok
+CREATE TABLE vtw (id INTEGER PRIMARY KEY, emb FLOAT[2], tag VARCHAR)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX vtw_idx ON vtw
+  USING inverted(id, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(0, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vtw;
+
+statement ok
+INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1000, 2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vtw;
+
+statement ok
+INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(2000, 3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vtw;
+
+statement ok
+INSERT INTO vtw SELECT i, [i::FLOAT, 0]::FLOAT[2],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(3000, 4000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) vtw;
+
+statement ok
+SET threads = 4;
+
+query
+SELECT count(*) FROM vtw;
+----
+count
+4000
+
+query
+SELECT id FROM vtw ORDER BY emb <-> [1999.6, 0]::FLOAT[2] LIMIT 3;
+----
+id
+2000
+1999
+2001
+
+query
+SELECT id FROM vtw WHERE tag = 'odd'
+  ORDER BY emb <-> [1999.6, 0]::FLOAT[2] LIMIT 3;
+----
+id
+1999
+2001
+1997
+
+query
+SELECT count(*), min(id), max(id) FROM (
+  SELECT id FROM vtw ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 2100);
+----
+count	min	max
+2100	0	2099
+
+query
+SELECT count(*), min(id), max(id) FROM (
+  SELECT id FROM vtw WHERE tag = 'even'
+    ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 2100);
+----
+count	min	max
+2000	0	3998
+
+query
+SELECT id FROM (
+  SELECT id, row_number() OVER () AS r FROM (
+    SELECT id FROM vtw ORDER BY emb <-> [0.4, 0]::FLOAT[2] LIMIT 2100))
+  WHERE r IN (1, 2049, 2100) ORDER BY r;
+----
+id
+0
+2048
+2099
+
+statement ok
+RESET threads;

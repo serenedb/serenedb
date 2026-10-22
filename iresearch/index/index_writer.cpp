@@ -28,6 +28,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <ranges>
 #include <shared_mutex>
 #include <type_traits>
@@ -76,7 +77,8 @@ struct FlushedSegmentContext {
   std::shared_ptr<const SegmentReaderImpl> reader;
   IndexWriter::FlushedSegment& flushed;
 
-  bool MakeDocumentMask(DocumentMask& document_mask, IndexSegment& index) {
+  bool MakeDocumentMask(DocumentMaskBuilder& document_mask,
+                        IndexSegment& index) {
     const auto docs_count = flushed.meta.docs_count;
     const auto committed = static_cast<doc_id_t>(flushed.docs.size());
     SDB_ASSERT(0 < committed);
@@ -96,7 +98,7 @@ struct FlushedSegmentContext {
   void Remove(const IndexWriter::QueryContext& query);
 };
 
-bool RemoveFromSegment(DocumentMask& deleted_docs,
+bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
                        const IndexWriter::QueryContext& query,
                        const SubReader& reader) {
   // A deletion never scores, so nothing under it collects statistics. The
@@ -234,7 +236,7 @@ MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
 }
 
 bool MapRemovals(const CandidatesMapping& candidates_mapping,
-                 const MergeWriter& merger, DocumentMask& docs_mask) {
+                 const MergeWriter& merger, DocumentMaskBuilder& docs_mask) {
   for (auto& mapping : candidates_mapping) {
     const auto& segment_mapping = mapping.second;
     const auto* new_segment = segment_mapping.new_segment;
@@ -417,11 +419,11 @@ uint64_t MaxSegmentId(const Directory& dir) {
   return max_id;
 }
 
-DocumentMask CopyMask(const auto& segment) {
+DocumentMaskBuilder CopyMask(const auto& segment) {
   if (const auto* mask = segment.docs_mask(); mask) {
-    return DocumentMask{*mask};
+    return DocumentMaskBuilder{*mask};
   } else {
-    return DocumentMask{};
+    return DocumentMaskBuilder{};
   }
 }
 
@@ -460,7 +462,7 @@ PublishResult UpdateExisting(
   PublishResult result;
   result.segments.reserve(committed_reader_size);
 
-  for (DocumentMask deleted_docs;
+  for (DocumentMaskBuilder deleted_docs;
        const auto& existing_segment : committed_reader.GetReaders()) {
     const auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
@@ -494,12 +496,12 @@ PublishResult UpdateExisting(
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMask(existing_segment);
         docs_mask.Merge(deleted_docs);
-        docs_mask.Trim();
-        return std::make_shared<DocumentMask>(std::move(docs_mask));
+        return std::make_shared<const DocumentMask>(
+          std::move(docs_mask).Finish());
       }();
 
       // Write with new mask
-      index_utils::FlushIndexSegmentPatch(dir, segment, deleted_docs);
+      index_utils::FlushIndexSegment(dir, segment, true);
       deleted_docs.Clear();
       auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
 
@@ -530,7 +532,7 @@ AddIncomingResult AddIncoming(
     SDB_ASSERT(incoming.reader);
     auto& meta = incoming.segment.meta;
     auto& reader = incoming.reader;
-    auto docs_mask = CopyMask(*reader);
+    DocumentMaskBuilder docs_mask;
 
     bool docs_mask_modified = false;
 
@@ -598,16 +600,27 @@ AddIncomingResult AddIncoming(
       }
     }
 
+    const auto* published = reader->docs_mask();
+    size_t masked = 0;
+    if (docs_mask_modified) {
+      if (published != nullptr) {
+        docs_mask.Merge(*published);
+      }
+      masked = docs_mask.Count();
+    } else if (published != nullptr) {
+      masked = published->Count();
+    }
+
     // Skip empty segments
-    if (const auto masked = docs_mask.Count(); meta.docs_count <= masked) {
+    if (meta.docs_count <= masked) {
       SDB_ASSERT(meta.docs_count == masked);
       result.modified = true;  // FIXME(gnusi): looks strange
       continue;
     }
 
     if (docs_mask_modified) {
-      docs_mask.Trim();
-      meta.docs_mask = std::make_shared<DocumentMask>(std::move(docs_mask));
+      meta.docs_mask =
+        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
 
     if (docs_mask_modified || pending_compaction) {
@@ -691,7 +704,7 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     progress("Stage 4: Applying removals for new segments",
              current_segment_ctxs++, segment_ctxs.size());
 
-    DocumentMask document_mask;
+    DocumentMaskBuilder document_mask;
     IndexSegment new_segment;
     if (segment_ctx.MakeDocumentMask(document_mask, new_segment)) {
       continue;
@@ -699,9 +712,8 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     const bool need_flush = !document_mask.Empty();
     if (need_flush) {
       ++new_segment.meta.version;
-      document_mask.Trim();
       new_segment.meta.docs_mask =
-        std::make_shared<DocumentMask>(std::move(document_mask));
+        std::make_shared<const DocumentMask>(std::move(document_mask).Finish());
     }
     if (need_flush || !segment_ctx.flushed.meta_on_disk) {
       index_utils::FlushIndexSegment(dir, new_segment, false);
@@ -1066,7 +1078,7 @@ void IndexWriter::SegmentContext::Flush() {
     committed_buffered_docs = 0;
   };
 
-  DocumentMask docs_mask;
+  DocumentMaskBuilder docs_mask;
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -1237,13 +1249,17 @@ void IndexWriter::InitMeta(IndexMeta& meta) const {
 }
 
 void IndexWriter::Clear(const SourcePosition& position) {
-  _commit_lock.ForgetDeadlockInfo();
   std::lock_guard commit_lock{_commit_lock};
 
+  const bool had_pending = _pending_state.Valid();
+  Abort();
   auto ctx = SwitchFlushContext();
   // Ensure there are no active struct update operations
   ctx->pending.Done();
-  ctx->pending.Wait();
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    ctx->pending.Wait();
+  }
   ctx->pending.Reset(1);
   // TODO(mbkkt) Move some pending to the next flush ctx?
   //  It's not super trivial for spliting segments
@@ -1251,7 +1267,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
 
   SDB_ASSERT(_committed_reader);
   if (const auto& committed_meta = _committed_reader->Meta();
-      !_pending_state.Valid() && committed_meta.index_meta.segments.empty() &&
+      !had_pending && committed_meta.index_meta.segments.empty() &&
       !IsInitialCommit(committed_meta)) {
     return;  // Already empty
   }
@@ -1260,7 +1276,6 @@ void IndexWriter::Clear(const SourcePosition& position) {
   InitMeta(to_commit.meta);
   to_commit.ctx = std::move(ctx);
 
-  Abort();  // iff Clear called between Begin and Commit
   ApplyFlush(std::move(to_commit));
   Finish();
 
@@ -1313,6 +1328,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     }
   }
 
+  auto hnsw_bases = std::make_unique<HnswBases>();
+  options.reader_options.hnsw_bases = hnsw_bases.get();
   auto reader = [](Directory& dir, DirectoryMeta&& meta,
                    const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
@@ -1336,6 +1353,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
+  writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
@@ -1521,7 +1539,6 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
-  _commit_lock.ForgetDeadlockInfo();
   std::shared_lock lock{_commit_lock};
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
@@ -1587,7 +1604,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
     // handle removals if something changed
     if (has_removals) {
-      DocumentMask docs_mask;
+      DocumentMaskBuilder docs_mask;
       if (!MapRemovals(mappings, merger, docs_mask)) {
         // compacted segment has docs missing from
         // current_committed_meta->segments()
@@ -1601,9 +1618,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       }
 
       SDB_ASSERT(!docs_mask.Empty());
-      docs_mask.Trim();
       compaction_segment.meta.docs_mask =
-        std::make_shared<DocumentMask>(std::move(docs_mask));
+        std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
   }
 
@@ -1753,7 +1769,6 @@ void IndexWriter::ReplaceSegments(
     adopted.push_back(std::move(entry));
   }
 
-  _commit_lock.ForgetDeadlockInfo();
   std::shared_lock commit_lock{_commit_lock};
   if (_pending_state.Valid()) {
     THROW_SQL_ERROR(
@@ -1848,23 +1863,16 @@ IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
   }
 }
 
-IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept
-  ABSL_NO_THREAD_SAFETY_ANALYSIS {
+IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
+  _commit_lock.AssertHeld();
+  SDB_ASSERT(!_pending_state.Valid());
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
-  for (;;) {
-    ctx->context_mutex.lock();
-    auto* curr = _flush_context.load(std::memory_order_relaxed);
-    if (ctx == curr) [[likely]] {
-      _flush_context.store(ctx->next, std::memory_order_relaxed);
-      return {ctx, [](FlushContext* ctx)
-                     ABSL_UNLOCK_FUNCTION(ctx->context_mutex) noexcept {
-                       ctx->Reset();  // reset context and make ready for reuse
-                       ctx->context_mutex.unlock();
-                     }};
-    }
-    ctx->context_mutex.unlock();
-    ctx = curr;
-  }
+  absl::MutexLock lock{&ctx->context_mutex};
+  _flush_context.store(ctx->next, std::memory_order_relaxed);
+  return {ctx, [](FlushContext* ctx) noexcept {
+            absl::MutexLock lock{&ctx->context_mutex};
+            ctx->Reset();
+          }};
 }
 
 IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
@@ -1934,6 +1942,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
+    .hnsw_bases = _hnsw_bases.get(),
   };
 }
 
@@ -1942,7 +1951,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
-  ctx->pending.Wait();
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    ctx->pending.Wait();
+  }
   ctx->pending.Reset(1);
   ctx->FlushPending();
 

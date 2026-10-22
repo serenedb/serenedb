@@ -140,7 +140,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   const auto& columns = table->GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
   for (const auto& column : columns.Logical()) {
-    state->column_ids.emplace_back(column.Oid());
+    state->column_ids.emplace_back(TableColumnId(column));
   }
   state->chunk_types = columns.GetColumnTypes();
   state->generated_pk_seq = table->GeneratedPkSequence(context);

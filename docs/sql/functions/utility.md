@@ -187,6 +187,12 @@ Returns a `UBIGINT` with the hash of the `value`. The used hash function may cha
 
 <SqlLogicTest id="sql/functions/utility/hash" />
 
+#### `hash_city64(value, ...)`
+
+Returns a `UBIGINT` with the [CityHash64](https://github.com/google/cityhash) hash (CityHash v1.1) of the bytes of `value`: the UTF-8 bytes of a `VARCHAR`, the bytes of a `BLOB`, and for a `BOOLEAN` or a number its little-endian bytes at the width of its type, so `hash_city64(1)` (an `INTEGER`) and `hash_city64(1::BIGINT)` differ. Each further value is hashed with `CityHash64WithSeed`, seeded with the hash of the values before it. The result is the same in every SereneDB version and matches other CityHash v1.1 implementations. Other types must be cast to one of these first.
+
+<SqlLogicTest id="sql/functions/utility/hash_city64" />
+
 #### `icu_sort_key(string, collator)`
 
 Surrogate [sort key](https://unicode-org.github.io/icu/userguide/collation/architecture.html#sort-keys) used to sort special characters according to the specific locale. The collator parameter is optional.

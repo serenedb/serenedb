@@ -1,9 +1,5 @@
 add_compile_warnings_flags()
 
-if(uring_FOUND)
-    add_definitions(-DIRESEARCH_URING)
-endif()
-
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -70,6 +66,7 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
+    ./formats/hnsw/hnsw_bases.cpp
     ./formats/hnsw/hnsw_graph.cpp
     ./formats/hnsw/hnsw_reader.cpp
     ./formats/hnsw/hnsw_writer.cpp
@@ -78,7 +75,15 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
+    ./formats/ivf/quantizers/bq.cpp
+    ./formats/ivf/quantizers/osq.cpp
+    ./formats/ivf/quantizers/panorama.cpp
+    ./formats/ivf/quantizers/pq.cpp
+    ./formats/ivf/quantizers/rabitq.cpp
+    ./formats/ivf/quantizers/scalar.cpp
+    ./formats/ivf/quantizers/tq.cpp
     ./index/directory_reader.cpp
+    ./index/docs_mask/chunks.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
@@ -124,9 +129,13 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_filter.cpp
     ./search/count/make.cpp
     ./search/count/make_hnsw.cpp
+    ./search/count/make_exact.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
+    ./search/count/make_boolean_exclusion.cpp
+    ./search/count/make_boolean_exclusion_window.cpp
+    ./search/count/make_boolean_negation.cpp
     ./search/count/make_subtract_conjunction.cpp
     ./search/count/make_subtract_disjunction.cpp
     ./search/count/make_fixed_phrase.cpp
@@ -152,6 +161,9 @@ set(IResearch_core_sources
     ./search/lead/make_all_docs.cpp
     ./search/lead/make_all_scored.cpp
     ./search/lead/make_boolean.cpp
+    ./search/lead/make_boolean_exclusion.cpp
+    ./search/lead/make_boolean_exclusion_window.cpp
+    ./search/lead/make_boolean_negation.cpp
     ./search/lead/make_boolean_scored.cpp
     ./search/lead/make_fixed_phrase_docs.cpp
     ./search/lead/make_fixed_phrase_scored.cpp
@@ -199,6 +211,7 @@ set(IResearch_core_sources
     ./search/probe/make_all_scored.cpp
     ./search/probe/make_boolean.cpp
     ./search/probe/make_boolean_sparse.cpp
+    ./search/probe/make_boolean_sparse_exclusion.cpp
     ./search/probe/make_boolean_scored.cpp
     ./search/probe/make_boolean_sparse_scored.cpp
     ./search/probe/make_fixed_phrase_docs.cpp
@@ -237,6 +250,9 @@ set(IResearch_core_sources
     ./search/fill/make_all_docs.cpp
     ./search/fill/make_all_scored.cpp
     ./search/fill/make_boolean.cpp
+    ./search/fill/make_boolean_exclusion.cpp
+    ./search/fill/make_boolean_exclusion_window.cpp
+    ./search/fill/make_boolean_negation.cpp
     ./search/fill/make_boolean_scored.cpp
     ./search/fill/make_fixed_phrase_docs.cpp
     ./search/fill/make_fixed_phrase_scored.cpp
@@ -267,11 +283,15 @@ set(IResearch_core_sources
     ./search/fill/make_geo_distance_scored.cpp
     ./search/docs/make.cpp
     ./search/docs/make_hnsw.cpp
+    ./search/docs/make_exact.cpp
     ./search/docs/make_ivf.cpp
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp
     ./search/docs/make_all.cpp
     ./search/docs/make_boolean.cpp
+    ./search/docs/make_boolean_exclusion.cpp
+    ./search/docs/make_boolean_exclusion_window.cpp
+    ./search/docs/make_boolean_negation.cpp
     ./search/docs/make_fixed_phrase.cpp
     ./search/docs/make_fixed_phrase_intervals.cpp
     ./search/docs/make_fixed_phrase_slop.cpp
@@ -288,11 +308,14 @@ set(IResearch_core_sources
     ./search/docs/make_geo_distance.cpp
     ./search/hits/make.cpp
     ./search/hits/make_hnsw.cpp
+    ./search/hits/make_exact.cpp
     ./search/hits/make_ivf.cpp
     ./search/hits/make_posting.cpp
     ./search/hits/make_single_posting.cpp
     ./search/hits/make_all.cpp
     ./search/hits/make_boolean.cpp
+    ./search/hits/make_boolean_exclusion.cpp
+    ./search/hits/make_boolean_exclusion_window.cpp
     ./search/hits/make_boosted_posting.cpp
     ./search/hits/make_fixed_phrase.cpp
     ./search/hits/make_fixed_phrase_intervals.cpp
@@ -310,11 +333,14 @@ set(IResearch_core_sources
     ./search/hits/make_geo_distance.cpp
     ./search/top/make.cpp
     ./search/top/make_hnsw.cpp
+    ./search/top/make_exact.cpp
     ./search/top/make_ivf.cpp
     ./search/top/make_posting.cpp
     ./search/top/make_single_posting.cpp
     ./search/top/make_all.cpp
     ./search/top/make_boolean.cpp
+    ./search/top/make_boolean_exclusion.cpp
+    ./search/top/make_boolean_exclusion_window.cpp
     ./search/top/make_fixed_phrase.cpp
     ./search/top/make_fixed_phrase_intervals.cpp
     ./search/top/make_fixed_phrase_slop.cpp
@@ -348,6 +374,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_prefix_rules.cpp
     ./search/filters/ngram_similarity_filter.cpp
     ./search/filters/vector_similarity_filter.cpp
+    ./search/filters/vector_exact_filter.cpp
     ./search/queries/hnsw_query.cpp
     ./search/queries/vector_similarity_query.cpp
     ./search/scorers/vector_similarity_scorer.cpp
@@ -390,6 +417,7 @@ set(IResearch_core_sources
     ./utils/application_exit.cpp
     ./utils/async_utils.cpp
     ./utils/bit_packing.cpp
+    ./utils/cpu_features.cpp
     ./utils/crash_handler.cpp
     ./utils/debugging.cpp
     ./utils/duckdb_engine.cpp
@@ -449,14 +477,23 @@ else()
     unset(_missing_tools_str)
 endif()
 
-if(uring_FOUND)
-    list(APPEND IResearch_core_sources ./store/async_directory.cpp)
-endif()
-
 # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
-add_library(iresearch-static STATIC ${IResearch_core_sources})
+if(IRESEARCH_BENCH)
+    set(IResearch_library iresearch-minimal)
+    list(
+        FILTER IResearch_core_sources
+        EXCLUDE
+        REGEX
+            "/analysis/|snowball_stemmer|geo|hnsw|/ivf/|_ivf\\.|vector_|_exact\\.|/offsets/|/scorers/(dfi|idf|indri_dirichlet|lm_dirichlet|lm_jelinek_mercer|raw_boost|raw_dl|raw_tf|tfidf)\\.|nested_filter|shingle_phrase"
+    )
+    list(APPEND IResearch_core_sources ./analysis/text_tokenizer.cpp)
+else()
+    set(IResearch_library iresearch-static)
+endif()
+
+add_library(${IResearch_library} STATIC ${IResearch_core_sources})
 
 set_source_files_properties(
     search/scorers/bm25.cpp
@@ -467,39 +504,34 @@ set_source_files_properties(
 )
 
 target_include_directories(
-    iresearch-static
+    ${IResearch_library}
     PUBLIC ${CMAKE_SOURCE_DIR}
     PUBLIC ${CMAKE_BINARY_DIR}
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
 )
 
 target_include_directories(
-    iresearch-static
+    ${IResearch_library}
     SYSTEM
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-    PUBLIC
-        $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
-    PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)
     target_compile_definitions(
-        iresearch-static
+        ${IResearch_library}
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
     target_compile_definitions(
-        iresearch-static
+        ${IResearch_library}
         PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
     )
 endif()
 
 target_link_libraries(
-    iresearch-static
+    ${IResearch_library}
     PUBLIC icu
     PUBLIC absl::flat_hash_map
     PUBLIC absl::flat_hash_set
@@ -517,25 +549,43 @@ target_link_libraries(
     PUBLIC yaclib
     PUBLIC zlib
     PUBLIC zstd::zstd
-    PUBLIC OpenSSL::Crypto
-    PUBLIC OpenSSL::SSL
     PRIVATE absl::failure_signal_handler
     PRIVATE absl::stacktrace
     PRIVATE absl::symbolize
     PUBLIC boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
-    PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC sse2neon
-    PUBLIC ${FAISS_LIB}
+    PUBLIC pcg
     PUBLIC re2
     PUBLIC roaring::roaring
-    PUBLIC s2
     PUBLIC duckdb_static
-    PRIVATE lz4_static
-    PRIVATE stemmer-static
 )
 
-if(uring_FOUND)
-    target_link_libraries(iresearch-static PRIVATE uring::uring)
+if(IRESEARCH_BENCH)
+    target_compile_definitions(
+        iresearch-minimal
+        PUBLIC IRESEARCH_NO_GEO IRESEARCH_NO_VECTOR
+    )
+else()
+    target_include_directories(
+        iresearch-static
+        SYSTEM
+        PUBLIC
+            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
+        PRIVATE
+            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
+        PUBLIC
+            ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+    )
+    target_link_libraries(
+        iresearch-static
+        PUBLIC OpenSSL::Crypto
+        PUBLIC OpenSSL::SSL
+        PUBLIC ${FASTTEXT_LIBRARY_STATIC}
+        PUBLIC ${FAISS_LIB}
+        PUBLIC s2
+        PRIVATE lz4_static
+        PRIVATE stemmer-static
+    )
 endif()

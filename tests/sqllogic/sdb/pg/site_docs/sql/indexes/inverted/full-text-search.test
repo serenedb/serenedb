@@ -454,6 +454,8 @@ id	offsets
 statement ok
 CREATE TABLE notes (id INTEGER PRIMARY KEY, body VARCHAR);
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY notes_en AS
     split_text(case := 'lower') WITH (frequency);
@@ -470,8 +472,6 @@ INSERT INTO notes VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) notes;
-
-# DOCS_TEST_BODY
 
 query
 SELECT id, BM25(notes_idx.tableoid) > 0 AS scored

@@ -38,7 +38,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace duckdb {
@@ -147,7 +146,7 @@ class IvfWriter final : public AnnWriter {
   VectorMetric Metric() const noexcept { return _info.metric; }
 
   const BasicTermReader* ClusterReader(ReadContext& ctx,
-                                       const ColReader& col_reader);
+                                       const ColReader& col_reader) final;
 
  private:
   struct Result {
@@ -161,29 +160,5 @@ class IvfWriter final : public AnnWriter {
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;
 };
-
-inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
-  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
-  std::optional<ReadContext>& ctx) {
-  std::vector<const BasicTermReader*> out;
-  if (col_reader == nullptr || writers.empty()) {
-    return out;
-  }
-  ctx.emplace(*col_reader);
-  out.reserve(writers.size());
-  for (const auto& w : writers) {
-    if (!w) {
-      continue;
-    }
-    if (w->Kind() != AnnKind::Ivf) {
-      continue;
-    }
-    auto& ivf = irs::utils::downCast<IvfWriter>(*w);
-    if (const auto* r = ivf.ClusterReader(ctx.value(), *col_reader)) {
-      out.push_back(r);
-    }
-  }
-  return out;
-}
 
 }  // namespace irs

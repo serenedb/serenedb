@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_refresh_finish;
+
+
+statement ok
+CREATE TABLE ckpt_refresh_finish.public.docs (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_refresh_finish.public.docs USING inverted (id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ckpt_refresh_finish.public.docs VALUES (1, 'before');
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM ckpt_refresh_finish.public.docs;
+----
+n
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_checkpoint_before_index_finish';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT ckpt_refresh_finish;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_checkpoint_before_index_finish:parked';
+
+
+connection refresher
+statement ok
+VACUUM (REFRESH_INDEX) ckpt_refresh_finish.public.docs_idx;
+
+
+connection refresher
+query
+SELECT id, body FROM ckpt_refresh_finish.public.docs_idx ORDER BY id;
+----
+id	body
+1	before
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_checkpoint_before_index_finish:release';
+
+
+connection checkpointer
+wait
+
+
+connection reader
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO ckpt_refresh_finish.public.docs VALUES (2, 'after');
+
+
+statement ok
+VACUUM (REFRESH_INDEX) ckpt_refresh_finish.public.docs_idx;
+
+
+query
+SELECT id, body FROM ckpt_refresh_finish.public.docs_idx ORDER BY id;
+----
+id	body
+1	before
+2	after
+
+
+statement ok
+CHECKPOINT ckpt_refresh_finish;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM ckpt_refresh_finish.public.docs_idx ORDER BY id;
+----
+id	body
+1	before
+2	after

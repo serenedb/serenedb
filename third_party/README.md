@@ -27,10 +27,10 @@ fork introduces, on our version branch.
 
 # Layout
 
-51 submodules, all serenedb forks except `yaclib`.
+50 submodules, all serenedb forks except `yaclib`.
 
-8 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
-`liburing-cmake`, `libxml2-cmake`, `openssl-cmake`, `podofo-cmake`. Three of them carry
+7 wrappers: `azure-cmake`, `freetype-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
+`libxml2-cmake`, `openssl-cmake`, `podofo-cmake`. Three of them carry
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.
 

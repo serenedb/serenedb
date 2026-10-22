@@ -19,7 +19,7 @@ Every query family below produces a `TSQUERY`. The simplest is a bare string lit
 
 <DocCallout type="tip">
 
-All examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
+Most examples on this page use a `sentences` table whose `b` column is indexed with a lower-casing, non-stemming dictionary. For a full reference of every function and operator, see [Full-Text Search Functions](../../functions/search/full-text.md).
 
 </DocCallout>
 
@@ -123,7 +123,7 @@ Without `position` and without the column's text, a phrase of two or more words 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_023" />
 
-**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance) (insertions, deletions, substitutions):
+**How fuzzy matching works.** Each query term matches any indexed token within the given [edit distance](https://en.wikipedia.org/wiki/Levenshtein_distance): insertions, deletions and substitutions, and by default also a swap of two adjacent characters, which is why `act` matches `cat` at distance 1 above:
 
 | Query | Closest token | Edit distance | `ts_levenshtein(…, 1)` |
 |---|---|:---:|:---:|
@@ -156,7 +156,7 @@ When the alternatives are a list, [`ts_any`](../../functions/search/full-text.md
 
 ## Range queries {#range-queries}
 
-Numeric, temporal and verbatim text columns support range matching. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
+Numeric, temporal, boolean, text and `BLOB` columns support range matching. On a text column each bound is analyzed with the column's dictionary and must give one token, so `keyword`, `normalize_tokens` and `collate_tokens` dictionaries work, and so does a tokenizing one for single-token bounds. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_014" />
 

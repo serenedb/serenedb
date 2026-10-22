@@ -39,6 +39,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
@@ -46,6 +47,8 @@
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+
+#include "connector/inet_terms.h"
 
 namespace irs {
 namespace {
@@ -117,7 +120,14 @@ std::string TermValue(bytes_view term, Kind kind) {
   if (sdb::connector::term_dict::IsNumeric(kind)) {
     return DecodeNumericTerm(term);
   }
+  if (kind == Kind::Inet) {
+    return sdb::connector::inet_terms::Describe(term);
+  }
   return TermToString(term);
+}
+
+std::string PrefixValue(bytes_view prefix, Kind kind) {
+  return kind == Kind::Inet ? TermValue(prefix, kind) : TermToString(prefix);
 }
 
 std::string TermValue(const bstring& term, Kind kind) {
@@ -477,7 +487,22 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPrefix>(filter);
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Prefix"] = TermToString(f.options().term);
+      node.attributes["Prefix"] =
+        PrefixValue(f.options().term, FieldKind(f.field_id()));
+      return node;
+    }
+    if (type == Type<ByPrefixes>::id()) {
+      const auto& f = downCast<const ByPrefixes>(filter);
+      ExplainNode node{"Starts With Any"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      const auto kind = FieldKind(f.field_id());
+      const auto prefixes = f.options().Prefixes();
+      node.attributes["Prefixes"] =
+        prefixes.empty()
+          ? std::string{"0"}
+          : absl::StrCat(prefixes.size(), ", ",
+                         PrefixValue(prefixes.front(), kind), " .. ",
+                         PrefixValue(prefixes.back(), kind));
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {
@@ -578,6 +603,20 @@ struct FilterPrinter {
       node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
+    if (type == Type<ByVectorExact>::id()) {
+      const auto& f = downCast<const ByVectorExact>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Vector Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Radius"] =
+        absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
+      node.attributes["Exact"] = "brute force over the stored vectors";
       if (o.inner) {
         node.children.push_back(Build(*o.inner));
       }

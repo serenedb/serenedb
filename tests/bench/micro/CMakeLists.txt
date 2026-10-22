@@ -21,17 +21,6 @@ target_include_directories(
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
         ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
-add_custom_command(
-    TARGET serenedb-bench-micro
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
-        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-build
-    COMMAND
-        ${CMAKE_COMMAND} -E create_symlink serenedb-bench-micro
-        $<TARGET_FILE_DIR:serenedb-bench-micro>/search-benchmark-game-query
-)
-
 function(add_bench NAME)
     set(MODULE ${NAME})
     if(ARGC GREATER 1)
@@ -59,6 +48,7 @@ add_bench(vector_access)
 add_bench(crc32c)
 add_bench(delimited_scan)
 add_bench(document_mask)
+add_bench(docs_mask_kinds)
 add_bench(function)
 add_bench(hash_map)
 add_bench(insertion_order_map)
@@ -75,8 +65,14 @@ add_bench(split_by_non_alpha)
 add_bench(term_enumeration)
 add_bench(top_term_selector)
 add_bench(random)
+set_property(
+    SOURCE random.cpp TARGET_DIRECTORY serenedb-bench-micro
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS USE_PCG_RANDOM
+)
 add_bench(io_buffers)
 add_bench(fp_neg_zero_cmp)
+add_bench(hugeint)
 add_bench(uuid_print)
 add_bench(json_functions)
 add_bench(config_var_lookup)
@@ -104,6 +100,7 @@ add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
+add_bench(column_point_read)
 add_bench(select_thresholds)
 add_bench(clustering)
 add_bench(simd_base64)
@@ -115,10 +112,13 @@ add_bench(tokenizer_fill)
 add_bench(stemming)
 add_bench(stringzilla_kernels)
 add_bench(vector_distances)
+add_bench(quant_quality)
+add_bench(table_fetch)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)
     add_bench(ci_fold128)
+    add_bench(rot_bench)
 endif()
 
 set_property(
@@ -148,4 +148,53 @@ set_property(
     SOURCE vector_distances.cpp
     APPEND
     PROPERTY COMPILE_OPTIONS -fassociative-math -fno-signed-zeros
+)
+
+add_library(
+    serenedb-bench-docs-mask-iresearch
+    STATIC
+    ${CMAKE_SOURCE_DIR}/iresearch/index/docs_mask/chunks.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/index/document_mask.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/store/data_input.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/store/store_utils.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/cpu_features.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/crash_handler.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/file_utils_ext.cpp
+    ${CMAKE_SOURCE_DIR}/iresearch/utils/log.cpp
+)
+target_include_directories(
+    serenedb-bench-docs-mask-iresearch
+    PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+)
+target_include_directories(
+    serenedb-bench-docs-mask-iresearch
+    SYSTEM
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+)
+target_link_libraries(
+    serenedb-bench-docs-mask-iresearch
+    PUBLIC
+        absl::failure_signal_handler
+        absl::flat_hash_map
+        absl::flat_hash_set
+        absl::strings
+        duckdb_static
+        re2
+        roaring::roaring
+)
+
+add_executable(
+    serenedb-bench-docs-mask
+    main.cpp
+    docs_mask_kinds.cpp
+    document_mask.cpp
+)
+target_link_libraries(
+    serenedb-bench-docs-mask
+    PRIVATE
+        serenedb-bench-docs-mask-iresearch
+        absl::btree
+        absl::str_format
+        benchmark
 )

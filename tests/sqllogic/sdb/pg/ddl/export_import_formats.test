@@ -204,3 +204,55 @@ DROP DATABASE exf_parquet;
 
 statement ok
 DROP DATABASE exf_src;
+
+
+statement ok
+CREATE DATABASE exf_upper_src_${__DATABASE__};
+
+
+statement ok
+USE exf_upper_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE nn (id INT, s TEXT NOT NULL);
+
+
+statement ok
+INSERT INTO nn VALUES (1, ''), (2, 'x');
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/exf_upper' (FORMAT 'CSV');
+
+
+statement ok
+CREATE DATABASE exf_upper_dst_${__DATABASE__};
+
+
+statement ok
+USE exf_upper_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/exf_upper';
+
+
+query
+SELECT id, s = '' AS empty FROM nn ORDER BY id;
+----
+id	empty
+1	t
+2	f
+
+
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE exf_upper_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE exf_upper_dst_${__DATABASE__};

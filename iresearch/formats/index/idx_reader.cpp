@@ -29,13 +29,17 @@
 #include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
-#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+
+#ifndef IRESEARCH_NO_VECTOR
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
+#endif
 
 namespace irs {
 
@@ -47,7 +51,8 @@ struct IdxReader::Impl {
   std::vector<uint64_t> ann_ends;
 };
 
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
+IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
+                     HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
   const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
   bool exists = false;
@@ -86,6 +91,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
             _impl->term_dicts.emplace_back(id, std::move(meta));
           });
         });
+#ifndef IRESEARCH_NO_VECTOR
       footer.ReadOptionalList(
         kIdxFieldIvf, "ivf",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -128,12 +134,13 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
 
             const size_t idx = _impl->ann_entries.size();
             _impl->ann_entries.emplace_back(
-              id,
-              std::make_unique<HnswIndex>(
-                header, HnswMeta{.offset = offset, .byte_size = byte_size}));
+              id, std::make_unique<HnswIndex>(
+                    header, HnswMeta{.offset = offset, .byte_size = byte_size},
+                    id, hnsw_bases));
             _impl->ann_by_id.emplace(id, idx);
           });
         });
+#endif
     });
 }
 

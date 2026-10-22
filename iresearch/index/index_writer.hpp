@@ -40,6 +40,7 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -456,25 +457,21 @@ class IndexWriter : private util::Noncopyable {
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
   bool RefreshBegin(const CommitInfo& info = {}) {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     return Start(info);
   }
 
   void RefreshAbort() {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Abort();
   }
 
   void RefreshFinish() {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Finish();
   }
 
   bool RefreshCommit(const CommitInfo& info = {}) {
-    _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     const bool modified = Start(info);
     Finish();
@@ -550,8 +547,9 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocumentMask&& docs_mask,
-                            DocContexts&& docs, size_t committed_docs) noexcept
+    explicit FlushedSegment(IndexSegment&& segment,
+                            DocumentMaskBuilder&& docs_mask, DocContexts&& docs,
+                            size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
         docs_mask{std::move(docs_mask)},
         docs{std::move(docs)},
@@ -559,7 +557,7 @@ class IndexWriter : private util::Noncopyable {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
-    DocumentMask docs_mask;
+    DocumentMaskBuilder docs_mask;
     DocContexts docs;
     size_t committed_docs;
     bool meta_on_disk = false;
@@ -768,6 +766,7 @@ class IndexWriter : private util::Noncopyable {
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;
   struct {

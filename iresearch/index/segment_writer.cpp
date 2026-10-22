@@ -28,13 +28,13 @@
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/async.hpp"
@@ -100,7 +100,8 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
       options.resource_manager}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
-    _ann_env{options.ann_env} {}
+    _ann_env{options.ann_env},
+    _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra) {
@@ -114,7 +115,8 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-void SegmentWriter::flush(IndexSegment& segment, DocumentMask& docs_mask) {
+void SegmentWriter::flush(IndexSegment& segment,
+                          DocumentMaskBuilder& docs_mask) {
   auto& meta = segment.meta;
 
   FlushState state{
@@ -223,6 +225,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
   _col_writer->SetFieldOptions(active);
+  _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());
   _fields.SetFieldOptions(active);
 

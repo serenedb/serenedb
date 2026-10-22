@@ -33,6 +33,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -61,6 +62,16 @@ inline bool DensePosting(uint64_t docs, doc_id_t docs_count) noexcept {
 inline uint64_t FoldRead(uint64_t docs, doc_id_t docs_count,
                          uint64_t words) noexcept {
   return DensePosting(docs, docs_count) ? words : docs;
+}
+
+inline constexpr uint64_t kProbePostings = 20;
+
+inline bool ProbeBeatsFold(doc_id_t rarest, doc_id_t densest,
+                           doc_id_t docs_count) noexcept {
+  const auto words = SegmentWords(docs_count);
+  return uint64_t{rarest} * kProbePostings <=
+         words + FoldRead(rarest, docs_count, words) +
+           FoldRead(densest, docs_count, words);
 }
 
 template<typename Term>
@@ -351,6 +362,7 @@ struct BitsetBuckets {
   std::vector<PostingClause> must_not;
   std::vector<FillNode::ptr> fills;
   std::vector<FillNode::ptr> exclude_fills;
+  const SubReader* masked = nullptr;
 
   size_t Seed(doc_id_t docs_count) const noexcept {
     if (must.empty() || must.front().size() > 1) {
@@ -454,6 +466,11 @@ inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
     }
   });
 
+  if (buckets.masked != nullptr) {
+    ResolveDocsMask(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
+      mask.Remove(BitsetStorage::kMin, bits.End(), words);
+    });
+  }
   bits.Trim();
   return bits;
 }

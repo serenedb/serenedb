@@ -1,0 +1,75 @@
+statement ok
+CREATE TABLE ivf_r (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR,
+  grp INTEGER, other INTEGER);
+
+statement ok
+CREATE INDEX ivf_r_idx ON ivf_r
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+  INCLUDE (label, grp);
+
+statement ok
+INSERT INTO ivf_r SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 7, i FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_r;
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+query
+SELECT pk FROM ivf_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+query
+SELECT pk FROM ivf_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM ivf_r
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY abs(pk - 150.4) LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM ivf_r_idx
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+94
+108
+80
+
+query
+SELECT pk FROM ivf_r_idx
+  WHERE label = 'even' OR other < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+statement ok
+RESET sdb_ivf_search_nprobe;

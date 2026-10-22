@@ -132,6 +132,12 @@ duckdb::optional_ptr<SereneDBCatalog> DefaultSereneDBCatalog(
   return catalog->Cast<SereneDBCatalog>();
 }
 
+bool IsSereneDB(duckdb::Catalog& catalog) {
+  const auto type = catalog.GetCatalogType();
+  return type == SereneDBCatalog::kStorageType ||
+         type == SereneDBCatalog::kReadOnlyStorageType;
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -148,6 +154,7 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
+        sequence_info.permissions.owner = info.Base().permissions.owner;
         info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
@@ -233,7 +240,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
-    op.return_chunk, std::move(op.return_columns));
+    op.return_chunk, std::move(op.return_columns), op.row_id_handling);
   del.children.emplace_back(plan);
   return del;
 }
@@ -271,7 +278,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk);
+    op.estimated_cardinality, op.return_chunk, op.row_id_handling);
   update.children.emplace_back(plan);
   return update;
 }

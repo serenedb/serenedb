@@ -25,7 +25,7 @@ git submodule update --init --depth 1 --jobs=$(nproc)
 
 ### Build prerequisites
 
-- Compiler: clang-21 / clang++-21; CI builds with clang-23, so code must compile with both
+- Compiler: clang-23 / clang++-23, the same as CI. `sudo scripts/setup_dev_toolchain.sh` installs it from apt.llvm.org on Ubuntu and points `clang`, `clang++`, `lld`, `lldb`, `clangd` and the other LLVM tools at it.
 - Build system: Ninja
 - CMake >= 3.28
 
@@ -34,7 +34,7 @@ The toolchain only moves forward.
 ### Build
 
 ```bash
-cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
+cmake --preset lldb
 cd build/
 ninja
 ```
@@ -42,7 +42,7 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked and without io_uring
+- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked
 - `bench` -- Release build (`build_bench/`), static linking, configured like the release packages; no frame pointers
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 
@@ -62,6 +62,15 @@ Every binary links most of the server statically, so debug info dominates its si
 - **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
 
 Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](.claude/rules/cpp.md#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.
+
+### The search-benchmark-game build
+
+`-DIRESEARCH_BENCH=ON` configures a tree for `search-benchmark-game` alone: its two executables link `iresearch-minimal`, which leaves out vector search, geo, fastText, every tokenizer but `split_text`, every scorer but BM25, and match offsets, over DuckDB with only its `icu` extension. Such a tree compiles about a sixth of what the full one does for that target, and it has no server, tests or micro benchmarks; `SDB_GTEST` is refused there.
+
+```bash
+cmake --preset perf -B build_sbg -DIRESEARCH_BENCH=ON
+cmake --build build_sbg -t search-benchmark-game
+```
 
 ### The embedded documentation index
 

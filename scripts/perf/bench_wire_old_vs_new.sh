@@ -296,7 +296,7 @@ CUR_PID=""
 CUR_CONTAINER=""
 
 cleanup() {
-	[[ -n "${CUR_CONTAINER}" ]] && docker rm -f "${CUR_CONTAINER}" >/dev/null 2>&1 || true
+	[[ -n "${CUR_CONTAINER}" ]] && docker rm -fv "${CUR_CONTAINER}" >/dev/null 2>&1 || true
 	[[ -n "${CUR_PID}" && -z "${CUR_CONTAINER}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
 	rm -rf "${DATA_NEW}"
 }
@@ -776,7 +776,7 @@ start_serened() {
 		# serened binds the bench port itself, so host networking needs no
 		# listen-port translation.
 		[[ "${DOCKER_HOSTNET}" != 0 ]] && netargs=(--network host)
-		docker rm -f "${SDB_CONTAINER}" >/dev/null 2>&1 || true
+		docker rm -fv "${SDB_CONTAINER}" >/dev/null 2>&1 || true
 		docker run -d --name "${SDB_CONTAINER}" "${cpuset[@]}" \
 			--user "$(id -u):$(id -g)" -e HOME=/tmp \
 			"${netargs[@]}" \
@@ -797,7 +797,7 @@ stop_serened() {
 	local srv="$1"
 	if [[ -n "${CUR_CONTAINER}" ]]; then
 		docker logs "${CUR_CONTAINER}" >"${OUT_DIR}/serened_${srv}.log" 2>&1 || true
-		docker rm -f "${CUR_CONTAINER}" >/dev/null 2>&1 || true
+		docker rm -fv "${CUR_CONTAINER}" >/dev/null 2>&1 || true
 		CUR_CONTAINER=""
 	else
 		kill -9 "${CUR_PID}" 2>/dev/null || true
@@ -904,7 +904,7 @@ bench_engine() {
 		read -r -a cargs <<<"${ENG_CARGS[$name]}" || true
 		echo "-- ${name} ${image} (host :${hport} -> container :${cport}) [docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}]"
 	fi
-	docker rm -f "${container}" >/dev/null 2>&1 || true
+	docker rm -fv "${container}" >/dev/null 2>&1 || true
 	if ! docker run -d --name "${container}" "${cpuset[@]}" \
 		"${netargs[@]}" "${preargs[@]}" "${image}" "${cargs[@]}" >/dev/null; then
 		echo "  ${name}: docker run failed -- skipping" >&2
@@ -922,7 +922,7 @@ bench_engine() {
 	if [[ "${up}" != 1 ]]; then
 		echo "  ${name} did not come up:" >&2
 		docker logs "${container}" 2>&1 | tail -20 >&2
-		docker rm -f "${container}" >/dev/null 2>&1 || true
+		docker rm -fv "${container}" >/dev/null 2>&1 || true
 		return 1
 	fi
 	# Same workload set + layout as bench_server, as <name>_<workload> rows. The
@@ -950,7 +950,7 @@ bench_engine() {
 		run_copyin "${name}" "${hport}" || true
 	fi
 	unset RUN_ONE_USER RUN_ONE_DB PGPASSWORD
-	docker rm -f "${container}" >/dev/null 2>&1 || true
+	docker rm -fv "${container}" >/dev/null 2>&1 || true
 }
 
 mkdir -p "${BASELINE_DIR}"

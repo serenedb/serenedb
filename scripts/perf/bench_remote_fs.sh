@@ -390,7 +390,7 @@ COPY (SELECT *, id % ${BRFS_SMALL_FILES} AS f FROM big WHERE id < ${BRFS_ROWS_SM
 }
 
 net_up() {
-	docker rm -f "$MINIO_NAME" "$AZURITE_NAME" "$TOXI_NAME" >/dev/null 2>&1 || true
+	docker rm -fv "$MINIO_NAME" "$AZURITE_NAME" "$TOXI_NAME" >/dev/null 2>&1 || true
 	docker run -d --name "$MINIO_NAME" --network host \
 		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
 		"$BRFS_MINIO_IMAGE" server /data \
@@ -421,7 +421,7 @@ net_down() {
 		echo "keeping containers: $MINIO_NAME $AZURITE_NAME $TOXI_NAME" >&2
 		return
 	fi
-	docker rm -f "$MINIO_NAME" "$AZURITE_NAME" "$TOXI_NAME" >/dev/null 2>&1 || true
+	docker rm -fv "$MINIO_NAME" "$AZURITE_NAME" "$TOXI_NAME" >/dev/null 2>&1 || true
 }
 
 tc_host() {

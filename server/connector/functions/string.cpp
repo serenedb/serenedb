@@ -785,6 +785,7 @@ struct RegexpLocalState final : duckdb::FunctionLocalState {
 re2::RE2::Options OwnedRegexOptions() {
   re2::RE2::Options options{re2::RE2::Quiet};
   options.set_thread_safe(false);
+  options.set_valid_utf8(true);
   return options;
 }
 
@@ -1009,6 +1010,11 @@ std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
   return result;
 }
 
+bool LikePatternEndsWithEscape(std::string_view pattern) {
+  const auto escapes_begin = pattern.find_last_not_of('\\') + 1;
+  return (pattern.size() - escapes_begin) % 2 == 1;
+}
+
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
 
@@ -1154,8 +1160,12 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     ConvertToFunction});
 
   // pg_client_encoding() -> name
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction});
+  {
+    duckdb::ScalarFunction func{
+      "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction};
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+    loader.RegisterFunction(func);
+  }
 
   // quote_ident(text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{"quote_ident",

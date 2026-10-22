@@ -97,6 +97,14 @@ class LoserScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
+  void Restart(score_t seed) noexcept {
+    _size = 0;
+    _root = 0;
+    *_score_threshold = seed;
+  }
+
+  void SortHits() noexcept;
+
   IRS_FORCE_INLINE score_t ScoreThreshold() const noexcept {
     return _score_threshold->load(std::memory_order_relaxed);
   }
@@ -193,6 +201,18 @@ class LoserScoreCollector {
   IRS_FORCE_INLINE static uint64_t GetScoreMask(
     const score_t* IRS_RESTRICT scores, score_t threshold) noexcept {
     const auto v = _mm256_set1_ps(threshold);
+    const auto max = _mm256_max_ps(
+      _mm256_max_ps(
+        _mm256_max_ps(_mm256_loadu_ps(scores), _mm256_loadu_ps(scores + 8)),
+        _mm256_max_ps(_mm256_loadu_ps(scores + 16),
+                      _mm256_loadu_ps(scores + 24))),
+      _mm256_max_ps(_mm256_max_ps(_mm256_loadu_ps(scores + 32),
+                                  _mm256_loadu_ps(scores + 40)),
+                    _mm256_max_ps(_mm256_loadu_ps(scores + 48),
+                                  _mm256_loadu_ps(scores + 56))));
+    if (_mm256_movemask_ps(_mm256_cmp_ps(max, v, kCmpPred)) == 0) {
+      return 0;
+    }
     uint64_t mask = 0;
     for (int i = 0; i < 64; i += 8) {
       const uint64_t bits = _mm256_movemask_ps(
@@ -212,12 +232,8 @@ class LoserScoreCollector {
   }
 #endif
 
-  struct Node {
-    uint32_t key;
-    uint32_t leaf;
-  };
-
   static constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+  static constexpr uint64_t kKeyMask = 0xFFFFFFFF00000000;
 
   IRS_FORCE_INLINE static uint32_t Key(score_t score) noexcept {
     const auto bits = std::bit_cast<uint32_t>(score);
@@ -225,44 +241,59 @@ class LoserScoreCollector {
     return bits ^ (sign | 0x80000000U);
   }
 
+  IRS_FORCE_INLINE static uint64_t MakeNode(score_t score,
+                                            uint32_t leaf) noexcept {
+    return uint64_t{Key(score)} << 32 | leaf;
+  }
+
+  IRS_FORCE_INLINE static uint32_t Leaf(uint64_t node) noexcept {
+    return static_cast<uint32_t>(node);
+  }
+
+  IRS_FORCE_INLINE static bool KeyLess(uint64_t lhs, uint64_t rhs) noexcept {
+    return lhs < (rhs & kKeyMask);
+  }
+
   IRS_FORCE_INLINE size_t Match(uint32_t leaf) const noexcept {
     return (_k + leaf) >> 1;
   }
 
   void Build() noexcept {
-    Node* IRS_RESTRICT const tree = _tree.data();
+    uint64_t* IRS_RESTRICT const tree = _tree.data();
     for (size_t i = 1; i < _k; ++i) {
-      tree[i].leaf = kNone;
+      tree[i] = kNone;
     }
     for (uint32_t leaf = 0; leaf != _k; ++leaf) {
-      Node cur{Key(_hits[leaf].score), leaf};
+      auto cur = MakeNode(_hits[leaf].score, leaf);
       for (size_t node = Match(leaf); node != 0; node >>= 1) {
-        Node& slot = tree[node];
-        if (slot.leaf == kNone) {
-          slot = cur;
-          cur.leaf = kNone;
+        const auto slot = tree[node];
+        if (Leaf(slot) == kNone) {
+          tree[node] = cur;
+          cur = kNone;
           break;
         }
-        if (slot.key < cur.key) {
-          std::swap(slot, cur);
-        }
+        const bool win = KeyLess(slot, cur);
+        tree[node] = win ? cur : slot;
+        cur = win ? slot : cur;
       }
-      if (cur.leaf != kNone) {
+      if (Leaf(cur) != kNone) {
         _root = cur;
       }
     }
   }
 
   IRS_FORCE_INLINE void Replace(ScoreDoc hit) noexcept {
-    Node* IRS_RESTRICT const tree = _tree.data();
-    const uint32_t leaf = _root.leaf;
+    uint64_t* IRS_RESTRICT const tree = _tree.data();
+    const auto leaf = Leaf(_root);
     _hits[leaf] = hit;
-    Node cur{Key(hit.score), leaf};
+    auto cur = MakeNode(hit.score, leaf);
+    auto cur_key = cur & kKeyMask;
     for (size_t node = Match(leaf); node != 0; node >>= 1) {
-      const Node loser = tree[node];
-      const bool win = loser.key < cur.key;
+      const auto loser = tree[node];
+      const bool win = loser < cur_key;
       tree[node] = win ? cur : loser;
       cur = win ? loser : cur;
+      cur_key = win ? loser & kKeyMask : cur_key;
     }
     _root = cur;
   }
@@ -281,7 +312,7 @@ class LoserScoreCollector {
     } else {
       Replace({score, doc, _current_segment});
     }
-    const auto root = _hits[_root.leaf].score;
+    const auto root = _hits[Leaf(_root)].score;
     if (root <= threshold) {
       return false;
     }
@@ -294,9 +325,9 @@ class LoserScoreCollector {
   std::atomic<score_t>* IRS_RESTRICT _score_threshold;
   ScoreDoc* IRS_RESTRICT _hits;
   size_t _k;
-  std::vector<Node> _tree;
+  std::vector<uint64_t> _tree;
   size_t _size = 0;
-  Node _root{};
+  uint64_t _root = 0;
 };
 
 // One term's postings as block-contiguous columns: one row per (doc,

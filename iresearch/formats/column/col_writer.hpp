@@ -35,6 +35,7 @@
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -57,6 +58,8 @@ class ColWriter final {
   ColWriter& operator=(const ColWriter&) = delete;
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
+
+  void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
@@ -108,6 +111,7 @@ class ColWriter final {
   std::string _filename;
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;

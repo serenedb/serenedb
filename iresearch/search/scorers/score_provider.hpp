@@ -47,6 +47,23 @@ struct ScaleProvider final : AttributeProvider {
   ScaleBlockAttr attr;
 };
 
+inline ScoreFunction PrepareBlockScorer(const ScoreArgs& args,
+                                        const NormProvider& segment,
+                                        const FieldProperties& field,
+                                        ScaleProvider& provider,
+                                        score_t* block) {
+  SDB_ASSERT(args.scorer && args.fetcher);
+  provider.attr.value = block;
+  return args.scorer->PrepareScorer({
+    .segment = segment,
+    .field = field,
+    .doc_attrs = provider,
+    .fetcher = *args.fetcher,
+    .stats = args.stats,
+    .boost = args.boost,
+  });
+}
+
 struct LeafRecipe {
   const SubReader* segment = nullptr;
   const TermReader* field = nullptr;

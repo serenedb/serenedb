@@ -1,0 +1,65 @@
+statement ok
+CREATE TABLE iic_t (id INT PRIMARY KEY, body TEXT, n INT, ts TIMESTAMPTZ);
+
+
+statement ok
+CREATE INDEX iic_idx ON iic_t USING inverted(id, body, (lower(body)), (ts::VARCHAR), n included());
+
+
+statement ok
+CREATE VIEW iic_v AS SELECT id, body FROM iic_t;
+
+
+statement ok
+CREATE INDEX iic_vidx ON iic_v USING inverted(id, body);
+
+
+query
+SELECT c.relname, c.relnatts, i.indnatts, i.indnkeyatts, array_to_string(i.indkey, ' ') AS indkey
+FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+WHERE c.relname IN ('iic_idx', 'iic_vidx')
+ORDER BY c.relname;
+----
+relname	relnatts	indnatts	indnkeyatts	indkey
+iic_idx	5	5	4	1 2 0 0 3
+iic_vidx	2	2	2	(empty)
+
+
+query
+SELECT c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS type,
+       CASE WHEN a.attnum <= i.indnkeyatts THEN 'yes' ELSE 'no' END AS is_key,
+       pg_get_indexdef(a.attrelid, a.attnum, true) AS definition
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_index i ON i.indexrelid = a.attrelid
+WHERE c.relname IN ('iic_idx', 'iic_vidx') AND a.attnum > 0
+ORDER BY c.relname, a.attnum;
+----
+relname	attnum	attname	type	is_key	definition
+iic_idx	1	id	integer	yes	id
+iic_idx	2	body	text	yes	body
+iic_idx	3	lower	text	yes	lower(body)
+iic_idx	4	ts	text	yes	(CAST(ts AS VARCHAR))
+iic_idx	5	n	integer	no	n
+iic_vidx	1	id	integer	yes	id
+iic_vidx	2	body	text	yes	body
+
+
+query
+SELECT has_column_privilege('iic_idx', 'lower', 'SELECT') AS by_name,
+       has_column_privilege('iic_idx'::regclass, 5::int2, 'SELECT') AS by_attnum,
+       has_column_privilege('iic_idx'::regclass, 6::int2, 'SELECT') AS past_end,
+       has_column_privilege('iic_vidx', 'body', 'SELECT') AS view_index;
+----
+by_name	by_attnum	past_end	view_index
+t	t	NULL	t
+
+
+statement ok
+DROP INDEX iic_vidx;
+
+
+statement ok
+DROP VIEW iic_v;
+
+
+statement ok
+DROP TABLE iic_t;

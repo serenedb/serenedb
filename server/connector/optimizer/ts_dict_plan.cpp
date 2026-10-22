@@ -1104,7 +1104,8 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
 bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
                                                TsDictFacetKey& key) {
   const auto expr_ti = SingleReferencedTableIndex(expr);
-  if (!expr_ti || !AdoptScan(FindIResearchScan(_root, *expr_ti)) ||
+  if (!expr_ti || !connector::ComputedFromRowAlone(expr) ||
+      !AdoptScan(FindIResearchScan(_root, *expr_ti)) ||
       !ColumnIndex()->HasExpressionKeys()) {
     return false;
   }
@@ -1769,7 +1770,8 @@ bool TsDictFacetPushdown::WhereOk() {
   const bool claimable = WithSearchGetters(
     *_found.get, *_found.bind_data, _context,
     [&](const SearchGetters& getters) {
-      auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
+      auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
+        getters;
       size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {

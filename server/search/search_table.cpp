@@ -21,6 +21,8 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -52,6 +54,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -127,6 +130,7 @@ void SearchTable::OpenWriter(bool in_memory) {
   _absent = opened.absent;
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
@@ -190,6 +194,7 @@ void SearchTable::StartTasks() {
 
 ResultWithTime SearchTable::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
   auto result =
     _durability.Refresh(*_writer, wait, progress, code, [] {}, [] {});
@@ -238,7 +243,7 @@ void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   _build_truncate = std::max(_build_truncate, position);
 }
 
-void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
+void SearchTable::AppendDeleteLog(std::span<const RowRange> rows) {
   if (rows.empty()) {
     return;
   }
@@ -444,19 +449,23 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
+  const ManualCompactionSlot slot;
+  const irs::AnnBuildEnv* env = slot.AnnEnv();
   for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets(target);
+    std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot = _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
+      buckets.resize(target);
       for (size_t i = 0; i < snapshot.size(); ++i) {
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
+    absl::Status status;
     bool merged = false;
-    for (auto& names : buckets) {
+    for (const auto& names : buckets) {
       const irs::CompactionPolicy bucket =
         [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
                  const irs::CompactingSegments& busy) {
@@ -469,12 +478,14 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      if (auto res =
-            CompactUnsafe(bucket, kProgress, empty, field_options.get()).res;
-          !res.ok()) {
-        return res;
-      }
-      merged |= !empty;
+      status.Update(
+        irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
+                                            field_options.get(), env))
+          .res);
+      merged = merged || !empty;
+    }
+    if (!status.ok()) {
+      return status;
     }
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;
@@ -540,6 +551,18 @@ void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
   connector::RemoveGeneratedRows(
     session->trx, std::span<const int64_t>{
                     duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+}
+
+void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
+                                     std::vector<RowRange> rows) {
+  auto* session = BeginReplay(db);
+  if (!session) {
+    return;
+  }
+  NormalizeRowRanges(rows);
+  if (auto removal = connector::MakeRowRangeRemoval(rows)) {
+    session->trx.Remove(std::move(removal));
+  }
 }
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {

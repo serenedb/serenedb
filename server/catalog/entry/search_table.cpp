@@ -448,7 +448,7 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
                                     duckdb::optional_idx row_start) {
   std::vector<connector::ColumnId> column_ids;
   for (const auto& column : _columns.Logical()) {
-    column_ids.emplace_back(column.Oid());
+    column_ids.emplace_back(connector::TableColumnId(column));
   }
   _storage->ReplayInsert(context, catalog, column_ids, chunk,
                          row_start.GetIndex());
@@ -457,6 +457,17 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
 void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
                                     duckdb::DataChunk& chunk) {
   _storage->ReplayDelete(catalog.GetAttached(), chunk);
+}
+
+void SearchTableEntry::ReplayDeleteRanges(
+  duckdb::ClientContext&, const duckdb::vector<duckdb::row_t>& starts,
+  const duckdb::vector<duckdb::idx_t>& counts) {
+  std::vector<search::RowRange> rows;
+  rows.reserve(starts.size());
+  for (size_t i = 0; i != starts.size(); ++i) {
+    rows.emplace_back(starts[i], starts[i] + static_cast<int64_t>(counts[i]));
+  }
+  _storage->ReplayDeleteRanges(catalog.GetAttached(), std::move(rows));
 }
 
 void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {

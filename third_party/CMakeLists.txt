@@ -119,17 +119,6 @@ set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
 set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
 
 ################################################################################
-## liburing
-################################################################################
-
-if(SDB_IOURING)
-    sdb_update_module(${GIT_EXECUTABLE} "liburing" ${CMAKE_CURRENT_SOURCE_DIR} "README")
-    add_subdirectory(liburing-cmake)
-    set(uring_FOUND ON)
-    set(uring_FOUND ON PARENT_SCOPE)
-endif()
-
-################################################################################
 ## ZLIB-NG
 ################################################################################
 
@@ -249,7 +238,20 @@ target_include_directories(
 sdb_update_module(${GIT_EXECUTABLE} "re2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(RE2_USE_ICU ON CACHE BOOL "" FORCE)
 set(RE2_INSTALL OFF CACHE BOOL "" FORCE)
+set(RE2_TEST ${SDB_GTEST} CACHE BOOL "" FORCE)
+if(SDB_GTEST)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake "")
+    enable_testing()
+endif()
 add_subdirectory(re2)
+if(SDB_GTEST)
+    get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
+    list(FILTER re2_targets INCLUDE REGEX "_test$")
+    foreach(target ${re2_targets})
+        target_link_libraries(${target} PRIVATE icu_extension)
+    endforeach()
+    add_custom_target(re2-tests DEPENDS ${re2_targets})
+endif()
 
 ################################################################################
 ### tcmalloc library
@@ -311,9 +313,10 @@ set(USE_OPENMP 0 CACHE BOOL "" FORCE)
 set(USE_LOCKING 1 CACHE BOOL "" FORCE)
 set(NO_WARMUP 1 CACHE BOOL "" FORCE)
 set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
-set(NO_LAPACK 1 CACHE BOOL "" FORCE)
-set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
-set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
+set(NO_LAPACK 0 CACHE BOOL "" FORCE)
+set(C_LAPACK 1 CACHE BOOL "" FORCE)
+set(BUILD_SINGLE 1 CACHE BOOL "" FORCE)
+set(NO_CBLAS 1 CACHE BOOL "" FORCE)
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
 if(SDB_SANITIZE MATCHES "^Memory")
     message(
@@ -351,6 +354,16 @@ if(ARCH_AMD64 AND DYNAMIC_ARCH)
 endif()
 
 ################################################################################
+### pcg, header-only, vendored by duckdb
+################################################################################
+add_library(pcg INTERFACE)
+target_include_directories(
+    pcg
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/pcg
+)
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
@@ -368,6 +381,7 @@ target_compile_options(
         -Wno-sign-compare
         -Wno-suggest-destructor-override
 )
+target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
 ## snowball stemmer
@@ -661,14 +675,25 @@ option(
     "Build DuckDB's unittest binary for vendored-extension test suites"
     ON
 )
-set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
-set(ENABLE_UNITTEST_CPP_TESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
 option(
     SDB_BUILD_DUCKDB_BENCHMARKS
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+if(IRESEARCH_BENCH)
+    set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
+    set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+else()
+    set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS
+        ${SDB_BUILD_DUCKDB_UNITTESTS}
+        CACHE BOOL
+        ""
+        FORCE
+    )
+    set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+endif()
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
@@ -686,29 +711,35 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
-    CACHE STRING
-    ""
-    FORCE
-)
-set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;pdf"
-    CACHE STRING
-    ""
-    FORCE
-)
-# Extensions whose build config lives NEXT TO the extension instead of as a
-# shim inside the duckdb fork (.github/config/extensions/): duckdb includes
-# these files after the BUILD_EXTENSIONS list is resolved.
-set(DUCKDB_EXTENSION_CONFIGS
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_pdf/extension_config.cmake"
-    CACHE STRING
-    ""
-    FORCE
-)
+if(IRESEARCH_BENCH)
+    set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
+    set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
+    set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
+else()
+    set(BUILD_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    set(STATICALLY_LINK_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;pdf"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    # Extensions whose build config lives NEXT TO the extension instead of as a
+    # shim inside the duckdb fork (.github/config/extensions/): duckdb includes
+    # these files after the BUILD_EXTENSIONS list is resolved.
+    set(DUCKDB_EXTENSION_CONFIGS
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_pdf/extension_config.cmake"
+        CACHE STRING
+        ""
+        FORCE
+    )
+endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -747,35 +778,42 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
 
-target_link_libraries(
-    iceberg_catalog_rest_storage_authorization
-    PRIVATE OpenSSL::Crypto
-)
-
 # Link extension objects that aren't automatically included in duckdb_static
 target_link_libraries(
     duckdb_static
     PUBLIC
-        core_functions_extension
-        parquet_extension
-        tpch_extension
-        tpcds_extension
-        json_extension
-        httpfs_extension
-        azure_extension
-        avro_extension
-        iceberg_extension
-        postgres_scanner_extension
-        autocomplete_extension
         icu_extension
-        inet_extension
-        markdown_extension
-        spatial_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to
         # every static extension (they each link duckdb_static).
         simdutf
 )
+
+if(NOT IRESEARCH_BENCH)
+    target_link_libraries(
+        iceberg_catalog_rest_storage_authorization
+        PRIVATE OpenSSL::Crypto
+    )
+
+    target_link_libraries(
+        duckdb_static
+        PUBLIC
+            core_functions_extension
+            parquet_extension
+            tpch_extension
+            tpcds_extension
+            json_extension
+            httpfs_extension
+            azure_extension
+            avro_extension
+            iceberg_extension
+            postgres_scanner_extension
+            autocomplete_extension
+            inet_extension
+            markdown_extension
+            spatial_extension
+    )
+endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at

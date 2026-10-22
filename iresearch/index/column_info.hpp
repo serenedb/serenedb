@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include <core_functions/array_kernels.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
@@ -43,26 +42,6 @@ enum class VectorMetric : uint8_t {
   L1,
 };
 
-template<VectorMetric Metric>
-float ComputeDistance(const float* l, const float* r, uint16_t d) {
-  if constexpr (Metric == VectorMetric::L2Sqr) {
-    return -duckdb::DistanceSquaredOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::L1) {
-    return -duckdb::L1DistanceOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::InnerProduct) {
-    return duckdb::InnerProductOp::Operation(l, r, d);
-  } else if constexpr (Metric == VectorMetric::Cosine) {
-    return duckdb::CosineSimilarityOp::Operation(l, r, d);
-  }
-  SDB_UNREACHABLE();
-}
-
-template<VectorMetric Metric>
-float ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return ComputeDistance<Metric>(reinterpret_cast<const float*>(l),
-                                 reinterpret_cast<const float*>(r), d);
-}
-
 enum class VectorQuantization : uint8_t {
   None = 0,
   SQ8,
@@ -70,7 +49,26 @@ enum class VectorQuantization : uint8_t {
   PQ,
   RaBitQ,
   TQ,
+  USQ8,
+  USQ4,
+  BQ,
+  OSQ,
+  FP16,
+  BF16,
 };
+
+inline constexpr bool IsHalfFloat(VectorQuantization q) noexcept {
+  return q == VectorQuantization::FP16 || q == VectorQuantization::BF16;
+}
+
+inline constexpr bool IsUniformScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::USQ8 || q == VectorQuantization::USQ4;
+}
+
+inline constexpr bool IsScalar(VectorQuantization q) noexcept {
+  return q == VectorQuantization::SQ8 || q == VectorQuantization::SQ4 ||
+         IsUniformScalar(q);
+}
 
 inline constexpr uint32_t kRaBitQMinBits = 1;
 inline constexpr uint32_t kRaBitQMaxBits = 9;
@@ -83,8 +81,34 @@ inline constexpr bool TQBitsValid(uint32_t bits) noexcept {
   return bits >= kTQMinBits && bits <= kTQMaxBits;
 }
 
-inline constexpr bool TQFullBits(uint32_t bits) noexcept {
-  return bits == 3 || bits == 5;
+inline constexpr bool TQHalfBitValid(uint32_t bits) noexcept {
+  return bits == 1;
+}
+
+inline constexpr uint32_t kBQDefaultBits = 1;
+inline constexpr uint32_t kBQDefaultQueryBits = 1;
+
+inline constexpr bool BQBitsValid(uint32_t bits, bool half_bit) noexcept {
+  return half_bit ? bits == 1 : bits == 1 || bits == 2;
+}
+
+inline constexpr bool BQQueryBitsValid(uint32_t bits) noexcept {
+  return bits == 1 || bits == 4 || bits == 8;
+}
+
+inline constexpr uint32_t kOSQDefaultBits = 1;
+
+inline constexpr bool OSQBitsValid(uint32_t bits) noexcept {
+  return bits == 1 || bits == 2 || bits == 4 || bits == 7 || bits == 8;
+}
+
+inline constexpr uint32_t OSQDefaultQueryBits(uint32_t bits) noexcept {
+  return bits <= 4 ? 4 : bits;
+}
+
+inline constexpr bool OSQQueryBitsValid(uint32_t bits,
+                                        uint32_t query_bits) noexcept {
+  return bits <= 4 ? query_bits == 4 || query_bits == 8 : query_bits == bits;
 }
 
 inline constexpr VectorMetric EffectiveQuantMetric(
@@ -97,11 +121,28 @@ enum class AnnKind : uint8_t {
   Hnsw,
 };
 
+enum class HnswFilterMode : uint8_t {
+  Auto = 0,
+  Walk,
+  Scan,
+  Prune,
+  TwoHop,
+  Bridge,
+};
+
+enum class HnswColumnFilter : uint8_t {
+  Auto = 0,
+  Fold,
+  Read,
+};
+
 struct AnnInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;
     uint32_t pq_m = 0;
     uint32_t nb_bits = 0;
+    bool half_bit = false;
+    uint32_t query_bits = 0;
 
     friend bool operator==(const Quantizer&, const Quantizer&) = default;
   };

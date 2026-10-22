@@ -1,0 +1,117 @@
+statement ok
+CREATE TABLE case_strings AS
+SELECT * FROM (VALUES
+    (1, 'Grüße aus Köln'),
+    (2, 'İSTANBUL ışık'),
+    (3, 'ÉCOLE MATERNELLE à Paris'),
+    (4, 'Привет, Мир! Съешь ещё этих булок'),
+    (5, 'Αλφάβητο ΣΊΣΥΦΟΣ'),
+    (6, 'K-band 5 KB, Ω, Å'),
+    (7, 'ＦＵＬＬＷＩＤＴＨ ｔｅｘｔ'),
+    (8, '東京タワー 漢字 カタカナ'),
+    (9, '🦆 DUCK 𐐀𐐁 duck 𐐨'),
+    (10, 'Ⱥ Ⱦ ⱥ ⱦ'),
+    (11, 'ǅ ǈ ǋ Ǆ ǆ'),
+    (12, 'abcdefghabcdefghabcdefghÉXYZXYZXYZ'),
+    (13, 'Ä'),
+    (14, 'ı'),
+    (15, 'İ'),
+    (16, 'K'),
+    (17, 'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ'),
+    (18, 'àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ'),
+    (19, 'ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįĲĳĴĵĶķĸĹĺĻļĽľĿŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽž'),
+    (20, 'ΆΈΉΊΌΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ'),
+    (21, 'ЀЁЂЃЄЅІЇЈЉЊЋЌЍЎЏАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюяѐёђѓєѕіїјљњћќѝўџ'),
+    (22, 'ԱԲԳԴԵԶԷԸԹԺ աբգդեզէըթժ'),
+    (23, 'ႠႡႢ ⴀⴁⴂ'),
+    (24, 'ḀḁẞẠạẤấ ỲỳỴỵ'),
+    (25, 'ⒶⒷⒸ ⓐⓑⓒ ⅠⅡⅢ ⅰⅱⅲ'),
+    (26, 'abcµDEF' || chr(837)),
+    (27, 'İİİİİİİİİİİİİİİİ'),
+    (28, 'İ' || repeat('AbCdEfGh', 3) || 'İ'),
+    (29, repeat('ı', 9) || repeat('x', 17)),
+    (30, repeat('K', 5) || 'ABCDEFGHI'),
+    (31, 'ⱥ' || repeat('a', 9) || 'ⱦ'),
+    (32, 'Ⱥ' || repeat('A', 9) || 'Ⱦ')
+) AS t(id, s)
+
+
+query
+SELECT id, lower(s) AS lowered, upper(s) AS uppered FROM case_strings WHERE id <> 1 ORDER BY id
+----
+id	lowered	uppered
+2	istanbul ışık	İSTANBUL IŞIK
+3	école maternelle à paris	ÉCOLE MATERNELLE À PARIS
+4	привет, мир! съешь ещё этих булок	ПРИВЕТ, МИР! СЪЕШЬ ЕЩЁ ЭТИХ БУЛОК
+5	αλφάβητο σίσυφοσ	ΑΛΦΆΒΗΤΟ ΣΊΣΥΦΟΣ
+6	k-band 5 kb, ω, å	K-BAND 5 KB, Ω, Å
+7	ｆｕｌｌｗｉｄｔｈ ｔｅｘｔ	ＦＵＬＬＷＩＤＴＨ ＴＥＸＴ
+8	東京タワー 漢字 カタカナ	東京タワー 漢字 カタカナ
+9	🦆 duck 𐐨𐐩 duck 𐐨	🦆 DUCK 𐐀𐐁 DUCK 𐐀
+10	ⱥ ⱦ ⱥ ⱦ	Ⱥ Ⱦ Ⱥ Ⱦ
+11	ǆ ǉ ǌ ǆ ǆ	Ǆ Ǉ Ǌ Ǆ Ǆ
+12	abcdefghabcdefghabcdefghéxyzxyzxyz	ABCDEFGHABCDEFGHABCDEFGHÉXYZXYZXYZ
+13	ä	Ä
+14	ı	I
+15	i	İ
+16	k	K
+17	àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþ	ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ
+18	àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ	ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞŸ
+19	āāăăąąććĉĉċċččďďđđēēĕĕėėęęěěĝĝğğġġģģĥĥħħĩĩīīĭĭįįĳĳĵĵķķĸĺĺļļľľŀŀłłńńņņňňŉŋŋōōŏŏőőœœŕŕŗŗřřśśŝŝşşššţţťťŧŧũũūūŭŭůůűűųųŵŵŷŷÿźźżżžž	ĀĀĂĂĄĄĆĆĈĈĊĊČČĎĎĐĐĒĒĔĔĖĖĘĘĚĚĜĜĞĞĠĠĢĢĤĤĦĦĨĨĪĪĬĬĮĮĲĲĴĴĶĶĸĹĹĻĻĽĽĿĿŁŁŃŃŅŅŇŇŉŊŊŌŌŎŎŐŐŒŒŔŔŖŖŘŘŚŚŜŜŞŞŠŠŢŢŤŤŦŦŨŨŪŪŬŬŮŮŰŰŲŲŴŴŶŶŸŹŹŻŻŽŽ
+20	άέήίόύώΐαβγδεζηθικλμνξοπρστυφχψωϊϋάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ	ΆΈΉΊΌΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩΪΫΆΈΉΊΰΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΣΤΥΦΧΨΩΪΫΌΎΏ
+21	ѐёђѓєѕіїјљњћќѝўџабвгдежзийклмнопрстуфхцчшщъыьэюяабвгдежзийклмнопрстуфхцчшщъыьэюяѐёђѓєѕіїјљњћќѝўџ	ЀЁЂЃЄЅІЇЈЉЊЋЌЍЎЏАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЀЁЂЃЄЅІЇЈЉЊЋЌЍЎЏ
+22	աբգդեզէըթժ աբգդեզէըթժ	ԱԲԳԴԵԶԷԸԹԺ ԱԲԳԴԵԶԷԸԹԺ
+23	ⴀⴁⴂ ⴀⴁⴂ	ႠႡႢ ႠႡႢ
+24	ḁḁßạạấấ ỳỳỵỵ	ḀḀẞẠẠẤẤ ỲỲỴỴ
+25	ⓐⓑⓒ ⓐⓑⓒ ⅰⅱⅲ ⅰⅱⅲ	ⒶⒷⒸ ⒶⒷⒸ ⅠⅡⅢ ⅠⅡⅢ
+26	abcµdefͅ	ABCΜDEFΙ
+27	iiiiiiiiiiiiiiii	İİİİİİİİİİİİİİİİ
+28	iabcdefghabcdefghabcdefghi	İABCDEFGHABCDEFGHABCDEFGHİ
+29	ıııııııııxxxxxxxxxxxxxxxxx	IIIIIIIIIXXXXXXXXXXXXXXXXX
+30	kkkkkabcdefghi	KKKKKABCDEFGHI
+31	ⱥaaaaaaaaaⱦ	ȺAAAAAAAAAȾ
+32	ⱥaaaaaaaaaⱦ	ȺAAAAAAAAAȾ
+
+
+query
+SELECT lower(s) AS lowered FROM case_strings WHERE id = 1
+----
+lowered
+grüße aus köln
+
+
+statement ok
+CREATE TABLE case_mixed AS
+SELECT g.i AS id, a.s || repeat(chr(65 + g.i % 26), g.i % 19) || ' ' || b.s || g.i AS s
+FROM generate_series(1, 2000) AS g(i)
+JOIN case_strings a ON a.id = 1 + g.i % 32
+JOIN case_strings b ON b.id = 1 + (g.i * 7) % 32
+
+
+query
+SELECT md5(string_agg(lower(s), '|' ORDER BY id)) AS lowered, count(*) AS strings FROM case_mixed
+----
+lowered	strings
+d85a6bd09255f0753f7b9cc67a4fc54f	2000
+
+
+query
+SELECT md5(string_agg(upper(s), '|' ORDER BY id)) AS uppered, count(*) AS strings FROM case_mixed WHERE strpos(s, 'ß') = 0
+----
+uppered	strings
+f8d1512f8607973cc80c6d9187f38b25	1938
+
+
+query
+SELECT count(*) FILTER (WHERE s ILIKE '%köln%') AS koln,
+       count(*) FILTER (WHERE s ILIKE '%МИР%') AS mir,
+       count(*) FILTER (WHERE s ILIKE '%ÉCOLE%') AS ecole,
+       count(*) FILTER (WHERE s ILIKE '%istanbul%') AS istanbul,
+       count(*) FILTER (WHERE s ILIKE '%ｆｕｌｌ%') AS fullwidth,
+       count(*) FILTER (WHERE s ILIKE '%σίσυφοσ%') AS sisyphus,
+       count(*) FILTER (WHERE s ILIKE '%ⱦ%') AS t_stroke,
+       count(*) FILTER (WHERE s ILIKE '%' || lower(substr(s, 3, 4)) || '%') AS own_substring
+FROM case_mixed
+----
+koln	mir	ecole	istanbul	fullwidth	sisyphus	t_stroke	own_substring
+62	126	126	125	126	125	312	2000

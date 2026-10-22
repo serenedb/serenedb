@@ -53,7 +53,15 @@ using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 
+uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size, uint32_t top_k,
+                       uint64_t leaves = 0) noexcept;
+
+uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
+                       uint32_t max_fanout) noexcept;
+
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
+
+score_t RadiusThreshold(VectorMetric metric, float radius) noexcept;
 
 class IvfVectorReader {
  public:
@@ -97,13 +105,14 @@ class IvfIndex final : public AnnIndex {
 
   QueryBuilder::ptr PrepareKnn(const SubReader& segment,
                                const PrepareContext& ctx,
-                               const VectorFilterOptions& opts,
-                               uint32_t effort) const final;
+                               const VectorFilterOptions& opts, uint32_t effort,
+                               AnnQueryCache* cache) const final;
 
   QueryBuilder::ptr PrepareRange(const SubReader& segment,
                                  const PrepareContext& ctx,
                                  const VectorFilterOptions& opts, float radius,
-                                 bool inclusive, uint32_t effort) const final;
+                                 bool inclusive, uint32_t effort,
+                                 AnnQueryCache* cache) const final;
 
  private:
   CentroidsTree _tree;

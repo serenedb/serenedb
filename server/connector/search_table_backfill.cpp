@@ -35,6 +35,7 @@
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -48,7 +49,6 @@
 
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
-#include "connector/primary_key.h"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
@@ -74,7 +74,8 @@ struct RowSource {
   duckdb::idx_t rowid_slot = 0;
   duckdb::DataChunk chunk;
   irs::ColFilterStateCache filter_states;
-  duckdb::SelectionVector live{STANDARD_VECTOR_SIZE};
+  duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
+                               irs::doc_limits::kDocsSlack};
 };
 
 // In place: RowSource owns a DataChunk and a selection vector, neither
@@ -108,8 +109,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
     *col_reader, source.projections, {}, &context, source.filter_states};
-  auto it_mask = sub.MaskedDocs();
   const bool has_mask = sub.docs_mask() != nullptr;
+  auto mask = irs::MakeGenericDocsMask(sub.docs_mask());
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
@@ -123,14 +124,9 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
     chunk.SetCardinality(produced);
     if (has_mask) {
-      duckdb::idx_t keep = 0;
-      for (duckdb::idx_t i = 0; i < produced; ++i) {
-        const auto doc =
-          static_cast<irs::doc_id_t>(row + i + irs::doc_limits::min());
-        if (!it_mask.Contains(doc)) {
-          source.live.set_index(keep++, i);
-        }
-      }
+      const duckdb::idx_t keep =
+        mask.FillLive(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()),
+                      static_cast<uint32_t>(produced), source.live.data());
       if (keep == 0) {
         continue;
       }
@@ -143,24 +139,6 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     fed += chunk.size();
   }
   return fed;
-}
-
-std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
-  if (rowids.empty()) {
-    return nullptr;
-  }
-  // Sorted rowids encode to sorted terms, so the remove filter walks each
-  // segment's term dictionary sequentially.
-  absl::c_sort(rowids);
-  auto removal =
-    std::make_shared<SearchRemoveFilter>(rowids.size(), term_dict::kPKFieldId);
-  std::string key;
-  for (const auto rowid : rowids) {
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    removal->Add(key);
-  }
-  return removal;
 }
 
 struct Slice {
@@ -279,7 +257,8 @@ bool RebuildGroup(duckdb::ClientContext& context,
   absl::Cleanup abort_slices = abort_all;
 
   {
-    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                  context.GetSchedulerAccount()};
     for (auto& slice : slices) {
       if (slice->segments.empty()) {
         continue;
@@ -310,12 +289,13 @@ bool RebuildGroup(duckdb::ClientContext& context,
     shard.ReplaceSegments(
       replaced, adopted,
       [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
-        auto [rowids, truncate] = shard.DrainDeleteLog();
+        auto [rows, truncate] = shard.DrainDeleteLog();
         if (truncate > snapshot) {
           truncated = true;
           return false;
         }
-        removal = MakeRemoval(std::move(rowids));
+        search::NormalizeRowRanges(rows);
+        removal = MakeRowRangeRemoval(rows);
         return true;
       });
   } catch (const irs::SqlException& e) {

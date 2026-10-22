@@ -57,7 +57,7 @@ extension-only dependency selects just that extension.
 
 ## Branches
 
-Every repo in the table below is a `serenedb/<name>` fork. Each update builds a new branch `vYYYY.MM.DD` in every fork from scratch, and serenedb's gitlinks point at those heads (`scripts/check_submodule_pointers.py` refuses a gitlink that no version branch contains). A version branch is never rewritten once created; the next update makes a new one.
+Every repo in the table below is a `serenedb/<name>` fork. Each update builds a new branch `vYYYY.MM.DD` in every fork from scratch, and serenedb's gitlinks point at those heads (`scripts/check_submodule_pointers.py` refuses a gitlink that no version branch contains, unless it heads an open PR into the current version branch, which lands with `scripts/land.sh`). A version branch is never rewritten once created; the next update makes a new one.
 
 The first-parent history of a version branch, oldest first:
 

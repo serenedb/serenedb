@@ -643,6 +643,57 @@ def test_search_bool(conn, corpus):
     assert sorted(h["_id"] for h in body["hits"]["hits"]) == ["1", "2"]
 
 
+@pytest.mark.parametrize("endpoint", ["_search", "_count"])
+@pytest.mark.parametrize("query", [
+    '{"term":{"year":%s}}',
+    '{"term":{"year":{"value":%s}}}',
+    '{"range":{"year":{"gt":%s}}}',
+    '{"range":{"year":{"gte":%s}}}',
+    '{"range":{"year":{"lt":%s}}}',
+    '{"range":{"year":{"lte":%s}}}',
+])
+@pytest.mark.parametrize("token", [
+    "1abc", "9999/**/OR/**/TRUE", "-1/**/OR/**/TRUE", "01", "1.",
+    "1e", "1e+", "0x10", "1+1", "1e9999",
+])
+def test_query_rejects_malformed_numbers(conn, corpus, endpoint, query, token):
+    conn.request(
+        "POST", f"/{corpus}/{endpoint}",
+        body='{"query":' + query % token + '}',
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 400, body
+    assert body["status"] == 400
+    assert body["error"]["type"] == "parsing_exception"
+
+
+@pytest.mark.parametrize("query, expected", [
+    ('{"term":{"year":1900}}', ["1"]),
+    ('{"term":{"year":{"value":1950.0}}}', ["2", "3"]),
+    ('{"term":{"year":1.95e3}}', ["2", "3"]),
+    ('{"term":{"year":1.9E+3 \t\r\n}}', ["1"]),
+    ('{"term":{"year":-0}}', []),
+    ('{"range":{"year":{"gt":0,"lte":1900}}}', ["1"]),
+    ('{"range":{"year":{"gte":-42,"lt":1.95e3}}}', ["1"]),
+    ('{"range":{"year":{"gte":9999}}}', []),
+    ('{"range":{"year":{"gt":-9223372036854775808}}}', ["1", "2", "3"]),
+    ('{"range":{"year":{"lt":18446744073709551615}}}', ["1", "2", "3"]),
+])
+def test_search_numeric_literals(conn, corpus, query, expected):
+    conn.request(
+        "POST", f"/{corpus}/_search",
+        body='{"query":' + query + '}',
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 200, body
+    assert sorted(hit["_id"] for hit in body["hits"]["hits"]) == expected
+    assert body["hits"]["total"]["value"] == len(expected)
+
+
 def test_search_paging_and_source(conn, corpus):
     status, body = _search(conn, corpus, {
         "query": {"match_all": {}}, "size": 2, "from": 1, "sort": ["year"],

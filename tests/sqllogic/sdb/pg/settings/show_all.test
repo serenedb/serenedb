@@ -84,6 +84,7 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_tablespace	(empty)	The tablespace search tables and search indexes are created in when CREATE names none. Default: '' (the database's own tablespace).
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -431,6 +432,7 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_tablespace	(empty)	The tablespace search tables and search indexes are created in when CREATE names none. Default: '' (the database's own tablespace).
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.

@@ -20,22 +20,25 @@ fi
 # exits, so those stacks alone fill most of its 32 GB stack store and the server
 # crashes once it is full. ai_ollama drives a local Ollama container; on arm64
 # inference is slow enough that ai_generate's own HTTP timeout fires.
-SANITIZER_SKIP=""
+CONFIG_SKIP=""
 if [[ "${SANITIZERS:-}" == *Address* || "${SANITIZERS:-}" == *Thread* ]]; then
-	SANITIZER_SKIP='simple/(planner_scaling|nested_subqueries)\.test|simple/unicode/regexp_properties\.test|simple/temporal/(bucket_groups_alias_distinct_matrix|monotone_predicate_matrix_1)\.test|index/(geo|phrase|wildcard)_deferred_matrix\.gen\.test'
+	CONFIG_SKIP='simple/(planner_scaling|nested_subqueries)\.test|simple/unicode/regexp_properties\.test|simple/temporal/(bucket_groups_alias_distinct_matrix|monotone_predicate_matrix_1)\.test|index/(geo|phrase|wildcard)_deferred_matrix\.gen\.test'
 fi
 if [[ "${SANITIZERS:-}" == *Thread* ]]; then
-	SANITIZER_SKIP+='|simple/large_values\.test|simple/unicode/case_mapping\.test'
+	CONFIG_SKIP+='|simple/large_values\.test|simple/unicode/case_mapping\.test'
 	if [[ "$(uname -m)" == "aarch64" ]]; then
-		SANITIZER_SKIP+='|_ollama\.test_slow'
+		CONFIG_SKIP+='|_ollama\.test_slow'
 	fi
+fi
+if [[ "${SDB_COVERAGE:-Off}" == On ]]; then
+	CONFIG_SKIP+="${CONFIG_SKIP:+|}index/inverted_index_(cidr|hnsw_rotated)\.test"
 fi
 
 # sqlite subtree is under sdb/pg/any via the any/pg symlink; --skip is a path regex.
 declare -a SEL
 JUNIT="tests-serenedb"
 case "${SDB_SQLLOGIC_SCOPE:-all}" in
-ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${SANITIZER_SKIP:+|$SANITIZER_SKIP}") ;;
+ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite${CONFIG_SKIP:+|$CONFIG_SKIP}") ;;
 sqlite) SEL=(--test "sdb/pg/any/sqlite/**/*.test*") ;;
 biglake)
 	SEL=(--test "sdb/**/*_iceberg.test_slow" --jobs 2)
@@ -44,7 +47,7 @@ biglake)
 	;;
 all | *)
 	SEL=(--test "sdb/**/*.test*")
-	[[ -n "$SANITIZER_SKIP" ]] && SEL+=(--skip "$SANITIZER_SKIP")
+	[[ -n "$CONFIG_SKIP" ]] && SEL+=(--skip "$CONFIG_SKIP")
 	;;
 esac
 

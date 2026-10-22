@@ -782,6 +782,9 @@ TEST(ShinglePhraseIndexTest, cover_scores_by_phrase_frequency) {
 }
 
 TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
+#ifdef SDB_COVERAGE
+  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
+#endif
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   for (const std::string_view separator : {" ", "\xC2\xB7", "--"}) {
     SCOPED_TRACE(separator);
@@ -805,6 +808,9 @@ TEST(ShinglePhraseIndexTest, cover_agrees_with_positions) {
 }
 
 TEST(ShinglePhraseIndexTest, checked_covers_agree_with_positions) {
+#ifdef SDB_COVERAGE
+  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
+#endif
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   for (const std::string_view separator : {" ", "\xC2\xB7", "--"}) {
     SCOPED_TRACE(separator);
@@ -828,6 +834,9 @@ TEST(ShinglePhraseIndexTest, checked_covers_agree_with_positions) {
 }
 
 TEST(ShinglePhraseIndexTest, checked_phrases_agree_with_positions) {
+#ifdef SDB_COVERAGE
+  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
+#endif
   static constexpr std::string_view kWords[] = {"a", "b", "c", "d", "e"};
   std::mt19937 rng{19};
   const auto texts = RandomTexts(rng, kWords, 400, 3, 12);

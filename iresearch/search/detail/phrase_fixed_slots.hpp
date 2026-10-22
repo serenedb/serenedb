@@ -71,13 +71,7 @@ class PhraseFixedSlots {
     return _leaves.Probe(target);
   }
 
-  bool Match(doc_id_t) {
-    if constexpr (requires { _matcher.Match(); }) {
-      return _matcher.Match();
-    } else {
-      return _matcher.template Match<false>();
-    }
-  }
+  bool Match(doc_id_t) { return _matcher.Match(); }
 
   static constexpr bool kHasFreqBound =
     requires(Matcher& m) { m.DocFreqBound(); };

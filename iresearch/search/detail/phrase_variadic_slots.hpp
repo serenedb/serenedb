@@ -116,11 +116,7 @@ class PhraseVariadicSlots {
     for (auto* slot : _probes) {
       slot->OnMatch();
     }
-    if constexpr (requires { _matcher.template Match<true>(); }) {
-      return _matcher.template Match<true>();
-    } else {
-      return _matcher.Match();
-    }
+    return _matcher.Match();
   }
 
   uint32_t Freq() const noexcept { return _matcher.GetFreq(); }

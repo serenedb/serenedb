@@ -339,11 +339,7 @@ class SearchSinkDeleteBaseImpl {
 };
 
 std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
-  std::span<const int64_t> starts, std::span<const uint64_t> counts,
-  std::span<const uint64_t> positions);
-
-std::shared_ptr<const irs::DocRemoval> MakeRowRangeRemoval(
-  std::vector<irs::KeyRange> ranges);
+  std::span<const uint64_t> starts, std::span<const uint64_t> counts);
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {

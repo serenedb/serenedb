@@ -459,15 +459,10 @@ void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
                          row_start.GetIndex());
 }
 
-void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
-                                    duckdb::DataChunk& chunk) {
-  _storage->ReplayDelete(catalog.GetAttached(), chunk);
-}
-
 void SearchTableEntry::ReplayDeleteRanges(
   duckdb::ClientContext&, const duckdb::WALDeleteRowRanges& entry) {
   _storage->ReplayDeleteRanges(catalog.GetAttached(), entry.starts,
-                               entry.counts, entry.positions);
+                               entry.counts);
 }
 
 void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {

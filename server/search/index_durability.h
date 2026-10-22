@@ -76,10 +76,9 @@ class IndexDurability {
                        const irs::ProgressReportCallback& progress,
                        RefreshResult& code, absl::FunctionRef<void()> unchanged,
                        absl::FunctionRef<void()> published);
-  void ReplaceSegments(
-    irs::IndexWriter& writer, std::span<const std::string_view> replaced,
-    std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider);
+  void ReplaceSegments(irs::IndexWriter& writer,
+                       std::span<const std::string_view> replaced,
+                       std::span<irs::IndexWriter::Replacement> adopted);
   void Clear(irs::IndexWriter& writer, const irs::SourcePosition& position);
   void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
   bool FinishCheckpoint(irs::IndexWriter& writer);

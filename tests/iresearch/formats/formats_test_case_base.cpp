@@ -24,6 +24,7 @@
 #include "formats_test_case_base.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -42,6 +43,7 @@
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
+#include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
@@ -53,8 +55,10 @@
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <roaring/roaring.hh>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "utils/write_helpers.hpp"
@@ -1007,6 +1011,135 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
         ERRCODE_INDEX_CORRUPTED);
     }
   }
+}
+
+TEST_P(FormatTestCase, segment_meta_absorbed_read_write) {
+  const auto mask_of = [](std::initializer_list<irs::doc_id_t> docs) {
+    irs::DocumentMaskBuilder builder;
+    for (const auto doc : docs) {
+      builder.Add(doc);
+    }
+    return std::make_shared<const irs::DocumentMask>(
+      std::move(builder).Finish());
+  };
+  for (const bool with_mask : {true, false}) {
+    irs::SegmentMeta meta;
+    meta.name = with_mask ? "absorbing_masked" : "absorbing";
+    meta.docs_count = 40;
+    meta.live_docs_count = with_mask ? 38 : 40;
+    meta.byte_size = 666;
+    meta.version = 3;
+    if (with_mask) {
+      meta.docs_mask = mask_of({7, 30});
+    }
+    meta.files.emplace_back("file1");
+    meta.absorbed = {
+      {.number = 5,
+       .steps =
+         {{.mask = mask_of({2, 5}), .rank_begin = 0, .rank_end = 10, .base = 1},
+          {.rank_begin = 3, .rank_end = 9, .base = 12}}},
+      {.number = 9, .steps = {{.rank_begin = 0, .rank_end = 4, .base = 20}}},
+      {.number = 11,
+       .steps = {{.mask = mask_of({1, 2, 3, 70000}),
+                  .rank_begin = 0,
+                  .rank_end = 0,
+                  .base = 40}}}};
+
+    std::string filename;
+    irs::segment_meta::Write(dir(), filename, meta);
+
+    irs::SegmentMeta read_meta;
+    irs::segment_meta::Read(dir(), read_meta, filename);
+    EXPECT_EQ(meta.absorbed, read_meta.absorbed);
+    EXPECT_EQ(meta.docs_count, read_meta.docs_count);
+    EXPECT_EQ(meta.files, read_meta.files);
+    if (with_mask) {
+      ASSERT_NE(nullptr, read_meta.docs_mask);
+      EXPECT_EQ(*meta.docs_mask, *read_meta.docs_mask);
+      EXPECT_EQ(meta.docs_mask->FrozenSize(), read_meta.docs_mask_size);
+      EXPECT_EQ(meta.byte_size, read_meta.byte_size);
+    } else {
+      EXPECT_EQ(nullptr, read_meta.docs_mask);
+      EXPECT_EQ(0, read_meta.docs_mask_size);
+    }
+    ASSERT_TRUE(dir().remove(filename));
+  }
+}
+
+TEST_P(FormatTestCase, segment_meta_rejects_malformed_absorbed_steps) {
+  const std::array<std::pair<std::string_view, irs::AbsorbedStep>, 2> cases{{
+    {"reversed_window", {.rank_begin = 5, .rank_end = 4, .base = 1}},
+    {"invalid_base", {.rank_begin = 0, .rank_end = 4, .base = 0}},
+  }};
+  for (const auto& [name, step] : cases) {
+    irs::SegmentMeta meta;
+    meta.name = name;
+    meta.docs_count = 10;
+    meta.live_docs_count = 10;
+    meta.files.emplace_back("file1");
+    meta.absorbed = {{.number = 3, .steps = {step}}};
+    std::string filename;
+    irs::segment_meta::Write(dir(), filename, meta);
+
+    std::string message{"not rejected"};
+    try {
+      irs::SegmentMeta read_meta;
+      irs::segment_meta::Read(dir(), read_meta, filename);
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
+      message = e.what();
+    }
+    EXPECT_NE(std::string::npos, message.find("has a malformed step"))
+      << message;
+  }
+}
+
+TEST_P(FormatTestCase, segment_meta_rejects_absorbed_masks_past_the_data) {
+  namespace sm = irs::segment_meta;
+  {
+    auto out = dir().create(irs::FileName("short_masks", 1, sm::kExt));
+    ASSERT_NE(nullptr, out);
+    irs::format_utils::WriteFooter(*out, [&](
+                                           duckdb::BinarySerializer& meta_out) {
+      meta_out.WriteList(
+        sm::kFieldFiles, "files", 1,
+        [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+          list.WriteElement<std::string>("file1");
+        });
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 10);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
+      meta_out.WriteList(
+        sm::kFieldAbsorbed, "absorbed", 1,
+        [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+          list.WriteObject([](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<uint32_t>(sm::kAbsorbedFieldNumber, "number", 3);
+            obj.WriteList(
+              sm::kAbsorbedFieldSteps, "steps", 1,
+              [](duckdb::BinarySerializer::List& steps, duckdb::idx_t) {
+                steps.WriteObject([](duckdb::BinarySerializer& step) {
+                  step.WriteProperty<uint32_t>(sm::kStepFieldRankBegin,
+                                               "rank_begin", 0);
+                  step.WriteProperty<uint32_t>(sm::kStepFieldRankEnd,
+                                               "rank_end", 4);
+                  step.WriteProperty<uint32_t>(sm::kStepFieldBase, "base", 1);
+                  step.WriteProperty<uint64_t>(sm::kStepFieldMaskSize,
+                                               "mask_size", 1000);
+                });
+              });
+          });
+        });
+    });
+  }
+  std::string message{"not rejected"};
+  try {
+    irs::SegmentMeta meta;
+    sm::Read(dir(), meta, irs::FileName("short_masks", 1, sm::kExt));
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("absorbed segment masks exceed"))
+    << message;
 }
 
 TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {

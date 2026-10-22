@@ -158,10 +158,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // buffer is replayed, ordered against exactly the rows that precede it. The
   // new row is buffered straight after, so it still outranks the removal of the
   // version it replaces.
-  const auto& old_columns = gstate.old_pk_columns;
   gstate.sdb_txn->SearchTxn().AddSearchDeletes(
-    gstate.search_table, chunk.data[old_columns[0].input_col_idx],
-    chunk.data[old_columns[1].input_col_idx]);
+    gstate.search_table, chunk.data[gstate.old_pk_columns[1].input_col_idx]);
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);

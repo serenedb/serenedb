@@ -38,6 +38,15 @@ inline constexpr std::string_view kExt = "sm";
 inline constexpr duckdb::field_id_t kFieldFiles = 1;
 inline constexpr duckdb::field_id_t kFieldDocsCount = 2;
 inline constexpr duckdb::field_id_t kFieldByteSize = 3;
+inline constexpr duckdb::field_id_t kFieldAbsorbed = 4;
+
+inline constexpr duckdb::field_id_t kAbsorbedFieldNumber = 1;
+inline constexpr duckdb::field_id_t kAbsorbedFieldSteps = 2;
+
+inline constexpr duckdb::field_id_t kStepFieldRankBegin = 1;
+inline constexpr duckdb::field_id_t kStepFieldRankEnd = 2;
+inline constexpr duckdb::field_id_t kStepFieldBase = 3;
+inline constexpr duckdb::field_id_t kStepFieldMaskSize = 4;
 
 std::string FileName(const SegmentMeta& meta);
 

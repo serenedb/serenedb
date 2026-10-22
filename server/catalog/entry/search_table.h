@@ -182,8 +182,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   void ReplayInsert(duckdb::ClientContext& context, duckdb::DataChunk& chunk,
                     duckdb::optional_idx row_start) final;
-  void ReplayDelete(duckdb::ClientContext& context,
-                    duckdb::DataChunk& chunk) final;
   void ReplayDeleteRanges(duckdb::ClientContext& context,
                           const duckdb::WALDeleteRowRanges& entry) final;
   void ReplayTruncate(duckdb::ClientContext& context) final;

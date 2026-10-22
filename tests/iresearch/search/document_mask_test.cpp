@@ -127,7 +127,7 @@ std::string FrozenBlob(const irs::DocumentMask& mask) {
 
 irs::DocumentMask ReadFrozen(std::string_view blob) {
   irs::BytesViewInput in{irs::ViewCast<irs::byte_type>(blob)};
-  return irs::DocumentMask::ReadFrozen(in, blob.size());
+  return irs::DocumentMask::ReadFrozen(in, 0, blob.size());
 }
 
 irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {
@@ -316,6 +316,21 @@ TEST_P(DocumentMaskTest, contains_and_count) {
         << first << ".." << last;
     }
   });
+}
+
+TEST_P(DocumentMaskTest, for_each_and_count_below_match_reference) {
+  std::vector<doc_id_t> visited;
+  _mask.ForEach([&](doc_id_t doc) { visited.push_back(doc); });
+  std::vector<doc_id_t> expected;
+  doc_id_t below = 0;
+  for (doc_id_t doc = 1; doc <= kLimit; ++doc) {
+    ASSERT_EQ(below, _mask.CountBelow(doc)) << doc;
+    if (_ref->Masked(doc)) {
+      expected.push_back(doc);
+      ++below;
+    }
+  }
+  ASSERT_EQ(expected, visited);
 }
 
 TEST_P(DocumentMaskTest, probe_test_and_next_live) {

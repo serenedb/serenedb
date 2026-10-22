@@ -71,6 +71,13 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   if (has_mask) {
     WriteDocumentMask(*out, *docs_mask, mask_size);
   }
+  for (const auto& absorbed : meta.absorbed) {
+    for (const auto& step : absorbed.steps) {
+      if (step.mask) {
+        WriteDocumentMask(*out, *step.mask, step.mask->FrozenSize());
+      }
+    }
+  }
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteList(
@@ -82,6 +89,34 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta) {
                                      meta.docs_count);
     meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
                                      size_without_mask);
+    if (meta.absorbed.empty()) {
+      return;
+    }
+    meta_out.WriteList(
+      kFieldAbsorbed, "absorbed", meta.absorbed.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        const auto& absorbed = meta.absorbed[i];
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          obj.WriteProperty<uint32_t>(kAbsorbedFieldNumber, "number",
+                                      absorbed.number);
+          obj.WriteList(
+            kAbsorbedFieldSteps, "steps", absorbed.steps.size(),
+            [&](duckdb::BinarySerializer::List& steps, duckdb::idx_t j) {
+              const auto& step = absorbed.steps[j];
+              steps.WriteObject([&](duckdb::BinarySerializer& step_out) {
+                step_out.WriteProperty<uint32_t>(kStepFieldRankBegin,
+                                                 "rank_begin", step.rank_begin);
+                step_out.WriteProperty<uint32_t>(kStepFieldRankEnd, "rank_end",
+                                                 step.rank_end);
+                step_out.WriteProperty<uint32_t>(kStepFieldBase, "base",
+                                                 step.base);
+                step_out.WritePropertyWithDefault<uint64_t>(
+                  kStepFieldMaskSize, "mask_size",
+                  step.mask ? step.mask->FrozenSize() : 0, 0);
+              });
+            });
+        });
+      });
   });
 
   meta.docs_mask_size = mask_size;

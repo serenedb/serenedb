@@ -29,7 +29,6 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/wal_entry.hpp>
-#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -40,7 +39,6 @@
 #include <vector>
 
 #include "connector/column_id.h"
-#include "connector/row_position.h"
 
 namespace duckdb {
 
@@ -54,21 +52,14 @@ struct InlinePk {
   uint64_t count;
 };
 
-using RowRange = irs::KeyRange;
-
-inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, int64_t rowid,
-                         uint64_t position) {
+inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, uint64_t position) {
   if (!runs.starts.empty() &&
-      rowid == runs.starts.back() + static_cast<int64_t>(runs.counts.back()) &&
-      (runs.positions.back() == connector::kNoRowPosition
-         ? position == connector::kNoRowPosition
-         : position == runs.positions.back() + runs.counts.back())) {
+      position == runs.starts.back() + runs.counts.back()) {
     ++runs.counts.back();
     return;
   }
-  runs.starts.emplace_back(rowid);
+  runs.starts.emplace_back(position);
   runs.counts.emplace_back(1);
-  runs.positions.emplace_back(position);
 }
 
 // Per-search-table, per-transaction write buffer.
@@ -83,7 +74,7 @@ struct LocalTableChangesEntry {
     // Insert bands of `pk_segments` that precede this op. Rows the flush
     // already promoted are gone from the buffer, so their ops sit at 0.
     uint32_t band_watermark = 0;
-    // Rowid ranges to remove. Empty for a TRUNCATE.
+    // Runs of row positions to remove. Empty for a TRUNCATE.
     duckdb::WALDeleteRowRanges deletes;
     bool truncate = false;
     bool clears_shard = false;
@@ -125,14 +116,19 @@ struct LocalTableChangesEntry {
     pk_segments.push_back({pk_base, chunk.size()});
   }
 
-  void AppendDeletes(const duckdb::Vector& rowids,
-                     const duckdb::Vector& positions) {
-    auto rows = rowids.Values<int64_t>();
-    const auto places = positions.Values<uint64_t>();
-    SDB_ENSURE(places.size() == rows.size(), "search table: ", places.size(),
-               " row positions for ", rows.size(), " deleted rows");
-    if (rows.size() == 0) {
+  void AppendDeletes(const duckdb::Vector& positions) {
+    auto places = positions.Values<uint64_t>();
+    if (places.size() == 0) {
       return;
+    }
+    if (places.CanHaveNull()) {
+      for (const auto& place : places) {
+        if (!place.IsValid()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+            ERR_MSG("search table: a deleted row has no storage position"));
+        }
+      }
     }
     const auto band = static_cast<uint32_t>(pk_segments.size());
     if (ops.size() == applied_ops || ops.back().truncate ||
@@ -140,11 +136,8 @@ struct LocalTableChangesEntry {
       ops.emplace_back().band_watermark = band;
     }
     auto& deletes = ops.back().deletes;
-    for (const auto& row : rows) {
-      const auto place = places[row.GetIndex()];
-      AppendRowRun(
-        deletes, row.GetValue(),
-        place.IsValid() ? place.GetValue() : connector::kNoRowPosition);
+    for (const auto& place : places) {
+      AppendRowRun(deletes, place.GetValue());
     }
   }
 

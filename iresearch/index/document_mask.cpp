@@ -174,7 +174,8 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
                                        &lhs._set.roaring, &rhs._set.roaring);
 }
 
-DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
+DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t offset,
+                                      uint64_t size) {
   DocumentMask mask;
   mask._frozen.reset(
     static_cast<byte_type*>(roaring_aligned_malloc(kFrozenAlignment, size)));
@@ -184,7 +185,7 @@ DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
       ERR_MSG("Failed to allocate a document mask of ", size, " byte(s)"));
   }
   auto* buf = mask._frozen.get();
-  in.ReadData(0, buf, size);
+  in.ReadData(offset, buf, size);
 
   const auto* view = roaring::api::roaring_bitmap_frozen_view(
     reinterpret_cast<const char*>(buf), size);
@@ -212,6 +213,12 @@ DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
 
 bool DocumentMask::Contains(doc_id_t doc) const noexcept {
   return roaring::api::roaring_bitmap_contains(&_set.roaring, doc);
+}
+
+doc_id_t DocumentMask::CountBelow(doc_id_t doc) const noexcept {
+  SDB_ASSERT(doc_limits::valid(doc));
+  return static_cast<doc_id_t>(
+    roaring::api::roaring_bitmap_rank(&_set.roaring, doc - 1));
 }
 
 size_t DocumentMask::ByteSize() const noexcept {

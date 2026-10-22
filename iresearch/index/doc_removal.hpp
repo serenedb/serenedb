@@ -22,27 +22,20 @@
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 struct SubReader;
-
-struct KeyRange {
-  int64_t begin;
-  int64_t end;
-};
-
-void AppendKeyRanges(std::vector<KeyRange>& ranges,
-                     std::span<const int64_t> keys);
-
-void NormalizeKeyRanges(std::vector<KeyRange>& ranges);
 
 struct DocRemoval {
   static constexpr uint32_t kNoSegment = std::numeric_limits<uint32_t>::max();
@@ -50,11 +43,11 @@ struct DocRemoval {
   struct Row {
     uint32_t segment;
     doc_id_t doc;
-    int64_t key;
   };
 
-  static DocRemoval Build(field_id key_column, std::span<const Row> rows,
-                          std::vector<KeyRange> ranges = {});
+  static DocRemoval Build(std::span<const Row> rows);
+
+  static DocRemoval All() { return DocRemoval{.all = true}; }
 
   size_t Find(uint32_t segment) const noexcept;
 
@@ -62,38 +55,37 @@ struct DocRemoval {
     return {docs.data() + offsets[group], docs.data() + offsets[group + 1]};
   }
 
-  std::span<const int64_t> Keys(size_t group) const noexcept {
-    return {keys.data() + offsets[group], keys.data() + offsets[group + 1]};
-  }
-
-  field_id key_column = field_limits::invalid();
+  bool all = false;
   std::vector<uint32_t> segments;
   std::vector<uint32_t> offsets;
   std::vector<doc_id_t> docs;
-  std::vector<int64_t> keys;
-  std::vector<KeyRange> ranges;
 };
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 
+std::optional<doc_id_t> AbsorbedDoc(std::span<const AbsorbedStep> steps,
+                                    doc_id_t doc) noexcept;
+
+struct RemovalTarget {
+  uint32_t number;
+  const SegmentMeta* meta;
+};
+
 class DocRemovalResolver {
  public:
   void Prepare(std::span<const DocRemoval* const> removals,
-               std::span<const SubReader* const> live);
+               std::span<const RemovalTarget> targets);
 
   std::span<const doc_id_t> PositionalDocs(const DocRemoval& removal,
                                            const SubReader& segment) const;
 
-  bool ByKey(const DocRemoval& removal) const noexcept {
-    return _by_key.contains(&removal);
+  bool Used(uint32_t absorbed) const noexcept {
+    return _used.contains(absorbed);
   }
 
-  std::vector<DocRange> ByKeyDocs(const SubReader& segment) const;
-
  private:
-  field_id _key_column = field_limits::invalid();
-  std::vector<KeyRange> _ranges;
-  irs::containers::FlatHashSet<const DocRemoval*> _by_key;
+  containers::NodeHashMap<const DocRemoval*, DocRemoval> _resolved;
+  containers::FlatHashSet<uint32_t> _used;
 };
 
 }  // namespace irs

@@ -128,11 +128,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk, uint64_t row_start);
-  void ReplayDelete(duckdb::AttachedDatabase& db, duckdb::DataChunk& chunk);
   void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
-                          std::span<const int64_t> starts,
-                          std::span<const uint64_t> counts,
-                          std::span<const uint64_t> positions);
+                          std::span<const uint64_t> starts,
+                          std::span<const uint64_t> counts);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
@@ -244,43 +242,28 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _build_in_flight.load(std::memory_order_acquire);
   }
 
-  bool IsDeleteLogOpen() const noexcept {
-    return _delete_log_open.load(std::memory_order_acquire);
+  bool WatchesTruncates() const noexcept {
+    return _truncate_watch.load(std::memory_order_acquire);
   }
-  void OpenDeleteLog();
-  void AppendDeleteLog(std::vector<RowRange> rows);
+  void WatchTruncates();
   void RecordTruncateForBuild(const irs::SourcePosition& position);
   bool TruncatedAfter(const irs::SourcePosition& position) {
-    absl::MutexLock lock{&_delete_log_mutex};
+    absl::MutexLock lock{&_truncate_mutex};
     return _build_truncate > position;
-  }
-
-  struct DrainedDeleteLog {
-    std::vector<RowRange> rows;
-    irs::SourcePosition truncate;
-  };
-
-  DrainedDeleteLog DrainDeleteLog() {
-    absl::MutexLock lock{&_delete_log_mutex};
-    return {.rows = std::exchange(_delete_log, {}),
-            .truncate = _build_truncate};
   }
 
   std::pair<irs::DirectoryReader, irs::SourcePosition>
   GetSnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
-  void CloseDeleteLog();
+  void StopWatchingTruncates();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  void ReplaceSegments(
-    std::span<const std::string_view> replaced,
-    std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
-    _durability.ReplaceSegments(*_writer, replaced, adopted_metas,
-                                removal_provider);
+  void ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<irs::IndexWriter::Replacement> adopted) {
+    _durability.ReplaceSegments(*_writer, replaced, adopted);
   }
 
  private:
@@ -328,12 +311,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
 
-  // Delete log. The open flag is atomic so the commit path can skip the mutex
-  // entirely when no build is running, which is the normal case.
-  std::atomic<bool> _delete_log_open{false};
-  absl::Mutex _delete_log_mutex;
-  std::vector<RowRange> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
-  irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_delete_log_mutex);
+  // The watch flag is atomic so the commit path can skip the mutex entirely
+  // when no build is running, which is the normal case.
+  std::atomic<bool> _truncate_watch{false};
+  absl::Mutex _truncate_mutex;
+  irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

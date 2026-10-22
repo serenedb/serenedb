@@ -76,13 +76,23 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
-  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
+  static DocumentMask ReadFrozen(IndexInput& in, uint64_t offset,
+                                 uint64_t size);
 
   size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
 
   void WriteFrozen(char* buf) const noexcept { _set.writeFrozen(buf); }
 
   bool Contains(doc_id_t doc) const noexcept;
+
+  doc_id_t CountBelow(doc_id_t doc) const noexcept;
+
+  template<typename Visitor>
+  void ForEach(Visitor&& visitor) const {
+    for (const auto doc : _set) {
+      visitor(static_cast<doc_id_t>(doc));
+    }
+  }
 
   size_t Count() const noexcept { return _count; }
 

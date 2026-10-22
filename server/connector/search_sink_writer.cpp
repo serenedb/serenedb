@@ -1119,48 +1119,21 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 }
 
 std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
-  std::span<const int64_t> starts, std::span<const uint64_t> counts,
-  std::span<const uint64_t> positions) {
-  SDB_ENSURE(counts.size() == starts.size() &&
-               (positions.empty() || positions.size() == starts.size()),
-             "search table: ", starts.size(), " removed row runs with ",
-             counts.size(), " counts and ", positions.size(), " positions");
+  std::span<const uint64_t> starts, std::span<const uint64_t> counts) {
+  SDB_ENSURE(counts.size() == starts.size(), "search table: ", starts.size(),
+             " removed row runs with ", counts.size(), " counts");
   if (starts.empty()) {
     return nullptr;
   }
-  const auto placed = [&](size_t run) {
-    return !positions.empty() && positions[run] != kNoRowPosition;
-  };
-  size_t placed_rows = 0;
-  for (size_t i = 0; i < starts.size(); ++i) {
-    placed_rows += placed(i) ? counts[i] : 0;
-  }
   std::vector<irs::DocRemoval::Row> rows;
-  rows.reserve(placed_rows);
-  std::vector<irs::KeyRange> unplaced;
+  rows.reserve(absl::c_accumulate(counts, size_t{0}));
   for (size_t i = 0; i < starts.size(); ++i) {
-    const auto count = static_cast<int64_t>(counts[i]);
-    if (!placed(i)) {
-      unplaced.emplace_back(starts[i], starts[i] + count);
-      continue;
-    }
-    for (int64_t row = 0; row < count; ++row) {
-      const auto position = positions[i] + static_cast<uint64_t>(row);
-      rows.emplace_back(RowPositionSegment(position), RowPositionDoc(position),
-                        starts[i] + row);
+    for (uint64_t row = 0; row < counts[i]; ++row) {
+      const auto position = starts[i] + row;
+      rows.emplace_back(RowPositionSegment(position), RowPositionDoc(position));
     }
   }
-  return std::make_shared<const irs::DocRemoval>(
-    irs::DocRemoval::Build(kGeneratedPKId, rows, std::move(unplaced)));
-}
-
-std::shared_ptr<const irs::DocRemoval> MakeRowRangeRemoval(
-  std::vector<irs::KeyRange> ranges) {
-  if (ranges.empty()) {
-    return nullptr;
-  }
-  return std::make_shared<const irs::DocRemoval>(
-    irs::DocRemoval::Build(kGeneratedPKId, {}, std::move(ranges)));
+  return std::make_shared<const irs::DocRemoval>(irs::DocRemoval::Build(rows));
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

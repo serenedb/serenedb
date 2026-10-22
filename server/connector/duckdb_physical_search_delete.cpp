@@ -146,10 +146,8 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   // Buffered, not removed here. The removal reaches iresearch when the write
   // buffer is replayed, after exactly the rows that precede it, which is what
   // reproduces the ordering these statements would have had.
-  const auto& columns = gstate.pk_columns;
   gstate.sdb_txn->SearchTxn().AddSearchDeletes(
-    gstate.search_table, chunk.data[columns[0].input_col_idx],
-    chunk.data[columns[1].input_col_idx]);
+    gstate.search_table, chunk.data[gstate.pk_columns[1].input_col_idx]);
 
   if (gstate.returned) {
     duckdb::DataChunk row;

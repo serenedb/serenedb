@@ -46,6 +46,8 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 
@@ -455,9 +457,13 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
+  struct Replacement {
+    std::string_view meta_file;
+    std::vector<AbsorbedSegment> absorbed;
+  };
+
   void ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       absl::FunctionRef<bool(QueryContext&)> removal_provider);
+                       std::span<Replacement> adopted);
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
@@ -499,7 +505,6 @@ class IndexWriter : private util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
     std::optional<MergeWriter> merger;
-    bool pending = false;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -517,8 +522,7 @@ class IndexWriter : private util::Noncopyable {
         reader{std::move(reader)},
         compaction_ctx{.compaction_reader = std::move(compaction_reader),
                        .candidates = std::move(compaction_candidates),
-                       .merger = std::move(merger),
-                       .pending = true} {}
+                       .merger = std::move(merger)} {}
 
     IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
@@ -549,7 +553,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    QueryContext removal;
+    std::vector<uint32_t> replaced;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
@@ -714,6 +718,8 @@ class IndexWriter : private util::Noncopyable {
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
+    uint64_t seq = 0;
+    containers::FlatHashSet<uint32_t> retiring;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -787,6 +793,14 @@ class IndexWriter : private util::Noncopyable {
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
+  struct PublishedReader {
+    uint64_t seq;
+    std::weak_ptr<const DirectoryReaderImpl> reader;
+  };
+  std::vector<PublishedReader> _published;
+  uint64_t _commit_seq = 0;
+  containers::FlatHashMap<uint32_t, uint64_t> _absorbed_at;
+  containers::FlatHashSet<uint32_t> _retiring;
   PendingState _pending_state;
   SegmentLimits _segment_limits;
   SegmentPool _segment_writer_pool;

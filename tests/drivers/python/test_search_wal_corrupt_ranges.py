@@ -16,7 +16,7 @@ SERENED_BIN = os.environ.get(
 )
 
 EMPTY_RANGE_FAULT = "search_delete_wal_empty_range"
-EXTRA_POSITION_FAULT = "search_delete_wal_extra_position"
+OUTSIDE_SEGMENT_FAULT = "search_delete_wal_outside_segment"
 
 pytestmark = pytest.mark.skipif(
     not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
@@ -29,8 +29,8 @@ pytestmark = pytest.mark.skipif(
     [
         (EMPTY_RANGE_FAULT, "Corrupt WAL: row range out of bounds"),
         (
-            EXTRA_POSITION_FAULT,
-            "Corrupt WAL: row ranges with mismatched starts and positions",
+            OUTSIDE_SEGMENT_FAULT,
+            "Corrupt WAL: search-table row range leaves its segment",
         ),
     ],
 )

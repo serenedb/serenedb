@@ -65,6 +65,11 @@ bool IResearchConsumeTopN(duckdb::ClientContext& context,
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   duckdb::TableFunctionToStringInput& input);
 
+duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
+IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input);
+
+duckdb::virtual_column_map_t ScanVirtualColumns(const ScanBindData& bind);
+
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data,
                                       const duckdb::LogicalIndex& col_idx);
 

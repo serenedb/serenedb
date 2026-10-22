@@ -36,35 +36,36 @@ query
 EXPLAIN SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet') ORDER BY id % 1500, id LIMIT 4;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────╮
-│ Projections: #0, #1, #2, #3   │
-│ ~4 rows                       │
-╰───────────────┬───────────────╯
-╭─ PROJECTION ──┴───────────────╮
-│ Projections: id, title, body, │
-│              n, id % 1500     │
-│ ~4 rows                       │
-╰───────────────┬───────────────╯
-╭─ LOOKUP_JOIN ─┴───────────────╮
-│ ~4 rows                       │
-╰───────────────┬───────────────╯
-                ├───────────────────────────────╮
-╭─ TOP_N ───────┴───────────────╮  ╭─ READ_PARQUET ─────────╮
-│ Top: 4                        │  │ Function: READ_PARQUET │
-│ Order By: #1 ASC, id ASC      │  │ Projections: title,    │
-│ ~4 rows                       │  │              body, n   │
-╰───────────────┬───────────────╯  │ ~4 rows                │
-╭─ PROJECTION ──┴───────────────╮  ╰────────────────────────╯
-│ Projections: id, id % 1500,   │
-│              file_index,      │
-│              file_row_number  │
-│ ~3,000 rows                   │
-╰───────────────┬───────────────╯
-╭─ READ_PARQUET ┴───────────────╮
-│ Function: READ_PARQUET        │
-│ Projections: id               │
-│ ~3,000 rows                   │
-╰───────────────────────────────╯
+╭─ PROJECTION ─────────────────────╮
+│ Projections: #0, #1, #2, #3      │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: id, title, body, n, │
+│              id % 1500           │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+╭─ LOOKUP_JOIN ───┴────────────────╮
+│ Key: file_index, file_row_number │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+                  ├────────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ READ_PARQUET ─────────╮
+│ Top: 4                           │  │ Function: READ_PARQUET │
+│ Order By: #1 ASC, id ASC         │  │ Projections: title,    │
+│ ~4 rows                          │  │              body, n   │
+╰─────────────────┬────────────────╯  │ ~4 rows                │
+╭─ PROJECTION ────┴────────────────╮  ╰────────────────────────╯
+│ Projections: id, id % 1500,      │
+│              file_index,         │
+│              file_row_number     │
+│ ~3,000 rows                      │
+╰─────────────────┬────────────────╯
+╭─ READ_PARQUET ──┴────────────────╮
+│ Function: READ_PARQUET           │
+│ Projections: id                  │
+│ ~3,000 rows                      │
+╰──────────────────────────────────╯
 
 query
 SELECT id, title FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet') ORDER BY id % 1500, id LIMIT 4;
@@ -107,15 +108,21 @@ QUERY PLAN
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+│ Key: pk                                                 │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
-                             ├───────────────────────────────────────────╮
-╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
-│ Top: 5                                                  │  │ Lookup: glob parquet │
-│ Order By: #0 ASC                                        │  │ Projections: title,  │
-│ ~5 rows                                                 │  │              n       │
-╰────────────────────────────┬────────────────────────────╯  │ ~5 rows              │
-╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────────╯
+                             ├───────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                  ╭─ INDEX_SOURCE ───────╮
+│ Key: iresearch_pk                                       │                  │ Lookup: glob parquet │
+│ ~5 rows                                                 │                  │ Projections: title   │
+╰────────────────────────────┬────────────────────────────╯                  │ ~5 rows              │
+                             ├────────────────────────────────────────────╮  ╰──────────────────────╯
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ───────╮
+│ Top: 5                                                  │  │ Index: ljaz_v_glob_idx │
+│ Order By: #0 ASC                                        │  │ Projections: n, pk     │
+│ ~5 rows                                                 │  │ ~5 rows                │
+╰────────────────────────────┬────────────────────────────╯  ╰────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: ljaz_v_glob_idx                                  │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
@@ -125,7 +132,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, doc_address      │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 

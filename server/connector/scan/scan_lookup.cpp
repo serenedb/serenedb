@@ -239,7 +239,7 @@ duckdb::TableFunction IResearchGetLookupFunction(duckdb::ClientContext&,
   lookup.init_global = LookupInitGlobal;
   lookup.init_local = LookupInitLocal;
   lookup.in_out_function = LookupFunction;
-  lookup.to_string_value = LookupToStringValue;
+  lookup.to_string_value = IndexLookupToStringValue;
   return lookup;
 }
 

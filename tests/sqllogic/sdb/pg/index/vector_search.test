@@ -122,22 +122,23 @@ QUERY PLAN
 │ ~4 rows                         │
 ╰────────────────┬────────────────╯
 ╭─ LOOKUP_JOIN ──┴────────────────╮
+│ Key: iresearch_pk               │
 │ ~4 rows                         │
 ╰────────────────┬────────────────╯
                  ├─────────────────────────────╮
 ╭─ TOP_N ────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Top: 5                          │  │ Lookup: table    │
-│ Order By: #0 ASC                │  │ Projections: id  │
-│ ~4 rows                         │  │ ~4 rows          │
-╰────────────────┬────────────────╯  ╰──────────────────╯
-╭─ PROJECTION ───┴────────────────╮
+│ Top: 5                          │  │ Index: l2_index  │
+│ Order By: #0 ASC                │  │ Lookup: table    │
+│ ~4 rows                         │  │ Projections: id  │
+╰────────────────┬────────────────╯  │ ~4 rows          │
+╭─ PROJECTION ───┴────────────────╮  ╰──────────────────╯
 │ Projections: emb <=> [0, 0, 0], │
-│              doc_address, emb   │
+│              iresearch_pk, emb  │
 │ ~4 rows                         │
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: l2_index                 │
-│ Projections: emb, doc_address   │
+│ Projections: emb, iresearch_pk  │
 │ ~4 rows                         │
 ╰─────────────────────────────────╯
 
@@ -352,22 +353,23 @@ QUERY PLAN
 │ ~4 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ LOOKUP_JOIN ────┴──────────────────╮
+│ Key: iresearch_pk                   │
 │ ~4 rows                             │
 ╰──────────────────┬──────────────────╯
                    ├───────────────────────────────╮
 ╭─ TOP_N ──────────┴──────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Top: 5                              │  │ Lookup: table    │
-│ Order By: #0 ASC                    │  │ Projections: id  │
-│ ~4 rows                             │  │ ~4 rows          │
-╰──────────────────┬──────────────────╯  ╰──────────────────╯
-╭─ PROJECTION ─────┴──────────────────╮
+│ Top: 5                              │  │ Index: l2_index  │
+│ Order By: #0 ASC                    │  │ Lookup: table    │
+│ ~4 rows                             │  │ Projections: id  │
+╰──────────────────┬──────────────────╯  │ ~4 rows          │
+╭─ PROJECTION ─────┴──────────────────╮  ╰──────────────────╯
 │ Projections: l2_distance(emb, emb), │
-│              doc_address, emb       │
+│              iresearch_pk, emb      │
 │ ~4 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: l2_index                     │
-│ Projections: emb, doc_address       │
+│ Projections: emb, iresearch_pk      │
 │ ~4 rows                             │
 ╰─────────────────────────────────────╯
 

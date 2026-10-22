@@ -51,15 +51,16 @@ QUERY PLAN
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+│ Key: iresearch_pk                                       │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
-                             ├─────────────────────────────────────────╮
-╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Top: 5                                                  │  │ Lookup: table    │
-│ Order By: #0 ASC                                        │  │ Projections: id  │
-│ ~1 row                                                  │  │ ~1 row           │
-╰────────────────────────────┬────────────────────────────╯  ╰──────────────────╯
-╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+                             ├───────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
+│ Top: 5                                                  │  │ Index: docs_topk_idx │
+│ Order By: #0 ASC                                        │  │ Lookup: table        │
+│ ~1 row                                                  │  │ Projections: id      │
+╰────────────────────────────┬────────────────────────────╯  │ ~1 row               │
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────────╯
 │ Index: docs_topk_idx                                    │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
@@ -69,7 +70,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, doc_address      │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 

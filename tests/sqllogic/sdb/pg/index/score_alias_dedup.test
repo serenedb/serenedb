@@ -267,18 +267,19 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮
+│ Key: iresearch_pk                      │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
-                     ├─────────────────────────────────╮
-╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ────╮
-│ Top: 3                                 │  │ Lookup: table       │
-│ Order By: #0 DESC                      │  │ Projections: kostya │
-│ ~1 row                                 │  │ ~1 row              │
-╰────────────────────┬───────────────────╯  ╰─────────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
+                     ├──────────────────────────────────────╮
+╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ─────────────╮
+│ Top: 3                                 │  │ Index: vedernikoff_alias_idx │
+│ Order By: #0 DESC                      │  │ Lookup: table                │
+│ ~1 row                                 │  │ Projections: kostya          │
+╰────────────────────┬───────────────────╯  │ ~1 row                       │
+╭─ PROJECTION ───────┴───────────────────╮  ╰──────────────────────────────╯
 │ Projections:                           │
 │ 2 * sdb_inverted_index_score,          │
-│ doc_address, sdb_inverted_index_score  │
+│ iresearch_pk, sdb_inverted_index_score │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -290,7 +291,7 @@ QUERY PLAN
 │ ╰────────────────────────╯             │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: sdb_inverted_index_score, │
-│              doc_address               │
+│              iresearch_pk              │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
 

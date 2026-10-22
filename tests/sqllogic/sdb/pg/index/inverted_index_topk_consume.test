@@ -166,17 +166,18 @@ QUERY PLAN
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯
 ╭─ LOOKUP_JOIN ───┴────────────────╮
+│ Key: iresearch_pk                │
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯
                   ├─────────────────────────────╮
 ╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Top: 2                           │  │ Lookup: table    │
-│ Order By: #0 DESC                │  │ Projections: id  │
-│ ~2 rows                          │  │ ~2 rows          │
-╰─────────────────┬────────────────╯  ╰──────────────────╯
-╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Top: 2                           │  │ Index: tk_idx    │
+│ Order By: #0 DESC                │  │ Lookup: table    │
+│ ~2 rows                          │  │ Projections: id  │
+╰─────────────────┬────────────────╯  │ ~2 rows          │
+╭─ IRESEARCH_SCAN ┴────────────────╮  ╰──────────────────╯
 │ Index: tk_idx                    │
-│ Projections: n, doc_address      │
+│ Projections: n, iresearch_pk     │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (n > ?) │
 │ ~5 rows                          │

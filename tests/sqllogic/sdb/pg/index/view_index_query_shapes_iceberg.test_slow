@@ -189,10 +189,11 @@ QUERY PLAN
 │ ~1 row                            │
 ╰─────────────────┬─────────────────╯
 ╭─ LOOKUP_JOIN ───┴─────────────────╮
+│ Key: pk                           │
 │ ~1 row                            │
 ╰─────────────────┬─────────────────╯
                   ├─────────────────────────────────╮
-╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ───────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────────╮
 │ Top: 2                            │  │ Lookup: iceberg        │
 │ Order By: #0 DESC                 │  │ Projections: body,     │
 │ ~1 row                            │  │              category  │
@@ -207,7 +208,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (id > ?) │
-│ Projections: id, doc_address      │
+│ Projections: id, pk               │
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 

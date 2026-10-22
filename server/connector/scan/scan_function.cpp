@@ -568,6 +568,34 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
   return true;
 }
 
+duckdb::virtual_column_map_t ScanVirtualColumns(const ScanBindData& bind) {
+  duckdb::virtual_column_map_t result;
+  if (bind.relation.table_entry) {
+    result = bind.relation.table_entry->GetVirtualColumns();
+    result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
+  }
+  if (bind.IsViewBacked()) {
+    result.insert(
+      {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+       duckdb::TableColumn("file_index", duckdb::LogicalType::UBIGINT)});
+    result.insert(
+      {kColumnIdentifierPkRowNumber,
+       duckdb::TableColumn("row_number", duckdb::LogicalType::BIGINT)});
+  }
+  if (LooksUpByPk(bind)) {
+    result.insert({kColumnIdentifierGeneratedPk,
+                   duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
+  }
+  result.insert(
+    {kColumnIdentifierDocAddress,
+     duckdb::TableColumn("iresearch_pk", duckdb::LogicalType::BIGINT)});
+  result.insert({kColumnIdentifierTableOid,
+                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
+  return result;
+}
+
 namespace {
 
 duckdb::BindInfo ScanGetBindInfo(
@@ -589,35 +617,10 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanCardinality(
 
 duckdb::virtual_column_map_t ScanGetVirtualColumns(
   duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
-  duckdb::virtual_column_map_t result;
   if (!bind_p) {
-    return result;
+    return {};
   }
-  const auto& bind = bind_p->Cast<ScanBindData>();
-  if (bind.relation.table_entry) {
-    result = bind.relation.table_entry->GetVirtualColumns();
-    result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
-  }
-  if (bind.IsViewBacked()) {
-    result.insert(
-      {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
-       duckdb::TableColumn("file_index", duckdb::LogicalType::UBIGINT)});
-    result.insert(
-      {kColumnIdentifierPkRowNumber,
-       duckdb::TableColumn("row_number", duckdb::LogicalType::BIGINT)});
-  }
-  if (LooksUpByPk(bind)) {
-    result.insert({kColumnIdentifierGeneratedPk,
-                   duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
-  }
-  result.insert(
-    {kColumnIdentifierDocAddress,
-     duckdb::TableColumn("doc_address", duckdb::LogicalType::BIGINT)});
-  result.insert({kColumnIdentifierTableOid,
-                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
-  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
-                 duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
-  return result;
+  return ScanVirtualColumns(bind_p->Cast<ScanBindData>());
 }
 
 void ScanSerialize(duckdb::Serializer&,

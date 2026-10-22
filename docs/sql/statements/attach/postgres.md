@@ -46,7 +46,7 @@ The connection string is a list of `{key}={value}` arguments. The most common on
 
 ## Remote servers
 
-A query that keeps only some rows of a PostgreSQL table — `ORDER BY … LIMIT k`, a `LIMIT k` after a filter or an `OFFSET`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) — reads the columns it sorts and filters by for every row, and its other columns only for the rows it keeps (a `LOOKUP_JOIN` in the plan). This is done only for a remote server; a local server sends the whole rows in one pass.
+A query that keeps only some rows of a PostgreSQL table — `ORDER BY … LIMIT k`, a `LIMIT k` after a filter or an `OFFSET`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) — reads the columns it sorts and filters by for every row, and its other columns only for the rows it keeps, found by their `ctid` (a `LOOKUP_JOIN` with `Key: ctid` in the plan). This is done only for a remote server; a local server sends the whole rows in one pass.
 
 A server is local when the connection goes to a loopback address or through a unix socket. The `remote` option of `ATTACH` overrides that: `ATTACH '…' AS pg (TYPE postgres, remote true)` treats the server as remote, `remote false` as local.
 

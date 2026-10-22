@@ -48,6 +48,7 @@ QUERY PLAN
 │ ~0 rows                           │
 ╰─────────────────┬─────────────────╯
 ╭─ LOOKUP_JOIN ───┴─────────────────╮
+│ Key: ctid                         │
 │ ~0 rows                           │
 ╰─────────────────┬─────────────────╯
                   ├───────────────────────────────╮
@@ -90,6 +91,7 @@ QUERY PLAN
 │ ~0 rows              │
 ╰───────────┬──────────╯
 ╭─ LOOKUP_JOIN ────────╮
+│ Key: ctid            │
 │ ~0 rows              │
 ╰───────────┬──────────╯
             ├────────────────────────╮
@@ -185,6 +187,18 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljs_loc
 query
 EXPLAIN SELECT id, title, body FROM ljs_local_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
 ----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1, #2           │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: t                          │
+│ Projections: id, title, body, k   │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
 
 query
 SELECT id, title FROM ljs_local_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;

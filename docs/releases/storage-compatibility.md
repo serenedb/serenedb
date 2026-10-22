@@ -29,7 +29,8 @@ The catalog log belongs to the whole instance: if a release refuses it or cannot
 A server keeps its catalog and its databases under `engine_v1` in its data directory:
 
 - `engine_v1/catalog.wal`: the catalog log.
-- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, the write-ahead logs that checkpoints [kept for search tables](../sql/indexes/inverted/maintenance.md#durability) (`data.db.wal.retained.<n>`), and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
+- `engine_v1/index_location`: the [index location](../configuration/index_storage.md) the cluster was created with, empty for the data directory.
+- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, the write-ahead logs that checkpoints [kept for search tables](../sql/indexes/inverted/maintenance.md#durability) (`data.db.wal.retained.<n>`), and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`. A cluster with an index location keeps these directories at that location instead, under `<location>/<oid>/`.
 
 Beside `engine_v1`, the root of the data directory holds:
 
@@ -39,7 +40,7 @@ Beside `engine_v1`, the root of the data directory holds:
 - `extensions/`: the extension directory (the `extension_directory` setting).
 - `LOCK`: held while the server runs, so that a second server does not start on the same data directory.
 
-`engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
+`engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well, and the index files at the cluster's index location when it has one. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
 
 Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 

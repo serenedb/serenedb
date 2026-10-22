@@ -199,6 +199,7 @@ class _Server(http.server.ThreadingHTTPServer):
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
     fake: FakeS3
 
     def log_message(self, *args) -> None:

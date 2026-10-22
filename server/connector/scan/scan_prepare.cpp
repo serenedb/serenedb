@@ -77,7 +77,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     }
     const auto& query = EnsureSegmentQuery(g, l, seg);
     if (g.remote) {
-      irs::PrefetchPostingHeads(query);
+      irs::PrefetchPostingHeads(query, 1);
     }
     if (g.stats_barrier.Arrive()) {
       if (g.collector) {

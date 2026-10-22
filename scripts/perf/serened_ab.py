@@ -289,24 +289,33 @@ def cmd_remote(args):
             print(json.dumps(result), file=out, flush=True)
             with psycopg.connect(server.dsn(), autocommit=True) as con:
                 items = [(cmd, q) for q in queries for cmd in commands]
-                for phase in ("cold", "warm"):
-                    if phase == "warm":
-                        for cmd, q in items:
-                            con.execute(SQL[cmd], (q,)).fetchall()
+                for i, (cmd, q) in enumerate(items):
+                    con.execute("SET GLOBAL enable_external_file_cache = false")
+                    con.execute("SET GLOBAL enable_external_file_cache = true")
+                    before = store_requests(store) if store else None
+                    try:
+                        ms = timed_statement(con, cmd, q)
+                    except psycopg.Error as e:
+                        print(json.dumps({"phase": "cold", "cmd": cmd, "item": i, "error": str(e)}), file=out)
+                        continue
+                    result = {"phase": "cold", "cmd": cmd, "item": i, "ms": ms}
+                    if store:
+                        result["requests"] = dict(store_requests(store) - before)
+                    print(json.dumps(result), file=out, flush=True)
+                for cmd, q in items:
+                    con.execute(SQL[cmd], (q,)).fetchall()
+                before = store_requests(store) if store else None
+                for _ in range(args.repeats):
                     for i, (cmd, q) in enumerate(items):
-                        if phase == "cold":
-                            con.execute("SET GLOBAL enable_external_file_cache = false")
-                            con.execute("SET GLOBAL enable_external_file_cache = true")
-                        before = store_requests(store) if store else None
                         try:
                             ms = timed_statement(con, cmd, q)
                         except psycopg.Error as e:
-                            print(json.dumps({"phase": phase, "cmd": cmd, "item": i, "error": str(e)}), file=out)
+                            print(json.dumps({"phase": "warm", "cmd": cmd, "item": i, "error": str(e)}), file=out)
                             continue
-                        result = {"phase": phase, "cmd": cmd, "item": i, "ms": ms}
-                        if store:
-                            result["requests"] = dict(store_requests(store) - before)
-                        print(json.dumps(result), file=out, flush=True)
+                        print(json.dumps({"phase": "warm", "cmd": cmd, "item": i, "ms": ms}), file=out, flush=True)
+                if store:
+                    print(json.dumps({"phase": "warm", "statements": args.repeats * len(items),
+                                      "requests": dict(store_requests(store) - before)}), file=out, flush=True)
         finally:
             server.stop()
     if store:
@@ -323,14 +332,41 @@ def cmd_remote_summary(args):
                     continue
                 rows[(path, r["phase"], r.get("cmd", ""))].append(r)
     for (path, phase, cmd), runs in sorted(rows.items()):
-        ms = [r["ms"] for r in runs]
         requests = collections.Counter()
         for r in runs:
             requests.update(r.get("requests", {}))
-        row = {"file": os.path.basename(path), "phase": phase, "cmd": cmd, "n": len(runs),
-               "p50_ms": round(statistics.median(ms), 2), "p95_ms": round(pct(ms, 0.95), 2),
-               "requests_per_run": {k: round(v / len(runs), 2) for k, v in sorted(requests.items())}}
+        ms = [r["ms"] for r in runs if "ms" in r]
+        statements = len(ms) or sum(r.get("statements", 0) for r in runs)
+        row = {"file": os.path.basename(path), "phase": phase, "cmd": cmd, "n": len(ms),
+               "requests_per_run": {k: round(v / statements, 2) for k, v in sorted(requests.items())}}
+        if ms:
+            row.update(p50_ms=round(statistics.median(ms), 2), p95_ms=round(pct(ms, 0.95), 2))
         print(json.dumps(row))
+
+
+def item_medians(path, phase):
+    runs = collections.defaultdict(list)
+    with open(path) as f:
+        for line in f:
+            r = json.loads(line)
+            if r["phase"] == phase and "ms" in r:
+                runs[(r["cmd"], r["item"])].append(r["ms"])
+    return {k: statistics.median(v) for k, v in runs.items()}
+
+
+def cmd_remote_compare(args):
+    base = item_medians(args.base, args.phase)
+    test = item_medians(args.test, args.phase)
+    for cmd in sorted({k[0] for k in base}):
+        keys = [k for k in base if k[0] == cmd and k in test]
+        ratios = [test[k] / base[k] for k in keys]
+        print(json.dumps({
+            "phase": args.phase, "cmd": cmd, "items": len(keys),
+            "base_p50_ms": round(statistics.median(base[k] for k in keys), 3),
+            "test_p50_ms": round(statistics.median(test[k] for k in keys), 3),
+            "geomean_ratio": round(math.exp(statistics.fmean(math.log(r) for r in ratios)), 4),
+            "p95_ratio": round(pct(ratios, 0.95), 4),
+        }))
 
 
 def pct(values, q):
@@ -383,11 +419,17 @@ def main():
     m.add_argument("--latency", type=float, default=0.03, help="seconds the store adds to every request")
     m.add_argument("--commands", default="top_10")
     m.add_argument("--limit", type=int, default=100)
+    m.add_argument("--repeats", type=int, default=5, help="timed passes over the warm statements")
     m.add_argument("--node", type=int, default=0)
     m.set_defaults(func=cmd_remote)
     s = sub.add_parser("remote-summary", help="medians and requests per statement of remote runs")
     s.add_argument("results", nargs="+")
     s.set_defaults(func=cmd_remote_summary)
+    rc = sub.add_parser("remote-compare", help="per-statement latency ratios of two remote runs")
+    rc.add_argument("base")
+    rc.add_argument("test")
+    rc.add_argument("--phase", default="warm")
+    rc.set_defaults(func=cmd_remote_compare)
     r = sub.add_parser("run", help="alternate two serened builds over one data directory")
     r.add_argument("--base", required=True)
     r.add_argument("--test", required=True)

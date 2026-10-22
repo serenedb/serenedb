@@ -8,6 +8,7 @@ indexes missing.
 
 from __future__ import annotations
 
+import collections
 import os
 import socket
 import subprocess
@@ -500,6 +501,63 @@ def test_cold_top_k_reads_postings_and_columns_in_one_round(
         i for i in range(segments * 1000) if i % 10 < 2]
     assert len(_one_round(log, ".doc")) <= segments
     assert len(_one_round(log, ".col")) == segments
+
+
+def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:
+    location = f"s3://bucket/counts-{tmp_path.name}"
+    segments = 4
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret",
+                                          "bucket"), location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower') "
+                    "WITH (frequency, position, norm)")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(id, body words) "
+                    "WITH (compaction_interval = 0)")
+                for segment in range(segments):
+                    conn.execute(
+                        "INSERT INTO docs SELECT i, CASE i % 10 WHEN 0 THEN 'alpha beta' "
+                        "WHEN 1 THEN 'beta alpha' ELSE 'gamma' END "
+                        f"FROM range({segment * 1000}, {(segment + 1) * 1000}) t(i)")
+                    conn.execute("VACUUM (REFRESH_TABLE) docs")
+                conn.execute("SET GLOBAL threads = 2")
+                fake.latency = 0.1
+
+                def cold_count(query: str) -> tuple[int, list[dict]]:
+                    conn.execute("SET GLOBAL enable_external_file_cache = false")
+                    conn.execute("SET GLOBAL enable_external_file_cache = true")
+                    fake.log = []
+                    count = conn.execute(
+                        "SELECT count(*) FROM docs_body WHERE body @@ to_tsquery(%s)",
+                        (query,)).fetchone()[0]
+                    log, fake.log = fake.log, None
+                    return count, log
+
+                term, term_log = cold_count("alpha")
+                phrase, phrase_log = cold_count('"alpha beta"')
+        finally:
+            server.stop()
+    assert term == segments * 200
+    assert not [entry for entry in term_log
+                if entry["key"].endswith((".doc", ".pos"))], term_log
+    assert phrase == segments * 100
+    by_segment = collections.defaultdict(list)
+    for entry in phrase_log:
+        name = entry["key"].rsplit("/", 1)[-1]
+        if name.endswith((".doc", ".pos")):
+            by_segment[name.split(".")[0]].append(entry)
+    assert len(by_segment) == segments, phrase_log
+    for reads in by_segment.values():
+        assert {entry["key"].rsplit(".", 1)[-1] for entry in reads} == {"doc", "pos"}, reads
+        assert max(entry["began"] for entry in reads) < min(
+            entry["ended"] for entry in reads), reads
 
 
 def test_index_files_on_an_object_store(tmp_path: Path) -> None:

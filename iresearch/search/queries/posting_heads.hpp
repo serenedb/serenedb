@@ -24,6 +24,6 @@
 
 namespace irs {
 
-void PrefetchPostingHeads(const QueryBuilder& query);
+void PrefetchPostingHeads(const QueryBuilder& query, uint32_t min_lists);
 
 }  // namespace irs

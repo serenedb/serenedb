@@ -491,6 +491,9 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
       .field = kWords,
       .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}};
   };
+  irs::BooleanFilter only;
+  only.Add(clause("long"), irs::Occur::Must);
+  const auto only_query = only.PrepareSegment(segment, {});
   irs::BooleanFilter either;
   either.Add(clause("long"), irs::Occur::Should);
   either.Add(clause("short"), irs::Occur::Should);
@@ -498,8 +501,9 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   const auto terms_query = either.PrepareSegment(segment, {});
   auto& cache = duckdb::BlockCache::Get(Db());
   cache.Clear();
+  irs::PrefetchPostingHeads(*only_query, 2);
   EXPECT_FALSE(words.doc->Warm(long_list.doc_start, 1));
-  irs::PrefetchPostingHeads(*terms_query);
+  irs::PrefetchPostingHeads(*terms_query, 2);
   EXPECT_TRUE(words.doc->Warm(long_list.doc_start, 1));
   EXPECT_TRUE(words.doc->Warm(long_list.doc_start + long_list.doc_delta, 1));
   EXPECT_TRUE(words.doc->Warm(short_list.doc_start, 1));
@@ -515,7 +519,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   ASSERT_NE(nullptr, text.pos);
   cache.Clear();
   EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
-  irs::PrefetchPostingHeads(*phrase_query);
+  irs::PrefetchPostingHeads(*phrase_query, 1);
   EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
   EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
 }

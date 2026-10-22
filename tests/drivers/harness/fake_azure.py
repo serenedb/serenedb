@@ -92,6 +92,7 @@ def _http_date(seconds: float) -> str:
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
     fake: FakeAzure
 
     def log_message(self, *args) -> None:

@@ -63,7 +63,10 @@ class PostingHeads final : public PreparedStateVisitor {
     return true;
   }
 
-  void Prefetch() {
+  void Prefetch(uint32_t min_lists) {
+    if (_lists < min_lists) {
+      return;
+    }
     for (auto& [in, extents] : _extents) {
       in->PrefetchExtents(extents);
     }
@@ -82,6 +85,7 @@ class PostingHeads final : public PreparedStateVisitor {
     }
     const auto handles = reader->Handles();
     if (handles.doc && meta.docs_count > 1 && meta.inline_size == 0) {
+      ++_lists;
       auto& extents = _extents[handles.doc];
       extents.push_back({.offset = meta.doc_start, .size = file_utils::kPage});
       if (meta.docs_count > doc_limits::kBlockSize) {
@@ -90,20 +94,22 @@ class PostingHeads final : public PreparedStateVisitor {
       }
     }
     if (positions && handles.pos && meta.docs_count != 0) {
+      ++_lists;
       _extents[handles.pos].push_back(
         {.offset = meta.pos_start, .size = file_utils::kPage});
     }
   }
 
   containers::FlatHashMap<const IndexInput*, std::vector<ByteExtent>> _extents;
+  uint32_t _lists = 0;
 };
 
 }  // namespace
 
-void PrefetchPostingHeads(const QueryBuilder& query) {
+void PrefetchPostingHeads(const QueryBuilder& query, uint32_t min_lists) {
   PostingHeads heads;
   query.Visit(heads, kNoBoost);
-  heads.Prefetch();
+  heads.Prefetch(min_lists);
 }
 
 }  // namespace irs

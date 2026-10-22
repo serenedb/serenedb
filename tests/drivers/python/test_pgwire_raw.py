@@ -1311,7 +1311,7 @@ def test_copy_feeder_error_ends_the_copy(conn):
         conn.run("drop table if exists t_copy_feeder")
 
 
-@pytest.mark.exclusive
+@pytest.mark.usefixtures("own_server")
 def test_copy_feeder_wake_outlives_the_session(conn):
     if "E" in types(conn.run("set sdb_faults='copy_feeder_done_wake'")):
         pytest.skip("fault injection not enabled in this build")

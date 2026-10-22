@@ -701,6 +701,7 @@ add_compile_options(
     -Wundef
     -Wheader-hygiene
     -Wextra-semi
+    -Wno-c++98-compat-extra-semi
     -Wunused-exception-parameter
     -Wmissing-variable-declarations
     -Wfloat-conversion

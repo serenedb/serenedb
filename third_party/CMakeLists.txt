@@ -66,7 +66,7 @@ add_subdirectory(fast_float)
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(simdjson)
+add_subdirectory(simdjson SYSTEM)
 
 ################################################################################
 ## YACLib
@@ -79,7 +79,7 @@ if(SDB_DEV)
 else()
     set(YACLIB_LOG "")
 endif()
-add_subdirectory(yaclib)
+add_subdirectory(yaclib SYSTEM)
 
 ################################################################################
 ## openssl
@@ -587,7 +587,7 @@ set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
 set(ADA_USE_SIMDUTF ON CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(ada)
+add_subdirectory(ada SYSTEM)
 
 ###############################################################################
 ## croaring
@@ -596,7 +596,7 @@ add_subdirectory(ada)
 set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "croaring" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(croaring)
+add_subdirectory(croaring SYSTEM)
 
 ################################################################################
 ## fmt

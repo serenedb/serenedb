@@ -140,7 +140,7 @@ struct BlockingDirectory : DirectoryMock {
       exists(has, blocker);
 
       auto policy_guard = std::unique_lock(policy_lock);
-      policy_applied.wait_for(policy_guard, 1000ms);
+      policy_applied.wait_for(policy_guard, std::chrono::seconds{1});
     }
   }
 

@@ -164,12 +164,13 @@ add_library(
 )
 target_include_directories(
     serenedb-bench-docs-mask-iresearch
-    PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+    PUBLIC ${CMAKE_SOURCE_DIR}
 )
 target_include_directories(
     serenedb-bench-docs-mask-iresearch
     SYSTEM
     PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/magic_enum
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 target_link_libraries(

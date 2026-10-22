@@ -43,10 +43,12 @@ target_link_libraries(
         snappy
 )
 
+target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
+
 target_include_directories(
     sereneserver
+    SYSTEM
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/server
         # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/datetime/include

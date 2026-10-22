@@ -505,7 +505,6 @@ target_include_directories(
     ${IResearch_library}
     PUBLIC ${CMAKE_SOURCE_DIR}
     PUBLIC ${CMAKE_BINARY_DIR}
-    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
 )
 
 target_include_directories(
@@ -514,6 +513,7 @@ target_include_directories(
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
+    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
 )
 
 if(ARCH_AMD64)

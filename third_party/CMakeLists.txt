@@ -501,7 +501,7 @@ target_include_directories(
 
 target_compile_definitions(
     clickhouse_cpp
-    PUBLIC WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+    PRIVATE WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
 )
 
 target_link_libraries(

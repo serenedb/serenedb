@@ -198,7 +198,7 @@ void CheckIndexLocation(const DataDirectory& layout, bool fresh_cluster) {
   auto& fs =
     duckdb::FileSystem::GetLocal(irs::DuckDBEngine::Instance().instance());
   const auto default_root = layout.EngineDir().string();
-  std::string recorded = default_root;
+  std::string recorded;
   if (auto handle = fs.OpenFile(
         record, duckdb::FileFlags::FILE_FLAGS_READ |
                   duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS)) {
@@ -213,7 +213,7 @@ void CheckIndexLocation(const DataDirectory& layout, bool fresh_cluster) {
     auto out =
       fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
                              duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-    auto text = layout.index_root;
+    auto text = absl::GetFlag(FLAGS_index_location);
     out->Write(duckdb::QueryContext{}, text.data(), text.size(), 0);
     out->Sync();
     out.reset();
@@ -221,10 +221,11 @@ void CheckIndexLocation(const DataDirectory& layout, bool fresh_cluster) {
     SyncDirectory(layout.EngineDir());
     return;
   }
-  if (recorded != layout.index_root) {
-    SDB_FATAL(STARTUP, "the search indexes of this cluster live in '", recorded,
+  if (const auto root = IndexRoot(layout.directory, recorded, kEngineDir);
+      root != layout.index_root) {
+    SDB_FATAL(STARTUP, "the search indexes of this cluster live in '", root,
               "', not in '", layout.index_root, "': start it ",
-              recorded == default_root
+              recorded.empty()
                 ? std::string{"without --index_location"}
                 : absl::StrCat("with --index_location=", recorded));
   }

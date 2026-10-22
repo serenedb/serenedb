@@ -21,7 +21,7 @@ The files of inverted indexes and search tables live in the data directory by de
 serened /var/lib/serenedb --index_location=s3://search-indexes/production
 ```
 
-A cluster keeps the location it was first started with. Starting it with another location, or without the location it was created with, is refused at startup, and the error names the location the cluster uses. A cluster created without `--index_location` keeps its index files in the data directory.
+A cluster keeps the location it was first started with. Starting it with another location, or without the location it was created with, is refused at startup, and the error names the location the cluster uses. A cluster created without `--index_location` keeps its index files in the data directory. The default and a relative location are resolved against the data directory at every start, so such a cluster can be moved with its data directory.
 
 Local storage is the fastest: index files are read in place. On an object store, every read that misses the cache is a request to the store.
 

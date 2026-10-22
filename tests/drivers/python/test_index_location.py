@@ -154,6 +154,28 @@ def test_existing_cluster_keeps_the_data_directory(tmp_path: Path) -> None:
         again.stop()
 
 
+@pytest.mark.parametrize("flags", [(), ("--index_location=indexes",)],
+                         ids=["default", "relative"])
+def test_moved_data_directory_keeps_its_indexes(
+        tmp_path: Path, flags: tuple[str, ...]) -> None:
+    datadir = tmp_path / "data"
+    server = _Server(datadir, *flags)
+    try:
+        assert server.wait_ready(), server.output()
+        _create_index(server)
+    finally:
+        server.stop()
+
+    moved = tmp_path / "moved"
+    datadir.rename(moved)
+    again = _Server(moved, *flags)
+    try:
+        assert again.wait_ready(), again.output()
+        assert _matches(again) == [1]
+    finally:
+        again.stop()
+
+
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
          "MINIO_BUCKET")
 

@@ -1,6 +1,6 @@
 add_subdirectory(search-benchmark-game)
 
-if(SDB_IRESEARCH_BENCH)
+if(IRESEARCH_BENCH)
     return()
 endif()
 

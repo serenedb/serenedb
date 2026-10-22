@@ -209,7 +209,7 @@ target_sources(
         top/make_wildcard_ngram.cpp
 )
 
-if(SDB_IRESEARCH_BENCH)
+if(IRESEARCH_BENCH)
     return()
 endif()
 

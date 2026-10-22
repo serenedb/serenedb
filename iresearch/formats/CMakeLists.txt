@@ -22,7 +22,7 @@ target_sources(
         segment_meta_writer.cpp
 )
 
-if(SDB_IRESEARCH_BENCH)
+if(IRESEARCH_BENCH)
     return()
 endif()
 

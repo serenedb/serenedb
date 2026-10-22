@@ -89,7 +89,7 @@ target_link_libraries(
         simdutf
 )
 
-if(SDB_IRESEARCH_BENCH)
+if(IRESEARCH_BENCH)
     target_compile_definitions(
         iresearch
         PUBLIC IRESEARCH_NO_GEO IRESEARCH_NO_VECTOR

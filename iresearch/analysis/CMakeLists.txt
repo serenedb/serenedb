@@ -1,6 +1,6 @@
 target_sources(iresearch PRIVATE text_tokenizer.cpp)
 
-if(SDB_IRESEARCH_BENCH)
+if(IRESEARCH_BENCH)
     return()
 endif()
 

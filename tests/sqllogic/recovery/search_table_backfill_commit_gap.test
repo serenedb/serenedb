@@ -38,7 +38,7 @@ DELETE FROM bcg WHERE id = 2;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_delete_log');
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
 
 connection default
 statement ok
@@ -50,7 +50,7 @@ VACUUM (REFRESH_TABLE) bcg;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_irs_commit_after_flush_switch');
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection default
 statement ok

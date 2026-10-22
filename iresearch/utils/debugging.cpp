@@ -139,17 +139,16 @@ void ParkOnceOnFailurePointDebugging(std::string_view value) {
   }
 }
 
-bool AwaitParkedFailurePointDebugging(std::string_view value,
-                                      absl::Duration timeout) {
-  auto parked = absl::StrCat(value, ":parked");
-  const auto is_parked =
-    +[](std::string* v) noexcept { return gFailurePoints.contains(*v); };
+bool AwaitFailurePointDebugging(std::string_view value,
+                                absl::Duration timeout) {
+  const auto is_set =
+    +[](std::string_view* v) noexcept { return gFailurePoints.contains(*v); };
   absl::MutexLock lock{&gFailurePointsLock};
-  if (!gFailurePointsLock.AwaitWithTimeout(absl::Condition{is_parked, &parked},
+  if (!gFailurePointsLock.AwaitWithTimeout(absl::Condition{is_set, &value},
                                            timeout)) {
     return false;
   }
-  gFailurePoints.erase(parked);
+  gFailurePoints.erase(value);
   if (gFailurePoints.empty()) {
     gHasFailurePoints.store(false, std::memory_order_relaxed);
   }

@@ -26,6 +26,7 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 
 #include <cmath>
@@ -549,15 +550,23 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all. Superuser only: the failure-point registry is "
-        "process-global, so an armed point fires for every session.",
+        "clear all. SET sdb_faults = '-name:parked' waits up to 60 seconds "
+        "for a thread to park at the point. Superuser only: the "
+        "failure-point registry is process-global, so an armed point fires "
+        "for every session.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
           RequireFaultSuperuser(ctx);
           auto s = value.ToString();
           if (s.starts_with('-')) {
-            if (!irs::RemoveFailurePointDebugging(
-                  std::string_view{s}.substr(1))) {
+            const auto name = std::string_view{s}.substr(1);
+            if (name.ends_with(":parked")) {
+              if (!irs::AwaitFailurePointDebugging(name, absl::Seconds(60))) {
+                THROW_SQL_ERROR(
+                  ERR_CODE(ERRCODE_QUERY_CANCELED),
+                  ERR_MSG("failure point '", name, "' not reached"));
+              }
+            } else if (!irs::RemoveFailurePointDebugging(name)) {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                               ERR_MSG("failure point '", s, "' not set"));
             }

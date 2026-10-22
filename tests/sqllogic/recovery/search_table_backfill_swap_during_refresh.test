@@ -53,7 +53,7 @@ VACUUM (REFRESH_TABLE) bsr;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_index_refresh_begun');
+SET sdb_faults = '-pause_index_refresh_begun:parked';
 
 
 connection default

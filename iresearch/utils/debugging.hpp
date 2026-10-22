@@ -106,8 +106,7 @@ constexpr void ParkOnceOnFailurePointDebugging(std::string_view) noexcept {}
 #endif
 
 #ifdef SDB_FAULT_INJECTION
-bool AwaitParkedFailurePointDebugging(std::string_view value,
-                                      absl::Duration timeout);
+bool AwaitFailurePointDebugging(std::string_view value, absl::Duration timeout);
 #endif
 
 constexpr bool CanUseFailurePointsDebugging() {

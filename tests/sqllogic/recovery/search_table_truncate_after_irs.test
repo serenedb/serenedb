@@ -25,7 +25,7 @@ TRUNCATE tai;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_delete_log');
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
 
 connection default
 statement ok

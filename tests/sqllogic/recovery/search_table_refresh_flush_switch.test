@@ -38,7 +38,7 @@ VACUUM (REFRESH_TABLE) rfs;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_irs_commit_after_flush_switch');
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection truncator
 statement async ok
@@ -84,7 +84,7 @@ VACUUM (REFRESH_TABLE) rfi;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_irs_commit_after_flush_switch');
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection writer
 statement ok

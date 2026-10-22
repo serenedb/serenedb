@@ -25,7 +25,7 @@ TRUNCATE trw;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_irs');
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection refresher
 statement ok

@@ -25,7 +25,7 @@ INSERT INTO rtp VALUES (2, 'q');
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_irs');
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection default
 statement ok
@@ -37,7 +37,7 @@ VACUUM (REFRESH_TABLE) rtp;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_irs_commit_after_flush_switch');
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
 
 connection a
 statement ok

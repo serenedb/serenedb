@@ -139,20 +139,6 @@ sdb_faults
 (empty)
 
 
-connection c_lowly user=flt_lowly password=flt_pw
-statement error
-CALL sdb_wait_fault('pause_job_after_run');
-----
-db error: ERROR: permission denied for function sdb_wait_fault
-
-
-connection default
-statement error
-CALL sdb_wait_fault(NULL);
-----
-db error: ERROR: Failure point name cannot be NULL
-
-
 connection default
 statement ok
 DROP ROLE flt_lowly;

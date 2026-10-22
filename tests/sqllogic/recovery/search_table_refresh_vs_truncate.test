@@ -22,7 +22,7 @@ VACUUM (REFRESH_TABLE) rvt;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_index_refresh');
+SET sdb_faults = '-pause_index_refresh:parked';
 
 connection truncater
 statement async ok

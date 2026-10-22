@@ -6,17 +6,15 @@ three checks over the whole tree (it cross-references the entire repo, so it mus
 not rely on the per-file argv list pre-commit passes; see pass_filenames: false
 in .pre-commit-config.yaml):
 
-  1. Faults only in recovery: any `SET sdb_faults = '...'` or
-     `sdb_wait_fault('...')` in a .test/.test_slow outside
-     tests/sqllogic/recovery/ is an error.
+  1. Faults only in recovery: any `SET sdb_faults = '...'` in a .test/.test_slow
+     outside tests/sqllogic/recovery/ is an error.
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
      defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
      SDB_PARK_ONCE_ON_FAILURE / WaitWhileFailurePointDebugging /
      ParkOnceOnFailurePointDebugging string literal in server/ or iresearch/).
      A park-once point NAME also defines NAME:parked and NAME:release, the
-     names a test observes and arms to release the parked thread; a NAME a
-     test waits on with sdb_wait_fault('NAME') must be a park-once point.
+     names a test waits on and arms to observe and release the parked thread.
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).
@@ -46,8 +44,6 @@ SET_FAULT = re.compile(
 )
 # Just the `SET ... sdb_faults` head, for the recovery-only location check.
 SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.IGNORECASE)
-# Waiting for a park-once point: sdb_wait_fault('NAME').
-WAIT_FAULT = re.compile(r"sdb_wait_fault\s*\(\s*'([^']*)'", re.IGNORECASE)
 
 # Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
 # / WaitWhile...("NAME").
@@ -149,29 +145,16 @@ def main():
 
     # ----- single pass over tests/ (checks #1 and the #3 test net) -----
     test_faults = {}  # name -> "path:line" (recovery activations only)
-    waited_faults = {}  # name -> "path:line" (recovery sdb_wait_fault calls)
     exercised = set()  # any test reference, for check #3
     for path in walk_files(TEST_DIR, TESTNET_EXTS):
         text = read(path)
         has_set = "sdb_faults" in text
-        has_wait = "sdb_wait_fault" in text
         has_lit = "FAIL" in text or "Fail" in text
-        if not has_set and not has_wait and not has_lit:
+        if not has_set and not has_lit:
             continue
         normalized = rel(path)
         is_recovery = normalized.startswith(RECOVERY_DIR + "/")
         is_sqllogic = path.endswith(TEST_EXTS)
-        if has_wait and is_sqllogic:
-            for m in WAIT_FAULT.finditer(text):
-                if not is_recovery:
-                    errors.append(
-                        f"{normalized}:{lineno(text, m.start())}: "
-                        "'sdb_wait_fault' must live under tests/sqllogic/recovery/ "
-                        "(move this test to the recovery folder)"
-                    )
-                    continue
-                exercised.add(m.group(1))
-                waited_faults.setdefault(m.group(1), f"{normalized}:{lineno(text, m.start())}")
         if has_set:
             # check #1: SET sdb_faults only belongs under recovery/ (.test files).
             if is_sqllogic and not is_recovery:
@@ -209,15 +192,6 @@ def main():
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
             "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
             "SDB_PARK_ONCE_ON_FAILURE/WaitWhileFailurePointDebugging/"
-            "ParkOnceOnFailurePointDebugging literal in server/ or iresearch/)"
-        )
-
-    for name, loc in sorted(waited_faults.items()):
-        if name in park_faults:
-            continue
-        errors.append(
-            f"{loc}: sdb_wait_fault('{name}') waits on a point that is not a "
-            "park-once point (no SDB_PARK_ONCE_ON_FAILURE/"
             "ParkOnceOnFailurePointDebugging literal in server/ or iresearch/)"
         )
 

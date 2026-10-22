@@ -43,7 +43,7 @@ TRUNCATE tcm;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_irs');
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection compactor
 statement ok
@@ -114,7 +114,7 @@ TRUNCATE tcm;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_irs');
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection compactor
 statement ok

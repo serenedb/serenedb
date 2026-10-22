@@ -24,7 +24,7 @@ EXECUTE JOB jsi_dropped;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_job_after_statement');
+SET sdb_faults = '-pause_job_after_statement:parked';
 
 
 connection default
@@ -79,7 +79,7 @@ EXECUTE JOB jsi_replaced;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_job_after_statement');
+SET sdb_faults = '-pause_job_after_statement:parked';
 
 
 connection default
@@ -146,7 +146,7 @@ EXECUTE JOB jsi_altered;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_job_after_statement');
+SET sdb_faults = '-pause_job_after_statement:parked';
 
 
 connection default
@@ -202,7 +202,7 @@ CREATE JOB jsi_scheduled AFTER 1 SECOND AS 'INSERT INTO jsi_log VALUES (40); INS
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_job_after_statement');
+SET sdb_faults = '-pause_job_after_statement:parked';
 
 
 connection default
@@ -222,7 +222,7 @@ SET sdb_faults = 'pause_job_after_statement:release';
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_job_after_run');
+SET sdb_faults = '-pause_job_after_run:parked';
 
 
 connection default

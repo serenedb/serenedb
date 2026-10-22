@@ -35,7 +35,7 @@ TRUNCATE xt_local, xt_other.public.xt_remote;
 
 connection default
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_irs');
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection checkpointer
 statement ok
@@ -100,7 +100,7 @@ COMMIT;
 
 connection after_autocommit
 statement ok
-CALL sdb_wait_fault('pause_search_commit_before_delete_log');
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
 
 connection after_autocommit
 statement ok

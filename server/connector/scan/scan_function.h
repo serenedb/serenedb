@@ -86,10 +86,14 @@ duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
 
 bool IResearchSupportsLookup(duckdb::ClientContext& context,
                              const duckdb::LogicalGet& get,
-                             duckdb::vector<bool>& fetchable,
-                             bool& filters_rows);
+                             duckdb::TableFunctionLookupInfo& info);
 
 duckdb::TableFunction IResearchGetLookupFunction(
   duckdb::ClientContext& context, const duckdb::LogicalGet& source);
+
+duckdb::unique_ptr<duckdb::LogicalGet> IResearchGetLookupSource(
+  duckdb::ClientContext& context, const duckdb::LogicalGet& get,
+  const duckdb::vector<duckdb::ProjectionIndex>& columns,
+  duckdb::TableIndex table_index);
 
 }  // namespace sdb::connector

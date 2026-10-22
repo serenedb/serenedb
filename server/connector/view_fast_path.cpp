@@ -59,16 +59,6 @@
 #include "connector/pg_logical_types.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
-namespace duckdb {
-
-TableFunction MakeParquetLookupTableFunction();
-TableFunction MakeCSVLookupTableFunction();
-TableFunction MakeJSONLookupTableFunction();
-TableFunction MakeJSONObjectsLookupTableFunction();
-TableFunction MakeTextLookupTableFunction();
-TableFunction MakeDuckDBLookupTableFunction();
-
-}  // namespace duckdb
 namespace sdb::connector {
 namespace {
 
@@ -76,7 +66,6 @@ struct RegistryEntry {
   std::string_view function_name;
   PkSpec single_pk_spec;
   PkSpec glob_pk_spec;
-  duckdb::TableFunction (*make_lookup)();
   // Whether the reader's lookup applies pushed table filters. csv/json/text
   // only fetch rows by offset and ignore filters, so filters on their lookup
   // columns must NOT be pushed (they'd be silently dropped) -- see
@@ -89,45 +78,37 @@ const RegistryEntry kRegistry[] = {
     .function_name = "read_parquet",
     .single_pk_spec = PkSpec::FileRowNumber,
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
-    .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   {
     .function_name = "read_csv",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
-    .make_lookup = duckdb::MakeCSVLookupTableFunction,
   },
   {
     .function_name = "read_json",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
-    .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_ndjson",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
-    .make_lookup = duckdb::MakeJSONLookupTableFunction,
   },
   {
     .function_name = "read_json_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
-    .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
   {
     .function_name = "read_ndjson_objects",
     .single_pk_spec = PkSpec::FileOffset,
     .glob_pk_spec = PkSpec::FileIndexPlusOffset,
-    .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
   },
-  // Iceberg data files are parquet; reuse the parquet lookup TF.
   {
     .function_name = "iceberg_scan",
     .single_pk_spec = PkSpec::FileIndexPlusRowNumber,
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
-    .make_lookup = duckdb::MakeParquetLookupTableFunction,
     .supports_filters = true,
   },
   // read_text emits one row per file; PK is (file_index, 0) in glob mode.
@@ -135,13 +116,11 @@ const RegistryEntry kRegistry[] = {
     .function_name = "read_text",
     .single_pk_spec = PkSpec::FileRowNumber,
     .glob_pk_spec = PkSpec::FileIndexPlusRowNumber,
-    .make_lookup = duckdb::MakeTextLookupTableFunction,
   },
   {
     .function_name = "read_duckdb",
     .single_pk_spec = PkSpec::DuckDBRowId,
     .glob_pk_spec = PkSpec::FileIndexPlusDuckDBRowId,
-    .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
     .supports_filters = true,
   },
   // TODO: read_avro, postgres_scan / postgres_query.
@@ -547,12 +526,6 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
   SDB_UNREACHABLE();
 }
 
-duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
-  const auto* entry = LookupRegistry(fp.function_name);
-  SDB_ASSERT(entry);
-  return entry->make_lookup();
-}
-
 void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
   auto* multi_bd = dynamic_cast<duckdb::MultiFileBindData*>(bind_data);
   if (!multi_bd) {
@@ -566,7 +539,41 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
 
 namespace {
 
-duckdb::unique_ptr<duckdb::FunctionData> BindCatalogSource(
+duckdb::unique_ptr<duckdb::LogicalGet> MakeSourceGet(
+  duckdb::ClientContext& context, duckdb::BoundTableFunction function,
+  duckdb::unique_ptr<duckdb::FunctionData> bind_data,
+  duckdb::vector<duckdb::LogicalType> types,
+  duckdb::vector<duckdb::Identifier> names) {
+  auto virtual_columns =
+    function.get_virtual_columns
+      ? function.get_virtual_columns(context, bind_data.get())
+      : duckdb::virtual_column_map_t{};
+  return duckdb::make_uniq<duckdb::LogicalGet>(
+    duckdb::TableIndex(0), std::move(function), std::move(bind_data),
+    std::move(types), std::move(names), std::move(virtual_columns));
+}
+
+}  // namespace
+
+duckdb::unique_ptr<duckdb::LogicalGet> BindTableScan(
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::EntryLookupInfo& lookup) {
+  duckdb::unique_ptr<duckdb::FunctionData> bind_data;
+  auto function = table.GetScanFunction(context, bind_data, lookup);
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<duckdb::Identifier> names;
+  for (const auto& column : table.GetColumns().Logical()) {
+    types.push_back(column.Type());
+    names.push_back(column.Name());
+  }
+  return MakeSourceGet(context, duckdb::BoundTableFunction{function},
+                       std::move(bind_data), std::move(types),
+                       std::move(names));
+}
+
+namespace {
+
+duckdb::unique_ptr<duckdb::LogicalGet> BindCatalogSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_IF_FAILURE("view_index_source_lookup") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -583,19 +590,15 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCatalogSource(
     at_clause.emplace("version",
                       duckdb::Value::BIGINT(fp.pinned_iceberg_snapshot_id));
   }
-  duckdb::EntryLookupInfo lookup(
-    duckdb::CatalogType::TABLE_ENTRY,
-    duckdb::QualifiedName(duckdb::Identifier{fp.catalog_ref->table}),
-    at_clause ? &*at_clause : nullptr, duckdb::QueryErrorContext{});
-  duckdb::unique_ptr<duckdb::FunctionData> bind_data;
-  auto fn = entry.GetScanFunction(context, bind_data, lookup);
-  if (fn.get_virtual_columns) {
-    fn.get_virtual_columns(context, bind_data.get());
-  }
-  return bind_data;
+  return BindTableScan(
+    context, entry,
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier{fp.catalog_ref->table}),
+      at_clause ? &*at_clause : nullptr, duckdb::QueryErrorContext{}});
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> BindReaderSource(
+duckdb::unique_ptr<duckdb::LogicalGet> BindReaderSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_ASSERT(!fp.args.empty());
   auto& reader =
@@ -654,22 +657,20 @@ duckdb::unique_ptr<duckdb::FunctionData> BindReaderSource(
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::Identifier> names;
   auto bind_data = function.bind(context, input, types, names);
-  if (function.get_virtual_columns) {
-    function.get_virtual_columns(context, bind_data.get());
-  }
-  return bind_data;
+  return MakeSourceGet(context, std::move(function), std::move(bind_data),
+                       std::move(types), std::move(names));
 }
 
 }  // namespace
 
-duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
+duckdb::unique_ptr<duckdb::LogicalGet> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
-  auto bind_data = fp.catalog_ref ? BindCatalogSource(context, fp)
-                                  : BindReaderSource(context, fp);
+  auto get = fp.catalog_ref ? BindCatalogSource(context, fp)
+                            : BindReaderSource(context, fp);
   if (fp.function_name == "iceberg_scan") {
-    EnableIcebergSort(bind_data.get());
+    EnableIcebergSort(get->bind_data.get());
   }
-  return bind_data;
+  return get;
 }
 
 std::string FormatLookupLabel(const ViewFastPath& fp) {

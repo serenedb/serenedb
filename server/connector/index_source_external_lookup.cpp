@@ -107,9 +107,6 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   SDB_ASSERT(!_postgres_ctid || _dialect == Dialect::Postgres);
 
   BuildQuery(context, ref, select_names);
-
-  _sort_perm.resize(STANDARD_VECTOR_SIZE);
-  absl::c_iota(_sort_perm, 0);
 }
 
 void ExternalLookupIndexSource::BuildQuery(

@@ -204,9 +204,11 @@ A full-text search is a first-class part of the SQL query plan, not a black box 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
-When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS` — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus a `doc_address` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows:
+When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default) — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus a `doc_address` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan_lookup_join" />
+
+Columns the index stores (`INCLUDE`d columns) are read from the index, by a `LOOKUP_JOIN` with an `IRESEARCH_SCAN` on its right. Other columns are read from the indexed table or view. When the query also returns stored columns, or its sort or filters already read a column the index does not store, those columns are read by a `LOOKUP_JOIN` with an `INDEX_SOURCE` on its right, keyed by `pk`, the row's identity in the source; otherwise the `LOOKUP_JOIN` into the index reads them as well. A query can therefore show two `LOOKUP_JOIN`s, one above the other.
 
 A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan. A condition the index can only narrow down — a [phrase without `position`](#phrases-without-positions), a [geo predicate](./geospatial-search.md#how-rows-are-checked) or a re-checked [`ts_like`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) pattern — keeps its lookup in the `Index Filter` and lists the exact check under `Table Filter`, where it runs with the query's other filters.
 

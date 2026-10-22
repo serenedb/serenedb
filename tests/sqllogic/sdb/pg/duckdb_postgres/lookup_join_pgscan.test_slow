@@ -3,6 +3,9 @@ control substitution on
 hash-threshold 100
 
 statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljpg_${__DATABASE__} (TYPE postgres);
 
 statement ok

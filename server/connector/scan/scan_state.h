@@ -445,6 +445,16 @@ void FeedHits(irs::HitBatcher& batcher, std::span<const irs::ScoreDoc> hits,
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);
+void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
+                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
+                 duckdb::idx_t count, duckdb::idx_t offset);
+void FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+               FetchLocalState& f, duckdb::DataChunk& tmp, uint32_t seg,
+               std::span<const irs::ScoreDoc> hits, bool rebind,
+               duckdb::DataChunk& into, std::unique_ptr<duckdb::Vector>& pk,
+               duckdb::idx_t& appended);
+void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
+                       FetchLocalState& f);
 inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
   return g.vector_scorer ? g.vector_scorer->score_emit : ScoreEmit::Identity;
 }

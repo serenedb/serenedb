@@ -1,6 +1,9 @@
 control substitution on
 
 statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+statement ok
 CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
   TYPE azure,
   CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',

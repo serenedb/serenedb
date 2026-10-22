@@ -373,7 +373,8 @@ class ColumnReader {
   bool FetchSparse(ScanState& s, uint64_t anchor,
                    const duckdb::SelectionVector& sel, duckdb::idx_t hits,
                    duckdb::Vector& out, duckdb::idx_t at) const;
-  void FetchInto(ScanState& s, uint64_t row, duckdb::Vector& out,
+  void FetchInto(ScanState& s, std::span<const uint64_t> rows,
+                 duckdb::sel_t* positions, duckdb::Vector& out,
                  duckdb::idx_t at) const;
   // The span's validity block is the all-valid EMPTY codec (or there is no
   // validity child): the data segment alone is validity-complete there.

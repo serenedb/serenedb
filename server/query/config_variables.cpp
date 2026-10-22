@@ -1015,6 +1015,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_lookup_join_source_hop",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a LOOKUP_JOIN over an inverted index that returns only "
+        "source columns reads the row keys from the index in one LOOKUP_JOIN "
+        "and the source columns in a second one. Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "sdb_scan_split",
       {
         LogicalTypeId::VARCHAR,

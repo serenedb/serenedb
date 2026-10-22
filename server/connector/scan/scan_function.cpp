@@ -606,6 +606,10 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
       {kColumnIdentifierPkRowNumber,
        duckdb::TableColumn("row_number", duckdb::LogicalType::BIGINT)});
   }
+  if (LooksUpByPk(bind)) {
+    result.insert({kColumnIdentifierGeneratedPk,
+                   duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
+  }
   result.insert(
     {kColumnIdentifierDocAddress,
      duckdb::TableColumn("doc_address", duckdb::LogicalType::BIGINT)});
@@ -650,6 +654,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.get_row_id_columns = IResearchGetRowIdColumns;
   func.supports_lookup = &IResearchSupportsLookup;
   func.get_lookup_function = &IResearchGetLookupFunction;
+  func.get_lookup_source = &IResearchGetLookupSource;
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;

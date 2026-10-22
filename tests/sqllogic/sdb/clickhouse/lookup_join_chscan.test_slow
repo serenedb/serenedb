@@ -2,6 +2,9 @@ control substitution on
 
 hash-threshold 100
 
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
 query
 SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.lj_${__DATABASE__}');
 ----
@@ -92,6 +95,13 @@ title	n
 title-3000-long-enough-to-not-inline	30000
 title-2997-long-enough-to-not-inline	29970
 title-2994-long-enough-to-not-inline	29940
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM ljch_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljch_idx.tableoid) DESC LIMIT 10);
+----
+count	count
+10	10
 
 statement ok
 DETACH ljch_${__DATABASE__};

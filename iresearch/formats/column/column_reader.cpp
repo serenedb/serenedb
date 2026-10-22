@@ -66,6 +66,8 @@
 namespace irs {
 namespace {
 
+constexpr duckdb::idx_t kMaxFetchHits = 64;
+
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
   s.WriteProperty(0, "compression_type", static_cast<uint8_t>(m.codec->type));
@@ -553,27 +555,36 @@ void ColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
   }
 }
 
-void ColumnReader::FetchInto(ScanState& s, uint64_t row, duckdb::Vector& out,
+void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
+                             duckdb::sel_t* positions, duckdb::Vector& out,
                              duckdb::idx_t at) const {
-  if (!s.fetch.segment || row < s.fetch_window.begin ||
-      row >= s.fetch_window.end) {
-    if (s.fetch.segment) {
-      s.retired_fetches.push_back(std::move(s.fetch));
-      s.fetch = {};
+  SDB_ASSERT(rows.size() <= kMaxFetchHits);
+  std::array<duckdb::idx_t, kMaxFetchHits> in_block;
+  for (duckdb::idx_t i = 0; i < rows.size();) {
+    if (!s.fetch.segment || rows[i] < s.fetch_window.begin ||
+        rows[i] >= s.fetch_window.end) {
+      if (s.fetch.segment) {
+        s.retired_fetches.push_back(std::move(s.fetch));
+        s.fetch = {};
+      }
+      s.fetch_window = Locate(rows[i], s.window);
+      s.fetch.segment = Open(s.fetch_window, *s.ctx);
     }
-    s.fetch_window = Locate(row, s.window);
-    s.fetch.segment = Open(s.fetch_window, *s.ctx);
+    auto end = i;
+    for (; end < rows.size() && rows[end] < s.fetch_window.end; ++end) {
+      in_block[end - i] = rows[end] - s.fetch_window.begin;
+    }
+    s.fetch.segment->FetchRows(s.fetch.state, in_block.data(), end - i, out,
+                               duckdb::SelectionVector{positions + i, end - i},
+                               at);
+    i = end;
   }
-  s.fetch.segment->FetchRow(
-    s.fetch.state, static_cast<duckdb::row_t>(row - s.fetch_window.begin), out,
-    at);
 }
 
 bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
                                const duckdb::SelectionVector& sel,
                                duckdb::idx_t hits, duckdb::Vector& out,
                                duckdb::idx_t at) const {
-  constexpr duckdb::idx_t kMaxFetchHits = 64;
   const uint64_t first = anchor + sel.get_index(0);
   const uint64_t last = anchor + sel.get_index(hits - 1);
   if (hits >= kMaxFetchHits || last >= _row_count) {
@@ -593,17 +604,27 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
     out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
   auto& mask = duckdb::FlatVector::ValidityMutable(out);
+  std::array<uint64_t, kMaxFetchHits> rows;
+  std::array<duckdb::sel_t, kMaxFetchHits> positions;
   for (duckdb::idx_t i = 0; i < hits; ++i) {
-    const uint64_t row = anchor + sel.get_index(i);
+    rows[i] = anchor + sel.get_index(i);
+    positions[i] = static_cast<duckdb::sel_t>(i);
     mask.SetValid(at + i);
-    if (_validity) {
-      _validity->FetchInto(s.child_states[0], row, out, at + i);
-      if (!mask.RowIsValid(at + i)) {
-        continue;
+  }
+  auto valid = hits;
+  if (_validity) {
+    _validity->FetchInto(s.child_states[0], {rows.data(), hits},
+                         positions.data(), out, at);
+    valid = 0;
+    for (duckdb::idx_t i = 0; i < hits; ++i) {
+      if (mask.RowIsValid(at + i)) {
+        rows[valid] = rows[i];
+        positions[valid] = static_cast<duckdb::sel_t>(i);
+        ++valid;
       }
     }
-    FetchInto(s, row, out, at + i);
   }
+  FetchInto(s, {rows.data(), valid}, positions.data(), out, at);
   ColumnReader::Skip(s, last + 1 - first);
   return true;
 }

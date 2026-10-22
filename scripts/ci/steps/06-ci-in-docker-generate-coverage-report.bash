@@ -46,8 +46,8 @@ echo ":: Generating HTML coverage report..."
 ./scripts/prepare_coverage.py \
     --unified-report \
     --compilation-dir . \
-    llvm-profdata-21 \
-    llvm-cov-21 \
+    llvm-profdata-23 \
+    llvm-cov-23 \
     ./out/coverage/profiles \
     ./out/coverage/llvm_html \
     "${ALL_BINARIES[@]}"

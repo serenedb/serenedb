@@ -1,9 +1,5 @@
 add_compile_warnings_flags()
 
-if(uring_FOUND)
-    add_definitions(-DIRESEARCH_URING)
-endif()
-
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -481,10 +477,6 @@ else()
     unset(_missing_tools_str)
 endif()
 
-if(uring_FOUND)
-    list(APPEND IResearch_core_sources ./store/async_directory.cpp)
-endif()
-
 # ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
@@ -596,8 +588,4 @@ else()
         PRIVATE lz4_static
         PRIVATE stemmer-static
     )
-endif()
-
-if(uring_FOUND)
-    target_link_libraries(${IResearch_library} PRIVATE uring::uring)
 endif()

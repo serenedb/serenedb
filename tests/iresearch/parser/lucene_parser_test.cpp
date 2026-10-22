@@ -2193,6 +2193,18 @@ TEST_F(LuceneParserTest, MaxGapsOverMoreThanAPairIsRefused) {
     irs::ParseQuery(ctx, "fn:maxgaps(2 fn:ordered(alpha beta gamma))"));
 }
 
+TEST_F(LuceneParserTest, SlopOverAnIntervalGapIsRefused) {
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"~2"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "\"alpha 1-3 beta\"^2~2"));
+  EXPECT_ANY_THROW(irs::ParseQuery(ctx, "fn:ordered(alpha beta)^2~2"));
+}
+
+TEST_F(LuceneParserTest, SlopOverAnExactGapIsAPhrase) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"alpha 2-2 beta\"~1"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertPhrase(*Optional().filters[0], kFieldId, 0.0f, 1);
+}
+
 TEST_F(LuceneParserTest, FieldExistenceIsRefused) {
   EXPECT_ANY_THROW(irs::ParseQuery(ctx, "title:*"));
 }

@@ -253,8 +253,17 @@ struct ParserContext {
   }
 
   void SetSlop(irs::Filter* f, int slop) {
-    irs::utils::downCast<irs::ByPhrase>(*f).mutable_options()->set_slop(
-      static_cast<irs::PosAttr::value_t>(slop));
+    auto& options = *irs::utils::downCast<irs::ByPhrase>(*f).mutable_options();
+    if (slop > 0 && absl::c_any_of(options, [](const auto& info) {
+          return info.offs_min != info.offs_max;
+        })) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("slop is incompatible with interval gaps (min-max)"),
+        ERR_HINT("Use exact gaps (\"quick 2-2 fox\") with ~N, or drop the "
+                 "slop."));
+    }
+    options.set_slop(static_cast<irs::PosAttr::value_t>(slop));
   }
 
   // `(...)@k`: how many of the group's optional clauses a document needs.

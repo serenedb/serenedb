@@ -113,9 +113,4 @@ include(UpdateModule)
 sdb_update_module(${GIT_EXECUTABLE} "llvm-project" ${CMAKE_SOURCE_DIR}/third_party "LICENSE.TXT")
 
 add_subdirectory(third_party/llvm-project/runtimes EXCLUDE_FROM_ALL)
-sdb_dir_compile_options(
-    third_party/llvm-project/runtimes
-    -Wno-deprecated-dynamic-exception-spec
-    -Wno-suggest-destructor-override
-    -Wno-format
-)
+sdb_dir_compile_options(third_party/llvm-project/runtimes -w)

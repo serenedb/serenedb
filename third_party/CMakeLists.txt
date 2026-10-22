@@ -20,7 +20,7 @@ if("${SDB_ALLOC}" MATCHES "JE")
     # compiles it natively (no autotools) into the `jemalloc_native` target.
     sdb_update_module(${GIT_EXECUTABLE} "jemalloc" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
     add_subdirectory(jemalloc-cmake)
-    sdb_dir_compile_options(jemalloc-cmake -Wno-missing-braces)
+    sdb_dir_compile_options(jemalloc-cmake -w)
     # Expose it as an IMPORTED target: it is linked globally, so it ends up in
     # the link interface of vendored libs that export() their targets (croaring),
     # and export() tolerates IMPORTED but not in-tree targets.
@@ -189,7 +189,7 @@ sdb_update_module(${GIT_EXECUTABLE} "abseil-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
 add_subdirectory(abseil-cpp)
-sdb_dir_compile_options(abseil-cpp -Wno-unused-parameter)
+sdb_dir_compile_options(abseil-cpp -w)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
@@ -275,7 +275,7 @@ sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
 add_subdirectory(googletest)
-sdb_dir_compile_options(googletest -Wno-sign-conversion)
+sdb_dir_compile_options(googletest -w)
 
 ################################################################################
 ### benchmark library
@@ -352,17 +352,7 @@ else()
     endif()
 endif()
 add_subdirectory(OpenBLAS)
-sdb_dir_compile_options(
-    OpenBLAS
-    -Wno-unused-but-set-variable
-    -Wno-unused-but-set-parameter
-    -Wno-unused-function
-    -Wno-unused-variable
-    -Wno-sign-compare
-    -Wno-sometimes-uninitialized
-    -Wno-pointer-sign
-    -Wno-absolute-value
-)
+sdb_dir_compile_options(OpenBLAS -w)
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)
     foreach(_core SKYLAKEX COOPERLAKE SAPPHIRERAPIDS)
@@ -391,13 +381,7 @@ set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss SYSTEM)
-target_compile_options(
-    ${FAISS_LIB}
-    PRIVATE
-        -Wno-suggest-override
-        -Wno-sign-compare
-        -Wno-suggest-destructor-override
-)
+sdb_dir_compile_options(faiss -w)
 target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
@@ -525,7 +509,7 @@ set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
 
 add_subdirectory(curl)
-sdb_dir_compile_options(curl -Wno-unused-but-set-global)
+sdb_dir_compile_options(curl -w)
 
 # Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
 # FindCURL.cmake short-circuits when these variables are already set.
@@ -633,11 +617,7 @@ set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
 set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
 set(THREADSAFE ON CACHE BOOL "" FORCE)
 add_subdirectory(avro/lang/c)
-sdb_dir_compile_options(
-    avro/lang/c
-    -Wno-cast-function-type-mismatch
-    -Wno-sometimes-uninitialized
-)
+sdb_dir_compile_options(avro/lang/c -w)
 
 ################################################################################
 ## libxml2
@@ -646,7 +626,7 @@ sdb_dir_compile_options(
 sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(libxml2-cmake)
-sdb_dir_compile_options(libxml2-cmake -Wno-unused-but-set-global)
+sdb_dir_compile_options(libxml2-cmake -w)
 
 ################################################################################
 ## Azure SDK (monolithic build)
@@ -787,13 +767,7 @@ if(TARGET iceberg_planning_scan_plan)
     )
 endif()
 if(TARGET libpq)
-    target_compile_options(
-        libpq
-        PRIVATE
-            -Wno-ignored-attributes
-            -Wno-deprecated-declarations
-            -Wno-missing-field-initializers
-    )
+    target_compile_options(libpq PRIVATE -w)
 endif()
 
 if(TARGET duckdb_shell)

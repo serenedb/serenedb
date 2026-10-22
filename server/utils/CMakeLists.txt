@@ -1,3 +1,5 @@
+configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
+
 add_library(
     serene
     STATIC
@@ -15,4 +17,4 @@ add_library(
     signals.cpp
 )
 
-target_link_libraries(serene PUBLIC iresearch-static boost_boost simdjson)
+target_link_libraries(serene PUBLIC iresearch boost_boost simdjson)

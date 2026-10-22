@@ -6,8 +6,6 @@
 # default empty prefix so it overrides libc malloc/free directly (serenedb links
 # it globally) -- hence NO -DJEMALLOC_NO_RENAME.
 
-project(jemalloc C)
-
 set(LIBRARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../jemalloc")
 
 # jemalloc runtime config (malloc_conf), substituted into the config header via
@@ -75,13 +73,13 @@ target_include_directories(jemalloc_native SYSTEM PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/${JEMALLOC_INCLUDE_PREFIX}")
 
 # We do not ship private_namespace.h, so disable the private namespace.
-target_compile_definitions(jemalloc_native PRIVATE -DJEMALLOC_NO_PRIVATE_NAMESPACE)
+target_compile_definitions(jemalloc_native PRIVATE JEMALLOC_NO_PRIVATE_NAMESPACE)
 # for RTLD_NEXT / secure_getenv
-target_compile_options(jemalloc_native PRIVATE -D_GNU_SOURCE)
+target_compile_definitions(jemalloc_native PRIVATE _GNU_SOURCE)
 
 # Optional heap profiling (serenedb's SDB_JEMALLOC_PROF). Uses libgcc's
 # _Unwind_Backtrace (no libunwind dependency), matching the historical
 # --enable-prof --disable-prof-libunwind configuration.
 if(SDB_JEMALLOC_PROF)
-    target_compile_definitions(jemalloc_native PRIVATE -DJEMALLOC_PROF=1 -DJEMALLOC_PROF_LIBGCC=1)
+    target_compile_definitions(jemalloc_native PRIVATE JEMALLOC_PROF=1 JEMALLOC_PROF_LIBGCC=1)
 endif()

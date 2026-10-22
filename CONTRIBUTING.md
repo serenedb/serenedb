@@ -66,10 +66,10 @@ Tools and benchmarks share binaries instead of each linking their own: `serenedb
 
 ### The search-benchmark-game build
 
-`-DIRESEARCH_BENCH=ON` configures a tree for `search-benchmark-game` alone: its two executables link `iresearch-minimal`, which leaves out vector search, geo, fastText, every tokenizer but `split_text`, every scorer but BM25, and match offsets, over DuckDB with only its `icu` extension. Such a tree compiles about a sixth of what the full one does for that target, and it has no server, tests or micro benchmarks; `SDB_GTEST` is refused there.
+`-DSDB_IRESEARCH_BENCH=ON` configures a tree for `search-benchmark-game` alone: its two executables link an `iresearch` that leaves out vector search, geo, fastText, every tokenizer but `split_text`, every scorer but BM25, and match offsets, over DuckDB with only its `icu` extension. Such a tree compiles about a sixth of what the full one does for that target, and it has no server, tests or micro benchmarks; `SDB_GTEST` is refused there.
 
 ```bash
-cmake --preset perf -B build_sbg -DIRESEARCH_BENCH=ON
+cmake --preset perf -B build_sbg -DSDB_IRESEARCH_BENCH=ON
 cmake --build build_sbg -t search-benchmark-game
 ```
 

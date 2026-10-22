@@ -43,10 +43,10 @@ LOG_SUFFIX="${LOG_SUFFIX// /_}"
 : "${SDB_DEV:=On}"
 : "${SDB_LTO:=Off}"
 : "${SDB_GTEST:=Off}"
-: "${ENSURE_VTUNE_SYMBOLS:=Off}"
+: "${SDB_VTUNE:=Off}"
 : "${SDB_ALLOC:=JE}"
 : "${SANITIZERS:=None}"
-: "${STATIC_EXECUTABLES:=On}"
+: "${SDB_STATIC:=On}"
 : "${SDB_FAULT_INJECTION:=On}"
 : "${SDB_COVERAGE:=Off}"
 
@@ -68,13 +68,13 @@ CMAKE_FLAGS=(
 	"-DCMAKE_CXX_COMPILER=/usr/local/bin/clang++"
 	"-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld"
 	"-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld"
-	"-DAUTO_UPDATE_MODULES=Off"
+	"-DSDB_UPDATE_SUBMODULES=Off"
 	"-DSDB_DEV=$SDB_DEV"
 	"-DSDB_FAULT_INJECTION=$SDB_FAULT_INJECTION"
 	"-DSDB_GTEST=$SDB_GTEST"
 	"-DSDB_LTO=$SDB_LTO"
 	"-DSDB_COVERAGE=$SDB_COVERAGE"
-	"-DENSURE_VTUNE_SYMBOLS=$ENSURE_VTUNE_SYMBOLS"
+	"-DSDB_VTUNE=$SDB_VTUNE"
 )
 
 if [[ -n "${SERENEDB_VERSION_PATCH:-}" && "${SERENEDB_VERSION_PATCH}" != "0" ]]; then
@@ -87,9 +87,9 @@ if [[ -n "${EXTRA_CMAKE_FLAGS:-}" ]]; then
 fi
 
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
-	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=$STATIC_EXECUTABLES" "-DSDB_ALLOC=$SDB_ALLOC" "-DSDB_SANITIZE=")
+	CMAKE_FLAGS+=("-DSDB_STATIC=$SDB_STATIC" "-DSDB_ALLOC=$SDB_ALLOC" "-DSDB_SANITIZE=")
 else
-	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=Off" "-DSDB_ALLOC=SYS" "-DSDB_SANITIZE=$SANITIZERS")
+	CMAKE_FLAGS+=("-DSDB_STATIC=Off" "-DSDB_ALLOC=SYS" "-DSDB_SANITIZE=$SANITIZERS")
 fi
 
 print_banner "CMAKE CONFIGURATION" "${TARGETS[*]}"
@@ -105,7 +105,7 @@ ccache -s | tee -a /serenedb/out/logs/ccache_${LOG_SUFFIX}.log
 
 print_banner "SYSTEM DEPENDENCY CHECK" "${TARGETS[*]}"
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
-	/serenedb/scripts/ci/check-system-deps.sh "$PWD" None "$STATIC_EXECUTABLES" || exit 1
+	/serenedb/scripts/ci/check-system-deps.sh "$PWD" None "$SDB_STATIC" || exit 1
 else
 	/serenedb/scripts/ci/check-system-deps.sh "$PWD" "$SANITIZERS" Off || exit 1
 fi

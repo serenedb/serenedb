@@ -13,7 +13,7 @@ function(sdb_dir_compile_options dir)
 endfunction()
 
 function(sdb_update_module)
-    if(NOT AUTO_UPDATE_MODULES)
+    if(NOT SDB_UPDATE_SUBMODULES)
         return()
     endif()
     set(cwd ${CMAKE_SOURCE_DIR}/third_party)
@@ -61,7 +61,7 @@ endfunction()
 macro(sdb_add_module module)
     cmake_parse_arguments(
         _sdb_add_module
-        "EXCLUDE_FROM_ALL;SYSTEM;NO_WARNINGS;COVERAGE"
+        "EXCLUDE_FROM_ALL;NO_WARNINGS;COVERAGE"
         "DIR"
         ""
         ${ARGN}
@@ -78,14 +78,12 @@ macro(sdb_add_module module)
     set(_sdb_add_module_DIR
         ${CMAKE_SOURCE_DIR}/third_party/${_sdb_add_module_DIR}
     )
-    set(_sdb_add_module_ARGS "")
-    foreach(_sdb_add_module_ARG EXCLUDE_FROM_ALL SYSTEM)
-        if(_sdb_add_module_${_sdb_add_module_ARG})
-            list(APPEND _sdb_add_module_ARGS ${_sdb_add_module_ARG})
-        endif()
-    endforeach()
     sdb_update_module(${module})
-    add_subdirectory(${_sdb_add_module_DIR} ${_sdb_add_module_ARGS})
+    if(_sdb_add_module_EXCLUDE_FROM_ALL)
+        add_subdirectory(${_sdb_add_module_DIR} EXCLUDE_FROM_ALL SYSTEM)
+    else()
+        add_subdirectory(${_sdb_add_module_DIR} SYSTEM)
+    endif()
     if(_sdb_add_module_NO_WARNINGS)
         sdb_dir_compile_options(${_sdb_add_module_DIR} -w)
     endif()
@@ -93,3 +91,8 @@ macro(sdb_add_module module)
         sdb_dir_compile_options(${_sdb_add_module_DIR} ${SDB_COVERAGE_FLAGS})
     endif()
 endmacro()
+
+function(sdb_link_duckdb_extensions target)
+    set(DUCKDB_MODULE_BASE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb)
+    duckdb_link_extensions(${target} PRIVATE ${STATICALLY_LINK_EXTENSIONS})
+endfunction()

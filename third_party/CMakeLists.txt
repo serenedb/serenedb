@@ -32,9 +32,6 @@ if(SDB_ALLOC STREQUAL "JE")
     )
     add_dependencies(jemalloc jemalloc_native)
     link_libraries(jemalloc)
-    set(FOLLY_USE_JEMALLOC ON)
-else()
-    set(FOLLY_USE_JEMALLOC OFF)
 endif()
 
 ###############################################################################
@@ -45,7 +42,7 @@ set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-sdb_add_module(simdutf SYSTEM)
+sdb_add_module(simdutf)
 
 ################################################################################
 ## fast_float
@@ -60,7 +57,7 @@ sdb_add_module(fast_float)
 
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-sdb_add_module(simdjson SYSTEM)
+sdb_add_module(simdjson)
 
 ################################################################################
 ## YACLib
@@ -72,7 +69,7 @@ if(SDB_DEV)
 else()
     set(YACLIB_LOG "")
 endif()
-sdb_add_module(yaclib SYSTEM)
+sdb_add_module(yaclib)
 
 ################################################################################
 ## openssl
@@ -152,7 +149,6 @@ add_library(Boost::headers ALIAS boost_boost)
 add_library(sdb_icu INTERFACE)
 target_include_directories(
     sdb_icu
-    SYSTEM
     INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/include
         ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/collation/include
@@ -162,7 +158,6 @@ target_include_directories(
 )
 
 add_library(icu ALIAS sdb_icu)
-add_library(icu-uc ALIAS sdb_icu)
 add_library(ICU::uc ALIAS sdb_icu)
 
 ################################################################################
@@ -194,7 +189,6 @@ sdb_update_module(protozero)
 add_library(protozero INTERFACE)
 target_include_directories(
     protozero
-    SYSTEM
     INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protozero/include"
 )
 
@@ -210,7 +204,6 @@ add_library(
 )
 target_include_directories(
     geographiclib
-    SYSTEM
     INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src"
 )
 
@@ -225,7 +218,7 @@ if(SDB_GTEST)
     file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake "")
     enable_testing()
 endif()
-sdb_add_module(re2 SYSTEM COVERAGE)
+sdb_add_module(re2 COVERAGE)
 if(SDB_GTEST)
     get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
     list(FILTER re2_targets INCLUDE REGEX "_test$")
@@ -268,7 +261,6 @@ add_library(sse2neon INTERFACE)
 if(ARCH_AARCH64)
     target_include_directories(
         sse2neon
-        SYSTEM
         INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/sse2neon"
     )
 endif()
@@ -278,7 +270,7 @@ endif()
 ################################################################################
 
 # TODO(mbkkt) make it submodule
-add_subdirectory(fastText SYSTEM)
+add_subdirectory(fastText)
 
 ################################################################################
 ### BLAS
@@ -337,7 +329,6 @@ endif()
 add_library(pcg INTERFACE)
 target_include_directories(
     pcg
-    SYSTEM
     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/pcg
 )
 
@@ -345,14 +336,12 @@ target_include_directories(
 ### faiss library
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
-set(FAISS_LIB faiss CACHE INTERNAL "faiss target to link" FORCE)
-
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
-sdb_add_module(faiss SYSTEM)
-set_property(TARGET ${FAISS_LIB} PROPERTY INTERFACE_COMPILE_OPTIONS "")
-target_link_libraries(${FAISS_LIB} PUBLIC pcg)
+sdb_add_module(faiss)
+set_property(TARGET faiss PROPERTY INTERFACE_COMPILE_OPTIONS "")
+target_link_libraries(faiss PUBLIC pcg)
 
 ################################################################################
 ## snowball stemmer
@@ -430,9 +419,6 @@ target_include_directories(
 
 # Force static HTTP(S)-only build, using our vendored OpenSSL.
 set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY ON CACHE BOOL "" FORCE)
@@ -531,7 +517,7 @@ set(ADA_TESTING OFF CACHE BOOL "" FORCE)
 set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
 set(ADA_USE_SIMDUTF ON CACHE BOOL "" FORCE)
-sdb_add_module(ada SYSTEM)
+sdb_add_module(ada)
 
 ###############################################################################
 ## croaring
@@ -539,7 +525,7 @@ sdb_add_module(ada SYSTEM)
 
 set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
-sdb_add_module(croaring SYSTEM)
+sdb_add_module(croaring)
 
 ################################################################################
 ## fmt
@@ -590,14 +576,12 @@ sdb_add_module(cmark-gfm)
 
 target_include_directories(
     libcmark-gfm_static
-    SYSTEM
     INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
         ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
 )
 target_include_directories(
     libcmark-gfm-extensions_static
-    SYSTEM
     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
 )
 
@@ -618,7 +602,7 @@ option(
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-if(IRESEARCH_BENCH)
+if(SDB_IRESEARCH_BENCH)
     set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
     set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
     set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
@@ -649,7 +633,7 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-if(IRESEARCH_BENCH)
+if(SDB_IRESEARCH_BENCH)
     set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(STATICALLY_LINK_EXTENSIONS "icu" CACHE STRING "" FORCE)
     set(DUCKDB_EXTENSION_CONFIGS "" CACHE STRING "" FORCE)
@@ -715,15 +699,11 @@ if(TARGET duckdb_shell)
     )
 endif()
 
-function(sdb_link_duckdb_extensions TARGET)
-    set(DUCKDB_MODULE_BASE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb)
-    duckdb_link_extensions(${TARGET} ${ARGN} ${STATICALLY_LINK_EXTENSIONS})
-endfunction()
-
 target_include_directories(
     duckdb_static
-    SYSTEM
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/utf8proc/include
 )
 
 # Link extension objects that aren't automatically included in duckdb_static
@@ -737,7 +717,7 @@ target_link_libraries(
         simdutf
 )
 
-if(NOT IRESEARCH_BENCH)
+if(NOT SDB_IRESEARCH_BENCH)
     target_link_libraries(
         iceberg_catalog_rest_storage_authorization
         PRIVATE OpenSSL::Crypto

@@ -75,7 +75,6 @@ target_include_directories(
     PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
-        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include"
 )
 
 add_subdirectory(functions)

@@ -105,11 +105,11 @@ jobs:
           echo "SDB_COVERAGE=Off" >> $GITHUB_ENV
           echo "SANITIZERS=" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
-          echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
+          echo "SDB_VTUNE=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV
           echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
-          echo "STATIC_EXECUTABLES=On" >> $GITHUB_ENV
+          echo "SDB_STATIC=On" >> $GITHUB_ENV
 
           # Version
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
@@ -156,7 +156,7 @@ jobs:
             -e SDB_FAULT_INJECTION=Off \
             -e SDB_LTO=On \
             -e SDB_COVERAGE=Off \
-            -e ENSURE_VTUNE_SYMBOLS=Off \
+            -e SDB_VTUNE=Off \
             -e BUILD_DIR=build \
             -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \
             -v "${WORKSPACE}:/serenedb" \

@@ -1019,9 +1019,6 @@ launch_external() {
 			if [[ -n "$skip" && "$f" =~ $skip ]]; then
 				continue
 			fi
-			if grep -qE '^# exclusive( |$)' "$f" 2>/dev/null; then
-				exclusive_tests+=("$f")
-			fi
 			# The local iceberg fixture is generated, not checked in. Tests
 			# symlink ${RESOURCES}/tests/iceberg/<table>_vN and serened
 			# resolves the target; under compose run_in_docker.sh generates
@@ -1200,7 +1197,6 @@ parse_options() {
 # --test is repeatable; collect into array and fall back to the single default
 # glob when none are provided.
 tests=()
-exclusive_tests=()
 
 # Example usage:
 parse_options "$@" || exit 1
@@ -1304,15 +1300,9 @@ run_tests() {
 		skip_failed_opt="--skip-failed"
 	fi
 
-	local main_skip="$skip"
-	if [[ ${#exclusive_tests[@]} -gt 0 ]]; then
-		local exclusive_regex
-		exclusive_regex=$(printf '%s\n' "${exclusive_tests[@]}" | sed -e 's/[][\\.*^$+?(){}|]/\\&/g' | paste -sd'|')
-		main_skip="${main_skip:+$main_skip|}$exclusive_regex"
-	fi
 	local skip_opt=""
-	if [[ -n "$main_skip" ]]; then
-		skip_opt="--skip $main_skip"
+	if [[ -n "$skip" ]]; then
+		skip_opt="--skip $skip"
 	fi
 
 	# TODO(Misha) move this to sqllogictest-rs
@@ -1338,19 +1328,6 @@ run_tests() {
 		$skip_opt \
 		$ssl_port_opt
 	local rc=$?
-	if [[ ${#exclusive_tests[@]} -gt 0 ]]; then
-		sqllogictest "${exclusive_tests[@]}" \
-			--host "$host" --port "$port" --engine "$engine" \
-			--jobs 1 \
-			--label "$database" \
-			${PGSOCKETDIR:+--label pgsocket} \
-			--junit "$junit-$engine-exclusive" \
-			$options \
-			$skip_failed_opt ${skip_failed:+"$skip_failed"} \
-			$ssl_port_opt
-		local exclusive_rc=$?
-		[[ $rc == 0 ]] && rc=$exclusive_rc
-	fi
 
 	if [[ -n "$timing_out" ]]; then
 		unset SDB_TIMING_CACHE SDB_TIMING_OUT

@@ -210,6 +210,9 @@ void NativeIndexSource::BindFiles(
       duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(paths))};
     fast_path.is_glob = false;
     if (fast_path.function_name == "iceberg_scan") {
+      if (fast_path.catalog_ref) {
+        BindFastPathSource(context, _fast_path);
+      }
       fast_path.function_name = "read_parquet";
       fast_path.named_params.clear();
       fast_path.catalog_ref.reset();

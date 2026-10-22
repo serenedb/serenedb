@@ -216,14 +216,11 @@ std::string ProjectionDisplayName(const ScanBindData& bind,
   if (col_id == kColumnIdentifierTableOid) {
     return "tableoid";
   }
-  if (col_id == kColumnIdentifierGeneratedPk) {
-    return "generated_pk";
-  }
   if (col_id == kColumnIdentifierPkRowNumber) {
     return "row_number";
   }
   if (col_id == kColumnIdentifierRowPosition) {
-    return "row_position";
+    return "rowid";
   }
   return absl::StrCat("column_", col_id);
 }

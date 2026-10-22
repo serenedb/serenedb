@@ -2,8 +2,8 @@
 """Generate the randomized search-table DML tests.
 
 DELETE and UPDATE on a search table remove rows by the position their scan
-read, and fall back to the rowid when a compaction replaced the segment in
-between. The sqllogic files below drive random inserts, deletes, updates and
+read, also when a compaction replaced the segment in between. The sqllogic
+files below drive random inserts, deletes, updates and
 compactions, also from a second connection while a transaction is open, against
 a search table and a plain table with the same rows, and check after every step
 that both hold the same rows. The recovery file crashes the server right after a

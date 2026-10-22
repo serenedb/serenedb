@@ -20,31 +20,49 @@ statement ok
 VACUUM (REFRESH_TABLE) pe;
 
 query
-SELECT count(*) = count(DISTINCT sdb_row_position$) AS unique_positions, count(sdb_row_position$) AS n FROM pe;
+SELECT count(*) = count(DISTINCT rowid) AS unique_positions, count(rowid) AS n FROM pe;
 ----
 unique_positions	n
 t	20000
 
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+SELECT count(DISTINCT rowid >> 32) AS segments FROM pe;
 ----
 segments
 2
 
 statement ok
+CREATE TABLE pe_before AS SELECT id, rowid AS pos FROM pe;
+
+query
+SELECT count(*) AS same FROM pe JOIN pe_before USING (id) WHERE pe.rowid = pe_before.pos;
+----
+same
+20000
+
+statement ok
 VACUUM (COMPACT_TABLE) pe;
 
 query
-SELECT count(*) = count(DISTINCT sdb_row_position$) AS unique_positions, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+SELECT count(*) = count(DISTINCT rowid) AS unique_positions, count(DISTINCT rowid >> 32) AS segments FROM pe;
 ----
 unique_positions	segments
 t	1
 
 query
-SELECT min(sdb_row_position$ & 4294967295) AS first_doc, max(sdb_row_position$ & 4294967295) AS last_doc FROM pe;
+SELECT min(rowid & 4294967295) AS first_doc, max(rowid & 4294967295) AS last_doc FROM pe;
 ----
 first_doc	last_doc
 1	20000
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE pe.rowid = pe_before.pos) AS same FROM pe JOIN pe_before USING (id);
+----
+n	same
+20000	0
+
+statement ok
+DROP TABLE pe_before;
 
 query
 DELETE FROM pe WHERE id = 5 RETURNING id, v;
@@ -353,3 +371,78 @@ n	gone	newer	fresh
 
 statement ok
 DROP TABLE pc;
+
+statement ok
+CREATE TABLE pr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pr SELECT i, 'v' || i FROM generate_series(1, 100) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pr;
+
+statement ok
+SET VARIABLE pr_pos = (SELECT rowid FROM pr WHERE id = 42);
+
+query
+SELECT id FROM pr WHERE rowid = getvariable('pr_pos');
+----
+id
+42
+
+query
+SELECT count(*) AS n FROM pr WHERE rowid > getvariable('pr_pos');
+----
+n
+58
+
+query
+SELECT count(*) AS n FROM pr WHERE rowid IN (getvariable('pr_pos'), getvariable('pr_pos') + 1);
+----
+n
+2
+
+query
+UPDATE pr SET v = 'changed' WHERE rowid = getvariable('pr_pos') RETURNING id, v;
+----
+id	v
+42	changed
+
+statement ok
+VACUUM (REFRESH_TABLE) pr;
+
+query
+SELECT count(*) AS n FROM pr WHERE rowid = getvariable('pr_pos');
+----
+n
+0
+
+query
+SELECT id, v FROM pr WHERE v = 'changed';
+----
+id	v
+42	changed
+
+statement ok
+SET VARIABLE pr_pos = (SELECT rowid FROM pr WHERE id = 7);
+
+query
+DELETE FROM pr WHERE rowid = getvariable('pr_pos') RETURNING id;
+----
+id
+7
+
+statement ok
+VACUUM (REFRESH_TABLE) pr;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id = 7) AS seven FROM pr;
+----
+n	seven
+99	0
+
+statement ok
+RESET VARIABLE pr_pos;
+
+statement ok
+DROP TABLE pr;

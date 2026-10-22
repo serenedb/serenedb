@@ -73,7 +73,6 @@ constexpr absl::Duration kArmRetry = absl::Milliseconds(50);
 
 struct RowSource {
   std::vector<irs::ColumnstoreProjection> projections;
-  duckdb::idx_t rowid_slot = 0;
   duckdb::DataChunk chunk;
   irs::ColFilterStateCache filter_states;
   duckdb::SelectionVector live{STANDARD_VECTOR_SIZE +
@@ -84,19 +83,12 @@ struct RowSource {
 // copyable.
 void InitRowSource(duckdb::ClientContext& context,
                    const SearchBackfillTarget& target, RowSource& source) {
-  source.projections.reserve(target.column_ids.size() + 1);
-  duckdb::vector<duckdb::LogicalType> types = target.column_types;
+  source.projections.reserve(target.column_ids.size());
   for (size_t i = 0; i < target.column_ids.size(); ++i) {
     source.projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = i, .column_id = target.column_ids[i]});
   }
-  // The rowid is a stored column like any other (kPKFieldId is kGeneratedPKId
-  // by definition), read here so each rebuilt row keeps its identity.
-  source.rowid_slot = target.column_ids.size();
-  source.projections.emplace_back(irs::ColumnstoreProjection{
-    .output_slot = source.rowid_slot, .column_id = term_dict::kPKFieldId});
-  types.push_back(duckdb::LogicalType::BIGINT);
-  source.chunk.Initialize(duckdb::Allocator::Get(context), types);
+  source.chunk.Initialize(duckdb::Allocator::Get(context), target.column_types);
 }
 
 // Feeds every live row of `sub` into `sink`. A segment with deletes is scanned
@@ -136,8 +128,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
         chunk.Slice(source.live, keep);
       }
     }
-    WriteRebuiltChunkToSearchSink(sink, chunk, target.column_ids,
-                                  source.rowid_slot, target.table_id, context);
+    WriteChunkToSearchSink(sink, chunk, target.column_ids, target.table_id,
+                           context);
     fed += chunk.size();
   }
   return fed;

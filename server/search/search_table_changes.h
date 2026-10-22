@@ -32,7 +32,6 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -46,11 +45,6 @@ class Catalog;
 
 }  // namespace duckdb
 namespace sdb::search {
-
-struct InlinePk {
-  uint64_t base;
-  uint64_t count;
-};
 
 inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, uint64_t position) {
   if (!runs.starts.empty() &&
@@ -67,13 +61,13 @@ inline void AppendRowRun(duckdb::WALDeleteRowRanges& runs, uint64_t position) {
 // One collection of rows and one vector of delete row ranges, both filled in
 // issue order; nothing reaches iresearch until the buffer is flushed. `ops`
 // records only the things that are not rows -- deletes and truncates -- each
-// carrying the number of insert bands that precede it, so replay can interleave
-// them back into the row stream. Rows between two ops are implicit.
+// carrying the number of buffered rows that precede it, so replay can
+// interleave them back into the row stream. Rows between two ops are implicit.
 struct LocalTableChangesEntry {
   struct Op {
-    // Insert bands of `pk_segments` that precede this op. Rows the flush
-    // already promoted are gone from the buffer, so their ops sit at 0.
-    uint32_t band_watermark = 0;
+    // Buffered rows that precede this op. Rows the flush already promoted are
+    // gone from the buffer, so their ops sit at 0.
+    uint64_t row_watermark = 0;
     // Runs of row positions to remove. Empty for a TRUNCATE.
     duckdb::WALDeleteRowRanges deletes;
     bool truncate = false;
@@ -82,12 +76,10 @@ struct LocalTableChangesEntry {
     bool IsTruncate() const noexcept { return truncate; }
   };
 
-  using EmitFn = absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t) const>;
+  using EmitFn = absl::AnyInvocable<void(duckdb::DataChunk&) const>;
   using ApplyFn = absl::AnyInvocable<void(Op&) const>;
 
-  // The buffer. `pk_segments` bands it one entry per Sink chunk.
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
-  std::vector<InlinePk> pk_segments;
   // The shard's stored columns, in chunk order, and the catalog its sink is
   // built against -- both captured with the first buffered chunk so the rows
   // can be replayed into iresearch later, from a commit that never saw the
@@ -103,8 +95,7 @@ struct LocalTableChangesEntry {
   void AppendInsertChunk(duckdb::BufferManager& bm,
                          const duckdb::vector<duckdb::LogicalType>& types,
                          std::span<const connector::ColumnId> cols,
-                         duckdb::Catalog& cat, duckdb::DataChunk& chunk,
-                         uint64_t pk_base) {
+                         duckdb::Catalog& cat, duckdb::DataChunk& chunk) {
     if (collection == nullptr) {
       collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
     }
@@ -113,11 +104,10 @@ struct LocalTableChangesEntry {
       catalog = &cat;
     }
     collection->Append(chunk);
-    pk_segments.push_back({pk_base, chunk.size()});
   }
 
   void AppendDeletes(const duckdb::Vector& positions) {
-    auto places = positions.Values<uint64_t>();
+    auto places = positions.Values<int64_t>();
     if (places.size() == 0) {
       return;
     }
@@ -130,14 +120,14 @@ struct LocalTableChangesEntry {
         }
       }
     }
-    const auto band = static_cast<uint32_t>(pk_segments.size());
+    const auto rows = BufferedRows();
     if (ops.size() == applied_ops || ops.back().truncate ||
-        ops.back().band_watermark != band) {
-      ops.emplace_back().band_watermark = band;
+        ops.back().row_watermark != rows) {
+      ops.emplace_back().row_watermark = rows;
     }
     auto& deletes = ops.back().deletes;
     for (const auto& place : places) {
-      AppendRowRun(deletes, place.GetValue());
+      AppendRowRun(deletes, static_cast<uint64_t>(place.GetValue()));
     }
   }
 
@@ -148,12 +138,10 @@ struct LocalTableChangesEntry {
   // whole and could not mask the part the truncate should have taken.
   void AppendTruncate(bool clears_shard) {
     collection.reset();
-    pk_segments.clear();
     ops.clear();
     applied_ops = 0;
     segments.clear();
     auto& op = ops.emplace_back();
-    op.band_watermark = 0;
     op.truncate = true;
     op.clears_shard = clears_shard;
   }
@@ -170,9 +158,11 @@ struct LocalTableChangesEntry {
                     std::make_move_iterator(refs.end()));
   }
 
-  bool HasBufferedRows() const noexcept {
-    return collection != nullptr && collection->Count() > 0;
+  uint64_t BufferedRows() const noexcept {
+    return collection == nullptr ? 0 : collection->Count();
   }
+
+  bool HasBufferedRows() const noexcept { return BufferedRows() > 0; }
 
   // Bytes a flush would reclaim. Deletes are deliberately not counted: a flush
   // frees none of them (the record carries them to commit either way), so
@@ -183,45 +173,39 @@ struct LocalTableChangesEntry {
 
   void Visit(size_t first_op, const EmitFn& emit, const ApplyFn& apply) {
     auto op = ops.begin() + first_op;
-    auto apply_until = [&](size_t band) {
-      for (; op != ops.end() && op->band_watermark <= band; ++op) {
+    uint64_t row = 0;
+    auto apply_reached = [&] {
+      for (; op != ops.end() && op->row_watermark <= row; ++op) {
         apply(*op);
       }
     };
-    size_t band = 0;
-    uint64_t band_rows = 0;
     if (collection != nullptr) {
       for (auto& chunk : collection->Chunks()) {
         for (duckdb::idx_t offset = 0; offset < chunk.size();) {
-          if (band_rows == 0) {
-            apply_until(band);
+          apply_reached();
+          auto end = chunk.size();
+          if (op != ops.end()) {
+            end =
+              std::min<duckdb::idx_t>(end, offset + (op->row_watermark - row));
           }
-          const auto& pk = pk_segments[band];
-          const auto end = std::min<duckdb::idx_t>(
-            chunk.size(), offset + pk.count - band_rows);
           duckdb::DataChunk slice;
           slice.InitializeEmpty(collection->Types());
           slice.Slice(chunk, offset, end);
-          emit(slice, pk.base + band_rows);
-          band_rows += end - offset;
+          emit(slice);
+          row += end - offset;
           offset = end;
-          if (band_rows == pk.count) {
-            ++band;
-            band_rows = 0;
-          }
         }
       }
     }
-    apply_until(std::numeric_limits<size_t>::max());
+    for (; op != ops.end(); ++op) {
+      apply(*op);
+    }
   }
 
   // Drops the buffered rows once a flush has taken ownership of them. The ops
   // stay: the record has to carry them to commit. `applied_ops` keeps replay
   // from feeding them a second time, so their stale watermarks are never read.
-  void ClearBufferedRows() {
-    collection.reset();
-    pk_segments.clear();
-  }
+  void ClearBufferedRows() { collection.reset(); }
 
   bool ClearsShard() const noexcept {
     if (ops.empty() || !ops.front().clears_shard) {

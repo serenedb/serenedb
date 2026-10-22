@@ -97,11 +97,6 @@
 #include "search/search_table.h"
 
 namespace sdb::catalog {
-namespace {
-
-constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
-
-}  // namespace
 
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
@@ -149,15 +144,6 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
     if (info.Base().oid == 0) {
-      if (!entry->PkSequenceName().empty()) {
-        duckdb::CreateSequenceInfo sequence_info;
-        sequence_info.SetQualification(GetName(), schema.name);
-        sequence_info.SetSequenceName(entry->PkSequenceName());
-        sequence_info.cache = kPkSequenceCache;
-        sequence_info.permissions.owner = info.Base().permissions.owner;
-        info.Base().dependencies.AddOwnedDependency(
-          *schema.CreateSequence(transaction, sequence_info));
-      }
       entry->Storage()->StartTasks();
     }
     return std::move(entry);

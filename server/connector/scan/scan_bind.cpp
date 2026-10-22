@@ -491,13 +491,6 @@ duckdb::TableFunction BindSearchTableScan(
   return CreateIResearchScanFunction();
 }
 
-std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
-  if (bind.relation.IsSearchTable()) {
-    return duckdb::LogicalType::ROW_TYPE;
-  }
-  return std::nullopt;
-}
-
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   if (bind.view &&
       bind.relation.inverted_config->pk.column == PkColumnKind::Has) {

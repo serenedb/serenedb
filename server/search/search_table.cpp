@@ -516,7 +516,7 @@ SearchTable::ReplaySession* SearchTable::BeginReplay(
 void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                duckdb::Catalog& catalog,
                                std::span<const connector::ColumnId> column_ids,
-                               duckdb::DataChunk& chunk, uint64_t row_start) {
+                               duckdb::DataChunk& chunk) {
   auto* session = BeginReplay(catalog.GetAttached());
   if (!session) {
     return;
@@ -526,7 +526,7 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                                          catalog, context);
   }
   connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids,
-                                    row_start, _table_id, context);
+                                    _table_id, context);
 }
 
 void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,

@@ -236,7 +236,8 @@ bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
 
 bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
                     duckdb::idx_t col) noexcept {
-  if (col == g.score_output_idx || col == g.tableoid_output_idx) {
+  if (col == g.score_output_idx || col == g.tableoid_output_idx ||
+      col == g.row_position_output_idx) {
     return true;
   }
   if (absl::c_any_of(f.offsets_entries,

@@ -309,7 +309,6 @@ TEST(RowPositionTest, PositionRoundTrips) {
       const auto position = MakeRowPosition(segment, doc);
       EXPECT_EQ(segment, RowPositionSegment(position));
       EXPECT_EQ(doc, RowPositionDoc(position));
-      EXPECT_NE(kNoRowPosition, position);
     }
   }
 }
@@ -321,19 +320,19 @@ TEST(RowPositionTest, PositionsOrderBySegmentThenDoc) {
 }
 
 TEST(RowPositionTest, FillRowPositions) {
-  duckdb::Vector out{duckdb::LogicalType::UBIGINT, 4};
+  duckdb::Vector out{duckdb::LogicalType::ROW_TYPE, 4};
   FillRowPositions(
     7, 4,
     [](duckdb::idx_t i) { return static_cast<irs::doc_id_t>(10 + 2 * i); },
     out);
   EXPECT_EQ(4, out.size());
-  const auto* data = duckdb::FlatVector::GetData<uint64_t>(out);
+  const auto* data = duckdb::FlatVector::GetData<int64_t>(out);
   for (duckdb::idx_t i = 0; i < 4; ++i) {
     EXPECT_TRUE(duckdb::FlatVector::Validity(out).RowIsValid(i));
     EXPECT_EQ(MakeRowPosition(7, static_cast<irs::doc_id_t>(10 + 2 * i)),
-              data[i]);
+              static_cast<uint64_t>(data[i]));
   }
-  duckdb::Vector null_out{duckdb::LogicalType::UBIGINT, 4};
+  duckdb::Vector null_out{duckdb::LogicalType::ROW_TYPE, 4};
   FillRowPositions(
     irs::DocRemoval::kNoSegment, 3,
     [](duckdb::idx_t) { return irs::doc_id_t{1}; }, null_out);
@@ -346,7 +345,7 @@ TEST(RowPositionTest, FillRowPositionsOfHighSegments) {
   for (const uint32_t segment :
        {uint32_t{0}, uint32_t{1} << 31, uint32_t{3000000000},
         irs::DocRemoval::kNoSegment - 1}) {
-    duckdb::Vector out{duckdb::LogicalType::UBIGINT, 3};
+    duckdb::Vector out{duckdb::LogicalType::ROW_TYPE, 3};
     FillRowPositions(
       segment, 3,
       [](duckdb::idx_t i) {
@@ -355,12 +354,12 @@ TEST(RowPositionTest, FillRowPositionsOfHighSegments) {
       },
       out);
     for (duckdb::idx_t i = 0; i < 3; ++i) {
-      const auto position = out.GetValue(i).GetValue<uint64_t>();
+      const auto position =
+        static_cast<uint64_t>(out.GetValue(i).GetValue<int64_t>());
       EXPECT_EQ(segment, RowPositionSegment(position)) << segment << " " << i;
       EXPECT_EQ(std::numeric_limits<irs::doc_id_t>::max() - 2 + i,
                 RowPositionDoc(position))
         << segment << " " << i;
-      EXPECT_NE(kNoRowPosition, position);
     }
   }
 }

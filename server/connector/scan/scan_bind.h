@@ -286,8 +286,6 @@ duckdb::TableFunction BindSearchTableScan(
   duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
-std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind);
-
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind);
 
 double SegmentBeamShare(double k, size_t segments) noexcept;

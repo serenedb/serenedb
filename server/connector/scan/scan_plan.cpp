@@ -434,21 +434,16 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   const auto num_bind_columns = bind_data.columns.ids.size();
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
-    if (col_id == kColumnIdentifierGeneratedPk) {
-      auto pk_type = GeneratedPkTypeOf(bind_data);
-      if (!pk_type) {
+    if (col_id == kColumnIdentifierRowPosition) {
+      if (!bind_data.relation.IsSearchTable()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("projecting the rowid through an inverted-index scan is not "
                   "supported"));
       }
-      state.generated_pk_output_idx = proj;
-      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
-      state.projected_types.push_back(std::move(*pk_type));
-    } else if (col_id == kColumnIdentifierRowPosition) {
       state.row_position_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
-      state.projected_types.push_back(duckdb::LogicalType::UBIGINT);
+      state.projected_types.push_back(duckdb::LogicalType::ROW_TYPE);
     } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId();
@@ -542,11 +537,6 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data) {
-  if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    state.cs_projections.emplace_back(
-      irs::ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
-                                 .column_id = term_dict::kPKFieldId});
-  }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = state.row_number_output_idx,

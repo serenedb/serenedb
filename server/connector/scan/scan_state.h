@@ -172,7 +172,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t score_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
-  duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t row_position_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;

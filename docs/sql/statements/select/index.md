@@ -129,6 +129,8 @@ Deletions introduce gaps in the rowids which may be reclaimed later:
 
 The `rowid` values are stable within a transaction.
 
+On a table created `WITH (storage = 'search')`, the `rowid` is the row's position in storage, like the `ctid` of PostgreSQL: the upper 32 bits number the segment that holds the row and the lower 32 bits the row within it. Every row has a distinct `rowid`. An `UPDATE` gives the row a new one, and so does a [compaction](../../indexes/inverted/maintenance.md#background-compaction) that merges its segment or an index build that rewrites it.
+
 <DocCallout type="bestPractice">
 It is strongly advised to avoid using rowids as identifiers.
 </DocCallout>

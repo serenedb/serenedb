@@ -103,9 +103,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     }
     changes.Visit(
       truncates ? 1 : 0,
-      [&](duckdb::DataChunk& rows, uint64_t pk_base) {
-        _entries.WriteInsert(rows, pk_base);
-      },
+      [&](duckdb::DataChunk& rows) { _entries.WriteInsert(rows); },
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
         const auto& deletes = op.deletes;
@@ -207,9 +205,9 @@ void SearchTableTransaction::AddInlineInsertChunk(
   duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types,
   std::span<const connector::ColumnId> column_ids, duckdb::Catalog& catalog,
-  duckdb::DataChunk& chunk, uint64_t pk_base) {
-  _changes[shard->GetTableId()].AppendInsertChunk(
-    buffer_manager, types, column_ids, catalog, chunk, pk_base);
+  duckdb::DataChunk& chunk) {
+  _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types,
+                                                  column_ids, catalog, chunk);
 }
 
 // Replays a shard's buffer into `trx` in issue order: rows through a sink,
@@ -229,8 +227,8 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
   }
   entry.Visit(
     entry.applied_ops,
-    [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-      connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids, pk_base,
+    [&](duckdb::DataChunk& chunk) {
+      connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids,
                                         shard.GetTableId(), context);
     },
     [&](LocalTableChangesEntry::Op& op) {

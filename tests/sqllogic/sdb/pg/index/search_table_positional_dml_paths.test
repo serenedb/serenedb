@@ -365,7 +365,7 @@ statement ok
 VACUUM (REFRESH_TABLE) pe;
 
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+SELECT count(DISTINCT rowid >> 32) AS segments FROM pe;
 ----
 segments
 30
@@ -401,16 +401,47 @@ statement ok
 VACUUM (REFRESH_TABLE) pf;
 
 query
-SELECT count(sdb_row_position$) AS n FROM pf WHERE id < 3;
+SELECT count(rowid) AS n FROM pf WHERE id < 3;
 ----
 n
 2
 
-statement error row positions are not served by this scan
-SELECT sdb_row_position$ FROM pf_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf_idx.tableoid) DESC LIMIT 1;
+query
+SELECT (SELECT rowid FROM pf_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf_idx.tableoid) DESC LIMIT 1) = (SELECT rowid FROM pf WHERE id = 2) AS same;
+----
+same
+t
 
-statement error row positions are not served by this scan
-SELECT id, sdb_row_position$ FROM pf WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf.tableoid) DESC LIMIT 1;
+query
+SELECT t.id, t.rowid = s.rowid AS same FROM (SELECT id, rowid FROM pf WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf.tableoid) DESC LIMIT 1) t JOIN pf s ON s.id = t.id;
+----
+id	same
+2	t
+
+statement ok
+SET VARIABLE pf_top = (SELECT rowid FROM pf WHERE body @@ ts_phrase('quick') ORDER BY BM25(pf.tableoid) DESC LIMIT 1);
+
+statement ok
+DELETE FROM pf WHERE rowid = getvariable('pf_top');
+
+statement ok
+RESET VARIABLE pf_top;
+
+statement ok
+VACUUM (REFRESH_TABLE) pf;
+
+query
+SELECT id FROM pf ORDER BY id;
+----
+id
+2
+3
+
+statement ok
+INSERT INTO pf VALUES (1, 'quick fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) pf;
 
 statement ok
 DELETE FROM pf WHERE body = 'fox';
@@ -445,21 +476,21 @@ query
 EXPLAIN UPDATE pg SET v = 'x' WHERE id = 3;
 ----
 QUERY PLAN
-╭─ EXTENSION ─────────────────────╮
-╰────────────────┬────────────────╯
-╭─ PROJECTION ───┴────────────────╮
-│ Projections: 'x', #0, rowid,    │
-│              sdb_row_position$  │
-│ ~1 row                          │
-╰────────────────┬────────────────╯
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: pg                       │
-│ Lookup: search                  │
-│ Projections: id, generated_pk,  │
-│              row_position       │
-│ Column Filter: id = 3           │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: 'x', #0, │
+│              rowid    │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: pg             │
+│ Lookup: search        │
+│ Projections: id,      │
+│              rowid    │
+│ Column Filter: id = 3 │
+│ ~1 row                │
+╰───────────────────────╯
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY pg_bm AS split_text(case := 'lower') WITH (frequency, position, norm);
@@ -471,7 +502,7 @@ statement ok
 VACUUM (REFRESH_TABLE) pg;
 
 query
-SELECT count(sdb_row_position$) AS n FROM pg_idx WHERE v @@ ts_phrase('v42');
+SELECT count(rowid) AS n FROM pg_idx WHERE v @@ ts_phrase('v42');
 ----
 n
 1

@@ -149,13 +149,13 @@ statement ok
 VACUUM (REFRESH_TABLE) pq;
 
 query
-SELECT count(*) AS n, count(*) FILTER (WHERE id BETWEEN 4000 AND 6999) AS gone, count(*) = count(DISTINCT sdb_row_position$) AS unique_positions FROM pq;
+SELECT count(*) AS n, count(*) FILTER (WHERE id BETWEEN 4000 AND 6999) AS gone, count(*) = count(DISTINCT rowid) AS unique_positions FROM pq;
 ----
 n	gone	unique_positions
 6623	0	t
 
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pq;
+SELECT count(DISTINCT rowid >> 32) AS segments FROM pq;
 ----
 segments
 2
@@ -210,7 +210,7 @@ statement ok
 VACUUM (REFRESH_TABLE) pq;
 
 query
-SELECT count(*) AS n, count(*) FILTER (WHERE v LIKE 'v9%' AND id % 2 = 1) AS gone, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pq;
+SELECT count(*) AS n, count(*) FILTER (WHERE v LIKE 'v9%' AND id % 2 = 1) AS gone, count(DISTINCT rowid >> 32) AS segments FROM pq;
 ----
 n	gone	segments
 6070	0	1

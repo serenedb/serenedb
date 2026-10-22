@@ -26,14 +26,12 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/types.hpp>
-#include <limits>
 
 namespace sdb::connector {
 
 inline constexpr uint32_t kRowPositionDocBits = 32;
 inline constexpr uint64_t kRowPositionDocMask =
   (uint64_t{1} << kRowPositionDocBits) - 1;
-inline constexpr uint64_t kNoRowPosition = std::numeric_limits<uint64_t>::max();
 
 inline uint64_t MakeRowPosition(uint32_t segment, irs::doc_id_t doc) noexcept {
   return uint64_t{segment} << kRowPositionDocBits | doc;
@@ -54,9 +52,9 @@ void FillRowPositions(uint32_t segment, duckdb::idx_t count, DocOf&& doc_of,
     duckdb::ConstantVector::SetNull(out, duckdb::count_t(count));
     return;
   }
-  auto* positions = duckdb::FlatVector::GetDataMutable<uint64_t>(out);
+  auto* positions = duckdb::FlatVector::GetDataMutable<int64_t>(out);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    positions[i] = MakeRowPosition(segment, doc_of(i));
+    positions[i] = static_cast<int64_t>(MakeRowPosition(segment, doc_of(i)));
   }
   duckdb::FlatVector::SetSize(out, count);
 }

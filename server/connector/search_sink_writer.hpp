@@ -406,14 +406,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const ColumnId> column_ids,
-                            uint64_t pk_base, duckdb::idx_t table_id,
+                            duckdb::idx_t table_id,
                             duckdb::ClientContext& context);
-
-void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                                   duckdb::DataChunk& chunk,
-                                   std::span<const ColumnId> column_ids,
-                                   duckdb::idx_t rowid_slot,
-                                   duckdb::idx_t table_id,
-                                   duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

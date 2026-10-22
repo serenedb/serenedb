@@ -103,8 +103,7 @@ class SearchTableTransaction {
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
                             std::span<const connector::ColumnId> column_ids,
-                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk,
-                            uint64_t pk_base);
+                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk);
 
   // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {

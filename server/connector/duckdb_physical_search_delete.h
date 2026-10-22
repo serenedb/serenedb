@@ -31,10 +31,8 @@
 
 namespace sdb::connector {
 
-// DELETE on a TableEngine::Search table. Single-threaded like the RocksDB
-// delete operator (no ParallelSink / local sink state): each row's PK is
-// encoded and (1) handed to the shard's serial iresearch trx as a removal and
-// (2) recorded on the transaction as the WAL delete payload.
+// DELETE on a TableEngine::Search table. Single-threaded (no ParallelSink /
+// local sink state): the transaction buffers each row's rowid as a removal.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: `types` is then the table row followed by the
@@ -69,7 +67,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
 
  private:
   duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
-  std::vector<primary_key::PKColumn> _pk_columns;
+  primary_key::PKColumn _rowid;
   bool _return_chunk = false;
   duckdb::vector<duckdb::idx_t> _return_columns;
   std::vector<duckdb::Value> _returned_constants;

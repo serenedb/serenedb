@@ -99,8 +99,6 @@ inline constexpr std::string_view kTermScoreName =
 // plans carry these; nothing persists them.
 inline constexpr duckdb::column_t kColumnIdentifierTableOid =
   UINT64_C(9223372036854775811);
-inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
-  UINT64_C(9223372036854775812);
 inline constexpr duckdb::column_t kColumnIdentifierPkRowNumber =
   UINT64_C(9223372036854775813);
 inline constexpr duckdb::column_t kColumnIdentifierRowPosition =

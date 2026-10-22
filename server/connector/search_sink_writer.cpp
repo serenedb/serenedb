@@ -1169,12 +1169,11 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     std::move(indexed_exprs), config.get());
 }
 
-namespace {
-
-void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-                     std::span<const ColumnId> column_ids,
-                     const duckdb::Vector& gen_pk, duckdb::idx_t table_id,
-                     duckdb::ClientContext& context) {
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const ColumnId> column_ids,
+                            duckdb::idx_t table_id,
+                            duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
   sink.InitImpl(num_rows, PkChunk{});
   const auto write_column = [&](ColumnId col_id,
@@ -1188,7 +1187,6 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   for (size_t col = 0; col < column_ids.size(); ++col) {
     write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
-  write_column(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
     auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
                                         table_id, column_ids, context);
@@ -1196,30 +1194,6 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
                               num_rows);
   }
   sink.FinishImpl();
-}
-
-}  // namespace
-
-void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                            duckdb::DataChunk& chunk,
-                            std::span<const ColumnId> column_ids,
-                            uint64_t pk_base, duckdb::idx_t table_id,
-                            duckdb::ClientContext& context) {
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, nullptr);
-  gen_pk.Sequence(static_cast<int64_t>(pk_base), 1, chunk.size());
-  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
-}
-
-void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
-                                   duckdb::DataChunk& chunk,
-                                   std::span<const ColumnId> column_ids,
-                                   duckdb::idx_t rowid_slot,
-                                   duckdb::idx_t table_id,
-                                   duckdb::ClientContext& context) {
-  SDB_ASSERT(rowid_slot < chunk.ColumnCount());
-  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, nullptr);
-  gen_pk.Reinterpret(chunk.data[rowid_slot]);
-  WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
 }
 
 }  // namespace sdb::connector

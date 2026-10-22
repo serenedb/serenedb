@@ -20,7 +20,7 @@ if("${SDB_ALLOC}" MATCHES "JE")
     # compiles it natively (no autotools) into the `jemalloc_native` target.
     sdb_update_module(${GIT_EXECUTABLE} "jemalloc" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
     add_subdirectory(jemalloc-cmake)
-    sdb_suppress_warnings(jemalloc-cmake -Wno-missing-braces)
+    sdb_dir_compile_options(jemalloc-cmake -Wno-missing-braces)
     # Expose it as an IMPORTED target: it is linked globally, so it ends up in
     # the link interface of vendored libs that export() their targets (croaring),
     # and export() tolerates IMPORTED but not in-tree targets.
@@ -189,7 +189,7 @@ sdb_update_module(${GIT_EXECUTABLE} "abseil-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
 add_subdirectory(abseil-cpp)
-sdb_suppress_warnings(abseil-cpp -Wno-unused-parameter)
+sdb_dir_compile_options(abseil-cpp -Wno-unused-parameter)
 target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
@@ -246,6 +246,9 @@ if(SDB_GTEST)
     enable_testing()
 endif()
 add_subdirectory(re2 SYSTEM)
+if(SDB_COVERAGE)
+    sdb_dir_compile_options(re2 ${SDB_COVERAGE_FLAGS})
+endif()
 if(SDB_GTEST)
     get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
     list(FILTER re2_targets INCLUDE REGEX "_test$")
@@ -272,7 +275,7 @@ sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
 add_subdirectory(googletest)
-sdb_suppress_warnings(googletest -Wno-sign-conversion)
+sdb_dir_compile_options(googletest -Wno-sign-conversion)
 
 ################################################################################
 ### benchmark library
@@ -349,7 +352,7 @@ else()
     endif()
 endif()
 add_subdirectory(OpenBLAS)
-sdb_suppress_warnings(
+sdb_dir_compile_options(
     OpenBLAS
     -Wno-unused-but-set-variable
     -Wno-unused-but-set-parameter
@@ -522,7 +525,7 @@ set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
 
 add_subdirectory(curl)
-sdb_suppress_warnings(curl -Wno-unused-but-set-global)
+sdb_dir_compile_options(curl -Wno-unused-but-set-global)
 
 # Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
 # FindCURL.cmake short-circuits when these variables are already set.
@@ -630,7 +633,7 @@ set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
 set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
 set(THREADSAFE ON CACHE BOOL "" FORCE)
 add_subdirectory(avro/lang/c)
-sdb_suppress_warnings(
+sdb_dir_compile_options(
     avro/lang/c
     -Wno-cast-function-type-mismatch
     -Wno-sometimes-uninitialized
@@ -643,7 +646,7 @@ sdb_suppress_warnings(
 sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(libxml2-cmake)
-sdb_suppress_warnings(libxml2-cmake -Wno-unused-but-set-global)
+sdb_dir_compile_options(libxml2-cmake -Wno-unused-but-set-global)
 
 ################################################################################
 ## Azure SDK (monolithic build)
@@ -773,6 +776,9 @@ sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 add_subdirectory(duckdb)
+if(SDB_COVERAGE)
+    sdb_dir_compile_options(duckdb ${SDB_COVERAGE_FLAGS})
+endif()
 target_compile_options(duckdb_storage PRIVATE -Wno-thread-safety-analysis)
 if(TARGET iceberg_planning_scan_plan)
     target_compile_options(

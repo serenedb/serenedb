@@ -72,15 +72,7 @@ set_property(
             MemoryWithOrigins
 )
 
-set(USE_COVERAGE
-    ""
-    CACHE STRING
-    "coverage: SourceBased, SourceBasedMCDC, GCOV, empty for none"
-)
-set_property(
-    CACHE USE_COVERAGE
-    PROPERTY STRINGS "" SourceBased SourceBasedMCDC GCOV
-)
+option(SDB_COVERAGE "LLVM source-based coverage of our code, DuckDB and re2" OFF)
 
 set(USE_DEBUG_INFO
     "FULL"
@@ -225,30 +217,15 @@ elseif(SDB_USE_PGO)
     #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
 endif()
 
-if(USE_COVERAGE STREQUAL "SourceBased")
-    add_compile_options(
+if(SDB_COVERAGE)
+    set(SDB_COVERAGE_FLAGS
         -fprofile-instr-generate
         -fcoverage-mapping
+        "SHELL:-mllvm -enable-single-byte-coverage=true"
+        "SHELL:-mllvm -conditional-counter-update"
         -Wno-pass-failed
     )
-    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
-elseif(USE_COVERAGE STREQUAL "SourceBasedMCDC")
-    add_compile_options(
-        -fprofile-instr-generate
-        -fcoverage-mapping
-        -fcoverage-mcdc
-        -Wno-pass-failed
-    )
-    add_link_options(
-        -fprofile-instr-generate
-        -fcoverage-mapping
-        -fcoverage-mcdc
-    )
-elseif(USE_COVERAGE STREQUAL "GCOV")
-    add_compile_options(--coverage)
-    add_link_options(--coverage)
-elseif(NOT "${USE_COVERAGE}" STREQUAL "")
-    message(FATAL_ERROR "Invalid USE_COVERAGE value ${USE_COVERAGE}")
+    add_link_options(-fprofile-instr-generate)
 endif()
 
 # ------------------------------------------------------------------------------
@@ -378,7 +355,9 @@ if(USE_FAIL_ON_WARNINGS)
     add_compile_options(-Werror)
 endif()
 
-function(sdb_suppress_warnings dir)
+add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.)
+
+function(sdb_dir_compile_options dir)
     get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
     foreach(target IN LISTS targets)
         get_target_property(type ${target} TYPE)
@@ -388,7 +367,7 @@ function(sdb_suppress_warnings dir)
     endforeach()
     get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
     foreach(subdir IN LISTS subdirs)
-        sdb_suppress_warnings(${subdir} ${ARGN})
+        sdb_dir_compile_options(${subdir} ${ARGN})
     endforeach()
 endfunction()
 
@@ -721,6 +700,10 @@ add_compile_options(
     -Wunreachable-code-break
     -Wunreachable-code-return
 )
+if(SDB_COVERAGE)
+    add_compile_options(${SDB_COVERAGE_FLAGS})
+    add_compile_definitions(SDB_COVERAGE)
+endif()
 
 add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)

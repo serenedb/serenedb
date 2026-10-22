@@ -102,7 +102,7 @@ jobs:
           echo "SDB_GTEST=Off" >> $GITHUB_ENV
           echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
           echo "USE_IPO=On" >> $GITHUB_ENV
-          echo "USE_COVERAGE=" >> $GITHUB_ENV
+          echo "SDB_COVERAGE=Off" >> $GITHUB_ENV
           echo "SANITIZERS=" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
@@ -155,7 +155,7 @@ jobs:
             -e SDB_DEV=Off \
             -e SDB_FAULT_INJECTION=Off \
             -e USE_IPO=On \
-            -e USE_COVERAGE= \
+            -e SDB_COVERAGE=Off \
             -e ENSURE_VTUNE_SYMBOLS=Off \
             -e BUILD_DIR=build \
             -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \

@@ -29,6 +29,7 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 
@@ -136,6 +137,13 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     values.emplace_back("block_cache_spill_reads", stats.spill_reads,
                         "blocks read back from the spill file since start");
   }
+  const auto uploads = irs::CurrentUploads();
+  values.emplace_back("index_uploads_pending", uploads.files,
+                      "index files being written to an object store whose "
+                      "upload has not completed");
+  values.emplace_back("index_upload_pending_bytes", uploads.bytes,
+                      "bytes written to index files on an object store whose "
+                      "upload has not completed");
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   auto& context = _context;

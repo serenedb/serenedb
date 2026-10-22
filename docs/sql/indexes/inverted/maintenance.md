@@ -178,7 +178,7 @@ The standard `pg_indexes` view also lists them (alongside the primary-key index)
 
 ### Statistics in `sdb_metrics` {#sdb-metrics}
 
-The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks, the [cache of index files on an object store](../../../configuration/index_storage.md#caching)) and carry a `NULL` `relation_id`. In addition, **each search table and each inverted index on a regular table or a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a search table has no storage of its own and contributes no rows: the search table's rows cover its indexes.
+The `sdb_metrics` system table exposes live runtime metrics. Most rows are process-wide gauges (connection counts, active/pending maintenance tasks, the [cache and uploads of index files on an object store](../../../configuration/index_storage.md#caching)) and carry a `NULL` `relation_id`. In addition, **each search table and each inverted index on a regular table or a view contributes a row per statistic**, tagged with its oid in the `relation_id` column -- describing its physical state and the health of its background maintenance. An inverted index on a search table has no storage of its own and contributes no rows: the search table's rows cover its indexes.
 
 | Column | Description |
 | :--- | :--- |

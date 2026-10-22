@@ -12,6 +12,7 @@ import collections
 import os
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -607,6 +608,55 @@ def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> Non
         finally:
             again.stop()
         assert orphan not in fake.keys("bucket"), fake.keys("bucket")
+
+
+def _pending_uploads(conn: psycopg.Connection) -> dict[str, int]:
+    return dict(conn.execute(
+        "SELECT metric, value FROM sdb_metrics "
+        "WHERE relation_id IS NULL AND metric LIKE 'index_upload%' "
+        "ORDER BY metric").fetchall())
+
+
+def test_pending_uploads_are_reported(tmp_path: Path) -> None:
+    location = f"s3://bucket/pending-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                         location)
+            errors: list[Exception] = []
+
+            def build() -> None:
+                try:
+                    with server.connect() as conn:
+                        conn.execute(
+                            "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+
+            fake.latency = 0.2
+            builder = threading.Thread(target=build)
+            builder.start()
+            seen = []
+            with server.connect() as conn:
+                while builder.is_alive():
+                    seen.append(_pending_uploads(conn))
+                    time.sleep(0.05)
+                builder.join()
+                fake.latency = 0
+                deadline = time.monotonic() + 30
+                after = _pending_uploads(conn)
+                while any(after.values()) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    after = _pending_uploads(conn)
+        finally:
+            fake.latency = 0
+            server.stop()
+    assert not errors, errors
+    assert any(rows["index_uploads_pending"] > 0 and rows["index_upload_pending_bytes"] > 0
+               for rows in seen), seen[:5]
+    assert after == {"index_upload_pending_bytes": 0, "index_uploads_pending": 0}, after
 
 
 def test_store_requests_are_logged(tmp_path: Path) -> None:

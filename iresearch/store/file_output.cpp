@@ -23,6 +23,7 @@
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <duckdb/common/query_context.hpp>
 
@@ -31,6 +32,17 @@
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
+namespace {
+
+constinit std::atomic<uint64_t> gUploadingFiles{0};
+constinit std::atomic<uint64_t> gUploadingBytes{0};
+
+}  // namespace
+
+PendingUploads CurrentUploads() noexcept {
+  return {.files = gUploadingFiles.load(std::memory_order_relaxed),
+          .bytes = gUploadingBytes.load(std::memory_order_relaxed)};
+}
 
 IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
                                   const std::string& path,
@@ -64,6 +76,9 @@ FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
     _infos{std::move(infos)},
     _name{_infos ? name : std::string_view{}} {
   SDB_ASSERT(_handle);
+  if (_infos) {
+    gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
+  }
   if (cache && cache->IsEnabled()) {
     _cache = cache;
     _cached = cache->CreateWrittenFile(_handle->GetPath(),
@@ -104,6 +119,10 @@ uint64_t FileOutput::CloseImpl() try {
     }
     _handle.reset();
     _rm.file_descriptors->Decrease(1);
+    if (_infos) {
+      gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
+      gUploadingBytes.fetch_sub(_offset, std::memory_order_relaxed);
+    }
     _crc = Crc32c{};
     _offset = 0;
   };
@@ -167,6 +186,9 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) try {
   }
   if (_cached) {
     CacheBytes(b, len);
+  }
+  if (_infos) {
+    gUploadingBytes.fetch_add(len, std::memory_order_relaxed);
   }
   _offset += len;
   _unhinted += len;

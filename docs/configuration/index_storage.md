@@ -45,7 +45,7 @@ A query over uncached data asks the store for what it needs in a few rounds rath
 - `external_file_cache_size` is the memory the cache may use, a quarter of `memory_limit` by default. The cache gives memory back when queries need it.
 - `external_file_cache_spill_path` and `external_file_cache_spill_size` keep evicted blocks in a file on local disk, so reading them again costs a disk read instead of a request. Spilling is off by default.
 
-The `sdb_metrics` system table reports how the cache does, in rows with a `NULL` `relation_id`:
+The `sdb_metrics` system table reports how the cache and the uploads do, in rows with a `NULL` `relation_id`:
 
 | Metric | Meaning |
 | :--- | :--- |
@@ -58,6 +58,8 @@ The `sdb_metrics` system table reports how the cache does, in rows with a `NULL`
 | `block_cache_evictions` | Blocks evicted from memory since startup |
 | `block_cache_spilled_blocks` | Evicted blocks kept in the spill file since startup |
 | `block_cache_spill_reads` | Blocks read back from the spill file since startup |
+| `index_uploads_pending` | Index files being written to the object store whose upload has not completed |
+| `index_upload_pending_bytes` | Bytes written to those files so far |
 
 ## Requests
 

@@ -36,6 +36,13 @@
 
 namespace irs {
 
+struct PendingUploads {
+  uint64_t files = 0;
+  uint64_t bytes = 0;
+};
+
+PendingUploads CurrentUploads() noexcept;
+
 class FileOutput final : public IndexOutput {
  public:
   static constexpr size_t kMaxTail = 16 << 10;

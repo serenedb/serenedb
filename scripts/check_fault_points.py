@@ -14,7 +14,7 @@ in .pre-commit-config.yaml):
      SDB_PARK_ONCE_ON_FAILURE / WaitWhileFailurePointDebugging /
      ParkOnceOnFailurePointDebugging string literal in server/ or iresearch/).
      A park-once point NAME also defines NAME:parked and NAME:release, the
-     names a test waits on and arms to observe and release the parked thread.
+     names a test polls and arms to observe and release the parked thread.
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).

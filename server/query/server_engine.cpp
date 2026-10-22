@@ -39,6 +39,7 @@
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
+#include "connector/functions/backup.h"
 #include "connector/functions/catalog_introspect.h"
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
@@ -162,6 +163,11 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::XID8(),
       nullptr,
     },
+    {
+      "pg_lsn",
+      sdb::pg::PG_LSN(),
+      nullptr,
+    },
     // PG name type
     {
       "name",
@@ -236,6 +242,10 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config, layout);
   catalog::RegisterClusterStorage(config, std::move(layout));
   connector::RegisterConfigVariables(config);
+  config.AddExtensionOption(
+    duckdb::Identifier{"data_directory"}, "Shows the data directory.",
+    duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
+    duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
   config.SetOptionByName(
     "temp_directory",
@@ -316,6 +326,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterEsFunctions(db);
 
   connector::RegisterOtelFunctions(db);
+
+  connector::RegisterBackupFunctions(db);
 
   connector::RegisterMetricsFunctions(db);
 

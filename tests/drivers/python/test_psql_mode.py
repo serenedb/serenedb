@@ -1412,7 +1412,7 @@ def test_docs_backspace_widens_a_narrowed_menu(docs_terminal) -> None:
 
 
 def test_docs_arrows_move_through_the_menu_grid(narrow_docs_terminal) -> None:
-    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    out = narrow_docs_terminal.send(".docs\r", until="12. sql (")
     assert "1. benchmarks (" in out
     for key, buffer in [("\x1b[B", ".docs 3"), ("\x1b[C", ".docs 4"),
                         ("\x1b[A", ".docs 2"), ("\x1b[D", ".docs 1")]:
@@ -1421,7 +1421,7 @@ def test_docs_arrows_move_through_the_menu_grid(narrow_docs_terminal) -> None:
 
 
 def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
-    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    out = narrow_docs_terminal.send(".docs\r", until="12. sql (")
     assert "PAGER_USED" not in out
     lines = out.splitlines()
     start = lines.index("SereneDB documentation")

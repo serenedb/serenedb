@@ -242,6 +242,12 @@ void Transaction::Commit() {
   Destroy();
 }
 
+void Transaction::EnterCommitGate() {
+  if (!_commit_pass) {
+    _commit_pass = backup::CommitGate().Enter();
+  }
+}
+
 void Transaction::Rollback() {
   if (_search_txn) {
     _search_txn->Abort();
@@ -300,6 +306,7 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
 }
 
 void Transaction::Destroy() noexcept {
+  _commit_pass.Release();
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};

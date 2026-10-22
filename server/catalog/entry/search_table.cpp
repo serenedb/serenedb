@@ -479,24 +479,6 @@ void SearchTableEntry::ReplayAdoptSegments(
   _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
 }
 
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
-  duckdb::DuckCatalog& catalog) {
-  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-  catalog.ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
-  std::vector<std::shared_ptr<search::SearchTable>> tables;
-  for (auto& schema : schemas) {
-    schema.get().Scan(
-      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
-            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
-          tables.push_back(entry.Cast<SearchTableEntry>().Storage());
-        }
-      });
-  }
-  return tables;
-}
-
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,

@@ -43,6 +43,7 @@
 #include <mutex>
 
 #include "catalog/database_directory.h"
+#include "utils/file_utils.h"
 
 namespace sdb::search {
 namespace {
@@ -397,7 +398,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    catalog::SyncDirectory(_path);
+    utils::file_utils::SyncDirectory(_path);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;

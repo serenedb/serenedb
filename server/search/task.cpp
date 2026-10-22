@@ -207,6 +207,9 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
+  } else if (absl::IsUnavailable(res)) {
+    SDB_TRACE(SEARCH, "compaction of Search index '", idx->GetId(),
+              "' stopped by a backup");
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
              "ms while compacting Search index '", idx->GetId(),
@@ -227,10 +230,11 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
   const std::weak_ptr<Storage>& weak) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
-  while (!ShouldStop() && engine.TryAcquireCompaction()) {
+  while (!ShouldStop() && !engine.IsBackupActive() &&
+         engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
     runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
-      if (ShouldStop()) {
+      if (ShouldStop() || engine.IsBackupActive()) {
         engine.ReleaseCompaction();
         return yaclib::MakeFuture(false);
       }
@@ -385,7 +389,8 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
       const size_t cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
-      const bool run_cleanup = stale || periodic;
+      const bool run_cleanup =
+        (stale || periodic) && !GetSearchEngine().IsBackupActive();
       if (run_cleanup) {
         cleanup_count = 0;
         idx->ClearStalePressure();

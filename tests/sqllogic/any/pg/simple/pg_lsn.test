@@ -1,0 +1,28 @@
+query
+SELECT
+  '16/B374D848'::pg_lsn AS lsn,
+  '0/0'::pg_lsn AS zero,
+  'FFFFFFFF/FFFFFFFF'::pg_lsn AS max,
+  '0000000a/0000000b'::pg_lsn AS padded,
+  NULL::pg_lsn AS none;
+----
+lsn	zero	max	padded	none
+16/B374D848	0/0	FFFFFFFF/FFFFFFFF	A/B	NULL
+
+query
+SELECT ARRAY['1/2'::pg_lsn, NULL, 'A/B'::pg_lsn] AS lsns;
+----
+lsns
+{1/2,NULL,A/B}
+
+query
+SELECT '1/0'::pg_lsn > '0/FFFFFFFF'::pg_lsn AS later;
+----
+later
+t
+
+query
+SELECT pg_walfile_name('16/B374D848'::pg_lsn) AS walfile, pg_walfile_name('0/0'::pg_lsn) AS first;
+----
+walfile	first
+0000000100000016000000B3	000000010000000000000000

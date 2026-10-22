@@ -37,6 +37,7 @@ RUN \
       python3 python3-dev python3-pip perl \
       git gcc g++ binutils coreutils bash \
       postgresql-client-18 \
+      pgbackrest=2.59.3-1.pgdg26.04+1 \
       systemd \
       nodejs \
       openjdk-25-jdk-headless maven \

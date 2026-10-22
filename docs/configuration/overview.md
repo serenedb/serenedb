@@ -224,12 +224,16 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | --- | --- | --- | --- | --- |
 | `access_mode` | Access mode of the database (`AUTOMATIC`, `READ_ONLY` or `READ_WRITE`) | `VARCHAR` | `GLOBAL` | `automatic` |
 | `application_name` | Sets the application name to be reported in statistics and logs. | `VARCHAR` | `SESSION` |  |
+| `archive_command` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` |  |
+| `archive_mode` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` | `off` |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `SESSION` | `hex` |
 | `Calendar` | The current calendar | `VARCHAR` | `SESSION` | `gregorian` |
+| `checkpoint_timeout` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `300` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
 | `current_transaction_invalidation_policy` | Which types of exceptions invalidate the database for the current transaction | `VARCHAR` | `GLOBAL` | `STANDARD_POLICY` |
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
+| `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `GLOBAL` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
@@ -246,6 +250,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
+| `max_parallel_workers_per_gather` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `2` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |

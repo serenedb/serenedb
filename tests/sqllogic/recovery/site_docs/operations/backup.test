@@ -1,0 +1,59 @@
+# DOCS_TEST: start
+
+# DOCS_TEST_BODY
+
+query
+SELECT pg_backup_start('nightly') AS start_lsn;
+----
+start_lsn
+<slt:ignore>
+
+
+# DOCS_TEST: stop
+
+# DOCS_TEST_RAW
+#| SELECT lsn, labelfile FROM pg_backup_stop();
+
+# DOCS_TEST_BODY
+
+query
+SELECT strpos(labelfile, chr(10) || 'LABEL: nightly' || chr(10)) > 0 AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+# DOCS_TEST: named
+
+# DOCS_TEST_BODY
+
+query
+SELECT pg_backup_start(label => 'nightly', fast => true) IS NOT NULL AS started;
+----
+started
+t
+
+
+# DOCS_TEST: progress
+
+# DOCS_TEST_BODY
+
+query
+SELECT pid, phase FROM pg_stat_progress_basebackup;
+----
+pid	phase
+
+
+# DOCS_TEST: stop_named
+
+# DOCS_TEST_RAW
+#| SELECT labelfile FROM pg_backup_stop(wait_for_archive => false);
+
+# DOCS_TEST_BODY
+
+query
+SELECT strpos(labelfile, chr(10) || 'LABEL: nightly' || chr(10)) > 0 AS label
+FROM pg_backup_stop(wait_for_archive => false);
+----
+label
+t

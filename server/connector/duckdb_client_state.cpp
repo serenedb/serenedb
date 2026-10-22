@@ -38,6 +38,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -254,6 +255,10 @@ void SereneDBClientState::TransactionPreCommit(
       }
     }
   }
+  if (transaction.ModifiedDatabase() || !written.empty()) {
+    _connection_ctx->EnterCommitGate();
+    SDB_PARK_ONCE_ON_FAILURE("pause_commit_in_gate");
+  }
   tls_committing_ctx = _connection_ctx.get();
 }
 
@@ -333,6 +338,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_done = false;
   progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
+  _connection_ctx->LeaveCommitGate();
 }
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,

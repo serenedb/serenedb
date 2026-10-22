@@ -38,9 +38,7 @@ void WriterGenerations::Deregister(unsigned slot) noexcept {
   absl::MutexLock lock{&_mutex};
   SDB_ASSERT(slot < 2 && _writers[slot] > 0,
              "unbalanced search-table writer deregistration");
-  if (--_writers[slot] == 0) {
-    _cv.SignalAll();
-  }
+  --_writers[slot];
 }
 
 bool WriterGenerations::ClaimTruncate() {
@@ -73,8 +71,11 @@ bool WriterGenerations::Drain(absl::FunctionRef<bool()> cancelled,
 bool WriterGenerations::WaitUntilEmpty(unsigned slot,
                                        absl::FunctionRef<bool()> cancelled,
                                        absl::Duration poll) {
-  while (_writers[slot] != 0) {
-    if (_cv.WaitWithTimeout(&_mutex, poll) && cancelled()) {
+  const auto empty = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    return _writers[slot] == 0;
+  };
+  while (!_mutex.AwaitWithTimeout(absl::Condition{&empty}, poll)) {
+    if (cancelled()) {
       return false;
     }
   }

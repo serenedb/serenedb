@@ -85,6 +85,10 @@ class IndexDurability {
   void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
   bool FinishCheckpoint(irs::IndexWriter& writer);
   void FinishCheckpointIfIdle(irs::IndexWriter& writer);
+  bool HasPendingCheckpoint() {
+    absl::MutexLock lock{&_refresh_mutex};
+    return _pending_checkpoint != 0;
+  }
   std::pair<irs::DirectoryReader, irs::SourcePosition> Snapshot(
     irs::IndexWriter& writer);
 

@@ -2,6 +2,7 @@ target_sources(
     sereneserver
     PRIVATE
         array.cpp
+        backup.cpp
         catalog_introspect.cpp
         duckdb_aliases.cpp
         encode_key.cpp

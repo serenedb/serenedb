@@ -30,6 +30,7 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "backup/commit_gate.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
@@ -72,6 +73,9 @@ class Transaction : public Config {
   void Commit();
 
   void Rollback();
+
+  void EnterCommitGate();
+  void LeaveCommitGate() noexcept { _commit_pass.Release(); }
 
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));
@@ -207,6 +211,7 @@ class Transaction : public Config {
   // Whether the in-flight statement modifies data; folded into _had_dml at
   // OnStatementEnd. Never spans a statement boundary.
   bool _statement_is_dml = false;
+  utils::DrainGate::Pass _commit_pass;
 };
 
 }  // namespace sdb::query

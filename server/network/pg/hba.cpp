@@ -949,22 +949,14 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
                           parent.string(), "': ", dir_ec.message());
     }
   }
-  const std::string tmp = target.string() + ".tmp";
   try {
     SDB_IF_FAILURE("hba_config_write_fails") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
-    utils::file_utils::Spit(tmp, text, /*sync=*/true);
+    utils::file_utils::ReplaceFile(target, text);
   } catch (const std::exception& e) {
-    return absl::StrCat("could not write hba config file '", tmp,
+    return absl::StrCat("could not write hba config file '", target.string(),
                         "': ", e.what());
-  }
-  std::error_code ec;
-  fs::rename(tmp, target, ec);
-  if (ec) {
-    fs::remove(tmp, ec);
-    return absl::StrCat("could not install hba config file '", target.string(),
-                        "': ", ec.message());
   }
   return std::nullopt;
 }

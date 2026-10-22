@@ -629,6 +629,41 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  // pg_lsn (OID 3220)
+  {
+    .oid = 3220,
+    .typname = "pg_lsn",
+    .typnamespace = pg::kPgCatalogSchema,
+    .typowner = pg::kRootUser,
+    .typlen = 8,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::UserDefined,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 3221,    // _pg_lsn
+    .typinput = 3229,    // pg_lsn_in
+    .typoutput = 3230,   // pg_lsn_out
+    .typreceive = 3238,  // pg_lsn_recv
+    .typsend = 3239,     // pg_lsn_send
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Double,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
   // inet (OID 869) -- registered by the `inet` DuckDB extension
   {
     .oid = 869,

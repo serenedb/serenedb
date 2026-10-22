@@ -20,9 +20,14 @@
 
 #pragma once
 
+#include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <span>
+
 namespace sdb::search {
 
-void RecoverSearchStorages();
+void RecoverSearchStorages(
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
 
 }  // namespace sdb::search

@@ -370,10 +370,10 @@ def test_describe_object_unknown_lists_the_pages_mentioning_it(conn):
 
 
 def test_describe_object_reports_what_only_the_server_knows(conn):
-    text, is_error = call_tool(conn, "describe_object", {"name": "azure_account_name"})
+    text, is_error = call_tool(conn, "describe_object", {"name": "pg_backend_pid"})
     assert not is_error
     assert "The server has it, undocumented:" in text
-    assert "azure_account_name VARCHAR" in text and "(setting)" in text
+    assert "pg_backend_pid() -> INTEGER (scalar)" in text
     text, is_error = call_tool(conn, "describe_object", {"name": "date_trunc()"})
     assert not is_error and text.startswith("date_trunc(")
 

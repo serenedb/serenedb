@@ -1441,9 +1441,13 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
+  catalog::ThrowIfReadOnly(
+    duckdb::Catalog::GetCatalog(
+      context, duckdb::DatabaseManager::GetDefaultDatabase(context)),
+    "es_refresh");
   auto data = duckdb::make_uniq<EsIndexBindData>();
   if (!input.inputs[0].IsNull()) {
     data->index = input.inputs[0].GetValue<std::string>();

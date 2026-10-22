@@ -628,6 +628,28 @@ SET search_path TO {schema};<NL>\df
 > +--------------+--------------------------+-------+----------+--------------+
 > (4 rows)
 
+skip-line: 7
+\d {schema}.account_owner_idx
+----
+> Index "SCHEMA.account_owner_idx"
+> +--------+------+------+------------+
+> | Column | Type | Key? | Definition |
+> +--------+------+------+------------+
+> | owner  | text | yes  | owner      |
+> +--------+------+------+------------+
+> btree, for table "SCHEMA.account"
+
+skip-line: 7
+\d {schema}.account_pkey
+----
+>    Index "SCHEMA.account_pkey"
+> +--------+---------+------+------------+
+> | Column |  Type   | Key? | Definition |
+> +--------+---------+------+------------+
+> | id     | integer | yes  | id         |
+> +--------+---------+------+------------+
+> primary key, btree, for table "SCHEMA.account"
+
 \dv {schema}.*
 ----
 >                       List of views

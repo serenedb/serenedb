@@ -74,6 +74,7 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/index_expression.hpp"
 #include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "functions/search.h"
@@ -420,7 +421,7 @@ namespace {
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<irs::field_id>& markers) {
-  if (const auto* info = FindColumnInfoForExpr(ctx, expr)) {
+  if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
     if (irs::field_limits::valid(info->null_field_id) &&
         !absl::c_linear_search(markers, info->null_field_id)) {
       markers.push_back(info->null_field_id);
@@ -1446,6 +1447,10 @@ absl::Status FromFunctionExpression(
 
       if (builder == &BuildTSLike) {
         pattern = LikeEscapePattern(pattern, escape_char);
+        if (LikePatternEndsWithEscape(pattern)) {
+          return absl::InvalidArgumentError(
+            "LIKE pattern must not end with escape character");
+        }
         validator = &IsLikeCompatibleAnalyzer;
       }
 
@@ -2068,7 +2073,7 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
       return FindColumnRefInfo(
         ctx, operand.Cast<duckdb::BoundColumnRefExpression>());
     }
-    return FindColumnInfoForExpr(ctx, operand);
+    return FindIndexedExpressionInfo(ctx, operand);
   };
   const auto* left_info = operand_info(lhs);
   const auto* right_info = operand_info(rhs);
@@ -2294,6 +2299,14 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
+  if (!ComputedFromRowAlone(expr)) {
+    return nullptr;
+  }
+  return FindIndexedExpressionInfo(ctx, expr);
+}
+
+const SearchColumnInfo* FindIndexedExpressionInfo(
+  const FilterContext& ctx, const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
     const auto* info = FindColumnRefInfo(ctx, *col_ref);
     return info && !info->index_fields ? info : nullptr;

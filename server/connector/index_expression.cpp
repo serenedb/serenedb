@@ -31,6 +31,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/lambda_functions.hpp>
@@ -54,6 +55,7 @@
 #include <utility>
 
 #include "connector/column_id.h"
+#include "connector/pg_logical_types.h"
 
 namespace sdb::connector {
 namespace {
@@ -230,6 +232,51 @@ std::string NormalizedExpression(const duckdb::Expression& expr,
     ExpandStoredExpressions(normalized, stored_expression, context);
   }
   return SerializeBoundExpression(*normalized);
+}
+
+namespace {
+
+bool DependsOnSession(const duckdb::LogicalType& type) {
+  return duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
+    return t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+           t.id() == duckdb::LogicalTypeId::TIMESTAMP_TZ_NS ||
+           t.id() == duckdb::LogicalTypeId::TIME_TZ ||
+           t.id() == duckdb::LogicalTypeId::VARIANT || pg::IsRegLike(t);
+  });
+}
+
+bool PinsTimeZone(const duckdb::BoundFunctionExpression& func) {
+  return func.GetChildren().size() == 2 &&
+         func.Function().GetName().GetIdentifierName() == "timezone";
+}
+
+}  // namespace
+
+bool ComputedFromRowAlone(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    if (DependsOnSession(func.GetReturnType()) ||
+        (!PinsTimeZone(func) &&
+         absl::c_any_of(func.GetChildren(), [](const auto& arg) {
+           return DependsOnSession(arg->GetReturnType());
+         }))) {
+      return false;
+    }
+    if (duckdb::BoundCastExpression::IsCast(func) &&
+        duckdb::TypeVisitor::Contains(
+          duckdb::BoundCastExpression::SourceType(func),
+          duckdb::LogicalTypeId::BLOB) &&
+        duckdb::TypeVisitor::Contains(func.GetReturnType(),
+                                      duckdb::LogicalTypeId::VARCHAR)) {
+      return false;
+    }
+  }
+  bool alone = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      alone = alone && ComputedFromRowAlone(child);
+    });
+  return alone;
 }
 
 }  // namespace sdb::connector

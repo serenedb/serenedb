@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <array>
@@ -66,21 +68,66 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 // KiB).
 inline constexpr uint32_t kMaxSaslMessage = 1024;
 
+inline bool PlannedParamType(const duckdb::PreparedStatement& prepared,
+                             uint16_t id, duckdb::LogicalType& type) {
+  return prepared.TryGetParameterType(absl::AlphaNum(id + 1).Piece(), type) &&
+         type.id() != duckdb::LogicalTypeId::UNKNOWN &&
+         type.id() != duckdb::LogicalTypeId::INVALID;
+}
+
 inline duckdb::LogicalType ResolveExpectedType(
   const duckdb::PreparedStatement& prepared,
   const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
   uint16_t id) {
-  const auto key = absl::StrCat(id + 1);
   duckdb::LogicalType type;
-  if (prepared.TryGetParameterType(duckdb::Identifier{key}, type) &&
-      type.id() != duckdb::LogicalTypeId::UNKNOWN &&
-      type.id() != duckdb::LogicalTypeId::INVALID) {
+  if (PlannedParamType(prepared, id, type)) {
     return type;
   }
-  if (const auto hint = hints.find(key); hint != hints.end()) {
+  if (const auto hint = hints.find(absl::AlphaNum(id + 1).Piece());
+      hint != hints.end()) {
     return hint->second;
   }
   return duckdb::LogicalTypeId::VARCHAR;
+}
+
+inline bool IsNumericOid(uint64_t oid) {
+  return oid == sdb::pg::kNumeric || oid == sdb::pg::kNumericArray;
+}
+
+inline bool IsDeclaredNumeric(const Statement& stmt, size_t id) {
+  const auto& oids = stmt.ParamOids();
+  return id < oids.size() && IsNumericOid(oids[id]);
+}
+
+duckdb::LogicalType DeclaredNumericParamType(
+  const duckdb::PreparedStatement& prepared, const Statement& stmt, uint16_t id,
+  std::span<const duckdb::Value> values) {
+  if (id < values.size() && !values[id].IsNull()) {
+    return values[id].type();
+  }
+  duckdb::LogicalType type;
+  if (PlannedParamType(prepared, id, type)) {
+    return type;
+  }
+  type = duckdb::LogicalType::DECIMAL(18, 3);
+  return stmt.ParamOids()[id] == sdb::pg::kNumericArray
+           ? duckdb::LogicalType::LIST(type)
+           : type;
+}
+
+bool DeclaredNumericValueRetyped(const duckdb::PreparedStatement& prepared,
+                                 const Statement& stmt,
+                                 std::span<const duckdb::Value> values) {
+  for (uint16_t id = 0; id < values.size(); ++id) {
+    if (!IsDeclaredNumeric(stmt, id) || values[id].IsNull()) {
+      continue;
+    }
+    duckdb::LogicalType type;
+    if (!PlannedParamType(prepared, id, type) || type != values[id].type()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Rethrow a DuckDB result's error iff it carries one. ErrorData::Throw()
@@ -139,20 +186,6 @@ inline bool IsExtended(char type) {
       return false;
   }
 }
-
-// COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /
-// STDOUT to /dev/stdin / /dev/stdout; a COPY to/from a real file classifies as
-// None (it runs through the normal Prepare/Execute path).
-enum class CopyDir : uint8_t {
-  None,
-  FromStdin,
-  ToStdout,
-};
-
-struct CopyKind {
-  CopyDir dir = CopyDir::None;
-  CopyFormat format = CopyFormat::Other;
-};
 
 bool DeallocatesPreparedStatements(const duckdb::SQLStatement& statement) {
   if (statement.type != duckdb::StatementType::DROP_STATEMENT) {
@@ -938,7 +971,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
     const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return absl::c_binary_search(closure->closure, group_oid);
+    return closure->IsMember(group_oid);
   };
 
   hba::ClientInfo client;
@@ -1431,22 +1464,10 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
         statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       _txn_state->Arm();
     }
-    const auto copy = ClassifyCopy(*statement);
-    if (copy.dir == CopyDir::FromStdin) {
-      // Returns pinned to _ioexec; remaining statements just continue
-      // inline-first from there.
-      co_await RunCopyFromStdin(std::move(statement));
-      continue;
-    }
-    if (copy.dir == CopyDir::ToStdout) {
-      if (IsNativeCopyFormat(copy.format)) {
-        // Inner query through the wire collector (parallel + PGCOPY/text
-        // framing), instead of the single-threaded CopyFunction.
-        co_await RunCopyToStdout(std::move(statement), copy.format);
-      } else {
-        // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
-        co_await RunCopyToStdoutViaFormat(std::move(statement), copy.format);
-      }
+    if (const auto copy = ClassifyCopy(*statement); copy.dir != CopyDir::None) {
+      // A COPY FROM STDIN returns pinned to _ioexec; remaining statements just
+      // continue inline-first from there.
+      co_await RunCopy(std::move(statement), copy);
       continue;
     }
     // Bind and execution share one duckdb query lifecycle (one transaction):
@@ -1780,9 +1801,12 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
   // and csv stream straight through.
   const bool is_text = format == CopyFormat::Text;
-  absl::Cleanup done_guard = [this] {
+  absl::Cleanup done_guard = [this, task = this->_task] {
     _feeder_done.store(true, std::memory_order_release);
-    this->_task->RequestRun();
+    SDB_IF_FAILURE("copy_feeder_done_wake") {
+      absl::SleepFor(absl::Seconds(2));
+    }
+    task->RequestRun();
   };
   bool closed = false;
   const auto fail = [&](int code, auto&&... msg) {
@@ -1896,10 +1920,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             guarded([&] { builder.Finish(); });
             co_await publish();
             eod = true;
-            if (!failed) {
-              closed = true;
-              batches.Finish();
-            }
           }
         }
         this->_recv.Consume(take);
@@ -1917,9 +1937,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
           builder.Finish();
         });
         co_await publish();
-        if (!failed) {
-          batches.Finish();
-        }
+      }
+      if (!failed && !batches.Aborted()) {
+        batches.Finish();
       }
       closed = true;
       co_return {};
@@ -2005,7 +2025,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0) {
+    if (oid != 0 && !IsNumericOid(oid)) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));
@@ -2164,13 +2184,19 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
-    const auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
+    auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
-    const auto fn =
-      sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format);
     duckdb::Value out;
-    sdb::pg::ValueSink sink{type, out};
-    if (!fn(dctx, field, sink)) {
+    bool decoded =
+      !IsDeclaredNumeric(stmt, i) ||
+      sdb::pg::DeclaredNumericType(
+        field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray, type);
+    if (decoded) {
+      sdb::pg::ValueSink sink{type, out};
+      decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format)(
+        dctx, field, sink);
+    }
+    if (!decoded) {
       if (format == sdb::pg::VarFormat::Binary) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
@@ -2293,14 +2319,11 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   auto& statement = *slot;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                    ERR_MSG("prepared statement is not ready"));
+                    ERR_MSG("unnamed prepared statement does not exist"));
   }
   // Aborted transaction block: reject the Bind (no BindComplete) unless the
   // bound statement is COMMIT/ROLLBACK.
-  const auto* unbound = statement.Unbound();
-  const bool is_txn_exit = statement.GetKind() == Statement::Kind::Prepared &&
-                           unbound && IsTransactionExit(*unbound);
-  if (_txn_state->StatusByte() == 'E' && !is_txn_exit) {
+  if (!_txn_state->GuardNotAborted(statement)) {
     ThrowAbortedTransaction();
   }
 
@@ -2328,7 +2351,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     portal.bind_info = ParseBindVars(payload, statement, statement_name);
   }
   portal.plan = statement.Plan();
-  portal.epoch = statement.BindEpoch();
+  portal.bound_after_abort = _txn_state->StatusByte() == 'E';
   bound = true;
 
   WriteEmptyFrame(this->_send, PQ_MSG_BIND_COMPLETE);
@@ -2339,7 +2362,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   switch (stmt.GetKind()) {
     case Statement::Kind::Unbound:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
-                      ERR_MSG("prepared statement is not ready"));
+                      ERR_MSG("unnamed prepared statement does not exist"));
     case Statement::Kind::Empty:
     case Statement::Kind::Copy:
     case Statement::Kind::Compound:
@@ -2353,7 +2376,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   // Describe what the next Bind would run, not what the last one did.
   RevalidatePlan(stmt);
-  const auto plan = ResolvePlan(stmt, stmt.Plan());
+  const auto plan = ResolvePlan(stmt, stmt.Plan(), {});
   auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   // A data-returning Describe can't run in an aborted block (RowDescription
@@ -2394,7 +2417,8 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  const auto plan = ResolvePlan(*portal.stmt, portal.plan);
+  const auto plan =
+    ResolvePlan(*portal.stmt, portal.plan, portal.bind_info.param_values);
   auto& prepared = *plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
   if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
@@ -2413,16 +2437,21 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
 }
 
 template<SocketKind Kind>
-PlanPtr PgWireSession<Kind>::ResolvePlan(Statement& stmt, const PlanPtr& plan) {
-  if (!plan || plan->GetStatementProperties().bound_all_parameters ||
+PlanPtr PgWireSession<Kind>::ResolvePlan(
+  Statement& stmt, const PlanPtr& plan, std::span<const duckdb::Value> values) {
+  if (!plan ||
+      (plan->GetStatementProperties().bound_all_parameters &&
+       !DeclaredNumericValueRetyped(*plan, stmt, values)) ||
       !stmt.Source()) {
     return plan;
   }
   auto hints = stmt.TypeHints();
   const auto param_count = plan->GetNamedParameterMap().size();
-  for (size_t i = 0; i < param_count; ++i) {
-    hints.emplace(absl::StrCat(i + 1),
-                  ResolveExpectedType(*plan, stmt.TypeHints(), i));
+  for (uint16_t i = 0; i < param_count; ++i) {
+    hints.try_emplace(absl::AlphaNum(i + 1).Piece(),
+                      IsDeclaredNumeric(stmt, i)
+                        ? DeclaredNumericParamType(*plan, stmt, i, values)
+                        : ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
   auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {
@@ -2477,28 +2506,41 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   auto& portal = _proto.portals.FindOrThrow(portal_name);
   if (!portal.stmt) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
-                    ERR_MSG("portal is not bound"));
+                    ERR_MSG("portal \"", portal_name, "\" does not exist"));
   }
-  switch (portal.stmt->GetKind()) {
+  const auto kind = portal.stmt->GetKind();
+  if (_txn_state->StatusByte() == 'E' && kind != Statement::Kind::Empty &&
+      !portal.bound_after_abort) {
+    ThrowAbortedTransaction();
+  }
+  if (portal.exec.state == PortalState::Done) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("portal \"", portal_name, "\" cannot be run"));
+  }
+  switch (kind) {
     case Statement::Kind::Unbound:
-      // Never bound, or a deferred COPY a prior Execute already consumed.
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
-                      ERR_MSG("portal is not bound"));
+      SDB_UNREACHABLE();
     case Statement::Kind::Empty:
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
       co_return {};
-    case Statement::Kind::Copy:
-      co_await RunDeferredCopy(portal);
+    case Statement::Kind::Copy: {
+      portal.exec.state = PortalState::Done;
+      auto statement = portal.stmt->GetCopy().Copy();
+      const auto copy = ClassifyCopy(*statement);
+      co_await RunCopy(std::move(statement), copy);
       co_return {};
+    }
     case Statement::Kind::Prepared:
+      if (portal.exec.state == PortalState::Unstarted) {
+        PlanPortal(portal);
+      }
       co_await ExecutePrepared(portal, max_rows);
       co_return {};
     case Statement::Kind::Compound:
       // The first Execute prepares + runs the leading sub-statements in order
       // and prepares the last against the now-updated catalog
       // (ExecuteCompound); ExecutePrepared then drives that last one --
-      // emitting the single CommandComplete and honoring max_rows -- and a
-      // re-Execute reaches it too.
+      // emitting the single CommandComplete and honoring max_rows.
       if (portal.exec.state == PortalState::Unstarted) {
         co_await ExecuteCompound(portal);
       }
@@ -2508,48 +2550,46 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
 }
 
 template<SocketKind Kind>
-yaclib::Task<> PgWireSession<Kind>::RunDeferredCopy(Portal& portal) {
-  // Consume the stashed COPY (the plan reverts to Unbound) so a stray
-  // re-Execute or a second portal bound to it gets a clean "not bound" rather
-  // than a re-run.
-  auto deferred = portal.stmt->TakeCopy();
-  const auto copy = ClassifyCopy(*deferred);
-  if (copy.dir == CopyDir::ToStdout) {
-    if (IsNativeCopyFormat(copy.format)) {
-      co_await RunCopyToStdout(std::move(deferred), copy.format);
-    } else {
-      // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
-      co_await RunCopyToStdoutViaFormat(std::move(deferred), copy.format);
-    }
-  } else {
+yaclib::Task<> PgWireSession<Kind>::RunCopy(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyKind copy) {
+  if (copy.dir == CopyDir::FromStdin) {
     // COPY FROM STDIN: RunCopyFromStdin brings the feeder live before the
     // sniff.
-    co_await RunCopyFromStdin(std::move(deferred));
+    co_await RunCopyFromStdin(std::move(statement));
+  } else if (IsNativeCopyFormat(copy.format)) {
+    // Inner query through the wire collector (parallel + PGCOPY/text
+    // framing), instead of the single-threaded CopyFunction.
+    co_await RunCopyToStdout(std::move(statement), copy.format);
+  } else {
+    // csv/json/parquet/...: DuckDB writes the bytes, the session frames.
+    co_await RunCopyToStdoutViaFormat(std::move(statement), copy.format);
   }
   co_return {};
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::PlanPortal(Portal& portal) {
+  // A statement can be Bound and Executed either side of a DDL of this
+  // session's own, so the portal's plan is revalidated here too, not only at
+  // Bind. Nothing to re-plan once the portal is driving: the pipeline is
+  // already running against the plan it started with.
+  RevalidatePlan(*portal.stmt);
+  portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan(),
+                            portal.bind_info.param_values);
+  if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
+    // PG's plancache guard (fixed_result): a re-plan changed the row type
+    // away from the one the client was last told, and it has not asked
+    // again -- it would decode these rows against a descriptor that no
+    // longer holds.
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cached plan must not change result type"));
+  }
 }
 
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
                                                     uint64_t max_rows) {
   auto& exec = portal.exec;
-  if (exec.state == PortalState::Unstarted) {
-    // A statement can be Bound and Executed either side of a DDL of this
-    // session's own, so the portal's plan is revalidated here too, not only at
-    // Bind. Nothing to re-plan once the portal is driving: the pipeline is
-    // already running against the plan it started with.
-    RevalidatePlan(*portal.stmt);
-    portal.plan = ResolvePlan(*portal.stmt, portal.stmt->Plan());
-    portal.epoch = portal.stmt->BindEpoch();
-    if (!portal.stmt->DescribedShapeMatches(*portal.plan)) {
-      // PG's plancache guard (fixed_result): a re-plan changed the row type
-      // away from the one the client was last told, and it has not asked
-      // again -- it would decode these rows against a descriptor that no
-      // longer holds.
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("cached plan must not change result type"));
-    }
-  }
   auto& prepared = *portal.plan;
   const auto return_type = prepared.GetStatementProperties().return_type;
 
@@ -2586,7 +2626,7 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
       } else {
         WriteCommandTag(prepared, *result, return_type);
       }
-      exec.state = PortalState::Exhausted;
+      exec.state = PortalState::Done;
       if (const auto* unbound = portal.stmt->Unbound();
           unbound && DeallocatesPreparedStatements(*unbound)) {
         ReleaseDeallocated();
@@ -2671,18 +2711,17 @@ yaclib::Task<> PgWireSession<Kind>::ExecuteCompound(Portal& portal) {
   // sub-statement is prepared here too (catalog now final) and installed for
   // ExecutePrepared, which emits the one CommandComplete.
   _txn_state->Arm();
-  auto& body = portal.stmt->GetCompound();
+  const auto& body = portal.stmt->GetCompound();
   duckdb::vector<duckdb::Value> no_params;
   for (duckdb::idx_t i = 0; i + 1 < body.size(); ++i) {
-    auto prepared = _conn->Prepare(std::move(body[i]));
+    auto prepared = _conn->Prepare(body[i]->Copy());
     ThrowIfError(*prepared);
     ClosingPending pending;
     co_await DriveToResult(*prepared, no_params, pending, nullptr);
   }
-  const auto bind_epoch = _connection_ctx->CatalogEpoch();
-  auto last = _conn->Prepare(std::move(body.back()));
+  auto last = _conn->Prepare(body.back()->Copy());
   ThrowIfError(*last);
-  portal.stmt->SetCompoundResult(std::move(last), bind_epoch);
+  portal.plan = std::move(last);
   co_return {};
 }
 
@@ -3021,6 +3060,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
+        _cancel_token->role = _connection_ctx->GetLoginRoleId();
       }
       SendStartupBurst();
       this->KickSend();

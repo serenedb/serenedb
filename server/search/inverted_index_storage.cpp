@@ -259,6 +259,7 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  SDB_ASSERT(_writer);
   auto begin = std::chrono::steady_clock::now();
   auto result = _durability.Refresh(
     *_writer, wait, progress, code,

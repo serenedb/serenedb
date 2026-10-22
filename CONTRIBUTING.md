@@ -25,7 +25,7 @@ git submodule update --init --depth 1 --jobs=$(nproc)
 
 ### Build prerequisites
 
-- Compiler: clang-21 / clang++-21; CI builds with clang-23, so code must compile with both
+- Compiler: clang-23 / clang++-23, the same as CI. `sudo scripts/setup_dev_toolchain.sh` installs it from apt.llvm.org on Ubuntu and points `clang`, `clang++`, `lld`, `lldb`, `clangd` and the other LLVM tools at it.
 - Build system: Ninja
 - CMake >= 3.28
 
@@ -34,7 +34,7 @@ The toolchain only moves forward.
 ### Build
 
 ```bash
-cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
+cmake --preset lldb
 cd build/
 ninja
 ```
@@ -42,7 +42,7 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked and without io_uring
+- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked
 - `bench` -- Release build (`build_bench/`), static linking, configured like the release packages; no frame pointers
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 

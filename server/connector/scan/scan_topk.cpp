@@ -217,14 +217,13 @@ void Merge(ScanGlobalState& g) {
   }
   std::span<irs::ScoreDoc> all{t.hits.data(), total};
   const auto want = static_cast<size_t>(t.limit);
-  if (!g.has_lookup_filter && all.size() > want) {
-    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
-    all = all.first(want);
-  }
-  absl::c_sort(all, BetterScore);
   if (g.has_lookup_filter) {
+    absl::c_sort(all, BetterScore);
     t.ranked = all;
     all = all.first(std::min<size_t>(all.size(), t.verify_first));
+  } else if (all.size() > want) {
+    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
+    all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
   PlanFetch(g);

@@ -38,26 +38,12 @@ drivers=(psycopg3 psycopg2 asyncpg)
 parallel=(test_psql_mode)
 extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_search_wal_corrupt_ranges test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions)
 
-if [[ "${SDB_DRV_EXCLUSIVE:-false}" == "true" ]]; then
-	for name in "${drivers[@]/#/test_}" "${parallel[@]}" "${extras[@]}"; do
-		test_file="${SCRIPT_DIR}/${name}.py"
-		grep -qs "pytest.mark.exclusive" "$test_file" || continue
-		echo "[python][$name] running alone"
-		if ! python3 -m pytest "${pytest_args[@]}" -m exclusive \
-			--junitxml="${JUNIT}/tests-drivers-python-${name}-exclusive-junit.xml" \
-			"$test_file"; then
-			final=1
-		fi
-	done
-	exit "$final"
-fi
-
 declare -A parallel_pid=() parallel_log=()
 for name in "${parallel[@]}"; do
 	test_file="${SCRIPT_DIR}/${name}.py"
 	[[ -f "$test_file" ]] || continue
 	parallel_log[$name]="$(mktemp)"
-	python3 -m pytest "${pytest_args[@]}" -m "not exclusive" \
+	python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${name}-junit.xml" \
 		"$test_file" >"${parallel_log[$name]}" 2>&1 &
 	parallel_pid[$name]=$!
@@ -68,7 +54,7 @@ for driver in "${drivers[@]}"; do
 	test_file="${SCRIPT_DIR}/test_${driver}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$driver] running"
-	if ! python3 -m pytest "${pytest_args[@]}" -m "not exclusive" \
+	if ! python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${driver}-junit.xml" \
 		"$test_file"; then
 		final=1
@@ -79,7 +65,7 @@ for extra in "${extras[@]}"; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"
-	python3 -m pytest "${pytest_args[@]}" -m "not exclusive" \
+	python3 -m pytest "${pytest_args[@]}" \
 		--junitxml="${JUNIT}/tests-drivers-python-${extra}-junit.xml" \
 		"$test_file"
 	rc=$?

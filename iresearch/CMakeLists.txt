@@ -478,14 +478,6 @@ endif()
 
 add_library(${IResearch_library} STATIC ${IResearch_core_sources})
 
-set_source_files_properties(
-    search/scorers/bm25.cpp
-    search/scorers/tfidf.cpp
-    PROPERTIES
-        COMPILE_OPTIONS
-            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
-)
-
 target_include_directories(
     ${IResearch_library}
     PUBLIC ${CMAKE_SOURCE_DIR}

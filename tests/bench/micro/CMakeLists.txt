@@ -127,29 +127,6 @@ set_property(
     PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
 )
 
-# Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
-# aren't the ones we ship.
-set_property(
-    SOURCE bm25_byte_norm.cpp
-    APPEND
-    PROPERTY
-        COMPILE_OPTIONS
-            -fapprox-func
-            -fno-math-errno
-            -fassociative-math
-            -freciprocal-math
-            -fno-signed-zeros
-            -fno-trapping-math
-            -fno-rounding-math
-            -ffp-contract=fast
-)
-
-set_property(
-    SOURCE vector_distances.cpp
-    APPEND
-    PROPERTY COMPILE_OPTIONS -fassociative-math -fno-signed-zeros
-)
-
 add_library(
     serenedb-bench-docs-mask-iresearch
     STATIC

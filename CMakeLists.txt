@@ -624,6 +624,7 @@ add_compile_options(
     -Wno-deprecated-declarations
     -Wno-missing-designated-field-initializers
 )
+add_compile_options(-fno-math-errno)
 if(SDB_COVERAGE)
     add_compile_options(${SDB_COVERAGE_FLAGS})
     add_compile_definitions(SDB_COVERAGE)

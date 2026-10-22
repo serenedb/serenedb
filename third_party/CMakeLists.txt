@@ -2,9 +2,12 @@
 # External Projects used by SereneDB
 # ------------------------------------------------------------------------------
 
-set(CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wno-deprecated -Wno-missing-field-initializers -Wno-sign-compare -Wno-unused"
-)
+foreach(lang C CXX)
+    string(
+        APPEND CMAKE_${lang}_FLAGS
+        " -Wall -Wextra -Wthread-safety -Wno-deprecated -Wno-missing-field-initializers -Wno-sign-compare -Wno-unused -Wno-unused-parameter"
+    )
+endforeach()
 
 sdb_update_module(sqllogictest-rs stringzilla)
 
@@ -347,7 +350,7 @@ set(FAISS_LIB faiss CACHE INTERNAL "faiss target to link" FORCE)
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
-sdb_add_module(faiss SYSTEM NO_WARNINGS)
+sdb_add_module(faiss SYSTEM)
 target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
@@ -459,7 +462,7 @@ set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
 
-sdb_add_module(curl NO_WARNINGS)
+sdb_add_module(curl)
 
 # Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
 # FindCURL.cmake short-circuits when these variables are already set.
@@ -565,7 +568,7 @@ sdb_add_module(avro DIR avro/lang/c NO_WARNINGS)
 ## libxml2
 ################################################################################
 
-sdb_add_module(libxml2 DIR libxml2-cmake NO_WARNINGS)
+sdb_add_module(libxml2 DIR libxml2-cmake)
 
 ################################################################################
 ## Azure SDK (monolithic build)

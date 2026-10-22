@@ -107,6 +107,28 @@ set(SDB_GEN_CS_PGO
 )
 set(SDB_USE_PGO "" CACHE PATH "PGO profile to optimize with")
 
+option(SDB_LTO "ThinLTO, identical code folding and section GC" OFF)
+
+option(
+    SDB_DEV
+    "whether we want to have assertions and other development features"
+    OFF
+)
+
+option(
+    SDB_FAULT_INJECTION
+    "whether we want to have failure tests compiled in"
+    OFF
+)
+
+option(STATIC_EXECUTABLES "produce static executables" OFF)
+
+option(
+    ENSURE_VTUNE_SYMBOLS
+    "force needed by VTUNE profiler symbols to be included"
+    OFF
+)
+
 find_package(Git REQUIRED)
 
 # ------------------------------------------------------------------------------
@@ -201,37 +223,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # TODO(mbkkt) maybe disable in CI
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
-# disable not fatal logs and all vlogs in compile time
-add_compile_definitions(ABSL_MAX_VLOG_VERBOSITY=-1 ABSL_MIN_LOG_LEVEL=3)
-
-if(SDB_GEN_PGO)
-    # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
-    add_compile_options(-fprofile-generate)
-    add_link_options(-fprofile-generate)
-elseif(SDB_GEN_CS_PGO)
-    # TODO(mbkkt) seems like cs pgo didn't produce results with LTO :/
-    # https://github.com/llvm/llvm-project/issues/112103
-    add_compile_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
-    add_link_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
-elseif(SDB_USE_PGO)
-    add_compile_options(-fprofile-use=${SDB_USE_PGO})
-    add_link_options(-fprofile-use=${SDB_USE_PGO})
-    # TODO(mbkkt) for -ftemporal-profile
-    #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
-endif()
-
-if(SDB_COVERAGE)
-    set(SDB_COVERAGE_FLAGS
-        -fprofile-instr-generate
-        -fcoverage-mapping
-        -fcoverage-mcdc
-        "SHELL:-mllvm -enable-single-byte-coverage=true"
-        "SHELL:-mllvm -conditional-counter-update"
-        -Wno-pass-failed
-    )
-    add_link_options(-fprofile-instr-generate)
-endif()
-
 # ------------------------------------------------------------------------------
 # update files containing VERSION information
 # ------------------------------------------------------------------------------
@@ -277,14 +268,11 @@ else()
 endif()
 
 ################################################################################
-## MAINTAINER MODE
+## DEFINITIONS
 ################################################################################
 
-option(
-    SDB_DEV
-    "whether we want to have assertions and other development features"
-    OFF
-)
+# disable not fatal logs and all vlogs in compile time
+add_compile_definitions(ABSL_MAX_VLOG_VERBOSITY=-1 ABSL_MIN_LOG_LEVEL=3)
 
 if(SDB_DEV)
     add_compile_definitions(SDB_DEV=1 DEBUG)
@@ -298,29 +286,9 @@ if(SDB_GTEST)
     add_compile_definitions(SDB_GTEST=1)
 endif()
 
-################################################################################
-## FAILURE TESTS
-################################################################################
-
-option(
-    SDB_FAULT_INJECTION
-    "whether we want to have failure tests compiled in"
-    OFF
-)
-
 if(SDB_FAULT_INJECTION)
     add_compile_definitions(SDB_FAULT_INJECTION=1)
 endif()
-
-################################################################################
-## LINK TIME OPTIMIZATION
-################################################################################
-
-option(SDB_LTO "ThinLTO, identical code folding and section GC" OFF)
-
-################################################################################
-## ALLOC
-################################################################################
 
 # TODO(mbkkt) -fnew-alignment=8 and tcmalloc is nothrow -- ABSL_ALLOCATOR_NOTHROW
 if(SDB_ALLOC STREQUAL "JE")
@@ -333,27 +301,67 @@ endif()
 ## FLAGS
 ################################################################################
 
-if(SDB_WERROR)
-    add_compile_options(-Werror)
-endif()
-
-add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.)
-
-# compiler options
-set(EXTRA_FLAGS
-    "-Wall -Wdeprecated -Wextra -Wthread-safety -Wno-unused-parameter ${ARCHITECTURE_OPTIMIZATIONS}"
+set(SDB_CODEGEN_FLAGS
+    "${ARCHITECTURE_OPTIMIZATIONS} -falign-functions=64 -falign-loops=64 -fno-math-errno"
 )
-set(EXTRA_CXX_FLAGS "-fsized-deallocation -fstrict-vtable-pointers")
 if(SDB_LTO)
     # TODO(mbkkt) Try to apply -fsplit-lto-unit, -flo=full -fbasic-block-sections=all
     # -fexperimental-relative-c++-abi-vtables, -fassume-unique-vtables -fvirtual-function-elimination
     # -fassume-nothrow-exception-dtor -fasync-exceptions -fasynchronous-unwind-tables
-    set(EXTRA_FLAGS
-        "${EXTRA_FLAGS} -flto=thin -faddrsig -ffunction-sections -fdata-sections"
+    string(
+        APPEND SDB_CODEGEN_FLAGS
+        " -flto=thin -faddrsig -ffunction-sections -fdata-sections"
     )
-    # set(EXTRA_CXX_FLAGS "${EXTRA_CXX_FLAGS} -fforce-emit-vtables -fwhole-program-vtables")
-    set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -flto=thin -Wl,-icf=safe -Wl,--gc-sections"
+    # -fforce-emit-vtables -fwhole-program-vtables
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-icf=safe -Wl,--gc-sections")
+endif()
+string(APPEND CMAKE_C_FLAGS " ${SDB_CODEGEN_FLAGS}")
+string(
+    APPEND CMAKE_CXX_FLAGS
+    " ${SDB_CODEGEN_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
+)
+
+add_compile_options(
+    $<$<BOOL:${SDB_WERROR}>:-Werror>
+    -ffile-prefix-map=${CMAKE_SOURCE_DIR}=.
+    $<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>
+    $<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>
+)
+
+if(SDB_GEN_PGO)
+    # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
+    add_compile_options(-fprofile-generate)
+    add_link_options(-fprofile-generate)
+elseif(SDB_GEN_CS_PGO)
+    # TODO(mbkkt) seems like cs pgo didn't produce results with LTO :/
+    # https://github.com/llvm/llvm-project/issues/112103
+    add_compile_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+    add_link_options(-fprofile-use=${SDB_GEN_CS_PGO} -fcs-profile-generate)
+elseif(SDB_USE_PGO)
+    add_compile_options(-fprofile-use=${SDB_USE_PGO})
+    add_link_options(-fprofile-use=${SDB_USE_PGO})
+    # TODO(mbkkt) for -ftemporal-profile
+    #   add_link_options(-Wl,--symbol-ordering-file=path-to-code.orderfile)
+endif()
+
+if(SDB_COVERAGE)
+    set(SDB_COVERAGE_FLAGS
+        -fprofile-instr-generate
+        -fcoverage-mapping
+        -fcoverage-mcdc
+        "SHELL:-mllvm -enable-single-byte-coverage=true"
+        "SHELL:-mllvm -conditional-counter-update"
+        -Wno-pass-failed
+    )
+    add_link_options(-fprofile-instr-generate)
+endif()
+
+# VTune needs these symbols in a statically linked binary, see
+# https://software.intel.com/content/www/us/en/develop/documentation/vtune-help/top/set-up-analysis-target/linux-targets/analyzing-statically-linked-binaries-on-linux-targets.html
+if(ENSURE_VTUNE_SYMBOLS)
+    string(
+        APPEND CMAKE_EXE_LINKER_FLAGS
+        " -upthread_getattr_np -upthread_create -upthread_key_create -upthread_setspecific -upthread_getspecific -upthread_self -upthread_attr_destroy -upthread_attr_setstack -upthread_attr_getstack -upthread_attr_getstacksize -upthread_attr_setstacksize -upthread_cancel -u_pthread_cleanup_push -u_pthread_cleanup_pop -upthread_mutex_lock -upthread_mutex_trylock -upthread_spin_lock -upthread_spin_trylock"
     )
 endif()
 
@@ -432,14 +440,9 @@ foreach(lang C CXX)
     )
 endforeach()
 
-# put together the final flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_FLAGS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EXTRA_FLAGS} ${EXTRA_CXX_FLAGS}")
-
 ################################################################################
 ## Runtime
 ################################################################################
-option(STATIC_EXECUTABLES "produce static executables" OFF)
 
 execute_process(
     COMMAND ${CMAKE_CXX_COMPILER} --print-libgcc-file-name --rtlib=compiler-rt
@@ -525,9 +528,6 @@ if(NOT SDB_SANITIZE STREQUAL "")
     add_link_options(${SDB_SANITIZE_FLAGS})
 endif()
 
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>)
-
 include(Runtime)
 
 if(NOT SDB_SANITIZE STREQUAL "")
@@ -547,29 +547,6 @@ link_libraries(
     $<BUILD_LOCAL_INTERFACE:cxxabi_static>
     $<BUILD_LOCAL_INTERFACE:cxx_static>
 )
-
-################################################################################
-## VTUNE Symbols for profiling our build.
-## As we link statically we would miss some essential symbols for profiler.
-## So we force them to be included.
-## See https://software.intel.com/content/www/us/en/develop/documentation/vtune-help/top/set-up-analysis-target/linux-targets/analyzing-statically-linked-binaries-on-linux-targets.html
-################################################################################
-
-option(
-    ENSURE_VTUNE_SYMBOLS
-    "force needed by VTUNE profiler symbols to be included"
-    OFF
-)
-
-if(ENSURE_VTUNE_SYMBOLS)
-    set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -upthread_getattr_np -upthread_create\
-    -upthread_key_create -upthread_setspecific -upthread_getspecific -upthread_self -upthread_attr_destroy\
-    -upthread_attr_setstack -upthread_attr_getstack -upthread_attr_getstacksize -upthread_attr_setstacksize\
-    -upthread_cancel -u_pthread_cleanup_push -u_pthread_cleanup_pop -upthread_mutex_lock -upthread_mutex_trylock\
-    -upthread_spin_lock -upthread_spin_trylock"
-    )
-endif()
 
 ################################################################################
 ## 3RD PARTY
@@ -598,7 +575,10 @@ include(SereneDBInstall)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_compile_options(
+    -Wall
     -Wcomma
+    -Wdeprecated
+    -Wextra
     -Wextra-semi
     -Wfloat-conversion
     -Wformat-signedness
@@ -613,6 +593,7 @@ add_compile_options(
     -Wnull-dereference
     -Wsuggest-destructor-override
     -Wsuggest-override
+    -Wthread-safety
     -Wthread-safety-beta
     -Wundef
     -Wunreachable-code-break
@@ -623,8 +604,8 @@ add_compile_options(
     -Wno-deprecated-copy-with-dtor
     -Wno-deprecated-declarations
     -Wno-missing-designated-field-initializers
+    -Wno-unused-parameter
 )
-add_compile_options(-fno-math-errno)
 if(SDB_COVERAGE)
     add_compile_options(${SDB_COVERAGE_FLAGS})
     add_compile_definitions(SDB_COVERAGE)

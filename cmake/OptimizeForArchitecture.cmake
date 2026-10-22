@@ -55,6 +55,12 @@ set(AMD64_V4
     -mavx512vbmi2
 )
 
+macro(sandybridge)
+    message("Optimize for sandybridge")
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
+    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
+endmacro()
+
 macro(haswell)
     message("Optimize for haswell")
     list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
@@ -79,6 +85,16 @@ macro(graviton1)
     # little-endian enabled by default, but only if target is not something like aarch64_be
     # so force to generate little-endian code, because it's simpler and less error-prone
     # "fp simd" are included to armv8-a
+    list(
+        APPEND ARCHITECTURE_OPTIMIZATIONS
+        -mlittle-endian
+        -march=${AARCH64_MARCH}
+    )
+endmacro()
+
+macro(graviton2)
+    message("Optimize for graviton2")
+    set(AARCH64_MARCH "armv8.2-a+fp16+rcpc+dotprod+crypto")
     list(
         APPEND ARCHITECTURE_OPTIMIZATIONS
         -mlittle-endian
@@ -117,8 +133,6 @@ elseif(TARGET_ARCHITECTURE STREQUAL "native")
 else()
     message(WARNING "${TARGET_ARCHITECTURE} is not supported")
 endif()
-
-list(APPEND ARCHITECTURE_OPTIMIZATIONS -falign-functions=64 -falign-loops=64)
 
 string(
     REPLACE ";"

@@ -98,7 +98,8 @@
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",
         "SDB_ALLOC": "JE",
-        "SDB_LTO": "On"
+        "SDB_LTO": "On",
+        "SDB_DEBUG_INFO": "NONE"
       }
     },
     {

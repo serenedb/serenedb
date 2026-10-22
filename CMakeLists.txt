@@ -72,7 +72,11 @@ set_property(
             MemoryWithOrigins
 )
 
-option(SDB_COVERAGE "LLVM source-based coverage of our code, DuckDB and re2" OFF)
+option(
+    SDB_COVERAGE
+    "LLVM source-based coverage of our code, DuckDB and re2"
+    OFF
+)
 
 set(USE_DEBUG_INFO
     "FULL"
@@ -221,6 +225,7 @@ if(SDB_COVERAGE)
     set(SDB_COVERAGE_FLAGS
         -fprofile-instr-generate
         -fcoverage-mapping
+        -fcoverage-mcdc
         "SHELL:-mllvm -enable-single-byte-coverage=true"
         "SHELL:-mllvm -conditional-counter-update"
         -Wno-pass-failed

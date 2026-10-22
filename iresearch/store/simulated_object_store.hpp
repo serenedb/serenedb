@@ -67,7 +67,7 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
   }
 
   std::shared_ptr<const Object> Find(std::string_view path) const;
-  void Publish(const std::string& path, std::string bytes);
+  uint64_t Publish(const std::string& path, std::string bytes);
 
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) final;
@@ -79,6 +79,7 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
                 int64_t nr_bytes) final;
   int64_t GetFileSize(duckdb::FileHandle& handle) final;
   duckdb::timestamp_t GetLastModifiedTime(duckdb::FileHandle& handle) final;
+  std::string GetVersionTag(duckdb::FileHandle& handle) final;
   duckdb::FileType GetFileType(duckdb::FileHandle& handle) final {
     return duckdb::FileType::FILE_TYPE_REGULAR;
   }
@@ -133,8 +134,7 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
 
  private:
   void Request(std::atomic<uint64_t>& counter) const;
-  std::shared_ptr<const Object> Fetch(std::string_view path,
-                                      const Object* expected);
+  std::shared_ptr<const Object> Fetch(std::string_view path, uint64_t version);
 
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<std::string, std::shared_ptr<const Object>> _objects

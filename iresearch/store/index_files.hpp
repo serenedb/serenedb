@@ -92,12 +92,13 @@ using FileRefs = std::vector<IndexFileRefs::ref_t>;
 struct FileInfo {
   uint64_t size = 0;
   std::shared_ptr<const bstring> tail;
+  std::string etag;
 };
 
 class FileInfos {
  public:
   void Remember(std::string_view name, FileInfo info);
-  void Listed(std::string_view name, uint64_t size);
+  void Listed(std::string_view name, uint64_t size, std::string etag);
   std::optional<FileInfo> Find(std::string_view name) const;
   bool Contains(std::string_view name) const;
   bool Forget(std::string_view name);

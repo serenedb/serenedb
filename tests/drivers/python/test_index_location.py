@@ -17,6 +17,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from fake_azure import FakeAzure
 from fake_s3 import FakeS3
 
 SERENED_BIN = os.environ.get(
@@ -241,6 +242,40 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
                     if not key.endswith(".storage")], s3_store.fake.keys(s3_store.bucket)
 
 
+def test_index_files_on_azure(tmp_path: Path) -> None:
+    location = f"az://indexes/cluster-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    flag = f"--index_location={location}"
+    with FakeAzure() as fake:
+        server = _Server(datadir, flag)
+        try:
+            assert server.wait_ready(), server.output()
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE PERSISTENT SECRET index_store (TYPE azure, "
+                    f"CONNECTION_STRING '{fake.connection_string}', SCOPE '{location}')")
+            _create_index(server)
+            assert _matches(server) == [1]
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+            assert _matches(server) == [1, 3]
+        finally:
+            server.stop()
+        assert fake.requests["COPY"] > 0, fake.requests
+
+        again = _Server(datadir, flag)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _matches(again) == [1, 3]
+            with again.connect() as conn:
+                conn.execute("DROP INDEX docs_body")
+        finally:
+            again.stop()
+        assert not [name for name in fake.names("indexes")
+                    if not name.endswith(".storage")], fake.names("indexes")
+
+
 def _large_table(server: _Server, store: _Store, location: str) -> None:
     _create_secret(server, store, location)
     with server.connect() as conn:
@@ -276,6 +311,67 @@ def test_large_index_files_upload_parts_at_once(tmp_path: Path) -> None:
             server.stop()
     assert fake.requests["PUT_PART"] > 2, fake.requests
     assert fake.max_parts_in_flight > 1, fake.requests
+    assert fake.requests["CHECKSUM"] > fake.requests["COMPLETE_UPLOAD"] > 0, fake.requests
+
+
+def test_a_trickling_read_fails_by_its_deadline(tmp_path: Path) -> None:
+    location = f"s3://bucket/trickle-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL http_timeout = 2")
+                conn.execute("SET GLOBAL http_retries = 1")
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "INSERT INTO docs SELECT i, concat_ws(' ', 'fox', md5(i::VARCHAR)) "
+                    "FROM range(30000) t(i)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                fake.trickle = 2048
+                began = time.monotonic()
+                with pytest.raises(psycopg.Error):
+                    conn.execute(
+                        "SELECT count(*) FROM docs_body WHERE body @@ 'fox'").fetchall()
+                assert time.monotonic() - began < 30
+        finally:
+            fake.trickle = 0
+            server.stop()
+
+
+def test_reads_refuse_an_object_replaced_after_its_upload(tmp_path: Path) -> None:
+    location = f"s3://bucket/replaced-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            assert _matches(server) == [1]
+            terms = [key for key in fake.keys("bucket", f"replaced-{tmp_path.name}/")
+                     if key.endswith(".idx")]
+            assert terms, fake.keys("bucket")
+            for key in terms:
+                with fake.lock:
+                    size = len(fake.objects[("bucket", key)].data)
+                fake.replace("bucket", key, bytes(size))
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                with pytest.raises(psycopg.Error, match="changed after it was opened"):
+                    conn.execute(
+                        "SELECT id FROM docs_body WHERE body @@ 'fox'").fetchall()
+        finally:
+            server.stop()
 
 
 def test_a_failed_part_aborts_its_upload(tmp_path: Path) -> None:
@@ -330,6 +426,56 @@ def test_failed_commit_is_retried(tmp_path: Path) -> None:
         assert _matches(server) == [1, 3]
     finally:
         server.stop()
+
+
+def _one_round(log: list[dict], extension: str) -> list[dict]:
+    reads = [entry for entry in log if entry["key"].endswith(extension)]
+    assert reads, log
+    assert max(entry["began"] for entry in reads) < min(
+        entry["ended"] for entry in reads), reads
+    return reads
+
+
+def test_cold_top_k_reads_postings_and_columns_in_one_round(
+        tmp_path: Path) -> None:
+    location = f"s3://bucket/rounds-{tmp_path.name}"
+    segments = 4
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret",
+                                          "bucket"), location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower') "
+                    "WITH (frequency, position, norm)")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(id, body words) "
+                    "WITH (compaction_interval = 0)")
+                for segment in range(segments):
+                    conn.execute(
+                        "INSERT INTO docs SELECT i, CASE i % 10 WHEN 0 THEN 'alpha' "
+                        "WHEN 1 THEN 'beta' ELSE 'gamma' END "
+                        f"FROM range({segment * 1000}, {(segment + 1) * 1000}) t(i)")
+                    conn.execute("VACUUM (REFRESH_TABLE) docs")
+                conn.execute("SET GLOBAL threads = 2")
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                fake.latency = 0.1
+                fake.log = []
+                rows = conn.execute(
+                    "SELECT id FROM docs_body WHERE body @@ to_tsquery('alpha beta') "
+                    "ORDER BY BM25(docs_body.tableoid) DESC LIMIT 1000").fetchall()
+                log, fake.log = fake.log, None
+        finally:
+            server.stop()
+    assert sorted(row[0] for row in rows) == [
+        i for i in range(segments * 1000) if i % 10 < 2]
+    assert len(_one_round(log, ".doc")) <= segments
+    assert len(_one_round(log, ".col")) == segments
 
 
 def test_index_files_on_an_object_store(tmp_path: Path) -> None:

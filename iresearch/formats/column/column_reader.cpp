@@ -342,6 +342,40 @@ BlockWindow ColumnReader::Locate(uint64_t row,
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 
+void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                 std::vector<ByteExtent>& out) const {
+  if (!_segments.empty() && first < _row_count) {
+    const auto from = Locate(first).block;
+    const auto to = Locate(std::min(last, _row_count - 1)).block;
+    for (auto block = from; block <= to; ++block) {
+      const auto& m = _segments[block];
+      if (m.byte_size != 0) {
+        out.push_back({.offset = m.file_offset, .size = m.byte_size});
+      }
+    }
+  }
+  if (_validity) {
+    _validity->CollectBlocks(first, last, out);
+  }
+  switch (_type.id()) {
+    case duckdb::LogicalTypeId::UNION:
+    case duckdb::LogicalTypeId::STRUCT:
+    case duckdb::LogicalTypeId::TUPLE:
+      for (const auto& child : _children) {
+        child->CollectBlocks(first, last, out);
+      }
+      break;
+    case duckdb::LogicalTypeId::ARRAY:
+      if (_array_size != 0 && !_children.empty()) {
+        _children.front()->CollectBlocks(first * _array_size,
+                                         (last + 1) * _array_size - 1, out);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   const auto next = w.block + 1;
   if (next >= _segments.size()) {

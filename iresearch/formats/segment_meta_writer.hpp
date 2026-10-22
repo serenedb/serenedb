@@ -44,6 +44,7 @@ inline constexpr duckdb::field_id_t kFieldFileInfos = 4;
 inline constexpr duckdb::field_id_t kFileInfoFieldSize = 0;
 inline constexpr duckdb::field_id_t kFileInfoFieldTailSize = 1;
 inline constexpr duckdb::field_id_t kFileInfoFieldTail = 2;
+inline constexpr duckdb::field_id_t kFileInfoFieldETag = 3;
 
 std::string FileName(const SegmentMeta& meta);
 

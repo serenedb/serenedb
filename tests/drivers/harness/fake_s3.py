@@ -2,18 +2,28 @@
 
 Path-style buckets that exist on first use, single and multipart uploads,
 ranged reads, ListObjectsV2, server-side copies, single and batched deletes.
-Requests are not authenticated. It counts requests by kind and the most part
-uploads in flight at once; `latency` delays every request, and the part
-numbers in `failing_parts` are refused with a 500.
+Requests are not authenticated. It counts requests by kind, accepted
+connections and the most part uploads in flight at once; `latency` delays every request, `trickle`
+sends the bodies of reads at that many bytes a second, and the part numbers in `failing_parts` are
+refused with a 500.
+
+A CRC32C checksum sent with an upload is checked as S3 checks it: the body of
+a PUT or a part up to `checksum_limit` bytes against its own checksum, and a
+multipart upload created with the full-object type against the checksum its
+completion sends, which the checksums of its parts combine to. A mismatch is
+refused with BadDigest; CHECKSUM counts the checksums that matched.
 
 Run as a script, it serves until interrupted and answers on the `__admin`
 bucket: GET /__admin/stats returns the counters as JSON, POST /__admin/reset
-clears them, PUT /__admin/latency?seconds=S sets the latency.
+clears them, PUT /__admin/latency?seconds=S sets the latency, and after
+PUT /__admin/log?enabled=1 each GET of an object is logged with its key, range
+and start and end times, which GET /__admin/log returns and clears.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import collections
 import email.utils
 import hashlib
@@ -28,6 +38,86 @@ from datetime import datetime, timezone
 from xml.sax.saxutils import escape
 
 NS = "http://s3.amazonaws.com/doc/2006-03-01/"
+CRC32C_POLY = 0x82F63B78
+
+
+def _crc32c_table() -> list[int]:
+    table = []
+    for i in range(256):
+        crc = i
+        for _ in range(8):
+            crc = (crc >> 1) ^ CRC32C_POLY if crc & 1 else crc >> 1
+        table.append(crc)
+    return table
+
+
+_CRC32C_TABLE = _crc32c_table()
+
+
+def crc32c(data: bytes) -> int:
+    crc = 0xFFFFFFFF
+    table = _CRC32C_TABLE
+    for byte in data:
+        crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+    return crc ^ 0xFFFFFFFF
+
+
+def _gf2_times(matrix: list[int], vector: int) -> int:
+    result = 0
+    row = 0
+    while vector:
+        if vector & 1:
+            result ^= matrix[row]
+        vector >>= 1
+        row += 1
+    return result
+
+
+def _gf2_square(matrix: list[int]) -> list[int]:
+    return [_gf2_times(matrix, matrix[row]) for row in range(32)]
+
+
+def crc32c_combine(first: int, second: int, second_length: int) -> int:
+    """The CRC32C of two byte strings joined, from their checksums."""
+    if second_length == 0:
+        return first
+    odd = [CRC32C_POLY] + [1 << row for row in range(31)]
+    even = _gf2_square(odd)
+    odd = _gf2_square(even)
+    while True:
+        even = _gf2_square(odd)
+        if second_length & 1:
+            first = _gf2_times(even, first)
+        second_length >>= 1
+        if not second_length:
+            break
+        odd = _gf2_square(even)
+        if second_length & 1:
+            first = _gf2_times(odd, first)
+        second_length >>= 1
+        if not second_length:
+            break
+    return first ^ second
+
+
+def _encode_crc32c(value: int) -> str:
+    return base64.b64encode(value.to_bytes(4, "big")).decode()
+
+
+def _decode_crc32c(header: str) -> int | None:
+    try:
+        raw = base64.b64decode(header, validate=True)
+    except ValueError:
+        return None
+    return int.from_bytes(raw, "big") if len(raw) == 4 else None
+
+
+class _Upload:
+    def __init__(self, bucket: str, key: str, full_object_crc32c: bool) -> None:
+        self.bucket = bucket
+        self.key = key
+        self.full_object_crc32c = full_object_crc32c
+        self.parts: dict[int, tuple[bytes, int | None]] = {}
 
 
 class _Object:
@@ -38,21 +128,29 @@ class _Object:
 
 
 class FakeS3:
-    def __init__(self, latency: float = 0.0, port: int = 0) -> None:
+    def __init__(self, latency: float = 0.0, port: int = 0,
+                 checksum_limit: int = 1 << 20) -> None:
         self.latency = latency
+        self.trickle = 0
+        self.checksum_limit = checksum_limit
         self.lock = threading.Lock()
         self.objects: dict[tuple[str, str], _Object] = {}
-        self.uploads: dict[str, tuple[str, str, dict[int, bytes]]] = {}
+        self.uploads: dict[str, _Upload] = {}
         self.requests: collections.Counter[str] = collections.Counter()
         self.parts_in_flight = 0
         self.max_parts_in_flight = 0
         self.failing_parts: set[int] = set()
+        self.log: list[dict] | None = None
         store = self
 
         class Handler(_Handler):
             fake = store
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            def setup(self) -> None:
+                super().setup()
+                store.count("CONNECTION")
+
+        self.server = _Server(("127.0.0.1", port), Handler)
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever,
                                        daemon=True)
@@ -74,6 +172,10 @@ class FakeS3:
             return sorted(key for b, key in self.objects
                           if b == bucket and key.startswith(prefix))
 
+    def replace(self, bucket: str, key: str, data: bytes) -> None:
+        with self.lock:
+            self.objects[(bucket, key)] = _Object(data)
+
     def count(self, kind: str) -> None:
         with self.lock:
             self.requests[kind] += 1
@@ -89,6 +191,10 @@ class FakeS3:
         with self.lock:
             self.requests.clear()
             self.max_parts_in_flight = self.parts_in_flight
+
+
+class _Server(http.server.ThreadingHTTPServer):
+    request_queue_size = 1024
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -111,15 +217,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def _reply(self, status: int, body: bytes = b"",
                headers: dict[str, str] | None = None,
-               content_length: int | None = None) -> None:
+               content_length: int | None = None, trickle: bool = False) -> None:
         self.send_response(status)
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.send_header("Content-Length",
                          str(len(body) if content_length is None else content_length))
         self.end_headers()
-        if body and self.command != "HEAD":
+        if not body or self.command == "HEAD":
+            return
+        rate = self.fake.trickle if trickle else 0
+        if not rate:
             self.wfile.write(body)
+            return
+        chunk = max(1, rate // 10)
+        try:
+            for offset in range(0, len(body), chunk):
+                self.wfile.write(body[offset:offset + chunk])
+                self.wfile.flush()
+                time.sleep(chunk / rate)
+        except OSError:
+            self.close_connection = True
 
     def _xml(self, status: int, body: str) -> None:
         self._reply(status, ('<?xml version="1.0" encoding="UTF-8"?>' + body).encode(),
@@ -134,6 +252,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _wait(self) -> None:
         if self.fake.latency:
             time.sleep(self.fake.latency)
+
+    def _checksum(self, body: bytes) -> tuple[bool, int | None]:
+        header = self.headers.get("x-amz-checksum-crc32c")
+        if header is None:
+            return True, None
+        value = _decode_crc32c(header)
+        if value is None:
+            return False, None
+        if len(body) <= self.fake.checksum_limit:
+            if crc32c(body) != value:
+                return False, value
+            self.fake.count("CHECKSUM")
+        return True, value
+
+    def _bad_digest(self) -> None:
+        self._xml(400, "<Error><Code>BadDigest</Code></Error>")
 
     def _find(self, bucket: str, key: str) -> _Object | None:
         with self.fake.lock:
@@ -152,6 +286,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         elif self.command == "PUT" and key == "latency":
             self.fake.latency = float(query.get("seconds", ["0"])[0])
             self._reply(204)
+        elif self.command == "PUT" and key == "log":
+            with self.fake.lock:
+                self.fake.log = [] if query.get("enabled", ["1"])[0] == "1" else None
+            self._reply(204)
+        elif self.command == "GET" and key == "log":
+            with self.fake.lock:
+                entries = self.fake.log or []
+                if self.fake.log is not None:
+                    self.fake.log = []
+            self._reply(200, json.dumps(entries).encode(),
+                        {"Content-Type": "application/json"})
         else:
             self._reply(404)
         return True
@@ -181,11 +326,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._list(bucket, query)
             return
         self.fake.count("GET")
+        began = time.monotonic()
         self._wait()
         obj = self._find(bucket, key)
         if obj is None:
             self._missing(key)
             return
+        if self.fake.log is not None:
+            with self.fake.lock:
+                if self.fake.log is not None:
+                    self.fake.log.append({"key": key, "range": self.headers.get("Range"),
+                                          "began": began, "ended": time.monotonic()})
         if_match = self.headers.get("If-Match")
         if if_match and if_match != obj.etag:
             self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
@@ -193,7 +344,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         headers = self._object_headers(obj)
         ranged = self.headers.get("Range")
         if not ranged:
-            self._reply(200, obj.data, headers)
+            self._reply(200, obj.data, headers, trickle=True)
             return
         first, _, last = ranged.removeprefix("bytes=").partition("-")
         start = int(first)
@@ -202,7 +353,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._xml(416, "<Error><Code>InvalidRange</Code></Error>")
             return
         headers["Content-Range"] = f"bytes {start}-{end}/{len(obj.data)}"
-        self._reply(206, obj.data[start:end + 1], headers)
+        self._reply(206, obj.data[start:end + 1], headers, trickle=True)
 
     def _list(self, bucket: str, query: dict[str, list[str]]) -> None:
         prefix = query.get("prefix", [""])[0]
@@ -268,10 +419,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         self.fake.count("PUT")
         self._wait()
+        matches, checksum = self._checksum(body)
+        if not matches:
+            self._bad_digest()
+            return
         obj = _Object(body)
         with self.fake.lock:
             self.fake.objects[(bucket, key)] = obj
-        self._reply(200, headers={"ETag": obj.etag})
+        headers = {"ETag": obj.etag}
+        if checksum is not None:
+            headers["x-amz-checksum-crc32c"] = _encode_crc32c(checksum)
+        self._reply(200, headers=headers)
 
     def _put_part(self, number: int, upload_id: str) -> None:
         with self.fake.lock:
@@ -285,14 +443,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if number in self.fake.failing_parts:
                 self._xml(500, "<Error><Code>InternalError</Code></Error>")
                 return
+            matches, checksum = self._checksum(body)
+            if not matches:
+                self._bad_digest()
+                return
             with self.fake.lock:
                 upload = self.fake.uploads.get(upload_id)
                 if upload is not None:
-                    upload[2][number] = body
+                    upload.parts[number] = (body, checksum)
             if upload is None:
                 self._xml(404, "<Error><Code>NoSuchUpload</Code></Error>")
                 return
-            self._reply(200, headers={"ETag": '"' + hashlib.md5(body).hexdigest() + '"'})
+            if upload.full_object_crc32c and checksum is None:
+                self._xml(400, "<Error><Code>InvalidRequest</Code></Error>")
+                return
+            headers = {"ETag": '"' + hashlib.md5(body).hexdigest() + '"'}
+            if checksum is not None:
+                headers["x-amz-checksum-crc32c"] = _encode_crc32c(checksum)
+            self._reply(200, headers=headers)
         finally:
             with self.fake.lock:
                 self.fake.parts_in_flight -= 1
@@ -306,10 +474,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.fake.count("CREATE_UPLOAD")
             self._wait()
             upload_id = uuid.uuid4().hex
+            full_object = (self.headers.get("x-amz-checksum-algorithm", "").upper() == "CRC32C" and
+                           self.headers.get("x-amz-checksum-type", "").upper() == "FULL_OBJECT")
             with self.fake.lock:
-                self.fake.uploads[upload_id] = (bucket, key, {})
+                self.fake.uploads[upload_id] = _Upload(bucket, key, full_object)
+            checksum = ("<ChecksumAlgorithm>CRC32C</ChecksumAlgorithm><ChecksumType>FULL_OBJECT</ChecksumType>"
+                        if full_object else "")
             self._xml(200, f'<InitiateMultipartUploadResult xmlns="{NS}"><Bucket>{escape(bucket)}</Bucket>'
-                           f"<Key>{escape(key)}</Key><UploadId>{upload_id}</UploadId>"
+                           f"<Key>{escape(key)}</Key><UploadId>{upload_id}</UploadId>{checksum}"
                            "</InitiateMultipartUploadResult>")
             return
         if "uploadId" in query:
@@ -335,16 +507,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         numbers = [int(element.text or "0") for element in root.iter() if element.tag.endswith("PartNumber")]
         with self.fake.lock:
             upload = self.fake.uploads.pop(upload_id, None)
-            if upload is None or any(number not in upload[2] for number in numbers):
-                upload = None
-            else:
-                obj = _Object(b"".join(upload[2][number] for number in numbers))
-                self.fake.objects[(bucket, key)] = obj
-        if upload is None:
+        if upload is None or any(number not in upload.parts for number in numbers):
             self._xml(400, "<Error><Code>InvalidPart</Code></Error>")
             return
+        parts = [upload.parts[number] for number in numbers]
+        data = b"".join(part for part, _ in parts)
+        checksum = ""
+        if upload.full_object_crc32c:
+            expected = _decode_crc32c(self.headers.get("x-amz-checksum-crc32c", ""))
+            combined = 0
+            for part, part_checksum in parts:
+                combined = crc32c_combine(combined, part_checksum, len(part))
+            if expected is None or combined != expected or (
+                    len(data) <= self.fake.checksum_limit and crc32c(data) != expected):
+                self._bad_digest()
+                return
+            self.fake.count("CHECKSUM")
+            checksum = (f"<ChecksumCRC32C>{_encode_crc32c(expected)}</ChecksumCRC32C>"
+                        "<ChecksumType>FULL_OBJECT</ChecksumType>")
+        obj = _Object(data)
+        with self.fake.lock:
+            self.fake.objects[(bucket, key)] = obj
         self._xml(200, f'<CompleteMultipartUploadResult xmlns="{NS}"><Bucket>{escape(bucket)}</Bucket>'
-                       f"<Key>{escape(key)}</Key><ETag>{escape(obj.etag)}</ETag>"
+                       f"<Key>{escape(key)}</Key><ETag>{escape(obj.etag)}</ETag>{checksum}"
                        "</CompleteMultipartUploadResult>")
 
     def do_DELETE(self) -> None:

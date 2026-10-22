@@ -116,7 +116,8 @@ uint64_t FileOutput::CloseImpl() try {
       _name, {.size = size,
               .tail = _tail.empty()
                         ? nullptr
-                        : std::make_shared<const bstring>(std::move(_tail))});
+                        : std::make_shared<const bstring>(std::move(_tail)),
+              .etag = _handle->file_system.GetVersionTag(*_handle)});
   }
   return size;
 } catch (const duckdb::IOException& e) {

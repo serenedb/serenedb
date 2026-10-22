@@ -120,6 +120,8 @@ void Write(const IndexFiles& dir, std::string& meta_file, SegmentMeta& meta) {
             obj.WriteProperty(kFileInfoFieldTail, "tail", info.tail->data(),
                               tail_size);
           }
+          obj.WritePropertyWithDefault<std::string>(kFileInfoFieldETag, "etag",
+                                                    info.etag, "");
         });
       });
   });

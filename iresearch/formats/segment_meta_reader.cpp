@@ -90,6 +90,8 @@ void Read(const IndexFiles& dir, SegmentMeta& meta, std::string_view filename) {
                                tail_size);
               info.tail = std::move(tail);
             }
+            info.etag = obj.ReadPropertyWithExplicitDefault<std::string>(
+              kFileInfoFieldETag, "etag", "");
           });
         });
     });

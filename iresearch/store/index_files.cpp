@@ -85,7 +85,7 @@ duckdb::OpenFileInfo ObjectToRead(const std::string& path, const FileInfo* info,
   auto& options = file.extended_info->options;
   if (info) {
     options.emplace("file_size", duckdb::Value::UBIGINT(info->size));
-    options.emplace("etag", duckdb::Value{""});
+    options.emplace("etag", duckdb::Value{info->etag});
     options.emplace("last_modified",
                     duckdb::Value::TIMESTAMP(duckdb::timestamp_t{0}));
   } else {
@@ -172,9 +172,9 @@ void FileInfos::Remember(std::string_view name, FileInfo info) {
   _infos.insert_or_assign(name, std::move(info));
 }
 
-void FileInfos::Listed(std::string_view name, uint64_t size) {
+void FileInfos::Listed(std::string_view name, uint64_t size, std::string etag) {
   absl::MutexLock lock{&_mutex};
-  _infos.try_emplace(name, FileInfo{.size = size});
+  _infos.try_emplace(name, FileInfo{.size = size, .etag = std::move(etag)});
 }
 
 std::optional<FileInfo> FileInfos::Find(std::string_view name) const {
@@ -205,6 +205,7 @@ void FileInfos::Rename(std::string_view src, std::string_view dst) {
   }
   auto info = std::move(it->second);
   _infos.erase(it);
+  info.etag.clear();
   _infos.insert_or_assign(dst, std::move(info));
 }
 
@@ -740,7 +741,9 @@ bool IndexFiles::Visit(const Visitor& visitor) const {
           duckdb::idx_t size = 0;
           if (file.extended_info &&
               file.extended_info->TryGetOption("file_size", size)) {
-            _state->infos->Listed(file.path, size);
+            std::string etag;
+            file.extended_info->TryGetOption("etag", etag);
+            _state->infos->Listed(file.path, size, std::move(etag));
           }
           names.push_back(std::move(file.path));
         },

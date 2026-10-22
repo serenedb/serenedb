@@ -115,6 +115,7 @@ class BlockInput final : public IndexInput {
   uint32_t Checksum(uint64_t offset) const final;
 
   void Prefetch(uint64_t offset, uint64_t count) const noexcept final;
+  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept final;
   bool Resident(uint64_t offset, uint64_t count) const noexcept final {
     return Warm(offset, count);
   }

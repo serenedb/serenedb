@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/btree_map.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -69,7 +70,7 @@ class ObjectHandle final : public duckdb::FileHandle {
   void Close() final {
     if (writing) {
       writing = false;
-      store.Publish(path, std::move(pending));
+      version = store.Publish(path, std::move(pending));
     }
   }
 
@@ -79,16 +80,23 @@ class ObjectHandle final : public duckdb::FileHandle {
   bool downloaded;
   std::string pending;
   duckdb::idx_t position = 0;
+  uint64_t version = 0;
   bool writing = false;
 };
 
-bool KnowsObject(const duckdb::ExtendedOpenFileInfo& info,
-                 duckdb::idx_t& size) {
+bool KnowsObject(const duckdb::ExtendedOpenFileInfo& info, duckdb::idx_t& size,
+                 uint64_t& version) {
   std::string etag;
   duckdb::timestamp_t last_modified;
-  return info.TryGetOption("file_size", size) &&
-         info.TryGetOption("etag", etag) &&
-         info.TryGetOption("last_modified", last_modified);
+  if (!info.TryGetOption("file_size", size) ||
+      !info.TryGetOption("etag", etag) ||
+      !info.TryGetOption("last_modified", last_modified)) {
+    return false;
+  }
+  if (etag.empty() || !absl::SimpleAtoi(etag, &version)) {
+    version = 0;
+  }
+  return true;
 }
 
 }  // namespace
@@ -145,7 +153,8 @@ std::shared_ptr<const SimulatedObjectStore::Object> SimulatedObjectStore::Find(
   return it == _objects.end() ? nullptr : it->second;
 }
 
-void SimulatedObjectStore::Publish(const std::string& path, std::string bytes) {
+uint64_t SimulatedObjectStore::Publish(const std::string& path,
+                                       std::string bytes) {
   Request(_put);
   SDB_IF_FAILURE("object_store_put_fails") {
     throw duckdb::IOException("simulated PUT failure for \"%s\"", path);
@@ -156,23 +165,36 @@ void SimulatedObjectStore::Publish(const std::string& path, std::string bytes) {
   object->written = duckdb::Timestamp::GetCurrentTimestamp();
   absl::MutexLock lock{&_mutex};
   object->version = ++_versions;
+  const auto version = object->version;
   _objects.insert_or_assign(path, std::move(object));
+  return version;
 }
 
 std::shared_ptr<const SimulatedObjectStore::Object> SimulatedObjectStore::Fetch(
-  std::string_view path, const Object* expected) {
+  std::string_view path, uint64_t version) {
   Request(_get);
   SDB_IF_FAILURE("object_store_get_fails") {
     throw duckdb::IOException("simulated GET failure for \"%s\"",
                               std::string{path});
   }
   auto object = Find(path);
-  if (!object || (expected && object->version != expected->version)) {
+  if (!object) {
     throw duckdb::IOException(MissingInfo(),
                               "GET \"%s\": the object no longer exists",
                               std::string{path});
   }
+  if (version != 0 && object->version != version) {
+    throw duckdb::IOException(
+      "GET \"%s\": the object changed after it was opened (version %llu, "
+      "expected %llu)",
+      std::string{path}, object->version, version);
+  }
   return object;
+}
+
+std::string SimulatedObjectStore::GetVersionTag(duckdb::FileHandle& handle) {
+  const auto version = handle.Cast<ObjectHandle>().version;
+  return version == 0 ? std::string{} : absl::StrCat(version);
 }
 
 duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
@@ -192,9 +214,12 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
   bool download = false;
   if (file.extended_info) {
     duckdb::idx_t size = 0;
-    if (KnowsObject(*file.extended_info, size)) {
-      return duckdb::make_uniq<ObjectHandle>(*this, path, flags, nullptr, size,
-                                             false);
+    uint64_t version = 0;
+    if (KnowsObject(*file.extended_info, size, version)) {
+      auto handle = duckdb::make_uniq<ObjectHandle>(*this, path, flags, nullptr,
+                                                    size, false);
+      handle->version = version;
+      return handle;
     }
     file.extended_info->TryGetOption("force_full_download", download);
   }
@@ -203,11 +228,14 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
       Request(_get);
       return nullptr;
     }
-    auto object = Fetch(path, nullptr);
+    auto object = Fetch(path, 0);
     _bytes_read.fetch_add(object->bytes.size(), std::memory_order_relaxed);
     const auto size = object->bytes.size();
-    return duckdb::make_uniq<ObjectHandle>(*this, path, flags,
-                                           std::move(object), size, true);
+    const auto version = object->version;
+    auto handle = duckdb::make_uniq<ObjectHandle>(
+      *this, path, flags, std::move(object), size, true);
+    handle->version = version;
+    return handle;
   }
   Request(_head);
   SDB_IF_FAILURE("object_store_head_fails") {
@@ -224,8 +252,11 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
                               path);
   }
   const auto size = object->bytes.size();
-  return duckdb::make_uniq<ObjectHandle>(*this, path, flags, std::move(object),
-                                         size, false);
+  const auto version = object->version;
+  auto handle = duckdb::make_uniq<ObjectHandle>(*this, path, flags,
+                                                std::move(object), size, false);
+  handle->version = version;
+  return handle;
 }
 
 void SimulatedObjectStore::Read(duckdb::FileHandle& handle_p, void* buffer,
@@ -237,7 +268,7 @@ void SimulatedObjectStore::Read(duckdb::FileHandle& handle_p, void* buffer,
   }
   const auto bytes = duckdb::NumericCast<duckdb::idx_t>(nr_bytes);
   const auto object =
-    handle.downloaded ? handle.object : Fetch(handle.path, handle.object.get());
+    handle.downloaded ? handle.object : Fetch(handle.path, handle.version);
   if (location + bytes > object->bytes.size()) {
     throw duckdb::IOException(
       "Could not read %llu bytes at %llu from \"%s\": it has %llu bytes", bytes,

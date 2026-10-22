@@ -16,6 +16,7 @@ The files of inverted indexes and search tables live in the data directory by de
 | empty (the default) | the data directory |
 | `/mnt/fast/indexes` | that directory; a relative path is resolved against the data directory |
 | `s3://bucket/prefix` | an S3 bucket, or a bucket of an S3-compatible store, under that prefix |
+| `az://container/prefix` | an Azure Blob Storage container, under that prefix |
 
 ```bash
 serened /var/lib/serenedb --index_location=s3://search-indexes/production
@@ -31,11 +32,13 @@ The server reads and writes index files with the credentials of a persistent sec
 
 <SqlLogicTest id="configuration/index_storage/example_secret" />
 
-The secret has to be persistent: the server opens indexes at startup and maintains them in the background, outside any session. See [AWS Credentials](./aws_credentials.md) for the keys to use and for S3-compatible endpoints.
+The secret has to be persistent: the server opens indexes at startup and maintains them in the background, outside any session. See [AWS Credentials](./aws_credentials.md) for the keys to use and for S3-compatible endpoints. For Azure, create a persistent secret of `TYPE azure` whose scope covers the container and prefix, for example with a `CONNECTION_STRING`; the container has to exist.
 
 ## Caching
 
 Index files on an object store are read through the external file cache, in blocks of 256 KiB. A refresh or a merge keeps the files it writes in the cache, so the first queries over new data read memory. A query that touches a part of an index that is not cached reads it from the store and caches it; later queries read it from memory until the cache evicts it. A read that goes through a file in order fetches the blocks ahead of it, in requests of up to 16 MiB, and a large read fetches all of its blocks with one request.
+
+A query over uncached data asks the store for what it needs in a few rounds rather than piece by piece: the term dictionaries of all segments together, then, for a ranked query, the start of every term's postings in every segment together, and at the end the columns of all its results together. A cold ranked query over many segments therefore waits about as long as one over a single segment.
 
 <SqlLogicTest id="configuration/index_storage/example_cache_settings" />
 
@@ -66,11 +69,19 @@ What costs requests to the object store:
 | A refresh or a merge | the upload of each new index file: one request for a file up to 5 MiB, parts for a larger one |
 | Each commit of an index | a copy, two size checks and a delete of one small file |
 | Opening an index at startup | a listing of its files, then one read of its commit file and one of each segment's metadata; the footers of the index files come with the metadata, and the segments open in parallel |
-| Cleanup | one request for up to 1000 files that no index reader uses anymore |
+| Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore |
 | Startup | listings of the location, to remove files that belong to no index |
 
-The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them, 20 by default; setting it to `1` uploads one part at a time.
+The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them on S3 and `azure_write_blocks_in_flight` on Azure, 20 by default; setting it to `1` uploads one part at a time.
+
+## Integrity
+
+Every upload to S3 carries the CRC32C checksum of the whole file, which the store checks against the bytes it received before it keeps the object; an upload that does not match fails, and the refresh or merge that wrote it fails with it. `SET s3_upload_checksum = false` turns the checksums off for S3-compatible stores that refuse them.
+
+An index remembers the ETag the store gave each of its files, and every read asks for that version of the object. A file that was replaced in the bucket after the index wrote it fails the query with an error saying the file changed after it was opened, instead of returning other bytes.
+
+A read from S3 fails when it takes longer than `http_timeout` plus one second for every MiB it asks for, and `http_retries` retries it, so a store that answers too slowly fails the query instead of holding it.
 
 ## Limits
 
-Only S3 and S3-compatible stores can hold index files.
+S3, S3-compatible stores and Azure Blob Storage can hold index files. Other object stores cannot.

@@ -23,10 +23,17 @@
 
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -296,6 +303,221 @@ TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_at_once) {
   irs::bstring buf(kBlocks * kBlock, 0);
   in->ReadData(buf.data(), buf.size());
   EXPECT_EQ(1, tests::ObjectStore().Requests().get);
+}
+
+struct Rows {
+  std::span<const uint64_t> rows;
+  size_t size() const noexcept { return rows.size(); }
+  uint64_t operator[](size_t i) const noexcept { return rows[i]; }
+};
+
+int64_t Scrambled(uint64_t row) {
+  return static_cast<int64_t>(row * 0x9E3779B97F4A7C15ULL);
+}
+
+TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
+  constexpr uint32_t kRgSize = 64 * 1024;
+  constexpr uint64_t kRows = 4 * kRgSize;
+  constexpr duckdb::idx_t kDim = 3;
+  constexpr irs::field_id kPlain = 1;
+  constexpr irs::field_id kStruct = 2;
+  constexpr irs::field_id kArray = 3;
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.emplace_back("a", duckdb::LogicalType::BIGINT);
+  fields.emplace_back("b", duckdb::LogicalType::VARCHAR);
+  const auto stype = duckdb::LogicalType::STRUCT(fields);
+  const auto atype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::BIGINT, kDim);
+  const auto valid = [](uint64_t row) { return row % 7 != 0; };
+
+  tests::ObjectStore();
+  const irs::IndexFiles dir{Db(), Root()};
+  {
+    irs::ColWriter writer{dir, "seg", Db()};
+    auto& plain = writer.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
+                                    /*skip_validity=*/false, kRgSize);
+    auto& structs =
+      writer.OpenColumn(kStruct, stype, /*skip_validity=*/false, kRgSize);
+    auto& arrays =
+      writer.OpenColumn(kArray, atype, /*skip_validity=*/false, kRgSize);
+    for (uint64_t pos = 0; pos != kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector p{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      duckdb::Vector s{stype, STANDARD_VECTOR_SIZE};
+      duckdb::Vector a{atype, STANDARD_VECTOR_SIZE};
+      auto& entries = duckdb::StructVector::GetEntries(s);
+      auto& child = duckdb::ArrayVector::GetChildMutable(a);
+      auto* pd = duckdb::FlatVector::GetDataMutable<int64_t>(p);
+      auto* sa = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+      auto* sb =
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(entries[1]);
+      auto* ad = duckdb::FlatVector::GetDataMutable<int64_t>(child);
+      auto& pv = duckdb::FlatVector::ValidityMutable(p);
+      auto& sv = duckdb::FlatVector::ValidityMutable(s);
+      auto& av = duckdb::FlatVector::ValidityMutable(a);
+      pv.Reset(STANDARD_VECTOR_SIZE);
+      sv.Reset(STANDARD_VECTOR_SIZE);
+      av.Reset(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k != STANDARD_VECTOR_SIZE; ++k) {
+        const auto row = pos + k;
+        pd[k] = Scrambled(row);
+        sa[k] = Scrambled(row + 1);
+        sb[k] = duckdb::StringVector::AddString(entries[1],
+                                                absl::StrCat("v", row % 1000));
+        for (duckdb::idx_t i = 0; i != kDim; ++i) {
+          ad[k * kDim + i] = Scrambled(row * kDim + i);
+        }
+        if (!valid(row)) {
+          pv.SetInvalid(k);
+          sv.SetInvalid(k);
+          av.SetInvalid(k);
+        }
+      }
+      duckdb::FlatVector::SetSize(p, STANDARD_VECTOR_SIZE);
+      duckdb::FlatVector::SetSize(s, STANDARD_VECTOR_SIZE);
+      duckdb::FlatVector::SetSize(a, STANDARD_VECTOR_SIZE);
+      plain.Append(p, STANDARD_VECTOR_SIZE);
+      structs.Append(s, STANDARD_VECTOR_SIZE);
+      arrays.Append(a, STANDARD_VECTOR_SIZE);
+    }
+    writer.Commit(0);
+  }
+  const irs::ColReader reader{dir, "seg", Db()};
+  const auto* plain = reader.Column(kPlain);
+  ASSERT_NE(nullptr, plain);
+  ASSERT_TRUE(plain->HasValidity());
+
+  const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
+                                   2 * kRgSize + 5};
+  std::vector<irs::ByteExtent> extents;
+  plain->CollectBlocks(rows.front(), rows.back(), extents);
+  std::vector<irs::ByteExtent> expected;
+  for (const auto* column : {plain, plain->Validity()}) {
+    const auto blocks = column->DataBlocks();
+    for (size_t block = 0; block != blocks.size(); ++block) {
+      if (column->DataBlockFirstRow(block + 1) > rows.front() &&
+          column->DataBlockFirstRow(block) <= rows.back() &&
+          blocks[block].byte_size != 0) {
+        expected.push_back({.offset = blocks[block].file_offset,
+                            .size = blocks[block].byte_size});
+      }
+    }
+  }
+  ASSERT_LT(4, expected.size());
+  const auto key = [](const irs::ByteExtent& e) {
+    return std::pair{e.offset, e.size};
+  };
+  ASSERT_EQ(expected.size(), extents.size());
+  for (size_t i = 0; i != extents.size(); ++i) {
+    EXPECT_EQ(key(expected[i]), key(extents[i])) << i;
+  }
+
+  for (const auto id : {kStruct, kArray}) {
+    const auto* column = reader.Column(id);
+    ASSERT_NE(nullptr, column);
+    column->CollectBlocks(rows.front(), rows.back(), extents);
+  }
+  auto& cache = duckdb::BlockCache::Get(Db());
+  cache.Clear();
+  for (auto& extent : extents) {
+    reader.PrefetchExtents({&extent, 1});
+  }
+  const auto prefetched = cache.GetStatistics().misses;
+
+  irs::ReadContext ctx{reader};
+  const duckdb::LogicalType btype{duckdb::LogicalTypeId::BIGINT};
+  for (const auto& [id, type] :
+       {std::pair{kPlain, btype}, std::pair{kStruct, stype},
+        std::pair{kArray, atype}}) {
+    const auto& column = *reader.Column(id);
+    auto state = column.InitScan(ctx);
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    irs::column_internal::GatherRows(column, state, Rows{rows}, out, 0);
+    if (id == kPlain) {
+      out.Flatten(rows.size());
+      const auto* data = duckdb::FlatVector::GetData<int64_t>(out);
+      const auto& validity = duckdb::FlatVector::Validity(out);
+      for (size_t i = 0; i != rows.size(); ++i) {
+        ASSERT_EQ(valid(rows[i]), validity.RowIsValid(i)) << rows[i];
+        if (valid(rows[i])) {
+          EXPECT_EQ(Scrambled(rows[i]), data[i]) << rows[i];
+        }
+      }
+    }
+  }
+  EXPECT_EQ(prefetched, cache.GetStatistics().misses);
+}
+
+TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
+  constexpr size_t kDocs = 20000;
+  constexpr irs::field_id kWords = 1;
+  constexpr irs::field_id kText = 2;
+  tests::ObjectStore();
+  const irs::IndexFiles dir{Db(), Root()};
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    tests::Document doc;
+    auto words =
+      std::make_shared<tests::StringField>("words", irs::IndexFeatures::Freq);
+    words->id = kWords;
+    auto text = std::make_shared<tests::TextField<std::string>>("text");
+    text->id = kText;
+    doc.insert(words);
+    doc.insert(text);
+    for (size_t i = 0; i != kDocs; ++i) {
+      words->value(i % 2 == 0 ? "long" : (i % 100 == 1 ? "short" : "other"));
+      text->value(i % 50 == 0 ? "quick fox" : "fox quick");
+      ASSERT_TRUE(tests::Insert(*writer, doc));
+    }
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+
+  const auto meta = [&](irs::field_id field, std::string_view term) {
+    const auto* terms = segment.field(field);
+    EXPECT_NE(nullptr, terms);
+    return std::pair{terms->Handles(),
+                     terms->Lookup(irs::ViewCast<irs::byte_type>(term))};
+  };
+  const auto [words, long_list] = meta(kWords, "long");
+  const auto short_list = meta(kWords, "short").second;
+  ASSERT_LT(irs::doc_limits::kBlockSize, long_list.docs_count);
+  ASSERT_LT(1, short_list.docs_count);
+
+  const auto clause = [](std::string_view term) {
+    return irs::TermClause{
+      .field = kWords,
+      .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}};
+  };
+  irs::BooleanFilter either;
+  either.Add(clause("long"), irs::Occur::Should);
+  either.Add(clause("short"), irs::Occur::Should);
+  either.SetMinShouldMatch(1);
+  const auto terms_query = either.PrepareSegment(segment, {});
+  auto& cache = duckdb::BlockCache::Get(Db());
+  cache.Clear();
+  EXPECT_FALSE(words.doc->Warm(long_list.doc_start, 1));
+  irs::PrefetchPostingHeads(*terms_query);
+  EXPECT_TRUE(words.doc->Warm(long_list.doc_start, 1));
+  EXPECT_TRUE(words.doc->Warm(long_list.doc_start + long_list.doc_delta, 1));
+  EXPECT_TRUE(words.doc->Warm(short_list.doc_start, 1));
+
+  irs::ByPhrase phrase;
+  *phrase.mutable_field_id() = kText;
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  const auto phrase_query = phrase.PrepareSegment(segment, {});
+  const auto [text, quick] = meta(kText, "quick");
+  ASSERT_NE(nullptr, text.pos);
+  cache.Clear();
+  EXPECT_FALSE(text.pos->Warm(quick.pos_start, 1));
+  irs::PrefetchPostingHeads(*phrase_query);
+  EXPECT_TRUE(text.doc->Warm(quick.doc_start, 1));
+  EXPECT_TRUE(text.pos->Warm(quick.pos_start, 1));
 }
 
 TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {

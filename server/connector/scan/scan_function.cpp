@@ -53,11 +53,9 @@
 namespace sdb::connector {
 namespace {
 
-void PrefetchTerms(const irs::Filter& filter,
-                   const irs::DirectoryReader& reader) {
-  const auto& impl = reader.GetImpl();
+void PrefetchTerms(const irs::Filter& filter, const irs::IndexReader& reader) {
   const auto count = reader.size();
-  if (!impl || impl->Dir().Kind() != irs::StorageKind::Remote || count == 0) {
+  if (count == 0) {
     return;
   }
   bool fetching = filter.Prefetch(reader[0]);
@@ -247,6 +245,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   const auto& snapshot = *state->snapshot;
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
+  const auto& impl = snapshot.reader.GetImpl();
+  state->remote = impl && impl->Dir().Kind() == irs::StorageKind::Remote;
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
@@ -333,7 +333,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();
   }
-  PrefetchTerms(*state->filter, snapshot.reader);
+  if (state->remote) {
+    PrefetchTerms(*state->filter, snapshot.reader);
+  }
   state->queries.resize(state->total_segments);
 
   ClassifySegments(*state);

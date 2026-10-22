@@ -49,10 +49,12 @@ constexpr duckdb::idx_t kMinDenseBatch = 64;
 }  // namespace
 
 HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
-                       irs::field_id pk_field_id, bool track_scores)
+                       irs::field_id pk_field_id, bool track_scores,
+                       bool prefetch)
   : _projections{projections},
     _pk_field_id{pk_field_id},
-    _track_scores{track_scores} {
+    _track_scores{track_scores},
+    _prefetch{prefetch} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 }
@@ -311,8 +313,20 @@ void HitBatcher::CloseGroup() {
   }
 }
 
+void HitBatcher::PrefetchColumns(uint64_t anchor, duckdb::idx_t span) {
+  if (!_prefetch || !_ctx || !_ctx->HasIn()) {
+    return;
+  }
+  _extents.clear();
+  for (const auto& c : _columns) {
+    c.reader->CollectBlocks(anchor, anchor + span - 1, _extents);
+  }
+  _ctx->In().PrefetchExtents(_extents);
+}
+
 void HitBatcher::ScatterGroup(uint64_t anchor, duckdb::idx_t span) {
   const auto hits = _len - _group;
+  PrefetchColumns(anchor, span);
   _sel.Initialize(_sel_data);
   for (duckdb::idx_t i = 0; i < hits; ++i) {
     _sel.set_index(i, Row(_group + i) - anchor);
@@ -396,6 +410,9 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
 
   // Materialize the survivors of the non-filter projected columns (and PK),
   // keyed off the same anchor/span the `_sel` offsets were built against.
+  if (survivors != 0) {
+    PrefetchColumns(anchor, span);
+  }
   for (auto& c : _columns) {
     auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
     if (survivors != 0) {
@@ -419,6 +436,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
   batch.seg = _seg_idx;
   if (_ready == Pending::Dense) {
     const auto [anchor, span] = BuildSel(0, _batch);
+    PrefetchColumns(anchor, span);
     for (auto& c : _columns) {
       auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
       MaterializeColumn(c, anchor, span, _batch, 0, out, 0, /*dense=*/true);

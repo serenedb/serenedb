@@ -331,6 +331,7 @@ Local paths, remote object stores and the external file cache.
 | `azure_read_buffer_size` | Size of the read buffer for Azure reads, in bytes. | `UBIGINT` | `SESSION` | `8388608` |
 | `azure_storage_connection_string` | Azure connection string, used to authenticate and configure Azure requests. | `VARCHAR` | `SESSION` | NULL |
 | `azure_write_block_size` | Size in bytes of each block of a Blob or DFS write; 0 restores the default (8 MiB), at most 4000 MiB. A blob holds at most 50,000 blocks, so raise it to write files larger than 50,000 x this size. | `UBIGINT` | `SESSION` | `8388608` |
+| `azure_write_blocks_in_flight` | Blocks of one blob write staged at the same time, on the async threads; `1` stages each block from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `azure_write_staged_blocks_per_commit` | How many blocks a write stages before it commits the blocks written so far; 0 commits only when the file is closed. Non-zero values make partial writes visible sooner at the cost of extra requests. | `UBIGINT` | `SESSION` | `0` |
 | `ca_cert_file` | Path to a custom certificate file for self-signed certificates. | `VARCHAR` | `SESSION` |  |
 | `cache_local_files` | Whether the external file cache also caches local files (remote files are always cached). | `BOOLEAN` | `GLOBAL` | `off` |
@@ -354,7 +355,7 @@ Local paths, remote object stores and the external file cache.
 | `http_retries` | HTTP retries on I/O error | `UBIGINT` | `SESSION` | `3` |
 | `http_retry_backoff` | Backoff factor for exponentially increasing retry wait time | `FLOAT` | `SESSION` | `4` |
 | `http_retry_wait_ms` | Time between retries | `UBIGINT` | `SESSION` | `100` |
-| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds) | `UBIGINT` | `SESSION` | `30` |
+| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for | `UBIGINT` | `SESSION` | `30` |
 | `httpfs_enable_credential_refresh` | When S3 refuses a request for its credentials, reload them, refreshing the secret where it supports refresh, and retry the request once. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_access_key_id` | S3 Access Key ID | `VARCHAR` | `SESSION` | NULL |
 | `s3_allow_recursive_globbing` | Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing) | `BOOLEAN` | `SESSION` | `true` |
@@ -365,6 +366,7 @@ Local paths, remote object stores and the external file cache.
 | `s3_requester_pays` | S3 use requester pays mode | `BOOLEAN` | `SESSION` | `false` |
 | `s3_secret_access_key` | S3 Access Key | `VARCHAR` | `SESSION` | NULL |
 | `s3_session_token` | S3 Session Token | `VARCHAR` | `SESSION` | NULL |
+| `s3_upload_checksum` | Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_uploader_max_filesize` | Maximum size of a file written to S3. It must be above zero, fit in `s3_uploader_max_parts_per_file` parts and stay within the provider's largest object size. | `VARCHAR` | `SESSION` | `80GB` |
 | `s3_uploader_max_parts_per_file` | S3 Uploader max parts per file (between 1 and 10000) | `UBIGINT` | `SESSION` | `10000` |
 | `s3_uploader_parts_in_flight` | Parts of one S3 multipart upload sent at the same time, on the async threads; `1` sends each part from the write that fills it. | `UBIGINT` | `SESSION` | `20` |

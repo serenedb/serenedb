@@ -43,6 +43,7 @@ azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_blocks_in_flight	20	Blocks of one blob write staged at the same time, on the async threads; 1 stages each block from the write that fills it.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
@@ -149,7 +150,7 @@ http_proxy_username	(empty)	The username for the HTTP proxy.
 http_retries	3	HTTP retries on I/O error
 http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
-http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for
 httpfs_connection_caching	on	Enable connection caching for HTTP requests
 httpfs_enable_credential_refresh	on	Enable credential refresh for HTTPFS S3 secrets
 iceberg_default_format_version	2	The Iceberg format version used when creating a new table without an explicit 'format-version' property. Valid values are 2 and 3.
@@ -256,8 +257,10 @@ s3_region	NULL	S3 Region
 s3_requester_pays	off	S3 use requester pays mode
 s3_secret_access_key	NULL	S3 Access Key
 s3_session_token	NULL	S3 Session Token
+s3_upload_checksum	on	Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off
 s3_uploader_max_filesize	80GB	Maximum size of an S3 upload
 s3_uploader_max_parts_per_file	10000	Maximum number of parts in an S3 multipart upload
+s3_uploader_parts_in_flight	20	Parts of one S3 multipart upload sent at the same time, on the async threads; 1 sends each part from the write that fills it
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_scheme_aliases	[]	Additional URL schemes routed to the S3-compatible filesystem (e.g. ['oss', 'cos']). Can only be set globally; secrets for aliased schemes need an explicit SCOPE.
 s3_url_style	vhost	S3 URL style
@@ -387,6 +390,7 @@ azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_blocks_in_flight	20	Blocks of one blob write staged at the same time, on the async threads; 1 stages each block from the write that fills it.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
@@ -493,7 +497,7 @@ http_proxy_username	(empty)	The username for the HTTP proxy.
 http_retries	3	HTTP retries on I/O error
 http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
-http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for
 httpfs_connection_caching	on	Enable connection caching for HTTP requests
 httpfs_enable_credential_refresh	on	Enable credential refresh for HTTPFS S3 secrets
 iceberg_default_format_version	2	The Iceberg format version used when creating a new table without an explicit 'format-version' property. Valid values are 2 and 3.
@@ -600,8 +604,10 @@ s3_region	NULL	S3 Region
 s3_requester_pays	off	S3 use requester pays mode
 s3_secret_access_key	NULL	S3 Access Key
 s3_session_token	NULL	S3 Session Token
+s3_upload_checksum	on	Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off
 s3_uploader_max_filesize	80GB	Maximum size of an S3 upload
 s3_uploader_max_parts_per_file	10000	Maximum number of parts in an S3 multipart upload
+s3_uploader_parts_in_flight	20	Parts of one S3 multipart upload sent at the same time, on the async threads; 1 sends each part from the write that fills it
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_scheme_aliases	[]	Additional URL schemes routed to the S3-compatible filesystem (e.g. ['oss', 'cos']). Can only be set globally; secrets for aliased schemes need an explicit SCOPE.
 s3_url_style	vhost	S3 URL style

@@ -25,6 +25,7 @@
 #include <duckdb/common/serializer/read_stream.hpp>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <streambuf>
 
 #include "iresearch/utils/bytes_utils.hpp"
@@ -95,6 +96,11 @@ class DataInput : public duckdb::ReadStream {
   }
 };
 
+struct ByteExtent {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
 class IndexInput : public DataInput {
  public:
   using ptr = std::unique_ptr<IndexInput>;
@@ -121,6 +127,12 @@ class IndexInput : public DataInput {
   virtual uint32_t Checksum(uint64_t offset) const = 0;
 
   virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
+
+  virtual void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+    for (const auto& extent : extents) {
+      Prefetch(extent.offset, extent.size);
+    }
+  }
 
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 

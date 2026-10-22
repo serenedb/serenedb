@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_set.h>
+
 #include <atomic>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -28,26 +30,39 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sdb::catalog {
 
 inline constexpr std::string_view kDataFile = "data.db";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
+inline constexpr std::string_view kStorageMarker = ".storage";
 
 void SyncDirectory(const std::filesystem::path& directory);
 
+struct StorageEntry {
+  duckdb::idx_t oid = 0;
+  std::string path;
+  bool is_directory = false;
+};
+
+std::vector<StorageEntry> ListStorages(const std::string& root);
+
+void RemoveUnowned(const std::string& root,
+                   const absl::flat_hash_set<duckdb::idx_t>& owned);
+
 class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
  public:
-  explicit DatabaseDirectory(std::filesystem::path path);
+  DatabaseDirectory(std::filesystem::path path, std::string storage_root);
   ~DatabaseDirectory() final;
 
   const std::filesystem::path& Path() const noexcept { return _path; }
   std::string DataFile() const;
-  std::filesystem::path StoragePath(duckdb::idx_t oid) const;
+  std::string StoragePath(duckdb::idx_t oid) const;
 
   void Create() const;
-  std::filesystem::path CreateStorage(duckdb::idx_t oid) const;
-  std::optional<std::filesystem::path> OpenStorage(duckdb::idx_t oid) const;
+  std::string CreateStorage(duckdb::idx_t oid) const;
+  std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
   static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,
                             duckdb::idx_t oid);
 
@@ -56,7 +71,11 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
   }
 
  private:
+  std::string MarkerPath(duckdb::idx_t oid) const;
+
   std::filesystem::path _path;
+  std::string _storage_root;
+  bool _remote;
   std::atomic_bool _dropped{false};
 };
 

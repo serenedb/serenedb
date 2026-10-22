@@ -38,7 +38,7 @@
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -193,7 +193,7 @@ constexpr Strategy kStrategies[] = {
 
 struct Index {
   const Strategy* strategy;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IndexFiles> dir;
   std::unique_ptr<irs::analysis::Tokenizer> tokenizer;
   irs::DirectoryReader reader;
 };
@@ -212,11 +212,11 @@ Index BuildIndex(const std::vector<std::string>& docs,
     std::filesystem::temp_directory_path() / "sdb-bench-phrase" / strategy.name;
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
+  auto* db = &irs::DuckDBEngine::Instance().instance();
   Index index{.strategy = &strategy,
-              .dir = std::make_unique<irs::MMapDirectory>(path),
+              .dir = std::make_unique<irs::IndexFiles>(*db, path.string()),
               .tokenizer = MakeTokenizer(strategy)};
 
-  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;

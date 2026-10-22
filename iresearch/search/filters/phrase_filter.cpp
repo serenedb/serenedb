@@ -686,6 +686,20 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
   return PhrasePrepareSegment(segment, sub_ctx, field_id(), options());
 }
 
+bool ByPhrase::Prefetch(const SubReader& segment) const {
+  const auto* reader = segment.field(field_id());
+  if (!reader) {
+    return false;
+  }
+  bool fetching = false;
+  for (const auto& info : options()) {
+    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Term) {
+      fetching |= reader->Prefetch(ByPhraseOptions::TermOf(info.part));
+    }
+  }
+  return fetching;
+}
+
 PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {

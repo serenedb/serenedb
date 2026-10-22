@@ -36,6 +36,7 @@
 #include <absl/strings/str_cat.h>
 #include <signal.h>  // for signal(...)/raise(...)
 
+#include <cerrno>
 #include <ctime>
 #include <filesystem>
 #include <iresearch/analysis/tokenizer.hpp>
@@ -44,10 +45,9 @@
 #include <iresearch/utils/containers/bitset.hpp>
 #include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/mmap_utils.hpp>
 #include <iresearch/utils/network_utils.hpp>
+#include <system_error>
 #include <vector>
 
 #include "index/doc_generator.hpp"
@@ -137,20 +137,11 @@ bool TestEnv::prepare() {
 
 void TestEnv::make_directories() {
   std::filesystem::path exec_path(gArgv[0]);
-  auto path_parts = irs::file_utils::PathParts(exec_path.c_str());
 
   gExecPath = exec_path;
-  gExecFile = std::filesystem::path{
-    irs::basic_string_view<std::filesystem::path::value_type>(
-      path_parts.basename)};
-  gExecDir = std::filesystem::path{
-    irs::basic_string_view<std::filesystem::path::value_type>(
-      path_parts.dirname)};
-  gTestName =
-    std::filesystem::path{
-      irs::basic_string_view<std::filesystem::path::value_type>(
-        path_parts.stem)}
-      .string();
+  gExecFile = exec_path.filename();
+  gExecDir = exec_path.parent_path();
+  gTestName = exec_path.stem().string();
 
   if (gOutDir.native().empty()) {
     gOutDir = gExecDir;
@@ -162,7 +153,7 @@ void TestEnv::make_directories() {
   std::cout << "\t" << kIresResourceDir << ": " << gResourceDir.string()
             << std::endl;
 
-  irs::file_utils::EnsureAbsolute(gOutDir);
+  gOutDir = std::filesystem::absolute(gOutDir);
   (gResDir = gOutDir) /= gTestName;
 
   // add timestamp to res_dir_
@@ -188,7 +179,12 @@ void TestEnv::make_directories() {
 
   auto res_dir_templ = gResDir.string();
 
-  gResDir = mkdtemp(res_dir_templ.data());
+  std::filesystem::create_directories(gOutDir);
+  if (!mkdtemp(res_dir_templ.data())) {
+    throw std::system_error{errno, std::generic_category(),
+                            "cannot create the test result directory"};
+  }
+  gResDir = res_dir_templ;
   (gResPath = gResDir) /= kTestResults;
 }
 
@@ -276,11 +272,15 @@ int main(int argc, char* argv[]) {
   if (all_paths == 0) {
     std::filesystem::remove(TestEnv::test_results_dir());
   } else {
+    const auto& results = TestEnv::test_results_dir();
     for (auto& path : empty_paths) {
       do {
         std::filesystem::remove(path);
         path = path.parent_path();
-      } while (std::filesystem::is_empty(path));
+      } while (path != results && std::filesystem::is_empty(path));
+    }
+    if (std::filesystem::is_empty(results)) {
+      std::filesystem::remove(results);
     }
   }
 

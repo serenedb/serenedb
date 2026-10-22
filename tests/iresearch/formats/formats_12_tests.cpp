@@ -22,7 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"

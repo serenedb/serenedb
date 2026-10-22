@@ -38,7 +38,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
-#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -137,10 +137,10 @@ void SearchTable::OpenWriter(bool in_memory) {
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
 
-  _writer = _durability
-              .OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
-                          std::move(writer_options))
-              .first;
+  _writer =
+    _durability
+      .OpenWriter(*_dir, opened.on_disk, _is_new, std::move(writer_options))
+      .first;
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());

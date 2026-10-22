@@ -20,7 +20,7 @@
 /// @author Valerii Mironov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/memory_file.hpp>
 #include <random>
 #include <thread>
 #include <vector>

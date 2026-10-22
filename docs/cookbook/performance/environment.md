@@ -89,6 +89,14 @@ Based on user reports, running read-write workloads on network-attached storage 
 as well as spurious errors caused by the underlying file system.
 Instead of using SereneDB's native database format, consider using the [DuckLake lakehouse format](https://ducklake.select/).
 
+### Object Storage
+
+The files of inverted indexes and search tables can live in an S3 bucket, an S3-compatible store or an Azure Blob Storage container ([Index Storage](../../configuration/index_storage.md)); database files and write-ahead logs stay on the local disk. A query reads index data from memory when the cache holds it and from the store otherwise:
+
+* Run the server in the same region as the bucket or container: a query over uncached data waits for a few round trips to the store.
+* Give the cache (`external_file_cache_size`) room for the parts of the indexes that queries touch. A query over cached data runs about as fast as over local files.
+* A spill file on a local SSD or NVMe disk (`external_file_cache_spill_path`) keeps blocks evicted from memory, so reading them again costs a disk read instead of a request.
+
 ## Operating System
 
 We recommend using the latest stable version of operating systems: macOS, Windows, and Linux are all well-tested and SereneDB can run on them with high performance.
@@ -119,7 +127,7 @@ ulimit -n 131072
 A limit that is too low surfaces as `Too many open files` errors under load. See the [installation notes](../../installation/index.md) for more.
 
 **Memory maps (`vm.max_map_count`).**
-Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch), which memory-maps every index segment. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
+Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch), which memory-maps every index segment on a local disk; index files on an object store are not memory-mapped. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
 
 ```sh
 sudo sysctl -w vm.max_map_count=262144

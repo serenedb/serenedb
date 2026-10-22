@@ -48,7 +48,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -181,7 +181,7 @@ struct Field {
 };
 
 struct Index {
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IndexFiles> dir;
   irs::DirectoryReader reader;
 };
 
@@ -198,8 +198,8 @@ const Index& IndexOf(size_t dictionary) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   index = std::make_unique<Index>();
-  index->dir = std::make_unique<irs::MMapDirectory>(path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  index->dir = std::make_unique<irs::IndexFiles>(*db, path.string());
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;

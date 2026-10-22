@@ -39,8 +39,8 @@
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/memory_file.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -78,10 +78,9 @@ const std::vector<uint32_t>& IndexNorms() {
       return out;
     }
     const char* field = std::getenv("NORM_FIELD");
-    irs::MMapDirectory dir{path};
-    irs::DirectoryReader reader{
-      dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    irs::IndexFiles dir{db, path};
+    irs::DirectoryReader reader{dir, irs::IndexReaderOptions{.db = &db}};
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {

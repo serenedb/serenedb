@@ -32,7 +32,7 @@
 #include <limits>
 
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -57,6 +57,7 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const auto size = footer.GetPosition();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(), "footer of ", size,
              " bytes does not fit its 32-bit length");
+  out.BeginTail();
   out.WriteData(footer.GetData(), size);
   out.WriteU32(out.Checksum());
   out.WriteU32(static_cast<uint32_t>(size));
@@ -139,7 +140,7 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
   SDB_ASSERT(!out);
 
   FileName(str, state.name, ext);
-  out = state.dir->create(str);
+  out = state.dir->Create(str);
 }
 
 }  // namespace irs::format_utils

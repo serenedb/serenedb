@@ -44,7 +44,8 @@ class DirectoryReader final : public IndexReader {
 
   // Create an index reader over the specified directory
   explicit DirectoryReader(
-    const Directory& dir, const IndexReaderOptions& opts = IndexReaderOptions{},
+    const IndexFiles& dir,
+    const IndexReaderOptions& opts = IndexReaderOptions{},
     MetaPayloadReader payload = {});
   explicit DirectoryReader(
     std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
@@ -70,8 +71,6 @@ class DirectoryReader final : public IndexReader {
   const DirectoryReader* operator->() const noexcept { return this; }
 
   const SubReader& operator[](size_t i) const final;
-
-  uint64_t CountMappedMemory() const final;
 
   uint64_t docs_count() const final;
 

@@ -19,15 +19,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/remap_executable.hpp>
 #include <string>
+#include <vector>
 
 #include "executor.h"
 #include "line_source.h"
@@ -66,9 +71,33 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
   return 0;
 }
 
+int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
+                    std::string_view query, size_t repeat,
+                    std::vector<int64_t>& samples) {
+  samples.clear();
+  for (size_t i = 0; i != repeat; ++i) {
+    const auto start = std::chrono::steady_clock::now();
+    ExecuteCommand(executor, cmd, query);
+    samples.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+  }
+  const auto middle = samples.begin() + samples.size() / 2;
+  std::nth_element(samples.begin(), middle, samples.end());
+  return *middle;
+}
+
 }  // namespace
 
 int main(int argc, const char* argv[]) {
+  size_t repeat = 0;
+  if (argc < 2 ||
+      (argc > 2 && (argc != 4 || std::string_view{argv[2]} != "--repeat" ||
+                    !absl::SimpleAtoi(argv[3], &repeat) || repeat == 0))) {
+    absl::FPrintF(stderr, "usage: %s <index dir> [--repeat N] < queries\n",
+                  argv[0]);
+    return 1;
+  }
   irs::RemapExecutable(true);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
@@ -87,8 +116,10 @@ int main(int argc, const char* argv[]) {
 
     bench::LineSource input{STDIN_FILENO};
     std::string_view line;
+    std::vector<int64_t> samples;
     while (input.Next(line)) {
       size_t count = 0;
+      int64_t median_ns = 0;
       const auto tab = line.find('\t');
       const auto cmd =
         tab == std::string_view::npos
@@ -99,12 +130,19 @@ int main(int argc, const char* argv[]) {
       } else {
         try {
           count = ExecuteCommand(executor, cmd, line.substr(tab + 1));
+          if (count && repeat) {
+            median_ns =
+              MedianRunNs(executor, cmd, line.substr(tab + 1), repeat, samples);
+          }
         } catch (const std::exception& ex) {
           absl::FPrintF(stderr, "unsupported: %s\n", ex.what());
+          count = 0;
         }
       }
       if (!count) {
         absl::PrintF("UNSUPPORTED\n");
+      } else if (repeat) {
+        absl::PrintF("%d\t%d\n", count, median_ns);
       } else {
         absl::PrintF("%d\n", count);
       }

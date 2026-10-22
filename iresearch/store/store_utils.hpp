@@ -24,7 +24,6 @@
 
 #include "data_input.hpp"
 #include "data_output.hpp"
-#include "directory.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"

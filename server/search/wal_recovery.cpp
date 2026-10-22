@@ -155,10 +155,10 @@ void RecoverSearchStorages() {
   for (auto& db : databases) {
     SyncWal(db);
   }
-  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance())};
   std::atomic_size_t replayed{0};
   std::atomic_size_t replayed_tables{0};
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance())};
   for (auto& [index, storage] : recovering) {
     executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
       executor, [&replayed, index = std::move(index), storage]() mutable {

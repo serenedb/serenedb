@@ -52,8 +52,6 @@ class SegmentReader final : public SubReader {
   SegmentReader* operator->() noexcept { return this; }
   const SegmentReader* operator->() const noexcept { return this; }
 
-  uint64_t CountMappedMemory() const final;
-
   const SegmentInfo& Meta() const final;
 
   lead::Node::ptr docs_iterator() const final;

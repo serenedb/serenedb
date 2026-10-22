@@ -117,6 +117,11 @@ class RefCounter : public util::Noncopyable {
 
   template<typename Visitor>
   bool visit(const Visitor& visitor, bool remove_unused = false) {
+    return visit(visitor, remove_unused, [] {});
+  }
+
+  template<typename Visitor, typename Finish>
+  bool visit(const Visitor& visitor, bool remove_unused, const Finish& finish) {
     absl::MutexLock lock{&_lock};
 
     for (auto itr = _refs.begin(), end = _refs.end(); itr != end;) {
@@ -138,6 +143,7 @@ class RefCounter : public util::Noncopyable {
       }
     }
 
+    finish();
     return true;
   }
 

@@ -28,8 +28,6 @@ option(USE_FAIL_ON_WARNINGS "treat warnings as errors" ON)
 
 option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
-option(SDB_IOURING "allow to use iouring" ON)
-
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
@@ -280,7 +278,6 @@ include(OptimizeForArchitecture)
 
 if(APPLE)
     set(OS_DARWIN 1)
-    set(SDB_IOURING OFF CACHE BOOL "" FORCE)
     if(NOT CMAKE_CXX_COMPILER_AR)
         message(
             FATAL_ERROR

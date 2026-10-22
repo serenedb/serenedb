@@ -20,6 +20,7 @@
 
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/utils/assert.hpp>
 
 #include "connector/scan/scan_state.h"
@@ -74,7 +75,10 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
     if (seg >= g.total_segments) {
       break;
     }
-    EnsureSegmentQuery(g, l, seg);
+    const auto& query = EnsureSegmentQuery(g, l, seg);
+    if (g.remote) {
+      irs::PrefetchPostingHeads(query, 1);
+    }
     if (g.stats_barrier.Arrive()) {
       if (g.collector) {
         g.collector->Finish();

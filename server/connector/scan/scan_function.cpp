@@ -35,9 +35,12 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -49,6 +52,23 @@
 
 namespace sdb::connector {
 namespace {
+
+void PrefetchTerms(const irs::Filter& filter, const irs::IndexReader& reader) {
+  const auto count = reader.size();
+  if (count == 0) {
+    return;
+  }
+  bool fetching = filter.Prefetch(reader[0]);
+  if (count > 1) {
+    fetching = filter.Prefetch(reader[count - 1]) || fetching;
+  }
+  if (!fetching) {
+    return;
+  }
+  for (size_t i = 1; i + 1 < count; ++i) {
+    filter.Prefetch(reader[i]);
+  }
+}
 
 bool HasNested(const irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::ByNestedFilter>::id()) {
@@ -225,6 +245,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   const auto& snapshot = *state->snapshot;
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
+  const auto& impl = snapshot.reader.GetImpl();
+  state->remote = impl && impl->Dir().Kind() == irs::StorageKind::Remote;
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
@@ -310,6 +332,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->filter = state->owned_filter.get();
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();
+  }
+  if (state->remote) {
+    PrefetchTerms(*state->filter, snapshot.reader);
   }
   state->queries.resize(state->total_segments);
 

@@ -22,16 +22,11 @@
 
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace sdb::connector::highlight {
 
 class MemoryIndex {
@@ -71,8 +66,8 @@ class MemoryIndex {
   }
 
  private:
-  irs::MemoryDirectory _dir;
   duckdb::DatabaseInstance* _db;
+  irs::IndexFiles _dir;
 };
 
 }  // namespace sdb::connector::highlight

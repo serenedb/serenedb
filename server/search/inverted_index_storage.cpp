@@ -26,17 +26,13 @@
 
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
-#include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -116,7 +112,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, Path(), opened.on_disk, is_new, std::move(writer_options),
+    *_dir, opened.on_disk, is_new, std::move(writer_options),
     [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 
@@ -145,17 +141,17 @@ void InvertedIndexStorage::OpenReader() {
 StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources) {
-  std::optional<std::filesystem::path> path;
+  std::optional<std::string> path;
   if (!in_memory) {
     path = is_new ? database.CreateStorage(oid) : database.OpenStorage(oid);
   }
+  auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
-    return {.directory = std::make_unique<irs::MemoryDirectory>(
-              irs::DirectoryAttributes{}, resources),
+    return {.directory = std::make_unique<irs::IndexFiles>(
+              db, irs::MemoryIndexRoot(), resources),
             .absent = !in_memory};
   }
-  return {.directory = std::make_unique<irs::MMapDirectory>(
-            *path, irs::DirectoryAttributes{}, resources),
+  return {.directory = std::make_unique<irs::IndexFiles>(db, *path, resources),
           .on_disk = true};
 }
 

@@ -65,6 +65,11 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost);
 }
 
+bool ByTerm::Prefetch(const SubReader& segment) const {
+  const auto* reader = segment.field(field_id());
+  return reader && reader->Prefetch(options().term);
+}
+
 PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
                                                 StatsArena& stats,
                                                 uint32_t threads) const {

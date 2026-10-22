@@ -43,6 +43,7 @@ azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_blocks_in_flight	20	Blocks of one blob write staged at the same time, on the async threads; 1 stages each block from the write that fills it.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
@@ -121,10 +122,9 @@ explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OP
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
-external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
-external_file_cache_remote_max_block_size	2097152	Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel.
-external_file_cache_remote_min_block_size	4096	Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.
-external_file_cache_spill	off	Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so that they are re-read from there rather than re-fetched from the source.
+external_file_cache_size	<slt:ignore>	The memory the external file cache may use for blocks of remote and in-memory files (e.g. 4GB); by default a quarter of memory_limit. The buffer pool takes memory back from the cache when it needs it. A value above the size the cache started with takes effect after a restart.
+external_file_cache_spill_path	(empty)	The file evicted external file cache blocks spill to; empty spills only blocks of in-memory files, into the temporary directory.
+external_file_cache_spill_size	0 bytes	The disk space evicted external file cache blocks of remote files may take in the spill file (e.g. 50GB); 0 drops them instead.
 external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
@@ -150,7 +150,7 @@ http_proxy_username	(empty)	The username for the HTTP proxy.
 http_retries	3	HTTP retries on I/O error
 http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
-http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for
 httpfs_connection_caching	on	Enable connection caching for HTTP requests
 httpfs_enable_credential_refresh	on	Enable credential refresh for HTTPFS S3 secrets
 iceberg_default_format_version	2	The Iceberg format version used when creating a new table without an explicit 'format-version' property. Valid values are 2 and 3.
@@ -257,8 +257,10 @@ s3_region	NULL	S3 Region
 s3_requester_pays	off	S3 use requester pays mode
 s3_secret_access_key	NULL	S3 Access Key
 s3_session_token	NULL	S3 Session Token
+s3_upload_checksum	on	Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off
 s3_uploader_max_filesize	80GB	Maximum size of an S3 upload
 s3_uploader_max_parts_per_file	10000	Maximum number of parts in an S3 multipart upload
+s3_uploader_parts_in_flight	20	Parts of one S3 multipart upload sent at the same time, on the async threads; 1 sends each part from the write that fills it
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_scheme_aliases	[]	Additional URL schemes routed to the S3-compatible filesystem (e.g. ['oss', 'cos']). Can only be set globally; secrets for aliased schemes need an explicit SCOPE.
 s3_url_style	vhost	S3 URL style
@@ -388,6 +390,7 @@ azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_blocks_in_flight	20	Blocks of one blob write staged at the same time, on the async threads; 1 stages each block from the write that fills it.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
@@ -466,10 +469,9 @@ explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OP
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
-external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
-external_file_cache_remote_max_block_size	2097152	Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel.
-external_file_cache_remote_min_block_size	4096	Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.
-external_file_cache_spill	off	Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so that they are re-read from there rather than re-fetched from the source.
+external_file_cache_size	<slt:ignore>	The memory the external file cache may use for blocks of remote and in-memory files (e.g. 4GB); by default a quarter of memory_limit. The buffer pool takes memory back from the cache when it needs it. A value above the size the cache started with takes effect after a restart.
+external_file_cache_spill_path	(empty)	The file evicted external file cache blocks spill to; empty spills only blocks of in-memory files, into the temporary directory.
+external_file_cache_spill_size	0 bytes	The disk space evicted external file cache blocks of remote files may take in the spill file (e.g. 50GB); 0 drops them instead.
 external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
@@ -495,7 +497,7 @@ http_proxy_username	(empty)	The username for the HTTP proxy.
 http_retries	3	HTTP retries on I/O error
 http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
-http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for
 httpfs_connection_caching	on	Enable connection caching for HTTP requests
 httpfs_enable_credential_refresh	on	Enable credential refresh for HTTPFS S3 secrets
 iceberg_default_format_version	2	The Iceberg format version used when creating a new table without an explicit 'format-version' property. Valid values are 2 and 3.
@@ -602,8 +604,10 @@ s3_region	NULL	S3 Region
 s3_requester_pays	off	S3 use requester pays mode
 s3_secret_access_key	NULL	S3 Access Key
 s3_session_token	NULL	S3 Session Token
+s3_upload_checksum	on	Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off
 s3_uploader_max_filesize	80GB	Maximum size of an S3 upload
 s3_uploader_max_parts_per_file	10000	Maximum number of parts in an S3 multipart upload
+s3_uploader_parts_in_flight	20	Parts of one S3 multipart upload sent at the same time, on the async threads; 1 sends each part from the write that fills it
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_scheme_aliases	[]	Additional URL schemes routed to the S3-compatible filesystem (e.g. ['oss', 'cos']). Can only be set globally; secrets for aliased schemes need an explicit SCOPE.
 s3_url_style	vhost	S3 URL style

@@ -36,7 +36,6 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -87,11 +86,10 @@ IndexDurability::IndexDurability(duckdb::idx_t db_id, std::string name)
   : _db_id{db_id}, _name{std::move(name)} {}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
-IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
-                            bool on_disk, bool is_new,
-                            irs::IndexWriterOptions options,
+IndexDurability::OpenWriter(const irs::IndexFiles& dir, bool on_disk,
+                            bool is_new, irs::IndexWriterOptions options,
                             ManifestSource manifest) {
-  _path = std::move(path);
+  _files = dir;
   _on_disk = on_disk;
   options.meta_payload_writer = [this, manifest = std::move(manifest)](
                                   const irs::SourcePosition& position,
@@ -122,7 +120,7 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
 }
 
 std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
-  irs::Directory& dir, const irs::IndexReaderOptions& options) {
+  const irs::IndexFiles& dir, const irs::IndexReaderOptions& options) {
   IndexStamp stamp;
   irs::DirectoryReader reader{
     dir, options,
@@ -148,7 +146,7 @@ void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                          _pending_checkpoint, 0);
 }
 
-void IndexDurability::ResolvePendingSave(irs::Directory& dir) const {
+void IndexDurability::ResolvePendingSave(const irs::IndexFiles& dir) const {
   std::string pending;
   if (!irs::index_meta::LastPendingFile(dir, pending)) {
     return;
@@ -173,7 +171,7 @@ void IndexDurability::ResolvePendingSave(irs::Directory& dir) const {
         store->GetStorageManager().GetBlockManager().GetCheckpointIteration()) {
       const auto committed = irs::index_meta::FileName(
         irs::index_meta::ParsePendingGeneration(pending));
-      if (!dir.rename(pending, committed)) {
+      if (!dir.Rename(pending, committed)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_IO_ERROR),
           ERR_MSG("failed to rename '", pending, "' to '", committed, "'"));
@@ -181,7 +179,7 @@ void IndexDurability::ResolvePendingSave(irs::Directory& dir) const {
       return;
     }
   }
-  if (!dir.remove(pending)) {
+  if (!dir.Remove(pending)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("failed to remove '", pending, "'"));
   }
@@ -224,6 +222,13 @@ absl::Status IndexDurability::Refresh(
                 " is already in progress, waiting");
       refresh_lock.lock();
     }
+    if (_unfinished) {
+      if (!FinishRefresh(writer)) {
+        return absl::UnavailableError(
+          absl::StrCat(_name, " cannot commit its last refresh yet"));
+      }
+      _unfinished = false;
+    }
     if (wait) {
       AwaitPendingSave(refresh_lock, writer);
     } else {
@@ -250,9 +255,11 @@ absl::Status IndexDurability::Refresh(
       }
       if (were_changes && _pending_checkpoint == 0) {
         SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_begun");
-        writer.RefreshFinish();
-        MarkPublished();
-        _directory_dirty.store(true, std::memory_order_relaxed);
+        if (!FinishRefresh(writer)) {
+          _unfinished = true;
+          return absl::UnavailableError(
+            absl::StrCat(_name, " cannot commit its refresh yet"));
+        }
       }
     } catch (...) {
       _pending_checkpoint = 0;
@@ -310,6 +317,15 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
                                         uint64_t iteration) {
   std::lock_guard lock{_refresh_mutex};
   SDB_ASSERT(_pending_checkpoint == 0 || _pending_checkpoint == iteration);
+  if (_unfinished) {
+    if (!FinishRefresh(writer)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG(_name,
+                              " cannot commit its last refresh; refusing to "
+                              "checkpoint"));
+    }
+    _unfinished = false;
+  }
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
   try {
@@ -352,20 +368,27 @@ void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
   }
 }
 
+bool IndexDurability::FinishRefresh(irs::IndexWriter& writer) {
+  try {
+    writer.RefreshFinishRetryable();
+  } catch (const std::exception& e) {
+    SDB_WARN(SEARCH, _name, " cannot commit its refresh, it is retried: ",
+             duckdb::ErrorData{e}.RawMessage());
+    return false;
+  }
+  MarkPublished();
+  _directory_dirty.store(true, std::memory_order_relaxed);
+  return true;
+}
+
 bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {
   if (_pending_checkpoint == 0 || !CheckpointWritten(_pending_checkpoint)) {
     return false;
   }
-  try {
-    writer.RefreshFinish();
-  } catch (const std::exception& e) {
-    SDB_FATAL(SEARCH, _name,
-              " cannot commit the index save of a written checkpoint: ",
-              duckdb::ErrorData{e}.RawMessage());
+  if (!FinishRefresh(writer)) {
+    return false;
   }
   _pending_checkpoint = 0;
-  MarkPublished();
-  _directory_dirty.store(true, std::memory_order_relaxed);
   return true;
 }
 
@@ -397,7 +420,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    catalog::SyncDirectory(_path);
+    _files->SyncDirectory();
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
@@ -406,10 +429,14 @@ void IndexDurability::SyncDirectory() {
   _durable = std::max(_durable, published);
 }
 
-absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
+absl::Status IndexDurability::Cleanup(const irs::IndexFiles& dir) {
   try {
     SyncDirectory();
-    irs::directory_utils::RemoveAllUnreferenced(dir);
+    if (dir.Kind() == irs::StorageKind::Remote) {
+      dir.RemoveUnreferenced();
+    } else {
+      dir.RemoveAllUnreferenced();
+    }
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up ", _name, ": ",

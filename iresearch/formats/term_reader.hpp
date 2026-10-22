@@ -70,6 +70,8 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
+  virtual bool Prefetch(bytes_view term) const { return false; }
+
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
 

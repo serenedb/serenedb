@@ -185,6 +185,8 @@ class Filter {
   virtual QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const = 0;
 
+  virtual bool Prefetch(const SubReader& segment) const { return false; }
+
   const Scorer* GetScorer() const noexcept { return _scorer; }
 
   void SetScorer(const Scorer* scorer) noexcept { _scorer = scorer; }

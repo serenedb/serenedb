@@ -28,8 +28,9 @@
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <set>
 
@@ -122,7 +123,6 @@ struct WithoutColumns final : irs::SubReader {
   explicit WithoutColumns(const irs::SubReader& segment) noexcept
     : segment{segment} {}
 
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return segment.Meta(); }
   const irs::DocumentMask* docs_mask() const final {
     return segment.docs_mask();
@@ -264,7 +264,8 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
     {"S", R"({"type": "Point", "coordinates": [37.607, 55.709]})", " "},
   };
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
@@ -415,7 +416,8 @@ TEST(GeoFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -792,7 +794,8 @@ TEST(GeoFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -1030,7 +1033,8 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.75589,  55.798193 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
+  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,

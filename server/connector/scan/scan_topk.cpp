@@ -34,6 +34,7 @@
 #include "connector/index_source_factory.h"
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "connector/term_dict.h"
 #include "query/config.h"
 
 namespace sdb::connector {
@@ -197,12 +198,48 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   return units;
 }
 
+void PrefetchColumns(
+  const ScanGlobalState& g, std::span<const irs::ScoreDoc> hits,
+  std::span<const ScanGlobalState::TopKState::FetchUnit> units) {
+  if (!g.remote) {
+    return;
+  }
+  std::vector<irs::ByteExtent> extents;
+  for (size_t u = 0; u < units.size();) {
+    const auto seg = units[u].seg;
+    const auto* col_reader = (*g.reader)[seg].GetColReader();
+    extents.clear();
+    for (; u < units.size() && units[u].seg == seg; ++u) {
+      const auto& unit = units[u];
+      const uint64_t first = hits[unit.first].doc - irs::doc_limits::min();
+      const uint64_t last =
+        hits[unit.first + unit.count - 1].doc - irs::doc_limits::min();
+      const auto collect = [&](irs::field_id id) {
+        if (const auto* column =
+              col_reader ? col_reader->Column(id) : nullptr) {
+          column->CollectBlocks(first, last, extents);
+        }
+      };
+      if (g.needs_lookup) {
+        collect(term_dict::kPKFieldId);
+      }
+      for (const auto& p : g.cs_projections) {
+        collect(p.column_id);
+      }
+    }
+    if (!extents.empty()) {
+      col_reader->PrefetchExtents(extents);
+    }
+  }
+}
+
 void PlanFetch(ScanGlobalState& g) {
   auto& t = g.topk;
   SortByAddress(t.answer);
   t.fetch_units = FetchUnitsOf(t.answer, g.rg_size);
   t.fetched.resize(t.fetch_units.size());
   t.fetched_pk.resize(t.fetch_units.size());
+  PrefetchColumns(g, t.answer, t.fetch_units);
 }
 
 void Merge(ScanGlobalState& g) {
@@ -485,6 +522,7 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
     verified += take;
     SortByAddress(hits);
     const auto units = FetchUnitsOf(hits, g.rg_size);
+    PrefetchColumns(g, hits, units);
     for (size_t u = 0; u < units.size(); ++u) {
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,

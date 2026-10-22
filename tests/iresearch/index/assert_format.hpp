@@ -25,6 +25,7 @@
 
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <unordered_set>
 
@@ -238,7 +239,7 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
                  size_t skip = 0,
                  const irs::RegexpAcceptor* acceptor = nullptr);
 
-void AssertIndex(const irs::Directory& dir, const index_t& index,
+void AssertIndex(const irs::IndexFiles& dir, const index_t& index,
                  irs::IndexFeatures features, size_t skip = 0,
                  const irs::RegexpAcceptor* acceptor = nullptr);
 

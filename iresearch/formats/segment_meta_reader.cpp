@@ -32,12 +32,12 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
+void Read(const IndexFiles& dir, SegmentMeta& meta, std::string_view filename) {
   SDB_ASSERT(!IsNull(filename));
 
   std::string_view segment_name;
@@ -51,9 +51,10 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+  auto in = dir.Open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
   std::vector<std::string> files;
+  std::vector<FileInfo> infos;
   bool has_files = false;
   uint32_t docs_count = 0;
   uint64_t size = 0;
@@ -67,7 +68,40 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
       docs_count =
         meta_in.ReadProperty<uint32_t>(kFieldDocsCount, "docs_count");
       size = meta_in.ReadProperty<uint64_t>(kFieldByteSize, "byte_size");
+      meta_in.ReadOptionalList(
+        kFieldFileInfos, "file_infos",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+            auto& info = infos.emplace_back();
+            info.size = obj.ReadProperty<uint64_t>(kFileInfoFieldSize, "size");
+            const auto tail_size =
+              obj.ReadPropertyWithExplicitDefault<uint64_t>(
+                kFileInfoFieldTailSize, "tail_size", 0);
+            if (tail_size > info.size) [[unlikely]] {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                ERR_MSG("While reading segment meta '", filename,
+                        "', error: a file of ", info.size,
+                        " bytes has a tail of ", tail_size, " bytes"));
+            }
+            if (tail_size != 0) {
+              auto tail = std::make_shared<bstring>(tail_size, byte_type{0});
+              obj.ReadProperty(kFileInfoFieldTail, "tail", tail->data(),
+                               tail_size);
+              info.tail = std::move(tail);
+            }
+            info.etag = obj.ReadPropertyWithExplicitDefault<std::string>(
+              kFileInfoFieldETag, "etag", "");
+          });
+        });
     });
+
+  if (!infos.empty() && infos.size() != files.size()) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("While reading segment meta '", filename,
+                            "', error: ", infos.size(), " file infos for ",
+                            files.size(), " files"));
+  }
   const auto docs_mask_size = footer.data_len;
 
   std::shared_ptr<const DocumentMask> docs_mask;
@@ -90,6 +124,10 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
       ERR_MSG("While reading segment meta '", name, "', error: docs_count(",
               docs_count, ") is out of range for ", mask_count,
               " masked document(s)"));
+  }
+
+  for (size_t i = 0; i != infos.size(); ++i) {
+    dir.Remember(files[i], std::move(infos[i]));
   }
 
   // all operations below are noexcept

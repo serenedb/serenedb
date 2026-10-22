@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -52,6 +53,9 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
       if (l.root_seg != unit.seg || range.begin < l.root_end) {
         FinishRoot(l);
         const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+        if (g.remote) {
+          irs::PrefetchPostingHeads(seg_query, 2);
+        }
         auto* table = BeginVerify(l.col_verify, sub, g, l);
         auto plan = irs::count::MakeRoot(
           seg_query,

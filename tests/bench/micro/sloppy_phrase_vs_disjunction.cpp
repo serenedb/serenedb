@@ -60,7 +60,7 @@
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -356,7 +356,7 @@ constexpr irs::PosAttr::value_t kSlopValues[] = {1, 2, 5};
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IndexFiles> dir;
   irs::DirectoryReader reader;
 };
 
@@ -388,10 +388,10 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -444,10 +444,10 @@ Corpus BuildSyntheticIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -504,10 +504,10 @@ Corpus BuildDense3Index() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -557,10 +557,10 @@ Corpus BuildAllSameIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
@@ -614,10 +614,10 @@ Corpus BuildFarApartIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 

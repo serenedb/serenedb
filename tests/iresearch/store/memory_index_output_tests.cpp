@@ -21,7 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/memory_file.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/string.hpp>
 

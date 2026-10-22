@@ -28,7 +28,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/debugging.hpp"
 
@@ -38,7 +38,7 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
                          const ReaderState& state, std::string_view ext) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
-  in = state.dir->open(str, advice);
+  in = state.dir->Open(str, advice);
 
   format_utils::ReadFooter(*in, str);
 }
@@ -49,20 +49,6 @@ class PostingsReader final {
  public:
   PostingsHandles Handles() const noexcept {
     return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
-  }
-
-  uint64_t CountMappedMemory() const {
-    uint64_t bytes = 0;
-    if (_doc_in != nullptr) {
-      bytes += _doc_in->CountMappedMemory();
-    }
-    if (_pos_in != nullptr) {
-      bytes += _pos_in->CountMappedMemory();
-    }
-    if (_pay_in != nullptr) {
-      bytes += _pay_in->CountMappedMemory();
-    }
-    return bytes;
   }
 
   // features - the set of features available for segment

@@ -30,6 +30,9 @@
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/numeric_utils.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -420,13 +423,20 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       return;
     }
     const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
+    auto& fs = duckdb::FileSystem::GetFileSystem(context);
+    std::vector<std::string> names;
+    fs.ListFiles(store, [&](const std::string& name, bool is_directory) {
+      if (!is_directory) {
+        names.push_back(name);
       }
+    });
+    for (const auto& name : names) {
+      auto file = fs.OpenFile(fs.JoinPath(store, name),
+                              duckdb::FileFlags::FILE_FLAGS_READ);
+      std::string bytes(duckdb::NumericCast<size_t>(file->GetFileSize()), '\0');
+      file->Read(duckdb::QueryContext{context}, bytes.data(), bytes.size(), 0);
+      image.push_back({.name = absl::StrCat(table_name, "/", name),
+                       .bytes = std::move(bytes)});
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});

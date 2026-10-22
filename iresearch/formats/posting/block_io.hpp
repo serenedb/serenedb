@@ -73,6 +73,11 @@ template<typename InputType, typename Prefix, typename Size>
 const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
                        Size&& size) {
   SDB_ASSERT(buf != nullptr);
+  if (const auto* window =
+        in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack)) {
+    in.Skip(size(window));
+    return window;
+  }
   auto* const data = reinterpret_cast<byte_type*>(buf);
   data[0] = in.ReadByte();
   data[1] = 0;

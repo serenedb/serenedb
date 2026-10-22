@@ -33,7 +33,9 @@
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/memory_file.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -110,7 +112,7 @@ CentroidsBuildParams DeepParams() {
   };
 }
 
-void WriteVectorColumn(Directory& dir, duckdb::DatabaseInstance& db,
+void WriteVectorColumn(const IndexFiles& dir, duckdb::DatabaseInstance& db,
                        field_id id, uint32_t d, std::span<const float> data) {
   const uint64_t n = data.size() / d;
   const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
@@ -466,7 +468,7 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  MemoryDirectory dir;
+  IndexFiles dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
   ColReader r{dir, "seg", *db.instance};
@@ -488,7 +490,7 @@ TEST(centroids_builder_test,
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  MemoryDirectory dir;
+  IndexFiles dir{DuckDBEngine::Instance().instance(), MemoryIndexRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
   ColReader r{dir, "seg", *db.instance};

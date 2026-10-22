@@ -33,7 +33,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -81,7 +81,7 @@ std::string TermAt(size_t i) {
 
 struct CachedIndex {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::IndexFiles> dir;
   irs::DirectoryReader reader;
   std::vector<std::string> terms;
 };
@@ -98,14 +98,14 @@ const CachedIndex& IndexOf(size_t num_terms) {
                 absl::StrFormat("serenedb-bench-term-enum-%d", num_terms);
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
-  cached.dir = std::make_unique<irs::MMapDirectory>(cached.path);
+  auto* db = &irs::DuckDBEngine::Instance().instance();
+  cached.dir = std::make_unique<irs::IndexFiles>(*db, cached.path.string());
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {
     cached.terms.push_back(TermAt(i));
   }
 
-  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;

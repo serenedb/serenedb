@@ -42,7 +42,7 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked and without io_uring
+- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator and dynamically linked
 - `bench` -- Release build (`build_bench/`), static linking, configured like the release packages; no frame pointers
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 

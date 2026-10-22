@@ -69,9 +69,10 @@ set(iresearch-tests_sources
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
-    ./store/directory_test_case.cpp
-    ./store/directory_cleaner_tests.cpp
+    ./store/block_input_tests.cpp
+    ./store/index_files_tests.cpp
     ./store/memory_index_output_tests.cpp
+    ./store/simulated_object_store_tests.cpp
     ./store/store_utils_tests.cpp
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
@@ -83,6 +84,7 @@ set(iresearch-tests_sources
     ./index/index_tests.cpp
     ./index/index_acceptor_walk_tests.cpp
     ./index/norm_test.cpp
+    ./index/object_store_index_tests.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
     ./index/inverter_oracle_test.cpp
@@ -156,7 +158,6 @@ set(iresearch-tests_sources
     ./utils/object_pool_tests.cpp
     ./utils/numeric_utils_test.cpp
     ./utils/simd_utils_test.cpp
-    ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
     ./duckdb/validity_mask_tests.cpp
@@ -179,11 +180,11 @@ set(iresearch-tests_sources
     ./utils/std_test.cpp
     ./utils/thread_pool_test.cpp
     ./utils/utf8_utils_test.cpp
-    ./utils/utf8_path_tests.cpp
     ./utils/fst_builder_test.cpp
     ./utils/fst_string_weight_test.cpp
     ./utils/ngram_match_utils_tests.cpp
     ./utils/write_helpers.cpp
+    ./hook_file_system.cpp
     ./tests_param.cpp
     ./tests_main.cpp
 )

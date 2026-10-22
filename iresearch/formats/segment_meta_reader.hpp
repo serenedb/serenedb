@@ -24,14 +24,15 @@
 
 #include <string_view>
 
+#include "iresearch/store/index_files.hpp"
+
 namespace irs {
 
-struct Directory;
 struct SegmentMeta;
 
 namespace segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename);
+void Read(const IndexFiles& dir, SegmentMeta& meta, std::string_view filename);
 
 }  // namespace segment_meta
 }  // namespace irs

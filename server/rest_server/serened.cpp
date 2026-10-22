@@ -31,6 +31,7 @@
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -172,6 +173,10 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
+#ifdef SDB_DEV
+    irs::SimulatedObjectStore::Register(
+      irs::DuckDBEngine::Instance().instance());
+#endif
     catalog::InitCatalog(db_path.directory());
     network.StartIoPool();
     up_network = true;

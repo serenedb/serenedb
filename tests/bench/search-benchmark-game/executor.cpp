@@ -130,7 +130,7 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{path},
+    _dir{::irs::DuckDBEngine::Instance().instance(), path},
     _reader{irs::DirectoryReader(
       _dir, {.scorer = _scorer_ptr,
              .db = &::irs::DuckDBEngine::Instance().instance()})} {}

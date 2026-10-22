@@ -51,8 +51,8 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
@@ -736,7 +736,7 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
+void OpenColWriter(duckdb::DatabaseInstance& db, const IndexFiles& dir,
                    std::string_view segment_name,
                    ManagedVector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
@@ -777,7 +777,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
 
   const auto& progress_callback = progress ? progress : kProgressNoop;
-  TrackingDirectory track_dir{_dir};
+  FileTracker tracker;
+  const auto track_dir = _dir.Tracking(tracker);
 
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
@@ -867,7 +868,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return false;
   }
 
-  segment.files = track_dir.FlushTracked(segment.byte_size);
+  segment.files = tracker.Flush(segment.byte_size);
   if (segment.live_docs_count == 0) {
     co_return false;
   }

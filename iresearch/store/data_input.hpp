@@ -25,6 +25,7 @@
 #include <duckdb/common/serializer/read_stream.hpp>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <streambuf>
 
 #include "iresearch/utils/bytes_utils.hpp"
@@ -70,6 +71,8 @@ class DataInput : public duckdb::ReadStream {
   // and will reside in memory while underlying stream is open.
   virtual const byte_type* ReadStable(uint64_t count) = 0;
 
+  virtual const byte_type* Peek(uint64_t) noexcept { return nullptr; }
+
   using duckdb::ReadStream::ReadData;
 
   // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
@@ -91,6 +94,11 @@ class DataInput : public duckdb::ReadStream {
   IRS_FORCE_INLINE auto& operator++(this auto& self, int) noexcept {
     return self;
   }
+};
+
+struct ByteExtent {
+  uint64_t offset = 0;
+  uint64_t size = 0;
 };
 
 class IndexInput : public DataInput {
@@ -118,9 +126,13 @@ class IndexInput : public DataInput {
   // TODO(mbkkt) Maybe change offset to count?
   virtual uint32_t Checksum(uint64_t offset) const = 0;
 
-  virtual uint64_t CountMappedMemory() const { return 0; }
-
   virtual void Prefetch(uint64_t, uint64_t) const noexcept {}
+
+  virtual void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+    for (const auto& extent : extents) {
+      Prefetch(extent.offset, extent.size);
+    }
+  }
 
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
@@ -157,114 +169,6 @@ class InputBuf final : public std::streambuf, util::Noncopyable {
 
  private:
   IndexInput* _in;
-};
-
-class BufferedIndexInput : public IndexInput {
- public:
-  const byte_type* ReadStable(uint64_t count) noexcept final { return nullptr; }
-  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
-    return nullptr;
-  }
-
-  const byte_type* ReadVolatile(uint64_t count) final;
-  const byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
-    if (count <= _buf_size && offset + count <= Length()) {
-      Seek(offset);
-      return ReadVolatile(count);
-    }
-    return nullptr;
-  }
-
-  byte_type ReadByte() final;
-  using DataInput::ReadData;
-  void ReadData(byte_type* b, uint64_t count) final;
-  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
-    BufferedIndexInput::ReadData(b, count);
-  }
-  void ReadData(uint64_t offset, byte_type* b, size_t count) final {
-    Seek(offset);
-    ReadData(b, count);
-  }
-
-  int16_t ReadI16() final {
-    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
-                                       : irs::read<uint16_t>(_begin);
-  }
-  int32_t ReadI32() final {
-    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                       : irs::read<uint32_t>(_begin);
-  }
-  int64_t ReadI64() final {
-    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                       : irs::read<uint64_t>(_begin);
-  }
-  uint32_t ReadV32() final {
-    return Remain() < bytes_io<uint32_t>::kMaxVSize
-             ? irs::vread<uint32_t>(*this)
-             : irs::vread<uint32_t>(_begin);
-  }
-  uint64_t ReadV64() final {
-    return Remain() < bytes_io<uint64_t>::kMaxVSize
-             ? irs::vread<uint64_t>(*this)
-             : irs::vread<uint64_t>(_begin);
-  }
-
-  void SkipV32() final {
-    Remain() < bytes_io<uint32_t>::kMaxVSize ? irs::vskip<uint32_t>(*this)
-                                             : irs::vskip<uint32_t>(_begin);
-  }
-  void SkipV64() final {
-    Remain() < bytes_io<uint64_t>::kMaxVSize ? irs::vskip<uint64_t>(*this)
-                                             : irs::vskip<uint64_t>(_begin);
-  }
-
-  uint64_t Position() const noexcept final { return _start + Offset(); }
-
-  void Skip(uint64_t count) final { Seek(Position() + count); }
-  void Seek(uint64_t pos) final;
-
-  BufferedIndexInput(const BufferedIndexInput&) = delete;
-  BufferedIndexInput& operator=(const BufferedIndexInput&) = delete;
-
- protected:
-  BufferedIndexInput() = default;
-
-  void reset(byte_type* buf, uint64_t size, uint64_t start) noexcept {
-    _buf = buf;
-    _begin = buf;
-    _end = buf;
-    _buf_size = size;
-    _start = start;
-  }
-
-  virtual void SeekInternal(uint64_t pos) = 0;
-
-  virtual size_t ReadInternal(byte_type* b, size_t count) = 0;
-
-  // returns number of reamining bytes in the buffer
-  IRS_FORCE_INLINE uint64_t Remain() const noexcept {
-    return std::distance(_begin, _end);
-  }
-
- private:
-  // number of bytes between begin_ & end_
-  uint64_t Refill();
-
-  // number of elements between current position and beginning of the buffer
-  IRS_FORCE_INLINE uint64_t Offset() const noexcept {
-    return std::distance(_buf, _begin);
-  }
-
-  // number of valid bytes in the buffer
-  IRS_FORCE_INLINE uint64_t Size() const noexcept {
-    return std::distance(_buf, _end);
-  }
-
-  byte_type* _buf = nullptr;  // buffer itself
-  byte_type* _begin = _buf;   // current position in the buffer
-  byte_type* _end = _buf;     // end of the valid bytes in the buffer
-  uint64_t _start = 0;        // position of the buffer in file
-  uint64_t _buf_size = 0;     // size of the buffer in bytes
 };
 
 }  // namespace irs

@@ -32,7 +32,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -51,21 +51,20 @@ struct IdxReader::Impl {
   std::vector<uint64_t> ann_ends;
 };
 
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
+IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
                      HnswBases* hnsw_bases)
+  : IdxReader{dir, segment_name,
+              dir.Has(absl::StrCat(segment_name, ".", kIdxFormatExt)),
+              hnsw_bases} {}
+
+IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
+                     bool present, HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
-  const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_IO_ERROR),
-      ERR_MSG("Failed to check existence of file, path: ", filename));
-  }
-  if (!exists) {
+  if (!present) {
     return;
   }
-
-  _impl->in = dir.open(filename, IOAdvice::SEQUENTIAL);
+  const auto filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
+  _impl->in = dir.Open(filename, IOAdvice::SEQUENTIAL);
 
   format_utils::ReadFooter(
     *_impl->in, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {

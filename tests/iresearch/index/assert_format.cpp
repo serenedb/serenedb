@@ -813,7 +813,7 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
   }
 }
 
-void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
+void AssertIndex(const irs::IndexFiles& dir, const index_t& expected_index,
                  irs::IndexFeatures features, size_t skip,
                  const irs::RegexpAcceptor* acceptor) {
   auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());

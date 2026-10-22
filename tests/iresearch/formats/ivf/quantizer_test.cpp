@@ -33,7 +33,7 @@
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/memory_file.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <limits>

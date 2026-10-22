@@ -50,7 +50,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/memory_file.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
@@ -2676,12 +2676,10 @@ class SingleTermLookup {
   const FST* _fst;
 };
 
-template<typename FST>
-bool SingleTermLookup<FST>::seek(bytes_view term) {
-  const auto& fst = *_fst;
-
+template<typename FST, typename Visitor>
+bool VisitTermBlock(const FST& fst, bytes_view term, Visitor&& visit) {
   auto state = fst.Start();
-  ArcMatcher<FST> matcher{_fst};
+  ArcMatcher<FST> matcher{&fst};
 
   byte_weight weight_prefix;
   const auto* weight_suffix = &fst.FinalRef(state);
@@ -2721,15 +2719,19 @@ bool SingleTermLookup<FST>::seek(bytes_view term) {
   if (!BlockMeta::Terms(cur_block.Meta())) {
     return false;
   }
+  return visit(cur_block);
+}
 
-  cur_block.Load(*_terms_in);
-
-  if (SeekResult::Found == cur_block.ScanToTerm(term, [](auto, auto) {})) {
+template<typename FST>
+bool SingleTermLookup<FST>::seek(bytes_view term) {
+  return VisitTermBlock(*_fst, term, [&](BlockIterator& cur_block) {
+    cur_block.Load(*_terms_in);
+    if (SeekResult::Found != cur_block.ScanToTerm(term, [](auto, auto) {})) {
+      return false;
+    }
     cur_block.LoadData(*_field, _meta, *_postings);
     return true;
-  }
-
-  return false;
+  });
 }
 
 }  // namespace
@@ -2738,14 +2740,6 @@ namespace irs::burst_trie {
 class FieldReader::Impl {
  public:
   explicit Impl(IResourceManager& rm) : _resource_manager{rm} {}
-
-  uint64_t CountMappedMemory() const {
-    uint64_t bytes = _pr.CountMappedMemory();
-    if (_terms_in != nullptr) {
-      bytes += _terms_in->CountMappedMemory();
-    }
-    return bytes;
-  }
 
   void prepare(const ReaderState& state);
 
@@ -2796,6 +2790,22 @@ class FieldReader::Impl {
       }
 
       return it.cookie();
+    }
+
+    bool Prefetch(bytes_view term) const final {
+      if (max() < term || term < min()) {
+        return false;
+      }
+      bool fetching = false;
+      VisitTermBlock(*_fst, term, [&](const BlockIterator& block) {
+        const auto& in = *_owner->_terms_in;
+        if (!in.Warm(block.LoadStart(), kTermBlockPrefetch)) {
+          in.Prefetch(block.LoadStart(), kTermBlockPrefetch);
+          fetching = true;
+        }
+        return true;
+      });
+      return fetching;
     }
 
     void ReadDocs(bytes_view term, Acceptor acceptor) const final {
@@ -2901,6 +2911,7 @@ class FieldReader::Impl {
     static constexpr uint64_t kMaxBlocksPrefetch = uint64_t{256} << 20;
     static constexpr uint64_t kBlocksProbes = 4;
     static constexpr int kWideStart = 128;
+    static constexpr uint64_t kTermBlockPrefetch = 4096;
 
     FieldReader::Impl* _owner;
     std::unique_ptr<FST> _fst;
@@ -2991,10 +3002,6 @@ FieldReader::FieldReader(IResourceManager& rm)
   : _impl{std::make_unique<Impl>(rm)} {}
 
 FieldReader::~FieldReader() = default;
-
-uint64_t FieldReader::CountMappedMemory() const {
-  return _impl->CountMappedMemory();
-}
 
 void FieldReader::prepare(const ReaderState& state) { _impl->prepare(state); }
 

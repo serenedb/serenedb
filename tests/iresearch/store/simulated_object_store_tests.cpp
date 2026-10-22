@@ -1,0 +1,351 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
+
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <functional>
+#include <iresearch/formats/format_utils.hpp>
+#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/simulated_object_store.hpp>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "tests_param.hpp"
+#include "tests_shared.hpp"
+
+namespace {
+
+duckdb::FileSystem& Vfs() {
+  return duckdb::FileSystem::GetFileSystem(
+    irs::DuckDBEngine::Instance().instance());
+}
+
+std::string Root() {
+  static std::atomic<uint64_t> count{0};
+  return absl::StrCat(irs::SimulatedObjectStore::kPrefix, "bucket/test-",
+                      count.fetch_add(1, std::memory_order_relaxed));
+}
+
+void Put(const std::string& path, std::string_view bytes) {
+  auto handle =
+    Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                           duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
+  handle->Write(duckdb::QueryContext{}, const_cast<char*>(bytes.data()),
+                bytes.size(), 0);
+  handle->Close();
+}
+
+std::string Get(const std::string& path, duckdb::idx_t offset,
+                duckdb::idx_t size) {
+  auto handle = Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+  std::string bytes(size, '\0');
+  handle->Read(duckdb::QueryContext{}, bytes.data(), size, offset);
+  return bytes;
+}
+
+duckdb::ErrorData Error(const std::function<void()>& call) {
+  try {
+    call();
+  } catch (const std::exception& e) {
+    return duckdb::ErrorData{e};
+  }
+  return {};
+}
+
+std::string Errno(const duckdb::ErrorData& error) {
+  const auto it = error.ExtraInfo().find("errno");
+  return it == error.ExtraInfo().end() ? std::string{} : it->second;
+}
+
+TEST(SimulatedObjectStoreTest, objects_appear_when_their_writer_closes) {
+  auto& store = tests::ObjectStore();
+  const auto path = Root() + "/object";
+  store.ResetRequests();
+
+  auto writer =
+    Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                           duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
+  std::string head = "hello ";
+  std::string tail = "object store";
+  writer->Write(duckdb::QueryContext{}, head.data(), head.size(), 0);
+  writer->Write(duckdb::QueryContext{}, tail.data(), tail.size(), head.size());
+  EXPECT_FALSE(Vfs().FileExists(path));
+  writer->Close();
+  EXPECT_TRUE(Vfs().FileExists(path));
+
+  EXPECT_EQ("hello object store", Get(path, 0, 18));
+  EXPECT_EQ("object", Get(path, 6, 6));
+  auto reader = Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+  EXPECT_EQ(18, reader->GetFileSize());
+
+  const auto requests = store.Requests();
+  EXPECT_EQ(1, requests.put);
+  EXPECT_EQ(2, requests.get);
+  EXPECT_EQ(18, requests.bytes_written);
+  EXPECT_EQ(24, requests.bytes_read);
+}
+
+TEST(SimulatedObjectStoreTest, writes_are_sequential_and_unclosed_ones_vanish) {
+  tests::ObjectStore();
+  const auto path = Root() + "/object";
+  {
+    auto writer =
+      Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE);
+    std::string bytes = "abc";
+    writer->Write(duckdb::QueryContext{}, bytes.data(), bytes.size(), 0);
+    EXPECT_THROW(
+      writer->Write(duckdb::QueryContext{}, bytes.data(), bytes.size(), 10),
+      duckdb::NotImplementedException);
+  }
+  EXPECT_FALSE(Vfs().FileExists(path));
+}
+
+TEST(SimulatedObjectStoreTest, missing_objects_report_enoent) {
+  tests::ObjectStore();
+  const auto path = Root() + "/missing";
+  const auto error =
+    Error([&] { Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ); });
+  ASSERT_TRUE(error.HasError());
+  EXPECT_EQ(std::to_string(ENOENT), Errno(error));
+  EXPECT_EQ(
+    nullptr,
+    Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ |
+                           duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS));
+  EXPECT_EQ(std::to_string(ENOENT),
+            Errno(Error([&] { Vfs().MoveFile(path, path + ".moved"); })));
+}
+
+TEST(SimulatedObjectStoreTest, reads_fail_once_the_object_is_gone_or_replaced) {
+  tests::ObjectStore();
+  const auto path = Root() + "/object";
+  Put(path, "first");
+  auto reader = Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+  char byte = 0;
+  reader->Read(duckdb::QueryContext{}, &byte, 1, 0);
+  EXPECT_EQ('f', byte);
+
+  Put(path, "second");
+  EXPECT_THROW(reader->Read(duckdb::QueryContext{}, &byte, 1, 0),
+               duckdb::IOException);
+
+  auto replaced = Vfs().OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+  Vfs().RemoveFile(path);
+  EXPECT_THROW(replaced->Read(duckdb::QueryContext{}, &byte, 1, 0),
+               duckdb::IOException);
+}
+
+TEST(SimulatedObjectStoreTest, prefixes_list_move_and_remove) {
+  auto& store = tests::ObjectStore();
+  const auto root = Root();
+  Put(root + "/a", "1");
+  Put(root + "/b", "22");
+  Put(root + "/sub/c", "333");
+  store.ResetRequests();
+
+  std::vector<std::pair<std::string, bool>> entries;
+  EXPECT_TRUE(Vfs().ListFiles(root, [&](const std::string& name, bool dir) {
+    entries.emplace_back(name, dir);
+  }));
+  const std::vector<std::pair<std::string, bool>> expected{
+    {"a", false}, {"b", false}, {"sub/c", false}};
+  EXPECT_EQ(expected, entries);
+  EXPECT_TRUE(Vfs().DirectoryExists(root + "/none"));
+
+  Vfs().MoveFile(root + "/b", root + "/d");
+  EXPECT_FALSE(Vfs().FileExists(root + "/b"));
+  EXPECT_EQ("22", Get(root + "/d", 0, 2));
+
+  auto requests = store.Requests();
+  EXPECT_EQ(1, requests.list);
+  EXPECT_EQ(1, requests.copy);
+  EXPECT_EQ(1, requests.remove);
+
+  store.ResetRequests();
+  Vfs().RemoveDirectory(root);
+  requests = store.Requests();
+  EXPECT_EQ(1, requests.list);
+  EXPECT_EQ(1, requests.remove);
+  EXPECT_FALSE(Vfs().FileExists(root + "/a"));
+  EXPECT_FALSE(Vfs().FileExists(root + "/sub/c"));
+}
+
+TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
+  auto& store = tests::ObjectStore();
+  irs::IndexFiles files{irs::DuckDBEngine::Instance().instance(), Root()};
+  ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
+  {
+    auto out = files.Create("segment");
+    for (uint32_t i = 0; i != 100000; ++i) {
+      out->WriteU32(i);
+    }
+  }
+  bool exists = false;
+  ASSERT_TRUE(files.Exists(exists, "segment") && exists);
+
+  store.ResetRequests();
+  auto in = files.Open("segment", irs::IOAdvice::NORMAL);
+  ASSERT_EQ(irs::DataInput::Type::Generic, in->GetType());
+  for (uint32_t i = 0; i != 100000; ++i) {
+    ASSERT_EQ(i, static_cast<uint32_t>(in->ReadI32()));
+  }
+  EXPECT_LE(store.Requests().get, 2);
+
+  store.ResetRequests();
+  auto whole = files.Open("segment", irs::IOAdvice::READONCE);
+  EXPECT_EQ(400000, whole->Length());
+  EXPECT_EQ(1, store.Requests().get);
+
+  ASSERT_TRUE(files.Rename("segment", "renamed"));
+  std::vector<std::string> names;
+  ASSERT_TRUE(files.Visit([&](std::string_view name) {
+    names.emplace_back(name);
+    return true;
+  }));
+  EXPECT_EQ(std::vector<std::string>{"renamed"}, names);
+  ASSERT_TRUE(files.Remove("renamed"));
+  ASSERT_SQL_ERROR(files.Open("renamed", irs::IOAdvice::NORMAL),
+                   ERRCODE_UNDEFINED_FILE);
+}
+
+TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
+  auto& store = tests::ObjectStore();
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const auto root = Root();
+  irs::IndexFiles files{db, root};
+  {
+    auto out = files.Create("data");
+    for (uint32_t i = 0; i != 100000; ++i) {
+      out->WriteU32(i);
+    }
+    irs::format_utils::WriteFooter(*out);
+  }
+
+  store.ResetRequests();
+  bool exists = false;
+  ASSERT_TRUE(files.Exists(exists, "data") && exists);
+  auto in = files.Open("data", irs::IOAdvice::NORMAL);
+  EXPECT_EQ(400000, irs::format_utils::ReadFooter(*in, "data").data_len);
+  in->Seek(399996);
+  EXPECT_EQ(99999, static_cast<uint32_t>(in->ReadI32()));
+  in->Seek(0);
+  EXPECT_EQ(0, static_cast<uint32_t>(in->ReadI32()));
+  EXPECT_EQ(0, store.Requests().head);
+  EXPECT_EQ(0, store.Requests().get);
+
+  duckdb::BlockCache::Get(db).Clear();
+  auto uncached = files.Open("data", irs::IOAdvice::NORMAL);
+  EXPECT_EQ(400000, irs::format_utils::ReadFooter(*uncached, "data").data_len);
+  EXPECT_EQ(0, store.Requests().get);
+  uncached->Seek(399996);
+  EXPECT_EQ(99999, static_cast<uint32_t>(uncached->ReadI32()));
+  uncached->Seek(0);
+  EXPECT_EQ(0, static_cast<uint32_t>(uncached->ReadI32()));
+  EXPECT_EQ(2, store.Requests().get);
+
+  store.ResetRequests();
+  auto whole = files.Open("data", irs::IOAdvice::READONCE);
+  EXPECT_EQ(400000, irs::format_utils::ReadFooter(*whole, "data").data_len);
+  EXPECT_EQ(0, store.Requests().head);
+  EXPECT_EQ(1, store.Requests().get);
+
+  std::array<irs::byte_type, 16> expected{};
+  std::array<irs::byte_type, 16> actual{};
+  whole->ReadData(399992, expected.data(), expected.size());
+  in->ReadData(399992, actual.data(), actual.size());
+  EXPECT_EQ(expected, actual);
+  whole->Seek(0);
+  in->Seek(0);
+  EXPECT_EQ(whole->Checksum(whole->Length()), in->Checksum(in->Length()));
+
+  irs::IndexFiles restarted{db, root};
+  store.ResetRequests();
+  ASSERT_TRUE(restarted.Exists(exists, "data") && exists);
+  auto cold = restarted.Open("data", irs::IOAdvice::NORMAL);
+  EXPECT_EQ(400000, irs::format_utils::ReadFooter(*cold, "data").data_len);
+  EXPECT_EQ(2, store.Requests().head);
+
+  store.ResetRequests();
+  auto cold_whole = restarted.Open("data", irs::IOAdvice::READONCE);
+  EXPECT_EQ(400000,
+            irs::format_utils::ReadFooter(*cold_whole, "data").data_len);
+  EXPECT_EQ(0, store.Requests().head);
+  EXPECT_EQ(1, store.Requests().get);
+
+  ASSERT_TRUE(files.Rename("data", "renamed"));
+  store.ResetRequests();
+  ASSERT_TRUE(files.Exists(exists, "renamed") && exists);
+  EXPECT_EQ(0, store.Requests().head);
+  ASSERT_TRUE(files.Remove("renamed"));
+  ASSERT_TRUE(files.Exists(exists, "renamed"));
+  EXPECT_FALSE(exists);
+}
+
+TEST(SimulatedObjectStoreTest, injected_failures) {
+  tests::ObjectStore();
+  if (!irs::AddFailurePointDebugging("object_store_get_fails")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  const auto root = Root();
+  Put(root + "/object", "bytes");
+  EXPECT_THROW(Get(root + "/object", 0, 1), duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+
+  ASSERT_TRUE(irs::AddFailurePointDebugging("object_store_put_fails"));
+  EXPECT_THROW(Put(root + "/new", "x"), duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+  EXPECT_FALSE(Vfs().FileExists(root + "/new"));
+
+  ASSERT_TRUE(irs::AddFailurePointDebugging("object_store_head_fails"));
+  EXPECT_THROW(Vfs().FileExists(root + "/object"), duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+
+  ASSERT_TRUE(irs::AddFailurePointDebugging("object_store_list_fails"));
+  EXPECT_THROW(Vfs().ListFiles(root, [](const std::string&, bool) {}),
+               duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+
+  ASSERT_TRUE(irs::AddFailurePointDebugging("object_store_delete_fails"));
+  EXPECT_THROW(Vfs().RemoveFile(root + "/object"), duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+
+  ASSERT_TRUE(irs::AddFailurePointDebugging("object_store_copy_fails"));
+  EXPECT_THROW(Vfs().MoveFile(root + "/object", root + "/copy"),
+               duckdb::IOException);
+  irs::ClearFailurePointsDebugging();
+
+  EXPECT_EQ("bytes", Get(root + "/object", 0, 5));
+  EXPECT_FALSE(Vfs().FileExists(root + "/copy"));
+}
+
+}  // namespace

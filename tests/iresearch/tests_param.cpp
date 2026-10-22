@@ -23,61 +23,79 @@
 
 #include "tests_param.hpp"
 
-#include "tests_shared.hpp"
-#ifdef IRESEARCH_URING
-#include <iresearch/store/async_directory.hpp>
-#endif
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <absl/strings/str_cat.h>
+
+#include <atomic>
+#include <filesystem>
+#include <iresearch/utils/duckdb_engine.hpp>
 
 namespace tests {
+namespace {
+
+constinit std::atomic<uint64_t> gLocalDirectories{0};
+
+}  // namespace
 
 std::string ToString(dir_generator_f generator) {
   if (generator == &MemoryDirectory) {
     return "memory";
   }
 
-  if (generator == &FsDirectory) {
-    return "fs";
+  if (generator == &LocalDirectory) {
+    return "local";
   }
 
-  if (generator == &MmapDirectory) {
-    return "mmap";
+  if (generator == &ObjectStoreDirectory) {
+    return "sim";
   }
-
-#ifdef IRESEARCH_URING
-  if (generator == &AsyncDirectory) {
-    return "async";
-  }
-#endif
 
   return "unknown";
 }
 
-std::shared_ptr<irs::Directory> MemoryDirectory(
-  const TestBase* test, irs::DirectoryAttributes attrs) {
-  return std::make_shared<irs::MemoryDirectory>(
-    std::move(attrs), test ? test->GetResourceManager().options
-                           : irs::ResourceManagementOptions::gDefault);
+std::shared_ptr<irs::IndexFiles> MemoryDirectory(const TestBase* test) {
+  return std::make_shared<irs::IndexFiles>(
+    irs::DuckDBEngine::Instance().instance(), irs::MemoryIndexRoot(),
+    test ? test->GetResourceManager().options
+         : irs::ResourceManagementOptions::gDefault);
 }
 
-std::shared_ptr<irs::Directory> FsDirectory(const TestBase* test,
-                                            irs::DirectoryAttributes attrs) {
-  return MakePhysicalDirectory<irs::FSDirectory>(test, std::move(attrs));
+std::shared_ptr<irs::IndexFiles> LocalDirectory(const TestBase* test) {
+  if (!test) {
+    return nullptr;
+  }
+  auto path =
+    test->test_dir() / absl::StrCat("index_", gLocalDirectories.fetch_add(
+                                                1, std::memory_order_relaxed));
+  std::filesystem::create_directories(path);
+  auto* files =
+    new irs::IndexFiles{irs::DuckDBEngine::Instance().instance(), path.string(),
+                        test->GetResourceManager().options};
+  return {files, [path = std::move(path)](irs::IndexFiles* p) {
+            delete p;
+            std::filesystem::remove_all(path);
+          }};
 }
 
-std::shared_ptr<irs::Directory> MmapDirectory(const TestBase* test,
-                                              irs::DirectoryAttributes attrs) {
-  return MakePhysicalDirectory<irs::MMapDirectory>(test, std::move(attrs));
+std::shared_ptr<irs::IndexFiles> ObjectStoreDirectory(const TestBase* test) {
+  if (!test) {
+    return nullptr;
+  }
+  ObjectStore();
+  auto root =
+    absl::StrCat(irs::SimulatedObjectStore::kPrefix, "tests/",
+                 gLocalDirectories.fetch_add(1, std::memory_order_relaxed));
+  auto* files = new irs::IndexFiles{irs::DuckDBEngine::Instance().instance(),
+                                    root, test->GetResourceManager().options};
+  return {files, [root = std::move(root)](irs::IndexFiles* p) {
+            delete p;
+            ObjectStore().RemoveDirectory(root);
+          }};
 }
 
-#ifdef IRESEARCH_URING
-std::shared_ptr<irs::Directory> AsyncDirectory(const TestBase* test,
-                                               irs::DirectoryAttributes attrs) {
-  return MakePhysicalDirectory<irs::AsyncDirectory>(test, std::move(attrs));
+irs::SimulatedObjectStore& ObjectStore() {
+  static auto& store = irs::SimulatedObjectStore::Register(
+    irs::DuckDBEngine::Instance().instance());
+  return store;
 }
-#endif
 
 }  // namespace tests

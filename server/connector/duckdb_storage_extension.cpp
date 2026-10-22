@@ -75,7 +75,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
+  auto directory =
+    std::make_shared<catalog::DatabaseDirectory>(path, path.string());
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{

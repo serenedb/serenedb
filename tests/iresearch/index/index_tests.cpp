@@ -23,6 +23,7 @@
 
 #include "index_tests.hpp"
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
@@ -38,11 +39,8 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/serialization.hpp>
@@ -225,8 +223,6 @@ irs::Filter::ptr MakeOr(
 
 class SubReaderMock final : public irs::SubReader {
  public:
-  uint64_t CountMappedMemory() const final { return 0; }
-
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
@@ -308,7 +304,19 @@ std::string IndexTestBase::to_string(
   return (*factory)(nullptr).second;
 }
 
-std::shared_ptr<irs::Directory> IndexTestBase::get_directory(
+duckdb::FileSystem& DatabaseFileSystem() {
+  return duckdb::FileSystem::GetFileSystem(
+    irs::DuckDBEngine::Instance().instance());
+}
+
+irs::IndexFiles OverFileSystem(const irs::IndexFiles& files,
+                               duckdb::FileSystem& fs) {
+  SDB_ASSERT(files.Kind() != irs::StorageKind::Memory);
+  return irs::IndexFiles{irs::DuckDBEngine::Instance().instance(), fs,
+                         files.Root(), files.ResourceManager()};
+}
+
+std::shared_ptr<irs::IndexFiles> IndexTestBase::get_directory(
   const TestBase& ctx) const {
   auto [factory] = GetParam();
 
@@ -468,14 +476,11 @@ class IndexTestCase : public tests::IndexTestBase {
         tests::Remove(*writer, std::move(query_doc1));
       }
 
-      size_t file_count = 0;
-
-      {
-        dir().visit([&file_count](std::string_view) -> bool {
-          ++file_count;
-          return true;
-        });
-      }
+      absl::flat_hash_set<std::string> files;
+      dir().Visit([&files](std::string_view name) -> bool {
+        files.emplace(name);
+        return true;
+      });
 
       writer->Clear();
 
@@ -486,14 +491,19 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(0, reader.size());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
-        size_t file_count_post_clear = 0;
-        dir().visit([&file_count_post_clear](std::string_view) -> bool {
-          ++file_count_post_clear;
+        std::vector<std::string> added;
+        dir().Visit([&](std::string_view name) -> bool {
+          if (!files.contains(name)) {
+            added.emplace_back(name);
+          }
+          files.emplace(name);
           return true;
         });
-        ASSERT_EQ(
-          file_count + 1,
-          file_count_post_clear);  // +1 extra file for new empty index meta
+        std::erase_if(added, [&](const std::string& name) {
+          return dir().Kind() == irs::StorageKind::Remote &&
+                 name.starts_with("_2.");
+        });
+        ASSERT_EQ(std::vector<std::string>{"segments_3"}, added);
       }
 
       writer->RefreshCommit();
@@ -506,20 +516,19 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(0, reader.size());
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
-        size_t file_count_post_commit = 0;
-        dir().visit([&file_count_post_commit](std::string_view) -> bool {
-          ++file_count_post_commit;
+        absl::flat_hash_set<std::string> after_commit;
+        dir().Visit([&after_commit](std::string_view name) -> bool {
+          after_commit.emplace(name);
           return true;
         });
-        ASSERT_EQ(
-          file_count + 1,
-          file_count_post_commit);  // +1 extra file for new empty index meta
+        ASSERT_EQ(files, after_commit);
       }
     }
 
     // test creation of an empty writer
     {
-      irs::MemoryDirectory dir;
+      irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                          irs::MemoryIndexRoot()};
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_SQL_ERROR(
@@ -529,7 +538,7 @@ class IndexTestCase : public tests::IndexTestBase {
       {
         size_t file_count = 0;
 
-        dir.visit([&file_count](std::string_view) -> bool {
+        dir.Visit([&file_count](std::string_view) -> bool {
           ++file_count;
           return true;
         });
@@ -541,7 +550,7 @@ class IndexTestCase : public tests::IndexTestBase {
       {
         size_t file_count = 0;
 
-        dir.visit([&file_count](std::string_view) -> bool {
+        dir.Visit([&file_count](std::string_view) -> bool {
           ++file_count;
           return true;
         });
@@ -565,7 +574,7 @@ class IndexTestCase : public tests::IndexTestBase {
       AssertSnapshotEquality(*writer);
 
       size_t file_count0 = 0;
-      dir().visit([&file_count0](std::string_view) -> bool {
+      dir().Visit([&file_count0](std::string_view) -> bool {
         ++file_count0;
         return true;
       });
@@ -573,7 +582,7 @@ class IndexTestCase : public tests::IndexTestBase {
       writer->Clear();
 
       size_t file_count1 = 0;
-      dir().visit([&file_count1](std::string_view) -> bool {
+      dir().Visit([&file_count1](std::string_view) -> bool {
         ++file_count1;
         return true;
       });
@@ -583,7 +592,7 @@ class IndexTestCase : public tests::IndexTestBase {
       writer->Clear();
 
       size_t file_count2 = 0;
-      dir().visit([&file_count2](std::string_view) -> bool {
+      dir().Visit([&file_count2](std::string_view) -> bool {
         ++file_count2;
         return true;
       });
@@ -769,7 +778,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
       writer->RefreshCommit();
       AssertSnapshotEquality(*writer);
-      irs::DirectoryCleaner::clean(dir());
+      dir().RemoveUnreferenced();
       // can't open another writer at the same time on the same directory
       ASSERT_SQL_ERROR(
         irs::IndexWriter::Make(dir(), irs::kOmCreate,
@@ -1077,15 +1086,15 @@ class IndexTestCase : public tests::IndexTestBase {
         return true;
       };
       // clear any unused files before taking count
-      irs::directory_utils::RemoveAllUnreferenced(dir());
-      dir().visit(dir_visitor);
+      dir().RemoveAllUnreferenced();
+      dir().Visit(dir_visitor);
       auto file_count_before = file_count;
       ASSERT_TRUE(InsertWithName(*writer, *doc3));
       ASSERT_TRUE(writer->RefreshBegin());  // prepare for commit tx #2
       writer->RefreshAbort();               // rollback tx #2
-      irs::directory_utils::RemoveAllUnreferenced(dir());
+      dir().RemoveAllUnreferenced();
       file_count = 0;
-      dir().visit(dir_visitor);
+      dir().Visit(dir_visitor);
       ASSERT_EQ(file_count_before,
                 file_count);  // ensure rolled back file refs were released
 
@@ -1346,24 +1355,21 @@ class IndexTestCase : public tests::IndexTestBase {
   }
 
   void WriterAtomicityCheck() {
-    struct OverrideSyncDirectory : tests::DirectoryMock {
+    if (dir().Kind() != irs::StorageKind::Local) {
+      GTEST_SKIP() << "only a local index syncs its files";
+    }
+
+    struct OverrideSyncFileSystem : tests::HookFileSystem {
       typedef std::function<bool(std::string_view)> SyncF;
 
-      OverrideSyncDirectory(irs::Directory& impl, SyncF&& sync)
-        : DirectoryMock(impl), _sync(std::move(sync)) {}
+      explicit OverrideSyncFileSystem(SyncF&& sync)
+        : HookFileSystem{tests::DatabaseFileSystem()}, _sync(std::move(sync)) {}
 
-      bool sync(std::span<const std::string_view> files) noexcept final {
-        return absl::c_all_of(files, [this](std::string_view name) noexcept {
-          try {
-            if (_sync(name)) {
-              return true;
-            }
-          } catch (...) {
-            return false;
-          }
-
-          return DirectoryMock::sync({&name, 1});
-        });
+      void OnSync(std::string_view name) final {
+        if (!_sync(name)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                          ERR_MSG("injected sync failure"));
+        }
       }
 
      private:
@@ -1381,11 +1387,9 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // error while commiting index (during sync in index_meta_writer)
     {
-      OverrideSyncDirectory override_dir(
-        dir(), [](const std::string_view&) -> bool {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                          ERR_MSG("injected sync failure"));
-        });
+      OverrideSyncFileSystem override_fs{
+        [](std::string_view) { return false; }};
+      auto override_dir = tests::OverFileSystem(dir(), override_fs);
 
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -1406,14 +1410,9 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // error while commiting index (during sync in index_writer)
     {
-      OverrideSyncDirectory override_dir(
-        dir(), [](const std::string_view& name) {
-          if (name.starts_with("_")) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                            ERR_MSG("injected sync failure"));
-          }
-          return false;
-        });
+      OverrideSyncFileSystem override_fs{
+        [](std::string_view name) { return !name.starts_with("_"); }};
+      auto override_dir = tests::OverFileSystem(dir(), override_fs);
 
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -1902,14 +1901,18 @@ TEST_P(IndexTestCase, writer_begin_clear) {
 }
 
 TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
+  if (dir().Kind() == irs::StorageKind::Memory) {
+    GTEST_SKIP() << "file system hooks need a local index";
+  }
+
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
-  auto clean = [this] { irs::directory_utils::RemoveAllUnreferenced(dir()); };
-
   {
-    tests::CallbackDirectory synced_dir(dir(), clean);
-    auto writer = irs::IndexWriter::Make(synced_dir, irs::kOmCreate,
+    std::optional<irs::IndexFiles> synced_dir;
+    tests::CallbackFileSystem fs{[&] { synced_dir->RemoveAllUnreferenced(); }};
+    synced_dir.emplace(tests::OverFileSystem(dir(), fs));
+    auto writer = irs::IndexWriter::Make(*synced_dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     const auto* doc1 = gen.next();
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1918,7 +1921,7 @@ TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
 
     // check index, it should contain expected number of docs
     auto reader =
-      irs::DirectoryReader(synced_dir, irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(*synced_dir, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.live_docs_count());
     ASSERT_EQ(1, reader.docs_count());
     ASSERT_NE(reader.begin(), reader.end());
@@ -2015,9 +2018,6 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big) {
-  if (dynamic_cast<irs::FSDirectory*>(&dir()) != nullptr) {
-    GTEST_SKIP() << "too long for our CI";
-  }
   {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.big.txt"), doc);
@@ -5577,7 +5577,7 @@ TEST_P(IndexTestCase, concurrent_compaction) {
     AssertSnapshotEquality(*writer);
     ++size;
   }
-  ASSERT_EQ(size - 1, irs::DirectoryCleaner::clean(dir()));
+  ASSERT_EQ(size - 1, dir().RemoveUnreferenced());
 
   std::mutex mutex;
   bool ready = false;
@@ -5691,7 +5691,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
     AssertSnapshotEquality(*writer);
     ++size;
   }
-  ASSERT_EQ(size - 1, irs::DirectoryCleaner::clean(dir()));
+  ASSERT_EQ(size - 1, dir().RemoveUnreferenced());
 
   std::mutex mutex;
   bool ready = false;
@@ -5819,7 +5819,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
     AssertSnapshotEquality(*writer);
     ++size;
   }
-  ASSERT_EQ(size - 1, irs::DirectoryCleaner::clean(dir()));
+  ASSERT_EQ(size - 1, dir().RemoveUnreferenced());
 
   std::mutex mutex;
   bool ready = false;
@@ -5949,7 +5949,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
     AssertSnapshotEquality(*writer);
     ++size;
   }
-  ASSERT_EQ(size - 1, irs::DirectoryCleaner::clean(dir()));
+  ASSERT_EQ(size - 1, dir().RemoveUnreferenced());
 
   std::mutex mutex;
   bool ready = false;
@@ -5982,7 +5982,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
 
         if (writer->Compact(policy)) {
           writer->RefreshCommit();
-          irs::DirectoryCleaner::clean(this->dir());
+          this->dir().RemoveUnreferenced();
         }
 
         i = (i + 1) % num_segments;
@@ -6003,7 +6003,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
 
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
-  irs::DirectoryCleaner::clean(dir());
+  dir().RemoveUnreferenced();
 
   auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
@@ -6077,7 +6077,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // nothing to compact
@@ -6086,7 +6086,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
                                                     // for compaction
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
   }
 
   size_t count = 0;
@@ -6111,16 +6111,15 @@ TEST_P(IndexTestCase, compact_single_segment) {
     tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(
-      2,
-      irs::DirectoryCleaner::clean(dir()));  // segments_1 + stale segment meta
+    ASSERT_EQ(2,
+              dir().RemoveUnreferenced());  // segments_1 + stale segment meta
     ASSERT_EQ(
       1, irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions())
            .size());
 
     // get number of files in 1st segment
     count = 0;
-    dir().visit(get_number_of_files_in_segments);
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // nothing to compact
@@ -6132,7 +6131,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(1 + count,
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments_2
+              dir().RemoveUnreferenced());  // +1 for segments_2
 
     // validate structure
     tests::index_t expected;
@@ -6165,9 +6164,13 @@ TEST_P(IndexTestCase, compact_single_segment) {
 }
 
 TEST_P(IndexTestCase, segment_compact_long_running) {
+  if (dir().Kind() == irs::StorageKind::Memory) {
+    GTEST_SKIP() << "file system hooks need a local index";
+  }
+
   // The new cs writes `<segment>.col` for every committed segment. Use the
-  // third segment's expected `.col` file as the BlockingDirectory trigger;
-  // the test gates compaction on its create().
+  // third segment's expected `.col` file as the BlockingFileSystem trigger;
+  // the test gates compaction on its creation.
   const auto blocker = std::string{"_3.col"};
 
   tests::JsonDocGenerator gen(
@@ -6201,7 +6204,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
   // long running transaction
   {
-    tests::BlockingDirectory dir(this->dir(), blocker);
+    tests::BlockingFileSystem fs{blocker};
+    auto dir = tests::OverFileSystem(this->dir(), fs);
     auto writer =
       open_writer(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -6210,19 +6214,19 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_1
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_1
 
     // retrieve total number of segment files
-    dir.visit(get_number_of_files_in_segments);
+    dir.Visit(get_number_of_files_in_segments);
 
-    // acquire directory lock, and block compaction
-    dir.intermediate_commits_lock.lock();
+    // acquire file system lock, and block compaction
+    fs.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer] {
       // compact
@@ -6246,45 +6250,42 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_TRUE(writer->Compact(check_compacting_segments));
     });
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    while (true) {
+      ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    bool has = false;
-    dir.exists(has, dir.blocker);
-
-    while (!has) {
-      dir.exists(has, dir.blocker);
-      ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
-
-      auto policy_guard = std::unique_lock{dir.policy_lock};
-      dir.policy_applied.wait_for(policy_guard, 1000ms);
+      auto policy_guard = std::unique_lock{fs.policy_lock};
+      if (fs.created) {
+        break;
+      }
+      fs.policy_applied.wait_for(policy_guard, 1000ms);
     }
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // add several segments in background
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);                  // commit transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));  // segments_2
+    AssertSnapshotEquality(*writer);         // commit transaction
+    ASSERT_EQ(0, dir.RemoveUnreferenced());  // segments_2
 
     // add several segments in background
     // segment 4
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);                  // commit transaction
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_3
+    AssertSnapshotEquality(*writer);         // commit transaction
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_3
 
-    dir.intermediate_commits_lock.unlock();  // finish compaction
+    fs.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
 
     // finished compaction holds a reference to segments_3
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
 
     // +1 for segments_4, +1 for segments_3
-    ASSERT_EQ(1 + 1 + count, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(1 + 1 + count, dir.RemoveUnreferenced());
 
     // validate structure
     tests::index_t expected;
@@ -6361,10 +6362,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
   // long running transaction + segment removal
   {
-    SetUp();  // recreate directory
+    this->dir().RemoveAllUnreferenced();
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
-    tests::BlockingDirectory dir(this->dir(), blocker);
+    tests::BlockingFileSystem fs{blocker};
+    auto dir = tests::OverFileSystem(this->dir(), fs);
     auto writer =
       open_writer(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -6373,20 +6375,20 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // retrieve total number of segment files
     count = 0;
-    dir.visit(get_number_of_files_in_segments);
+    dir.Visit(get_number_of_files_in_segments);
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_1
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_1
 
-    // acquire directory lock, and block compaction
-    dir.intermediate_commits_lock.lock();
+    // acquire file system lock, and block compaction
+    fs.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer] {
       // A concurrent commit removed a doc from a candidate, so the merge can't
@@ -6406,46 +6408,43 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_TRUE(writer->Compact(check_compacting_segments));
     });
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    while (true) {
+      ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    bool has = false;
-    dir.exists(has, dir.blocker);
-
-    while (!has) {
-      dir.exists(has, dir.blocker);
-      ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
-
-      auto policy_guard = std::unique_lock{dir.policy_lock};
-      dir.policy_applied.wait_for(policy_guard, 1000ms);
+      auto policy_guard = std::unique_lock{fs.policy_lock};
+      if (fs.created) {
+        break;
+      }
+      fs.policy_applied.wait_for(policy_guard, 1000ms);
     }
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // add several segments in background
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);                  // commit transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));  // segments_2
+    AssertSnapshotEquality(*writer);         // commit transaction
+    ASSERT_EQ(0, dir.RemoveUnreferenced());  // segments_2
 
     // add several segments in background
     // segment 4
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);                  // commit transaction
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_3
+    AssertSnapshotEquality(*writer);         // commit transaction
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_3
 
-    dir.intermediate_commits_lock.unlock();  // finish compaction
+    fs.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
     ASSERT_EQ(2 * count - 1 + 1,
-              irs::DirectoryCleaner::clean(
-                dir));  // files from segment 1 and 3 (without segment meta)
-                        // + segments_3
+              dir.RemoveUnreferenced());  // files from segment 1 and 3
+                                          // (without segment meta)
+                                          // + segments_3
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
     ASSERT_EQ(0,
-              irs::DirectoryCleaner::clean(dir));  // compaction failed
+              dir.RemoveUnreferenced());  // compaction failed
 
     // validate structure
     tests::index_t expected;
@@ -6518,10 +6517,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
   // long running transaction + document removal
   {
-    SetUp();  // recreate directory
+    this->dir().RemoveAllUnreferenced();
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
-    tests::BlockingDirectory dir(this->dir(), blocker);
+    tests::BlockingFileSystem fs{blocker};
+    auto dir = tests::OverFileSystem(this->dir(), fs);
     auto writer =
       open_writer(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -6531,20 +6531,20 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_1
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_1
 
     // retrieve total number of segment files
     count = 0;
-    dir.visit(get_number_of_files_in_segments);
+    dir.Visit(get_number_of_files_in_segments);
 
-    // acquire directory lock, and block compaction
-    dir.intermediate_commits_lock.lock();
+    // acquire file system lock, and block compaction
+    fs.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer] {
       // compaction will fail because of
@@ -6568,37 +6568,34 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_TRUE(writer->Compact(check_compacting_segments));
     });
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    while (true) {
+      ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    bool has = false;
-    dir.exists(has, dir.blocker);
-
-    while (!has) {
-      dir.exists(has, dir.blocker);
-      ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
-
-      auto policy_guard = std::unique_lock{dir.policy_lock};
-      dir.policy_applied.wait_for(policy_guard, 1000ms);
+      auto policy_guard = std::unique_lock{fs.policy_lock};
+      if (fs.created) {
+        break;
+      }
+      fs.policy_applied.wait_for(policy_guard, 1000ms);
     }
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // remove doc1 in background
     tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
     // No unused column store: a remove-only batch no longer creates a `.col`.
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    dir.intermediate_commits_lock.unlock();  // finish compaction
+    fs.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
     // Compaction still holds a reference to the snapshot segment_2
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
     // files from segments 1 and 2, segment_3
     // segment_2 + stale segment 1 meta
-    ASSERT_EQ(count + 2 + 1, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(count + 2 + 1, dir.RemoveUnreferenced());
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -6661,11 +6658,12 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
   // long running transaction + document removal
   {
-    SetUp();  // recreate directory
+    this->dir().RemoveAllUnreferenced();
     auto query_doc1_doc4 =
       MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
 
-    tests::BlockingDirectory dir(this->dir(), blocker);
+    tests::BlockingFileSystem fs{blocker};
+    auto dir = tests::OverFileSystem(this->dir(), fs);
     auto writer =
       open_writer(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -6675,21 +6673,21 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));  // segments_1
+    ASSERT_EQ(1, dir.RemoveUnreferenced());  // segments_1
 
     // retrieve total number of segment files
     count = 0;
-    dir.visit(get_number_of_files_in_segments);
+    dir.Visit(get_number_of_files_in_segments);
 
-    dir.intermediate_commits_lock
-      .lock();  // acquire directory lock, and block compaction
+    fs.intermediate_commits_lock
+      .lock();  // acquire file system lock, and block compaction
 
     std::thread compaction_thread([&writer] {
       // compaction will fail because of
@@ -6713,40 +6711,37 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_TRUE(writer->Compact(check_compacting_segments));
     });
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    while (true) {
+      ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    bool has = false;
-    dir.exists(has, dir.blocker);
-
-    while (!has) {
-      dir.exists(has, dir.blocker);
-      ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
-
-      auto policy_guard = std::unique_lock{dir.policy_lock};
-      dir.policy_applied.wait_for(policy_guard, 1000ms);
+      auto policy_guard = std::unique_lock{fs.policy_lock};
+      if (fs.created) {
+        break;
+      }
+      fs.policy_applied.wait_for(policy_guard, 1000ms);
     }
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
     // remove doc1 in background
     tests::Remove(*writer, *query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
     // No unused column store: a remove-only batch no longer creates a `.col`.
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
 
-    dir.intermediate_commits_lock.unlock();  // finish compaction
+    fs.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
     // compaction still holds a reference to the snapshot pointed by
     // segments_2
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(0, dir.RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit compaction
 
     // files from segments 1 and 2,
     // segment_3
     // segment_2 + stale segment 1 meta + stale segment 2 meta
-    ASSERT_EQ(count + 3 + 1, irs::DirectoryCleaner::clean(dir));
+    ASSERT_EQ(count + 3 + 1, dir.RemoveUnreferenced());
 
     // validate structure (does not take removals into account)
     tests::index_t expected;
@@ -7037,11 +7032,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // compact
@@ -7050,7 +7045,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
@@ -7065,13 +7060,14 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit nothing)
-    ASSERT_EQ(1 + count, irs::DirectoryCleaner::clean(
-                           dir()));  // +1 for corresponding segments_* file
+    ASSERT_EQ(
+      1 + count,
+      dir().RemoveUnreferenced());  // +1 for corresponding segments_* file
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // nothing to compact
     writer->RefreshCommit();
@@ -7121,23 +7117,23 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // compact
 
@@ -7158,12 +7154,12 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction (will commit segment
                                       // 3 + compaction)
     ASSERT_EQ(1 + count,
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments_*
+              dir().RemoveUnreferenced());  // +1 for segments_*
 
     // validate structure
     tests::index_t expected;
@@ -7232,23 +7228,23 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(0, dir().RemoveUnreferenced());  // segments_1
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // compact
 
@@ -7269,16 +7265,16 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(0, dir().RemoveUnreferenced());  // segments_1
 
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(0, dir().RemoveUnreferenced());  // segments_1
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction (will commit segment
                                       // 3 + compaction)
     ASSERT_EQ(count + 1,
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments_*
+              dir().RemoveUnreferenced());  // +1 for segments_*
 
     // validate structure
     tests::index_t expected;
@@ -7533,18 +7529,18 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     ASSERT_FALSE(
       writer
@@ -7556,7 +7552,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     // Both segments are already registered for compaction, so the policy skips
     // them and finds nothing to compact (Ok, no candidates) instead of picking
     // an in-flight segment.
@@ -7571,13 +7567,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit compaction)
-    ASSERT_EQ(1 + count, irs::DirectoryCleaner::clean(
-                           dir()));  // +1 for corresponding segments_* file
+    ASSERT_EQ(
+      1 + count,
+      dir().RemoveUnreferenced());  // +1 for corresponding segments_* file
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7639,24 +7636,24 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7682,14 +7679,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit segment 3)
 
     // writer still holds a reference to segments_2
     // because it's under compaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7698,7 +7695,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
     ASSERT_EQ(1 + 1 + count,
-              irs::DirectoryCleaner::clean(dir()));  // segments_2
+              dir().RemoveUnreferenced());  // segments_2
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7773,25 +7770,25 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7817,18 +7814,18 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit segment 3)
 
     // writer still holds a reference to segments_3
     // because it's under compaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7840,7 +7837,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(
       *writer);               // commit pending merge, segment 4 (doc5 + doc6)
     ASSERT_EQ(count + 1 + 1,  // +1 for segments_3
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments
+              dir().RemoveUnreferenced());  // +1 for segments
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7943,22 +7940,22 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -7984,7 +7981,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     AssertSnapshotEquality(
@@ -7993,7 +7990,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // writer still holds a reference to segments_2
     // because it's under compaction
     // No unused column store: a remove-only batch no longer creates a `.col`.
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8004,7 +8001,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
     ASSERT_EQ(count + 2 + 1,  // +2 for  segments_2 + stale segment 1 meta
-              irs::DirectoryCleaner::clean(dir()));  // +1 for segments
+              dir().RemoveUnreferenced());  // +1 for segments
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8086,23 +8083,23 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8128,13 +8125,13 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
     // No unused column store: a remove-only batch no longer creates a `.col`.
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8144,7 +8141,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8229,23 +8226,23 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8280,7 +8277,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8369,7 +8366,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);
 
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     ASSERT_TRUE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -8379,7 +8376,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // check all old segments are deleted (no old version of segments is
     // left in cache and blocking )
     ASSERT_EQ(count + 3,
-              irs::DirectoryCleaner::clean(dir()));  // +3 segment files
+              dir().RemoveUnreferenced());  // +3 segment files
   }
 
   // repeatable compaction of already compacted segment
@@ -8395,28 +8392,28 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // check compacting segments
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // this compaction will be postponed
     ASSERT_TRUE(writer->Compact(
@@ -8452,11 +8449,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // so they are no longer in the merged snapshot: transient Busy, not Fail.
     ASSERT_EQ(irs::CompactionError::Busy,
               writer->Compact(do_commit_and_compact_count).error);
-    ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_NE(0, dir().RemoveUnreferenced());
     // check all data is deleted
     const auto one_segment_count = count;
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
     // files count should be the same as with one segment
     ASSERT_EQ(one_segment_count, count);
   }
@@ -8476,28 +8473,28 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // check compacting segments
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // this compaction will be postponed
     ASSERT_TRUE(writer->Compact(
@@ -8538,11 +8535,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
               writer->Compact(do_commit_and_compact_count).error);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_NE(0, dir().RemoveUnreferenced());
     // check all data is deleted
     const auto one_segment_count = count;
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
     // files count should be the same as with one segment
     ASSERT_EQ(one_segment_count, count);
   }
@@ -8560,7 +8557,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -8568,7 +8565,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(1, dir().RemoveUnreferenced());
 
     tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
@@ -8582,7 +8579,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshAbort();
 
     // leftovers cleanup (aborted compaction segment no longer emits a `.col`)
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(1, dir().RemoveUnreferenced());
 
     // still pending
     expected_compacting_segments = {0, 1};
@@ -8602,7 +8599,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
 
     // cleanup should remove old files
-    ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_NE(0, dir().RemoveUnreferenced());
 
     tests::index_t expected;
     expected.emplace_back();
@@ -8634,23 +8631,23 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8676,14 +8673,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
     // No unused column store: a remove-only batch no longer creates a `.col`.
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8693,7 +8690,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);  // commit pending merge
 
     // segments_2 + stale segment 1 meta + stale segment 2 meta +1 for segments,
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8800,20 +8797,20 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
 
     // check compacting segments
@@ -8821,7 +8818,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // compact
 
@@ -8842,14 +8839,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
 
     // writer still holds a reference to segments_2
     // because it's under compaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_2
+    ASSERT_EQ(0, dir().RemoveUnreferenced());  // segments_2
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8863,7 +8860,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // +1 for segment 1 meta,
     // +1 for segment 2 meta,
     // +1 for segments_2
-    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8969,24 +8966,24 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // segment 2
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_1
+    ASSERT_EQ(1, dir().RemoveUnreferenced());  // segments_1
 
     size_t num_files_segment_2 = count;
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
     num_files_segment_2 = count - num_files_segment_2;
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
 
     // check compacting segments
@@ -8994,7 +8991,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -9002,7 +8999,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
 
     ASSERT_TRUE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -9026,17 +9023,17 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     size_t num_files_compaction_segment = count;
     count = 0;
-    ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
+    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
     num_files_compaction_segment = count - num_files_compaction_segment;
 
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(0, dir().RemoveUnreferenced());
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
 
     // writer still holds a reference to segments_2
     // because it's under compaction
-    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_2
+    ASSERT_EQ(0, dir().RemoveUnreferenced());  // segments_2
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -9056,7 +9053,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // +1 for segments_2, +1 for segments_2
     ASSERT_EQ(num_files_compaction_segment + num_files_segment_2 + 1 + 1,
-              irs::DirectoryCleaner::clean(dir()));
+              dir().RemoveUnreferenced());
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -9127,7 +9124,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test default progress (false)
   {
-    irs::MemoryDirectory dir;
+    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                        irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9160,7 +9158,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test always-false progress
   {
-    irs::MemoryDirectory dir;
+    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                        irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9198,7 +9197,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test always-true progress
   {
-    irs::MemoryDirectory dir;
+    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                        irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
@@ -9244,7 +9244,8 @@ TEST_P(IndexTestCase, compact_progress) {
   // +1 for pre-decrement in 'progress'
   for (size_t i = 1; i < progress_call_count; ++i) {
     size_t call_count = i;
-    irs::MemoryDirectory dir;
+    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
+                        irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     for (size_t size = 0; size < max_docs; ++size) {
@@ -10965,17 +10966,17 @@ TEST_P(IndexTestCase, writer_close) {
     files.emplace_back(std::move(name));
     return true;
   };
-  ASSERT_TRUE(directory.visit(list_files));
+  ASSERT_TRUE(directory.Visit(list_files));
 
   // file removal should pass for all files (especially valid for Microsoft
   // Windows)
   for (auto& file : files) {
-    ASSERT_TRUE(directory.remove(file));
+    ASSERT_TRUE(directory.Remove(file));
   }
 
   // validate that all files have been removed
   files.clear();
-  ASSERT_TRUE(directory.visit(list_files));
+  ASSERT_TRUE(directory.Visit(list_files));
   ASSERT_TRUE(files.empty());
 }
 
@@ -11003,7 +11004,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
       count += size_t(name.size() && '_' == name[0]);
       return true;
     };
-  directory.visit(get_number_of_files_in_segments);
+  directory.Visit(get_number_of_files_in_segments);
   const auto one_segment_files_count = count;
 
   // Create segment and immediately do a remove operation
@@ -11033,11 +11034,11 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
 
   // file removal should pass for all files (especially valid for Microsoft
   // Windows)
-  irs::directory_utils::RemoveAllUnreferenced(directory);
+  directory.RemoveAllUnreferenced();
 
   // validate that all files from old segments have been removed
   count = 0;
-  directory.visit(get_number_of_files_in_segments);
+  directory.Visit(get_number_of_files_in_segments);
   ASSERT_EQ(count, one_segment_files_count);
 }
 
@@ -11064,7 +11065,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
       count += size_t(name.size() && '_' == name[0]);
       return true;
     };
-  directory.visit(get_number_of_files_in_segments);
+  directory.Visit(get_number_of_files_in_segments);
   const auto one_segment_files_count = count;
 
   // Create segment and immediately do a remove operation for all added
@@ -11097,11 +11098,11 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
 
   // file removal should pass for all files (especially valid for Microsoft
   // Windows)
-  irs::directory_utils::RemoveAllUnreferenced(directory);
+  directory.RemoveAllUnreferenced();
 
   // validate that all files from old segments have been removed
   count = 0;
-  directory.visit(get_number_of_files_in_segments);
+  directory.Visit(get_number_of_files_in_segments);
   ASSERT_EQ(count, one_segment_files_count);
 }
 
@@ -11126,7 +11127,7 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
       count += size_t(name.size() && '_' == name[0]);
       return true;
     };
-  directory.visit(get_number_of_files_in_segments);
+  directory.Visit(get_number_of_files_in_segments);
   ASSERT_GT(count, 0);
 
   // Remove all documents from segment
@@ -11142,11 +11143,11 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
     ASSERT_EQ(0, reader.size());
     // file removal should pass for all files (especially valid for
     // Microsoft Windows)
-    irs::directory_utils::RemoveAllUnreferenced(directory);
+    directory.RemoveAllUnreferenced();
 
     // validate that all files from old segments have been removed
     count = 0;
-    directory.visit(get_number_of_files_in_segments);
+    directory.Visit(get_number_of_files_in_segments);
     ASSERT_EQ(count, 0);
   }
 
@@ -11206,7 +11207,7 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
     ASSERT_EQ(0, reader.size());
     // file removal should pass for all files (especially valid for
     // Microsoft Windows)
-    irs::directory_utils::RemoveAllUnreferenced(directory);
+    directory.RemoveAllUnreferenced();
 
     // validate that all files from old segments have been removed
     size_t count{0};
@@ -11215,7 +11216,7 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
         count += size_t(name.size() && '_' == name[0]);
         return true;
       };
-    directory.visit(get_number_of_files_in_segments);
+    directory.Visit(get_number_of_files_in_segments);
     ASSERT_EQ(count, 0);
   }
 
@@ -11329,7 +11330,7 @@ class IndexTestCase11 : public tests::IndexTestBase {};
 
 namespace {
 
-std::optional<std::string> ReadMetaPayload(const irs::Directory& dir,
+std::optional<std::string> ReadMetaPayload(const irs::IndexFiles& dir,
                                            const irs::DirectoryReader& reader) {
   std::optional<std::string> payload;
   irs::IndexMeta meta;
@@ -11680,7 +11681,7 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   std::string old_meta;
   ASSERT_TRUE(irs::index_meta::LastFile(dir(), old_meta));
   {
-    auto out = dir().create(old_meta);
+    auto out = dir().Create(old_meta);
     ASSERT_NE(nullptr, out);
     irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint64_t>(
@@ -11775,7 +11776,7 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
 
   auto mask_files = [&] {
     size_t count = 0;
-    directory.visit([&](std::string_view file) {
+    directory.Visit([&](std::string_view file) {
       count += file.ends_with(".sm");
       return true;
     });
@@ -11806,7 +11807,7 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
     ASSERT_EQ(meta.docs_mask->FrozenSize(), meta.docs_mask_size);
   }
 
-  irs::directory_utils::RemoveAllUnreferenced(directory);
+  directory.RemoveAllUnreferenced();
   ASSERT_EQ(1, mask_files());
 
   auto reader =
@@ -11875,7 +11876,6 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
   {
     auto reader = writer->GetSnapshot();
-    EXPECT_EQ(reader->CountMappedMemory(), 0);
     EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), 0);
   }
 
@@ -11910,23 +11910,9 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
   writer.reset();
   auto reader =
     irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  if (dynamic_cast<irs::MemoryDirectory*>(&directory) == nullptr) {
-    // MMapDirectory keeps payload files memory-mapped, so only the
-    // non-mappable streams contribute to the file_descriptors counter;
-    // file-system based directories also retain an fd for the per-field
-    // `.idx` file introduced by the current index format.
-    const size_t expected_fd =
-      dynamic_cast<irs::MMapDirectory*>(&directory) != nullptr ? 4 : 5;
-    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), expected_fd);
+  if (directory.Kind() == irs::StorageKind::Local) {
+    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), 4);
   }
-  auto mapped_memory = reader.CountMappedMemory();
-#ifdef __linux__
-  if (dynamic_cast<irs::MMapDirectory*>(&directory) != nullptr) {
-    EXPECT_GT(mapped_memory, 0);
-    mapped_memory = 0;
-  }
-#endif
-  EXPECT_EQ(mapped_memory, 0);
 
   ASSERT_EQ(1, reader.size());
   auto& segment = (*reader)[0];

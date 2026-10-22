@@ -65,7 +65,6 @@ class FieldReader final {
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
 
-  uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
   const TermReader* field(field_id id) const;

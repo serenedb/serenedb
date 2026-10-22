@@ -89,6 +89,9 @@ Success
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_RAW
+#| CALL enable_logging(storage = 'file', storage_config = {'path': '/var/log/serenedb'});
+
 # DOCS_TEST_BODY
 
 query
@@ -98,6 +101,9 @@ Success
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_RAW
+#| CALL enable_logging(storage_path = '/var/log/serenedb');
+
 # DOCS_TEST_BODY
 
 query
@@ -106,6 +112,13 @@ CALL enable_logging(storage_path = '${__TEST_DIR__}/path/to/store/logs');
 Success
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_RAW
+#| -- normalized: creates `/var/log/serenedb/duckdb_log_contexts.csv` and `/var/log/serenedb/duckdb_log_entries.csv`
+#| CALL enable_logging(storage_path = '/var/log/serenedb');
+#|
+#| -- denormalized: creates `/var/log/serenedb/logs.csv`
+#| CALL enable_logging(storage_path = '/var/log/serenedb/logs.csv');
 
 # DOCS_TEST_BODY
 
@@ -148,6 +161,9 @@ Success
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_RAW
+#| CALL enable_logging(storage_path = '/var/log/serenedb', storage_buffer_size = 0);
+
 # DOCS_TEST_BODY
 
 query
@@ -172,7 +188,7 @@ CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
 Success
 
 query
--- omitting `storage = 'file'` -> is implied from presence of `storage_config`
+-- omitting `storage = 'file'`: a `path` in `storage_config` implies it
 CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
 ----
 Success

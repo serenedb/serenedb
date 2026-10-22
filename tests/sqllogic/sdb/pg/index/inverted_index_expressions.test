@@ -2057,6 +2057,306 @@ QUERY PLAN
 statement ok
 RESET TimeZone;
 
+# --- Groups of an indexed expression that depends on the session are computed from the rows, not read from the index's terms.
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_tz_terms(id INT PRIMARY KEY, ts TIMESTAMPTZ, tsn TIMESTAMPTZ_NS, v VARIANT, b BYTEA, label VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_tz_terms_idx ON inc_e_tz_terms USING inverted(
+    id, (ts::VARCHAR), (tsn::VARCHAR), (v::VARCHAR), (b::VARCHAR), (lower(label)));
+
+statement ok
+INSERT INTO inc_e_tz_terms VALUES
+    (1, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT, 'abc'::BYTEA, 'A'),
+    (2, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT, 'abc'::BYTEA, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_tz_terms;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT ts::VARCHAR AS s, count(*) AS c FROM inc_e_tz_terms_idx GROUP BY ts::VARCHAR;
+----
+s	c
+2026-01-02 08:30:00+09	2
+
+query
+SELECT tsn::VARCHAR AS s, count(*) AS c FROM inc_e_tz_terms_idx GROUP BY tsn::VARCHAR;
+----
+s	c
+2026-01-02 08:30:00+09	2
+
+query
+SELECT v::VARCHAR AS s, count(*) AS c FROM inc_e_tz_terms_idx GROUP BY v::VARCHAR;
+----
+s	c
+2026-01-02 08:30:00+09	2
+
+query
+SELECT s, count(*) AS c FROM (SELECT ts::VARCHAR AS s FROM inc_e_tz_terms_idx) GROUP BY s;
+----
+s	c
+2026-01-02 08:30:00+09	2
+
+query
+EXPLAIN SELECT ts::VARCHAR, count(*) FROM inc_e_tz_terms_idx GROUP BY ts::VARCHAR;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────╮
+│ Groups: #0                       │
+│ Aggregates: count_star()         │
+│ ~1 row                           │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: CAST(ts AS VARCHAR) │
+│ ~2 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: inc_e_tz_terms_idx        │
+│ Lookup: table                    │
+│ Projections: ts                  │
+│ ~2 rows                          │
+╰──────────────────────────────────╯
+
+statement ok
+RESET TimeZone;
+
+statement ok
+SET bytea_output = 'escape';
+
+query
+SELECT b::VARCHAR AS s, count(*) AS c FROM inc_e_tz_terms_idx GROUP BY b::VARCHAR;
+----
+s	c
+abc	2
+
+statement ok
+RESET bytea_output;
+
+query
+SELECT lower(label) AS l, count(*) AS c FROM inc_e_tz_terms_idx GROUP BY lower(label);
+----
+l	c
+a	2
+
+query
+EXPLAIN SELECT lower(label), count(*) FROM inc_e_tz_terms_idx GROUP BY lower(label);
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────╮
+│ Projections:                                  │
+│ sdb_inverted_index_term$lower("label"),       │
+│ CAST(#1 AS BIGINT)                            │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ HASH_GROUP_BY ───────┴───────────────────────╮
+│ Groups: #0                                    │
+│ Aggregates: sum(#1)                           │
+│ ~1 row                                        │
+╰───────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴───────────────────────╮
+│ Index: inc_e_tz_terms_idx                     │
+│ TsDict: lower("label")                        │
+│ Projections:                                  │
+│ sdb_inverted_index_term$lower("label"),       │
+│ sdb_inverted_index_term_count$lower("label")  │
+│ ~1 row                                        │
+╰───────────────────────────────────────────────╯
+
+# --- Comparisons on an indexed expression that depends on the session are checked on each row; AT TIME ZONE pins the zone, and @@ searches the stored text.
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_tz_filters(id INT PRIMARY KEY, ts TIMESTAMPTZ, b BYTEA);
+
+statement ok
+CREATE INDEX inc_e_tz_filters_idx ON inc_e_tz_filters USING inverted(
+    id, (ts::VARCHAR), ((ts AT TIME ZONE 'UTC')::VARCHAR), (b::VARCHAR));
+
+statement ok
+INSERT INTO inc_e_tz_filters VALUES
+    (1, '2026-01-01 23:30:00+00', 'abc'::BYTEA),
+    (2, '2026-01-03 12:00:00+00', 'xyz'::BYTEA),
+    (3, NULL, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_tz_filters;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR = '2026-01-02 08:30:00+09';
+----
+id
+1
+
+query
+SELECT count(*) AS c FROM inc_e_tz_filters_idx WHERE ts::VARCHAR = '2026-01-01 23:30:00+00';
+----
+c
+0
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR <> '2026-01-02 08:30:00+09';
+----
+id
+2
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR BETWEEN '2026-01-02' AND '2026-01-03';
+----
+id
+1
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR IN ('2026-01-02 08:30:00+09', '2026-01-03 21:00:00+09') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR LIKE '2026-01-02%';
+----
+id
+1
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR IS NULL;
+----
+id
+3
+
+query
+SELECT count(*) AS c FROM inc_e_tz_filters_idx WHERE NOT (ts::VARCHAR = '2026-01-02 08:30:00+09' OR id = 2);
+----
+c
+0
+
+query
+SELECT id FROM inc_e_tz_filters WHERE ts::VARCHAR = '2026-01-02 08:30:00+09';
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR = '2026-01-02 08:30:00+09';
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────╮
+│ Projections: #1                                │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ FILTER ───────────────┴───────────────────────╮
+│ Expression:                                    │
+│ CAST(ts AS VARCHAR) = '2026-01-02 08:30:00+09' │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+│ Index: inc_e_tz_filters_idx                    │
+│ Lookup: table                                  │
+│ Projections: ts, id                            │
+│ ~3 rows                                        │
+╰────────────────────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE (ts AT TIME ZONE 'UTC')::VARCHAR = '2026-01-01 23:30:00';
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM inc_e_tz_filters_idx WHERE (ts AT TIME ZONE 'UTC')::VARCHAR = '2026-01-01 23:30:00';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: inc_e_tz_filters_idx                      │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ Term ───────────────────────────────────────╮ │
+│ │ Field:                                       │ │
+│ │ CAST(timezone('UTC', ts) AS VARCHAR)(string) │ │
+│ │ Value: 2026-01-01 23:30:00                   │ │
+│ ╰──────────────────────────────────────────────╯ │
+│ Projections: id                                  │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+query
+SELECT (ts AT TIME ZONE 'UTC')::VARCHAR AS s, count(*) AS c FROM inc_e_tz_filters_idx GROUP BY (ts AT TIME ZONE 'UTC')::VARCHAR ORDER BY s;
+----
+s	c
+2026-01-01 23:30:00	1
+2026-01-03 12:00:00	1
+NULL	1
+
+query
+EXPLAIN SELECT (ts AT TIME ZONE 'UTC')::VARCHAR, count(*) FROM inc_e_tz_filters_idx GROUP BY (ts AT TIME ZONE 'UTC')::VARCHAR;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────╮
+│ Projections:                                                        │
+│ sdb_inverted_index_term$CAST(timezone('UTC', ts) AS VARCHAR),       │
+│ CAST(#1 AS BIGINT)                                                  │
+│ ~1 row                                                              │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────┴──────────────────────────────────╮
+│ Groups: #0                                                          │
+│ Aggregates: sum(#1)                                                 │
+│ ~1 row                                                              │
+╰──────────────────────────────────┬──────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────┴──────────────────────────────────╮
+│ Index: inc_e_tz_filters_idx                                         │
+│ TsDict:                                                             │
+│ CAST(timezone('UTC', ts) AS VARCHAR)                                │
+│ Projections:                                                        │
+│ sdb_inverted_index_term$CAST(timezone('UTC', ts) AS VARCHAR),       │
+│ sdb_inverted_index_term_count$CAST(timezone('UTC', ts) AS VARCHAR)  │
+│ ~2 rows                                                             │
+╰─────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE ts::VARCHAR @@ '2026-01-01 23:30:00+00'::tokenize('keyword');
+----
+id
+1
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE NOT (ts::VARCHAR @@ '2026-01-01 23:30:00+00'::tokenize('keyword'));
+----
+id
+2
+
+statement ok
+RESET TimeZone;
+
+statement ok
+SET bytea_output = 'escape';
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE b::VARCHAR = 'abc';
+----
+id
+1
+
+statement ok
+RESET bytea_output;
+
+query
+SELECT id FROM inc_e_tz_filters_idx WHERE b::VARCHAR = '\x616263';
+----
+id
+1
+
 statement ok
 CREATE TABLE inc_e_dict(id INT PRIMARY KEY, cat VARCHAR, title VARCHAR);
 

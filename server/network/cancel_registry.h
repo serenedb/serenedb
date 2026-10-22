@@ -78,9 +78,14 @@ struct CancelToken {
     ctx = nullptr;
     session.reset();
   }
+  duckdb::idx_t Role() {
+    absl::MutexLock lock{&mu};
+    return role;
+  }
 
   absl::Mutex mu;
   duckdb::ClientContext* ctx = nullptr;
+  duckdb::idx_t role = 0;
   duckdb::weak_ptr<TransportBase> session;
 };
 
@@ -157,42 +162,31 @@ class CancelRegistry {
     }
   }
 
-  enum class CancelResult {
-    NotFound,
-    Cancelled,
-    Ambiguous,
+  struct PidMatch {
+    std::shared_ptr<CancelToken> token;
+    bool ambiguous;
   };
 
-  // Cancel by the pid half of the key alone (the high 32 bits sent in
+  // Find by the pid half of the key alone (the high 32 bits sent in
   // BackendKeyData / reported by pg_backend_pid). Unlike Cancel(), this needs
   // no secret -- it backs the SQL pg_cancel_backend()/pg_terminate_backend(),
-  // which are authorised by being a (super)user session, not by the cancel key.
+  // which check the caller's role against the backend's, not the cancel key.
   // The pid is the high half of a RANDOM key, so it is not guaranteed unique
   // across live backends (unlike a real OS pid); if two share it the request is
-  // ambiguous and we cancel NONE rather than risk hitting the wrong backend.
-  CancelResult CancelByPid(uint32_t pid, bool terminate = false) {
-    std::shared_ptr<CancelToken> token;
-    int matches = 0;
-    {
-      absl::MutexLock lock{&_mu};
-      for (const auto& [key, candidate] : _tokens) {
-        if (static_cast<uint32_t>(key >> 32) == pid && ++matches == 1) {
-          token = candidate;
-        }
+  // ambiguous and none is found rather than risk hitting the wrong backend.
+  PidMatch FindByPid(uint32_t pid) {
+    PidMatch match{nullptr, false};
+    absl::MutexLock lock{&_mu};
+    for (const auto& [key, candidate] : _tokens) {
+      if (static_cast<uint32_t>(key >> 32) != pid) {
+        continue;
       }
+      if (match.token) {
+        return {nullptr, true};
+      }
+      match.token = candidate;
     }
-    if (matches == 0) {
-      return CancelResult::NotFound;
-    }
-    if (matches > 1) {
-      return CancelResult::Ambiguous;
-    }
-    if (terminate) {
-      token->Terminate();
-    } else {
-      token->Cancel();
-    }
-    return CancelResult::Cancelled;
+    return match;
   }
 
  private:

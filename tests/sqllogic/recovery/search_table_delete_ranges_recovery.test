@@ -1,0 +1,103 @@
+control substitution on
+
+statement ok
+CREATE TABLE dr (id BIGINT, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+      row_group_size = 8192);
+
+statement ok
+INSERT INTO dr SELECT i, 'row ' || i FROM range(0, 100000) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dr;
+
+statement ok
+INSERT INTO dr SELECT i, 'row ' || i FROM range(100000, 200000) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dr;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+DELETE FROM dr WHERE id < 50000;
+
+statement ok
+DELETE FROM dr WHERE id % 1000 = 7 AND id >= 50000;
+
+statement ok
+UPDATE dr SET body = 'updated' WHERE id >= 120000 AND id < 130000 AND id % 1000 <> 7;
+
+statement ok
+SET sdb_faults = 'search_delete_wal_rowids';
+
+statement ok
+DELETE FROM dr WHERE id >= 150000 AND id < 160000 AND id % 1000 <> 7;
+
+statement ok
+DELETE FROM dr WHERE id % 1000 = 500 AND id >= 50000
+  AND NOT (id >= 120000 AND id < 130000) AND NOT (id >= 150000 AND id < 160000);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+connection after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) dr;
+
+connection after
+query
+SELECT count(*), min(id), max(id) FROM dr;
+----
+count	min	max
+139730	50000	199999
+
+connection after
+query
+SELECT count(*) FROM dr WHERE id >= 150000 AND id < 160000;
+----
+count
+0
+
+connection after
+query
+SELECT count(*) FROM dr WHERE id % 1000 IN (7, 500) AND NOT (id >= 120000 AND id < 130000);
+----
+count
+0
+
+connection after
+query
+SELECT count(*) FROM dr WHERE body = 'updated';
+----
+count
+9990
+
+connection after
+query
+SELECT count(*) FROM dr WHERE id >= 120000 AND id < 130000;
+----
+count
+9990
+
+connection after
+statement ok
+DELETE FROM dr WHERE id < 100000;
+
+connection after
+statement ok
+VACUUM (REFRESH_TABLE) dr;
+
+connection after
+query
+SELECT count(*), min(id) FROM dr;
+----
+count	min
+89830	100000

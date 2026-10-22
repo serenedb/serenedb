@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/catalog/catalog_entry.hpp>
 #include <string_view>
 
 namespace duckdb {
@@ -41,5 +42,7 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
 
 void RequireSuperuser(duckdb::ClientContext& context,
                       std::string_view function);
+
+bool Unowned(const duckdb::CatalogEntry& entry);
 
 }  // namespace sdb::auth

@@ -28,9 +28,17 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "string.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+
+void CheckLikePattern(std::string_view pattern) {
+  if (LikePatternEndsWithEscape(pattern)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_ESCAPE_SEQUENCE),
+                    ERR_MSG("LIKE pattern must not end with escape character"));
+  }
+}
 
 void FromLike(BoolTarget parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
@@ -48,6 +56,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
       ERR_HINT("ts_like requires a VARCHAR column with identity or wildcard "
                "analyzer."));
   }
+  CheckLikePattern(pattern);
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardTokenizer>::id()) {

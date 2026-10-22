@@ -21,17 +21,22 @@
 
 #include <deque>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/list.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <optional>
 
 #include "connector/primary_key.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "pg/system_catalog.h"
 #include "server/utils/app_server.h"
 
@@ -236,6 +241,120 @@ void EmitColumnsForView(duckdb::ViewCatalogEntry& view,
   }
 }
 
+struct IndexedColumns {
+  duckdb::Identifier relation;
+  duckdb::vector<duckdb::Identifier> names;
+  duckdb::vector<duckdb::LogicalType> types;
+};
+
+IndexedColumns ColumnsOfTable(const duckdb::TableCatalogEntry& table) {
+  IndexedColumns columns{.relation = table.name};
+  for (const auto& column : table.GetColumns().Logical()) {
+    columns.names.push_back(column.Name());
+    columns.types.push_back(column.Type());
+  }
+  return columns;
+}
+
+duckdb::LogicalType IndexColumnType(duckdb::ClientContext& context,
+                                    const IndexedColumns& indexed,
+                                    const IndexColumn& column) {
+  if (column.attnum > 0) {
+    return indexed.types[column.attnum - 1];
+  }
+  if (!column.expression) {
+    return duckdb::LogicalType::SQLNULL;
+  }
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->bind_context.AddGenericBinding(
+    duckdb::TableIndex(0), indexed.relation, indexed.names, indexed.types);
+  duckdb::IndexBinder index_binder(*binder, context);
+  auto expression = column.expression->Copy();
+  return index_binder.Bind(expression)->GetReturnType();
+}
+
+void EmitColumnsForIndex(duckdb::idx_t index_oid, const IndexColumns& columns,
+                         const IndexedColumns& indexed,
+                         duckdb::ClientContext& context,
+                         std::deque<std::string>& names,
+                         std::vector<PgAttribute>& values) {
+  for (size_t i = 0; i < columns.columns.size(); ++i) {
+    const auto& column = columns.columns[i];
+    const auto type_oid = Type2Oid(IndexColumnType(context, indexed, column));
+    const auto phys = GetPhysicalInfo(type_oid);
+    values.push_back(PgAttribute{
+      .attrelid = index_oid,
+      .attname = names.emplace_back(column.name),
+      .atttypid = type_oid,
+      .attlen = phys.attlen,
+      .attnum = static_cast<int16_t>(i + 1),
+      .atttypmod = -1,
+      .attndims = 0,
+      .attbyval = phys.attbyval,
+      .attalign = phys.attalign,
+      .attstorage = phys.attstorage,
+      .attcompression = PgAttribute::Attcompression::None,
+      .attnotnull = false,
+      .atthasdef = false,
+      .atthasmissing = false,
+      .attidentity = PgAttribute::Attidentity::None,
+      .attgenerated = PgAttribute::Attgenerated::None,
+      .attisdropped = false,
+      .attislocal = true,
+      .attinhcount = 0,
+      .attcollation = GetCollationForType(type_oid),
+    });
+  }
+}
+
+void EmitColumnsForIndex(duckdb::DuckIndexEntry& index,
+                         duckdb::ClientContext& context,
+                         std::deque<std::string>& names,
+                         std::vector<PgAttribute>& values) {
+  auto host = index.GetRelation(index.catalog.GetCatalogTransaction(context));
+  if (!host) {
+    return;
+  }
+  if (host->type == duckdb::CatalogType::TABLE_ENTRY) {
+    const auto& table = host->Cast<duckdb::TableCatalogEntry>();
+    EmitColumnsForIndex(index.oid, ColumnsOfIndex(index, &table),
+                        ColumnsOfTable(table), context, names, values);
+    return;
+  }
+  if (host->type != duckdb::CatalogType::VIEW_ENTRY) {
+    return;
+  }
+  auto& view = host->Cast<duckdb::ViewCatalogEntry>();
+  auto view_columns = GetViewColumns(context, view);
+  if (!view_columns.info) {
+    return;
+  }
+  EmitColumnsForIndex(index.oid, ColumnsOfIndex(index, nullptr),
+                      IndexedColumns{.relation = view.name,
+                                     .names = std::move(view_columns.names),
+                                     .types = view_columns.info->types},
+                      context, names, values);
+}
+
+void EmitColumnsForKeyIndexes(const duckdb::TableCatalogEntry& table,
+                              duckdb::ClientContext& context,
+                              std::deque<std::string>& names,
+                              std::vector<PgAttribute>& values) {
+  std::optional<IndexedColumns> indexed;
+  for (const auto& constraint : table.GetConstraints()) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    if (!indexed) {
+      indexed = ColumnsOfTable(table);
+    }
+    const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+    EmitColumnsForIndex(unique.index_oid,
+                        ColumnsOfIndex(KeyIndex{&table, &unique}), *indexed,
+                        context, names, values);
+  }
+}
+
 }  // namespace
 
 template<>
@@ -247,10 +366,15 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   VisitEntries<duckdb::TableCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       EmitColumnsForTable(table, context, values);
+      EmitColumnsForKeyIndexes(table, context, field_names, values);
     });
   VisitEntries<duckdb::ViewCatalogEntry>(
     context, GetDatabase(), [&](duckdb::ViewCatalogEntry& view) {
       EmitColumnsForView(view, context, field_names, values);
+    });
+  VisitEntries<duckdb::DuckIndexEntry>(
+    context, GetDatabase(), [&](duckdb::DuckIndexEntry& index) {
+      EmitColumnsForIndex(index, context, field_names, values);
     });
   // Emit pg_attribute rows for composite (record) types so that drivers can
   // introspect the field list via the standard `attrelid = $oid` lookup. The

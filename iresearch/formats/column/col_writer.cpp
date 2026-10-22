@@ -30,12 +30,16 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+
+#ifndef IRESEARCH_NO_VECTOR
+#include "iresearch/formats/hnsw/hnsw_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
+#endif
 
 namespace irs {
 namespace {
@@ -198,12 +202,14 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   auto entry = std::make_unique<AnnEntry>();
   entry->column_id = column_id;
   switch (info.kind) {
+#ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
       entry->writer = std::make_unique<IvfWriter>(info);
       break;
     case AnnKind::Hnsw:
       entry->writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
       break;
+#endif
     default:
       SDB_UNREACHABLE();
   }

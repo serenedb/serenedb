@@ -133,7 +133,7 @@ Match indexed tokens against a SQL `LIKE` pattern.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character. The pattern is matched against terms as they are stored in the index. |
+| `pattern` | `VARCHAR`/`BLOB` | — | A `LIKE` pattern. `%` matches any run of characters (including none), `_` matches exactly one character, and `\` makes the next character literal (`\%`, `\_`, `\\`). A pattern that ends in an unpaired `\` is an error. The pattern is matched against terms as they are stored in the index. |
 
 **How it works.** `ts_like` is applied to the *indexed* term form, not the raw text, so it is not tokenized further — match it against a column whose dictionary stores whole values (such as a `keyword`-style category column). It is the inverted-index analogue of SQL `LIKE`: a row matches when any of its indexed tokens satisfies the pattern.
 
@@ -632,6 +632,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `+a` | `a` is required. |
 | `-a` | `a` is excluded. |
 | `a*` | Prefix (wildcard) match. |
+| `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |

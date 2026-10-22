@@ -34,10 +34,6 @@ id	host
 # DOCS_TEST: example_002
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY jlow AS
-    split_text(case := 'lower');
-
-statement ok
 CREATE TABLE tickets (
     id INTEGER PRIMARY KEY,
     doc VARIANT
@@ -45,26 +41,46 @@ CREATE TABLE tickets (
 
 statement ok
 INSERT INTO tickets VALUES
-    (1, '{"title": "Disk Error", "priority": 5, "tags": ["ops", "urgent"]}'::JSON::VARIANT),
-    (2, '{"title": "All Good", "priority": 1, "tags": ["ops"]}'::JSON::VARIANT);
+    (1, '{"sku": "DSK-01", "title": "Disk Error", "description": "Disks failing on node 7", "priority": 5}'::JSON::VARIANT),
+    (2, '{"sku": "NET-02", "title": "All Good", "description": "Network check failed once, then passed", "priority": 1}'::JSON::VARIANT),
+    (3, '{"sku": "DSK-03", "title": "Disk Full", "description": "Disk failed on node 2", "priority": 4}'::JSON::VARIANT);
 
 # DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jlow AS
+    split_text(case := 'lower');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jstem AS
+    split_text(case := 'lower') | stem_words('en_US.UTF-8');
 
 statement ok
 CREATE INDEX tickets_idx ON tickets
     USING inverted (
         id,
+        (doc['sku']::VARCHAR),
         (doc['title']::VARCHAR) jlow,
-        (doc['priority']::INTEGER),
-        (doc['tags']::VARCHAR[]) jlow
+        (doc['description']::VARCHAR) jstem,
+        (doc['priority']::INTEGER)
     );
 
 query
 SELECT id, doc['title']::VARCHAR AS title
 FROM tickets_idx
-WHERE (doc['title']::VARCHAR) @@ 'error'
+WHERE (doc['description']::VARCHAR) @@ 'fails'
+  AND (doc['title']::VARCHAR) @@ 'disk'
   AND (doc['priority']::INTEGER) @@ ts_ge(3)
-  AND (doc['tags']::VARCHAR[]) @@ 'urgent'
+ORDER BY id;
+----
+id	title
+1	Disk Error
+3	Disk Full
+
+query
+SELECT id, doc['title']::VARCHAR AS title
+FROM tickets_idx
+WHERE (doc['sku']::VARCHAR) @@ 'DSK-01'
 ORDER BY id;
 ----
 id	title

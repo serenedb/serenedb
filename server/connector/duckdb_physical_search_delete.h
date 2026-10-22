@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <duckdb/common/enums/row_id_handling.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <memory>
 #include <vector>
@@ -45,7 +46,8 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
-    duckdb::vector<duckdb::idx_t> return_columns);
+    duckdb::vector<duckdb::idx_t> return_columns,
+    duckdb::RowIdHandling row_id_handling);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -71,6 +73,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
   std::vector<primary_key::PKColumn> _pk_columns;
   bool _return_chunk = false;
   duckdb::vector<duckdb::idx_t> _return_columns;
+  duckdb::RowIdHandling _row_id_handling;
 };
 
 }  // namespace sdb::connector

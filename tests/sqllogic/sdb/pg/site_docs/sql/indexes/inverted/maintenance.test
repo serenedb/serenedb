@@ -103,3 +103,43 @@ CREATE INDEX my_events_idx ON my_events USING inverted (msg) WITH (row_group_siz
 ----
 db error: ERROR: row_group_size is a table option on a search-backed table
 HINT: Set it in CREATE TABLE ... WITH (storage = 'search', row_group_size = ...).
+
+
+# DOCS_TEST: sdb_metrics
+
+statement ok
+INSERT INTO my_events VALUES
+    (1, 'disk full'),
+    (2, 'connection reset'),
+    (3, 'disk replaced');
+
+statement ok
+VACUUM (REFRESH_TABLE) my_events;
+
+# DOCS_TEST_BODY
+
+query
+SELECT c.relname AS relation, m.metric, m.value
+FROM sdb_metrics m
+JOIN pg_class c ON c.oid = m.relation_id
+WHERE m.metric IN ('num_docs', 'num_live_docs')
+ORDER BY c.relname, m.metric;
+----
+relation	metric	value
+logs_idx	num_docs	2
+logs_idx	num_live_docs	2
+my_events	num_docs	3
+my_events	num_live_docs	3
+
+query
+SELECT t.relname AS table_name, c.relname AS relation, m.value AS live_docs
+FROM sdb_metrics m
+JOIN pg_class c ON c.oid = m.relation_id
+LEFT JOIN pg_index i ON i.indexrelid = c.oid
+JOIN pg_class t ON t.oid = coalesce(i.indrelid, c.oid)
+WHERE m.metric = 'num_live_docs'
+ORDER BY t.relname, c.relname;
+----
+table_name	relation	live_docs
+my_events	my_events	3
+my_logs	logs_idx	2

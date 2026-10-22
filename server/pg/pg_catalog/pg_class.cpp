@@ -263,7 +263,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     auto row = MakeBaseRow(entry->ParentSchemaOid(), entry->oid,
                            entry->name.GetIdentifierName(), owner->second);
     row.relkind = PgClass::Relkind::Index;
-    row.relnatts = static_cast<int16_t>(entry->column_ids.size());
+    row.relnatts = static_cast<int16_t>(entry->parsed_expressions.size());
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;

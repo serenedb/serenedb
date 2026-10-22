@@ -137,6 +137,89 @@ def test_schema_param_places_the_tables(tmp_path: Path) -> None:
         server.close()
 
 
+def _otel_objects(server: _Server, catalog: str) -> int:
+    return server.pg.execute(
+        f"SELECT count(*) FROM {catalog} WHERE schemaname = 'public' "
+        "AND tablename LIKE 'otel\\_%'").fetchone()[0]
+
+
+def _indexes_of(server: _Server, table: str) -> list[str]:
+    return [row[0] for row in server.pg.execute(
+        "SELECT indexname FROM pg_indexes WHERE tablename = %s "
+        "ORDER BY indexname", (table,)).fetchall()]
+
+
+def test_missing_table_is_created_with_its_index(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _otel_objects(server, "pg_tables") == 7
+        assert _otel_objects(server, "pg_indexes") == 7
+        server.pg.execute("DROP INDEX otel_logs_idx")
+        server.pg.execute("DROP TABLE otel_metrics_summary")
+    finally:
+        server.close()
+
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _otel_objects(server, "pg_tables") == 7
+        assert _indexes_of(server, "otel_metrics_summary") == [
+            "otel_metrics_summary_idx"]
+        assert _indexes_of(server, "otel_logs") == []
+    finally:
+        server.close()
+
+
+def test_own_index_survives_restart(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        def export(bodies: list[str]) -> bytes:
+            return json.dumps({"resourceLogs": [{
+                "resource": {"attributes": [
+                    {"key": "service.name", "value": {"stringValue": "svc"}}]},
+                "scopeLogs": [{"logRecords": [{
+                    "timeUnixNano": str(1_700_000_000_000_000_000 + i),
+                    "body": {"stringValue": body},
+                } for i, body in enumerate(bodies)]}],
+            }]}).encode()
+
+        assert server.post("/v1/logs", export([
+            "upstream downstream_remote_disconnect",
+            "connection reset by peer",
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 2
+
+        server.pg.execute("DROP INDEX otel_logs_idx")
+        server.pg.execute(
+            "CREATE TEXT SEARCH DICTIONARY otel_words AS "
+            "split_by_non_alpha(case := 'lower', break := 'alnum') "
+            "WITH (frequency, position, norm)")
+        server.pg.execute(
+            "CREATE INDEX otel_logs_words ON otel_logs USING inverted "
+            '("timestamp", body otel_words, service_name)')
+    finally:
+        server.close()
+
+    server = _Server(tmp_path, "api=otel")
+    try:
+        assert _indexes_of(server, "otel_logs") == ["otel_logs_words"]
+        assert server.post("/v1/logs", export([
+            "local_disconnect", "remote peer closed",
+        ]), "application/json") == 200
+        assert server.count("otel_logs") == 4
+
+        def matches(query: str) -> list[str]:
+            return [row[0] for row in server.pg.execute(
+                "SELECT body FROM otel_logs WHERE body @@ %s ORDER BY body",
+                (query,)).fetchall()]
+
+        assert matches("remote") == [
+            "remote peer closed", "upstream downstream_remote_disconnect"]
+        assert matches("disconnect") == [
+            "local_disconnect", "upstream downstream_remote_disconnect"]
+    finally:
+        server.close()
+
+
 def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
     server = _Server(tmp_path, "api=otel&api=es")
     try:

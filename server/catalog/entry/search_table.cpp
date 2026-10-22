@@ -459,6 +459,17 @@ void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
   _storage->ReplayDelete(catalog.GetAttached(), chunk);
 }
 
+void SearchTableEntry::ReplayDeleteRanges(
+  duckdb::ClientContext&, const duckdb::vector<duckdb::row_t>& starts,
+  const duckdb::vector<duckdb::idx_t>& counts) {
+  std::vector<search::RowRange> rows;
+  rows.reserve(starts.size());
+  for (size_t i = 0; i != starts.size(); ++i) {
+    rows.emplace_back(starts[i], starts[i] + static_cast<int64_t>(counts[i]));
+  }
+  _storage->ReplayDeleteRanges(catalog.GetAttached(), std::move(rows));
+}
+
 void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
   _storage->ReplayTruncate(catalog.GetAttached());
 }

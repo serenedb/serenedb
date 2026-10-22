@@ -7,7 +7,7 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-**Search your data lake in place — no ETL.** An [inverted index](./index.md) can be built directly over **external files** — Parquet, CSV, JSON, ORC and Iceberg, on local disk or S3 — so you get full-text, [vector](./vector-search.md) and [geospatial](./geospatial-search.md) search over data that **never gets copied into the database**. You point a [view](./views.md) at a reader function and index the view; the rows stay in the files, and only the search postings are built.
+**Search your data lake in place — no ETL.** An [inverted index](./index.md) can be built directly over **external files** — Parquet, CSV, JSON and Iceberg, on local disk or S3 — so you get full-text, [vector](./vector-search.md) and [geospatial](./geospatial-search.md) search over data that **never gets copied into the database**. You point a [view](./views.md) at a reader function and index the view; the rows stay in the files, and only the search postings are built.
 
 ```mermaid
 flowchart LR
@@ -85,7 +85,7 @@ Matched rows are re-read from the remote **by value**: the index yields the key 
 
 <DocCallout type="attention">
 
-A ClickHouse table with **no primary-key metadata** is not a fast-path source: there is no key to re-fetch by. The index still builds and `COUNT(*)`, `@@` filters and [BM25](./ranking.md) scores still come off it, but selecting a real non-indexed column raises the "not yet supported" [materialization error](./views.md#generic-views). The same applies to a view over a connector *query function* (`clickhouse_query(…)`, `postgres_query(…)`) — a query result carries no table metadata. Use [`INCLUDE`](./views.md#include-columns) columns in that case.
+A ClickHouse table with **no primary-key metadata** is not a fast-path source: there is no key to re-fetch by. The index still builds and `COUNT(*)`, `@@` filters and [BM25](./ranking.md) scores still come off it, but selecting a column the index doesn't store, an indexed text, numeric or temporal column too, raises the "not yet supported" [materialization error](./views.md#generic-views). The index stores only `INCLUDE`d columns, `included()` expressions, vector columns, and geo columns indexed with `encode_geopoint` or with the default `source` coding of `encode_geojson`. The same applies to a view over a connector *query function* (`clickhouse_query(…)`, `postgres_query(…)`) — a query result carries no table metadata. Use [`INCLUDE`](./views.md#include-columns) columns in that case.
 
 </DocCallout>
 

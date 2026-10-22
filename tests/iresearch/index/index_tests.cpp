@@ -1970,9 +1970,6 @@ TEST_P(IndexTestCase, writer_commit_clear) {
 TEST_P(IndexTestCase, insert_null_empty_term) { InsertDocWithNullEmptyTerm(); }
 
 TEST_P(IndexTestCase, europarl_docs) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
@@ -1982,9 +1979,6 @@ TEST_P(IndexTestCase, europarl_docs) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_batched) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
@@ -1999,9 +1993,6 @@ TEST_P(IndexTestCase, europarl_docs_batched) {
 // expected index. A walk that prunes a sub-block it should have kept shows up
 // as a missing term; one that mis-reads a record shows up in the postings.
 TEST_P(IndexTestCase, europarl_docs_automaton) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
@@ -2024,9 +2015,6 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
 }
 
 TEST_P(IndexTestCase, europarl_docs_big) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   if (dynamic_cast<irs::FSDirectory*>(&dir()) != nullptr) {
     GTEST_SKIP() << "too long for our CI";
   }
@@ -2065,9 +2053,6 @@ TEST_P(IndexTestCase, europarl_docs_big_automaton) {
 }
 
 TEST_P(IndexTestCase, monarch_eco_onthology) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   {
     tests::JsonDocGenerator gen(resource("ECO_Monarch.json"),
                                 &tests::PayloadedJsonFieldFactory);

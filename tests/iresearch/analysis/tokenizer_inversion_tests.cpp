@@ -720,9 +720,6 @@ std::vector<std::string> GenerateCorpus(const Spec& spec, uint64_t seed,
 }  // namespace
 
 TEST(TokenizerInversion, PostingsMatchEmittedTokens) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   const auto docs =
     static_cast<size_t>(EnvU64("TOKENIZER_INVERSION_DOCS", 192));
   for (const auto* spec : SelectedSpecs()) {
@@ -854,9 +851,6 @@ TEST(TokenizerInversion, StoredBlobsReachTheSink) {
 }
 
 TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   const auto docs_wanted =
     static_cast<size_t>(EnvU64("TOKENIZER_INVERSION_DOCS", 192));
   for (const auto* spec : SelectedFamilies()) {
@@ -959,9 +953,6 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
 }
 
 TEST(TokenizerInversion, SurvivesConsolidation) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   const auto docs =
     static_cast<size_t>(EnvU64("TOKENIZER_INVERSION_DOCS", 192));
   for (const auto* spec : SelectedFamilies()) {
@@ -975,9 +966,6 @@ TEST(TokenizerInversion, SurvivesConsolidation) {
 class TokenizerInversionLoad : public testing::TestWithParam<const Spec*> {};
 
 TEST_P(TokenizerInversionLoad, ManyDocuments) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   const auto* spec = GetParam();
   const auto budget = EnvU64("TOKENIZER_INVERSION_LOAD_BYTES", 32ull << 20);
   const auto seed = Seed() ^ 0x1E7E12ull;
@@ -994,9 +982,6 @@ TEST_P(TokenizerInversionLoad, ManyDocuments) {
 }
 
 TEST_P(TokenizerInversionLoad, ConcurrentWriters) {
-#ifdef SDB_COVERAGE
-  GTEST_SKIP() << "decodes wrong docs under coverage, serenedb/serenedb#1859";
-#endif
   const auto* spec = GetParam();
   const auto threads = static_cast<size_t>(
     EnvU64("TOKENIZER_INVERSION_THREADS",

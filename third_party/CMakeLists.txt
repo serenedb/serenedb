@@ -20,6 +20,7 @@ if("${SDB_ALLOC}" MATCHES "JE")
     # compiles it natively (no autotools) into the `jemalloc_native` target.
     sdb_update_module(${GIT_EXECUTABLE} "jemalloc" ${CMAKE_CURRENT_SOURCE_DIR} "COPYING")
     add_subdirectory(jemalloc-cmake)
+    sdb_suppress_warnings(jemalloc-cmake -Wno-missing-braces)
     # Expose it as an IMPORTED target: it is linked globally, so it ends up in
     # the link interface of vendored libs that export() their targets (croaring),
     # and export() tolerates IMPORTED but not in-tree targets.
@@ -48,7 +49,7 @@ set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
 set(SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(simdutf)
+add_subdirectory(simdutf SYSTEM)
 
 ################################################################################
 ## fast_float
@@ -243,7 +244,7 @@ if(SDB_GTEST)
     file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/gtest-config.cmake "")
     enable_testing()
 endif()
-add_subdirectory(re2)
+add_subdirectory(re2 SYSTEM)
 if(SDB_GTEST)
     get_property(re2_targets DIRECTORY re2 PROPERTY BUILDSYSTEM_TARGETS)
     list(FILTER re2_targets INCLUDE REGEX "_test$")
@@ -270,6 +271,7 @@ sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
 add_subdirectory(googletest)
+sdb_suppress_warnings(googletest -Wno-sign-conversion)
 
 ################################################################################
 ### benchmark library
@@ -346,6 +348,16 @@ else()
     endif()
 endif()
 add_subdirectory(OpenBLAS)
+sdb_suppress_warnings(
+    OpenBLAS
+    -Wno-unused-but-set-variable
+    -Wno-unused-but-set-parameter
+    -Wno-unused-function
+    -Wno-unused-variable
+    -Wno-sign-compare
+    -Wno-sometimes-uninitialized
+    -Wno-pointer-sign
+)
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)
     foreach(_core SKYLAKEX COOPERLAKE SAPPHIRERAPIDS)
@@ -373,10 +385,10 @@ sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
-add_subdirectory(faiss)
+add_subdirectory(faiss SYSTEM)
 target_compile_options(
     ${FAISS_LIB}
-    PUBLIC
+    PRIVATE
         -Wno-suggest-override
         -Wno-sign-compare
         -Wno-suggest-destructor-override
@@ -508,6 +520,7 @@ set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
 
 add_subdirectory(curl)
+sdb_suppress_warnings(curl -Wno-unused-but-set-global)
 
 # Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
 # FindCURL.cmake short-circuits when these variables are already set.
@@ -615,6 +628,11 @@ set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
 set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
 set(THREADSAFE ON CACHE BOOL "" FORCE)
 add_subdirectory(avro/lang/c)
+sdb_suppress_warnings(
+    avro/lang/c
+    -Wno-cast-function-type-mismatch
+    -Wno-sometimes-uninitialized
+)
 
 ################################################################################
 ## libxml2
@@ -623,6 +641,7 @@ add_subdirectory(avro/lang/c)
 sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(libxml2-cmake)
+sdb_suppress_warnings(libxml2-cmake -Wno-unused-but-set-global)
 
 ################################################################################
 ## Azure SDK (monolithic build)
@@ -752,6 +771,22 @@ sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 add_subdirectory(duckdb)
+target_compile_options(duckdb_storage PRIVATE -Wno-thread-safety-analysis)
+if(TARGET iceberg_planning_scan_plan)
+    target_compile_options(
+        iceberg_planning_scan_plan
+        PRIVATE -Wno-thread-safety-analysis
+    )
+endif()
+if(TARGET libpq)
+    target_compile_options(
+        libpq
+        PRIVATE
+            -Wno-ignored-attributes
+            -Wno-deprecated-declarations
+            -Wno-missing-field-initializers
+    )
+endif()
 
 if(TARGET duckdb_shell)
     target_compile_definitions(

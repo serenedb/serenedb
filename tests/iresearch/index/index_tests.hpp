@@ -36,8 +36,6 @@
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
-using namespace std::chrono_literals;
-
 namespace irs {
 
 struct TermAttr;

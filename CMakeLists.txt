@@ -369,10 +369,22 @@ endif()
 ## FLAGS
 ################################################################################
 
-function(add_compile_warnings_flags)
-    if(USE_FAIL_ON_WARNINGS)
-        add_compile_options(-Werror)
-    endif()
+if(USE_FAIL_ON_WARNINGS)
+    add_compile_options(-Werror)
+endif()
+
+function(sdb_suppress_warnings dir)
+    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target IN LISTS targets)
+        get_target_property(type ${target} TYPE)
+        if(NOT type MATCHES "^(INTERFACE_LIBRARY|UTILITY)$")
+            target_compile_options(${target} PRIVATE ${ARGN})
+        endif()
+    endforeach()
+    get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+    foreach(subdir IN LISTS subdirs)
+        sdb_suppress_warnings(${subdir} ${ARGN})
+    endforeach()
 endfunction()
 
 # compiler options
@@ -678,6 +690,27 @@ include(SereneDBInstall)
 ################################################################################
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
+
+add_compile_options(
+    -Wimplicit-fallthrough
+    -Wformat=2
+    -Wformat-signedness
+    -Wloop-analysis
+    -Wcomma
+    -Wnon-virtual-dtor
+    -Wundef
+    -Wheader-hygiene
+    -Wextra-semi
+    -Wunused-exception-parameter
+    -Wmissing-variable-declarations
+    -Wfloat-conversion
+    -Wimplicit-int-conversion-on-negation
+    -Wvla
+    -Wnull-dereference
+    -Wthread-safety-beta
+    -Wunreachable-code-break
+    -Wunreachable-code-return
+)
 
 add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)

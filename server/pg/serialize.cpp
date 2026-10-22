@@ -453,7 +453,7 @@ void WriteAsNumericBinary(SerializationContext& context, T value,
   if constexpr (std::numeric_limits<T>::is_signed) {
     if (value < T{0}) {
       sign = kNegative;
-      mag = -static_cast<U>(value);
+      mag = static_cast<U>(-static_cast<U>(value));
     } else {
       mag = static_cast<U>(value);
     }

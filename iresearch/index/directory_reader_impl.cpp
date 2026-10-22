@@ -66,7 +66,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   irs::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
   auto& refs = dir.attributes().refs();
-  for (const auto& [index_segment, reader] :
+  for (const auto [index_segment, reader] :
        std::views::zip(segments, readers)) {
     const auto& [filename, segment] = index_segment;
     file_refs.emplace_back(refs.add(filename));

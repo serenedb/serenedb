@@ -1,5 +1,3 @@
-add_compile_warnings_flags()
-
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(

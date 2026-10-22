@@ -242,38 +242,62 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
                     if not key.endswith(".storage")], s3_store.fake.keys(s3_store.bucket)
 
 
-def test_index_files_on_azure(tmp_path: Path) -> None:
-    location = f"az://indexes/cluster-{tmp_path.name}"
+AZURITE = ("AZURITE_CONNECTION_STRING", "AZURITE_BLOB_CONTAINER")
+
+
+@dataclass
+class _Container:
+    connection_string: str
+    name: str
+    fake: FakeAzure | None = None
+
+
+@pytest.fixture
+def azure_container():
+    if all(os.environ.get(name) for name in AZURITE):
+        yield _Container(os.environ["AZURITE_CONNECTION_STRING"],
+                         os.environ["AZURITE_BLOB_CONTAINER"])
+        return
+    with FakeAzure() as fake:
+        yield _Container(fake.connection_string, "indexes", fake)
+
+
+def test_index_files_on_azure(tmp_path: Path, azure_container: _Container) -> None:
+    location = f"az://{azure_container.name}/cluster-{tmp_path.name}"
     datadir = tmp_path / "data"
     flag = f"--index_location={location}"
-    with FakeAzure() as fake:
-        server = _Server(datadir, flag)
-        try:
-            assert server.wait_ready(), server.output()
-            with server.connect() as conn:
-                conn.execute(
-                    "CREATE PERSISTENT SECRET index_store (TYPE azure, "
-                    f"CONNECTION_STRING '{fake.connection_string}', SCOPE '{location}')")
-            _create_index(server)
-            assert _matches(server) == [1]
-            with server.connect() as conn:
-                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
-                conn.execute("VACUUM (REFRESH_TABLE) docs")
-            assert _matches(server) == [1, 3]
-        finally:
-            server.stop()
+    fake = azure_container.fake
+    server = _Server(datadir, flag)
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(
+                "CREATE PERSISTENT SECRET index_store (TYPE azure, "
+                f"CONNECTION_STRING '{azure_container.connection_string}', "
+                f"SCOPE '{location}')")
+        _create_index(server)
+        assert _matches(server) == [1]
+        with server.connect() as conn:
+            conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+            conn.execute("VACUUM (REFRESH_TABLE) docs")
+        assert _matches(server) == [1, 3]
+    finally:
+        server.stop()
+    if fake:
         assert fake.requests["COPY"] > 0, fake.requests
 
-        again = _Server(datadir, flag)
-        try:
-            assert again.wait_ready(), again.output()
-            assert _matches(again) == [1, 3]
-            with again.connect() as conn:
-                conn.execute("DROP INDEX docs_body")
-        finally:
-            again.stop()
-        assert not [name for name in fake.names("indexes")
-                    if not name.endswith(".storage")], fake.names("indexes")
+    again = _Server(datadir, flag)
+    try:
+        assert again.wait_ready(), again.output()
+        assert _matches(again) == [1, 3]
+        with again.connect() as conn:
+            conn.execute("DROP INDEX docs_body")
+    finally:
+        again.stop()
+    if fake:
+        prefix = f"cluster-{tmp_path.name}/"
+        assert not [name for name in fake.names(azure_container.name, prefix)
+                    if not name.endswith(".storage")], fake.names(azure_container.name)
 
 
 def _large_table(server: _Server, store: _Store, location: str) -> None:

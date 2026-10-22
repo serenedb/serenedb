@@ -465,6 +465,8 @@ class IndexWriter : private util::Noncopyable {
   void ReplaceSegments(std::span<const std::string_view> replaced,
                        std::span<Replacement> adopted);
 
+  DocMapList CopyDocMaps(std::span<const uint32_t> segments) const;
+
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
 
@@ -553,7 +555,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    std::vector<uint32_t> replaced;
+    std::vector<AbsorbedSegment> replaced;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
@@ -719,7 +721,6 @@ class IndexWriter : private util::Noncopyable {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
     uint64_t seq = 0;
-    containers::FlatHashSet<uint32_t> retiring;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -773,6 +774,7 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
+  void AbsorbDocMaps(std::span<const DocMap> direct);
 
   bool Start(const CommitInfo& info);
   void Finish();
@@ -799,8 +801,8 @@ class IndexWriter : private util::Noncopyable {
   };
   std::vector<PublishedReader> _published;
   uint64_t _commit_seq = 0;
-  containers::FlatHashMap<uint32_t, uint64_t> _absorbed_at;
-  containers::FlatHashSet<uint32_t> _retiring;
+  mutable absl::Mutex _doc_maps_mutex;
+  DocMaps _doc_maps ABSL_GUARDED_BY(_doc_maps_mutex);
   PendingState _pending_state;
   SegmentLimits _segment_limits;
   SegmentPool _segment_writer_pool;

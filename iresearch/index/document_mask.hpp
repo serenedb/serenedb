@@ -76,8 +76,7 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
-  static DocumentMask ReadFrozen(IndexInput& in, uint64_t offset,
-                                 uint64_t size);
+  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
 
   size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }
 

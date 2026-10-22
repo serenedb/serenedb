@@ -394,11 +394,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
   return true;
 }
 
-std::vector<AbsorbedSegment> AbsorbedBy(const DirectoryReaderImpl& reader,
-                                        CompactionView candidates,
-                                        const MergeWriter& merger) {
+std::vector<DocMap> AbsorbedBy(const DirectoryReaderImpl& reader,
+                               CompactionView candidates,
+                               const MergeWriter& merger, uint32_t target) {
   const auto& segments = reader.Meta().index_meta.segments;
-  std::vector<AbsorbedSegment> absorbed;
+  std::vector<DocMap> absorbed;
   for (size_t i = 0; i < candidates.size(); ++i) {
     const auto& name = candidates[i]->Meta().name;
     const auto segment = absl::c_find_if(
@@ -406,17 +406,14 @@ std::vector<AbsorbedSegment> AbsorbedBy(const DirectoryReaderImpl& reader,
     SDB_ASSERT(segment != segments.end());
     const auto& meta = segment->meta;
     const auto removed = RemovalCount(meta);
-    const AbsorbedStep step{
-      .mask = removed != 0 ? meta.docs_mask : nullptr,
-      .rank_end = meta.docs_count - removed,
-      .base = merger[i].remap.base_id,
-    };
-    for (const auto& inherited : meta.absorbed) {
-      absorbed.emplace_back(inherited).steps.push_back(step);
-    }
     if (const auto number = SegmentNumber(name);
         number != DocRemoval::kNoSegment) {
-      absorbed.push_back({.number = number, .steps = {step}});
+      absorbed.push_back(
+        {.source = number,
+         .target = target,
+         .steps = {{.mask = removed != 0 ? meta.docs_mask : nullptr,
+                    .rank_end = meta.docs_count - removed,
+                    .base = merger[i].remap.base_id}}});
     }
   }
   return absorbed;
@@ -510,50 +507,11 @@ struct PublishResult {
   bool modified = false;
 };
 
-struct Retirement {
-  bool Keep(const AbsorbedSegment& entry) {
-    const auto it = absorbed_at.find(entry.number);
-    const uint64_t at = it == absorbed_at.end() ? 0 : it->second;
-    if (oldest_reader < at || removals.Used(entry.number)) {
-      return true;
-    }
-    if (!retiring.contains(entry.number)) {
-      next.insert(entry.number);
-      return true;
-    }
-    if (it != absorbed_at.end()) {
-      absorbed_at.erase(it);
-    }
-    return false;
-  }
-
-  std::optional<std::vector<AbsorbedSegment>> Retire(
-    std::span<const AbsorbedSegment> entries) {
-    std::optional<std::vector<AbsorbedSegment>> kept;
-    for (size_t i = 0; i < entries.size(); ++i) {
-      if (Keep(entries[i])) {
-        if (kept) {
-          kept->push_back(entries[i]);
-        }
-      } else if (!kept) {
-        kept.emplace(entries.begin(), entries.begin() + i);
-      }
-    }
-    return kept;
-  }
-
-  uint64_t oldest_reader;
-  containers::FlatHashMap<uint32_t, uint64_t>& absorbed_at;
-  const containers::FlatHashSet<uint32_t>& retiring;
-  const DocRemovalResolver& removals;
-  containers::FlatHashSet<uint32_t> next;
-};
-
 PublishResult UpdateExisting(
   const DirectoryReaderImpl& committed_reader,
   const CompactingSegments& segment_mask,
   std::span<const IndexWriter::QueryContext* const> queries,
-  const DocRemovalResolver& removals, Retirement& retirement, Directory& dir,
+  const DocRemovalResolver& removals, Directory& dir,
   const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
   const size_t committed_reader_size = committed_reader.size();
@@ -599,23 +557,12 @@ PublishResult UpdateExisting(
         return std::make_shared<const DocumentMask>(
           std::move(docs_mask).Finish());
       }();
-      if (auto kept = retirement.Retire(index_segment.meta.absorbed)) {
-        segment.meta.absorbed = std::move(*kept);
-      }
 
       // Write with new mask
       index_utils::FlushIndexSegment(dir, segment, true);
       deleted_docs.Clear();
       auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
 
-      result.segments.emplace_back(
-        std::move(segment), SegmentReader{std::move(reader)}, Sync::Meta);
-    } else if (auto kept = retirement.Retire(index_segment.meta.absorbed)) {
-      IndexSegment segment{.meta = index_segment.meta};
-      segment.meta.absorbed = std::move(*kept);
-      ++segment.meta.version;
-      index_utils::FlushIndexSegment(dir, segment, false);
-      auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
       result.segments.emplace_back(
         std::move(segment), SegmentReader{std::move(reader)}, Sync::Meta);
     } else {
@@ -628,16 +575,10 @@ PublishResult UpdateExisting(
 using SegmentsByNumber = containers::FlatHashMap<uint32_t, const SegmentMeta*>;
 
 bool CarryRemovals(DocumentMaskBuilder& docs_mask,
-                   std::span<const uint32_t> replaced, const SegmentMeta& meta,
+                   std::span<const AbsorbedSegment> replaced,
                    const SegmentsByNumber& committed) {
   bool modified = false;
-  for (const auto number : replaced) {
-    const auto entry =
-      absl::c_find_if(meta.absorbed, [&](const AbsorbedSegment& absorbed) {
-        return absorbed.number == number;
-      });
-    SDB_ASSERT(entry != meta.absorbed.end());
-    const auto& step = entry->steps.front();
+  for (const auto& [number, step] : replaced) {
     const auto source = committed.find(number);
     if (source == committed.end()) {
       if (step.rank_begin != step.rank_end) {
@@ -743,7 +684,7 @@ AddIncomingResult AddIncoming(
         }
       }
       docs_mask_modified |=
-        CarryRemovals(docs_mask, incoming.replaced, meta, committed);
+        CarryRemovals(docs_mask, incoming.replaced, committed);
     }
 
     const auto* published = reader->docs_mask();
@@ -769,22 +710,18 @@ AddIncomingResult AddIncoming(
         std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
     }
 
-    const bool absorbs = !incoming.replaced.empty();
-    if (absorbs && !docs_mask_modified) {
-      ++meta.version;
-    }
-    if (docs_mask_modified || pending_compaction || absorbs) {
+    if (docs_mask_modified || pending_compaction) {
       index_utils::FlushIndexSegment(dir, incoming.segment,
                                      !pending_compaction);
     }
 
-    if (docs_mask_modified || absorbs) {
+    if (docs_mask_modified) {
       reader = reader->UpdateMeta(dir, meta);
     }
 
     result.segments.emplace_back(
       std::move(incoming.segment), SegmentReader{std::move(reader)},
-      SyncOf(candidates.empty(), docs_mask_modified || absorbs));
+      SyncOf(candidates.empty(), docs_mask_modified));
     result.modified = true;
   }
   return result;
@@ -1407,6 +1344,18 @@ void IndexWriter::InitMeta(IndexMeta& meta) const {
   meta.gen = _last_gen;                   // Clone index metadata generation
 }
 
+void IndexWriter::AbsorbDocMaps(std::span<const DocMap> direct) {
+  absl::MutexLock lock{&_doc_maps_mutex};
+  _doc_maps.Absorb(direct);
+}
+
+DocMapList IndexWriter::CopyDocMaps(std::span<const uint32_t> segments) const {
+  DocMapList maps;
+  absl::MutexLock lock{&_doc_maps_mutex};
+  _doc_maps.CopyTo(segments, maps);
+  return maps;
+}
+
 void IndexWriter::Clear(const SourcePosition& position) {
   std::lock_guard commit_lock{_commit_lock};
 
@@ -1692,8 +1641,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // Nothing to compact or compaction failure
     co_return result;
   }
-  compaction_segment.meta.absorbed =
-    AbsorbedBy(*committed_reader, candidates, merger);
+  const auto absorbed = AbsorbedBy(*committed_reader, candidates, merger,
+                                   SegmentNumber(compaction_segment.meta.name));
 
   auto opts = committed_reader->Options();
   auto pending_reader =
@@ -1733,6 +1682,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     auto refs = dir.GetRefs();
     // Prevent concurrent modification of incoming segments
     std::lock_guard ctx_lock{ctx->pending_mutex};
+    AbsorbDocMaps(absorbed);
     // register compaction for the next transaction
     ctx->incoming.emplace_back(
       std::move(compaction_segment), writer_limits::kMaxTick,
@@ -1794,6 +1744,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   auto refs = dir.GetRefs();
   auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
+  AbsorbDocMaps(absorbed);
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
                        candidates.size());
@@ -1901,21 +1852,17 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
     return;
   }
 
-  containers::FlatHashSet<uint32_t> replaced_numbers;
-  for (const auto name : replaced) {
-    replaced_numbers.insert(SegmentNumber(name));
-  }
-
   // Open every replacement before touching the flush context, so a failure
   // leaves nothing behind.
   struct Adopted {
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
-    std::vector<uint32_t> replaced;
+    std::vector<AbsorbedSegment> replaced;
   };
   std::vector<Adopted> adopted;
   adopted.reserve(replacements.size());
+  std::vector<DocMap> absorbed;
   for (auto& replacement : replacements) {
     Adopted entry;
     entry.segment.filename = replacement.meta_file;
@@ -1923,12 +1870,11 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
     if (entry.segment.meta.live_docs_count == 0) {
       continue;  // nothing to adopt; the sources are still replaced
     }
-    entry.segment.meta.absorbed = std::move(replacement.absorbed);
-    for (const auto& absorbed : entry.segment.meta.absorbed) {
-      if (replaced_numbers.contains(absorbed.number)) {
-        SDB_ASSERT(absorbed.steps.size() == 1);
-        entry.replaced.push_back(absorbed.number);
-      }
+    entry.replaced = std::move(replacement.absorbed);
+    for (const auto& [number, step] : entry.replaced) {
+      absorbed.push_back({.source = number,
+                          .target = SegmentNumber(entry.segment.meta.name),
+                          .steps = {step}});
     }
     auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
     if (!meta_ref) {
@@ -1977,6 +1923,7 @@ void IndexWriter::ReplaceSegments(std::span<const std::string_view> replaced,
 
   auto flush = GetFlushContext();
   std::lock_guard lock{flush->pending_mutex};
+  AbsorbDocMaps(absorbed);
 
   // Pre-allocation so tail is allocation-free
   auto& segment_mask = flush->segment_mask;
@@ -2146,17 +2093,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   std::erase_if(_published, [](const PublishedReader& published) {
     return published.reader.expired();
   });
-  for (const auto& incoming : ctx->incoming) {
-    for (const auto* candidate : incoming.compaction_ctx.candidates) {
-      if (const auto number = SegmentNumber(candidate->Meta().name);
-          number != DocRemoval::kNoSegment) {
-        _absorbed_at.insert_or_assign(number, seq);
-      }
-    }
-    for (const auto number : incoming.replaced) {
-      _absorbed_at.insert_or_assign(number, seq);
-    }
-  }
   SegmentsByNumber committed;
   for (const auto& segment : committed_reader.Meta().index_meta.segments) {
     if (const auto number = SegmentNumber(segment.meta.name);
@@ -2174,35 +2110,36 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       pending_removals.emplace_back(query->removal.get());
     }
   }
-  if (!pending_removals.empty()) {
-    std::vector<RemovalTarget> targets;
-    targets.reserve(committed_reader.size() + ctx->incoming.size());
-    const auto add_target = [&](const SegmentMeta& meta) {
-      if (const auto number = SegmentNumber(meta.name);
-          number != DocRemoval::kNoSegment) {
-        targets.emplace_back(number, &meta);
-      }
-    };
-    for (const auto& segment : committed_reader.Meta().index_meta.segments) {
-      if (!ctx->segment_mask.contains(segment.meta.name)) {
-        add_target(segment.meta);
-      }
-    }
+  {
+    absl::MutexLock maps_lock{&_doc_maps_mutex};
     for (const auto& incoming : ctx->incoming) {
-      if (!incoming.compaction_ctx.merger) {
-        add_target(incoming.segment.meta);
+      for (const auto* candidate : incoming.compaction_ctx.candidates) {
+        _doc_maps.Committed(SegmentNumber(candidate->Meta().name), seq);
+      }
+      for (const auto& replaced : incoming.replaced) {
+        _doc_maps.Committed(replaced.number, seq);
       }
     }
-    removals.Prepare(pending_removals, targets);
+    if (!pending_removals.empty()) {
+      std::vector<uint32_t> targets;
+      targets.reserve(committed_reader.size() + ctx->incoming.size());
+      for (const auto& segment : committed_reader.Meta().index_meta.segments) {
+        if (!ctx->segment_mask.contains(segment.meta.name)) {
+          targets.emplace_back(SegmentNumber(segment.meta.name));
+        }
+      }
+      for (const auto& incoming : ctx->incoming) {
+        if (!incoming.compaction_ctx.merger) {
+          targets.emplace_back(SegmentNumber(incoming.segment.meta.name));
+        }
+      }
+      removals.Prepare(pending_removals, targets, _doc_maps);
+    }
+    _doc_maps.Retire(_published.empty() ? seq : _published.front().seq,
+                     removals);
   }
-  Retirement retirement{
-    .oldest_reader = _published.empty() ? seq : _published.front().seq,
-    .absorbed_at = _absorbed_at,
-    .retiring = _retiring,
-    .removals = removals,
-  };
   auto existing = UpdateExisting(committed_reader, ctx->segment_mask, queries,
-                                 removals, retirement, dir, progress);
+                                 removals, dir, progress);
 
   // Stage 2
   // Add incoming segments registered by compaction, adoption or replacement
@@ -2292,8 +2229,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
                 .position = position,
-                .seq = seq,
-                .retiring = std::move(retirement.next)},
+                .seq = seq},
     std::move(pending_meta),  // Retain meta pending flush
     std::move(readers),
     std::move(files_to_sync),
@@ -2396,7 +2332,6 @@ void IndexWriter::Finish() {
                              std::move(_pending_state.commit),
                              std::memory_order_release);
   _published.emplace_back(_pending_state.seq, _committed_reader);
-  _retiring = std::move(_pending_state.retiring);
   _pending_state.FinishReset();
 }
 

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/storage/storage_lock.hpp>
@@ -83,8 +84,10 @@ void ReleaseWriter(SearchShardWrites& w) noexcept {
 class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
  public:
   SearchTableLogWriter(const catalog::SearchTableEntry& table,
-                       LocalTableChangesEntry& changes)
+                       LocalTableChangesEntry& changes,
+                       SearchShardWrites& writes)
     : _table{table},
+      _writes{writes},
       _entries{table.catalog.GetAttached(), SerializedSizeHint(changes)} {
     const bool truncates =
       !changes.ops.empty() && changes.ops.front().IsTruncate();
@@ -106,6 +109,9 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       [&](LocalTableChangesEntry::Op& op) {
         SDB_ASSERT(!op.IsTruncate());
         const auto& deletes = op.deletes;
+        for (const auto start : deletes.starts) {
+          _segments.push_back(connector::RowPositionSegment(start));
+        }
         SDB_IF_FAILURE("search_delete_wal_empty_range") {
           auto empty_range = deletes;
           empty_range.counts.front() = 0;
@@ -121,16 +127,31 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
         }
         _entries.WriteDeleteRowRanges(deletes);
       });
+    absl::c_sort(_segments);
+    _segments.erase(std::unique(_segments.begin(), _segments.end()),
+                    _segments.end());
   }
 
   void WriteToWAL(duckdb::WriteAheadLog& wal) final {
+    for (auto& trx : _writes.transactions) {
+      trx->RegisterFlush();
+    }
     wal.WriteSetTable(_table);
+    auto maps = irs::WriteDocMaps(_writes.shard->CopyDocMaps(_segments));
+    SDB_IF_FAILURE("search_delete_wal_malformed_maps") { maps.push_back('x'); }
+    if (!maps.empty()) {
+      duckdb::WALEntryBuffer entry{_table.catalog.GetAttached(), 0};
+      entry.WriteRowPositionMaps(std::move(maps));
+      wal.WriteEntries(entry);
+    }
     wal.WriteEntries(_entries);
   }
 
  private:
   const catalog::SearchTableEntry& _table;
+  SearchShardWrites& _writes;
   duckdb::WALEntryBuffer _entries;
+  std::vector<uint32_t> _segments;
 };
 
 }  // namespace
@@ -326,7 +347,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
     }
     duckdb::DuckTransaction::Get(context, w.table->catalog)
       .log_writers.push_back(
-        duckdb::make_shared_ptr<SearchTableLogWriter>(*w.table, entry));
+        duckdb::make_shared_ptr<SearchTableLogWriter>(*w.table, entry, w));
     entry.ClearBufferedRows();
     if (entry.ClearsShard()) {
       w.checkpoint_lock =

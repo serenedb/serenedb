@@ -1119,7 +1119,8 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 }
 
 std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
-  std::span<const uint64_t> starts, std::span<const uint64_t> counts) {
+  std::span<const uint64_t> starts, std::span<const uint64_t> counts,
+  std::shared_ptr<const irs::DocMapList> maps) {
   SDB_ENSURE(counts.size() == starts.size(), "search table: ", starts.size(),
              " removed row runs with ", counts.size(), " counts");
   if (starts.empty()) {
@@ -1133,7 +1134,9 @@ std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
       rows.emplace_back(RowPositionSegment(position), RowPositionDoc(position));
     }
   }
-  return std::make_shared<const irs::DocRemoval>(irs::DocRemoval::Build(rows));
+  auto removal = irs::DocRemoval::Build(rows);
+  removal.maps = std::move(maps);
+  return std::make_shared<const irs::DocRemoval>(std::move(removal));
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

@@ -184,6 +184,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
                     duckdb::optional_idx row_start) final;
   void ReplayDeleteRanges(duckdb::ClientContext& context,
                           const duckdb::WALDeleteRowRanges& entry) final;
+  void ReplayRowPositionMaps(duckdb::ClientContext& context,
+                             std::string maps) final;
   void ReplayTruncate(duckdb::ClientContext& context) final;
   void ReplayAdoptSegments(duckdb::ClientContext& context,
                            duckdb::vector<std::string> segments) final;

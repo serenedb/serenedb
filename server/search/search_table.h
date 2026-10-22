@@ -125,12 +125,18 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _writer->GetBatch(exclusive_segment);
   }
 
+  irs::DocMapList CopyDocMaps(std::span<const uint32_t> segments) const {
+    return _writer->CopyDocMaps(segments);
+  }
+
   void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk, uint64_t row_start);
   void ReplayDeleteRanges(duckdb::AttachedDatabase& db,
                           std::span<const uint64_t> starts,
                           std::span<const uint64_t> counts);
+  void ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
+                             std::string_view maps);
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);

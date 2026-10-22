@@ -18,8 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <initializer_list>
@@ -27,6 +29,7 @@
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -36,6 +39,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -73,25 +78,50 @@ std::shared_ptr<const irs::DocumentMask> MaskOf(
   return std::make_shared<const irs::DocumentMask>(std::move(builder).Finish());
 }
 
-irs::SegmentMeta MetaOf(std::string name,
-                        std::vector<irs::AbsorbedSegment> absorbed = {}) {
-  irs::SegmentMeta meta;
-  meta.name = std::move(name);
-  meta.absorbed = std::move(absorbed);
-  return meta;
+irs::DocMap Direct(uint32_t source, uint32_t target, irs::AbsorbedStep step) {
+  return {.source = source, .target = target, .steps = {std::move(step)}};
 }
 
-irs::RemovalTarget TargetOf(const irs::SegmentMeta& meta) {
-  return {.number = irs::SegmentNumber(meta.name), .meta = &meta};
+irs::AbsorbedStep Window(irs::doc_id_t rank_begin, irs::doc_id_t rank_end,
+                         irs::doc_id_t base) {
+  return {.rank_begin = rank_begin, .rank_end = rank_end, .base = base};
+}
+
+irs::DocMaps MapsOf(std::initializer_list<irs::DocMap> direct) {
+  irs::DocMaps maps;
+  const std::vector<irs::DocMap> batch{direct};
+  maps.Absorb(batch);
+  return maps;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> Edges(
+  std::span<const std::shared_ptr<const irs::DocMap>> maps) {
+  std::vector<std::pair<uint32_t, uint32_t>> edges;
+  for (const auto& map : maps) {
+    edges.emplace_back(map->source, map->target);
+  }
+  std::sort(edges.begin(), edges.end());
+  return edges;
 }
 
 std::vector<irs::doc_id_t> Resolve(const irs::DocRemoval& removal,
-                                   std::span<const irs::RemovalTarget> targets,
+                                   std::span<const uint32_t> targets,
+                                   const irs::DocMaps& maps,
                                    const irs::SubReader& segment) {
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  resolver.Prepare(removals, targets);
+  resolver.Prepare(removals, targets, maps);
   return ToVector(resolver.PositionalDocs(removal, segment));
+}
+
+std::string Words(std::initializer_list<uint32_t> words) {
+  std::string out;
+  for (const auto word : words) {
+    char buf[sizeof(uint32_t)];
+    absl::little_endian::Store32(buf, word);
+    out.append(buf, sizeof(buf));
+  }
+  return out;
 }
 
 }  // namespace
@@ -316,14 +346,12 @@ TEST(AbsorbedDocTest, StepsChainInOrder) {
 TEST(DocRemovalResolverTest, RemovalsOfLiveSegmentsAreUsedAsBuilt) {
   const FakeSegment three{"_3", 10};
   const FakeSegment five{"_5", 10};
-  const auto three_meta = MetaOf("_3");
-  const auto five_meta = MetaOf("_5");
   const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {5, 7}, {3, 1}};
   const auto removal = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  const std::array targets{TargetOf(three_meta), TargetOf(five_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 2> targets{3, 5};
+  resolver.Prepare(removals, targets, {});
   EXPECT_EQ((std::vector<irs::doc_id_t>{2, 1}),
             ToVector(resolver.PositionalDocs(removal, three)));
   EXPECT_EQ((std::vector<irs::doc_id_t>{7}),
@@ -334,18 +362,17 @@ TEST(DocRemovalResolverTest, RemovalsOfLiveSegmentsAreUsedAsBuilt) {
 
 TEST(DocRemovalResolverTest, RemovalsOfAbsorbedSegmentsAreRemapped) {
   const FakeSegment nine{"_9", 30};
-  const auto nine_meta = MetaOf(
-    "_9",
-    {{.number = 3, .steps = {{.rank_begin = 0, .rank_end = 10, .base = 1}}},
-     {.number = 5,
-      .steps = {
-        {.mask = MaskOf({1}), .rank_begin = 0, .rank_end = 19, .base = 11}}}});
+  const auto maps = MapsOf(
+    {Direct(3, 9, Window(0, 10, 1)),
+     Direct(
+       5, 9,
+       {.mask = MaskOf({1}), .rank_begin = 0, .rank_end = 19, .base = 11})});
   const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {5, 1}, {5, 4}, {3, 10}};
   const auto removal = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  const std::array targets{TargetOf(nine_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 1> targets{9};
+  resolver.Prepare(removals, targets, maps);
   EXPECT_EQ((std::vector<irs::doc_id_t>{2, 10, 13}),
             ToVector(resolver.PositionalDocs(removal, nine)));
   EXPECT_TRUE(resolver.Used(3));
@@ -356,18 +383,14 @@ TEST(DocRemovalResolverTest, RemovalsOfAbsorbedSegmentsAreRemapped) {
 TEST(DocRemovalResolverTest, ASourceSplitAcrossTargetsReachesEach) {
   const FakeSegment seven{"_7", 5};
   const FakeSegment eight{"_8", 5};
-  const auto seven_meta = MetaOf(
-    "_7",
-    {{.number = 3, .steps = {{.rank_begin = 0, .rank_end = 5, .base = 1}}}});
-  const auto eight_meta = MetaOf(
-    "_8",
-    {{.number = 3, .steps = {{.rank_begin = 5, .rank_end = 10, .base = 1}}}});
+  const auto maps =
+    MapsOf({Direct(3, 7, Window(0, 5, 1)), Direct(3, 8, Window(5, 10, 1))});
   const std::vector<irs::DocRemoval::Row> rows{{3, 1}, {3, 5}, {3, 6}, {3, 10}};
   const auto removal = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  const std::array targets{TargetOf(seven_meta), TargetOf(eight_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 2> targets{7, 8};
+  resolver.Prepare(removals, targets, maps);
   EXPECT_EQ((std::vector<irs::doc_id_t>{1, 5}),
             ToVector(resolver.PositionalDocs(removal, seven)));
   EXPECT_EQ((std::vector<irs::doc_id_t>{1, 5}),
@@ -377,71 +400,77 @@ TEST(DocRemovalResolverTest, ASourceSplitAcrossTargetsReachesEach) {
 TEST(DocRemovalResolverTest, LiveAndAbsorbedGroupsResolveTogether) {
   const FakeSegment four{"_4", 10};
   const FakeSegment nine{"_9", 10};
-  const auto four_meta = MetaOf("_4");
-  const auto nine_meta = MetaOf(
-    "_9",
-    {{.number = 3, .steps = {{.rank_begin = 0, .rank_end = 10, .base = 1}}}});
+  const auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
   const std::vector<irs::DocRemoval::Row> rows{{4, 6}, {3, 2}, {4, 1}};
   const auto removal = irs::DocRemoval::Build(rows);
-  const std::array targets{TargetOf(four_meta), TargetOf(nine_meta)};
+  const std::array<uint32_t, 2> targets{4, 9};
   EXPECT_EQ((std::vector<irs::doc_id_t>{6, 1}),
-            Resolve(removal, targets, four));
-  EXPECT_EQ((std::vector<irs::doc_id_t>{2}), Resolve(removal, targets, nine));
+            Resolve(removal, targets, maps, four));
+  EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
+            Resolve(removal, targets, maps, nine));
 }
 
 TEST(DocRemovalResolverTest, GroupsOfSegmentsNeitherLiveNorAbsorbedAreGone) {
   const FakeSegment four{"_4", 10};
-  const auto four_meta = MetaOf("_4");
   const std::vector<irs::DocRemoval::Row> rows{{4, 2}, {3, 7}};
   const auto removal = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  const std::array targets{TargetOf(four_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 1> targets{4};
+  resolver.Prepare(removals, targets, {});
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
             ToVector(resolver.PositionalDocs(removal, four)));
   EXPECT_FALSE(resolver.Used(3));
 }
 
+TEST(DocRemovalResolverTest, MapsIntoSegmentsThatAreNotLiveAreSkipped) {
+  const FakeSegment four{"_4", 10};
+  const auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
+  const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {4, 5}};
+  const auto removal = irs::DocRemoval::Build(rows);
+  irs::DocRemovalResolver resolver;
+  const std::array<const irs::DocRemoval*, 1> removals{&removal};
+  const std::array<uint32_t, 1> targets{4};
+  resolver.Prepare(removals, targets, maps);
+  EXPECT_EQ((std::vector<irs::doc_id_t>{5}),
+            ToVector(resolver.PositionalDocs(removal, four)));
+  EXPECT_TRUE(resolver.Used(3));
+}
+
 TEST(DocRemovalResolverTest, AbsorbedDocsMaskedBeforeTheMergeAreDropped) {
   const FakeSegment nine{"_9", 10};
-  const auto nine_meta = MetaOf(
-    "_9",
-    {{.number = 3,
-      .steps = {
-        {.mask = MaskOf({2, 3}), .rank_begin = 0, .rank_end = 8, .base = 1}}}});
+  const auto maps = MapsOf({Direct(
+    3, 9,
+    {.mask = MaskOf({2, 3}), .rank_begin = 0, .rank_end = 8, .base = 1})});
   const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {3, 3}, {3, 4}};
   const auto removal = irs::DocRemoval::Build(rows);
-  const std::array targets{TargetOf(nine_meta)};
-  EXPECT_EQ((std::vector<irs::doc_id_t>{2}), Resolve(removal, targets, nine));
+  const std::array<uint32_t, 1> targets{9};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
+            Resolve(removal, targets, maps, nine));
 }
 
 TEST(DocRemovalResolverTest, AllNeedsNoResolution) {
   const FakeSegment nine{"_9", 10};
-  const auto nine_meta = MetaOf(
-    "_9",
-    {{.number = 3, .steps = {{.rank_begin = 0, .rank_end = 10, .base = 1}}}});
+  const auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
   const auto removal = irs::DocRemoval::All();
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  const std::array targets{TargetOf(nine_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 1> targets{9};
+  resolver.Prepare(removals, targets, maps);
   EXPECT_TRUE(resolver.PositionalDocs(removal, nine).empty());
   EXPECT_FALSE(resolver.Used(3));
 }
 
 TEST(DocRemovalResolverTest, RemovalLeftOutOfPrepareUsesItsOwnGroups) {
   const FakeSegment three{"_3", 10};
-  const auto nine_meta = MetaOf(
-    "_9",
-    {{.number = 3, .steps = {{.rank_begin = 0, .rank_end = 10, .base = 1}}}});
+  const auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
   const std::vector<irs::DocRemoval::Row> rows{{3, 2}};
   const auto prepared = irs::DocRemoval::Build(rows);
   const auto other = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&prepared};
-  const std::array targets{TargetOf(nine_meta)};
-  resolver.Prepare(removals, targets);
+  const std::array<uint32_t, 1> targets{9};
+  resolver.Prepare(removals, targets, maps);
   EXPECT_TRUE(resolver.PositionalDocs(prepared, three).empty());
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
             ToVector(resolver.PositionalDocs(other, three)));
@@ -455,17 +484,189 @@ TEST(DocRemovalResolverTest, SegmentsNamedLikeTheSentinelAreNeverPositional) {
   const auto removal = irs::DocRemoval::Build(rows);
   irs::DocRemovalResolver resolver;
   const std::array<const irs::DocRemoval*, 1> removals{&removal};
-  resolver.Prepare(removals, {});
+  resolver.Prepare(removals, {}, {});
   EXPECT_TRUE(resolver.PositionalDocs(removal, sentinel).empty());
   EXPECT_TRUE(resolver.PositionalDocs(removal, bogus).empty());
 }
 
 TEST(DocRemovalResolverTest, PositionalDocsAreTheGroupAsBuilt) {
   const FakeSegment three{"_3", 4};
-  const auto three_meta = MetaOf("_3");
   const std::vector<irs::DocRemoval::Row> rows{{3, 9}, {3, 2}, {3, 2}};
   const auto removal = irs::DocRemoval::Build(rows);
-  const std::array targets{TargetOf(three_meta)};
+  const std::array<uint32_t, 1> targets{3};
   EXPECT_EQ((std::vector<irs::doc_id_t>{9, 2, 2}),
-            Resolve(removal, targets, three));
+            Resolve(removal, targets, {}, three));
+}
+
+TEST(DocRemovalResolverTest, ARemovalResolvesThroughTheMapsItCarries) {
+  const FakeSegment nine{"_9", 10};
+  const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {3, 4}, {5, 1}};
+  auto removal = irs::DocRemoval::Build(rows);
+  removal.maps = std::make_shared<const irs::DocMapList>(irs::DocMapList{
+    std::make_shared<const irs::DocMap>(Direct(3, 9, Window(0, 10, 4))),
+    std::make_shared<const irs::DocMap>(Direct(6, 9, Window(0, 10, 1)))});
+  irs::DocRemovalResolver resolver;
+  const std::array<const irs::DocRemoval*, 1> removals{&removal};
+  const std::array<uint32_t, 1> targets{9};
+  resolver.Prepare(removals, targets, {});
+  EXPECT_EQ((std::vector<irs::doc_id_t>{5, 7}),
+            ToVector(resolver.PositionalDocs(removal, nine)));
+  EXPECT_FALSE(resolver.Used(3));
+}
+
+TEST(DocRemovalResolverTest, CarriedMapsJoinTheWritersMaps) {
+  const FakeSegment eight{"_8", 10};
+  const FakeSegment nine{"_9", 10};
+  const auto maps = MapsOf({Direct(3, 8, Window(0, 5, 1))});
+  const std::vector<irs::DocRemoval::Row> rows{{3, 2}, {3, 7}};
+  auto removal = irs::DocRemoval::Build(rows);
+  removal.maps = std::make_shared<const irs::DocMapList>(irs::DocMapList{
+    std::make_shared<const irs::DocMap>(Direct(3, 9, Window(5, 10, 1)))});
+  const std::array<uint32_t, 2> targets{8, 9};
+  EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
+            Resolve(removal, targets, maps, eight));
+  EXPECT_EQ((std::vector<irs::doc_id_t>{2}),
+            Resolve(removal, targets, maps, nine));
+}
+
+TEST(DocMapsTest, AbsorbingAMergedSegmentComposesTheMapsIntoIt) {
+  irs::DocMaps maps;
+  const std::vector<irs::DocMap> first{Direct(3, 9, Window(0, 10, 1)),
+                                       Direct(5, 9, Window(0, 10, 11))};
+  maps.Absorb(first);
+  const std::vector<irs::DocMap> second{Direct(9, 12, Window(0, 20, 31))};
+  maps.Absorb(second);
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 9}, {3, 12}}),
+            Edges(maps.Of(3)));
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{5, 9}, {5, 12}}),
+            Edges(maps.Of(5)));
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{9, 12}}),
+            Edges(maps.Of(9)));
+  for (const auto& map : maps.Of(5)) {
+    if (map->target == 12) {
+      EXPECT_EQ(43, irs::AbsorbedDoc(map->steps, 3));
+    }
+  }
+}
+
+TEST(DocMapsTest, AbsorbingASourceAgainReplacesItsMaps) {
+  irs::DocMaps maps;
+  const std::vector<irs::DocMap> dropped{Direct(3, 9, Window(0, 10, 1))};
+  maps.Absorb(dropped);
+  const std::vector<irs::DocMap> taken{Direct(3, 11, Window(0, 10, 1))};
+  maps.Absorb(taken);
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 11}}),
+            Edges(maps.Of(3)));
+}
+
+TEST(DocMapsTest, ASourceSplitInOneBatchKeepsEveryWindow) {
+  const auto maps =
+    MapsOf({Direct(3, 7, Window(0, 5, 1)), Direct(3, 8, Window(5, 10, 1))});
+  EXPECT_EQ((std::vector<std::pair<uint32_t, uint32_t>>{{3, 7}, {3, 8}}),
+            Edges(maps.Of(3)));
+}
+
+TEST(DocMapsTest, CopiesShareTheMapsOfTheNamedSources) {
+  const auto maps =
+    MapsOf({Direct(3, 9, Window(0, 10, 1)), Direct(5, 9, Window(0, 10, 11))});
+  irs::DocMapList copied;
+  const std::array<uint32_t, 3> sources{3, 4, 7};
+  maps.CopyTo(sources, copied);
+  ASSERT_EQ(1, copied.size());
+  EXPECT_EQ(maps.Of(3).front().get(), copied.front().get());
+  EXPECT_TRUE(maps.Of(4).empty());
+}
+
+TEST(DocMapsTest, MapsLastWhileAReaderOlderThanTheirCommitLives) {
+  auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
+  const irs::DocRemovalResolver unused;
+  maps.Committed(3, 5);
+  maps.Committed(3, 8);
+  for (int i = 0; i < 3; ++i) {
+    maps.Retire(4, unused);
+    EXPECT_EQ(1, maps.Of(3).size());
+  }
+  maps.Retire(5, unused);
+  EXPECT_EQ(1, maps.Of(3).size());
+  maps.Retire(5, unused);
+  EXPECT_TRUE(maps.Of(3).empty());
+}
+
+TEST(DocMapsTest, UncommittedMapsAreNeverRetired) {
+  auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
+  const irs::DocRemovalResolver unused;
+  for (int i = 0; i < 3; ++i) {
+    maps.Retire(std::numeric_limits<uint64_t>::max() - 1, unused);
+  }
+  EXPECT_EQ(1, maps.Of(3).size());
+}
+
+TEST(DocMapsTest, AUseRestartsTheRetirement) {
+  auto maps = MapsOf({Direct(3, 9, Window(0, 10, 1))});
+  maps.Committed(3, 1);
+  const irs::DocRemovalResolver unused;
+  maps.Retire(1, unused);
+  const std::vector<irs::DocRemoval::Row> rows{{3, 2}};
+  const auto removal = irs::DocRemoval::Build(rows);
+  irs::DocRemovalResolver using_it;
+  const std::array<const irs::DocRemoval*, 1> removals{&removal};
+  const std::array<uint32_t, 1> targets{9};
+  using_it.Prepare(removals, targets, maps);
+  ASSERT_TRUE(using_it.Used(3));
+  maps.Retire(1, using_it);
+  maps.Retire(1, unused);
+  EXPECT_EQ(1, maps.Of(3).size());
+  maps.Retire(1, unused);
+  EXPECT_TRUE(maps.Of(3).empty());
+}
+
+TEST(DocMapsCodecTest, MapsSurviveTheirBytes) {
+  const irs::DocMapList maps{
+    std::make_shared<const irs::DocMap>(irs::DocMap{
+      .source = 3,
+      .target = 12,
+      .steps =
+        {{.mask = MaskOf({2, 7}), .rank_begin = 0, .rank_end = 8, .base = 1},
+         Window(0, 20, 31)}}),
+    std::make_shared<const irs::DocMap>(Direct(5, 9, Window(4, 6, 2)))};
+  const auto read = irs::ReadDocMaps(irs::WriteDocMaps(maps));
+  ASSERT_EQ(maps.size(), read.size());
+  for (size_t i = 0; i < maps.size(); ++i) {
+    EXPECT_EQ(maps[i]->source, read[i]->source);
+    EXPECT_EQ(maps[i]->target, read[i]->target);
+    ASSERT_EQ(maps[i]->steps.size(), read[i]->steps.size());
+    for (size_t j = 0; j < maps[i]->steps.size(); ++j) {
+      const auto& written = maps[i]->steps[j];
+      const auto& back = read[i]->steps[j];
+      EXPECT_EQ(written.rank_begin, back.rank_begin);
+      EXPECT_EQ(written.rank_end, back.rank_end);
+      EXPECT_EQ(written.base, back.base);
+      ASSERT_EQ(written.mask == nullptr, back.mask == nullptr);
+      if (written.mask != nullptr) {
+        EXPECT_EQ(*written.mask, *back.mask);
+      }
+    }
+  }
+}
+
+TEST(DocMapsCodecTest, NoMapsAreNoBytes) {
+  EXPECT_TRUE(irs::WriteDocMaps({}).empty());
+  EXPECT_TRUE(irs::ReadDocMaps("").empty());
+}
+
+TEST(DocMapsCodecTest, MalformedBytesAreCorruptData) {
+  const auto valid = Words({1, 3, 9, 1, 0, 10, 1, 0});
+  ASSERT_EQ(1, irs::ReadDocMaps(valid).size());
+  for (const auto& bytes :
+       {valid.substr(0, valid.size() - 1), valid + "x",
+        Words({2, 3, 9, 1, 0, 10, 1, 0}), Words({1, 3, 9, 0}),
+        Words({1, 3, 9, 1, 5, 4, 1, 0}), Words({1, 3, 9, 1, 0, 10, 0, 0}),
+        Words({1, 3, 9, 1, 0, 10, irs::doc_limits::eof() - 5, 0}),
+        Words({1, irs::DocRemoval::kNoSegment, 9, 1, 0, 10, 1, 0}),
+        Words({1, 3, irs::DocRemoval::kNoSegment, 1, 0, 10, 1, 0}),
+        Words({1, 3, 9, 1, 0, 10, 1, 100})}) {
+    ASSERT_SQL_ERROR(irs::ReadDocMaps(bytes), ERRCODE_DATA_CORRUPTED);
+  }
+  ASSERT_SQL_ERROR(irs::ReadDocMaps(Words({1, 3, 9, 1, 0, 10, 1, 4}) + "abcd"),
+                   ERRCODE_INDEX_CORRUPTED);
 }

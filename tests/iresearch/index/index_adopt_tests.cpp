@@ -711,19 +711,29 @@ const irs::SegmentMeta& MetaOf(const irs::DirectoryReader& snapshot,
   return kMissing;
 }
 
-std::vector<irs::AbsorbedSegment> AbsorbedOf(irs::IndexWriter& writer,
-                                             std::string_view name) {
-  return MetaOf(writer.GetSnapshot(), name).absorbed;
+irs::DocMapList MapsOf(const irs::IndexWriter& writer,
+                       const std::vector<std::string>& sources) {
+  std::vector<uint32_t> numbers;
+  for (const auto& source : sources) {
+    numbers.push_back(NumberOf(source));
+  }
+  return writer.CopyDocMaps(numbers);
+}
+
+size_t MapsInto(const irs::DocMapList& maps, std::string_view target) {
+  const auto number = NumberOf(target);
+  return absl::c_count_if(
+    maps, [&](const auto& map) { return map->target == number; });
 }
 
 irs::AbsorbedSegment Takes(const irs::DirectoryReader& snapshot,
                            std::string_view source, irs::doc_id_t rank_begin,
                            irs::doc_id_t rank_end) {
   return {.number = NumberOf(source),
-          .steps = {{.mask = MetaOf(snapshot, source).docs_mask,
-                     .rank_begin = rank_begin,
-                     .rank_end = rank_end,
-                     .base = irs::doc_limits::min()}}};
+          .step = {.mask = MetaOf(snapshot, source).docs_mask,
+                   .rank_begin = rank_begin,
+                   .rank_end = rank_end,
+                   .base = irs::doc_limits::min()}};
 }
 
 irs::AbsorbedSegment TakesAll(const irs::DirectoryReader& snapshot,
@@ -734,14 +744,17 @@ irs::AbsorbedSegment TakesAll(const irs::DirectoryReader& snapshot,
 }
 
 irs::IndexWriter::QueryContext::RemovalPtr Positions(
-  const std::map<std::string, std::vector<irs::doc_id_t>>& docs) {
+  const std::map<std::string, std::vector<irs::doc_id_t>>& docs,
+  std::shared_ptr<const irs::DocMapList> maps = nullptr) {
   std::vector<irs::DocRemoval::Row> rows;
   for (const auto& [name, segment_docs] : docs) {
     for (const auto doc : segment_docs) {
       rows.emplace_back(NumberOf(name), doc);
     }
   }
-  return std::make_shared<const irs::DocRemoval>(irs::DocRemoval::Build(rows));
+  auto removal = irs::DocRemoval::Build(rows);
+  removal.maps = std::move(maps);
+  return std::make_shared<const irs::DocRemoval>(std::move(removal));
 }
 
 irs::IndexWriter::QueryContext::RemovalPtr FirstDocsEverywhere(
@@ -985,11 +998,14 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
     ASSERT_TRUE(trx.Commit(20));
     ASSERT_TRUE(_writer->RefreshCommit());
   }
+  auto absorbed = sources;
+  absl::c_copy(CommittedNames(*_writer), std::back_inserter(absorbed));
+  ASSERT_EQ(4, absorbed.size());
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer);
   ASSERT_EQ(1, merged.size());
-  EXPECT_EQ(4, AbsorbedOf(*_writer, merged.front()).size());
+  EXPECT_EQ(4, MapsInto(MapsOf(*_writer, absorbed), merged.front()));
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{sources.front(), {2}}, {sources.back(), {1}}}));
@@ -1018,7 +1034,7 @@ TEST_F(IndexAdoptTest, AbsorbedDocMapsLastAsLongAsAnOlderReader) {
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
-  ASSERT_EQ(2, AbsorbedOf(*_writer, merged).size());
+  ASSERT_EQ(2, MapsInto(MapsOf(*_writer, sources), merged));
 
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -1029,14 +1045,14 @@ TEST_F(IndexAdoptTest, AbsorbedDocMapsLastAsLongAsAnOlderReader) {
   for (const auto* value : {"f1", "f2", "f3"}) {
     commit(value);
   }
-  EXPECT_EQ(2, AbsorbedOf(*_writer, merged).size())
+  EXPECT_EQ(2, MapsOf(*_writer, sources).size())
     << "the older reader can still name the sources";
 
   old.reset();
   commit("f4");
-  EXPECT_EQ(2, AbsorbedOf(*_writer, merged).size());
+  EXPECT_EQ(2, MapsOf(*_writer, sources).size());
   commit("f5");
-  EXPECT_TRUE(AbsorbedOf(*_writer, merged).empty());
+  EXPECT_TRUE(MapsOf(*_writer, sources).empty());
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{sources.front(), {1}}}));
@@ -1054,10 +1070,11 @@ TEST_F(IndexAdoptTest, CompactionAcrossADocMapRetirementFindsNoRemovals) {
   };
   commit("a");
   commit("b");
+  const auto sources = CommittedNames(*_writer);
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
-  ASSERT_EQ(2, AbsorbedOf(*_writer, merged).size());
+  ASSERT_EQ(2, MapsInto(MapsOf(*_writer, sources), merged));
   commit("c");
 
   auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -1066,7 +1083,7 @@ TEST_F(IndexAdoptTest, CompactionAcrossADocMapRetirementFindsNoRemovals) {
   ASSERT_TRUE(_writer->RefreshBegin());
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
-  EXPECT_TRUE(AbsorbedOf(*_writer, merged).empty());
+  EXPECT_TRUE(MapsOf(*_writer, sources).empty());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -1093,7 +1110,7 @@ TEST_F(IndexAdoptTest, AbsorbedDocMapsLastWhileARemovalUsesThem) {
   first.Remove(Positions({{sources.front(), {1}}}));
   ASSERT_TRUE(first.Commit(20));
   ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(2, AbsorbedOf(*_writer, merged).size());
+  EXPECT_EQ(2, MapsInto(MapsOf(*_writer, sources), merged));
 
   auto second = _writer->GetBatch();
   second.Remove(Positions({{sources.back(), {1}}}));
@@ -1102,7 +1119,7 @@ TEST_F(IndexAdoptTest, AbsorbedDocMapsLastWhileARemovalUsesThem) {
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, AbsorbedDocMapsSurviveAReopen) {
+TEST_F(IndexAdoptTest, AfterAReopenOnlyCarriedDocMapsReachAMergedAwaySource) {
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     for (const auto* value : {"a1", "a2", "a3"}) {
@@ -1130,14 +1147,23 @@ TEST_F(IndexAdoptTest, AbsorbedDocMapsSurviveAReopen) {
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
-  const auto before = AbsorbedOf(*_writer, merged);
-  ASSERT_EQ(2, before.size());
+  const auto copied =
+    std::make_shared<const irs::DocMapList>(MapsOf(*_writer, sources));
+  ASSERT_EQ(2, MapsInto(*copied, merged));
 
   Restart(/*cleanup_on_open=*/true);
-  EXPECT_EQ(before, AbsorbedOf(*_writer, merged));
+  EXPECT_TRUE(MapsOf(*_writer, sources).empty());
+  {
+    auto lost = _writer->GetBatch();
+    lost.Remove(Positions({{sources.front(), {3}}}));
+    ASSERT_TRUE(lost.Commit(25));
+    EXPECT_FALSE(_writer->RefreshCommit());
+    EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
+  }
 
   auto del = _writer->GetBatch();
-  del.Remove(Positions({{sources.front(), {3}}, {sources.back(), {1}}}));
+  del.Remove(
+    Positions({{sources.front(), {3}}, {sources.back(), {1}}}, copied));
   ASSERT_TRUE(del.Commit(30));
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
@@ -1570,7 +1596,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsMasksTheRowsOfASourceThatVanished) {
   ASSERT_EQ(1, CommittedNames(*_writer).size()) << "the first source is gone";
 
   auto absorbed = TakesAll(snapshot, sources.back());
-  absorbed.steps.front().base = irs::doc_limits::min() + 2;
+  absorbed.step.base = irs::doc_limits::min() + 2;
   Replace(*_writer, sources, replacement,
           {{TakesAll(snapshot, sources.front()), std::move(absorbed)}});
   ASSERT_TRUE(_writer->RefreshCommit());

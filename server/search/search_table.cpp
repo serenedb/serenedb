@@ -83,6 +83,7 @@ struct SearchTable::ReplaySession {
   irs::IndexWriter::Transaction trx;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
   std::vector<PendingAdopt> adopts;
+  std::shared_ptr<const irs::DocMapList> maps;
 };
 
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
@@ -546,8 +547,17 @@ void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
   if (!session) {
     return;
   }
-  if (auto removal = connector::MakeRowRunRemoval(starts, counts)) {
+  if (auto removal =
+        connector::MakeRowRunRemoval(starts, counts, session->maps)) {
     session->trx.Remove(std::move(removal));
+  }
+}
+
+void SearchTable::ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
+                                        std::string_view maps) {
+  auto parsed = irs::ReadDocMaps(maps);
+  if (auto* session = BeginReplay(db)) {
+    session->maps = std::make_shared<const irs::DocMapList>(std::move(parsed));
   }
 }
 

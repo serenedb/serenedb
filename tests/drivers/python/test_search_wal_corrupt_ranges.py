@@ -17,6 +17,7 @@ SERENED_BIN = os.environ.get(
 
 EMPTY_RANGE_FAULT = "search_delete_wal_empty_range"
 OUTSIDE_SEGMENT_FAULT = "search_delete_wal_outside_segment"
+MALFORMED_MAPS_FAULT = "search_delete_wal_malformed_maps"
 
 pytestmark = pytest.mark.skipif(
     not (Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)),
@@ -32,6 +33,7 @@ pytestmark = pytest.mark.skipif(
             OUTSIDE_SEGMENT_FAULT,
             "Corrupt WAL: search-table row range leaves its segment",
         ),
+        (MALFORMED_MAPS_FAULT, "Malformed doc map: it ends early"),
     ],
 )
 def test_corrupt_row_range_refuses_replay(tmp_path: Path, fault: str, error: str) -> None:

@@ -48,41 +48,17 @@ struct SegmentInfo {
 static_assert(std::is_nothrow_move_constructible_v<SegmentInfo>);
 static_assert(std::is_nothrow_move_assignable_v<SegmentInfo>);
 
-inline bool SameMask(const std::shared_ptr<const DocumentMask>& lhs,
-                     const std::shared_ptr<const DocumentMask>& rhs) {
-  return lhs == rhs || (lhs && rhs && *lhs == *rhs);
-}
-
-struct AbsorbedStep {
-  bool operator==(const AbsorbedStep& rhs) const {
-    return SameMask(mask, rhs.mask) && rank_begin == rhs.rank_begin &&
-           rank_end == rhs.rank_end && base == rhs.base;
-  }
-
-  std::shared_ptr<const DocumentMask> mask;
-  doc_id_t rank_begin = 0;
-  doc_id_t rank_end = 0;
-  doc_id_t base = doc_limits::min();
-};
-
-struct AbsorbedSegment {
-  bool operator==(const AbsorbedSegment&) const = default;
-
-  uint32_t number = 0;
-  std::vector<AbsorbedStep> steps;
-};
-
 struct SegmentMeta : SegmentInfo {
   bool operator==(const SegmentMeta& rhs) const {
     return SegmentInfo::operator==(rhs) && files == rhs.files &&
-           SameMask(docs_mask, rhs.docs_mask) &&
-           docs_mask_size == rhs.docs_mask_size && absorbed == rhs.absorbed;
+           (docs_mask == rhs.docs_mask ||
+            (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask)) &&
+           docs_mask_size == rhs.docs_mask_size;
   }
 
   std::vector<std::string> files;
   std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
-  std::vector<AbsorbedSegment> absorbed;
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {

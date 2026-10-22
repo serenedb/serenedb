@@ -465,6 +465,11 @@ void SearchTableEntry::ReplayDeleteRanges(
                                entry.counts);
 }
 
+void SearchTableEntry::ReplayRowPositionMaps(duckdb::ClientContext&,
+                                             std::string maps) {
+  _storage->ReplayRowPositionMaps(catalog.GetAttached(), maps);
+}
+
 void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
   _storage->ReplayTruncate(catalog.GetAttached());
 }

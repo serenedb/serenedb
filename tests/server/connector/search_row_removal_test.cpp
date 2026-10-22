@@ -90,9 +90,10 @@ duckdb::WALDeleteRowRanges RunsOf(std::span<const uint64_t> positions) {
 }
 
 std::shared_ptr<const irs::DocRemoval> MakeRemoval(
-  std::span<const uint64_t> positions) {
+  std::span<const uint64_t> positions,
+  std::shared_ptr<const irs::DocMapList> maps = nullptr) {
   const auto runs = RunsOf(positions);
-  return MakeRowRunRemoval(runs.starts, runs.counts);
+  return MakeRowRunRemoval(runs.starts, runs.counts, std::move(maps));
 }
 
 const irs::CompactionPolicy& FullMerge() {
@@ -238,9 +239,10 @@ class SearchRowRemovalTest : public ::testing::Test {
   }
 
   void Remove(std::span<const uint64_t> positions,
-              std::span<const int64_t> victims) {
+              std::span<const int64_t> victims,
+              std::shared_ptr<const irs::DocMapList> maps = nullptr) {
     auto trx = _writer->GetBatch();
-    if (auto removal = MakeRemoval(positions)) {
+    if (auto removal = MakeRemoval(positions, std::move(maps))) {
       trx.Remove(std::move(removal));
     }
     ASSERT_TRUE(trx.Commit());
@@ -275,10 +277,10 @@ class SearchRowRemovalTest : public ::testing::Test {
         static_cast<irs::doc_id_t>(segment.meta.live_docs_count);
       replaced.emplace_back(segment.meta.name);
       absorbed.push_back({.number = irs::SegmentNumber(segment.meta.name),
-                          .steps = {{.mask = segment.meta.docs_mask,
-                                     .rank_begin = 0,
-                                     .rank_end = live,
-                                     .base = base}}});
+                          .step = {.mask = segment.meta.docs_mask,
+                                   .rank_begin = 0,
+                                   .rank_end = live,
+                                   .base = base}});
       base += live;
     }
     ASSERT_EQ(1, metas.size());
@@ -501,6 +503,24 @@ TEST(WalDeleteEntryTest, RoundTripsRuns) {
   EXPECT_EQ(entry.counts, back.counts);
 }
 
+TEST(WalRowPositionMapsTest, RoundTripsTheMaps) {
+  const duckdb::WALRowPositionMaps entry{
+    irs::WriteDocMaps({std::make_shared<const irs::DocMap>(irs::DocMap{
+      .source = 3, .target = 9, .steps = {{.rank_end = 5, .base = 2}}})})};
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(entry, stream);
+  stream.Rewind();
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  const auto back = duckdb::WALRowPositionMaps::Deserialize(deserializer);
+  deserializer.End();
+  EXPECT_EQ(entry.maps, back.maps);
+  const auto maps = irs::ReadDocMaps(back.maps);
+  ASSERT_EQ(1, maps.size());
+  EXPECT_EQ(3, maps.front()->source);
+  EXPECT_EQ(9, maps.front()->target);
+}
+
 TEST_F(SearchRowRemovalTest, EmptyRemovalRemovesNothing) {
   InsertRange(0, 10);
   Remove({}, {});
@@ -557,7 +577,7 @@ TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedThroughTwoMerges) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedAfterAReopen) {
+TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);
   const std::vector<int64_t> early{10, 3011};
@@ -567,15 +587,25 @@ TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedAfterAReopen) {
     victims.push_back(r);
   }
   std::vector<uint64_t> positions;
+  std::string record;
   {
     const auto snapshot = _writer->GetSnapshot();
     positions = PositionsOf(snapshot, victims);
     ASSERT_TRUE(_writer->Compact(FullMerge()));
     _writer->RefreshCommit();
+    std::vector<uint32_t> segments;
+    for (const auto& segment : snapshot) {
+      segments.push_back(irs::SegmentNumber(segment.Meta().name));
+    }
+    record = irs::WriteDocMaps(_writer->CopyDocMaps(segments));
   }
+  ASSERT_FALSE(record.empty());
   Reopen();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
-  Remove(positions, victims);
+  Remove(positions, {});
+  ExpectModel();
+  Remove(positions, victims,
+         std::make_shared<const irs::DocMapList>(irs::ReadDocMaps(record)));
   ExpectModel();
 }
 

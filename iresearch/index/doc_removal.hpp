@@ -22,13 +22,16 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -36,6 +39,26 @@
 namespace irs {
 
 struct SubReader;
+
+struct AbsorbedStep {
+  std::shared_ptr<const DocumentMask> mask;
+  doc_id_t rank_begin = 0;
+  doc_id_t rank_end = 0;
+  doc_id_t base = doc_limits::min();
+};
+
+struct AbsorbedSegment {
+  uint32_t number = 0;
+  AbsorbedStep step;
+};
+
+struct DocMap {
+  uint32_t source = 0;
+  uint32_t target = 0;
+  std::vector<AbsorbedStep> steps;
+};
+
+using DocMapList = std::vector<std::shared_ptr<const DocMap>>;
 
 struct DocRemoval {
   static constexpr uint32_t kNoSegment = std::numeric_limits<uint32_t>::max();
@@ -59,6 +82,7 @@ struct DocRemoval {
   std::vector<uint32_t> segments;
   std::vector<uint32_t> offsets;
   std::vector<doc_id_t> docs;
+  std::shared_ptr<const DocMapList> maps;
 };
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
@@ -66,15 +90,36 @@ uint32_t SegmentNumber(std::string_view name) noexcept;
 std::optional<doc_id_t> AbsorbedDoc(std::span<const AbsorbedStep> steps,
                                     doc_id_t doc) noexcept;
 
-struct RemovalTarget {
-  uint32_t number;
-  const SegmentMeta* meta;
+std::string WriteDocMaps(const DocMapList& maps);
+DocMapList ReadDocMaps(std::string_view bytes);
+
+class DocRemovalResolver;
+
+class DocMaps {
+ public:
+  void Absorb(std::span<const DocMap> direct);
+  void Committed(uint32_t source, uint64_t seq) noexcept;
+  void CopyTo(std::span<const uint32_t> sources, DocMapList& out) const;
+  std::span<const std::shared_ptr<const DocMap>> Of(
+    uint32_t source) const noexcept;
+  void Retire(uint64_t oldest_reader, const DocRemovalResolver& removals);
+
+ private:
+  static constexpr uint64_t kUncommitted = std::numeric_limits<uint64_t>::max();
+
+  struct Source {
+    uint64_t absorbed_at = kUncommitted;
+    bool retiring = false;
+    DocMapList maps;
+  };
+
+  containers::FlatHashMap<uint32_t, Source> _sources;
 };
 
 class DocRemovalResolver {
  public:
   void Prepare(std::span<const DocRemoval* const> removals,
-               std::span<const RemovalTarget> targets);
+               std::span<const uint32_t> targets, const DocMaps& maps);
 
   std::span<const doc_id_t> PositionalDocs(const DocRemoval& removal,
                                            const SubReader& segment) const;

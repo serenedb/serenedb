@@ -119,17 +119,6 @@ set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
 set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
 
 ################################################################################
-## liburing
-################################################################################
-
-if(SDB_IOURING)
-    sdb_update_module(${GIT_EXECUTABLE} "liburing" ${CMAKE_CURRENT_SOURCE_DIR} "README")
-    add_subdirectory(liburing-cmake)
-    set(uring_FOUND ON)
-    set(uring_FOUND ON PARENT_SCOPE)
-endif()
-
-################################################################################
 ## ZLIB-NG
 ################################################################################
 

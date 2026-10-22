@@ -23,7 +23,7 @@ hash-threshold 100
 # nothing for TSan to flag.
 #
 # Run with TSan to verify the race is gone (no warning under load):
-#   ./tests/sqllogic/run.sh ... --test '.../inverted_index_insert_conflict_snapshot.test_slow'
+#   ./tests/sqllogic/run.sh ... --test '.../inverted_index_insert_conflict_snapshot.test'
 
 statement ok
 CREATE TABLE t (id INT PRIMARY KEY, val INT);

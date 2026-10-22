@@ -1,5 +1,3 @@
-add_compile_options(-Wno-error)
-
 add_library(
     search-benchmark-common
     OBJECT

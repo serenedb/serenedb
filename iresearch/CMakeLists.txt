@@ -1,15 +1,3 @@
-set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
-
-if(
-    NOT APPLE
-    AND NOT (
-        CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
-        OR CMAKE_BUILD_TYPE STREQUAL "Debug"
-    )
-)
-    add_link_options(-s)
-endif()
-
 set(IResearch_core_sources
     ./utils/snowball_stemmer.cpp
     ./analysis/token_attributes.cpp
@@ -475,9 +463,6 @@ else()
     unset(_missing_tools_str)
 endif()
 
-# ensure Boost paths take precedence over other system libraries as Boost may be defined elsewhere
-include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-
 if(IRESEARCH_BENCH)
     set(IResearch_library iresearch-minimal)
     list(
@@ -570,17 +555,13 @@ else()
         iresearch-static
         SYSTEM
         PUBLIC
-            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
-        PRIVATE
-            $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
-        PUBLIC
             ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
     )
     target_link_libraries(
         iresearch-static
         PUBLIC OpenSSL::Crypto
         PUBLIC OpenSSL::SSL
-        PUBLIC ${FASTTEXT_LIBRARY_STATIC}
+        PUBLIC fasttext-static
         PUBLIC ${FAISS_LIB}
         PUBLIC s2
         PRIVATE lz4_static

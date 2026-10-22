@@ -233,9 +233,7 @@ target_include_directories(
 target_include_directories(
     iresearch-tests
     SYSTEM
-    PRIVATE
-        ${Boost_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and
@@ -270,9 +268,7 @@ target_include_directories(
 target_include_directories(
     iresearch-load-tests
     SYSTEM
-    PRIVATE
-        ${Boost_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
 add_test(NAME iresearch-tests COMMAND iresearch-tests)

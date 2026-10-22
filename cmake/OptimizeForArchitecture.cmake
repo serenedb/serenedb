@@ -1,13 +1,10 @@
-# CMAKE_TARGET_ARCHITECTURES -- for backward compatibility
 # https://learn.microsoft.com/en-us/windows/win32/winprog64/wow64-implementation-details
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(amd64.*|AMD64.*|x86_64.*)")
     set(ARCH_AMD64 1)
-    set(CMAKE_TARGET_ARCHITECTURES "x86_64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64.*|ARM64.*|aarch64.*|AARCH64.*)")
     # armv8.*|ARMV8.* is 32 bit builded aarch64, we don't need to support it now
     # also even if we want to support it, it's more like armv7 with extensions not aarch64
     set(ARCH_AARCH64 1)
-    set(CMAKE_TARGET_ARCHITECTURES "aarch64")
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc64le.*|ppc64le.*|PPC64LE.*)")
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(s390x.*|S390X.*)")
     # elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64")
@@ -58,12 +55,6 @@ set(AMD64_V4
     -mavx512vbmi2
 )
 
-macro(sandybridge)
-    message("Optimize for sandybridge")
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
-    list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V2})
-endmacro()
-
 macro(haswell)
     message("Optimize for haswell")
     list(APPEND ARCHITECTURE_OPTIMIZATIONS ${AMD64_V1})
@@ -88,16 +79,6 @@ macro(graviton1)
     # little-endian enabled by default, but only if target is not something like aarch64_be
     # so force to generate little-endian code, because it's simpler and less error-prone
     # "fp simd" are included to armv8-a
-    list(
-        APPEND ARCHITECTURE_OPTIMIZATIONS
-        -mlittle-endian
-        -march=${AARCH64_MARCH}
-    )
-endmacro()
-
-macro(graviton2)
-    message("Optimize for graviton2")
-    set(AARCH64_MARCH "armv8.2-a+fp16+rcpc+dotprod+crypto")
     list(
         APPEND ARCHITECTURE_OPTIMIZATIONS
         -mlittle-endian

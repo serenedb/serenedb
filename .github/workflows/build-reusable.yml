@@ -259,8 +259,8 @@ jobs:
           echo "RUN_BIGLAKE=${{ inputs.BIGLAKE }}"     >> $GITHUB_ENV
 
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
-          echo "USE_DEBUG_INFO=COLUMNS"   >> $GITHUB_ENV
-          echo "USE_IPO=Off"              >> $GITHUB_ENV
+          echo "SDB_DEBUG_INFO=COLUMNS"   >> $GITHUB_ENV
+          echo "SDB_LTO=Off"              >> $GITHUB_ENV
           echo "SDB_ALLOC=JE"             >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=false"   >> $GITHUB_ENV
@@ -340,10 +340,10 @@ jobs:
             -e BUILD_DIR=build \
             -e SDB_GTEST="$SDB_GTEST" \
             -e BUILDMODE="$BUILDMODE" \
-            -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+            -e SDB_DEBUG_INFO="$SDB_DEBUG_INFO" \
             -e SDB_DEV="$SDB_DEV" \
             -e SDB_FAULT_INJECTION="$SDB_FAULT_INJECTION" \
-            -e USE_IPO="$USE_IPO" \
+            -e SDB_LTO="$SDB_LTO" \
             -e SDB_COVERAGE="$SDB_COVERAGE" \
             -e ENSURE_VTUNE_SYMBOLS="$ENSURE_VTUNE_SYMBOLS" \
             ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \

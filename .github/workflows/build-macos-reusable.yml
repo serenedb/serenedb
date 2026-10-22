@@ -97,8 +97,8 @@ jobs:
         run: |
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DUSE_DEBUG_INFO=COLUMNS \
-            -DUSE_IPO=Off \
+            -DSDB_DEBUG_INFO=COLUMNS \
+            -DSDB_LTO=Off \
             -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
             -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \

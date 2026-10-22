@@ -12,9 +12,7 @@ if(NOT CMAKE_BUILD_TYPE)
     )
 endif()
 
-if(
-    NOT CMAKE_BUILD_TYPE MATCHES "(Debug)|(Release)|(RelWithDebInfo)|(MinSizeRel)"
-)
+if(NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|Release|RelWithDebInfo|MinSizeRel)$")
     message(
         FATAL_ERROR
         "expecting CMAKE_BUILD_TYPE: Debug Release RelWithDebInfo MinSizeRel, got ${CMAKE_BUILD_TYPE}."
@@ -23,8 +21,9 @@ endif()
 
 # where to find CMAKE modules
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
+include(SereneDBUtils)
 
-option(USE_FAIL_ON_WARNINGS "treat warnings as errors" ON)
+option(SDB_WERROR "treat warnings as errors" ON)
 
 option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
@@ -50,6 +49,7 @@ set(SDB_ALLOC
     "allocator: JE (jemalloc), TC (tcmalloc), empty for system"
 )
 set_property(CACHE SDB_ALLOC PROPERTY STRINGS "" JE TC)
+option(SDB_JEMALLOC_PROF "jemalloc heap profiling, with SDB_ALLOC=JE" OFF)
 
 set(SDB_SANITIZE
     ""
@@ -78,13 +78,13 @@ option(
     OFF
 )
 
-set(USE_DEBUG_INFO
+set(SDB_DEBUG_INFO
     "FULL"
     CACHE STRING
     "debug info: NONE, LINES, COLUMNS, SANITIZE, COVERAGE, PROFILE, LLDB, GDB, FULL"
 )
 set_property(
-    CACHE USE_DEBUG_INFO
+    CACHE SDB_DEBUG_INFO
     PROPERTY STRINGS NONE LINES COLUMNS SANITIZE COVERAGE PROFILE LLDB GDB FULL
 )
 
@@ -202,8 +202,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
 # disable not fatal logs and all vlogs in compile time
-add_definitions(-DABSL_MAX_VLOG_VERBOSITY=-1)
-add_definitions(-DABSL_MIN_LOG_LEVEL=3)
+add_compile_definitions(ABSL_MAX_VLOG_VERBOSITY=-1 ABSL_MIN_LOG_LEVEL=3)
 
 if(SDB_GEN_PGO)
     # TODO(mbkkt) Does it make sense to use -ftemporal-profile ?
@@ -288,16 +287,15 @@ option(
 )
 
 if(SDB_DEV)
-    add_definitions("-DSDB_DEV=1")
-    add_definitions("-DDEBUG")
+    add_compile_definitions(SDB_DEV=1 DEBUG)
 
-    # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
+    # TODO(mbkkt) add_compile_definitions(_FORTIFY_SOURCE=3)
 else()
-    add_definitions(-DNDEBUG)
+    add_compile_definitions(NDEBUG)
 endif()
 
 if(SDB_GTEST)
-    add_definitions("-DSDB_GTEST=1")
+    add_compile_definitions(SDB_GTEST=1)
 endif()
 
 ################################################################################
@@ -311,85 +309,42 @@ option(
 )
 
 if(SDB_FAULT_INJECTION)
-    add_definitions("-DSDB_FAULT_INJECTION=1")
+    add_compile_definitions(SDB_FAULT_INJECTION=1)
 endif()
 
 ################################################################################
-## INTERPROCEDURAL OPTIMIZATION (LINK TIME OPTIMIZATION)
+## LINK TIME OPTIMIZATION
 ################################################################################
 
-set(USE_IPO
-    AUTO
-    CACHE STRING
-    "Use interprocedural optimization: ON, OFF or AUTO"
-)
-set_property(CACHE USE_IPO PROPERTY STRINGS AUTO ON OFF)
-
-set(IPO_ENABLED OFF)
-
-# Determine value if IPO_ENABLED from USE_IPO and CMAKE_BUILD_TYPE
-if(USE_IPO STREQUAL "AUTO")
-    if(
-        NOT SDB_GTEST
-        AND CMAKE_BUILD_TYPE MATCHES "(Release)|(RelWithDebInfo)|(MinSizeRel)"
-    )
-        set(IPO_ENABLED ON)
-    endif()
-elseif(USE_IPO)
-    set(IPO_ENABLED ON)
-endif()
-
-message(STATUS "IPO_ENABLED: ${IPO_ENABLED}")
+option(SDB_LTO "ThinLTO, identical code folding and section GC" OFF)
 
 ################################################################################
 ## ALLOC
 ################################################################################
 
 # TODO(mbkkt) -fnew-alignment=8 and tcmalloc is nothrow -- ABSL_ALLOCATOR_NOTHROW
-if("${SDB_ALLOC}" MATCHES "JE")
-    add_definitions("-DSERENEDB_HAVE_JEMALLOC=1")
-elseif("${SDB_ALLOC}" MATCHES "TC")
-    add_definitions("-DSERENEDB_HAVE_TCMALLOC=1")
+if(SDB_ALLOC STREQUAL "JE")
+    add_compile_definitions(SERENEDB_HAVE_JEMALLOC=1)
+elseif(SDB_ALLOC STREQUAL "TC")
+    add_compile_definitions(SERENEDB_HAVE_TCMALLOC=1)
 endif()
 
 ################################################################################
 ## FLAGS
 ################################################################################
 
-if(USE_FAIL_ON_WARNINGS)
+if(SDB_WERROR)
     add_compile_options(-Werror)
 endif()
 
 add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.)
 
-function(sdb_dir_compile_options dir)
-    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(target IN LISTS targets)
-        get_target_property(type ${target} TYPE)
-        if(NOT type MATCHES "^(INTERFACE_LIBRARY|UTILITY)$")
-            target_compile_options(${target} PRIVATE ${ARGN})
-        endif()
-    endforeach()
-    get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
-    foreach(subdir IN LISTS subdirs)
-        sdb_dir_compile_options(${subdir} ${ARGN})
-    endforeach()
-endfunction()
-
 # compiler options
-set(EXTRA_FLAGS "-Wall -Wextra -Wthread-safety -Wdeprecated")
-set(EXTRA_FLAGS "${EXTRA_FLAGS} -Wno-unused-parameter")
-set(EXTRA_FLAGS "${EXTRA_FLAGS} ${ARCHITECTURE_OPTIMIZATIONS}")
-
-# TODO(mbkkt) add -Wheader-hygiene -Wignored-base-class-qualifiers
-set(EXTRA_CXX_FLAGS "-Wsuggest-override -Wsuggest-destructor-override")
-set(EXTRA_CXX_FLAGS
-    "${EXTRA_CXX_FLAGS} -Wno-missing-designated-field-initializers -Wno-deprecated-declarations -Wno-deprecated-copy-with-dtor"
+set(EXTRA_FLAGS
+    "-Wall -Wdeprecated -Wextra -Wthread-safety -Wno-unused-parameter ${ARCHITECTURE_OPTIMIZATIONS}"
 )
-set(EXTRA_CXX_FLAGS
-    "${EXTRA_CXX_FLAGS} -fsized-deallocation -fstrict-vtable-pointers"
-)
-if(IPO_ENABLED)
+set(EXTRA_CXX_FLAGS "-fsized-deallocation -fstrict-vtable-pointers")
+if(SDB_LTO)
     # TODO(mbkkt) Try to apply -fsplit-lto-unit, -flo=full -fbasic-block-sections=all
     # -fexperimental-relative-c++-abi-vtables, -fassume-unique-vtables -fvirtual-function-elimination
     # -fassume-nothrow-exception-dtor -fasync-exceptions -fasynchronous-unwind-tables
@@ -433,86 +388,49 @@ endif()
 set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")
 set(GDB_DEBUG_INFO "${FULL_DEBUG_INFO} -ggdb")
 
-if(USE_DEBUG_INFO STREQUAL "NONE")
-    set(DEBUG_INFO_FLAGS "${NONE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "LINES")
-    set(DEBUG_INFO_FLAGS "${LINES_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "COLUMNS")
-    set(DEBUG_INFO_FLAGS "${COLUMNS_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "SANITIZE")
-    set(DEBUG_INFO_FLAGS "${SANITIZE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "COVERAGE")
-    set(DEBUG_INFO_FLAGS "${COVERAGE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "PROFILE")
-    set(DEBUG_INFO_FLAGS "${PROFILE_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "LLDB")
-    set(DEBUG_INFO_FLAGS "${LLDB_DEBUG_INFO}")
-elseif(USE_DEBUG_INFO STREQUAL "GDB")
-    set(DEBUG_INFO_FLAGS "${GDB_DEBUG_INFO}")
-else()
-    set(DEBUG_INFO_FLAGS "${FULL_DEBUG_INFO}")
+if(NOT DEFINED ${SDB_DEBUG_INFO}_DEBUG_INFO)
+    message(
+        FATAL_ERROR
+        "SDB_DEBUG_INFO=${SDB_DEBUG_INFO}, expecting NONE, LINES, COLUMNS, SANITIZE, COVERAGE, PROFILE, LLDB, GDB or FULL"
+    )
 endif()
+set(DEBUG_INFO_FLAGS "${${SDB_DEBUG_INFO}_DEBUG_INFO}")
 
-if(SDB_SPLIT_DWARF AND NOT USE_DEBUG_INFO STREQUAL "NONE")
+if(SDB_SPLIT_DWARF AND NOT SDB_DEBUG_INFO STREQUAL "NONE")
     set(DEBUG_INFO_FLAGS "${DEBUG_INFO_FLAGS} -gsplit-dwarf")
-    if(IPO_ENABLED)
+    if(SDB_LTO)
         add_link_options(
             "-Wl,--plugin-opt=dwo_dir=${CMAKE_BINARY_DIR}/dwo/$<TARGET_PROPERTY:NAME>"
         )
     endif()
 endif()
 
-# c
 # note: when building one of the build types, CMake will automatically combine
-# the base flags from CMAKE_C_FLAGS with build type-specific flags in
-# CMAKE_C_FLAGS_${CMAKE_BUILD_TYPE}.
+# the base flags from CMAKE_<LANG>_FLAGS with build type-specific flags in
+# CMAKE_<LANG>_FLAGS_${CMAKE_BUILD_TYPE}.
 # there is no need to repeat the base flags in the build-type specific flags!
-set(CMAKE_C_FLAGS_DEBUG
-    "-O0 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C debug flags"
-)
-set(CMAKE_C_FLAGS_MINSIZEREL
-    "-Os ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C minimal size flags"
-)
-set(CMAKE_C_FLAGS_RELEASE
-    "-O3 ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C release flags"
-)
-set(CMAKE_C_FLAGS_RELWITHDEBINFO
-    "-O3 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C release with debug info flags"
-)
-
-# cxx
-# note: when building one of the build types, CMake will automatically combine
-# the base flags from CMAKE_CXX_FLAGS with build type-specific flags in
-# CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}.
-# there is no need to repeat the base flags in the build-type specific flags!
-set(CMAKE_CXX_FLAGS_DEBUG
-    "-O0 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ debug flags"
-)
-set(CMAKE_CXX_FLAGS_MINSIZEREL
-    "-Os ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ minimal size flags"
-)
-set(CMAKE_CXX_FLAGS_RELEASE
-    "-O3 ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ release flags"
-)
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO
-    "-O3 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
-    CACHE INTERNAL
-    "C++ release with debug info flags"
-)
+foreach(lang C CXX)
+    set(CMAKE_${lang}_FLAGS_DEBUG
+        "-O0 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_MINSIZEREL
+        "-Os ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_RELEASE
+        "-O3 ${NONE_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_RELWITHDEBINFO
+        "-O3 ${FULL_FRAME_INFO} ${DEBUG_INFO_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+endforeach()
 
 # put together the final flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_FLAGS}")
@@ -623,17 +541,12 @@ if(NOT SDB_SANITIZE STREQUAL "")
 endif()
 
 if(SDB_SANITIZE_UNWINDER)
-    link_libraries(
-        $<BUILD_LOCAL_INTERFACE:unwind_static>
-        $<BUILD_LOCAL_INTERFACE:cxxabi_static>
-        $<BUILD_LOCAL_INTERFACE:cxx_static>
-    )
-else()
-    link_libraries(
-        $<BUILD_LOCAL_INTERFACE:cxxabi_static>
-        $<BUILD_LOCAL_INTERFACE:cxx_static>
-    )
+    link_libraries($<BUILD_LOCAL_INTERFACE:unwind_static>)
 endif()
+link_libraries(
+    $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+    $<BUILD_LOCAL_INTERFACE:cxx_static>
+)
 
 ################################################################################
 ## VTUNE Symbols for profiling our build.
@@ -666,9 +579,9 @@ set(CMAKE_SKIP_INSTALL_RULES TRUE)
 add_subdirectory(third_party EXCLUDE_FROM_ALL)
 set(CMAKE_SKIP_INSTALL_RULES FALSE)
 
-if("${SDB_ALLOC}" MATCHES "JE")
+if(SDB_ALLOC STREQUAL "JE")
     link_libraries(jemalloc)
-elseif("${SDB_ALLOC}" MATCHES "TC")
+elseif(SDB_ALLOC STREQUAL "TC")
     link_libraries(tcmalloc::tcmalloc)
 endif()
 
@@ -685,25 +598,31 @@ include(SereneDBInstall)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_compile_options(
-    -Wimplicit-fallthrough
-    -Wformat=2
-    -Wformat-signedness
-    -Wloop-analysis
     -Wcomma
-    -Wnon-virtual-dtor
-    -Wundef
-    -Wheader-hygiene
     -Wextra-semi
-    -Wno-c++98-compat-extra-semi
-    -Wunused-exception-parameter
-    -Wmissing-variable-declarations
     -Wfloat-conversion
+    -Wformat-signedness
+    -Wformat=2
+    -Wheader-hygiene
+    -Wignored-base-class-qualifiers
+    -Wimplicit-fallthrough
     -Wimplicit-int-conversion-on-negation
-    -Wvla
+    -Wloop-analysis
+    -Wmissing-variable-declarations
+    -Wnon-virtual-dtor
     -Wnull-dereference
+    -Wsuggest-destructor-override
+    -Wsuggest-override
     -Wthread-safety-beta
+    -Wundef
     -Wunreachable-code-break
     -Wunreachable-code-return
+    -Wunused-exception-parameter
+    -Wvla
+    -Wno-c++98-compat-extra-semi
+    -Wno-deprecated-copy-with-dtor
+    -Wno-deprecated-declarations
+    -Wno-missing-designated-field-initializers
 )
 if(SDB_COVERAGE)
     add_compile_options(${SDB_COVERAGE_FLAGS})
@@ -714,10 +633,7 @@ add_subdirectory(iresearch)
 if(NOT IRESEARCH_BENCH)
     add_subdirectory(server/utils)
     add_subdirectory(server)
-endif()
-add_subdirectory(tests)
-if(NOT IRESEARCH_BENCH)
     add_subdirectory(examples/iresearch EXCLUDE_FROM_ALL)
-
     add_custom_target(serenedb DEPENDS serened)
 endif()
+add_subdirectory(tests)

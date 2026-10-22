@@ -1,0 +1,22 @@
+# PDF dependencies
+
+PoDoFo is used under the Mozilla Public License 2.0 (MPL-2.0).
+The license and upstream notices are in `podofo/COPYING.MPL` and `podofo/NOTICE`.
+The corresponding library source, including modifications, is available under
+the MPL-2.0 at:
+
+https://github.com/serenedb/podofo/tree/@PDF_PODOFO_REVISION@
+
+Source archive:
+https://github.com/serenedb/podofo/archive/@PDF_PODOFO_REVISION@.tar.gz
+
+The bundled component license notices are in `podofo/THIRD_PARTY.txt`,
+`podofo/pdfium/LICENSE`, and `podofo/numerics/LICENSE`.
+
+Portions of this software are copyright (C) 1996-2025 The FreeType Project
+(https://freetype.org). All rights reserved. This software is based in part on
+the work of the FreeType Team. FreeType is used under the FreeType License;
+see `freetype/FTL.TXT` and `freetype/LICENSE.TXT`.
+
+FreeType source:
+https://github.com/serenedb/freetype/tree/@PDF_FREETYPE_REVISION@

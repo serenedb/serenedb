@@ -52,3 +52,7 @@ Provide `password` for password-protected documents. A missing or incorrect pass
 OCR and table extraction are not supported. `read_pdf` reports pages without extractable text with empty `text` and `has_text_layer = false`; `read_pdf_blocks` emits no fragments for those pages. A completed scan of a file whose selected pages have no extractable text raises an error. An empty text result does not establish that a page is scanned: it may be blank, contain outlines, or lack usable character mappings.
 
 Files must be nonempty and seekable. Each PDF must fit in memory along with its parsed content. A malformed or unreadable PDF aborts the query. Use `ORDER BY filename, page` for page order, or `ORDER BY filename, page, block` for fragment order.
+
+## Licenses
+
+The PDF readers are distributed under Apache-2.0, with PoDoFo under MPL-2.0 and FreeType under the FreeType License. Binary packages include dependency licenses, attribution, and source links in the `pdf/` directory under the installed SereneDB documentation directory.

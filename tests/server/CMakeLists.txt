@@ -35,6 +35,7 @@ add_executable(
     network_proxy_protocol_test.cpp
     network_router_test.cpp
     number_of_cores_test.cpp
+    pdf_layout_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
     random_test.cpp

@@ -202,7 +202,3 @@
 	path = third_party/freetype
 	url = https://github.com/serenedb/freetype.git
 	shallow = true
-[submodule "third_party/duckdb_pdf"]
-	path = third_party/duckdb_pdf
-	url = https://github.com/serenedb/duckdb-pdf.git
-	shallow = true

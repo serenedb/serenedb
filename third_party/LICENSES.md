@@ -17,6 +17,7 @@
 * [Apache Avro](https://github.com/apache/avro)
 * [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp)
 * [StringZilla](https://github.com/ashvardanian/StringZilla)
+* [SereneDB PDF readers](duckdb_pdf), Apache-2.0; PoDoFo and FreeType retain their licenses listed below.
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
@@ -51,10 +52,6 @@
 * [GeographicLib](https://geographiclib.sourceforge.io) (MIT/X11, see `duckdb_spatial/src/third_party/geographiclib/LICENSE`; the C geodesic routines behind the spatial extension's `*_Spheroid` functions, taken from PROJ 9.3.1's copy)
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet)
 * [brotli](https://github.com/google/brotli)
-
-### [GPL-2.0-or-later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-
-* [duckdb-pdf](https://github.com/asubbarao/duckdb-pdf), with the SereneDB PoDoFo backend; upstream license and bundled notices are preserved in `duckdb_pdf`.
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 

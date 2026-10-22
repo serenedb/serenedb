@@ -5,7 +5,7 @@
 #
 # Directories: duckdb, duckdb_avro, duckdb_azure, duckdb_httpfs, duckdb_iceberg, duckdb_inet,
 # duckdb_markdown, duckdb_postgres, duckdb_spatial and database-connector (submodules under third_party/)
-# and duckdb_clickhouse (in-tree). Without <dir> arguments, every checked-out one.
+# and duckdb_clickhouse and duckdb_pdf (in-tree). Without <dir> arguments, every checked-out one.
 #
 # scripts/duckdb_family.sh format [--check] [--staged | --all] [<dir>...]
 #   Formats the files changed against HEAD, staged or not; with --staged only the files staged for
@@ -13,7 +13,7 @@
 #   decides what is formatted and how: C/C++ with clang-format 11.0.1, CMakeLists.txt with
 #   cmake-format, Python with black, sqllogictest files, the typos spell check, and it skips the files
 #   it ignores or that are generated. duckdb and database-connector run their own scripts/format.py,
-#   the other extensions and duckdb_clickhouse run duckdb's over src/ and test/, as extension-ci-tools
+#   the other extensions and in-tree extensions run duckdb's over src/ and test/, as extension-ci-tools
 #   does. --check reports what would change and exits 1 instead of writing.
 #
 # scripts/duckdb_family.sh format [--check] --files <path>... <dir>
@@ -56,8 +56,8 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
 DUCKDB="$THIRD_PARTY/duckdb"
 SUBMODULES=(duckdb duckdb_avro duckdb_azure duckdb_httpfs duckdb_iceberg duckdb_inet duckdb_markdown duckdb_postgres
-	duckdb_spatial duckdb_pdf database-connector)
-INTREE=(duckdb_clickhouse)
+	duckdb_spatial database-connector)
+INTREE=(duckdb_clickhouse duckdb_pdf)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/serenedb-duckdb"
 FORMAT_VENV="$CACHE/format-venv"
 FORMAT_PYTHON="$FORMAT_VENV/bin/python"
@@ -168,19 +168,12 @@ format_dir() {
 		done
 		return $status
 	elif is_intree "$dir"; then
-		local files status=0 file
+		local staged=()
 		if [[ "$scope" == staged ]]; then
-			files=$(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=d --relative="third_party/$dir" HEAD)
-		else
-			files=$({
-				git -C "$REPO_ROOT" diff --name-only --diff-filter=d --relative="third_party/$dir" HEAD
-				git -C "$path" ls-files --others --exclude-standard
-			} | sort -u)
+			staged=(--staged)
 		fi
-		for file in $files; do
-			run_format_py "$dir" "$path" "$file" "${action[@]}" || status=1
-		done
-		return $status
+		GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }'diff.relative=true'" \
+			run_format_py "$dir" "$path" HEAD "${staged[@]}" "${action[@]}"
 	elif [[ "$scope" == staged ]]; then
 		if [[ -z "$(git -C "$path" diff --cached --name-only)" ]]; then
 			return 0

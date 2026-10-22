@@ -25,6 +25,8 @@ install(
     DESTINATION ${CMAKE_INSTALL_DOCDIR}/glibc
 )
 
+include(PdfNotices)
+
 ################################################################################
 ### @brief install log directory
 ################################################################################

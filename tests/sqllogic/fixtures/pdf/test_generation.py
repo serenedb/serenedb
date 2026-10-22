@@ -31,8 +31,12 @@ class FixtureGenerationTest(unittest.TestCase):
         for path in self.scripts:
             path.write_text(generator)
         for name, value in (("SOURCE", self.source), ("OUT", self.output), ("INPUTS", self.scripts)):
-            self.enterContext(patch.object(fixture, name, value))
-        self.enterContext(patch.object(fixture.importlib.util, "find_spec", return_value=True))
+            patcher = patch.object(fixture, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(fixture.importlib.util, "find_spec", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_cache_and_invalidation(self):
         previous_umask = os.umask(0o077)

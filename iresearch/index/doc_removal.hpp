@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -34,6 +36,7 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -72,6 +75,12 @@ struct DocRemoval {
 
   static DocRemoval All() { return DocRemoval{.all = true}; }
 
+  static DocRemoval Keys(field_id field, std::vector<bstring> keys) {
+    return DocRemoval{.field = field, .keys = std::move(keys)};
+  }
+
+  bool Keyed() const noexcept { return field != field_limits::invalid(); }
+
   size_t Find(uint32_t segment) const noexcept;
 
   std::span<const doc_id_t> Docs(size_t group) const noexcept {
@@ -83,7 +92,14 @@ struct DocRemoval {
   std::vector<uint32_t> offsets;
   std::vector<doc_id_t> docs;
   std::shared_ptr<const DocMapList> maps;
+  field_id field = field_limits::invalid();
+  std::vector<bstring> keys;
+  uint64_t tick = 0;
 };
+
+void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
+                     const DocumentMaskBuilder* pending, doc_id_t end,
+                     absl::FunctionRef<void(doc_id_t)> remove);
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 

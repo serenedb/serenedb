@@ -40,7 +40,6 @@
 
 #include "connector/column_id.h"
 #include "connector/common.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
 

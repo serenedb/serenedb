@@ -235,7 +235,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
       SDB_ASSERT(!op.IsTruncate());
       if (auto removal = connector::MakeRowRunRemoval(op.deletes.starts,
                                                       op.deletes.counts)) {
-        trx.Remove(std::move(removal));
+        trx.Remove(std::move(*removal));
       }
     });
   entry.applied_ops = entry.ops.size();
@@ -303,7 +303,7 @@ void SearchTableTransaction::AddSearchTruncate(
     auto& trx = *w.transactions.emplace_back(
       std::make_unique<irs::IndexWriter::Transaction>(
         shard->GetTransaction(/*exclusive_segment=*/true)));
-    trx.Remove(std::make_shared<const irs::DocRemoval>(irs::DocRemoval::All()));
+    trx.Remove(irs::DocRemoval::All());
   }
 }
 

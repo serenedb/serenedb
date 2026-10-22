@@ -45,6 +45,7 @@
 #include <map>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -89,7 +90,7 @@ duckdb::WALDeleteRowRanges RunsOf(std::span<const uint64_t> positions) {
   return runs;
 }
 
-std::shared_ptr<const irs::DocRemoval> MakeRemoval(
+std::optional<irs::DocRemoval> MakeRemoval(
   std::span<const uint64_t> positions,
   std::shared_ptr<const irs::DocMapList> maps = nullptr) {
   const auto runs = RunsOf(positions);
@@ -243,7 +244,7 @@ class SearchRowRemovalTest : public ::testing::Test {
               std::shared_ptr<const irs::DocMapList> maps = nullptr) {
     auto trx = _writer->GetBatch();
     if (auto removal = MakeRemoval(positions, std::move(maps))) {
-      trx.Remove(std::move(removal));
+      trx.Remove(std::move(*removal));
     }
     ASSERT_TRUE(trx.Commit());
     _writer->RefreshCommit();
@@ -431,7 +432,7 @@ TEST(RowRunsTest, ExpandBackToThePositionsInOrder) {
 }
 
 TEST(RowRunRemovalTest, NoRunsMakeNoRemoval) {
-  EXPECT_EQ(nullptr, MakeRowRunRemoval({}, {}));
+  EXPECT_FALSE(MakeRowRunRemoval({}, {}));
 }
 
 TEST(RowRunRemovalTest, RejectsMismatchedRuns) {
@@ -446,7 +447,7 @@ TEST(RowRunRemovalTest, RunsGroupBySegment) {
     MakeRowPosition(2, 5), MakeRowPosition(1, 1), MakeRowPosition(2, 40)};
   const std::array<uint64_t, 3> counts{2, 3, 1};
   const auto removal = MakeRowRunRemoval(starts, counts);
-  ASSERT_NE(nullptr, removal);
+  ASSERT_TRUE(removal);
   EXPECT_FALSE(removal->all);
   EXPECT_EQ((std::vector<uint32_t>{1, 2}), removal->segments);
   EXPECT_EQ((std::vector<irs::doc_id_t>{1, 2, 3}),
@@ -470,10 +471,10 @@ TEST(RowRunRemovalTest, MatchesAModelOnRandomPositions) {
     }
     const auto removal = MakeRemoval(positions);
     if (positions.empty()) {
-      ASSERT_EQ(nullptr, removal);
+      ASSERT_FALSE(removal);
       continue;
     }
-    ASSERT_NE(nullptr, removal);
+    ASSERT_TRUE(removal);
     ASSERT_EQ(expected.size(), removal->segments.size());
     size_t group = 0;
     for (const auto& [segment, docs] : expected) {
@@ -632,7 +633,7 @@ TEST_F(SearchRowRemovalTest, RemovalInFlightDuringAMergeIsRemapped) {
   }
   const auto positions = PositionsOf(victims);
   auto trx = _writer->GetBatch();
-  trx.Remove(MakeRemoval(positions));
+  trx.Remove(*MakeRemoval(positions));
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
@@ -722,7 +723,7 @@ TEST_F(SearchRowRemovalTest, ManyRemovalsInOneCommit) {
   for (int64_t chunk = 0; chunk < 50; ++chunk) {
     const std::array<uint64_t, 2> places{positions.at(chunk * 7),
                                          positions.at(11999 - chunk * 5)};
-    trx.Remove(MakeRemoval(places));
+    trx.Remove(*MakeRemoval(places));
     _model.erase(chunk * 7);
     _model.erase(11999 - chunk * 5);
   }
@@ -741,7 +742,7 @@ TEST_F(SearchRowRemovalTest, ManyStalePositionsInOneCommit) {
   auto trx = _writer->GetBatch();
   for (int64_t chunk = 0; chunk < 40; ++chunk) {
     const std::array<uint64_t, 1> positions{before.at(chunk * 199)};
-    trx.Remove(MakeRemoval(positions));
+    trx.Remove(*MakeRemoval(positions));
     _model.erase(chunk * 199);
   }
   ASSERT_TRUE(trx.Commit());
@@ -787,7 +788,7 @@ TEST_F(SearchRowRemovalTest, RemovalReachesReplacementSegments) {
   const auto metas = FlushCopy(copy);
 
   auto trx = _writer->GetBatch();
-  trx.Remove(MakeRemoval(positions));
+  trx.Remove(*MakeRemoval(positions));
   ASSERT_TRUE(trx.Commit());
 
   ReplaceAll(snapshot, metas);
@@ -829,7 +830,7 @@ TEST_F(SearchRowRemovalTest, RemovalAndInsertInOneTransaction) {
   InsertRange(0, 100);
   const std::vector<int64_t> victims{5};
   auto trx = _writer->GetBatch();
-  trx.Remove(MakeRemoval(PositionsOf(victims)));
+  trx.Remove(*MakeRemoval(PositionsOf(victims)));
   const std::vector<int64_t> later{200, 201};
   WriteRows(trx, later);
   ASSERT_TRUE(trx.Commit());
@@ -846,7 +847,7 @@ TEST_F(SearchRowRemovalTest, InsertAndRemovalInOneTransaction) {
   auto trx = _writer->GetBatch();
   const std::vector<int64_t> earlier{300, 301};
   WriteRows(trx, earlier);
-  trx.Remove(MakeRemoval(positions));
+  trx.Remove(*MakeRemoval(positions));
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
   _model.erase(6);
@@ -865,7 +866,7 @@ TEST_F(SearchRowRemovalTest, SeveralRemovalsInOneCommit) {
       places.push_back(positions.at(r));
       _model.erase(r);
     }
-    trx.Remove(MakeRemoval(places));
+    trx.Remove(*MakeRemoval(places));
   }
   ASSERT_TRUE(trx.Commit());
   _writer->RefreshCommit();
@@ -953,7 +954,7 @@ TEST_F(SearchRowRemovalTest, RemoveAllTakesEveryCommittedRow) {
   InsertRange(0, 3000);
   InsertRange(3000, 3000);
   auto trx = _writer->GetBatch();
-  trx.Remove(std::make_shared<const irs::DocRemoval>(irs::DocRemoval::All()));
+  trx.Remove(irs::DocRemoval::All());
   const std::vector<int64_t> later{7000, 7001};
   WriteRows(trx, later);
   ASSERT_TRUE(trx.Commit());
@@ -968,7 +969,7 @@ TEST_F(SearchRowRemovalTest, RemoveAllSparesRowsWrittenAfterIt) {
   auto trx = _writer->GetBatch();
   const std::vector<int64_t> earlier{500, 501};
   WriteRows(trx, earlier);
-  trx.Remove(std::make_shared<const irs::DocRemoval>(irs::DocRemoval::All()));
+  trx.Remove(irs::DocRemoval::All());
   const std::vector<int64_t> later{600};
   WriteRows(trx, later);
   ASSERT_TRUE(trx.Commit());
@@ -1059,7 +1060,7 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
           continue;
         }
         auto trx = _writer->GetBatch();
-        trx.Remove(MakeRemoval(positions));
+        trx.Remove(*MakeRemoval(positions));
         EXPECT_TRUE(trx.Commit());
         std::lock_guard lock{mutex};
         removed.insert(victims.begin(), victims.end());

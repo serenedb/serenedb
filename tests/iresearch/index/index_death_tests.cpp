@@ -22,7 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_features.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <thread>
@@ -37,7 +36,7 @@ namespace {
 // Per-doc cs column id used by tests in this file. Holds the bytes of the
 // indexed StringField named "name"; readback through `segment.Column(kNameId)`
 // + `BlobPointReader` decodes back to the original string with `ReadStoredStr`.
-// Also used as the field_id of the "name" StringField for term filters that
+// Also used as the field_id of the "name" StringField for removals that
 // delete by name (`MakeByTerm(kNameId, "B")`), so it must equal
 // `FieldIdFor("name")`.
 inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
@@ -48,11 +47,9 @@ inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 inline constexpr irs::field_id kSameAnlPayId =
   tests::FieldIdFor("same_anl_pay");
 
-auto MakeByTerm(irs::field_id field_id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field_id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+irs::DocRemoval MakeByTerm(irs::field_id field_id, std::string_view value) {
+  return irs::DocRemoval::Keys(
+    field_id, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
 }
 
 // Insert `doc->indexed` into `writer` and capture the indexed StringField
@@ -307,7 +304,7 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    tests::Remove(*writer, *query_doc2);
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1234,7 +1231,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    tests::Remove(*writer, *query_doc2);
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1530,7 +1527,7 @@ TEST(index_death_test_formats_15,
         continue;
       }
       if (inserts_ok) {
-        tests::Remove(writer, *query_doc2);
+        tests::Remove(writer, query_doc2);
         ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
@@ -2661,7 +2658,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, *query_doc2);
+    tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(

@@ -53,7 +53,6 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
 #include "search/search_table.h"
-#include "search_remove_filter.hpp"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -62,8 +61,6 @@ class DataChunk;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-class SearchRemoveFilter;
 
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
@@ -331,14 +328,14 @@ class SearchSinkDeleteBaseImpl {
 
   void DeleteRowImpl(std::string_view row_key);
 
-  void AbortImpl() { _remove_filter.reset(); }
+  void AbortImpl() { _keys.clear(); }
 
  protected:
   irs::IndexWriter::Transaction* _trx;
-  std::shared_ptr<SearchRemoveFilter> _remove_filter;
+  std::vector<irs::bstring> _keys;
 };
 
-std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
+std::optional<irs::DocRemoval> MakeRowRunRemoval(
   std::span<const uint64_t> starts, std::span<const uint64_t> counts,
   std::shared_ptr<const irs::DocMapList> maps = nullptr);
 

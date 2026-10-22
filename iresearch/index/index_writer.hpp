@@ -64,7 +64,6 @@ class DatabaseInstance;
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
-#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -201,33 +200,6 @@ class IndexWriter : private util::Noncopyable {
   }
 
  public:
-  struct QueryContext {
-    using FilterPtr = std::shared_ptr<const irs::Filter>;
-    using RemovalPtr = std::shared_ptr<const DocRemoval>;
-
-    QueryContext() = default;
-
-    QueryContext(FilterPtr filter, uint64_t tick)
-      : filter{std::move(filter)}, tick{tick} {
-      SDB_ASSERT(this->filter);
-    }
-    QueryContext(const irs::Filter& filter, uint64_t tick)
-      : QueryContext{{FilterPtr{}, &filter}, tick} {}
-    QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
-      : QueryContext{FilterPtr{std::move(filter)}, tick} {}
-    QueryContext(RemovalPtr removal, uint64_t tick)
-      : removal{std::move(removal)}, tick{tick} {
-      SDB_ASSERT(this->removal);
-    }
-
-    explicit operator bool() const noexcept { return filter || removal; }
-
-    FilterPtr filter;
-    RemovalPtr removal;
-    uint64_t tick = writer_limits::kMinTick;
-  };
-  static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
-
   class Document : private util::Noncopyable {
    public:
     Document(SegmentContext& segment, uint64_t tick, doc_id_t batch_size = 1);
@@ -299,11 +271,11 @@ class IndexWriter : private util::Noncopyable {
       return {*_active.Segment(), _queries, batch_size};
     }
 
-    template<bool TickBound = true, typename Filter>
-    void Remove(Filter&& filter) {
+    template<bool TickBound = true>
+    void Remove(DocRemoval removal) {
       UpdateSegment(true, nullptr);
-      _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
-                                              _queries);
+      removal.tick = _queries;
+      _active.Segment()->removals.emplace_back(std::move(removal));
       if constexpr (TickBound) {
         ++_queries;
       }
@@ -586,13 +558,13 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    ManagedVector<QueryContext> queries;
+    ManagedVector<DocRemoval> removals;
     ManagedVector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
 
-    size_t flushed_queries{0};
-    size_t committed_queries{0};
+    size_t flushed_removals{0};
+    size_t committed_removals{0};
     size_t committed_buffered_docs{0};
 
     bool committed{false};

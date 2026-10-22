@@ -960,11 +960,11 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
   return true;
 }
 
-template<typename Filter, typename Indexed>
-bool Update(irs::IndexWriter& writer, Filter&& filter, Indexed ibegin,
+template<typename Indexed>
+bool Update(irs::IndexWriter& writer, irs::DocRemoval removal, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  ctx.Remove(std::forward<Filter>(filter));
+  ctx.Remove(std::move(removal));
   if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
   }
@@ -972,12 +972,12 @@ bool Update(irs::IndexWriter& writer, Filter&& filter, Indexed ibegin,
   return true;
 }
 
-// One-shot removal: opens a batch, queues the filter and commits it.
-// Equivalent to `auto b = writer.GetBatch(); b.Remove(filter); b.Commit();`.
-template<bool TickBound = true, typename Filter>
-void Remove(irs::IndexWriter& writer, Filter&& filter) {
+// One-shot removal: opens a batch, queues the removal and commits it.
+// Equivalent to `auto b = writer.GetBatch(); b.Remove(removal); b.Commit();`.
+template<bool TickBound = true>
+void Remove(irs::IndexWriter& writer, irs::DocRemoval removal) {
   auto trx = writer.GetBatch();
-  trx.template Remove<TickBound>(std::forward<Filter>(filter));
+  trx.template Remove<TickBound>(std::move(removal));
   trx.Commit();
 }
 

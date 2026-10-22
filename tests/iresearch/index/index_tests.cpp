@@ -36,8 +36,6 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -121,14 +119,13 @@ inline bool InsertWithName(irs::IndexWriter& writer,
   return true;
 }
 
-// Update analogue of `InsertWithName`: replaces docs matching `filter`
+// Update analogue of `InsertWithName`: replaces the docs `removal` names
 // with `src.indexed`, and forwards the "name" StringField (if any) into
 // the per-doc cs column keyed by `kNameColumnId`.
-template<typename Filter>
-bool UpdateWithName(irs::IndexWriter& writer, Filter&& filter,
+bool UpdateWithName(irs::IndexWriter& writer, irs::DocRemoval removal,
                     const tests::Document& src) {
   auto ctx = writer.GetBatch();
-  ctx.Remove(std::forward<Filter>(filter));
+  ctx.Remove(std::move(removal));
   {
     auto d = ctx.Insert();
     if (!tests::InsertFields(d, src.indexed.begin(), src.indexed.end())) {
@@ -195,32 +192,18 @@ inline constexpr irs::field_id kNameAnlPayFieldId =
 
 using tests::FieldIdFor;
 
-irs::Filter::ptr MakeByTerm(irs::field_id field_id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field_id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
-}
-
-irs::Filter::ptr MakeByTermOrByTerm(irs::field_id field_id0,
-                                    std::string_view value0,
-                                    irs::field_id field_id1,
-                                    std::string_view value1) {
-  auto filter = std::make_unique<irs::BooleanFilter>();
-  filter->Add(MakeByTerm(field_id0, value0), irs::Occur::Should);
-  filter->Add(MakeByTerm(field_id1, value1), irs::Occur::Should);
-  filter->SetMinShouldMatch(1);
-  return filter;
-}
-
-irs::Filter::ptr MakeOr(
-  const std::vector<std::pair<irs::field_id, std::string_view>>& parts) {
-  auto filter = std::make_unique<irs::BooleanFilter>();
-  for (const auto& [field_id, value] : parts) {
-    filter->Add(MakeByTerm(field_id, value), irs::Occur::Should);
+irs::DocRemoval MakeByTerms(irs::field_id field_id,
+                            std::initializer_list<std::string_view> values) {
+  std::vector<irs::bstring> keys;
+  keys.reserve(values.size());
+  for (const auto value : values) {
+    keys.emplace_back(irs::ViewCast<irs::byte_type>(value));
   }
-  filter->SetMinShouldMatch(1);
-  return filter;
+  return irs::DocRemoval::Keys(field_id, std::move(keys));
+}
+
+irs::DocRemoval MakeByTerm(irs::field_id field_id, std::string_view value) {
+  return MakeByTerms(field_id, {value});
 }
 
 class SubReaderMock final : public irs::SubReader {
@@ -2220,8 +2203,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
   {
     std::condition_variable cond;
     std::mutex mutex;
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     std::unique_lock lock{mutex};
@@ -2241,7 +2223,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    tests::Remove(*writer, *(query_doc1_doc2.get()));
+    tests::Remove(*writer, query_doc1_doc2);
 
     // re-add docs into a single segment
     {
@@ -2294,8 +2276,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
   // remove added docs, add same docs again commit separate thread after end of
   // add
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -2306,7 +2287,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    tests::Remove(*writer, *(query_doc1_doc2.get()));
+    tests::Remove(*writer, query_doc1_doc2);
 
     // re-add docs into a single segment
     {
@@ -2390,9 +2371,9 @@ TEST_P(IndexTestCase, document_context) {
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove<false>(*writer, *query_doc1);
+    tests::Remove<false>(*writer, query_doc1);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    tests::Remove(*writer, *query_doc3);
+    tests::Remove(*writer, query_doc3);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     auto reader =
@@ -2475,7 +2456,7 @@ TEST_P(IndexTestCase, document_context) {
     auto ctx = writer->GetBatch();
     // wait for insertion to start
     auto field_cond_lock = std::unique_lock{field.cond_mutex};
-    ctx.Remove(*(query_doc1));
+    ctx.Remove(query_doc1);
     std::atomic<bool> commit(false);  // FIXME TODO remove once segment_context
                                       // will not block flush_all()
     std::thread thread1([&]() -> void {
@@ -2546,7 +2527,7 @@ TEST_P(IndexTestCase, document_context) {
     // wait for insertion to start
     auto field_cond_lock = std::unique_lock{field.cond_mutex};
 
-    ctx.Remove(*(query_doc1));
+    ctx.Remove(query_doc1);
     {
       auto doc = ctx.Insert();
       tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
@@ -2879,7 +2860,7 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       ctx.Reset();
     }
 
@@ -2916,7 +2897,7 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       ctx.Reset();
       {
         auto doc = ctx.Insert();
@@ -2971,14 +2952,14 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
           tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
-      ctx.Remove(*(query_doc2));
+      ctx.Remove(query_doc2);
       ctx.Reset();
       {
         auto doc = ctx.Insert();
@@ -3041,7 +3022,7 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3084,7 +3065,7 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3288,14 +3269,14 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Remove(*(query_doc1));
+      ctx.Remove(query_doc1);
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Remove(*(query_doc2));
+      ctx.Remove(query_doc2);
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3952,7 +3933,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 
-  // new segment: add + remove 1st (as reference)
+  // new segment: add + remove 1st (copy)
   {
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
@@ -3960,7 +3941,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, *(query_doc1.get()));
+    tests::Remove(*writer, query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -3983,7 +3964,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 
-  // new segment: add + remove 1st (as unique_ptr)
+  // new segment: add + remove 1st (move)
   {
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
@@ -3992,37 +3973,6 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     tests::Remove(*writer, std::move(query_doc1));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = tests::MaskPostings(
-      segment, term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // new segment: add + remove 1st (as shared_ptr)
-  {
-    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, std::shared_ptr<irs::Filter>(std::move(query_doc1)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4148,8 +4098,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + add, old segment: remove + remove + add
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4235,8 +4184,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove, old segment: remove
   {
-    auto query_doc1_doc3 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
+    auto query_doc1_doc3 = MakeByTerms(kNameFieldId, {"A", "C"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4292,10 +4240,8 @@ TEST_P(IndexTestCase, doc_removal) {
   // new segment: add + remove, old segment: add + remove old-old
   // segment: remove
   {
-    auto query_doc2_doc6_doc9 =
-      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "F"}, {kNameFieldId, "I"}});
-    auto query_doc3_doc7 =
-      MakeByTermOrByTerm(kNameFieldId, "C", kNameFieldId, "G");
+    auto query_doc2_doc6_doc9 = MakeByTerms(kNameFieldId, {"B", "F", "I"});
+    auto query_doc3_doc7 = MakeByTerms(kNameFieldId, {"C", "G"});
     auto query_doc4 = MakeByTerm(kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -4419,20 +4365,20 @@ TEST_P(IndexTestCase, doc_update) {
       auto doc = trx1.Insert();
       tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
       CaptureNameLikeFields(doc, doc2->indexed);
-      trx1.Remove(*query_doc2);
+      trx1.Remove(query_doc2);
     }
     {
       auto doc = trx3.Insert();
       tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end());
       CaptureNameLikeFields(doc, doc2->indexed);
     }
-    trx4.Remove(*query_doc2);
+    trx4.Remove(query_doc2);
     {
       auto doc = trx4.Insert();
       tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end());
       CaptureNameLikeFields(doc, doc3->indexed);
     }
-    trx2.Remove(*query_doc3);
+    trx2.Remove(query_doc3);
     {
       auto doc = trx2.Insert();
       tests::InsertFields(doc, doc4->indexed.begin(), doc4->indexed.end());
@@ -4459,14 +4405,14 @@ TEST_P(IndexTestCase, doc_update) {
     EXPECT_EQ(reader.live_docs_count(), 2);
   }
 
-  // new segment update (as reference)
+  // new segment update (copy)
   {
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc1.get()), *doc2));
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc1, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4489,7 +4435,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
 
-  // new segment update (as unique_ptr)
+  // new segment update (move)
   {
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
@@ -4497,37 +4443,6 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(UpdateWithName(*writer, std::move(query_doc1), *doc2));
-    writer->RefreshCommit();
-    AssertSnapshotEquality(*writer);
-
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kNameColumnId);
-    ASSERT_NE(nullptr, column);
-    irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field(kSameFieldId);
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = tests::MaskPostings(
-      segment, term_itr->postings(irs::IndexFeatures::None));
-    ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-    ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                     values, docs_itr->Value()));  // 'name' value in doc2
-    ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-  }
-
-  // new segment update (as shared_ptr)
-  {
-    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(UpdateWithName(
-      *writer, std::shared_ptr<irs::Filter>(std::move(query_doc1)), *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4738,8 +4653,8 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
-    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2, *doc3));
+    tests::Remove(*writer, query_doc2);  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4775,10 +4690,10 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
+    tests::Remove(*writer, query_doc2);  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4829,8 +4744,8 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, *(query_doc2));
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
+    tests::Remove(*writer, query_doc2);
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2,
                                *doc3));  // update no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4867,10 +4782,10 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    tests::Remove(*writer, *(query_doc2));
+    tests::Remove(*writer, query_doc2);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2,
                                *doc3));  // update no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4924,9 +4839,9 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    tests::Remove(*writer, *(query_doc2));
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc3), *doc4));
+    tests::Remove(*writer, query_doc2);
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2, *doc3));
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc3, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4964,13 +4879,13 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    tests::Remove(*writer, *(query_doc2));
+    tests::Remove(*writer, query_doc2);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc2, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(UpdateWithName(*writer, *(query_doc3), *doc4));
+    ASSERT_TRUE(UpdateWithName(*writer, query_doc3, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -5075,7 +4990,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));   // index features subset
     ASSERT_FALSE(InsertWithName(*writer, *doc3));  // serializer returs false
     ASSERT_FALSE(InsertWithName(*writer, *doc4));  // index features differ
-    ASSERT_FALSE(UpdateWithName(*writer, *(query_doc1.get()), *doc3));
+    ASSERT_FALSE(UpdateWithName(*writer, query_doc1, *doc3));
     ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
 
@@ -6108,7 +6023,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(
@@ -6424,7 +6339,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // add several segments in background
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);                  // commit transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));  // segments_2
@@ -6584,7 +6499,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
     // No unused column store: a remove-only batch no longer creates a `.col`.
@@ -6662,8 +6577,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
   // long running transaction + document removal
   {
     SetUp();  // recreate directory
-    auto query_doc1_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
+    auto query_doc1_doc4 = MakeByTerms(kNameFieldId, {"A", "D"});
 
     tests::BlockingDirectory dir(this->dir(), blocker);
     auto writer =
@@ -6729,7 +6643,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    tests::Remove(*writer, *query_doc1_doc4);
+    tests::Remove(*writer, query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
     // No unused column store: a remove-only batch no longer creates a `.col`.
@@ -7959,7 +7873,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8077,8 +7991,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes
   {
     SetUp();
-    auto query_doc1_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
+    auto query_doc1_doc4 = MakeByTerms(kNameFieldId, {"A", "D"});
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -8103,7 +8016,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    tests::Remove(*writer, *query_doc1_doc4);
+    tests::Remove(*writer, query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8246,7 +8159,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8279,7 +8192,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(0, result.size);
     }
 
-    tests::Remove(*writer, *query_doc4);
+    tests::Remove(*writer, query_doc4);
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
@@ -8366,8 +8279,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // something
     auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto query_doc5 = MakeByTerm(kNameFieldId, "E");
-    tests::Remove(*writer, *query_doc3);
-    tests::Remove(*writer, *query_doc5);
+    tests::Remove(*writer, query_doc3);
+    tests::Remove(*writer, query_doc5);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -8417,7 +8330,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8498,7 +8411,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8528,7 +8441,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         writer->RefreshCommit();
         AssertSnapshotEquality(*writer);
         // new transaction with passed 1st phase
-        tests::Remove(*writer, *query_doc4);
+        tests::Remove(*writer, query_doc4);
         writer->RefreshBegin();
         auto sub_policy =
           irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
@@ -8573,7 +8486,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     // this compaction will be postponed
     ASSERT_TRUE(writer->Compact(
@@ -8591,7 +8504,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    tests::Remove(*writer, *query_doc1);
+    tests::Remove(*writer, query_doc1);
     // make next commit
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -8625,8 +8538,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc1_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
+    auto query_doc1_doc4 = MakeByTerms(kNameFieldId, {"A", "D"});
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -8651,7 +8563,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    tests::Remove(*writer, *query_doc1_doc4);
+    tests::Remove(*writer, query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8791,8 +8703,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc1_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
+    auto query_doc1_doc4 = MakeByTerms(kNameFieldId, {"A", "D"});
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -8858,7 +8769,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    tests::Remove(*writer, *query_doc1_doc4);
+    tests::Remove(*writer, query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + removal
 
@@ -8961,7 +8872,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc3_doc4 = MakeOr({{kNameFieldId, "C"}, {kNameFieldId, "D"}});
+    auto query_doc3_doc4 = MakeByTerms(kNameFieldId, {"C", "D"});
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -9045,7 +8956,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    tests::Remove(*writer, *query_doc3_doc4);
+    tests::Remove(*writer, query_doc3_doc4);
 
     // commit pending merge + removal
     // pending compaction will fail (because segment 2 will have no live
@@ -9348,8 +9259,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment new
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9393,8 +9303,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment new
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9437,8 +9346,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment old
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9483,8 +9391,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment old
   {
-    auto query_doc1_doc2 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
+    auto query_doc1_doc2 = MakeByTerms(kNameFieldId, {"A", "B"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9604,8 +9511,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge new+old segment
   {
-    auto query_doc1_doc3 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
+    auto query_doc1_doc3 = MakeByTerms(kNameFieldId, {"A", "C"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9653,8 +9559,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge new+old segment
   {
-    auto query_doc1_doc3 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
+    auto query_doc1_doc3 = MakeByTerms(kNameFieldId, {"A", "C"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9702,8 +9607,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old segment
   {
-    auto query_doc1_doc3 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
+    auto query_doc1_doc3 = MakeByTerms(kNameFieldId, {"A", "C"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9753,8 +9657,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old segment
   {
-    auto query_doc1_doc3 =
-      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
+    auto query_doc1_doc3 = MakeByTerms(kNameFieldId, {"A", "C"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9804,8 +9707,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old+old segment
   {
-    auto query_doc1_doc3_doc5 =
-      MakeOr({{kNameFieldId, "A"}, {kNameFieldId, "C"}, {kNameFieldId, "E"}});
+    auto query_doc1_doc3_doc5 = MakeByTerms(kNameFieldId, {"A", "C", "E"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9863,8 +9765,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old+old segment
   {
-    auto query_doc1_doc3_doc5 =
-      MakeOr({{kNameFieldId, "A"}, {kNameFieldId, "C"}, {kNameFieldId, "E"}});
+    auto query_doc1_doc3_doc5 = MakeByTerms(kNameFieldId, {"A", "C", "E"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10384,8 +10285,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid docs count policy (merge)
   {
-    auto query_doc2_doc3_doc4 =
-      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}, {kNameFieldId, "D"}});
+    auto query_doc2_doc3_doc4 = MakeByTerms(kNameFieldId, {"B", "C", "D"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10435,8 +10335,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid docs count policy (not modified)
   {
-    auto query_doc2_doc3_doc4 =
-      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}, {kNameFieldId, "D"}});
+    auto query_doc2_doc3_doc4 = MakeByTerms(kNameFieldId, {"B", "C", "D"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10515,8 +10414,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid segment fill policy (merge)
   {
-    auto query_doc2_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "B", kNameFieldId, "D");
+    auto query_doc2_doc4 = MakeByTerms(kNameFieldId, {"B", "D"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10567,8 +10465,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid segment fill policy (not modified)
   {
-    auto query_doc2_doc4 =
-      MakeByTermOrByTerm(kNameFieldId, "B", kNameFieldId, "D");
+    auto query_doc2_doc4 = MakeByTerms(kNameFieldId, {"B", "D"});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -11015,7 +10912,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  tests::Remove(*writer, *(query_doc1.get()));
+  tests::Remove(*writer, query_doc1);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11023,7 +10920,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  tests::Remove(*writer, *(query_doc3.get()));
+  tests::Remove(*writer, query_doc3);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11077,9 +10974,9 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  tests::Remove(*writer, *(query_doc1.get()));
+  tests::Remove(*writer, query_doc1);
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  tests::Remove(*writer, *(query_doc2.get()));
+  tests::Remove(*writer, query_doc2);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11087,7 +10984,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  tests::Remove(*writer, *(query_doc3.get()));
+  tests::Remove(*writer, query_doc3);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11134,9 +11031,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
 
   // Remove all documents from segment
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  tests::Remove(*writer, *(query_doc1.get()));
+  tests::Remove(*writer, query_doc1);
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  tests::Remove(*writer, *(query_doc2.get()));
+  tests::Remove(*writer, query_doc2);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11186,9 +11083,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   AssertSnapshotEquality(*writer);  //  segment 2
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  tests::Remove(*writer, *(query_doc1.get()));
+  tests::Remove(*writer, query_doc1);
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  tests::Remove(*writer, *(query_doc3.get()));
+  tests::Remove(*writer, query_doc3);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11198,9 +11095,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
   // Remove all documents from 'new' segment
   auto query_doc4 = MakeByTerm(kNameFieldId, "D");
-  tests::Remove(*writer, *(query_doc4.get()));
+  tests::Remove(*writer, query_doc4);
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  tests::Remove(*writer, *(query_doc2.get()));
+  tests::Remove(*writer, query_doc2);
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11737,25 +11634,36 @@ size_t BucketOf(size_t i, size_t buckets) noexcept {
   return static_cast<size_t>(h % buckets);
 }
 
-// Documents carrying a unique "name" and a "grp" that buckets them, so one term
-// filter removes a scattered share of the segment.
-void InsertBucketDocs(irs::IndexWriter& writer, size_t count, size_t buckets) {
+std::string BucketDocName(size_t i) { return absl::StrCat("d", i); }
+
+void InsertBucketDocs(irs::IndexWriter& writer, size_t count) {
   auto name = std::make_shared<tests::StringField>("name");
-  name->id = tests::FieldIdFor("name");
-  auto grp = std::make_shared<tests::StringField>("grp");
-  grp->id = tests::FieldIdForRuntime("grp");
+  name->id = kNameFieldId;
   tests::Document doc;
   doc.insert(name);
-  doc.insert(grp);
 
   auto trx = writer.GetBatch();
   for (size_t i = 0; i < count; ++i) {
-    name->value(absl::StrCat("d", i));
-    grp->value(absl::StrCat("g", BucketOf(i, buckets)));
+    name->value(BucketDocName(i));
     auto d = trx.Insert();
     EXPECT_TRUE(tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end()));
   }
   trx.Commit();
+}
+
+size_t RemoveBuckets(irs::IndexWriter& writer, size_t count, size_t buckets,
+                     size_t first, size_t last) {
+  std::vector<irs::bstring> names;
+  for (size_t i = 0; i < count; ++i) {
+    const auto bucket = BucketOf(i, buckets);
+    if (first <= bucket && bucket < last) {
+      const auto name = BucketDocName(i);
+      names.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{name}));
+    }
+  }
+  const auto removed = names.size();
+  tests::Remove(writer, irs::DocRemoval::Keys(kNameFieldId, std::move(names)));
+  return removed;
 }
 
 TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
@@ -11763,11 +11671,10 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
   constexpr size_t kDocs = 10000;
   constexpr size_t kBuckets = 20;
   constexpr size_t kFirstRound = 6;
-  const irs::field_id kGrpFieldId = tests::FieldIdForRuntime("grp");
   auto& directory = dir();
 
   auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-  InsertBucketDocs(*writer, kDocs, kBuckets);
+  InsertBucketDocs(*writer, kDocs);
   writer->RefreshCommit();
 
   auto segment_meta = [&] {
@@ -11789,18 +11696,8 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
   for (uint32_t round = 0; round != kRounds; ++round) {
     const size_t first = round == 0 ? 0 : kFirstRound + round - 1;
     const size_t last = round == 0 ? kFirstRound : first + 1;
-    {
-      auto trx = writer->GetBatch();
-      for (size_t b = first; b < last; ++b) {
-        trx.Remove(MakeByTerm(kGrpFieldId, absl::StrCat("g", b)));
-      }
-      trx.Commit();
-    }
+    removed += RemoveBuckets(*writer, kDocs, kBuckets, first, last);
     writer->RefreshCommit();
-    for (size_t i = 0; i < kDocs; ++i) {
-      const auto bucket = BucketOf(i, kBuckets);
-      removed += first <= bucket && bucket < last;
-    }
 
     const auto meta = segment_meta();
     ASSERT_EQ(0, MaskLinks(meta)) << "after round " << round;

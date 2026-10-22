@@ -29,9 +29,9 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <map>
@@ -674,11 +674,8 @@ bool FillDocument(const IndexWriter::Document& doc,
   return true;
 }
 
-Filter::ptr KeyFilter(std::string_view key) {
-  auto filter = std::make_unique<ByTerm>();
-  *filter->mutable_field_id() = kKey;
-  filter->mutable_options()->term = irs::ViewCast<byte_type>(key);
-  return filter;
+DocRemoval ByKey(std::string_view key) {
+  return DocRemoval::Keys(kKey, {bstring{irs::ViewCast<byte_type>(key)}});
 }
 
 double Seconds(Clock::time_point from) {
@@ -906,13 +903,13 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
       auto trx = writer->GetBatch();
       for (size_t i = 0; i < values.size(); ++i) {
         if (fate[i] == kRemoved) {
-          trx.Remove(KeyFilter(keys[i]));
+          trx.Remove(ByKey(keys[i]));
           continue;
         }
         if (fate[i] != kReplaced) {
           continue;
         }
-        trx.Remove(KeyFilter(keys[i]));
+        trx.Remove(ByKey(keys[i]));
         auto doc = trx.Insert();
         ASSERT_TRUE(doc);
         std::string error;

@@ -352,7 +352,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->index_storage = storage;
   if (extras && extras->Pass() == ReindexPass::Rebuild) {
     auto trx = storage->GetTransaction();
-    trx.Remove(std::make_shared<irs::All>());
+    trx.Remove(irs::DocRemoval::All());
     trx.RegisterFlush();
     if (!trx.Commit()) {
       THROW_SQL_ERROR(

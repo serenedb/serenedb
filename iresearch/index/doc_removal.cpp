@@ -25,6 +25,7 @@
 
 #include <utility>
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -71,6 +72,39 @@ class MapReader {
 };
 
 }  // namespace
+
+void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
+                     const DocumentMaskBuilder* pending, doc_id_t end,
+                     absl::FunctionRef<void(doc_id_t)> remove) {
+  SDB_ASSERT(removal.Keyed());
+  const auto* field = segment.field(removal.field);
+  if (field == nullptr) {
+    return;
+  }
+  const auto masked = segment.MaskedDocs();
+  auto& keys = removal.keys;
+  for (size_t i = 0; i < keys.size();) {
+    auto doc = doc_limits::eof();
+    field->ReadDocs(keys[i], [&](doc_id_t found) {
+      if (masked.Contains(found) ||
+          (pending != nullptr && pending->Contains(found))) {
+        return true;
+      }
+      doc = found;
+      return false;
+    });
+    if (doc >= end) {
+      ++i;
+      continue;
+    }
+    remove(doc);
+    keys[i] = std::move(keys.back());
+    keys.pop_back();
+  }
+  if (keys.empty()) {
+    keys = {};
+  }
+}
 
 DocRemoval DocRemoval::Build(std::span<const Row> rows) {
   containers::FlatHashMap<uint32_t, uint32_t> cursors;

@@ -40,7 +40,6 @@
 #include "connector/primary_key.h"
 #include "connector/row_position.h"
 #include "connector/term_dict.h"
-#include "search_remove_filter.hpp"
 
 namespace sdb::connector {
 namespace {
@@ -1099,32 +1098,30 @@ SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   : _trx{&trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
-  SDB_ASSERT(_remove_filter);
-  _remove_filter->Add(row_key);
+  _keys.emplace_back(irs::ViewCast<irs::byte_type>(row_key));
 }
 
 void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
   FinishImpl();
-  SDB_ASSERT(!_remove_filter);
-  _remove_filter =
-    std::make_shared<SearchRemoveFilter>(batch_size, term_dict::kPKFieldId);
+  _keys.reserve(batch_size);
 }
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
-  if (_remove_filter && !_remove_filter->Empty()) {
-    _trx->Remove(std::move(_remove_filter));
+  if (!_keys.empty()) {
+    _trx->Remove(
+      irs::DocRemoval::Keys(term_dict::kPKFieldId, std::move(_keys)));
   }
-  _remove_filter.reset();
+  _keys = {};
 }
 
-std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
+std::optional<irs::DocRemoval> MakeRowRunRemoval(
   std::span<const uint64_t> starts, std::span<const uint64_t> counts,
   std::shared_ptr<const irs::DocMapList> maps) {
   SDB_ENSURE(counts.size() == starts.size(), "search table: ", starts.size(),
              " removed row runs with ", counts.size(), " counts");
   if (starts.empty()) {
-    return nullptr;
+    return std::nullopt;
   }
   std::vector<irs::DocRemoval::Row> rows;
   rows.reserve(absl::c_accumulate(counts, size_t{0}));
@@ -1136,7 +1133,7 @@ std::shared_ptr<const irs::DocRemoval> MakeRowRunRemoval(
   }
   auto removal = irs::DocRemoval::Build(rows);
   removal.maps = std::move(maps);
-  return std::make_shared<const irs::DocRemoval>(std::move(removal));
+  return removal;
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

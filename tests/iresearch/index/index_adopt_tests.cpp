@@ -29,7 +29,6 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -38,6 +37,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -117,7 +117,7 @@ class IndexAdoptTest : public TestBase {
   static constexpr irs::field_id kNameFieldId = tests::FieldIdFor("name");
 
   // field.id has to be set: StringField's ctor leaves it invalid and the writer
-  // indexes by field id, so a ByTerm filter would match nothing.
+  // indexes by field id, so a removal by name would match nothing.
   static bool InsertDoc(irs::IndexWriter::Transaction& trx,
                         std::string_view value) {
     tests::StringField field{"name", value};
@@ -125,11 +125,18 @@ class IndexAdoptTest : public TestBase {
     return tests::InsertFields(trx.Insert(), &field, &field + 1);
   }
 
-  static irs::Filter::ptr ByName(std::string_view value) {
-    auto by_term = std::make_unique<irs::ByTerm>();
-    *by_term->mutable_field_id() = kNameFieldId;
-    by_term->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-    return by_term;
+  static irs::DocRemoval ByName(std::string_view value) {
+    return irs::DocRemoval::Keys(
+      kNameFieldId, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+  }
+
+  static irs::DocRemoval ByNames(std::span<const std::string> values) {
+    std::vector<irs::bstring> keys;
+    keys.reserve(values.size());
+    for (const auto& value : values) {
+      keys.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{value}));
+    }
+    return irs::DocRemoval::Keys(kNameFieldId, std::move(keys));
   }
 
   bool Exists(std::string_view name) const {
@@ -743,7 +750,7 @@ irs::AbsorbedSegment TakesAll(const irs::DirectoryReader& snapshot,
     static_cast<irs::doc_id_t>(MetaOf(snapshot, source).live_docs_count));
 }
 
-irs::IndexWriter::QueryContext::RemovalPtr Positions(
+irs::DocRemoval Positions(
   const std::map<std::string, std::vector<irs::doc_id_t>>& docs,
   std::shared_ptr<const irs::DocMapList> maps = nullptr) {
   std::vector<irs::DocRemoval::Row> rows;
@@ -754,18 +761,17 @@ irs::IndexWriter::QueryContext::RemovalPtr Positions(
   }
   auto removal = irs::DocRemoval::Build(rows);
   removal.maps = std::move(maps);
-  return std::make_shared<const irs::DocRemoval>(std::move(removal));
+  return removal;
 }
 
-irs::IndexWriter::QueryContext::RemovalPtr FirstDocsEverywhere(
-  irs::doc_id_t count) {
+irs::DocRemoval FirstDocsEverywhere(irs::doc_id_t count) {
   std::vector<irs::DocRemoval::Row> rows;
   for (uint32_t segment = 0; segment < 64; ++segment) {
     for (irs::doc_id_t doc = 0; doc < count; ++doc) {
       rows.emplace_back(segment, irs::doc_limits::min() + doc);
     }
   }
-  return std::make_shared<const irs::DocRemoval>(irs::DocRemoval::Build(rows));
+  return irs::DocRemoval::Build(rows);
 }
 
 const irs::CompactionPolicy& FullMerge() {
@@ -1208,7 +1214,7 @@ TEST_F(IndexAdoptTest, DocRemovalReachesItsSegmentOnceCommitted) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, DocRemovalAndFilterInOneCommit) {
+TEST_F(IndexAdoptTest, PositionsAndKeysInOneCommit) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   for (const auto* value : {"a", "b", "c"}) {
     ASSERT_TRUE(InsertDoc(trx, value));
@@ -1223,6 +1229,105 @@ TEST_F(IndexAdoptTest, DocRemovalAndFilterInOneCommit) {
   ASSERT_TRUE(del.Commit(20));
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, AKeyOnlyInsertedAfterTheRemovalKeepsTheOtherKeysGoing) {
+  const std::vector<std::string> keys{"a", "b"};
+  auto trx = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(trx, "b"));
+  trx.Remove(ByNames(keys));
+  ASSERT_TRUE(InsertDoc(trx, "a"));
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+
+  auto del = _writer->GetBatch();
+  del.Remove(ByName("a"));
+  ASSERT_TRUE(del.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, AKeyReinsertedAfterItsRemovalSurvives) {
+  {
+    auto trx = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(trx, "a"));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+  const auto old_segment = CommittedNames(*_writer);
+  ASSERT_EQ(1, old_segment.size());
+
+  const std::vector<std::string> keys{"a", "b"};
+  {
+    auto trx = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(trx, "b"));
+    trx.Remove(ByNames(keys));
+    ASSERT_TRUE(InsertDoc(trx, "a"));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+  const auto names = CommittedNames(*_writer);
+  ASSERT_EQ(1, names.size());
+  EXPECT_NE(old_segment.front(), names.front());
+  auto del = _writer->GetBatch();
+  del.Remove(ByName("a"));
+  ASSERT_TRUE(del.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, KeysSkipMaskedDocs) {
+  {
+    auto trx = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(trx, "a"));
+    ASSERT_TRUE(InsertDoc(trx, "x"));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+  {
+    auto del = _writer->GetBatch();
+    del.Remove(ByName("a"));
+    ASSERT_TRUE(del.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+  {
+    auto trx = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(trx, "a"));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+
+  auto del = _writer->GetBatch();
+  del.Remove(ByName("a"));
+  ASSERT_TRUE(del.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+}
+
+TEST_F(IndexAdoptTest, KeysSkipDocsTheirCommitRemovedEarlier) {
+  {
+    auto trx = _writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(trx, "a"));
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  auto trx = _writer->GetBatch();
+  trx.Remove(ByName("a"));
+  ASSERT_TRUE(InsertDoc(trx, "a"));
+  trx.Remove(ByName("a"));
+  ASSERT_TRUE(InsertDoc(trx, "a"));
+  ASSERT_TRUE(trx.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  const auto snapshot = _writer->GetSnapshot();
+  EXPECT_EQ(1, snapshot.live_docs_count());
+  ASSERT_EQ(1, snapshot.size());
+  EXPECT_EQ(2, snapshot[0].docs_count());
 }
 
 TEST_F(IndexAdoptTest, EmptyDocRemovalKeepsTheSegment) {
@@ -1278,28 +1383,24 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, FilterThatPreparesNothingRemovesNothing) {
-  class Nothing final : public irs::Filter {
-   public:
-    irs::QueryBuilder::ptr PrepareSegment(
-      const irs::SubReader&, const irs::PrepareContext&) const final {
-      return nullptr;
-    }
-    irs::TypeInfo::type_id type() const noexcept final {
-      return irs::Type<Nothing>::id();
-    }
-  };
-
+TEST_F(IndexAdoptTest, KeysOfNoDocRemoveNothing) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "a"));
   ASSERT_TRUE(trx.Commit(10));
   ASSERT_TRUE(_writer->RefreshCommit());
+  const auto before = _writer->GetSnapshot()[0].Meta().version;
 
   auto del = _writer->GetBatch();
-  del.Remove(std::make_shared<Nothing>());
+  del.Remove(ByName("b"));
+  del.Remove(irs::DocRemoval::Keys(
+    tests::FieldIdFor("missing"),
+    {irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"a"})}}));
   ASSERT_TRUE(del.Commit(20));
   _writer->RefreshCommit();
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
+  const auto snapshot = _writer->GetSnapshot();
+  ASSERT_EQ(1, snapshot.size());
+  EXPECT_EQ(before, snapshot[0].Meta().version);
+  EXPECT_EQ(1, snapshot.live_docs_count());
 }
 
 TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
@@ -1997,11 +2098,18 @@ TEST_F(IndexAdoptTest,
 
 TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
   constexpr size_t kDocs = 5000;
+  std::vector<std::string> evens;
+  std::vector<std::string> ones;
   {
     auto trx = _writer->GetBatch(true);
     for (size_t i = 0; i != kDocs; ++i) {
-      ASSERT_TRUE(
-        InsertDoc(trx, i % 2 == 0 ? "even" : (i % 4 == 1 ? "one" : "three")));
+      auto name = absl::StrCat("d", i);
+      ASSERT_TRUE(InsertDoc(trx, name));
+      if (i % 2 == 0) {
+        evens.push_back(std::move(name));
+      } else if (i % 4 == 1) {
+        ones.push_back(std::move(name));
+      }
     }
     ASSERT_TRUE(trx.Commit(10));
     ASSERT_TRUE(_writer->RefreshCommit());
@@ -2022,7 +2130,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     if (!removed) {
       removed = true;
       auto del = _writer->GetBatch();
-      del.Remove(ByName("even"));
+      del.Remove(ByNames(evens));
       EXPECT_TRUE(del.Commit(20));
       EXPECT_TRUE(_writer->RefreshCommit());
     }
@@ -2034,7 +2142,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
 
   {
     auto del = _writer->GetBatch();
-    del.Remove(ByName("one"));
+    del.Remove(ByNames(ones));
     ASSERT_TRUE(del.Commit(30));
   }
 

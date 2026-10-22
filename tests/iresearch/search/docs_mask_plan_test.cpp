@@ -22,6 +22,8 @@
 #include <atomic>
 #include <cmath>
 #include <functional>
+#include <iresearch/formats/term_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -258,9 +260,20 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
         removals = {{kBucket, "7"}, {kRange, "20"}};
         break;
     }
+    const auto snapshot = writer->GetSnapshot();
     for (const auto& [field, value] : removals) {
+      std::vector<irs::DocRemoval::Row> rows;
+      for (const auto& segment : snapshot) {
+        const auto number = irs::SegmentNumber(segment.Meta().name);
+        segment.field(field)->ReadDocs(
+          irs::ViewCast<irs::byte_type>(std::string_view{value}),
+          [&](doc_id_t doc) {
+            rows.push_back({number, doc});
+            return true;
+          });
+      }
       auto trx = writer->GetBatch();
-      trx.Remove(Term(field, value));
+      trx.Remove(irs::DocRemoval::Build(rows));
       trx.Commit();
     }
     writer->RefreshCommit();

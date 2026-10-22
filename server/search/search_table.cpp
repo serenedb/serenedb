@@ -549,7 +549,7 @@ void SearchTable::ReplayDeleteRanges(duckdb::AttachedDatabase& db,
   }
   if (auto removal =
         connector::MakeRowRunRemoval(starts, counts, session->maps)) {
-    session->trx.Remove(std::move(removal));
+    session->trx.Remove(std::move(*removal));
   }
 }
 
@@ -563,8 +563,7 @@ void SearchTable::ReplayRowPositionMaps(duckdb::AttachedDatabase& db,
 
 void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
-    session->trx.Remove(
-      std::make_shared<const irs::DocRemoval>(irs::DocRemoval::All()));
+    session->trx.Remove(irs::DocRemoval::All());
   }
 }
 

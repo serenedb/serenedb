@@ -97,6 +97,11 @@ constexpr irs::field_id kSameFieldId = 4;
 constexpr irs::field_id kValueFieldId = 5;
 constexpr irs::field_id kDuplicatedFieldId = 6;
 
+irs::DocRemoval RemoveByName(std::string_view name) {
+  return irs::DocRemoval::Keys(
+    kNameFieldId, {irs::bstring{irs::ViewCast<irs::byte_type>(name)}});
+}
+
 // Wrap tests::GenericJsonFieldFactory to assign per-name field ids to the
 // freshly inserted indexed field. The factory itself is shared with other
 // tests, so we cannot modify it directly.
@@ -386,12 +391,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_skips_deleted) {
 
   constexpr std::string_view kRemoved[]{"A", "B", "C"};
   for (const auto name : kRemoved) {
-    auto trx = writer->GetBatch();
-    auto removal = std::make_unique<irs::ByTerm>();
-    *removal->mutable_field_id() = kNameFieldId;
-    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
-    trx.Remove(irs::Filter::ptr{std::move(removal)});
-    trx.Commit();
+    tests::Remove(*writer, RemoveByName(name));
   }
   writer->RefreshCommit();
 
@@ -432,12 +432,7 @@ TEST_P(DocCollectorTestCase, test_lead_all_walks_live_docs) {
 
   constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
   for (const auto name : kRemoved) {
-    auto trx = writer->GetBatch();
-    auto removal = std::make_unique<irs::ByTerm>();
-    *removal->mutable_field_id() = kNameFieldId;
-    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
-    trx.Remove(irs::Filter::ptr{std::move(removal)});
-    trx.Commit();
+    tests::Remove(*writer, RemoveByName(name));
   }
   writer->RefreshCommit();
 
@@ -490,9 +485,7 @@ TEST_P(DocCollectorTestCase, test_count_negation_skips_deleted) {
 
   constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
   for (const auto name : kRemoved) {
-    auto trx = writer->GetBatch();
-    trx.Remove(irs::Filter::ptr{by_name(name)});
-    trx.Commit();
+    tests::Remove(*writer, RemoveByName(name));
   }
   writer->RefreshCommit();
 
@@ -547,12 +540,7 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
 
   constexpr std::string_view kRemoved[]{"A", "C", "D", "Q"};
   for (const auto name : kRemoved) {
-    auto trx = writer->GetBatch();
-    auto removal = std::make_unique<irs::ByTerm>();
-    *removal->mutable_field_id() = kNameFieldId;
-    removal->mutable_options()->term = irs::ViewCast<irs::byte_type>(name);
-    trx.Remove(irs::Filter::ptr{std::move(removal)});
-    trx.Commit();
+    tests::Remove(*writer, RemoveByName(name));
   }
   writer->RefreshCommit();
 

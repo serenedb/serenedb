@@ -20,7 +20,6 @@ done
 [[ -n "$pr" ]] || usage
 
 repo=serenedb/serenedb
-context='serenedb | gitlinks'
 cd "$(git rev-parse --show-toplevel)"
 
 die() {
@@ -44,8 +43,9 @@ rule() {
 }
 
 read -r base behind < <(gh api "repos/$repo/compare/main...$head" --jq '"\(.merge_base_commit.sha) \(.behind_by)"')
-[[ "$behind" == 0 ]] || ! rule strict | grep -qx true ||
+if [[ "$behind" != 0 ]] && grep -qx true <<<"$(rule strict)"; then
 	die "#$pr is $behind commits behind main: update it and run CI again"
+fi
 
 rollup=$(gh api graphql -F pr="$pr" -f query='
 query($pr: Int!) {
@@ -60,23 +60,23 @@ query($pr: Int!) {
     }
   }
 }' --jq '.data.repository.pullRequest |
-  "review\t\(.reviewDecision // "")",
+  "review\t\t\(.reviewDecision // "")",
   ((.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // [])[] |
-    if .__typename == "StatusContext" then "\(.context)\t\(.state)"
-    else "\(.name)\t\(.conclusion // .status)" end)')
-lookup() {
-	awk -F '\t' -v key="$1" '$1 == key { print $2; exit }' <<<"$rollup"
-}
-review=$(lookup review)
+    if .__typename == "StatusContext" then "status\t\(.context)\t\(.state)"
+    else "check\t\(.name)\t\(.conclusion // .status)" end)')
+review=$(awk -F '\t' '$1 == "review" { print $3 }' <<<"$rollup")
 [[ "$(rule approvals | sort -rn | head -1)" -le 0 || "$review" == APPROVED ]] ||
 	die "#$pr: review decision $review"
 red=
 while IFS= read -r required; do
-	[[ -n "$required" && "$required" != "$context" ]] || continue
-	check=$(lookup "$required")
-	[[ "$check" == SUCCESS ]] || red+=$'\n'"$required: ${check:-not reported}"
+	[[ -n "$required" ]] || continue
+	states=$(awk -F '\t' -v name="$required" \
+		'$2 == name && !($1 == "status" && name == "pre-commit") { print $3 }' <<<"$rollup")
+	bad=$(grep -vxE 'SUCCESS|SKIPPED|NEUTRAL' <<<"$states" || true)
+	[[ -n "$states" && -z "$bad" ]] || red+=$'\n'"$required: ${bad:-not reported}"
 done < <(rule check)
 [[ -z "$red" ]] || die "#$pr: required checks are not green:$red"
+waiting=$(awk -F '\t' '$1 == "status" && $2 == "pre-commit" && $3 != "SUCCESS"' <<<"$rollup")
 
 git fetch --quiet --no-tags origin "$head" "$base"
 rc=0
@@ -96,6 +96,13 @@ while read -r sha fork number branch; do
 	echo "land $fork#$number: $branch -> $sha${fork_review:+ ($fork_review)}"
 	landings+=("$fork $branch $sha")
 done < <(sed -n 's/^.*: gitlink \([0-9a-f]*\) is pending: head of open \([^#]*\)#\([0-9]*\) into \(.*\)$/\1 \2 \3 \4/p' <<<"$out")
+run=
+if ((${#landings[@]})) || [[ -n "$waiting" ]]; then
+	run=$(gh run list -R "$repo" --workflow simple.yml --event pull_request --commit "$head" --limit 1 \
+		--json databaseId --jq '.[0].databaseId')
+	[[ -n "$run" ]] || die "#$pr: no pre-commit run for $head"
+	echo "rerun pre-commit run $run"
+fi
 echo "squash-merge #$pr at $head"
 
 if [[ "$yes" != true ]]; then
@@ -109,21 +116,19 @@ for landing in "${landings[@]}"; do
 	echo "landed $fork $branch at $sha"
 done
 
-gitlinks() {
-	gh api "repos/$repo/commits/$head/status" \
-		--jq ".statuses[] | select(.context == \"$context\" and .updated_at >= \"$1\") | .state"
-}
-if [[ "$(gitlinks 0)" != success ]]; then
-	since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	gh workflow run gitlinks.yml -R "$repo" -f PR_NUMBER="$pr"
+if [[ -n "$run" ]]; then
+	attempt=$(gh api "repos/$repo/actions/runs/$run" --jq .run_attempt)
+	gh run rerun "$run" -R "$repo"
+	now=$attempt
+	status=
 	for _ in $(seq 120); do
 		sleep 5
-		case "$(gitlinks "$since" || true)" in
-		success) break ;;
-		failure | error) die "#$pr: $context failed after landing, see its run" ;;
-		esac
+		read -r now status conclusion < <(gh api "repos/$repo/actions/runs/$run" \
+			--jq '"\(.run_attempt) \(.status) \(.conclusion)"') || continue
+		[[ "$now" -gt "$attempt" && "$status" == completed ]] && break
 	done
-	[[ "$(gitlinks "$since")" == success ]] || die "#$pr: $context did not pass within 10 minutes"
+	[[ "$now" -gt "$attempt" && "$status" == completed ]] || die "#$pr: pre-commit run $run did not finish within 10 minutes"
+	[[ "$conclusion" == success ]] || die "#$pr: pre-commit run $run failed after landing"
 fi
 
 gh api -X PUT "repos/$repo/pulls/$pr/merge" -f merge_method=squash -f sha="$head" --jq .message

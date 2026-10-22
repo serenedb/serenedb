@@ -18,9 +18,9 @@ satisfy rule 1.
 A gitlink that breaks rule 1 but is the head of an open fork PR into
 main's version branch or a newer one is pending, not failed: the PR is
 waiting for that fork PR to land. --allow-pending (the pre-commit hook)
-passes it; without the flag the script exits 3, which the gitlinks
-workflow reports as a pending status. --rev checks the gitlinks of a
-commit instead of the index, --base compares with another commit.
+passes it; without the flag the script exits 3, which the PR's pre-commit
+job turns into a pending `pre-commit` status. --rev checks the gitlinks
+of a commit instead of the index, --base compares with another commit.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the

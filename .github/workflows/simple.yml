@@ -8,6 +8,9 @@ on:
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     steps:
     - uses: actions/checkout@v7
       with:
@@ -19,3 +22,32 @@ jobs:
     - uses: pre-commit/action@v3.0.1
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        SKIP: check-submodule-pointers
+    - name: Check submodule gitlinks
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ github.token }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        FROM_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        rc=0
+        python3 scripts/check_submodule_pointers.py 2>&1 | tee gitlinks.log || rc=$?
+        [[ $rc == 0 || $rc == 3 ]] || exit 1
+        [[ -n "$HEAD_SHA" ]] || exit $rc
+        if [[ $rc == 3 ]]; then
+          if [[ "$FROM_FORK" == true ]]; then
+            echo "::error::A PR from a fork cannot post a pending status: its fork PRs must land first"
+            exit 1
+          fi
+          state=pending
+          description="Waiting for $(sed -n 's/.* is pending: head of open \([^ ]*\) .*/\1/p' gitlinks.log | paste -sd' ')"
+        else
+          contexts=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" --jq '.statuses[].context')
+          grep -qx pre-commit <<<"$contexts" || exit 0
+          state=success
+          description='Every gitlink is on a version branch'
+        fi
+        gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=$state -f context=pre-commit \
+          -f description="${description:0:140}" -f target_url="$RUN_URL" >/dev/null

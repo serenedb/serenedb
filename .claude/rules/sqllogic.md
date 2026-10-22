@@ -16,6 +16,7 @@ paths:
 - Each file runs in its own database (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: name them `<name>_${__DATABASE__}`, and filter server-wide listings (`WHERE database_name = current_database()`).
 - Files go under `${__TEST_DIR__}`, never `/tmp` (`check-no-tmp-in-sqllogic`); `${...}` needs `control substitution on` first (`check-substitution-directive`).
 - A test that needs a service is `.test_slow` with the service's suffix (`_s3`, `_azure`, `_iceberg`, `_ollama`, `_kev`, `_pgscan`, `_pgscan_tls`, `_chscan`): `run.sh` starts the service from the name.
+- `.test_slow` means a non-standard run: a service, TLS, a generated fixture. A test that is only slow is `.test`; split it rather than rename it.
 
 ## Races
 

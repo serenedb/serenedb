@@ -461,7 +461,7 @@ count
 
 # Comprehensive 100k-row pruned-vs-plain coverage across every multi-term
 # filter shape (Range / Prefix / Regexp / Levenshtein) lives in the sibling
-# inverted_index_score_prune.test_slow -- kept out of this file so the cheap
+# inverted_index_score_prune_large.test -- kept out of this file so the cheap
 # correctness checks above stay fast.
 
 

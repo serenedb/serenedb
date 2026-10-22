@@ -2,9 +2,8 @@ control substitution on
 
 # A dropped search table, inverted index or database has its directory removed
 # in the background after the commit. A crash in the middle of that removal
-# must leave a data directory that boots: replay creates the dropped object
-# again before it replays the drop, so it has to find the whole directory or
-# none of it.
+# must leave a data directory that boots without the dropped object and with
+# everything else intact.
 #
 # The fault point stops a removal once it deleted everything in the directory
 # but the segment list, and parks it there; the crash comes while it is parked.
@@ -229,6 +228,91 @@ n
 
 
 connection after_database
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept
+
+
+# ----------------------------------------------------------------------
+# 4. A search table replaced by CREATE OR REPLACE TABLE.
+# ----------------------------------------------------------------------
+
+connection after_database
+statement ok
+CREATE TABLE dsr_r (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_database
+statement ok
+INSERT INTO dsr_r VALUES (1, 'old');
+
+
+connection after_database
+statement ok
+VACUUM (REFRESH_TABLE) dsr_r;
+
+
+connection after_database
+statement ok
+SET sdb_faults = 'storage_removal_interrupted';
+
+
+connection after_database
+statement ok
+BEGIN;
+
+
+connection after_database
+statement ok
+CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT) WITH (storage = 'search');
+
+
+connection after_database
+statement ok
+INSERT INTO dsr_r VALUES (2, 'new', 20);
+
+
+connection after_database
+statement ok
+COMMIT;
+
+
+connection after_database
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-storage_removal_interrupted:parked';
+
+
+skipif pg-wire-extended
+connection after_database
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_database
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_database
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_replace
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body, extra FROM dsr_r ORDER BY id;
+----
+id	body	extra
+2	new	20
+
+
+connection after_replace
 query
 SELECT id, body FROM dsr_keep;
 ----

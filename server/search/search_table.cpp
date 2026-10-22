@@ -105,7 +105,7 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
   if (read_only) {
     OpenDirectory();
-  } else {
+  } else if (_is_new) {
     OpenWriter(in_memory);
   }
   ApplyOptions(options);

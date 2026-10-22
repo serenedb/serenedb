@@ -83,15 +83,9 @@ MissingDatabases gMissingDatabases;
 
 constexpr std::string_view kEngineDir = "engine_v1";
 
-struct OidDirectory {
-  duckdb::idx_t oid = 0;
-  std::filesystem::path path;
-  bool dropped = false;
-};
-
-std::vector<OidDirectory> OidDirectories(
+std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
   const std::filesystem::path& directory) {
-  std::vector<OidDirectory> found;
+  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
   std::error_code ec;
   std::filesystem::directory_iterator entries{directory, ec};
   if (ec && ec != std::errc::no_such_file_or_directory) {
@@ -104,16 +98,11 @@ std::vector<OidDirectory> OidDirectories(
       SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
                 "': ", ec.message());
     }
-    const auto filename = entry.path().filename().string();
-    std::string_view name = filename;
-    const bool dropped = name.ends_with(kDroppedSuffix);
-    if (dropped) {
-      name.remove_suffix(kDroppedSuffix.size());
-    }
+    const auto name = entry.path().filename().string();
     duckdb::idx_t oid = 0;
     if (is_directory && absl::c_all_of(name, absl::ascii_isdigit) &&
         absl::SimpleAtoi(name, &oid)) {
-      found.push_back({.oid = oid, .path = entry.path(), .dropped = dropped});
+      found.emplace_back(oid, entry.path());
     }
   }
   return found;
@@ -121,8 +110,8 @@ std::vector<OidDirectory> OidDirectories(
 
 void RemoveUnowned(const std::filesystem::path& directory,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
-  for (const auto& [oid, path, dropped] : OidDirectories(directory)) {
-    if (!dropped && owned.contains(oid)) {
+  for (const auto& [oid, path] : OidDirectories(directory)) {
+    if (owned.contains(oid)) {
       continue;
     }
     std::error_code ec;
@@ -143,29 +132,45 @@ void RequirePresent(const Storage& storage, const duckdb::CatalogEntry& entry) {
   }
 }
 
-absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
+void OpenStorages(const DataDirectory& layout, duckdb::AttachedDatabase& db) {
+  auto& catalog = db.GetCatalog().Cast<SereneDBCatalog>();
   std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
   catalog.ScanSchemas(
     [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  std::vector<duckdb::reference<SearchTableEntry>> tables;
+  std::vector<duckdb::reference<InvertedIndexEntry>> indexes;
   absl::flat_hash_set<duckdb::idx_t> oids;
   for (auto& schema : schemas) {
     schema.get().Scan(
       duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        if (const auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
-          RequirePresent(*table->Storage(), entry);
+        if (auto* table = dynamic_cast<SearchTableEntry*>(&entry)) {
+          tables.emplace_back(*table);
           oids.insert(entry.oid);
         }
       });
-    schema.get().Scan(
-      duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
-        const auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
-        if (index && index->Storage()) {
-          RequirePresent(*index->Storage(), entry);
-          oids.insert(entry.oid);
-        }
-      });
+    schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
+                      [&](duckdb::CatalogEntry& entry) {
+                        auto* index = dynamic_cast<InvertedIndexEntry*>(&entry);
+                        if (index && index->Storage()) {
+                          indexes.emplace_back(*index);
+                          oids.insert(entry.oid);
+                        }
+                      });
   }
-  return oids;
+  if (!catalog.InMemory()) {
+    RemoveUnowned(layout.DatabaseDir(db.oid), oids);
+  }
+  for (auto& table : tables) {
+    const auto& storage = table.get().Storage();
+    storage->OpenWriter(catalog.InMemory());
+    RequirePresent(*storage, table.get());
+  }
+  for (auto& index : indexes) {
+    const auto& storage = index.get().Storage();
+    storage->OpenWriter(catalog.InMemory(),
+                        ResolveSettings(index.get().options));
+    RequirePresent(*storage, index.get());
+  }
 }
 
 void RemoveUnownedDatabases(const DataDirectory& layout,
@@ -175,18 +180,6 @@ void RemoveUnownedDatabases(const DataDirectory& layout,
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
   RemoveUnowned(layout.EngineDir(), databases);
-}
-
-void RemoveUnownedStorages(const DataDirectory& layout,
-                           duckdb::DatabaseManager& manager) {
-  for (const auto& db : manager.GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !catalog.InMemory()) {
-      RemoveUnowned(layout.DatabaseDir(db->oid),
-                    StorageOids(catalog.Cast<SereneDBCatalog>()));
-    }
-  }
 }
 
 duckdb::unique_ptr<duckdb::Catalog> AttachCluster(
@@ -339,13 +332,10 @@ void InitCatalog(std::string_view directory) {
   }
   if (gMissingDatabases.fresh_cluster &&
       absl::c_any_of(OidDirectories(layout.EngineDir()), [](const auto& dir) {
-        if (dir.dropped) {
-          return false;
-        }
         std::error_code ec;
-        const bool empty = std::filesystem::is_empty(dir.path, ec);
+        const bool empty = std::filesystem::is_empty(dir.second, ec);
         if (ec) {
-          SDB_FATAL(STARTUP, "cannot list directory '", dir.path.string(),
+          SDB_FATAL(STARTUP, "cannot list directory '", dir.second.string(),
                     "': ", ec.message());
         }
         return !empty;
@@ -412,9 +402,9 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  RemoveUnownedStorages(layout, manager);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
+      OpenStorages(layout, *db);
       db->GetStorageManager().FinishLoad(context);
     }
   }

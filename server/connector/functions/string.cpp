@@ -26,6 +26,7 @@
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
+#include <duckdb/function/scalar/regexp.hpp>
 #include <duckdb/function/scalar/string_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -960,6 +961,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
         rows.WriteNull();
         continue;
       }
+      duckdb::regexp_util::VerifyUTF8Result(match.data(), match.size());
       for (auto& child : rows.WriteList(1)) {
         child.WriteValue(
           duckdb::string_t{match.data(), static_cast<uint32_t>(match.size())});
@@ -977,6 +979,8 @@ void RegexpMatchFunction(duckdb::DataChunk& args,
     int group = 1;
     for (auto& child : rows.WriteList(static_cast<duckdb::idx_t>(num_groups))) {
       if (groups[group].data()) {
+        duckdb::regexp_util::VerifyUTF8Result(groups[group].data(),
+                                              groups[group].size());
         child.WriteValue(duckdb::string_t{
           groups[group].data(), static_cast<uint32_t>(groups[group].size())});
       } else {
@@ -1207,6 +1211,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       nullptr,
       RegexpInitLocalState};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetFallible();
     loader.RegisterFunction(func);
   }
 
@@ -1215,15 +1220,17 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
   {
     duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+    duckdb::ScalarFunction instr{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+      RegexpInitLocalState};
+    instr.SetFallible();
+    regexp_instr_set.AddFunction(instr);
+    duckdb::ScalarFunction instr_from{
       "regexp_instr",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
        duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
@@ -1231,7 +1238,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       RegexpInstrFunction,
       RegexpInstrBind,
       nullptr,
-      RegexpInitLocalState});
+      RegexpInitLocalState};
+    instr_from.SetFallible();
+    regexp_instr_set.AddFunction(instr_from);
     loader.RegisterFunction(regexp_instr_set);
   }
 

@@ -32,7 +32,7 @@ namespace irs::utf8_utils {
 
 inline constexpr uint8_t kMaxCharSize = 4;
 
-inline constexpr uint32_t kInvalidChar32 = 0xFFFF;
+inline constexpr uint32_t kInvalidChar32 = 0xFFFFFFFF;
 
 // 0 -- return 0 for last invalid and intermediate
 // 1 -- return 1 for last invalid

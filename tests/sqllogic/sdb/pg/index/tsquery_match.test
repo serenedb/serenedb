@@ -399,6 +399,81 @@ SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'posix');
 db error: ERROR: invalid regular expression: invalid escape sequence: \d
 
 
+# A pattern ending in a lone backslash is invalid, like any other RE2 error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('ab\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('a\.b\');
+----
+db error: ERROR: invalid regular expression: trailing \
+
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('qu\.ck') ORDER BY a;
+----
+a
+
+# '.' does not match a line break unless (?s) says so, after a literal too.
+statement ok
+CREATE TABLE tsq_nl (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_nl_idx ON tsq_nl USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_nl VALUES (1, 'abc'), (2, 'abc' || chr(10) || 'def'), (3, 'abcdef'), (4, chr(10));
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_nl;
+
+query
+SELECT id FROM tsq_nl WHERE regexp_full_match(msg, 'abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('abc.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('.*') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ ts_regexp('(?s)abc.*') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM tsq_nl_idx WHERE msg @@ (ts_regexp('abc.*') || ts_regexp('x.+')) ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT msg, count(*) AS c FROM tsq_nl_idx WHERE msg @@ ts_regexp('abc.*') GROUP BY msg ORDER BY msg;
+----
+msg	c
+abc	1
+abcdef	1
+
+
 
 # ----------------------------------------------------------------------
 # ts_between(min, max, min_incl, max_incl) -- TSQUERY range constructor.
@@ -1030,18 +1105,18 @@ query
 EXPLAIN SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn') ## ts_regexp('fo.*') ## ts_regexp('jumps'))
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
-│ Index: tsq_idx                                                                   │
-│ Lookup: table                                                                    │
-│ Index Filter:                                                                    │
-│ ╭─ Phrase ─────────────────────────────────────────────────────────────────────╮ │
-│ │ Field: b(string)                                                             │ │
-│ │ Parts:                                                                       │ │
-│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Prefix:fo(1, 1); Term:jumps(1, 1);  │ │
-│ ╰──────────────────────────────────────────────────────────────────────────────╯ │
-│ Projections: a                                                                   │
-│ ~1 row                                                                           │
-╰──────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────╮
+│ Index: tsq_idx                                                                        │
+│ Lookup: table                                                                         │
+│ Index Filter:                                                                         │
+│ ╭─ Phrase ──────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: b(string)                                                                  │ │
+│ │ Parts:                                                                            │ │
+│ │ Term:quick(0, 0); Automaton:br.wn(1, 1); Automaton:fo.*(1, 1); Term:jumps(1, 1);  │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: a                                                                        │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────╯
 
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_regexp('br.wn', 'lisp'));
@@ -2763,6 +2838,218 @@ a
 2
 3
 6
+
+# ~, regexp_matches and regexp_like match anywhere in the value, through the
+# index as on the table.
+statement ok
+CREATE TABLE tsq_rx (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_rx_idx ON tsq_rx USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_rx VALUES (1, 'abc123'), (2, 'xyz'), (3, '42'), (4, 'line' || chr(10) || '7');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_rx;
+
+query
+SELECT id FROM tsq_rx WHERE msg ~ '[0-9]+' ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]+' ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '[0-9]+') ORDER BY id;
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_like(msg, 'b[a-z]') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg !~ '[0-9]+' ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '^[0-9]+$') ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_rx_idx WHERE regexp_matches(msg, '^li[a-z]+$') ORDER BY id;
+----
+id
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[0-9]+';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: tsq_rx_idx                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Automaton ───────────────────────╮ │
+│ │ Field: msg(string)                │ │
+│ │ Pattern: (?s:.*)(?:[0-9]+)(?s:.*) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+SELECT id FROM tsq_rx WHERE msg ~ '[a-z]\Q1' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rx_idx WHERE msg ~ '[a-z]\Q1';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: tsq_rx_idx                         │
+│ Lookup: table                             │
+│ Index Filter:                             │
+│ ╭─ Automaton ───────────────────────────╮ │
+│ │ Field: msg(string)                    │ │
+│ │ Pattern: (?s:.*)(?:[a-z]\\Q1\\E)(?s:.*) │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+statement ok
+PREPARE tsq_rx_quoted AS SELECT id FROM tsq_rx_idx WHERE msg ~ $1 ORDER BY id;
+
+query
+EXECUTE tsq_rx_quoted('[a-z]\Q1');
+----
+id
+1
+
+statement ok
+DEALLOCATE tsq_rx_quoted;
+
+# A regex of literals rewritten to LIKE reaches the index with its '_', '%'
+# and '\' still literal.
+statement ok
+CREATE TABLE tsq_rw (id INTEGER PRIMARY KEY, msg VARCHAR);
+
+statement ok
+CREATE INDEX tsq_rw_idx ON tsq_rw USING inverted (id, msg);
+
+statement ok
+INSERT INTO tsq_rw VALUES (1, 'a_b'), (2, 'axb'), (3, 'a%b'), (4, 'aXYb'), (5, 'C:\Windows'), (6, 'C:Windows'), (7, 'xa_bx'), (8, 'a_bc'), (9, 'axbc');
+
+statement ok
+VACUUM (REFRESH_TABLE) tsq_rw;
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b' ORDER BY id;
+----
+id
+1
+7
+8
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ 'a%b' ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b' ORDER BY id;
+----
+id
+1
+8
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^C:\\W' ORDER BY id;
+----
+id
+5
+
+query
+SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b$' ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ 'a_b';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Automaton ────────╮ │
+│ │ Field: msg(string) │ │
+│ │ Pattern: %a\\_b%    │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^a_b';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: a_b        │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM tsq_rw_idx WHERE msg ~ '^C:\\W';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: tsq_rw_idx      │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Starts With ──────╮ │
+│ │ Field: msg(string) │ │
+│ │ Prefix: C:\\W       │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
 
 # ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.

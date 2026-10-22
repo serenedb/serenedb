@@ -636,10 +636,10 @@ TEST(PhrasePositionsTest, regexp_parts_lower_by_shape) {
   ASSERT_TRUE(std::holds_alternative<irs::ByTermOptions>(literal));
   EXPECT_EQ(Bytes("brown"),
             irs::bytes_view{std::get<irs::ByTermOptions>(literal).term});
-  const auto prefix = lowered("bro.*");
-  ASSERT_TRUE(std::holds_alternative<irs::ByPrefixOptions>(prefix));
-  EXPECT_EQ(Bytes("bro"),
-            irs::bytes_view{std::get<irs::ByPrefixOptions>(prefix).term});
+  const auto dot_star = lowered("bro.*");
+  ASSERT_TRUE(std::holds_alternative<irs::AutomatonOptions>(dot_star));
+  EXPECT_EQ(irs::PatternKind::RegexpPerl,
+            std::get<irs::AutomatonOptions>(dot_star).kind);
   const auto perl = lowered("br.wn");
   ASSERT_TRUE(std::holds_alternative<irs::AutomatonOptions>(perl));
   EXPECT_EQ(irs::PatternKind::RegexpPerl,

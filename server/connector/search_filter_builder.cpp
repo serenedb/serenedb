@@ -24,6 +24,7 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <re2/re2.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -1349,9 +1350,13 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
+  auto pattern = absl::StrCat("(?s:.*)(?:", literal, ")(?s:.*)");
+  if (literal.contains("\\Q") && !re2::RE2{pattern, re2::RE2::Quiet}.ok()) {
+    pattern = absl::StrCat("(?s:.*)(?:", literal, "\\E)(?s:.*)");
+  }
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(literal))));
+                  duckdb::Value(std::move(pattern)))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(

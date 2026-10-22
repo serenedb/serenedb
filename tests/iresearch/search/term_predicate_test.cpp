@@ -337,7 +337,9 @@ TEST(term_predicate_test, regexp_matches_its_lowering) {
   const auto starts = prefix.CompileTermPredicate();
   ASSERT_NE(nullptr, starts);
   EXPECT_TRUE(Accepts(*starts, "ab"));
-  EXPECT_TRUE(Accepts(*starts, "ab\xFF"));
+  EXPECT_TRUE(Accepts(*starts, "abc"));
+  EXPECT_FALSE(Accepts(*starts, "ab\xFF"));
+  EXPECT_FALSE(Accepts(*starts, "ab\n"));
   EXPECT_FALSE(Accepts(*starts, "a"));
 
   irs::ByRegexp term;

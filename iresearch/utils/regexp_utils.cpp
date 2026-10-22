@@ -32,7 +32,7 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
   for (byte_type c : in) {
     if (escaped) {
       // Should only be called for patterns classified as
-      // LiteralEscaped/PrefixEscaped - only simple escapes allowed.
+      // LiteralEscaped - only simple escapes allowed.
       SDB_ASSERT(IsSimpleEscape(c));
       out.push_back(c);
       escaped = false;
@@ -42,9 +42,7 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
       out.push_back(c);
     }
   }
-  if (escaped) {
-    out.push_back(AsByte(RegexpMeta::kEscape));
-  }
+  SDB_ASSERT(!escaped);
 
   return bytes_view{out.data(), out.size()};
 }
@@ -69,27 +67,16 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
       escaped = true;
       continue;
     }
-    if (!IsRegexpMeta(pattern[i])) {
-      continue;
+    if (IsRegexpMeta(pattern[i])) {
+      return RegexpType::Complex;
     }
-    // First unescaped metacharacter: only .* at end is Prefix
-    if (pattern[i] == AsByte(RegexpMeta::kDot) && i + 1 == pattern.size() - 1 &&
-        pattern[i + 1] == AsByte(RegexpMeta::kStar)) {
-      return has_escapes ? RegexpType::PrefixEscaped : RegexpType::Prefix;
-    }
-    return RegexpType::Complex;
   }
 
   if (escaped) {
-    has_escapes = true;
+    return RegexpType::Complex;
   }
 
   return has_escapes ? RegexpType::LiteralEscaped : RegexpType::Literal;
-}
-
-bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
-  SDB_ASSERT(pattern.size() >= 2);
-  return bytes_view{pattern.data(), pattern.size() - 2};
 }
 
 }  // namespace irs

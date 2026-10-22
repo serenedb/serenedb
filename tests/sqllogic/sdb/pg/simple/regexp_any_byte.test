@@ -1,0 +1,111 @@
+# \C matches any byte, so it can stop inside a UTF-8 character. A match that
+# ends there is not text, and a tail after it must not take the rest of the
+# character.
+
+query
+SELECT regexp_full_match('aé', '^(a)\C.*$') AS r;
+----
+r
+f
+
+query
+SELECT regexp_replace('aé', '^(a)\C.*$', '[\1]') AS r;
+----
+r
+aé
+
+query
+SELECT regexp_replace('aé', '^(a)\C.*$', '\1') AS r;
+----
+r
+aé
+
+query
+SELECT regexp_replace('aé' || repeat('x', 100000), '^(a)\C.*$', '[\1]') = 'aé' || repeat('x', 100000) AS r;
+----
+r
+t
+
+query
+SELECT regexp_match('aé', '^(a)\C.*$') IS NULL AS r;
+----
+r
+t
+
+query
+SELECT regexp_count('aé', '^(a)\C.*$') AS r;
+----
+r
+0
+
+query
+SELECT regexp_replace('aé', 'a(?:\C|(é)).*$', '[\1]') AS r;
+----
+r
+[é]
+
+query
+SELECT regexp_extract('aé', 'a(?:\C|(é)).*$', 1) AS r;
+----
+r
+é
+
+query
+SELECT regexp_match('aé', 'a(?:\C|(é)).*$') AS r;
+----
+r
+{é}
+
+statement error
+SELECT regexp_replace('aéb', '^(a)\C.*', '[\1]');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT regexp_replace('aéb', '^(a)\C(.*)', '[\1]');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT regexp_extract('é', '(\C)', 1);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '(\C)'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '\C'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement ok
+CREATE TABLE rab (id INT, s VARCHAR, p VARCHAR);
+
+statement ok
+INSERT INTO rab VALUES (1, 'é', '(\C)'), (2, 'ab', '(b)');
+
+statement error
+SELECT id, regexp_match(s, p) FROM rab ORDER BY id;
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT id, regexp_match(s, p) AS m FROM rab WHERE id = 2;
+----
+id	m
+2	{b}
+
+query
+SELECT regexp_match('aé', '(\C\C\C)') AS m;
+----
+m
+{aé}

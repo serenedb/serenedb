@@ -453,6 +453,187 @@ def test_failed_commit_is_retried(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_throttled_requests_are_retried(tmp_path: Path) -> None:
+    location = f"s3://bucket/throttled-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            fake.throttle = 2
+            _create_index(server)
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+            fake.throttle = 2
+            assert _matches(server) == [1]
+        finally:
+            server.stop()
+    assert fake.requests["THROTTLED"] == 4, fake.requests
+
+
+def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
+        tmp_path: Path) -> None:
+    location = f"s3://bucket/lost-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    flag = f"--index_location={location}"
+    with FakeS3() as fake:
+        server = _Server(datadir, flag)
+        try:
+            assert server.wait_ready(), server.output()
+            _large_table(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                         location)
+            fake.drop["COMPLETE_UPLOAD"] = 1
+            with server.connect() as conn:
+                with pytest.raises(psycopg.Error, match="multipart upload"):
+                    conn.execute(
+                        "CREATE INDEX docs_body ON docs USING inverted(body words)")
+                conn.execute(
+                    "CREATE INDEX docs_body ON docs USING inverted(body words)")
+            assert _count_fox(server) == 300000
+        finally:
+            server.stop()
+        assert fake.dropped, fake.requests
+        again = _Server(datadir, flag)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _count_fox(again) == 300000
+        finally:
+            again.stop()
+        assert not set(fake.dropped) & set(fake.keys("bucket")), fake.dropped
+
+
+def test_a_lost_copy_response_is_retried(tmp_path: Path) -> None:
+    location = f"s3://bucket/copy-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            fake.drop["COPY"] = 1
+            with server.connect() as conn:
+                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
+                conn.execute("VACUUM (REFRESH_TABLE) docs")
+            assert _matches(server) == [1, 3]
+        finally:
+            server.stop()
+    assert fake.dropped, fake.requests
+
+
+def test_a_store_down_at_startup_refuses_the_start(tmp_path: Path) -> None:
+    location = f"s3://bucket/down-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    flag = f"--index_location={location}"
+    with FakeS3() as fake:
+        server = _Server(datadir, flag)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+        finally:
+            server.stop()
+    output = _refused(datadir, flag)
+    assert f"/bucket/down-{tmp_path.name}/" in output and "Could not connect" in output, output
+
+
+def test_a_crash_while_creating_an_index_leaves_no_objects(tmp_path: Path) -> None:
+    location = f"s3://bucket/crash-{tmp_path.name}"
+    prefix = f"crash-{tmp_path.name}/"
+    datadir = tmp_path / "data"
+    flag = f"--index_location={location}"
+    with FakeS3() as fake:
+        server = _Server(datadir, flag)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower')")
+                conn.execute("CREATE TABLE docs(id INTEGER, body TEXT)")
+                conn.execute(
+                    "INSERT INTO docs VALUES (1, 'quick brown fox'), (2, 'lazy dog')")
+                try:
+                    conn.execute("SET sdb_faults = 'crash_before_finish_creation'")
+                except psycopg.Error:
+                    pytest.skip("built without fault injection")
+                with pytest.raises(psycopg.OperationalError):
+                    conn.execute(
+                        "CREATE INDEX docs_body ON docs USING inverted(body words)")
+            server.proc.wait(timeout=60)
+            assert [key for key in fake.keys("bucket", prefix)
+                    if not key.endswith(".storage")], fake.keys("bucket")
+        finally:
+            server.stop()
+        again = _Server(datadir, flag)
+        try:
+            assert again.wait_ready(), again.output()
+            with again.connect() as conn:
+                with pytest.raises(psycopg.Error):
+                    conn.execute("SELECT * FROM docs_body")
+        finally:
+            again.stop()
+        assert not [key for key in fake.keys("bucket", prefix)
+                    if not key.endswith(".storage")], fake.keys("bucket")
+
+
+def test_an_orphan_object_is_removed_when_its_index_opens(tmp_path: Path) -> None:
+    location = f"s3://bucket/orphan-{tmp_path.name}"
+    datadir = tmp_path / "data"
+    flag = f"--index_location={location}"
+    with FakeS3() as fake:
+        server = _Server(datadir, flag)
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+        finally:
+            server.stop()
+        commits = [key for key in fake.keys("bucket", f"orphan-{tmp_path.name}/")
+                   if key.rsplit("/", 1)[-1].startswith("segments_")]
+        assert commits, fake.keys("bucket")
+        orphan = commits[0].rsplit("/", 1)[0] + "/_99.doc"
+        fake.replace("bucket", orphan, b"written by an upload no commit names")
+        again = _Server(datadir, flag)
+        try:
+            assert again.wait_ready(), again.output()
+            assert _matches(again) == [1]
+        finally:
+            again.stop()
+        assert orphan not in fake.keys("bucket"), fake.keys("bucket")
+
+
+def test_store_requests_are_logged(tmp_path: Path) -> None:
+    location = f"s3://bucket/logged-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data", f"--index_location={location}")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            _create_index(server)
+            with server.connect() as conn:
+                conn.execute("SET GLOBAL logging_storage = 'memory'")
+                conn.execute("CALL enable_logging('HTTP')")
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
+                fake.reset()
+                assert _matches(server) == [1]
+                logged = dict(conn.execute(
+                    "SELECT request.type, count(*) FROM sdb_logs_parsed('HTTP') "
+                    "WHERE request.url LIKE %s GROUP BY ALL",
+                    (f"%/logged-{tmp_path.name}/%",)).fetchall())
+        finally:
+            server.stop()
+    assert logged.get("GET") == fake.requests["GET"] > 0, (logged, fake.requests)
+
+
 def _one_round(log: list[dict], extension: str) -> list[dict]:
     reads = [entry for entry in log if entry["key"].endswith(extension)]
     assert reads, log

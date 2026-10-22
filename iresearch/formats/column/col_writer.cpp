@@ -299,6 +299,7 @@ bool ColWriter::Commit(uint64_t target_row,
         });
     }
   });
+  _out->Close();
   _out.reset();
   _committed = true;
   return true;

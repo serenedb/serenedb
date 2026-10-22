@@ -1,0 +1,20 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_logging('HTTP', storage = 'memory');
+----
+Success
+
+statement ok
+-- Run some queries...
+SELECT 1;
+
+query
+SELECT request.type, count(*) AS requests
+FROM sdb_logs_parsed('HTTP')
+GROUP BY ALL
+ORDER BY ALL;
+----
+type	requests

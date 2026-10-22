@@ -86,6 +86,7 @@ bool IndexMetaWriter::prepare(const IndexFiles& dir, IndexMeta& meta,
         [&](duckdb::BinarySerializer& obj) { _payload(position, obj); });
     }
   });
+  out->Close();
 
   // Only noexcept operations below
   _dir = dir;

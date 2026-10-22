@@ -37,6 +37,7 @@ class HookFileSystem : public duckdb::FileSystem {
   virtual void OnExists(std::string_view name) {}
   virtual void OnRemove(std::string_view name) {}
   virtual void OnRename(std::string_view src, std::string_view dst) {}
+  virtual void OnClose(std::string_view name) {}
   virtual void OnSync(std::string_view name) {}
   virtual void OnSyncDirectory() {}
 

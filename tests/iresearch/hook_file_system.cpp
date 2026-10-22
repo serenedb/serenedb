@@ -33,7 +33,10 @@ class HookFileHandle final : public duckdb::FileHandle {
                  const std::string& path, duckdb::FileOpenFlags flags)
     : duckdb::FileHandle{fs, path, flags}, inner{std::move(inner)} {}
 
-  void Close() final { inner->Close(); }
+  void Close() final {
+    file_system.Cast<HookFileSystem>().OnClose(HookFileSystem::Name(path));
+    inner->Close();
+  }
 
   duckdb::unique_ptr<duckdb::FileHandle> inner;
 };

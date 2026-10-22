@@ -125,6 +125,7 @@ void Write(const IndexFiles& dir, std::string& meta_file, SegmentMeta& meta) {
         });
       });
   });
+  out->Close();
 
   meta.docs_mask_size = mask_size;
   meta.byte_size = size_without_mask + mask_size;

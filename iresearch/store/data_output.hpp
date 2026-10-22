@@ -23,6 +23,7 @@
 #pragma once
 
 #include <duckdb/common/serializer/write_stream.hpp>
+#include <utility>
 
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/io_utils.hpp"
@@ -191,6 +192,9 @@ class IndexOutput : public BufferedOutput {
 
   // Flush and close output
   void Close() {
+    if (std::exchange(_closed, true)) {
+      return;
+    }
     const auto size = CloseImpl();
     _on_close(size);
   }
@@ -202,6 +206,7 @@ class IndexOutput : public BufferedOutput {
   virtual uint64_t CloseImpl() = 0;
 
   OnClose _on_close{absl::FunctionValue{}, [](uint64_t) noexcept {}};
+  bool _closed = false;
 };
 
 }  // namespace irs

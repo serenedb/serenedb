@@ -90,6 +90,7 @@ class FailingFileSystem final : public tests::HookFileSystem {
     RENAME,
     REMOVE,
     SYNC,
+    CLOSE,
   };
 
   FailingFileSystem() : FailingFileSystem{tests::DatabaseFileSystem()} {}
@@ -113,6 +114,7 @@ class FailingFileSystem final : public tests::HookFileSystem {
     Inject(Failure::RENAME, src);
   }
   void OnSync(std::string_view name) final { Inject(Failure::SYNC, name); }
+  void OnClose(std::string_view name) final { Inject(Failure::CLOSE, name); }
 
  private:
   void Inject(Failure type, std::string_view name) {
@@ -1388,6 +1390,52 @@ TEST_F(index_death_test_formats_15,
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+  }
+}
+
+TEST_F(index_death_test_formats_15,
+       segment_components_close_failure_1st_phase_flush) {
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc = gen.next();
+
+  {
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    for (const auto* name :
+         {"_1.0.sm", "_2.col", "_3.doc", "_4.pos", "_5.idx", "_6.pay"}) {
+      fs.RegisterFailure(FailingFileSystem::Failure::CLOSE, name);
+    }
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    while (!fs.NoFailures()) {
+      const auto failures_before = fs.NumFailures();
+      ASSERT_TRUE(InsertWithName(*writer, *doc));
+      ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
+      ASSERT_LT(fs.NumFailures(), failures_before);
+    }
+    ASSERT_TRUE(InsertWithName(*writer, *doc));
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+
+    auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+    ASSERT_TRUE(reader);
+    ASSERT_EQ(1, reader->size());
+    ASSERT_EQ(1, reader->docs_count());
+    ASSERT_EQ(1, reader->live_docs_count());
+  }
+
+  {
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::CLOSE, "pending_segments_1");
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    ASSERT_TRUE(InsertWithName(*writer, *doc));
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
+    ASSERT_TRUE(fs.NoFailures());
   }
 }
 

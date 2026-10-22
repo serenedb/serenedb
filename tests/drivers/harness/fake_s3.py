@@ -5,7 +5,9 @@ ranged reads, ListObjectsV2, server-side copies, single and batched deletes.
 Requests are not authenticated. It counts requests by kind, accepted
 connections and the most part uploads in flight at once; `latency` delays every request, `trickle`
 sends the bodies of reads at that many bytes a second, and the part numbers in `failing_parts` are
-refused with a 500.
+refused with a 500. The next `throttle` requests are refused with 503 SlowDown, and the next
+`drop[kind]` requests of a kind (COMPLETE_UPLOAD, COPY) take effect but get no response: the
+connection closes, and their keys are listed in `dropped`.
 
 A CRC32C checksum sent with an upload is checked as S3 checks it: the body of
 a PUT or a part up to `checksum_limit` bytes against its own checksum, and a
@@ -140,6 +142,9 @@ class FakeS3:
         self.parts_in_flight = 0
         self.max_parts_in_flight = 0
         self.failing_parts: set[int] = set()
+        self.throttle = 0
+        self.drop: collections.Counter[str] = collections.Counter()
+        self.dropped: list[str] = []
         self.log: list[dict] | None = None
         store = self
 
@@ -270,6 +275,26 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _bad_digest(self) -> None:
         self._xml(400, "<Error><Code>BadDigest</Code></Error>")
 
+    def _throttled(self) -> bool:
+        with self.fake.lock:
+            if self.fake.throttle == 0:
+                return False
+            self.fake.throttle -= 1
+            self.fake.requests["THROTTLED"] += 1
+        self._body()
+        self._xml(503, "<Error><Code>SlowDown</Code><Message>Please reduce your request rate."
+                       "</Message></Error>")
+        return True
+
+    def _dropped(self, kind: str, key: str) -> bool:
+        with self.fake.lock:
+            if self.fake.drop[kind] == 0:
+                return False
+            self.fake.drop[kind] -= 1
+            self.fake.dropped.append(key)
+        self.close_connection = True
+        return True
+
     def _find(self, bucket: str, key: str) -> _Object | None:
         with self.fake.lock:
             return self.fake.objects.get((bucket, key))
@@ -304,6 +329,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         bucket, key, _ = self._target()
+        if self._throttled():
+            return
         self.fake.count("HEAD")
         self._wait()
         obj = self._find(bucket, key)
@@ -319,7 +346,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query):
+        if self._admin(bucket, key, query) or self._throttled():
             return
         if not key and "list-type" in query:
             self.fake.count("LIST")
@@ -398,7 +425,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query):
+        if self._admin(bucket, key, query) or self._throttled():
             return
         if "partNumber" in query and "uploadId" in query:
             self._put_part(int(query["partNumber"][0]), query["uploadId"][0])
@@ -416,6 +443,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             copy = _Object(obj.data)
             with self.fake.lock:
                 self.fake.objects[(bucket, key)] = copy
+            if self._dropped("COPY", key):
+                return
             self._xml(200, f'<CopyObjectResult xmlns="{NS}"><ETag>{escape(copy.etag)}</ETag></CopyObjectResult>')
             return
         self.fake.count("PUT")
@@ -468,7 +497,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         bucket, key, query = self._target()
-        if self._admin(bucket, key, query):
+        if self._admin(bucket, key, query) or self._throttled():
             return
         body = self._body()
         if "uploads" in query:
@@ -529,12 +558,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         obj = _Object(data)
         with self.fake.lock:
             self.fake.objects[(bucket, key)] = obj
+        if self._dropped("COMPLETE_UPLOAD", key):
+            return
         self._xml(200, f'<CompleteMultipartUploadResult xmlns="{NS}"><Bucket>{escape(bucket)}</Bucket>'
                        f"<Key>{escape(key)}</Key><ETag>{escape(obj.etag)}</ETag>{checksum}"
                        "</CompleteMultipartUploadResult>")
 
     def do_DELETE(self) -> None:
         bucket, key, query = self._target()
+        if self._throttled():
+            return
         if "uploadId" in query:
             self.fake.count("ABORT_UPLOAD")
             self._wait()

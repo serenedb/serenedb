@@ -162,6 +162,7 @@ void IdxWriter::Commit() {
         });
     }
   });
+  _impl->out->Close();
   _impl->out.reset();
 }
 

@@ -732,7 +732,8 @@ inline void PostingsWriter::FlushDocBlock(const PostingMeta& meta) {
 inline void PostingsWriter::End() {
   block_io::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
-  _doc_out.reset();  // ensure stream is closed
+  _doc_out->Close();
+  _doc_out.reset();
 
   if (_pos_out) {
     if (_pos.size != 0) {
@@ -743,7 +744,8 @@ inline void PostingsWriter::End() {
     }
     block_io::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
-    _pos_out.reset();  // ensure stream is closed
+    _pos_out->Close();
+    _pos_out.reset();
   } else {
     SDB_ASSERT(_pos.size == 0);
   }
@@ -759,7 +761,8 @@ inline void PostingsWriter::End() {
     }
     block_io::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
-    _pay_out.reset();  // ensure stream is closed
+    _pay_out->Close();
+    _pay_out.reset();
   } else {
     SDB_ASSERT(_pay.size == 0);
   }

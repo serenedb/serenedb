@@ -74,6 +74,12 @@ What costs requests to the object store:
 
 The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them on S3 and `azure_write_blocks_in_flight` on Azure, 20 by default; setting it to `1` uploads one part at a time.
 
+The requests themselves, those of queries and those of background refreshes, merges and cleanup alike, are in the `HTTP` [log](./logging/index.md), so they can be counted by kind:
+
+<SqlLogicTest id="configuration/index_storage_requests/example_001" hideResult />
+
+Reads and listings are `GET`; uploads, their parts and copies `PUT`; batched deletes, and on S3 the start and completion of a large upload, `POST`.
+
 ## Integrity
 
 Every upload to S3 carries the CRC32C checksum of the whole file, which the store checks against the bytes it received before it keeps the object; an upload that does not match fails, and the refresh or merge that wrote it fails with it. `SET s3_upload_checksum = false` turns the checksums off for S3-compatible stores that refuse them.

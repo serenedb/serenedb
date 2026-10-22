@@ -2722,6 +2722,73 @@ statement count 1
 DELETE FROM coro_ix WHERE body = 'dup';
 
 
+# A replace that fails at COMMIT or rolls back leaves only the old index, which
+# takes the rows the new one would refuse.
+statement ok
+BEGIN;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (1, 'dup');
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (1, 'dup');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX coro_ix_art;
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ix_art ON coro_ix (body);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (2, 'dup');
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+indexdef
+CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id)
+
+
+statement count 2
+DELETE FROM coro_ix WHERE body = 'dup';
+
+
 # An inverted index replaced with another dictionary answers with it at once,
 # and indexes the rows written after it.
 statement ok
@@ -2784,6 +2851,47 @@ id
 1
 3
 4
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_inv ON coro_ix USING inverted (body);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (5, 'Alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ix;
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'coro_ix_inv';
+----
+def
+CREATE INDEX coro_ix_inv ON public.coro_ix USING inverted (id, body coro_ix_dict)
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+
+statement count 1
+DELETE FROM coro_ix WHERE id = 5;
 
 
 # A plain index replaced by an inverted one, and back.
@@ -2890,6 +2998,61 @@ INSERT INTO coro_ixt VALUES (3, 'a');
 
 statement ok
 DROP TABLE coro_ixt;
+
+
+# Every index the transaction dropped releases its name, not only the last one.
+statement ok
+CREATE TEMP TABLE coro_ixm (a INT, b INT, c INT);
+
+
+statement count 2
+INSERT INTO coro_ixm VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_1 ON coro_ixm (a);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_2 ON coro_ixm (b);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX coro_ixm_1;
+
+
+statement ok
+DROP INDEX coro_ixm_2;
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_2 ON coro_ixm (c);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_1 ON coro_ixm (c, a);
+
+
+statement ok
+COMMIT;
+
+
+statement count 1
+INSERT INTO coro_ixm VALUES (1, 10, 300);
+
+
+statement error
+INSERT INTO coro_ixm VALUES (5, 50, 100);
+----
+db error: ERROR: Duplicate key "c: 100" violates unique constraint.
+
+
+statement ok
+DROP TABLE coro_ixm;
 
 
 # A search table rebuilds the replacing index from its documents.

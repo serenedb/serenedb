@@ -21,6 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
+#include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/formats/term_reader.hpp>
@@ -2200,6 +2203,123 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     EXPECT_FALSE(anothers.contains("shared_value_1"));
     EXPECT_TRUE(anothers.contains("shared_value_2"));
     EXPECT_TRUE(anothers.contains("shared_value_3"));
+  }
+}
+
+TEST_P(MergeWriterTestCase, test_merge_writer_ivf_postings) {
+  constexpr irs::field_id kVecId = FieldIdFor("ivf_vec");
+  constexpr irs::field_id kWordId = FieldIdFor("ivf_word");
+  constexpr uint32_t kDim = 4;
+  constexpr irs::doc_id_t kDocsPerSegment = 8;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  const irs::ColumnOptionsProvider ivf_options = [](irs::field_id id) {
+    irs::ColumnOptions col;
+    if (id == kVecId) {
+      col.ann_info = irs::AnnInfo{
+        .centroids_id = kVecId,
+        .postings_id = kVecId,
+        .d = kDim,
+        .metric = irs::VectorMetric::L2Sqr,
+        .quant = {.kind = irs::VectorQuantization::SQ8},
+        .sample_factor = 1.f,
+        .posting_size = 1024,
+      };
+    }
+    return col;
+  };
+
+  irs::MemoryDirectory dir;
+  {
+    auto opts = irs::tests::DefaultWriterOptions();
+    opts.column_options = ivf_options;
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+    ASSERT_NE(nullptr, writer);
+    for (int segment = 0; segment < 2; ++segment) {
+      auto trx = writer->GetBatch();
+      for (irs::doc_id_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = trx.Insert();
+        const auto d = doc.DocId();
+        ASSERT_TRUE(doc.WithField(
+          kWordId, irs::IndexFeatures::Freq, [&](irs::FieldInverter& fld) {
+            return fld.InvertKeywords(
+              [&](auto&& emit) { emit(duckdb::string_t{"word", 4}, d); });
+          }));
+        auto& cw = doc.GetColWriter()->OpenColumn(kVecId, vtype);
+        duckdb::Vector v{vtype, 1};
+        auto& child = duckdb::ArrayVector::GetChildMutable(v);
+        auto* data = duckdb::FlatVector::GetDataMutable<float>(child);
+        for (uint32_t k = 0; k < kDim; ++k) {
+          data[k] = k == 0 ? static_cast<float>(d) : 0.f;
+        }
+        duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
+        duckdb::FlatVector::ValidityMutable(child).SetAllValid(kDim);
+        duckdb::FlatVector::SetSize(v, 1);
+        cw.Append(static_cast<uint64_t>(d) - irs::doc_limits::min(), v, 1);
+      }
+      trx.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+  for (auto& segment : reader) {
+    const auto* field = segment.field(kVecId);
+    ASSERT_NE(nullptr, field);
+    ASSERT_TRUE(
+      irs::IsSubsetOf(irs::IndexFeatures::Vec, field->meta().index_features));
+  }
+
+  const auto has_pay = [](const irs::SegmentMeta& meta) {
+    return absl::c_any_of(meta.files, [](const std::string& file) {
+      return file.ends_with(".pay");
+    });
+  };
+  const irs::IndexReaderOptions reader_options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+
+  {
+    irs::MemoryDirectory merged_dir;
+    irs::SegmentMeta meta;
+    irs::MergeWriter writer(
+      merged_dir, irs::SegmentWriterOptions{
+                    .db = &::irs::DuckDBEngine::Instance().instance()});
+    writer.Reset(reader.begin(), reader.end());
+    ASSERT_TRUE(irs::GetReady(writer.Flush(meta)));
+    ASSERT_FALSE(has_pay(meta));
+
+    auto segment =
+      irs::SegmentReaderImpl::Open(merged_dir, meta, reader_options);
+    ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+    ASSERT_EQ(nullptr, segment->field(kVecId));
+    ASSERT_EQ(nullptr, segment->Ann(kVecId));
+    ASSERT_NE(nullptr, segment->Column(kVecId));
+    ASSERT_EQ(2 * kDocsPerSegment, segment->field(kWordId)->docs_count());
+  }
+
+  {
+    const irs::FunctionFieldOptions field_options{
+      ivf_options, {}, DEFAULT_ROW_GROUP_SIZE};
+    irs::MemoryDirectory merged_dir;
+    irs::SegmentMeta meta;
+    irs::MergeWriter writer(merged_dir,
+                            irs::SegmentWriterOptions{
+                              .db = &::irs::DuckDBEngine::Instance().instance(),
+                              .field_options = &field_options});
+    writer.Reset(reader.begin(), reader.end());
+    ASSERT_TRUE(irs::GetReady(writer.Flush(meta)));
+    ASSERT_TRUE(has_pay(meta));
+
+    auto segment =
+      irs::SegmentReaderImpl::Open(merged_dir, meta, reader_options);
+    ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+    const auto* field = segment->field(kVecId);
+    ASSERT_NE(nullptr, field);
+    ASSERT_TRUE(
+      irs::IsSubsetOf(irs::IndexFeatures::Vec, field->meta().index_features));
+    ASSERT_EQ(2 * kDocsPerSegment, field->docs_count());
+    ASSERT_NE(nullptr, segment->Ann(kVecId));
   }
 }
 

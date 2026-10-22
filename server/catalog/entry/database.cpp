@@ -59,7 +59,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
 }
 
 void DatabaseCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     _directory->MarkDropped();
   }
 }

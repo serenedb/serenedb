@@ -286,9 +286,6 @@ t
 # 3. A replace whose commit crashes after it is durable is kept.
 # ----------------------------------------------------------------------
 
-# Only indexes without a directory of their own are replaced here: a crash
-# while a dropped inverted index's directory is being removed leaves it
-# unbootable, which is issue serenedb/serenedb#1572.
 connection after_before_commit
 statement ok
 BEGIN;
@@ -306,6 +303,11 @@ CREATE OR REPLACE INDEX corir_art ON corir_t (body);
 
 connection after_before_commit
 statement ok
+CREATE OR REPLACE INDEX corir_t_inv ON corir_t USING inverted (id, body);
+
+
+connection after_before_commit
+statement ok
 SET sdb_faults = 'crash_after_commit';
 
 
@@ -319,20 +321,22 @@ COMMIT;
 connection after_after_commit
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT indexname, regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes
-WHERE indexname IN ('corir_art', 'corir_s_inv') ORDER BY indexname;
+WHERE indexname IN ('corir_art', 'corir_s_inv', 'corir_t_inv') ORDER BY indexname;
 ----
 indexname	def
 corir_art	CREATE INDEX corir_art ON public.corir_t USING secondary (body)
 corir_s_inv	CREATE INDEX corir_s_inv ON public.corir_s USING inverted (body)
+corir_t_inv	CREATE INDEX corir_t_inv ON public.corir_t USING inverted (id, body)
 
 
 # Verbatim matching: only the row spelled 'alpha' matches.
 connection after_after_commit
 query
-SELECT string_agg(id::TEXT, ',' ORDER BY id) AS s FROM corir_s_inv WHERE body @@ 'alpha';
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_s_inv WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM corir_t_inv WHERE body @@ 'alpha') AS t;
 ----
-s
-3
+s	t
+3	3
 
 
 # ----------------------------------------------------------------------

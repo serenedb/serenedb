@@ -80,7 +80,7 @@ Remove the index `title_idx`:
 
 ## `CREATE OR REPLACE INDEX`
 
-`CREATE OR REPLACE INDEX` builds the new index and drops the existing index of the same name, in one transaction. Until it commits, other connections keep using the old index; if the build fails or the transaction rolls back, the old index stays as it was. The new index is defined only by the statement: the old index's options, predicate and comment are not carried over.
+`CREATE OR REPLACE INDEX` builds the new index and drops the existing index of the same name, in one transaction. Until it commits, other connections keep using the old index; if the build fails or the transaction rolls back, the old index stays as it was. Both indexes exist until the commit, so the replace needs memory and disk space for both. The new index is defined only by the statement: the old index's options, predicate and comment are not carried over.
 
 Replace an index with one on more columns:
 

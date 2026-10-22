@@ -438,7 +438,7 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     OnDrop();
   }
 }

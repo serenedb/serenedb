@@ -512,7 +512,7 @@ class Enforcer {
         auto& create = op.Cast<duckdb::LogicalCreateIndex>();
         if (_enforce) {
           RequireOwner(create.table);
-          CheckReplaceIndex(create);
+          CheckReplace(*create.info);
         }
         break;
       }
@@ -1121,19 +1121,6 @@ class Enforcer {
     }
     if (auto entry = FindEntry(info.type, info.GetQualifiedName())) {
       RequireOwner(*entry);
-    }
-  }
-
-  void CheckReplaceIndex(const duckdb::LogicalCreateIndex& create) {
-    if (create.info->on_conflict !=
-        duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
-      return;
-    }
-    auto& schema = create.table.ParentSchema(_context);
-    if (auto index = schema.GetEntry(schema.GetCatalogTransaction(_context),
-                                     CatalogType::INDEX_ENTRY,
-                                     create.info->GetIndexName())) {
-      RequireOwner(*index);
     }
   }
 

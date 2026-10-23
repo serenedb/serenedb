@@ -78,7 +78,9 @@ jobs:
           clean: true
 
       - name: Checkout test submodules
-        run: git submodule update --init --depth=1 third_party/sqllogictest-rs
+        run: |
+          git submodule update --init --depth=1 third_party/sqllogictest-rs
+          git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite
 
       - name: Prepare
         run: |

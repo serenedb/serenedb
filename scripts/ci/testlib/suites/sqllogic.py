@@ -8,8 +8,8 @@ import services
 
 from .. import reports
 from ..scheduler import CRASHED, FAILED, PASSED, STUCK, Fixture, Outcome, Unit
-from ..servers import RestartingServer, ServerPool
-from . import plan, skipped
+from ..servers import RestartingServer, Server, ServerPool
+from . import Skip, plan, skipped
 
 ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
@@ -136,8 +136,16 @@ def sqllogic_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
     generate_tests(ctx)
     units = []
+    corpus = base / "any" / "pg" / "sqlite"
+    if not corpus.is_dir() or not any(corpus.iterdir()):
+        ctx.skips.append((f"sqllogic:*:{CORPUS}*", Skip(CORPUS, "submodule",
+                          "not checked out: git submodule update --init --checkout "
+                          "tests/sqllogic/any/pg/sqlite")))
+    pool = () if ctx.attribute else ("servers",)
     for path in find_tests(base / "sdb", args.fast):
         rel = str(path.relative_to(base))
+        if args.fast and CORPUS in rel:
+            continue
         try:
             fixtures = service_fixture_names(path, args.biglake)
         except ValueError as e:
@@ -155,7 +163,7 @@ def sqllogic_units(ctx, args, skips):
             cost, timeout = plan(ctx, uid, 2.0)
             if CORPUS not in rel:
                 units.append(Unit(uid, "sqllogic", _sqllogic_run(ctx, rel, engine), cpus=1,
-                                  mem_gb=0.3, fixtures=("servers",) + fixtures, cost=cost,
+                                  mem_gb=0.3, fixtures=pool + fixtures, cost=cost,
                                   timeout=timeout, group=f"sqllogic:{rel}"))
                 continue
             parts = corpus_parts(ctx, uid)
@@ -163,12 +171,41 @@ def sqllogic_units(ctx, args, skips):
                 part = (k, parts) if parts > 1 else None
                 units.append(Unit(f"{uid}#{k}/{parts}" if part else uid, "sqllogic",
                                   _sqllogic_run(ctx, rel, engine, part), cpus=1, mem_gb=0.3,
-                                  fixtures=("servers",) + fixtures, cost=cost / parts,
+                                  fixtures=pool + fixtures, cost=cost / parts,
                                   timeout=max(ctx.timeout_floor, timeout / parts)))
     return units
 
 
+def _private_run(ctx, rel, engine, part):
+    def run(r):
+        server = Server(ctx, r.dir / "server", listen_ssl=True, profile_dir=r.profile_dir,
+                        extra_env={"POSTGRES_PASSWORD": "postgres"}).start()
+        r.stack_pids = lambda: (server.pid(),)
+        try:
+            res = r.exec(_runner_args(ctx, rel, engine, server.port, server.ssl_port, r.env, part),
+                         cwd=sqllogic_dir(ctx))
+        finally:
+            stop = server.stop()
+        out = r.outcome(res, san_dirs=(server.san_dir,))
+        if out.status in (STUCK, CRASHED):
+            return out
+        if stop and stop[0] == "stuck":
+            return Outcome(STUCK, "serened did not stop on SIGTERM at the end of the test",
+                           signature="serened stop stuck")
+        if stop and stop[1] not in (0, None):
+            sig = server.crash_signature()
+            return Outcome(CRASHED, f"serened exited with {stop[1]}: {sig}", signature=sig)
+        if out.status == FAILED and not out.signature:
+            out.detail = _runner_failure(r.log) or out.detail
+        return out
+
+    return run
+
+
 def _sqllogic_run(ctx, rel, engine, part=None):
+    if ctx.attribute:
+        return _private_run(ctx, rel, engine, part)
+
     def run(r):
         pool = r.fixture("servers")
         i, generation = pool.acquire()
@@ -217,7 +254,7 @@ def recovery_units(ctx, args, skips):
 
 def _recovery_run(ctx, rel):
     def run(r):
-        server = RestartingServer(ctx, r.dir / "server").start()
+        server = RestartingServer(ctx, r.dir / "server", profile_dir=r.profile_dir).start()
         r.stack_pids = lambda: (server.pid(),)
         env = {"SDB_DATADIR": str(server.datadir), "RETRY_ATTEMPTS": "60",
                "BACKOFF_DURATION": "500ms"}

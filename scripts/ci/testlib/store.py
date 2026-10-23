@@ -91,6 +91,16 @@ def jsonl_to_parquet(src, dest):
           f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", src.parent)
 
 
+def attribution_parquet(src, dest):
+    src, dest = Path(src).resolve(), Path(dest).resolve()
+    shell(f"COPY (SELECT i.unit, i.status, f.function FROM read_csv('{src}/*.txt', "
+          f"columns = {{'function': 'VARCHAR'}}, header = false, delim = '\\t', quote = '', "
+          f"escape = '', filename = true) f JOIN read_json('{src}/index.jsonl', "
+          f"format = 'newline_delimited') i "
+          f"ON regexp_extract(f.filename, '([0-9]+)\\.txt$', 1)::INTEGER = i.n) "
+          f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", dest.parent)
+
+
 def timing_snapshot(parquet, dest):
     parquet = Path(parquet).resolve()
     rows = shell(f"SELECT unit, p95 FROM read_parquet('{parquet}')", parquet.parent)

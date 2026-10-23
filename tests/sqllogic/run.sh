@@ -343,6 +343,33 @@ fi
 generated_tests write
 launch_external
 
+corpus_tests=()
+other_tests=()
+split_corpus() {
+	local pattern f
+	local -A seen=()
+	shopt -s globstar
+	for pattern in "${tests[@]}"; do
+		while IFS= read -r f; do
+			[[ -n "$f" && -z "${seen[$f]:-}" ]] || continue
+			seen[$f]=1
+			case "$f" in
+			*any/pg/sqlite/* | *pg/any/sqlite/*) corpus_tests+=("$f") ;;
+			*) other_tests+=("$f") ;;
+			esac
+		done < <(compgen -G "$pattern" 2>/dev/null || true)
+	done
+	shopt -u globstar
+	if [[ ! -d "$SCRIPT_DIR/any/pg/sqlite/test" ]]; then
+		echo "The sqlite corpus is not checked out, its tests are skipped:" \
+			"git submodule update --init --checkout tests/sqllogic/any/pg/sqlite"
+	elif [[ "$fast" == "true" && ${#corpus_tests[@]} -gt 0 ]]; then
+		echo "--fast skips the ${#corpus_tests[@]} sqlite corpus files"
+		corpus_tests=()
+	fi
+}
+split_corpus
+
 # Run tests based on parameters
 run_tests() {
 	local port=$1
@@ -393,16 +420,32 @@ run_tests() {
 	# TODO(Misha) move this to sqllogictest-rs
 	mkdir -p "$(dirname -- "$junit-$engine")"
 
-	sqllogictest "${tests[@]}" \
-		--host "$host" --port "$port" --engine "$engine" \
-		--jobs "$jobs" \
-		--label "$database" \
-		${PGSOCKETDIR:+--label pgsocket} \
-		--junit "$junit-$engine" \
-		$options \
-		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
-		$skip_opt \
-		$ssl_port_opt
+	local rc=0
+	if [[ ${#other_tests[@]} -gt 0 ]]; then
+		sqllogictest "${other_tests[@]}" \
+			--host "$host" --port "$port" --engine "$engine" \
+			--jobs "$jobs" \
+			--label "$database" \
+			${PGSOCKETDIR:+--label pgsocket} \
+			--junit "$junit-$engine" \
+			$options \
+			$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+			$skip_opt \
+			$ssl_port_opt || rc=$?
+	fi
+	if [[ ${#corpus_tests[@]} -gt 0 ]]; then
+		sqllogictest "${corpus_tests[@]}" \
+			--host "$host" --port "$port" --engine "$engine" \
+			--jobs "$jobs" \
+			--label "$database" \
+			--show-column-names false --flat-values true --hash-threshold 8 \
+			--junit "$junit-$engine-sqlite" \
+			$options \
+			$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+			$skip_opt \
+			$ssl_port_opt || rc=$?
+	fi
+	return $rc
 }
 
 # Default port when none specified

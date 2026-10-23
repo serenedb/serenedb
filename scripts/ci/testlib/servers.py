@@ -15,9 +15,10 @@ START_TIMEOUT = 300
 
 class Server:
     def __init__(self, ctx, home, *, threads=0, listen_ssl=False, http_apis=(), hba=None,
-                 extra_args=(), extra_env=None):
+                 extra_args=(), extra_env=None, profile_dir=None):
         self.ctx = ctx
         self.home = Path(home)
+        self.profile_dir = profile_dir or ctx.out_dir / "profiles"
         self.threads = threads
         self.listen_ssl = listen_ssl
         self.http_apis = tuple(http_apis)
@@ -37,7 +38,7 @@ class Server:
     def env(self):
         env = dict(self.ctx.base_env)
         env.update(self.ctx.build.sanitizer_env(self.san_dir))
-        env.update(self.ctx.build.coverage_env(self.ctx.out_dir / "profiles"))
+        env.update(self.ctx.build.coverage_env(self.profile_dir))
         env.update(self.extra_env)
         return env
 
@@ -236,8 +237,9 @@ class ServerPool(Fixture):
 
 
 class RestartingServer:
-    def __init__(self, ctx, home, threads=0, extra_args=()):
-        self.server = Server(ctx, home, threads=threads, extra_args=extra_args)
+    def __init__(self, ctx, home, threads=0, extra_args=(), profile_dir=None):
+        self.server = Server(ctx, home, threads=threads, extra_args=extra_args,
+                             profile_dir=profile_dir)
         self.exits = []
         self._stopping = threading.Event()
         self._thread = None

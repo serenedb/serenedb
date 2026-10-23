@@ -10,7 +10,7 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import proc, reports
+from . import attribution, proc, reports
 
 PASSED, FAILED, STUCK, CRASHED, SKIPPED, FLAKY = (
     "passed", "failed", "stuck", "crashed", "skipped", "flaky")
@@ -80,7 +80,7 @@ class Fixture:
 
 class Context:
     def __init__(self, *, root, build, config, out_dir, timing, jobs, mem_gb, verbose,
-                 base_env):
+                 base_env, attribute=False):
         self.root = root
         self.build = build
         self.config = config
@@ -90,6 +90,7 @@ class Context:
         self.mem_gb = mem_gb
         self.verbose = verbose
         self.base_env = base_env
+        self.attribute = attribute
         self.fixtures = {}
         self.findings = []
         self.skips = []
@@ -128,10 +129,11 @@ class Run:
         self.deadline = self.started + unit.timeout
         self.cancelled = cancelled
         self.stack_pids = lambda: ()
+        self.profile_dir = self.dir / "profiles" if ctx.attribute else ctx.out_dir / "profiles"
         env = dict(ctx.base_env)
         env["TMPDIR"] = str(self.tmp)
         env.update(ctx.build.sanitizer_env(self.san_dir))
-        env.update(ctx.build.coverage_env(ctx.out_dir / "profiles"))
+        env.update(ctx.build.coverage_env(self.profile_dir))
         for name in unit.fixtures:
             env.update(ctx.fixtures[name].env())
         self.env = env
@@ -251,6 +253,8 @@ class Scheduler:
                 self._fixture(name)
             run = Run(self.ctx, unit, attempt, lambda: self._stopping)
             out = unit.run(run)
+            if self.ctx.attribute and attempt == 0:
+                attribution.collect(self.ctx, unit, run, out.status)
         except Exception as e:
             out = Outcome(FAILED, f"harness error: {e}",
                           signature=f"harness: {type(e).__name__}")

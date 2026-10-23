@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from ..scheduler import CRASHED, FAILED, PASSED, Outcome, Unit
-from ..servers import ServerPool
+from ..servers import Server, ServerPool
 from . import plan, skipped
 
 LANGS = ("python", "java", "js", "go", "rust", "php", "csharp", "c", "ruby", "r", "psql")
@@ -21,7 +21,8 @@ def driver_units(ctx, args, skips):
             continue
         cost, timeout = plan(ctx, uid, 120.0)
         units.append(Unit(uid, "drivers", _driver_run(ctx, lang), cpus=CPUS.get(lang, 2),
-                          mem_gb=2.0, fixtures=("driver-servers",), cost=cost, timeout=timeout))
+                          mem_gb=2.0, fixtures=() if ctx.attribute else ("driver-servers",),
+                          cost=cost, timeout=timeout))
     uid = "network:hba"
     if not skipped(skips, uid):
         cost, timeout = plan(ctx, uid, 30.0)
@@ -38,26 +39,40 @@ def _summary_line(text, lang):
     return ""
 
 
+def _run_lang(ctx, r, lang, server):
+    r.stack_pids = lambda: (server.pid(),)
+    shared = ctx.out_dir / "drivers-shared"
+    shared.mkdir(exist_ok=True)
+    return r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
+                   "--host", "127.0.0.1", "--port", str(server.port),
+                   "--database", "postgres", "--user", "postgres",
+                   "--junit", str(r.dir / "junit")],
+                  env={"SDB_DRV_HTTP_PORT": str(server.http_port),
+                       "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
+                       "SDB_DRV_SHARED_DIR": str(shared)})
+
+
 def _driver_run(ctx, lang):
     def run(r):
-        pool = r.fixture("driver-servers")
-        i, generation = pool.acquire()
-        try:
-            server = pool.server(i)
-            r.stack_pids = lambda: (server.pid(),)
-            shared = ctx.out_dir / "drivers-shared"
-            shared.mkdir(exist_ok=True)
-            res = r.exec([ctx.root / "tests" / "drivers" / "run.sh", "--lang", lang,
-                          "--host", "127.0.0.1", "--port", str(server.port),
-                          "--database", "postgres", "--user", "postgres",
-                          "--junit", str(r.dir / "junit")],
-                         env={"SDB_DRV_HTTP_PORT": str(server.http_port),
-                              "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
-                              "SDB_DRV_SHARED_DIR": str(shared)})
-        finally:
-            pool.release(i)
-        out = r.outcome(res)
-        crash = pool.crashed_during(i, generation)
+        crash = None
+        if ctx.attribute:
+            server = Server(ctx, r.dir / "server", profile_dir=r.profile_dir, **SERVER).start()
+            try:
+                res = _run_lang(ctx, r, lang, server)
+            finally:
+                stop = server.stop()
+            out = r.outcome(res, san_dirs=(server.san_dir,))
+            if stop and stop[1] not in (0, None):
+                crash = server.crash_signature()
+        else:
+            pool = r.fixture("driver-servers")
+            i, generation = pool.acquire()
+            try:
+                res = _run_lang(ctx, r, lang, pool.server(i))
+            finally:
+                pool.release(i)
+            out = r.outcome(res)
+            crash = pool.crashed_during(i, generation)
         if crash and out.status != PASSED:
             return Outcome(CRASHED, f"serened died during this unit: {crash}", signature=crash)
         summary = _summary_line(r.log.read_text(errors="replace") if r.log.exists() else "", lang)
@@ -108,8 +123,9 @@ def _plain_run(argv):
     return run
 
 
+SERVER = {"threads": 0, "listen_ssl": False, "http_apis": ("es", "mcp", "test", "otel"),
+          "hba": TRUST_HBA, "extra_args": (f"--auth_bearer_token={HTTP_TOKEN}",)}
+
+
 def fixture_factories(ctx, args):
-    return {"driver-servers": lambda c: ServerPool(
-        c, count=1, threads=0, name="driver-servers", listen_ssl=False,
-        http_apis=("es", "mcp", "test", "otel"), hba=TRUST_HBA,
-        extra_args=(f"--auth_bearer_token={HTTP_TOKEN}",))}
+    return {"driver-servers": lambda c: ServerPool(c, count=1, name="driver-servers", **SERVER)}

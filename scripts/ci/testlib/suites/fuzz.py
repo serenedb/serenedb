@@ -34,7 +34,7 @@ def sqlsmith_units(ctx, args, skips):
 
 def _sqlsmith_run(ctx, seconds):
     def run(r):
-        server = Server(ctx, r.dir / "server").start()
+        server = Server(ctx, r.dir / "server", profile_dir=r.profile_dir).start()
         r.stack_pids = lambda: (server.pid(),)
         env = {"SDB_DRV_HOST": "127.0.0.1", "SDB_DRV_PORT": str(server.port),
                "SDB_DRV_DATABASE": "postgres", "SDB_DRV_USER": "postgres",

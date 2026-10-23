@@ -467,7 +467,7 @@ class VectorClusters {
         }
         Refill(target);
       }
-      if (const auto found = Find(target - _min);
+      if (const auto found = detail::FindSet(_mask.data(), target - _min);
           found != detail::kWindowDocs) {
         return _doc = _min + found;
       }
@@ -478,14 +478,7 @@ class VectorClusters {
   }
 
   void Refill(doc_id_t target) {
-    for (uint32_t w = 0; w != detail::kWindowWords; ++w) {
-      auto word = std::exchange(_mask[w], uint64_t{0});
-      const auto base = w * detail::kWindowBits;
-      while (word != 0) {
-        _window[base + static_cast<uint32_t>(std::countr_zero(word))] = 0;
-        word = PopBit(word);
-      }
-    }
+    detail::ClearScored(_mask.data(), _window);
     _min = target;
     _filled = true;
     _next = doc_limits::eof();
@@ -501,21 +494,6 @@ class VectorClusters {
       _next = std::min(_next, next);
     }
     _live = live;
-  }
-
-  doc_id_t Find(doc_id_t offset) const noexcept {
-    auto word = offset / detail::kWindowBits;
-    auto bits = _mask[word] & (~uint64_t{0} << (offset % detail::kWindowBits));
-    for (;;) {
-      if (bits != 0) {
-        return static_cast<doc_id_t>(word * detail::kWindowBits +
-                                     std::countr_zero(bits));
-      }
-      if (++word == detail::kWindowWords) {
-        return detail::kWindowDocs;
-      }
-      bits = _mask[word];
-    }
   }
 
   detail::Scratch _mask{};

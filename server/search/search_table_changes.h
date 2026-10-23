@@ -142,12 +142,31 @@ struct LocalTableChangesEntry {
     if (rows.empty()) {
       return;
     }
+    AppendRowRanges(OpenDeleteOp().delete_ranges, rows);
+  }
+
+  void AppendDeletes(std::vector<RowRange>&& ranges) {
+    if (ranges.empty()) {
+      return;
+    }
+    auto& op = OpenDeleteOp();
+    if (op.delete_ranges.empty()) {
+      op.delete_ranges = std::move(ranges);
+    } else {
+      op.delete_ranges.insert(op.delete_ranges.end(), ranges.begin(),
+                              ranges.end());
+    }
+  }
+
+  // The delete op the next removals join: the last one, unless a row or a
+  // truncate has come since or a flush has already applied it.
+  Op& OpenDeleteOp() {
     const auto band = static_cast<uint32_t>(pk_segments.size());
     if (ops.size() == applied_ops || ops.back().truncate ||
         ops.back().band_watermark != band) {
       ops.emplace_back().band_watermark = band;
     }
-    AppendRowRanges(ops.back().delete_ranges, rows);
+    return ops.back();
   }
 
   // A truncate removes every row, including the ones this transaction has just

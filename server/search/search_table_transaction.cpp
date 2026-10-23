@@ -280,6 +280,12 @@ void SearchTableTransaction::AddSearchDeletes(
   _changes[shard->GetTableId()].AppendDeletes(rows);
 }
 
+void SearchTableTransaction::AddSearchDeletes(
+  const std::shared_ptr<SearchTable>& shard, std::vector<RowRange>&& ranges) {
+  EnsureShardWrites(shard);
+  _changes[shard->GetTableId()].AppendDeletes(std::move(ranges));
+}
+
 void SearchTableTransaction::AddSearchTruncate(
   const std::shared_ptr<SearchTable>& shard,
   const duckdb::Identifier& table_name, bool clears_shard) {

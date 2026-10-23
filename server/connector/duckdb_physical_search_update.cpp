@@ -48,6 +48,7 @@
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
+#include "search/search_table_changes.h"
 
 namespace sdb::connector {
 namespace {
@@ -69,15 +70,21 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 
   std::atomic<bool> has_local_state = false;
 
-  // Guards the deduplicator, the transaction's write buffer and everything
-  // below, which the sink threads share.
+  // Guards the deduplicator and everything below, which the sink threads
+  // share. The transaction's search state is not under it: only the one inline
+  // sink thread and Finalize touch that, and never at the same time.
   absl::Mutex mu;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them, merged out of the
   // sink threads.
   std::optional<duckdb::ColumnDataCollection> returned;
 
-  // Segments the sink threads flushed + fsynced, for the WAL to reference.
+  // What the bulk sink threads hand over on Combine, for Finalize to pass to
+  // the transaction: the rows their new versions replace, the iresearch
+  // transactions holding those versions, and the segments those flushed and
+  // fsynced, for the WAL to reference.
+  std::vector<search::RowRange> removed_rows;
+  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   std::vector<std::string> flushed_segments;
 };
 
@@ -89,6 +96,8 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   bool bulk = false;
+  // Bulk only: the rows this thread's new versions replace.
+  std::vector<search::RowRange> removed_rows;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
 };
@@ -230,17 +239,16 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
     num_rows);
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
-  auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (lstate->bulk) {
-    // The removals stay buffered for commit to replay after every sink
-    // thread's segment; the rows they name were committed before this
-    // transaction, so they never meet the new versions written here.
+    // The removals reach the transaction's buffer on Finalize, for commit to
+    // replay after every sink thread's segment; the rows they name were
+    // committed before this transaction, so they never meet the new versions
+    // written here.
     WriteChunkToSearchSink(*lstate->sink, new_row, gstate.column_ids, pk_base,
                            _table.oid, context.client);
-    absl::MutexLock lock{&gstate.mu};
-    search_txn.AddSearchDeletes(gstate.search_table, old_rows);
+    search::AppendRowRanges(lstate->removed_rows, old_rows);
   } else {
-    absl::MutexLock lock{&gstate.mu};
+    auto& search_txn = gstate.sdb_txn->SearchTxn();
     search_txn.AddSearchDeletes(gstate.search_table, old_rows);
     search_txn.AddInlineInsertChunk(
       gstate.search_table,
@@ -289,12 +297,18 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
     gstate.returned->Combine(*lstate->returned);
   }
   gstate.update_count += lstate->update_count;
+  if (gstate.removed_rows.empty()) {
+    gstate.removed_rows = std::move(lstate->removed_rows);
+  } else {
+    gstate.removed_rows.insert(gstate.removed_rows.end(),
+                               lstate->removed_rows.begin(),
+                               lstate->removed_rows.end());
+  }
   if (owns_segment) {
     gstate.flushed_segments.insert(gstate.flushed_segments.end(),
                                    std::make_move_iterator(segments.begin()),
                                    std::make_move_iterator(segments.end()));
-    gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-      gstate.search_table, std::move(lstate->search_trx));
+    gstate.transactions.push_back(std::move(lstate->search_trx));
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -331,10 +345,15 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& search_txn = state.sdb_txn->SearchTxn();
+  for (auto& trx : state.transactions) {
+    search_txn.AddParallelSearchTransaction(state.search_table, std::move(trx));
+  }
   if (!state.flushed_segments.empty()) {
     search_txn.AddSegments(state.search_table,
                            std::move(state.flushed_segments));
   }
+  search_txn.AddSearchDeletes(state.search_table,
+                              std::move(state.removed_rows));
   search_txn.FlushBufferTransaction(_table.oid);
   if (state.table_lock.owns_lock()) {
     state.table_lock.unlock();

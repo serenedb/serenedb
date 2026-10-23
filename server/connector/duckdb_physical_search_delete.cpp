@@ -40,6 +40,7 @@
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/search_table.h"
+#include "search/search_table_changes.h"
 
 namespace sdb::connector {
 namespace {
@@ -50,14 +51,18 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   std::shared_lock<std::shared_mutex> table_lock;
 
-  // Guards the deduplicator, the transaction's write buffer and everything
-  // below, which the sink threads share.
+  // Guards the deduplicator and everything below, which the sink threads
+  // share. The transaction's search state is not under it: only Finalize
+  // touches that.
   absl::Mutex mu;
   std::optional<duckdb::RowIdDeduplicator> deleted_rows;
   duckdb::idx_t delete_count = 0;
   // RETURNING only: the rows this statement removed, merged out of the sink
   // threads.
   std::optional<duckdb::ColumnDataCollection> returned;
+  // The rows to remove, merged out of the sink threads for Finalize to buffer
+  // on the transaction.
+  std::vector<search::RowRange> removed_rows;
 };
 
 struct SearchDeleteSourceState final : duckdb::GlobalSourceState {
@@ -65,6 +70,7 @@ struct SearchDeleteSourceState final : duckdb::GlobalSourceState {
 };
 
 struct SearchDeleteLocalState final : duckdb::LocalSinkState {
+  std::vector<search::RowRange> removed_rows;
   duckdb::idx_t delete_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
 };
@@ -159,10 +165,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     rows.push_back(rowid_data[rowid.sel->get_index(row)]);
   }
-  {
-    absl::MutexLock lock{&gstate.mu};
-    gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows);
-  }
+  search::AppendRowRanges(lstate->removed_rows, rows);
 
   if (lstate->returned) {
     duckdb::DataChunk row;
@@ -197,6 +200,13 @@ duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
     gstate.returned->Combine(*lstate->returned);
   }
   gstate.delete_count += lstate->delete_count;
+  if (gstate.removed_rows.empty()) {
+    gstate.removed_rows = std::move(lstate->removed_rows);
+  } else {
+    gstate.removed_rows.insert(gstate.removed_rows.end(),
+                               lstate->removed_rows.begin(),
+                               lstate->removed_rows.end());
+  }
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -231,6 +241,8 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& state = input.global_state.Cast<SearchTableDeleteState>();
+  state.sdb_txn->SearchTxn().AddSearchDeletes(state.search_table,
+                                              std::move(state.removed_rows));
   if (state.table_lock.owns_lock()) {
     state.table_lock.unlock();
   }

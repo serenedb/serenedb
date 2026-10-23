@@ -29,10 +29,11 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_builder.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/hits/boolean_sparse.hpp"
+#include "iresearch/search/detail/sparse_cursor.hpp"
 #include "iresearch/search/hits/boolean_window.hpp"
 #include "iresearch/search/hits/make.hpp"
 #include "iresearch/search/hits/posting.hpp"
+#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -65,9 +66,9 @@ struct Api {
            typename... Args>
   static Result MakeSparse(const Context& ctx, irs::detail::Scored score,
                            Args&&... args) {
-    return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
-      ctx, std::piecewise_construct, ctx.fetcher, score,
-      std::forward<Args>(args)...);
+    return MakeShape<
+      Walk, irs::detail::SparseCursor<Lead, Probes, Optional, Excludes>>(
+      ctx, ctx.fetcher, score, std::forward<Args>(args)...);
   }
 
   template<typename Input, typename Exclude, typename ExcludeArgs>

@@ -24,6 +24,7 @@ duckdb:core:test/sql/storage/temp_directory/offloading_block_files.test_slow	iss
 duckdb:core:test/sql/storage/temp_directory/temp_directory_enable_external_access.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/temp_file_truncation.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/test_default_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/test_eviction_queue_no_underflow.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/update/larger_than_memory_update.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/update/larger_than_memory_update_transactions.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/transactions/statement-preprocessor/copy_from_database_is_transactional.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)

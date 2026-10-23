@@ -142,3 +142,38 @@ sdb_faults
 connection default
 statement ok
 DROP ROLE flt_lowly;
+
+
+statement ok
+CREATE TABLE flt_parked (step INT);
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run';
+
+
+statement ok
+CREATE JOB flt_parked_job AFTER 1 SECOND AS INSERT INTO flt_parked VALUES (1);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_before_run:parked';
+
+
+statement ok
+RESET sdb_faults;
+
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS runs FROM flt_parked;
+----
+runs
+1
+
+
+statement ok
+DROP JOB IF EXISTS flt_parked_job;
+
+
+statement ok
+DROP TABLE flt_parked;

@@ -126,3 +126,17 @@ Join operators in the query plan show the join type used:
 -   Inner joins are denoted as `INNER`.
 -   Left outer joins and right outer joins are denoted as `LEFT` and `RIGHT`, respectively.
 -   Full outer joins are denoted as `FULL`.
+
+A `LOOKUP_JOIN` reads columns of rows its left input picked — after a `TOP_N`, a `LIMIT` or a `SAMPLE` — from the scan on its right. The right scan is not run as a scan: it reads only the rows the left input produces, and its row count in `EXPLAIN ANALYZE` is the number of rows it read. Its `Key` names the row ids it finds the rows by:
+
+| Scan on the right | `Key` |
+|---|---|
+| A table | `rowid` |
+| Parquet files | `file_index, file_row_number` |
+| DuckDB files (`read_duckdb`) | `file_index, rowid` |
+| CSV and JSON files | `file_index, file_offset`, the byte offset of the row in its file |
+| A PostgreSQL table | `ctid` |
+| An inverted index | `iresearch_pk`, the row's address in the index |
+| The source of an inverted index (`INDEX_SOURCE`) | the [row identity](../../sql/indexes/inverted/views.md#row-identity) the index stores, named as its source names it: `rowid` for a table, `ctid` for a PostgreSQL view, `file_index, file_row_number` for a Parquet glob |
+
+A row that is no longer in the source produces no output row. It is used when the `TOP_N`, `LIMIT` or `SAMPLE` keeps at most [`late_materialization_lookup_max_rows`](../../configuration/overview.md#query-execution-and-the-optimizer) rows; `SET late_materialization_lookup_max_rows = 0` turns it off, and the plan then joins the scan with itself on the row ids (a `HASH_JOIN`), as long as the limit is at most `late_materialization_max_rows`. Scans of CSV and JSON files and of PostgreSQL tables use it only when the file or the [server](../../sql/statements/attach/postgres.md#remote-servers) is remote; a local one is read in one pass. Over an inverted index, two `LOOKUP_JOIN`s can sit one above the other: one reads the columns the index stores, the other reads the remaining columns from the indexed table or view (an `INDEX_SOURCE` on its right, keyed by the row identity the index stores).

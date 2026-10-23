@@ -323,6 +323,20 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
   BindExpressionFilter(cf, *owned, std::move(deferred.type));
 }
 
+std::optional<ColumnId> FetchableColumn(
+  const ScanBindData& bind, const duckdb::ColumnIndex& column_index) {
+  const auto bind_col = column_index.GetPrimaryIndex();
+  if (column_index.IsVirtualColumn() || column_index.HasChildren() ||
+      bind_col >= bind.columns.ids.size()) {
+    return std::nullopt;
+  }
+  const auto col_id = bind.columns.ids[bind_col];
+  if (VirtualIndexColumnType(col_id)) {
+    return std::nullopt;
+  }
+  return col_id;
+}
+
 }  // namespace
 
 const irs::Filter& MatchAllFilter() {
@@ -434,13 +448,18 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   const auto num_bind_columns = bind_data.columns.ids.size();
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
-    if (col_id == kColumnIdentifierRowPosition) {
-      if (!bind_data.relation.IsSearchTable()) {
+    if (col_id == kColumnIdentifierGeneratedPk) {
+      auto pk_type = GeneratedPkTypeOf(bind_data);
+      if (!pk_type) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("projecting the rowid through an inverted-index scan is not "
                   "supported"));
       }
+      state.generated_pk_output_idx = proj;
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(std::move(*pk_type));
+    } else if (col_id == kColumnIdentifierRowPosition) {
       state.row_position_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::ROW_TYPE);
@@ -537,6 +556,11 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data) {
+  if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    state.cs_projections.emplace_back(
+      irs::ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
+                                 .column_id = term_dict::kPKFieldId});
+  }
   if (state.row_number_output_idx != duckdb::DConstants::INVALID_INDEX) {
     state.cs_projections.emplace_back(irs::ColumnstoreProjection{
       .output_slot = state.row_number_output_idx,
@@ -625,6 +649,18 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
   }
 }
 
+bool IsLookupServed(const ScanBindData& bind,
+                    const duckdb::ColumnIndex& column_index) {
+  const auto col_id = FetchableColumn(bind, column_index);
+  return col_id && !bind.relation.Stores(*col_id);
+}
+
+bool IsStoreServed(const ScanBindData& bind,
+                   const duckdb::ColumnIndex& column_index) {
+  const auto col_id = FetchableColumn(bind, column_index);
+  return col_id && bind.relation.Stores(*col_id);
+}
+
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   if (ss.ts_dict.Active()) {
     return ScanShape::TsDict;
@@ -685,13 +721,11 @@ void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
 }
 
 void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
-                       uint64_t first_row, const duckdb::SelectionVector* sel,
+                       irs::doc_id_t first, const duckdb::SelectionVector* sel,
                        duckdb::idx_t count, duckdb::DataChunk& output) {
   if (g.row_position_output_idx == duckdb::DConstants::INVALID_INDEX) {
     return;
   }
-  const auto first =
-    static_cast<irs::doc_id_t>(first_row) + irs::doc_limits::min();
   FillRowPositions(
     irs::SegmentNumber((*g.reader)[seg].Meta().name), count,
     [&](duckdb::idx_t i) {

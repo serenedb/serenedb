@@ -549,7 +549,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Fault injection control. SET sdb_faults = 'name' to add a failure "
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all. Superuser only: the failure-point registry is "
+        "clear all and release parked threads. Superuser only: the "
+        "failure-point registry is "
         "process-global, so an armed point fires for every session.",
         [] { return duckdb::Value{""}; },
         [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
@@ -1010,6 +1011,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
         "LIMIT k` into the inverted-index scan, so block-max score pruning "
         "never engages. Default: false (optimization on).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_lookup_join_source_hop",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a LOOKUP_JOIN over an inverted index that returns only "
+        "source columns reads the row keys from the index in one LOOKUP_JOIN "
+        "and the source columns in a second one. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

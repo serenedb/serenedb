@@ -148,6 +148,8 @@ Root::ptr MakeFixedPhrasePruned(const FixedPhraseQuery& query,
                                 const Context& ctx);
 Root::ptr MakeFixedPhraseIntervalsPruned(const FixedPhraseQuery& query,
                                          const Context& ctx);
+Root::ptr MakeVariadicPhrasePruned(const VariadicPhraseQuery& query,
+                                   const Context& ctx);
 
 Root::ptr MakePrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,

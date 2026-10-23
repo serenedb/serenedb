@@ -205,6 +205,7 @@ target_sources(
         top/make_token_phrase.cpp
         top/make_variadic_phrase.cpp
         top/make_variadic_phrase_intervals.cpp
+        top/make_variadic_phrase_pruned.cpp
         top/make_variadic_phrase_slop.cpp
         top/make_wildcard_ngram.cpp
 )

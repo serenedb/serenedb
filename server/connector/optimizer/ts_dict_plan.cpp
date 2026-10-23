@@ -1120,20 +1120,25 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
 // null-marker field for the synthesized NULL group.
 bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
                                                TsDictFacetKey& key) {
+  const auto projected = [&] {
+    if (!_projected_ids) {
+      _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
+    }
+    return std::span<const connector::ColumnId>{*_projected_ids};
+  };
   const auto expr_ti = SingleReferencedTableIndex(expr);
   if (!expr_ti || !connector::ComputedFromRowAlone(expr) ||
       !AdoptScan(FindIResearchScan(_root, *expr_ti)) ||
-      !ColumnIndex()->HasExpressionKeys()) {
+      !connector::PassesKeyPrefilter(*ColumnIndex(), catalog::KeyKind::Term,
+                                     expr, connector::RootSignatureOf(expr),
+                                     projected)) {
     return false;
-  }
-  if (!_projected_ids) {
-    _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
   const auto& index = *ColumnIndex();
   const auto* term =
     index
       .FindExpressionKeys(connector::NormalizedExpression(
-        expr, _found.bind_data->RelationId(), *_projected_ids, _context))
+        expr, _found.bind_data->RelationId(), projected(), _context))
       .term;
   if (!term) {
     return false;

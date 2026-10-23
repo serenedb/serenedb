@@ -1,0 +1,153 @@
+control substitution on
+
+# Index keys recorded without a root chain, as releases before root
+# signatures recorded them, match no query after a restart: their stored
+# values are computed from the row and @@ on them fails. Creating the index
+# again makes its keys match.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword() WITH (frequency);
+
+statement ok
+CREATE TABLE legacy_keys(id INT PRIMARY KEY, title VARCHAR);
+
+statement ok
+INSERT INTO legacy_keys VALUES (1, 'New York'), (2, 'Boston');
+
+statement ok
+SET sdb_faults = 'inverted_index_key_without_root_signature';
+
+statement ok
+CREATE INDEX legacy_keys_idx ON legacy_keys USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included());
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+VACUUM (REFRESH_TABLE) legacy_keys;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, lower(title) AS l FROM legacy_keys_idx ORDER BY id;
+----
+id	l
+1	new york
+2	boston
+
+connection after_crash
+query
+EXPLAIN SELECT id, lower(title) FROM legacy_keys_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: id,           │
+│              lower(title)  │
+│ ~2 rows                    │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: legacy_keys_idx     │
+│ Lookup: table              │
+│ Projections: id, title     │
+│ ~2 rows                    │
+╰────────────────────────────╯
+
+connection after_crash
+query
+SELECT id FROM legacy_keys_idx WHERE lower(title) = 'boston';
+----
+id
+2
+
+connection after_crash
+query
+EXPLAIN SELECT id FROM legacy_keys_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────╮
+│ Projections: #1                │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: title ~~* 'boston' │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: legacy_keys_idx         │
+│ Lookup: table                  │
+│ Projections: title, id         │
+│ ~2 rows                        │
+╰────────────────────────────────╯
+
+connection after_crash
+statement error
+SELECT id FROM legacy_keys_idx WHERE lower(title) @@ 'boston';
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
+
+
+connection after_crash
+statement ok
+DROP INDEX legacy_keys_idx;
+
+connection after_crash
+statement ok
+CREATE INDEX legacy_keys_idx ON legacy_keys USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included());
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) legacy_keys;
+
+connection after_crash
+query
+SELECT id, lower(title) AS l FROM legacy_keys_idx ORDER BY id;
+----
+id	l
+1	new york
+2	boston
+
+connection after_crash
+query
+EXPLAIN SELECT id, lower(title) FROM legacy_keys_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: legacy_keys_idx         │
+│ Lookup: table                  │
+│ Projections: id (l),           │
+│              lower(title) (i)  │
+│ ~2 rows                        │
+╰────────────────────────────────╯
+
+connection after_crash
+query
+SELECT id FROM legacy_keys_idx WHERE lower(title) @@ 'boston';
+----
+id
+2
+
+connection after_crash
+query
+EXPLAIN SELECT id FROM legacy_keys_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: legacy_keys_idx          │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────────────╮ │
+│ │ Field: lower(title)(string) │ │
+│ │ Value: boston               │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯

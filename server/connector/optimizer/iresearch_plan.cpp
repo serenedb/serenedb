@@ -21,6 +21,7 @@
 #include "connector/optimizer/iresearch_plan.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/execution/expression_executor.hpp>
@@ -625,8 +626,13 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
     -> std::optional<connector::SearchColumnInfo> {
-    if (!config.HasExpressionKeys() ||
-        SingleReferencedTableIndex(expr) != table_index) {
+    if (!config.HasExpressionKeyOfType(expr.GetReturnType().id()) ||
+        SingleReferencedTableIndex(expr) != table_index ||
+        !connector::PassesKeyPrefilter(
+          config, catalog::KeyKind::Term, expr,
+          connector::RootSignatureOf(expr),
+          [&] { return std::span<const connector::ColumnId>{projected_ids}; },
+          stored_expression)) {
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
@@ -715,7 +721,8 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
       }
     }
   }
-  if (!bind_data.relation.inverted_config->HasExpressionKeys() ||
+  if (!bind_data.relation.inverted_config->HasExpressionKeyOfType(
+        col_arg.GetReturnType().id()) ||
       SingleReferencedTableIndex(col_arg) != get.table_index) {
     return irs::field_limits::invalid();
   }
@@ -1155,11 +1162,59 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   return out;
 }
 
-bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
-                              duckdb::LogicalOperator& root,
-                              const duckdb::LogicalOperator& op,
-                              duckdb::ClientContext& context) {
-  if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+class StoredExpressionScans {
+ public:
+  explicit StoredExpressionScans(duckdb::LogicalOperator& plan) {
+    Collect(plan);
+  }
+
+  bool SearchScan() const noexcept { return _search_scan; }
+
+  bool MayMatchStoredKey(const duckdb::Expression& expr,
+                         uint64_t& signature) const {
+    const auto type = expr.GetReturnType().id();
+    const auto of_type = [&](const catalog::InvertedIndexConfig* config) {
+      return config->HasExpressionKeyOfType(type);
+    };
+    if (absl::c_none_of(_configs, of_type)) {
+      return false;
+    }
+    signature = connector::RootSignatureOf(expr);
+    return absl::c_any_of(_configs, [&](const auto* config) {
+      return of_type(config) &&
+             absl::c_any_of(config->ExpressionsWithRootSignature(signature),
+                            [](const catalog::ExpressionKeys& keys) {
+                              return static_cast<bool>(keys.stored);
+                            });
+    });
+  }
+
+ private:
+  void Collect(duckdb::LogicalOperator& op) {
+    if (const auto scan = AsSearchScan(op)) {
+      _search_scan = true;
+      if (const auto* config = scan->bind_data->relation.inverted_config.get();
+          config->StoresExpressions()) {
+        _configs.push_back(config);
+      }
+    }
+    for (auto& child : op.children) {
+      Collect(*child);
+    }
+  }
+
+  bool _search_scan = false;
+  absl::InlinedVector<const catalog::InvertedIndexConfig*, 1> _configs;
+};
+
+bool PushdownStoredExpression(
+  duckdb::unique_ptr<duckdb::Expression>& expr, duckdb::LogicalOperator& root,
+  const duckdb::LogicalOperator& op,
+  const StoredExpressionScans& stored_expression_scans,
+  duckdb::ClientContext& context) {
+  uint64_t signature = 0;
+  if (!stored_expression_scans.MayMatchStoredKey(*expr, signature) ||
+      expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       expr->IsFoldable() || !expr->IsConsistent() || expr->HasParameter() ||
       !connector::ComputedFromRowAlone(*expr)) {
     return false;
@@ -1170,16 +1225,26 @@ bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
   }
   const auto found = FindIResearchScan(root, *table_index);
   if (!found || found->get->table_index != *table_index ||
-      found->bind_data->ts_dict.Active() ||
-      !found->bind_data->relation.inverted_config->StoresExpressions()) {
+      found->bind_data->ts_dict.Active()) {
     return false;
   }
   auto& bind_data = *found->bind_data;
   auto& get = *found->get;
-  const auto* stored = bind_data.relation.inverted_config
-                         ->FindExpressionKeys(connector::NormalizedExpression(
-                           *expr, bind_data.RelationId(),
-                           BuildProjectedColumnIds(get, bind_data), context))
+  const auto& config = *bind_data.relation.inverted_config;
+  std::vector<connector::ColumnId> projected_ids;
+  const auto projected = [&] {
+    if (projected_ids.empty()) {
+      projected_ids = BuildProjectedColumnIds(get, bind_data);
+    }
+    return std::span<const connector::ColumnId>{projected_ids};
+  };
+  if (!connector::PassesKeyPrefilter(config, catalog::KeyKind::Stored, *expr,
+                                     signature, projected)) {
+    return false;
+  }
+  const auto* stored = config
+                         .FindExpressionKeys(connector::NormalizedExpression(
+                           *expr, bind_data.RelationId(), projected(), context))
                          .stored;
   if (!stored || stored->type != expr->GetReturnType()) {
     return false;
@@ -1197,7 +1262,7 @@ bool PushdownStoredExpression(duckdb::unique_ptr<duckdb::Expression>& expr,
 
 struct RewriteScope {
   bool search_scan = false;
-  bool stored_expressions = false;
+  const StoredExpressionScans* stored_expression_scans = nullptr;
   const duckdb::LogicalOperator* op = nullptr;
 };
 
@@ -1207,8 +1272,8 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
   if (!expr) {
     return;
   }
-  if (scope.stored_expressions &&
-      PushdownStoredExpression(expr, root, *scope.op, context)) {
+  if (PushdownStoredExpression(expr, root, *scope.op,
+                               *scope.stored_expression_scans, context)) {
     return;
   }
   const auto cls = expr->GetExpressionClass();
@@ -1291,21 +1356,6 @@ void ReuseExistingScoreColumn(duckdb::Expression& order_expr,
       return;
     }
   }
-}
-
-RewriteScope ScopeOf(duckdb::LogicalOperator& op) {
-  RewriteScope scope;
-  if (const auto scan = AsSearchScan(op)) {
-    scope.search_scan = true;
-    scope.stored_expressions =
-      scan->bind_data->relation.inverted_config->StoresExpressions();
-  }
-  for (auto& child : op.children) {
-    const auto below = ScopeOf(*child);
-    scope.search_scan |= below.search_scan;
-    scope.stored_expressions |= below.stored_expressions;
-  }
-  return scope;
 }
 
 void RewriteIResearchExpressions(
@@ -1602,8 +1652,11 @@ bool TryClaimSearchFilter(
 void RewriteSearchCallsToColumnRefs(
   duckdb::OptimizerExtensionInput& input,
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  RewriteIResearchExpressions(input.context, plan, plan, input.optimizer.binder,
-                              ScopeOf(*plan));
+  const StoredExpressionScans stored_expression_scans{*plan};
+  RewriteIResearchExpressions(
+    input.context, plan, plan, input.optimizer.binder,
+    {.search_scan = stored_expression_scans.SearchScan(),
+     .stored_expression_scans = &stored_expression_scans});
 }
 
 void LimitTsDictScans(duckdb::OptimizerExtensionInput&,

@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
@@ -31,6 +34,7 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 
 namespace sdb::connector {
@@ -63,6 +67,19 @@ std::string NormalizedIndexKey(const duckdb::Expression& expr,
                                duckdb::idx_t table_id,
                                std::span<const ColumnId> col_index_to_id,
                                duckdb::ClientContext& context);
+
+void NormalizeIndexKey(const duckdb::Expression& expr, duckdb::idx_t table_id,
+                       std::span<const ColumnId> col_index_to_id,
+                       duckdb::ClientContext& context,
+                       catalog::persistence::KeyRecord& record);
+
+uint64_t RootSignatureOf(const duckdb::Expression& expr);
+
+bool PassesKeyPrefilter(
+  const catalog::InvertedIndexConfig& config, catalog::KeyKind kind,
+  const duckdb::Expression& expr, uint64_t signature,
+  absl::FunctionRef<std::span<const ColumnId>()> col_index_to_id,
+  const StoredExpressionOf& stored_expression = {});
 
 bool ComputedFromRowAlone(const duckdb::Expression& expr);
 

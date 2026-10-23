@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+#include <absl/hash/hash.h>
+
 #include <array>
+#include <bitset>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -37,8 +41,11 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "catalog/entry/tokenizer.h"
@@ -108,9 +115,25 @@ struct InvertedIndexKey : persistence::KeyRecord {
 };
 
 struct ExpressionKeys {
+  const InvertedIndexKey* first = nullptr;
   const InvertedIndexKey* term = nullptr;
   const InvertedIndexKey* stored = nullptr;
 };
+
+enum class KeyKind : uint8_t {
+  Term,
+  Stored,
+};
+
+inline uint64_t RootSignatureSeed(duckdb::LogicalTypeId type) {
+  return absl::HashOf(type);
+}
+
+inline uint64_t RootSignatureStep(uint64_t signature, uint8_t expression_class,
+                                  uint8_t expression_type,
+                                  std::string_view function) {
+  return absl::HashOf(signature, expression_class, expression_type, function);
+}
 
 using InvertedIndexFields =
   irs::containers::NodeHashMap<irs::field_id, InvertedIndexField>;
@@ -148,6 +171,8 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
  public:
   InvertedIndexConfig(std::vector<InvertedIndexKey> index_keys,
                       InvertedIndexFields index_fields);
+  InvertedIndexConfig(const InvertedIndexConfig&) = delete;
+  InvertedIndexConfig& operator=(const InvertedIndexConfig&) = delete;
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
@@ -172,9 +197,16 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   bool WritesField(const InvertedIndexKey& key) const noexcept {
     return FindKey(key.field_id) == &key;
   }
-  bool StoresExpression(irs::field_id field_id) const noexcept;
+  std::string_view StoredExpression(irs::field_id field_id) const noexcept;
+  bool StoresExpression(irs::field_id field_id) const noexcept {
+    return !StoredExpression(field_id).empty();
+  }
+  bool HasExpressionKeyOfType(duckdb::LogicalTypeId type) const noexcept {
+    return _expression_key_types.test(std::to_underlying(type));
+  }
+  std::span<const ExpressionKeys> ExpressionsWithRootSignature(
+    uint64_t signature) const noexcept;
   bool StoresExpressions() const noexcept { return _stores_expressions; }
-  bool HasExpressionKeys() const noexcept { return !_expressions.empty(); }
 
   const std::vector<InvertedIndexKey> keys;
   const InvertedIndexFields fields;
@@ -183,23 +215,19 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   CompressionByColumn declared_compression;
 
  private:
-  static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kLogicalTypeIds =
+    std::numeric_limits<std::underlying_type_t<duckdb::LogicalTypeId>>::max() +
+    size_t{1};
 
-  struct ExpressionSlots {
-    uint32_t first = kNoKey;
-    uint32_t term = kNoKey;
-    uint32_t stored = kNoKey;
-  };
-
-  const InvertedIndexKey* KeyAt(uint32_t key) const noexcept {
-    return key == kNoKey ? nullptr : &keys[key];
-  }
-  ExpressionSlots SlotsOf(std::string_view normalized) const noexcept;
+  void IndexRootSignature(const ExpressionKeys& expression);
 
   irs::containers::FlatHashMap<irs::field_id, uint32_t> _field_keys;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _column_fields;
-  irs::containers::FlatHashMap<std::string, ExpressionSlots> _expressions;
+  irs::containers::FlatHashMap<std::string, ExpressionKeys> _expressions;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _owners;
+  irs::containers::FlatHashMap<uint64_t, absl::InlinedVector<ExpressionKeys, 1>>
+    _expressions_by_root_signature;
+  std::bitset<kLogicalTypeIds> _expression_key_types;
   bool _stores_expressions = false;
 };
 

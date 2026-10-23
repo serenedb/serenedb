@@ -579,7 +579,6 @@ class SystemScan {
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
   duckdb::DuckCatalog& Database() const noexcept { return _database; }
-  std::shared_ptr<const auth::RoleClosure> SessionClosure() const;
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
   }
@@ -738,8 +737,8 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  SystemSet SetOf(catalog::CatalogSnapshots& snapshots, duckdb::CatalogSet& set,
-                  const duckdb::CatalogTransaction& transaction) const;
+  SystemSet SetOf(catalog::CatalogSnapshots& snapshots,
+                  duckdb::CatalogSet& set) const;
 
   std::span<const catalog::CatalogEdge> WalkedSubjects(
     duckdb::CatalogEntry& entry) const;

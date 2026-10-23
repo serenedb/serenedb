@@ -82,7 +82,7 @@ duckdb::optional<int32_t> IndexPosition(const Session& session, int64_t oid,
   }
   if (const auto key = FindKeyIndex(session, static_cast<uint64_t>(oid));
       key.table) {
-    return Position(KeyAttnums(key.table->GetColumns(), *key.key_index),
+    return Position(KeyAttnums(key.table->GetColumns(), *key.constraint),
                     column);
   }
   return duckdb::nullopt;

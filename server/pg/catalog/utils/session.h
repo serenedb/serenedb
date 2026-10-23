@@ -24,7 +24,6 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/function/function.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -62,7 +61,6 @@ struct Session {
   duckdb::ClientContext* context;
   duckdb::DuckCatalog* database;
   std::optional<duckdb::CatalogTransaction> transaction;
-  mutable std::optional<duckdb::CatalogEntryRetriever> retriever;
   std::vector<SessionSchema> search_path;
   std::optional<SessionTemporary> temporary;
   mutable irs::containers::FlatHashMap<std::pair<uint8_t, uint64_t>,
@@ -72,8 +70,6 @@ struct Session {
   mutable std::array<RegOutRecent, 64> reg_out_recent;
 };
 
-duckdb::optional_ptr<duckdb::DuckCatalog> SessionCatalog(
-  duckdb::ClientContext& context);
 Session MakeSession(duckdb::ClientContext* context);
 
 struct SessionState final : duckdb::FunctionLocalState {

@@ -395,7 +395,7 @@ Definition IndexDefinition(const Session& session, int64_t oid, int64_t column,
     shape = ShapeOf(session, *index);
   } else if (const auto key = FindKeyIndex(session, static_cast<uint64_t>(oid));
              key.table) {
-    shape = ShapeOf(*key.table, *key.key_index);
+    shape = ShapeOf(*key.table, *key.constraint);
   }
   if (!shape || !shape->relation) {
     return std::nullopt;

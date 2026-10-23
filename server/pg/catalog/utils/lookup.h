@@ -36,6 +36,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/snapshot.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
@@ -128,15 +129,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
 std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
   duckdb::ClientContext& context);
 
-struct SubObject {
-  duckdb::TableCatalogEntry* table = nullptr;
-  const duckdb::UniqueConstraint* key_index = nullptr;
-};
-
-SubObject FindKeyIndex(const Session& session, uint64_t oid);
-SubObject FindKeyIndex(duckdb::ClientContext& context,
-                       duckdb::SchemaCatalogEntry& schema,
-                       std::string_view name);
+catalog::CatalogKey FindKeyIndex(const Session& session, uint64_t oid);
+catalog::CatalogKey FindKeyIndex(duckdb::ClientContext& context,
+                                 duckdb::SchemaCatalogEntry& schema,
+                                 std::string_view name);
 
 struct Relation {
   duckdb::optional_ptr<duckdb::CatalogEntry> entry;

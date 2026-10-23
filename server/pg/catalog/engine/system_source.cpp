@@ -234,17 +234,9 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
   return result;
 }
 
-SystemSet SystemScan::SetOf(
-  catalog::CatalogSnapshots& snapshots, duckdb::CatalogSet& set,
-  const duckdb::CatalogTransaction& transaction) const {
+SystemSet SystemScan::SetOf(catalog::CatalogSnapshots& snapshots,
+                            duckdb::CatalogSet& set) const {
   auto snapshot = snapshots.Get(_context, set);
-  if (!snapshot) {
-    auto scanned = std::make_shared<catalog::CatalogSnapshot>();
-    set.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-      scanned->entries.emplace_back(&entry);
-    });
-    snapshot = std::move(scanned);
-  }
   std::span<duckdb::CatalogEntry* const> entries{snapshot->entries};
   return {.snapshot = std::move(snapshot), .entries = entries};
 }
@@ -252,9 +244,9 @@ SystemSet SystemScan::SetOf(
 SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
                                 duckdb::CatalogType type,
                                 const SystemPrefix* prefix) const {
-  auto result = SetOf(
-    _database.Cast<catalog::SereneDBCatalog>().Snapshots(),
-    schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type), Transaction());
+  auto result =
+    SetOf(_database.Cast<catalog::SereneDBCatalog>().Snapshots(),
+          schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type));
   if (prefix) {
     const duckdb::IdentifierCompare compare{
       schema.ParentCatalog().IsCaseSensitive()};
@@ -353,8 +345,7 @@ SystemEntries SystemScan::Resolve(const CatalogSetSource& source) const {
   }
   auto& catalog = CatalogOf(_context, _database, source.catalog);
   result.listed = SetOf(SnapshotsOf(_context, _database, source.catalog),
-                        catalog.GetCatalogSet(source.type),
-                        catalog.GetCatalogTransaction(_context));
+                        catalog.GetCatalogSet(source.type));
   return result;
 }
 
@@ -492,7 +483,7 @@ void SystemScan::VisitNamed(
     }
     if (wanted.test(std::to_underlying(INDEX_ENTRY))) {
       if (const auto key = FindKeyIndex(_context, *schema, name);
-          key.key_index && key.table != table) {
+          key.constraint && key.table != table) {
         visit(*key.table);
       }
     }

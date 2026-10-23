@@ -149,12 +149,6 @@ bool SystemScan::Declared(uint64_t provided) const {
 
 SystemScan::~SystemScan() = default;
 
-std::shared_ptr<const auth::RoleClosure> SystemScan::SessionClosure() const {
-  auto* connection = connector::GetSereneDBContextPtr(_context);
-  return connection ? auth::ClosureFor(&_context, connection->GetRoleId())
-                    : nullptr;
-}
-
 void SystemScan::Begin(duckdb::DataChunk& output) {
   output.Reset();
   _row = 0;

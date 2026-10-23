@@ -198,7 +198,7 @@ std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
     return Relation{nullptr, nullptr, nullptr, view};
   }
   if (const auto key = FindKeyIndex(session, oid); key.table) {
-    return Relation{key.table, key.key_index, nullptr, nullptr};
+    return Relation{key.table, key.constraint, nullptr, nullptr};
   }
   if (const auto entry = TemporaryEntryByOid(session, oid);
       entry && CatalogClassOid(entry->type) == kPgClassTable) {
@@ -251,12 +251,17 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
       {*relation}, &SystemPermissions(relation->system->SuperuserOnly())};
   }
   if (relation->view) {
-    const auto entry = session.retriever->GetEntry(
-      duckdb::EntryLookupInfo{
-        duckdb::CatalogType::VIEW_ENTRY,
-        duckdb::QualifiedName{{duckdb::Identifier{relation->view->schema}},
-                              duckdb::Identifier{relation->view->name}}},
-      duckdb::OnEntryNotFound::RETURN_NULL);
+    auto schema =
+      session.database
+        ? session.database->GetSchema(
+            *session.transaction, duckdb::Identifier{relation->view->schema},
+            duckdb::OnEntryNotFound::RETURN_NULL)
+        : nullptr;
+    const auto entry = schema
+                         ? FindMember(*session.transaction, *schema,
+                                      duckdb::CatalogType::VIEW_ENTRY,
+                                      duckdb::Identifier{relation->view->name})
+                         : nullptr;
     if (!entry) {
       return std::nullopt;
     }
@@ -410,21 +415,21 @@ std::vector<ReplicationOrigin> ReplicationOrigins(
   return origins;
 }
 
-SubObject FindKeyIndex(const Session& session, uint64_t oid) {
+catalog::CatalogKey FindKeyIndex(const Session& session, uint64_t oid) {
   if (auto table = OwnerTable(session, oid)) {
     for (const auto& key : KeyIndexes(*table)) {
       if (key.index_oid == oid) {
-        return {.table = table.get(), .key_index = &key};
+        return {.table = table.get(), .constraint = &key};
       }
     }
   }
   return {};
 }
 
-SubObject FindKeyIndex(duckdb::ClientContext& context,
-                       duckdb::SchemaCatalogEntry& schema,
-                       std::string_view name) {
-  SubObject found;
+catalog::CatalogKey FindKeyIndex(duckdb::ClientContext& context,
+                                 duckdb::SchemaCatalogEntry& schema,
+                                 std::string_view name) {
+  catalog::CatalogKey found;
   const auto match = [&](duckdb::CatalogEntry& entry) {
     if (found.table || entry.type != duckdb::CatalogType::TABLE_ENTRY) {
       return;
@@ -432,7 +437,7 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
     auto& table = entry.Cast<duckdb::TableCatalogEntry>();
     for (const auto& key : KeyIndexes(table)) {
       if (key.constraint_name == name) {
-        found = {.table = &table, .key_index = &key};
+        found = {.table = &table, .constraint = &key};
         return;
       }
     }
@@ -475,7 +480,7 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
     }
   });
   if (const auto it = keys.find(name); it != keys.end()) {
-    found = {.table = it->second.table, .key_index = it->second.constraint};
+    found = it->second;
   }
   return found;
 }

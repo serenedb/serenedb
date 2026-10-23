@@ -172,14 +172,6 @@ bool Exact(const duckdb::MacroFunction& macro) {
          });
 }
 
-struct BuiltinSource {
-  std::string_view schema;
-  std::string_view name;
-  duckdb::CatalogType type;
-  const duckdb::CatalogEntry* entry;
-  const duckdb::CreateMacroInfo* macro;
-};
-
 struct BuiltinOverload {
   std::string key;
   bool exact;
@@ -188,51 +180,22 @@ struct BuiltinOverload {
 
 template<typename Visit>
 void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
-  std::vector<BuiltinSource> sources;
-  duckdb::Catalog::GetSystemCatalog(context).ScanSchemas(
-    context, [&](duckdb::SchemaCatalogEntry& schema) {
-      const auto collect = [&](duckdb::CatalogEntry& entry) {
-        sources.emplace_back(schema.name.GetIdentifierName(),
-                             entry.name.GetIdentifierName(), entry.type, &entry,
-                             nullptr);
-      };
-      schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
-      schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
-      schema.Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
-    });
-  for (const auto& schema : kSystemNamespaces) {
-    for (const auto kind :
-         {duckdb::MacroType::SCALAR_MACRO, duckdb::MacroType::TABLE_MACRO}) {
-      VisitSystemFunctions(
-        schema.name, kind,
-        [&](std::string_view name, const duckdb::CreateMacroInfo& info) {
-          sources.emplace_back(schema.name, name,
-                               kind == duckdb::MacroType::SCALAR_MACRO
-                                 ? duckdb::CatalogType::MACRO_ENTRY
-                                 : duckdb::CatalogType::TABLE_MACRO_ENTRY,
-                               nullptr, &info);
-        });
-    }
-  }
-  absl::c_sort(sources, [](const BuiltinSource& lhs, const BuiltinSource& rhs) {
-    return std::tie(lhs.schema, lhs.name, lhs.type) <
-           std::tie(rhs.schema, rhs.name, rhs.type);
-  });
-
-  for (const auto& source : sources) {
+  const auto emit_source = [&](std::string_view schema, std::string_view name,
+                               const duckdb::CatalogEntry* system_entry,
+                               const duckdb::CreateMacroInfo* macro,
+                               std::string_view macro_kind) {
     const auto emit = [&](std::string_view kind_name, std::string parameters,
                           bool exact, char kind, duckdb::idx_t rettype,
                           std::vector<duckdb::idx_t> argtypes, bool retset,
                           bool strict, char volatility) {
       visit(BuiltinOverload{
-        .key =
-          absl::StrCat(kind_name, " ", source.entry ? "system." : "",
-                       source.schema, ".", source.name, "(", parameters, ")"),
+        .key = absl::StrCat(kind_name, " ", system_entry ? "system." : "",
+                            schema, ".", name, "(", parameters, ")"),
         .exact = exact,
         .function = BuiltinFunction{
           .oid = kInvalidOid,
-          .name = std::string{source.name},
-          .nsp = source.schema == irs::StaticStrings::kInformationSchema
+          .name = std::string{name},
+          .nsp = schema == irs::StaticStrings::kInformationSchema
                    ? kPgInformationSchema
                    : kPgCatalogSchema,
           .kind = kind,
@@ -275,14 +238,12 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
              ArgTypes(signature), retset, false, 'i');
       }
     };
-    using enum duckdb::CatalogType;
-    const auto macro_kind =
-      source.type == MACRO_ENTRY ? "macro" : "table_macro";
-    if (source.macro) {
-      emit_macros(macro_kind, source.macro->macros);
-      continue;
+    if (macro) {
+      emit_macros(macro_kind, macro->macros);
+      return;
     }
-    const auto& entry = *source.entry;
+    using enum duckdb::CatalogType;
+    const auto& entry = *system_entry;
     if (entry.type == SCALAR_FUNCTION_ENTRY) {
       emit_signatures("scalar", 'f',
                       entry.Cast<duckdb::ScalarFunctionCatalogEntry>());
@@ -299,7 +260,30 @@ void VisitBuiltinOverloads(duckdb::ClientContext& context, Visit&& visit) {
       emit_arguments("pragma", false,
                      entry.Cast<duckdb::PragmaFunctionCatalogEntry>());
     } else if (entry.type == MACRO_ENTRY || entry.type == TABLE_MACRO_ENTRY) {
-      emit_macros(macro_kind, entry.Cast<duckdb::MacroCatalogEntry>().macros);
+      emit_macros(entry.type == MACRO_ENTRY ? "macro" : "table_macro",
+                  entry.Cast<duckdb::MacroCatalogEntry>().macros);
+    }
+  };
+  duckdb::Catalog::GetSystemCatalog(context).ScanSchemas(
+    context, [&](duckdb::SchemaCatalogEntry& schema) {
+      const auto collect = [&](duckdb::CatalogEntry& entry) {
+        emit_source(schema.name.GetIdentifierName(),
+                    entry.name.GetIdentifierName(), &entry, nullptr, {});
+      };
+      schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
+      schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
+      schema.Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
+    });
+  for (const auto& schema : kSystemNamespaces) {
+    for (const auto kind :
+         {duckdb::MacroType::SCALAR_MACRO, duckdb::MacroType::TABLE_MACRO}) {
+      VisitSystemFunctions(
+        schema.name, kind,
+        [&](std::string_view name, const duckdb::CreateMacroInfo& info) {
+          emit_source(
+            schema.name, name, nullptr, &info,
+            kind == duckdb::MacroType::SCALAR_MACRO ? "macro" : "table_macro");
+        });
     }
   }
 }

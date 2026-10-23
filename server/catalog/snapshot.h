@@ -51,8 +51,8 @@ class Derived final {
 };
 
 struct CatalogKey {
-  duckdb::TableCatalogEntry* table;
-  const duckdb::UniqueConstraint* constraint;
+  duckdb::TableCatalogEntry* table = nullptr;
+  const duckdb::UniqueConstraint* constraint = nullptr;
 };
 
 struct CatalogEdge {

@@ -35,20 +35,13 @@
 
 namespace sdb::pg {
 
-duckdb::optional_ptr<duckdb::DuckCatalog> SessionCatalog(
-  duckdb::ClientContext& context) {
-  if (!connector::GetSereneDBContextPtr(context)) {
-    return nullptr;
-  }
-  return catalog::DefaultDuckCatalog(context);
-}
-
 Session MakeSession(duckdb::ClientContext* context) {
   Session session{
     .context = context,
-    .database = context ? SessionCatalog(*context).get() : nullptr,
+    .database = context && connector::GetSereneDBContextPtr(*context)
+                  ? catalog::DefaultDuckCatalog(*context).get()
+                  : nullptr,
     .transaction = std::nullopt,
-    .retriever = std::nullopt,
     .search_path = {},
     .temporary = std::nullopt,
     .reg_out = {},
@@ -57,7 +50,6 @@ Session MakeSession(duckdb::ClientContext* context) {
   if (!context) {
     return session;
   }
-  session.retriever.emplace(*context);
   if (session.database) {
     session.transaction.emplace(
       session.database->GetCatalogTransaction(*context));
@@ -86,8 +78,6 @@ Session MakeSession(duckdb::ClientContext* context) {
                                irs::StaticStrings::kPgCatalogSchema;
                       })) {
     add(irs::StaticStrings::kPgCatalogSchema);
-    session.retriever->SetSearchPath({duckdb::CatalogSearchEntry{
-      database, duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}}});
   }
   for (const auto& entry : search_path.Get()) {
     const auto& catalog = entry.GetCatalog();

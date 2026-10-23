@@ -58,10 +58,12 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
+    planned = defaultdict(int)
     for m in metas:
         key = (m["config"], m["arch"])
         longest[key] = max(longest[key], m["duration"])
         shards[key] += 1
+        planned[key] = max(planned[key], int(m["shard"].split("/")[1]))
     failures = []
     signatures = defaultdict(set)
     covered_wrappers = {(r["member_of"], r["config"], r["arch"]) for r in rows
@@ -84,11 +86,14 @@ def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     for key in keys:
         c = by_config[key]
         bad = sum(c[s] for s in BAD)
-        mark = "❌" if bad else "✅"
+        missing = planned[key] - shards[key]
+        mark = "❌" if bad or missing else "✅"
         lines.append(
             f"- {mark} **{key[0]}/{key[1]}**: {c['passed']} passed, {c['failed']} failed, "
             f"{c['flaky']} flaky, {c['stuck']} stuck, {c['crashed']} crashed, {c['skipped']} skipped; "
-            f"{shards[key]} shard(s), longest {_duration(longest[key])}")
+            f"{shards[key]} of {planned[key]} shards"
+            + (f" ({missing} without results)" if missing else "")
+            + f", longest {_duration(longest[key])}")
     for job, info in sorted((needs or {}).items()):
         result = info.get("result")
         if result in ("failure", "cancelled") and not any(k[0] == job for k in keys):

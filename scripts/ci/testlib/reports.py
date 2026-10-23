@@ -7,6 +7,8 @@ _SAN_HEAD = re.compile(
     r"MemorySanitizer|UndefinedBehaviorSanitizer): ([\w-]+(?: [\w-]+)*)"
 )
 _UBSAN_HEAD = re.compile(r"^(\S+:\d+:\d+): runtime error: (.*)$")
+_UBSAN_ADDRESS = re.compile(r"0x[0-9a-f]+")
+_UBSAN_VALUE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?:e[+-]?\d+)?(?![\w.])")
 _FRAME = re.compile(r"^\s*#\d+ 0x[0-9a-f]+ in (.+?)(?: (\S+:\d+(?::\d+)?))?$")
 _CRASH_HEAD = re.compile(r"\*\*\* (SIG\w+) received at time=")
 _ASSERT = re.compile(r"assertion failed in (\S+) \[([^\]]*)\]: (.*)")
@@ -55,7 +57,8 @@ def scan_sanitizer_text(text, path):
         m = _UBSAN_HEAD.match(line)
         if m:
             where = re.sub(r":\d+:\d+$", "", m.group(1))
-            sig = f"UndefinedBehaviorSanitizer: {m.group(2)[:120]} at {where}"
+            what = _UBSAN_VALUE.sub("N", _UBSAN_ADDRESS.sub("0x...", m.group(2)))
+            sig = f"UndefinedBehaviorSanitizer: {what[:120]} at {where}"
             reports.append(Report("UndefinedBehaviorSanitizer", sig, str(path),
                                   "\n".join(lines[i:i + 30])))
     return reports

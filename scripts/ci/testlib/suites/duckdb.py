@@ -57,14 +57,15 @@ def core_dir(ctx):
     return ctx.root / SUITE_DIRS["core"]
 
 
+def config_files(ctx, suite):
+    slow = ctx.build.sanitize or ctx.build.coverage or ctx.build.build_type == "Debug"
+    names = ["slow_build", suite] if slow else [suite]
+    paths = (ctx.root / "tests" / "duckdb" / "config" / f"{name}.json" for name in names)
+    return [p for p in paths if p.is_file()]
+
+
 def config_args(ctx, suite):
-    args = []
-    if ctx.build.sanitize or ctx.build.coverage or ctx.build.build_type == "Debug":
-        args += ["--test-config", str(ctx.root / "tests" / "duckdb" / "config" / "slow_build.json")]
-    cfg = ctx.root / "tests" / "duckdb" / "config" / f"{suite}.json"
-    if cfg.is_file():
-        args += ["--test-config", str(cfg)]
-    return args
+    return [arg for path in config_files(ctx, suite) for arg in ("--test-config", str(path))]
 
 
 def suite_filter(ctx, suite):
@@ -107,11 +108,7 @@ def _escape(name):
 
 def config_skips(ctx, suite):
     skips = {}
-    names = ["slow_build"] if ctx.build.sanitize or ctx.build.build_type == "Debug" else []
-    for name in names + [suite]:
-        path = ctx.root / "tests" / "duckdb" / "config" / f"{name}.json"
-        if not path.is_file():
-            continue
+    for path in config_files(ctx, suite):
         for group in json.loads(path.read_text()).get("skip_tests", []):
             reason = group.get("reason", "")
             first = reason.split(". ")[0][:200]

@@ -122,6 +122,7 @@ def iresearch_load_units(ctx, args, skips):
 
     def run(r):
         res = r.exec([binary, "--gtest_filter=LoadTest*",
+                      f"--ires_resource_dir={ctx.root / 'resources' / 'tests' / 'iresearch'}",
                       f"--gtest_output=xml:{r.dir / 'report.xml'}"],
                      env={"MALLOC_ARENA_MAX": "1"}, cwd=ctx.build.dir / "bin")
         return r.outcome(res)

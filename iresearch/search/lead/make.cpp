@@ -30,12 +30,13 @@
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
+#include "iresearch/search/lead/family.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/probe/plan.hpp"
@@ -45,6 +46,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
@@ -97,22 +99,15 @@ namespace {
 
 template<typename Query>
 Node::ptr MakeAnyPhrase(const Query& query) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhraseDocs<M>(query); });
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return detail::MakeDocs<Family, detail::PhraseKind<M>>(query, {});
+  });
 }
 
 template<typename Query>
 Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  if (!args.stats) {
-    return MakeAnyPhrase(query);
-  }
   return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
-    return MakePhraseScored<M>(query, args);
+    return detail::MakeNode<Family, detail::PhraseKind<M>>(query, ctx);
   });
 }
 
@@ -133,35 +128,38 @@ Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx) {
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query) {
-  return query.Every() ? MakeNGramAllDocs(query) : MakeNGramDocs(query);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeDocs<Family, detail::NGramKind<M>>(query, {});
+  });
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query,
                const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  if (record.stats == nullptr) {
-    return Make(query);
-  }
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  return query.Every() ? MakeNGramAllScored(query, args)
-                       : MakeNGramScored(query, args);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeNode<Family, detail::NGramKind<M>>(query, ctx);
+  });
+}
+
+Node::ptr Make(const TokenPhraseQuery& query) {
+  return detail::MakeDocs<Family, detail::TokenPhraseKind>(query, {});
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeNode<Family, detail::TokenPhraseKind>(query, ctx);
+}
+
+Node::ptr Make(const WildcardNGramQuery& query) {
+  return detail::MakeDocs<Family, detail::WildcardNGramKind>(query, {});
+}
+
+Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
+  return detail::MakeNode<Family, detail::WildcardNGramKind>(query, ctx);
 }
 
 Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
   return MakeAllScored(query.Segment(), detail::AllDocsScoreOf(query, ctx));
-}
-
-Node::ptr Make(const WildcardNGramQuery& query) {
-  return MakeWildcardNGramDocs(query);
-}
-
-Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
-  return MakeWildcardNGramScored(query, detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const ApproxQuery& query) { return query.Approx().PlanLead({}); }

@@ -27,7 +27,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/docs/boolean_bitset.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/docs/walk.hpp"
@@ -40,11 +39,5 @@ template<template<typename...> typename Shape, typename... Parts,
 Root::ptr MakeShape(const Context&, Args&&... args) {
   return memory::make_managed<Shape<Parts...>>(std::forward<Args>(args)...);
 }
-
-template<detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query, const Context& ctx);
-
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 
 }  // namespace irs::docs

@@ -21,7 +21,7 @@
 #include "iresearch/search/offsets/make.hpp"
 
 #include "iresearch/formats/term_reader.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 

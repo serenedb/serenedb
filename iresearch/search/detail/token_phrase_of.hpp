@@ -34,7 +34,7 @@
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
-#include "iresearch/search/detail/node_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/token_phrase.hpp"
@@ -215,19 +215,18 @@ inline bool IsSloppy(const TokenPhraseQuery& query) noexcept {
   return query.Compiled().slop.max != 0;
 }
 
-template<template<typename> typename Impl, typename Result, bool Scored = false,
-         template<typename> typename Wrap = DeducedNode, typename... Prefix>
-Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
-                       Prefix&&... prefix) {
+template<typename Result, bool Scored, typename F>
+Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
+             uint64_t interrogations, F&& f) {
   auto node = PlanApprox<Result>(query.Approx(), interrogations);
   if (!node) {
     return {};
   }
   const auto make = [&]<bool Sloppy> -> Result {
     using Slots = TokenPhraseSlots<ApproxNode<Result>, Sloppy>;
-    return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
-      std::forward<Prefix>(prefix)..., std::piecewise_construct,
-      std::forward_as_tuple(std::move(node)), query, Scored);
+    return f.template operator()<Slots>(std::piecewise_construct,
+                                        std::forward_as_tuple(std::move(node)),
+                                        query, Scored);
   };
   if constexpr (Scored) {
     return ResolveBool(IsSloppy(query), make);
@@ -236,12 +235,15 @@ Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
   }
 }
 
-inline std::optional<score_t> TokenPhraseConstantOf(
-  const TokenPhraseQuery& query, const ScoreArgs& args) {
-  if (IsSloppy(query)) {
-    return std::nullopt;
-  }
-  return ConstantOf(query.Segment(), query.Reader(), args);
+inline std::optional<score_t> ConstantOf(TokenPhraseKind,
+                                         const TokenPhraseQuery& query,
+                                         const ScoreArgs& args) {
+  return ConstantOf(query.Segment(), query.Reader(), args, IsSloppy(query));
+}
+
+inline const TermReader& FieldOf(TokenPhraseKind,
+                                 const TokenPhraseQuery& query) {
+  return query.Reader();
 }
 
 }  // namespace irs::detail

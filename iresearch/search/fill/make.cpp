@@ -24,16 +24,20 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/fill_posting_scored.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/fill/family.hpp"
+#include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make_boolean.hpp"
-#include "iresearch/search/fill/plan.hpp"
+#include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/fill/window_scored.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
@@ -48,6 +52,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::fill {
@@ -109,18 +114,17 @@ namespace {
 
 template<typename Query>
 Node::ptr MakeAnyPhrase(const Query& query) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhraseDocs<M>(query); });
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return detail::MakeDocs<Family, detail::PhraseKind<M>>(query, {});
+  });
 }
 
 template<typename Query>
 Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx,
                         ScoreMergeType merge) {
-  if (!query.Stats().stats) {
-    return MakeAnyPhrase(query);
-  }
   return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
-    return MakePhraseScored<M>(query, ctx, merge);
+    return detail::MakeNode<Family, detail::PhraseKind<M>>(
+      query, {.scored = ctx, .merge = merge});
   });
 }
 
@@ -143,16 +147,17 @@ Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx,
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query) {
-  return query.Every() ? MakeNGramAllDocs(query) : MakeNGramDocs(query);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeDocs<Family, detail::NGramKind<M>>(query, {});
+  });
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  if (query.Stats().stats == nullptr) {
-    return Make(query);
-  }
-  return query.Every() ? MakeNGramAllScored(query, ctx, merge)
-                       : MakeNGramScored(query, ctx, merge);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeNode<Family, detail::NGramKind<M>>(
+      query, {.scored = ctx, .merge = merge});
+  });
 }
 
 Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
@@ -164,12 +169,23 @@ Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
-  return MakeWildcardNGramDocs(query);
+  return detail::MakeDocs<Family, detail::WildcardNGramKind>(query, {});
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return MakeWildcardNGramScored(query, ctx, merge);
+  return detail::MakeNode<Family, detail::WildcardNGramKind>(
+    query, {.scored = ctx, .merge = merge});
+}
+
+Node::ptr Make(const TokenPhraseQuery& query) {
+  return detail::MakeDocs<Family, detail::TokenPhraseKind>(query, {});
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
+               ScoreMergeType merge) {
+  return detail::MakeNode<Family, detail::TokenPhraseKind>(
+    query, {.scored = ctx, .merge = merge});
 }
 
 Node::ptr Make(const ApproxQuery& query) {

@@ -20,21 +20,17 @@
 
 #pragma once
 
-#include <utility>
-
 #include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
 
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return irs::detail::MakeGeo<ConstantWalk, Root::ptr>(
-    query, 0, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
+  return irs::detail::MakeScored<Family, irs::detail::GeoKind>(query, ctx);
 }
 
 }  // namespace irs::hits

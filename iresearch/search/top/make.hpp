@@ -119,16 +119,10 @@ Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
 
 template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query, const Context& ctx);
-
-template<irs::detail::PhraseMatch M, typename Query>
 Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
 
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
-
-Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
-                            const Context& ctx);
+Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
+                                const Context& ctx);
 
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);

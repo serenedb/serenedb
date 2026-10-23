@@ -30,7 +30,6 @@
 #include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 
 namespace irs::count {
@@ -50,11 +49,5 @@ template<typename Node>
 using PlainWalk = Walk<Node, utils::Empty>;
 template<typename Node>
 using FilteredWalk = Walk<Node, detail::TableFilter*>;
-
-template<detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query, const Context& ctx);
-
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 
 }  // namespace irs::count

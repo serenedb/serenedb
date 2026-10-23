@@ -37,3 +37,9 @@
   IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<false, true>)  \
   IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<true, false>)  \
   IRS_GEO_PARSERS(F, GeoDistanceRangeAcceptor<true, true>)
+
+#define IRS_GEO_QUERIES(F)                   \
+  IRS_GEO_PARSERS(F, GeoContainsAcceptor)    \
+  IRS_GEO_PARSERS(F, GeoIntersectsAcceptor)  \
+  IRS_GEO_PARSERS(F, GeoIsContainedAcceptor) \
+  IRS_GEO_DISTANCE_ACCEPTORS(F)

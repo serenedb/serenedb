@@ -30,22 +30,21 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/hits/empty.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/make_boolean.hpp"
 #include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
@@ -53,27 +52,10 @@ namespace {
 
 template<typename Query>
 Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
-  if (!query.Stats().stats) {
-    return irs::detail::ResolveMatch(query, [&]<irs::detail::PhraseMatch M> {
-      return irs::detail::BuildPhrase<M>(
-        query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
-          return MakeShape<ConstantWalk, lead::TwoPhaseDocs<Slots>>(
-            ctx, score_t{0}, std::forward<decltype(args)>(args)...);
-        });
-    });
-  }
   return irs::detail::ResolveMatch(query, [&]<irs::detail::PhraseMatch M> {
-    return MakePhrase<M>(query, ctx);
+    return irs::detail::MakeScored<Family, irs::detail::PhraseKind<M>>(query,
+                                                                       ctx);
   });
-}
-
-Root::ptr MakeUnscored(const NGramSimilarityQuery& query, const Context& ctx) {
-  return irs::detail::Build(
-    query, [&]<typename Slots>(auto&&... args) -> Root::ptr {
-      using Node = lead::TwoPhaseDocs<Slots>;
-      return MakeShape<ConstantWalk, Node>(
-        ctx, score_t{0}, std::forward<decltype(args)>(args)...);
-    });
 }
 
 }  // namespace
@@ -117,10 +99,10 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
-  if (query.Stats().stats == nullptr) {
-    return MakeUnscored(query, ctx);
-  }
-  return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
+  return irs::detail::ResolveNGram(query, [&]<irs::detail::NGramMatch M> {
+    return irs::detail::MakeScored<Family, irs::detail::NGramKind<M>>(query,
+                                                                      ctx);
+  });
 }
 
 Root::ptr Make(const AllQuery& query, const Context& ctx) {
@@ -129,7 +111,13 @@ Root::ptr Make(const AllQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
-  return MakeWildcardNGram(query, ctx);
+  return irs::detail::MakeScored<Family, irs::detail::WildcardNGramKind>(query,
+                                                                         ctx);
+}
+
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
+  return irs::detail::MakeScored<Family, irs::detail::TokenPhraseKind>(query,
+                                                                       ctx);
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {

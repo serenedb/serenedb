@@ -26,17 +26,18 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
+#include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/make.hpp"
-#include "iresearch/search/fill/plan.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
 #include "iresearch/search/fill/window_scored.hpp"

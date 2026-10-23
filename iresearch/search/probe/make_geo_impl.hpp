@@ -21,29 +21,27 @@
 #pragma once
 
 #include <cstdint>
-#include <utility>
 
 #include "iresearch/search/detail/geo_of.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/probe/constant_scored.hpp"
-#include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/probe/make.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
 
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                uint64_t interrogations) {
-  return detail::MakeGeo<Impl, Node::ptr>(query, interrogations);
+  return detail::MakeDocs<Family, detail::GeoKind>(
+    query, {.interrogations = interrogations});
 }
 
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                const detail::ScoredCtx& ctx, uint64_t interrogations) {
-  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(
-    query, interrogations, detail::AllDocsScoreOf(query, ctx));
+  return detail::MakeNode<Family, detail::GeoKind>(
+    query, {.scored = ctx, .interrogations = interrogations});
 }
 
 }  // namespace irs::probe

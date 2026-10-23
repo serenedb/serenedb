@@ -123,6 +123,16 @@ inline std::optional<score_t> ConstantOf(const SubReader& segment,
   return std::nullopt;
 }
 
+inline std::optional<score_t> ConstantOf(const SubReader& segment,
+                                         const TermReader& field,
+                                         const ScoreArgs& args,
+                                         bool row_scaled) {
+  if (row_scaled && args.scorer != nullptr && args.stats != nullptr) {
+    return std::nullopt;
+  }
+  return ConstantOf(segment, field, args);
+}
+
 inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
                               const ScoreArgs& args) {
   if (args.scorer == nullptr || args.stats == nullptr) {

@@ -22,6 +22,7 @@
 
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
@@ -52,9 +53,10 @@ inline const MultiTermState& AsTerms(const QueryBuilder& query) noexcept {
   return irs::utils::downCast<MultiTermQuery>(query).State();
 }
 
-template<template<typename> typename Impl, typename Result, typename... Prefix>
-Result MakeWildcardNGram(const WildcardNGramQuery& query,
-                         uint64_t interrogations, Prefix&&... prefix) {
+template<typename Result, bool Scored, typename F>
+Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
+             uint64_t interrogations, F&& f) {
+  static_assert(!Scored);
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto& ngrams = query.NGrams();
@@ -62,20 +64,18 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
   SDB_ASSERT(kind != QueryKind::Empty);
 
   const auto recipe = query.MakeRecipe();
+  const auto make = [&]<typename Approx>(auto&&... args) -> Result {
+    using Slots =
+      std::conditional_t<kProbed, probe::WildcardNGramSlotsDocs<Approx>,
+                         lead::WildcardNGramSlotsDocs<Approx>>;
+    return f.template operator()<Slots>(
+      std::piecewise_construct,
+      std::forward_as_tuple(std::forward<decltype(args)>(args)...), recipe);
+  };
 
   if (kind == QueryKind::All) {
-    const auto& segment = query.Segment();
-    if constexpr (kProbed) {
-      using Slots = probe::WildcardNGramSlotsDocs<probe::AllDocs>;
-      return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(segment), recipe);
-    } else {
-      using Slots = lead::WildcardNGramSlotsDocs<lead::AllDocs>;
-      return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(segment), recipe);
-    }
+    using All = std::conditional_t<kProbed, probe::AllDocs, lead::AllDocs>;
+    return make.template operator()<All>(query.Segment());
   }
 
   const auto erased = [&]() -> Result {
@@ -84,19 +84,13 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
       if (!node) {
         return {};
       }
-      using Slots = probe::WildcardNGramSlotsDocs<probe::Erased>;
-      return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(std::move(node)), recipe);
+      return make.template operator()<probe::Erased>(std::move(node));
     } else {
       auto node = ngrams.PlanLead({});
       if (!node) {
         return {};
       }
-      using Slots = lead::WildcardNGramSlotsDocs<lead::Erased>;
-      return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct,
-        std::forward_as_tuple(std::move(node)), recipe);
+      return make.template operator()<lead::Erased>(std::move(node));
     }
   };
 
@@ -109,20 +103,6 @@ Result MakeWildcardNGram(const WildcardNGramQuery& query,
   if (field == nullptr || DocOf(*field) == nullptr) {
     return erased();
   }
-  const auto make = [&]<typename Approx>(auto&&... args) -> Result {
-    const auto one =
-      std::forward_as_tuple(std::forward<decltype(args)>(args)...);
-    if constexpr (kProbed) {
-      using Slots = probe::WildcardNGramSlotsDocs<Approx>;
-      return memory::make_managed<Impl<probe::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct, one, recipe);
-    } else {
-      using Slots = lead::WildcardNGramSlotsDocs<Approx>;
-      return memory::make_managed<Impl<lead::TwoPhaseDocs<Slots>>>(
-        std::forward<Prefix>(prefix)..., std::piecewise_construct, one, recipe);
-    }
-  };
-
   const auto* single =
     kind == QueryKind::Term ? &AsTerm(ngrams).cookie : nullptr;
 

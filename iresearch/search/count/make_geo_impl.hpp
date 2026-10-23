@@ -20,21 +20,17 @@
 
 #pragma once
 
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/make.hpp"
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::count {
 
 template<typename Parser, typename Acceptor>
 Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  if (ctx.table != nullptr) {
-    return detail::MakeGeo<FilteredWalk, Root::ptr>(query, 0, ctx.table);
-  }
-  return detail::MakeGeo<PlainWalk, Root::ptr>(query, 0, utils::Empty{});
+  return detail::MakeDocs<Family, detail::GeoKind>(query, ctx);
 }
 
 }  // namespace irs::count

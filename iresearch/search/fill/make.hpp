@@ -112,9 +112,4 @@ Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, ScoreMergeType merge,
                         score_t score);
 
-Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
-Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  const detail::ScoredCtx& ctx,
-                                  ScoreMergeType merge);
-
 }  // namespace irs::fill

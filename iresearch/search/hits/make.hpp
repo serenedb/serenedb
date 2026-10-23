@@ -26,7 +26,6 @@
 
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/hits/root.hpp"
@@ -79,15 +78,6 @@ Root::ptr MakeSinglePosting(const irs::detail::PostingClause& posting,
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
                   const irs::detail::StatsRecord& record, score_t boost);
 Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score);
-
-template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query, const Context& ctx);
-
-Root::ptr MakeNGram(const NGramSimilarityQuery& query, const Context& ctx);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
-
-Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
-                            const Context& ctx);
 
 }  // namespace hits
 }  // namespace irs

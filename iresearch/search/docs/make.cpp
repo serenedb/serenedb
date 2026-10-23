@@ -24,16 +24,18 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/docs/empty.hpp"
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make_boolean.hpp"
 #include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 
 namespace irs::docs {
 
@@ -50,18 +52,37 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
     static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
 }
 
+namespace {
+
+template<typename Query>
+Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return detail::MakeDocs<Family, detail::PhraseKind<M>>(query, ctx);
+  });
+}
+
+}  // namespace
+
 Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query, ctx); });
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(query, ctx); });
+  return MakeAnyPhrase(query, ctx);
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
-  return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeDocs<Family, detail::NGramKind<M>>(query, ctx);
+  });
+}
+
+Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
+  return detail::MakeDocs<Family, detail::TokenPhraseKind>(query, ctx);
+}
+
+Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
+  return detail::MakeDocs<Family, detail::WildcardNGramKind>(query, ctx);
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {

@@ -21,17 +21,16 @@
 #pragma once
 
 #include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make.hpp"
-#include "iresearch/search/docs/plan.hpp"
-#include "iresearch/search/docs/walk.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::docs {
 
 template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context&) {
-  SDB_ASSERT(query.Kind() != QueryKind::Empty);
-  return detail::MakeGeo<Walk, Root::ptr>(query, 0);
+Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
+  return detail::MakeDocs<Family, detail::GeoKind>(query, ctx);
 }
 
 }  // namespace irs::docs

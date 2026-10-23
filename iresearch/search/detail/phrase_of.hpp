@@ -27,15 +27,11 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/node_of.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
-#include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
@@ -132,33 +128,31 @@ auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
   });
 }
 
-template<PhraseMatch M, template<typename> typename Impl, typename Result,
-         bool Scored = false, template<typename> typename Wrap = DeducedNode,
-         typename Query, typename... Prefix>
-Result MakePhraseOf(const Query& query, Prefix&&... prefix) {
-  return BuildPhrase<M, Scored>(
-    query, [&]<typename Slots>(auto&&... args) -> Result {
-      return memory::make_managed<Impl<NodeOf<Wrap, Result, Slots>>>(
-        std::forward<Prefix>(prefix)..., std::forward<decltype(args)>(args)...);
-    });
+template<typename Result, bool Scored, PhraseMatch M, typename Query,
+         typename F>
+Result Build(PhraseKind<M>, const Query& query, uint64_t, F&& f) {
+  return BuildPhrase<M, Scored>(query, std::forward<F>(f));
 }
 
 template<PhraseMatch M>
-std::optional<score_t> PhraseConstantOf(const FixedPhraseQuery& query,
-                                        const ScoreArgs& args) {
-  if (M == PhraseMatch::Slop) {
-    return std::nullopt;
-  }
-  return ConstantOf(query.Segment(), *query.state.reader, args);
+std::optional<score_t> ConstantOf(PhraseKind<M>, const FixedPhraseQuery& query,
+                                  const ScoreArgs& args) {
+  return ConstantOf(query.Segment(), *query.state.reader, args,
+                    M == PhraseMatch::Slop);
 }
 
 template<PhraseMatch M>
-std::optional<score_t> PhraseConstantOf(const VariadicPhraseQuery& query,
-                                        const ScoreArgs& args) {
-  if (M == PhraseMatch::Slop || !query.state.boosts.empty()) {
-    return std::nullopt;
-  }
-  return ConstantOf(query.Segment(), *query.state.reader, args);
+std::optional<score_t> ConstantOf(PhraseKind<M>,
+                                  const VariadicPhraseQuery& query,
+                                  const ScoreArgs& args) {
+  return ConstantOf(query.Segment(), *query.state.reader, args,
+                    M == PhraseMatch::Slop || !query.state.boosts.empty());
+}
+
+template<PhraseMatch M, typename Query>
+const TermReader& FieldOf(PhraseKind<M>, const Query& query) {
+  SDB_ASSERT(query.state.reader);
+  return *query.state.reader;
 }
 
 }  // namespace irs::detail

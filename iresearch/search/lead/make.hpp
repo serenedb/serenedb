@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -93,23 +92,6 @@ Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
   const detail::ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-
-template<detail::PhraseMatch M, typename Query>
-Node::ptr MakePhraseDocs(const Query& query);
-
-template<detail::PhraseMatch M, typename Query>
-Node::ptr MakePhraseScored(const Query& query, const detail::ScoreArgs& args);
-
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
-Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
-Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const detail::ScoreArgs& args);
-Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const detail::ScoreArgs& args);
-
-Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query);
-Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  score_t score);
 
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,

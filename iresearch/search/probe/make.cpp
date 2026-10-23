@@ -29,12 +29,13 @@
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/probe/constant_scored.hpp"
+#include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -42,6 +43,7 @@
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::probe {
@@ -53,23 +55,19 @@ detail::ScoreRecipe RecipeOf(const SubReader& segment,
 }
 
 template<typename Query>
-Node::ptr MakeAnyPhrase(const Query& query) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhraseDocs<M>(query); });
+Node::ptr MakeAnyPhrase(const Query& query, uint64_t interrogations) {
+  return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
+    return detail::MakeDocs<Family, detail::PhraseKind<M>>(
+      query, {.interrogations = interrogations});
+  });
 }
 
 template<typename Query>
-Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  if (!args.stats) {
-    return MakeAnyPhrase(query);
-  }
+Node::ptr MakeAnyPhrase(const Query& query, const detail::ScoredCtx& ctx,
+                        uint64_t interrogations) {
   return detail::ResolveMatch(query, [&]<detail::PhraseMatch M> {
-    return MakePhraseScored<M>(query, args);
+    return detail::MakeNode<Family, detail::PhraseKind<M>>(
+      query, {.scored = ctx, .interrogations = interrogations});
   });
 }
 
@@ -90,16 +88,19 @@ Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
   return MakeDisjunctionDocs(terms, {}, field, query.Segment(), interrogations);
 }
 
-Node::ptr Make(const FixedPhraseQuery& query, uint64_t) {
-  return MakeAnyPhrase(query);
+Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations) {
+  return MakeAnyPhrase(query, interrogations);
 }
 
-Node::ptr Make(const VariadicPhraseQuery& query, uint64_t) {
-  return MakeAnyPhrase(query);
+Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations) {
+  return MakeAnyPhrase(query, interrogations);
 }
 
-Node::ptr Make(const NGramSimilarityQuery& query, uint64_t) {
-  return query.Every() ? MakeNGramAllDocs(query) : MakeNGramDocs(query);
+Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations) {
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeDocs<Family, detail::NGramKind<M>>(
+      query, {.interrogations = interrogations});
+  });
 }
 
 Node::ptr Make(const AllQuery& query, uint64_t) {
@@ -107,7 +108,13 @@ Node::ptr Make(const AllQuery& query, uint64_t) {
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations) {
-  return MakeWildcardNGramDocs(query, interrogations);
+  return detail::MakeDocs<Family, detail::WildcardNGramKind>(
+    query, {.interrogations = interrogations});
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations) {
+  return detail::MakeDocs<Family, detail::TokenPhraseKind>(
+    query, {.interrogations = interrogations});
 }
 
 Node::ptr Make(const TermQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
@@ -138,27 +145,21 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t) {
-  return MakeAnyPhrase(query, ctx);
+               uint64_t interrogations) {
+  return MakeAnyPhrase(query, ctx, interrogations);
 }
 
 Node::ptr Make(const VariadicPhraseQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t) {
-  return MakeAnyPhrase(query, ctx);
+               uint64_t interrogations) {
+  return MakeAnyPhrase(query, ctx, interrogations);
 }
 
 Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  const auto record = query.Stats(ctx);
-  if (record.stats == nullptr) {
-    return Make(query, interrogations);
-  }
-  const detail::ScoreArgs args{.scorer = record.scorer,
-                               .stats = record.stats,
-                               .fetcher = ctx.fetcher,
-                               .boost = query.Boost()};
-  return query.Every() ? MakeNGramAllScored(query, args)
-                       : MakeNGramScored(query, args);
+  return detail::ResolveNGram(query, [&]<detail::NGramMatch M> {
+    return detail::MakeNode<Family, detail::NGramKind<M>>(
+      query, {.scored = ctx, .interrogations = interrogations});
+  });
 }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
@@ -167,8 +168,14 @@ Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx, uint64_t) {
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  return MakeWildcardNGramScored(query, detail::AllDocsScoreOf(query, ctx),
-                                 interrogations);
+  return detail::MakeNode<Family, detail::WildcardNGramKind>(
+    query, {.scored = ctx, .interrogations = interrogations});
+}
+
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  return detail::MakeNode<Family, detail::TokenPhraseKind>(
+    query, {.scored = ctx, .interrogations = interrogations});
 }
 
 Node::ptr Make(const ApproxQuery& query, uint64_t interrogations) {

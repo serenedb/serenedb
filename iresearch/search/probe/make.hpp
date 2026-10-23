@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/probe/node.hpp"
@@ -129,15 +128,6 @@ Node::ptr MakeSparseExclusionDocs(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t interrogations);
 
-template<detail::PhraseMatch M, typename Query>
-Node::ptr MakePhraseDocs(const Query& query);
-
-Node::ptr MakeNGramDocs(const NGramSimilarityQuery& query);
-Node::ptr MakeNGramAllDocs(const NGramSimilarityQuery& query);
-
-Node::ptr MakeWildcardNGramDocs(const WildcardNGramQuery& query,
-                                uint64_t interrogations);
-
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
                            std::span<const detail::PostingClause> should,
@@ -210,16 +200,5 @@ Node::ptr MakeSparseBoostScored(
   detail::Terms should_uniformity, const SubReader& segment,
   const detail::ScoreRecipe& recipe, ScoreMergeType merge,
   uint64_t interrogations, const detail::ScoredCtx& ctx, score_t absorbed = 0);
-
-template<detail::PhraseMatch M, typename Query>
-Node::ptr MakePhraseScored(const Query& query, const detail::ScoreArgs& args);
-
-Node::ptr MakeNGramScored(const NGramSimilarityQuery& query,
-                          const detail::ScoreArgs& args);
-Node::ptr MakeNGramAllScored(const NGramSimilarityQuery& query,
-                             const detail::ScoreArgs& args);
-
-Node::ptr MakeWildcardNGramScored(const WildcardNGramQuery& query,
-                                  score_t score, uint64_t interrogations);
 
 }  // namespace irs::probe

@@ -20,29 +20,23 @@
 
 #pragma once
 
-#include <cstdint>
-#include <utility>
-
 #include "iresearch/search/detail/geo_of.hpp"
-#include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/lead/constant_scored.hpp"
-#include "iresearch/search/lead/impl.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/lead/family.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
-#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::lead {
 
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query) {
-  return detail::MakeGeo<Impl, Node::ptr>(query, 0);
+  return detail::MakeDocs<Family, detail::GeoKind>(query, {});
 }
 
 template<typename Parser, typename Acceptor>
 Node::ptr Make(const GeoQuery<Parser, Acceptor>& query,
                const detail::ScoredCtx& ctx) {
-  return detail::MakeGeo<ConstantScoredImpl, Node::ptr>(
-    query, 0, detail::AllDocsScoreOf(query, ctx));
+  return detail::MakeNode<Family, detail::GeoKind>(query, ctx);
 }
 
 }  // namespace irs::lead

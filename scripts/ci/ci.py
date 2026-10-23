@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
 from testlib import selection, store  # noqa: E402
+from testlib.config import CONFIGS  # noqa: E402
 from testlib.scheduler import BAD  # noqa: E402
 
 DIGEST_VERSION = "2"
@@ -196,14 +197,15 @@ def cmd_shards(args):
 
 
 def cmd_timing(args):
-    key = f"timing/{args.config}-{args.arch}.parquet"
     tmp = Path(tempfile.mkdtemp())
     try:
-        parquet = tmp / "timing.parquet"
-        if store.reachable() and store.get(key, parquet):
-            store.timing_snapshot(parquet, args.out)
-        else:
-            Path(args.out).write_text(json.dumps({"units": {}}))
+        scales = {}
+        if store.reachable():
+            own = CONFIGS[args.config].slowdown
+            for name, config in CONFIGS.items():
+                if store.get(f"timing/{name}-{args.arch}.parquet", tmp / f"{name}.parquet"):
+                    scales[name] = own / config.slowdown
+        store.timing_snapshot(tmp, scales, args.config, args.out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

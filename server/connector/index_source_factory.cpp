@@ -78,8 +78,8 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
   // pointer is what carries that.
   auto table = bind_data.relation.table_entry;
   return std::make_unique<NativeIndexSource>(
-    context, ViewFastPath{}, table, nullptr, projected_columns,
-    projected_types, bind_column_ids, pushed_filters);
+    context, ViewFastPath{}, table, nullptr, projected_columns, projected_types,
+    bind_column_ids, pushed_filters);
 }
 
 }  // namespace sdb::connector

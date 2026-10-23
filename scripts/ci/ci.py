@@ -35,8 +35,7 @@ BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
     "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
-    "bin/sqllogictest", "third_party/duckdb/test/unittest",
-    "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
+    "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
 
@@ -80,17 +79,19 @@ def cmd_digest(args):
 
 def cmd_pack(args):
     build = Path(args.build_dir).resolve()
-    runner = Path(args.runner) if args.runner else None
-    if runner and runner.is_file():
-        shutil.copy2(runner, build / "bin" / "sqllogictest")
     re2 = build / "third_party" / "re2"
     paths = [p for p in BUNDLE_PATHS if (build / p).exists()]
     if re2.is_dir():
         paths += [str((re2 / n).relative_to(build)) for n in sorted(os.listdir(re2))
                   if n.endswith("_test") and (re2 / n).is_file()]
+    runner = []
+    if args.runner:
+        source = Path(args.runner).resolve()
+        runner = ["-C", str(source.parent), f"--transform=s,^{source.name}$,bin/sqllogictest,",
+                  source.name]
     out = Path(args.out).resolve()
-    subprocess.run(["tar", "-C", str(build), "-I", "zstd -T0 -3", "-cf", str(out), *paths],
-                   check=True)
+    subprocess.run(["tar", "-C", str(build), "-I", "zstd -T0 -3", "-cf", str(out), *paths,
+                    *runner], check=True)
     print(f"{out} {out.stat().st_size >> 20} MB")
 
 

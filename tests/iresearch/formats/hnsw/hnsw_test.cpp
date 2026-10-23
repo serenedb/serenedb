@@ -67,6 +67,7 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
         .quant = {.kind = quant, .nb_bits = nb_bits},
         .m = 8,
         .ef_construction = 64,
+        .column_id = kVec,
       };
     }
     return col;
@@ -1413,6 +1414,7 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
         .quant = quant,
         .m = 8,
         .ef_construction = 64,
+        .column_id = kVec,
       };
     }
     return col;
@@ -1477,6 +1479,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
           .quant = quant,
           .m = 8,
           .ef_construction = 64,
+          .column_id = kVec,
         };
       }
       return col;

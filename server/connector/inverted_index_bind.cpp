@@ -48,7 +48,6 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -1245,9 +1244,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       record.field_id = record.column_id;
       if (search_table && opclass.IsAnn()) {
         record.field_id = next_id();
-        SDB_IF_FAILURE("legacy_ann_field_id") {
-          record.field_id = record.column_id;
-        }
       } else if (search_table) {
         auto [it, fresh] = term_fields.try_emplace(record.column_id, 0);
         if (fresh) {
@@ -1321,9 +1317,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       ann->centroids_id = record.field_id;
       ann->postings_id = record.field_id;
       ann->column_id = bare_column ? record.column_id : record.field_id;
-      SDB_IF_FAILURE("legacy_ann_field_id") {
-        ann->column_id = irs::field_limits::invalid();
-      }
     }
 
     keys.emplace_back(std::move(record));

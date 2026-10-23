@@ -79,6 +79,7 @@ irs::IndexWriterOptions MakeWriterOptions(
         // Larger than any doc count used here, so every test indexes a single
         // cluster and doc ids map 1:1 onto one posting list.
         .posting_size = 1024,
+        .column_id = kVec,
       };
     }
     return col;

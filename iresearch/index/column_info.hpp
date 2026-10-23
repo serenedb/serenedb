@@ -172,13 +172,6 @@ struct AnnInfo {
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
-// Compatibility: indexes stored before `column_id` existed keep their vectors
-// in the column with their own id.
-inline field_id AnnVectorColumn(const AnnInfo& info) noexcept {
-  return field_limits::valid(info.column_id) ? info.column_id
-                                             : info.centroids_id;
-}
-
 struct ColumnOptions {
   bool skip_validity = false;
   duckdb::CompressionType compression =

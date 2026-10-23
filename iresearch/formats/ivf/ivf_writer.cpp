@@ -419,7 +419,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
     _reader = std::make_unique<IvfTermReader>(
       _result.postings_id, _result.data.cluster_docs,
       _result.data.cluster_offsets, _result.qw.get(),
-      col_reader.Column(AnnVectorColumn(_info)), &ctx, _result.data.d,
+      col_reader.Column(_info.column_id), &ctx, _result.data.d,
       &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();

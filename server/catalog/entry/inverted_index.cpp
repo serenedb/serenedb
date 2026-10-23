@@ -301,17 +301,11 @@ bool InvertedIndexConfig::KeepsColumn(irs::field_id id) const noexcept {
 void InvertedIndexConfig::ForEachAnn(
   irs::field_id column,
   absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
-  for (const auto& ann : _anns) {
-    if (irs::AnnVectorColumn(ann) == column) {
-      visit(ann);
-    }
-  }
-  for (const auto& ann : retained_anns) {
-    if (irs::AnnVectorColumn(ann) == column &&
-        absl::c_none_of(_anns, [&](const irs::AnnInfo& live) {
-          return live.centroids_id == ann.centroids_id;
-        })) {
-      visit(ann);
+  for (const auto* anns : {&_anns, &retained_anns}) {
+    for (const auto& ann : *anns) {
+      if (ann.column_id == column) {
+        visit(ann);
+      }
     }
   }
 }
@@ -319,7 +313,7 @@ void InvertedIndexConfig::ForEachAnn(
 const irs::AnnInfo* InvertedIndexConfig::FindAnn(
   irs::field_id column, irs::VectorMetric metric) const noexcept {
   const auto it = absl::c_find_if(_anns, [&](const irs::AnnInfo& ann) {
-    return irs::AnnVectorColumn(ann) == column && ann.metric == metric;
+    return ann.column_id == column && ann.metric == metric;
   });
   return it == _anns.end() ? nullptr : &*it;
 }

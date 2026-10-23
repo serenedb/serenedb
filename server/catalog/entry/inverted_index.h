@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <array>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -33,6 +35,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
@@ -56,6 +59,7 @@ namespace sdb::search {
 
 class InvertedIndexStorage;
 class SearchTable;
+struct RetiredIndex;
 
 }  // namespace sdb::search
 namespace sdb::catalog {
@@ -151,6 +155,13 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
+  bool KeepsField(irs::field_id id) const noexcept final;
+  bool KeepsColumn(irs::field_id id) const noexcept final;
+  void ForEachAnn(
+    irs::field_id column,
+    absl::FunctionRef<void(const irs::AnnInfo&)> visit) const final;
+  const irs::AnnInfo* FindAnn(irs::field_id column,
+                              irs::VectorMetric metric) const noexcept;
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
@@ -181,6 +192,9 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   PkPolicy pk;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
+  irs::containers::FlatHashSet<irs::field_id> retained_fields;
+  std::vector<irs::AnnInfo> retained_anns;
+  irs::containers::FlatHashSet<irs::field_id> table_columns;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -200,6 +214,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _column_fields;
   irs::containers::FlatHashMap<std::string, ExpressionSlots> _expressions;
   irs::containers::FlatHashMap<irs::field_id, irs::field_id> _owners;
+  std::vector<irs::AnnInfo> _anns;
   bool _stores_expressions = false;
 };
 
@@ -308,6 +323,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<search::SearchTable> _search_table;
+  std::shared_ptr<const search::RetiredIndex> _retired;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
 };

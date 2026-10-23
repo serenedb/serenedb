@@ -79,6 +79,7 @@ irs::IndexWriterOptions MakeWriterOptions(
         // Larger than any doc count used here, so every test indexes a single
         // cluster and doc ids map 1:1 onto one posting list.
         .posting_size = 1024,
+        .column_id = kVec,
       };
     }
     return col;
@@ -134,6 +135,7 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
@@ -217,6 +219,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;

@@ -61,6 +61,7 @@
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -288,6 +289,35 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
            : irs::field_limits::invalid();
 }
 
+bool InvertedIndexConfig::KeepsField(irs::field_id id) const noexcept {
+  return id == connector::term_dict::kPKFieldId ||
+         retained_fields.contains(id) || LookupField(id).entry || FindKey(id);
+}
+
+bool InvertedIndexConfig::KeepsColumn(irs::field_id id) const noexcept {
+  return table_columns.empty() || table_columns.contains(id) || KeepsField(id);
+}
+
+void InvertedIndexConfig::ForEachAnn(
+  irs::field_id column,
+  absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
+  for (const auto* anns : {&_anns, &retained_anns}) {
+    for (const auto& ann : *anns) {
+      if (ann.column_id == column) {
+        visit(ann);
+      }
+    }
+  }
+}
+
+const irs::AnnInfo* InvertedIndexConfig::FindAnn(
+  irs::field_id column, irs::VectorMetric metric) const noexcept {
+  const auto it = absl::c_find_if(_anns, [&](const irs::AnnInfo& ann) {
+    return ann.column_id == column && ann.metric == metric;
+  });
+  return it == _anns.end() ? nullptr : &*it;
+}
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
@@ -358,6 +388,14 @@ InvertedIndexConfig::InvertedIndexConfig(
     _field_keys.try_emplace(key.field_id, i);
     if (irs::field_limits::valid(key.column_id)) {
       _column_fields.try_emplace(key.column_id, key.field_id);
+    }
+    if (const auto* entry = FindEntry(key.field_id)) {
+      const auto& ann = entry->column_options.ann_info;
+      if (ann && absl::c_none_of(_anns, [&](const irs::AnnInfo& added) {
+            return added.centroids_id == ann->centroids_id;
+          })) {
+        _anns.push_back(*ann);
+      }
     }
     if (key.normalized_expression.empty()) {
       continue;
@@ -694,12 +732,12 @@ void InvertedIndexEntry::OnDrop() {
     _storage->MarkDropped();
   }
   if (_search_table) {
-    _search_table->RemoveIndexConfig(oid);
+    _retired = _search_table->RemoveIndexConfig(oid);
   }
 }
 
 void InvertedIndexEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
-  if (prev_entry.type == duckdb::CatalogType::INVALID) {
+  if (CreatedObject(prev_entry)) {
     OnDrop();
   }
   duckdb::DuckIndexEntry::Rollback(prev_entry);

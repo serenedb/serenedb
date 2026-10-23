@@ -65,6 +65,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   : _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
+    _is_new{is_new},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);
@@ -72,23 +73,35 @@ InvertedIndexStorage::InvertedIndexStorage(
   SDB_ASSERT(index_id != 0);
 
   _delete_log_open = is_new;
-  irs::ResourceManagementOptions resource_manager;
-  resource_manager.transactions = _writers_memory;
-  resource_manager.readers = _readers_memory;
-  resource_manager.compactions = _compactions_memory;
-  resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(*_directory, index_id, is_new, in_memory,
-                                     resource_manager);
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
 
   if (const auto& scorer_options = top_k_scorer) {
     _topk_scorer = MakeScorer(*scorer_options);
   }
 
   if (read_only) {
-    return;
+    OpenDirectory(in_memory);
+  } else if (is_new) {
+    OpenWriter(in_memory, options);
   }
+}
+
+bool InvertedIndexStorage::OpenDirectory(bool in_memory) {
+  irs::ResourceManagementOptions resource_manager;
+  resource_manager.transactions = _writers_memory;
+  resource_manager.readers = _readers_memory;
+  resource_manager.compactions = _compactions_memory;
+  resource_manager.file_descriptors = _file_descriptors_count;
+  auto opened = OpenStorageDirectory(*_directory, _index_id, _is_new, in_memory,
+                                     resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
+  return opened.on_disk;
+}
+
+void InvertedIndexStorage::OpenWriter(
+  bool in_memory, const catalog::InvertedIndexSettings& options) {
+  SDB_ASSERT(!_writer);
+  const bool on_disk = OpenDirectory(in_memory);
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -116,7 +129,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, Path(), opened.on_disk, is_new, std::move(writer_options),
+    *_dir, Path(), on_disk, _is_new, std::move(writer_options),
     [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 

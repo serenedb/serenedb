@@ -126,6 +126,8 @@ class InvertedIndexStorage final
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
+  void OpenWriter(bool in_memory,
+                  const catalog::InvertedIndexSettings& options);
   void OpenReader();
 
   auto GetTransaction() {
@@ -258,6 +260,7 @@ class InvertedIndexStorage final
   bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
+  bool OpenDirectory(bool in_memory);
   irs::IndexReaderOptions ReaderOptions() const;
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                          const irs::MergeWriter::FlushProgress& progress,
@@ -270,6 +273,7 @@ class InvertedIndexStorage final
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  bool _is_new;
   bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;

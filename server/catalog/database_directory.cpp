@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <cstring>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -53,6 +54,14 @@ void CreateDirectory(const std::filesystem::path& path) {
 void RemoveTree(const std::filesystem::path& path) {
   duckdb::TaskScheduler::BlockingScope blocking;
   std::error_code ec;
+  SDB_IF_FAILURE("storage_removal_interrupted") {
+    for (const auto& entry : std::filesystem::directory_iterator{path, ec}) {
+      if (!entry.path().filename().string().starts_with("segments_")) {
+        std::filesystem::remove_all(entry.path(), ec);
+      }
+    }
+    SDB_PARK_ONCE_ON_FAILURE("storage_removal_interrupted");
+  }
   std::filesystem::remove_all(path, ec);
   if (ec) {
     SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());

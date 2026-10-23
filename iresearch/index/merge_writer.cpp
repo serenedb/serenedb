@@ -470,10 +470,11 @@ TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
 }
 
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
-                      IndexFeatures& index_features, const SubReader& reader) {
+                      IndexFeatures& index_features, const SubReader& reader,
+                      const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
     const auto* term_reader = reader.field(id);
-    if (!term_reader) {
+    if (!term_reader || (field_options && !field_options->KeepsField(id))) {
       continue;
     }
     const auto& field_meta = term_reader->meta();
@@ -654,7 +655,8 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra) {
+                 std::span<const BasicTermReader* const> extra,
+                 const IndexFieldOptions* field_options) {
   auto field_writer =
     std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
@@ -678,6 +680,9 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     if (ei < en && sorted_extra[ei]->id() == fid) {
       field_writer->write(*sorted_extra[ei]);
       ++ei;
+      continue;
+    }
+    if (field_options && !field_options->KeepsField(fid)) {
       continue;
     }
 
@@ -709,7 +714,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 bool ComputeDocMappingsAndFieldMeta(
   ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
   FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
-  IndexFeatures& index_features) {
+  IndexFeatures& index_features, const IndexFieldOptions* field_options) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -726,7 +731,8 @@ bool ComputeDocMappingsAndFieldMeta(
     if (!doc_limits::valid(base_id)) {
       return false;
     }
-    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
+    if (!ComputeFieldMeta(field_meta_map, index_features, reader,
+                          field_options)) {
       return false;
     }
     fields_itr.Add(reader, reader_ctx.remap);
@@ -783,7 +789,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
   IndexFeatures index_features{IndexFeatures::None};
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
-                                      fields_itr, index_features)) {
+                                      fields_itr, index_features,
+                                      _field_options)) {
     co_return false;
   }
 
@@ -851,7 +858,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers)) {
+                   cluster_readers, _field_options)) {
     co_return false;
   }
 

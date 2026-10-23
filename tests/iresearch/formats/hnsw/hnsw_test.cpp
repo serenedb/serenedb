@@ -67,6 +67,7 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
         .quant = {.kind = quant, .nb_bits = nb_bits},
         .m = 8,
         .ef_construction = 64,
+        .column_id = kVec,
       };
     }
     return col;
@@ -150,6 +151,7 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query = query;
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = metric;
@@ -1412,6 +1414,7 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
         .quant = quant,
         .m = 8,
         .ef_construction = 64,
+        .column_id = kVec,
       };
     }
     return col;
@@ -1476,6 +1479,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
           .quant = quant,
           .m = 8,
           .ef_construction = 64,
+          .column_id = kVec,
         };
       }
       return col;

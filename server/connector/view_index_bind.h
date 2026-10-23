@@ -29,6 +29,10 @@
 
 namespace sdb::connector {
 
+bool IndexNameTaken(duckdb::ClientContext& context,
+                    const duckdb::CreateIndexInfo& info,
+                    duckdb::CatalogEntry& relation);
+
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,

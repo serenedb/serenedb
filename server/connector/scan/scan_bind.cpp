@@ -228,6 +228,7 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   *f->mutable_field_id() = vs.field_id;
   auto* o = f->mutable_options();
   o->query = vs.query_vector;
+  o->column_id = vs.field_id;
   o->centroids_id = vs.centroids_id;
   o->postings_id = vs.postings_id;
   o->metric = vs.metric;

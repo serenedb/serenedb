@@ -45,6 +45,7 @@ struct AnnExactCodes {
 
 struct VectorFilterOptions {
   std::vector<float> query;
+  field_id column_id = field_limits::invalid();
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;

@@ -949,7 +949,9 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
   //  fcntl(fd, F_NOCACHE, 1);
   //}
 #endif
-#if (_XOPEN_SOURCE >= 600 || _POSIX_C_SOURCE >= 200112L) && !defined(__APPLE__)
+#if !defined(__APPLE__) &&                             \
+  ((defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) || \
+   (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L))
   posix_fadvise(fd, 0, 0, advice);
 #endif
   return handle_t(reinterpret_cast<void*>(fd));

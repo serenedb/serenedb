@@ -30,18 +30,20 @@ paths:
 
 ## Running
 
-- `run.sh` connects to a running serened (CLAUDE.md, "Local smoke server"); scope it with repeated `--test '<glob>'`, no positional arguments. Both wire engines run by default. Boolean flags take the next argument as their value: write `--fast=true`. `--fast` skips `.test_slow` files.
-- The exit code says nothing when no file matched: count one `[OK]`/`[FAILED]` line per file.
-- `run_recovery_tests.sh` starts its own servers; its paths are relative to `tests/sqllogic`, and a path that matches nothing still prints PASS. One recovery run per account at a time: it kills the account's other recovery servers. Logs stay in `/tmp/serened-logs-*/`.
-- Choose the parallelism before a run (`nproc / 2` when the machine is shared), never after a failure: a test that fails under load is a bug.
-- gtests: one test runs directly (`--gtest_filter=...`); more go through `scripts/gtest-parallel/gtest-parallel`, as CI runs them. `iresearch-load-tests` run as one process. `ninja serened` doesn't relink the test binaries.
+- `scripts/ci/test.py --build-dir <build>` runs the suites as CI does: every test as a unit in one queue over the machine, the servers and services the units need, a watchdog that saves every thread's stack on a hang, and a summary in `out/test/summary.txt` (every unit in `out/test/results.jsonl`, a failed unit's logs under `out/test/units/`). `--suite` and repeated `--test '<unit glob>'` scope it, `--list` prints the units it would run, `--fast` skips `.test_slow` files and the sqlite corpus. Recovery tests and the DuckDB suites run only this way.
+- `run.sh` runs sqllogic files against a server you started (CLAUDE.md, "Local smoke server"), for an edit-run loop and `--override`; scope it with repeated `--test '<glob>'`, no positional arguments. Both wire engines run by default. Boolean flags take the next argument as their value: write `--fast=true`. The exit code says nothing when no file matched: count one `[OK]`/`[FAILED]` line per file.
+- The sqlite corpus (`tests/sqllogic/any/pg/sqlite`) is a submodule only test jobs check out: `git submodule update --init --checkout tests/sqllogic/any/pg/sqlite`.
+- Choose the parallelism before a run (`--jobs`, `nproc / 2` when the machine is shared), never after a failure: a test that fails under load is a bug.
+- gtests: one test runs directly (`--gtest_filter=...`); more go through `test.py --suite gtest` or `scripts/gtest-parallel/gtest-parallel`. `iresearch-load-tests` run as one process. `ninja serened` doesn't relink the test binaries.
 - Drivers: `tests/drivers/run.sh --port <port> --lang <lang>`, only for languages whose toolchain is installed; a skipped language is not a pass.
-- DuckDB suites: `./tests/duckdb/run.sh --suite <name>` (`--list` names them); run `ninja unittest` first after a change. A suite's skip list holds only the SereneDB divergences that can't pass ([tests/duckdb/README.md](../../tests/duckdb/README.md)).
-- re2 fork suites, in a build with `SDB_GTEST`: `ninja re2-tests`, then `ctest --test-dir <build>/third_party/re2 -j "$(nproc)" --output-on-failure`.
+- DuckDB suites: `test.py --suite duckdb --duckdb-suite <name>`; run `ninja unittest` first after a change. A suite's skip list holds only the SereneDB divergences that can't pass ([tests/duckdb/README.md](../../tests/duckdb/README.md)).
+- re2 fork suites, in a build with `SDB_GTEST`: `ninja re2-tests`, then `test.py --suite re2`.
 
 ```bash
+scripts/ci/test.py --build-dir build_clangd --suite sqllogic --test 'sqllogic:*:sdb/pg/simple/*'
+scripts/ci/test.py --build-dir build_clangd --suite recovery --test 'recovery:recovery/<file>.test'
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite core --test '*test/sql/aggregate/*'
 ./tests/sqllogic/run.sh --single-port <port> --test 'tests/sqllogic/sdb/pg/simple/*.test'
-BUILD_DIR=build_clangd ./tests/sqllogic/run_recovery_tests.sh recovery/<file>.test
 ./scripts/gtest-parallel/gtest-parallel --gtest_filter='*StorageVersion*' ./build/bin/serenedb-tests
 ```
 

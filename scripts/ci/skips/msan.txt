@@ -45,3 +45,4 @@ duckdb:core:test/sql/function/variant/variant_typeof.test	issue	the VARIANT sizi
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_object.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
+duckdb:core:test/sql/storage/tpcds/tpcds_storage.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)

@@ -28,6 +28,7 @@ GitHub compare API. If neither works the hook fails closed; bypass a
 known-good commit with SKIP=check-submodule-pointers.
 """
 import argparse
+import functools
 import json
 import os
 import re
@@ -204,12 +205,28 @@ def github_repo(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+@functools.cache
+def api_token() -> str | None:
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token
+    try:
+        res = subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if res.returncode != 0:
+        return None
+    return res.stdout.strip() or None
+
+
 def api_get(path: str) -> tuple[int, object]:
     req = urllib.request.Request(
         f"https://api.github.com/{path}",
         headers={"Accept": "application/vnd.github+json"},
     )
-    token = os.environ.get("GITHUB_TOKEN")
+    token = api_token()
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     code = 0

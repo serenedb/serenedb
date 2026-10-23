@@ -2285,39 +2285,12 @@ bool DeserializeBinaryMultirange(DeserializeContext& ctx, std::string_view data,
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
-struct RangeBin {
+template<NestedVectorFn Fn>
+struct Nested {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryRange>(ctx, data,
-                                                                     sink);
-  }
-};
-
-struct RangeText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextRange>(ctx, data,
-                                                                   sink);
-  }
-};
-
-struct MultirangeBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryMultirange>(
-      ctx, data, sink);
-  }
-};
-
-struct MultirangeText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextMultirange>(
-      ctx, data, sink);
+    return NestedAdapter<Sink>::template Run<Fn>(ctx, data, sink);
   }
 };
 
@@ -2332,64 +2305,6 @@ bool DeserializeBinaryGeometric(DeserializeContext&, std::string_view data,
                                 duckdb::Vector& vec, duckdb::idx_t row) {
   return RecvGeometric(kKind, data, vec, row);
 }
-
-template<Geometric kKind>
-struct GeometricBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryGeometric<kKind>>(
-      ctx, data, sink);
-  }
-};
-
-template<Geometric kKind>
-struct GeometricText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextGeometric<kKind>>(
-      ctx, data, sink);
-  }
-};
-
-template<bool Cidr>
-struct InetBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<Cidr>>(
-      ctx, data, sink);
-  }
-};
-
-template<bool Cidr>
-struct InetText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet<Cidr>>(
-      ctx, data, sink);
-  }
-};
-
-struct ListBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryList>(ctx, data,
-                                                                    sink);
-  }
-};
-
-struct ListText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextList>(ctx, data,
-                                                                  sink);
-  }
-};
 
 template<typename T, auto Parse>
 bool DeserializeTextVector(DeserializeContext&, std::string_view data,
@@ -2406,43 +2321,6 @@ bool DeserializeTextVector(DeserializeContext&, std::string_view data,
   return true;
 }
 
-template<typename T, auto Parse>
-struct VectorText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextVector<T, Parse>>(
-      ctx, data, sink);
-  }
-};
-
-struct FixedArrayBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryFixedArray>(
-      ctx, data, sink);
-  }
-};
-
-struct StructBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryStruct>(ctx, data,
-                                                                      sink);
-  }
-};
-
-struct StructText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextStruct>(ctx, data,
-                                                                    sink);
-  }
-};
-
 // The wire form of a TSQUERY value is its query text (OID 25 in both
 // formats); the struct's tokenizer/boost fields take their defaults.
 struct TsqueryCore {
@@ -2450,24 +2328,6 @@ struct TsqueryCore {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     sink.Tsquery(data);
     return true;
-  }
-};
-
-struct MapBin {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryMap>(ctx, data,
-                                                                   sink);
-  }
-};
-
-struct MapText {
-  template<typename Sink>
-  static bool Decode(DeserializeContext& ctx, std::string_view data,
-                     Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextMap>(ctx, data,
-                                                                 sink);
   }
 };
 
@@ -2610,42 +2470,54 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
       if (IsInt2vector(type)) {
-        return SelectDecoder<ListBin, VectorText<int16_t, ParseInt2Vector>,
-                             Sink>(binary);
+        return SelectDecoder<
+          Nested<DeserializeBinaryList>,
+          Nested<DeserializeTextVector<int16_t, ParseInt2Vector>>, Sink>(
+          binary);
       }
       if (IsOidvector(type)) {
-        return SelectDecoder<ListBin, VectorText<int64_t, ParseOidVector>,
-                             Sink>(binary);
+        return SelectDecoder<
+          Nested<DeserializeBinaryList>,
+          Nested<DeserializeTextVector<int64_t, ParseOidVector>>, Sink>(binary);
       }
       if (IsMultirange(type)) {
-        return SelectDecoder<MultirangeBin, MultirangeText, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryMultirange>,
+                             Nested<DeserializeTextMultirange>, Sink>(binary);
       }
-      return SelectDecoder<ListBin, ListText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryList>,
+                           Nested<DeserializeTextList>, Sink>(binary);
     case ARRAY:
-      return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryFixedArray>, DefaultText,
+                           Sink>(binary);
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectDecoder<InetBin<false>, InetText<false>, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryInet<false>>,
+                             Nested<DeserializeTextInet<false>>, Sink>(binary);
       }
       if (IsCidr(type)) {
-        return SelectDecoder<InetBin<true>, InetText<true>, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryInet<true>>,
+                             Nested<DeserializeTextInet<true>>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;
       }
       if (IsRange(type)) {
-        return SelectDecoder<RangeBin, RangeText, Sink>(binary);
+        return SelectDecoder<Nested<DeserializeBinaryRange>,
+                             Nested<DeserializeTextRange>, Sink>(binary);
       }
       if (const auto geometric = GeometricOf(type)) {
         return VisitGeometric(*geometric, [&]<Geometric kKind>() {
-          return SelectDecoder<GeometricBin<kKind>, GeometricText<kKind>, Sink>(
+          return SelectDecoder<Nested<DeserializeBinaryGeometric<kKind>>,
+                               Nested<DeserializeTextGeometric<kKind>>, Sink>(
             binary);
         });
       }
-      return SelectDecoder<StructBin, StructText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryStruct>,
+                           Nested<DeserializeTextStruct>, Sink>(binary);
     case MAP:
-      return SelectDecoder<MapBin, MapText, Sink>(binary);
+      return SelectDecoder<Nested<DeserializeBinaryMap>,
+                           Nested<DeserializeTextMap>, Sink>(binary);
     default:
       return SelectDecoder<DefaultBin, DefaultText, Sink>(binary);
   }

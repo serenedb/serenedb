@@ -25,6 +25,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
@@ -32,6 +33,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <optional>
+#include <span>
 #include <string_view>
 
 namespace sdb::pg {
@@ -55,9 +57,42 @@ class ScalarArg {
   duckdb::UnifiedVectorFormat _format;
 };
 
+template<typename T, auto Read>
+class RecursiveArg {
+ public:
+  explicit RecursiveArg(const duckdb::Vector& vector) {
+    duckdb::Vector::RecursiveToUnifiedFormat(vector, _format);
+  }
+
+  std::optional<T> operator[](duckdb::idx_t row) const {
+    const auto index = _format.unified.sel->get_index(row);
+    if (!_format.unified.validity.RowIsValid(index)) {
+      return std::nullopt;
+    }
+    return Read(_format, index);
+  }
+
+ private:
+  duckdb::RecursiveUnifiedVectorFormat _format;
+};
+
 template<typename T>
 void StoreValue(duckdb::Vector& result, duckdb::idx_t row, const T& value) {
   duckdb::FlatVector::GetDataMutable<T>(result)[row] = value;
+}
+
+template<typename T>
+void StoreList(duckdb::Vector& list, duckdb::idx_t row,
+               std::span<const T> values) {
+  const auto offset = duckdb::ListVector::GetListSize(list);
+  duckdb::ListVector::Reserve(list, offset + values.size());
+  auto& child = duckdb::ListVector::GetChildMutable(list);
+  for (size_t i = 0; i < values.size(); ++i) {
+    StoreValue(child, offset + i, values[i]);
+  }
+  duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(list)[row] = {
+    offset, values.size()};
+  duckdb::ListVector::SetListSize(list, offset + values.size());
 }
 
 template<typename T>

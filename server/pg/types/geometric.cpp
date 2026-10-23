@@ -273,26 +273,13 @@ T Read(const duckdb::RecursiveUnifiedVectorFormat& value, duckdb::idx_t index) {
 }
 
 template<typename T>
-class GeometricArg {
- public:
-  explicit GeometricArg(const duckdb::Vector& vector) {
-    duckdb::Vector::RecursiveToUnifiedFormat(vector, _format);
-  }
-
-  std::optional<T> operator[](duckdb::idx_t row) const {
-    const auto index = _format.unified.sel->get_index(row);
-    if (!_format.unified.validity.RowIsValid(index)) {
-      return std::nullopt;
-    }
-    return Read<T>(_format, index);
-  }
-
- private:
-  duckdb::RecursiveUnifiedVectorFormat _format;
-};
+using GeometricArg = RecursiveArg<T, Read<T>>;
 
 template<typename T>
-void StoreFixed(duckdb::Vector& vector, duckdb::idx_t row, const T& value) {
+  requires(std::is_same_v<T, Point> || std::is_same_v<T, Line> ||
+           std::is_same_v<T, Lseg> || std::is_same_v<T, Box> ||
+           std::is_same_v<T, Circle>)
+void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const T& value) {
   const auto fields =
     std::bit_cast<std::array<double, sizeof(T) / sizeof(double)>>(value);
   auto& children = duckdb::StructVector::GetEntries(vector);
@@ -301,60 +288,18 @@ void StoreFixed(duckdb::Vector& vector, duckdb::idx_t row, const T& value) {
   }
 }
 
-void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const Point& value) {
-  StoreFixed(vector, row, value);
-}
-
-void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const Line& value) {
-  StoreFixed(vector, row, value);
-}
-
-void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const Lseg& value) {
-  StoreFixed(vector, row, value);
-}
-
-void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const Box& value) {
-  StoreFixed(vector, row, value);
-}
-
-void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
-                const Circle& value) {
-  StoreFixed(vector, row, value);
-}
-
-void StorePoints(duckdb::Vector& list, duckdb::idx_t row,
-                 std::span<const Point> values) {
-  const auto offset = duckdb::ListVector::GetListSize(list);
-  duckdb::ListVector::Reserve(list, offset + values.size());
-  auto& child = duckdb::ListVector::GetChildMutable(list);
-  for (size_t i = 0; i < values.size(); ++i) {
-    StoreFixed(child, offset + i, values[i]);
-  }
-  duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(list)[row] = {
-    offset, values.size()};
-  duckdb::ListVector::SetListSize(list, offset + values.size());
-}
-
 void StoreValue(duckdb::Vector& vector, duckdb::idx_t row, const Path& value) {
   auto& children = duckdb::StructVector::GetEntries(vector);
   duckdb::FlatVector::GetDataMutable<bool>(children[kPathClosedChild])[row] =
     value.closed;
-  StorePoints(children[kPathPointsChild], row, value.points);
+  StoreList<Point>(children[kPathPointsChild], row, value.points);
 }
 
 void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
                 const Polygon& value) {
-  StorePoints(duckdb::StructVector::GetEntries(vector)[kPolygonPointsChild],
-              row, value.points);
-}
-
-std::vector<Point> CopyPoints(const PointsView& points) {
-  std::vector<Point> result;
-  result.reserve(points.Size());
-  for (duckdb::idx_t i = 0; i < points.Size(); ++i) {
-    result.push_back(points[i]);
-  }
-  return result;
+  StoreList<Point>(
+    duckdb::StructVector::GetEntries(vector)[kPolygonPointsChild], row,
+    value.points);
 }
 
 template<typename Transform>
@@ -1208,11 +1153,11 @@ int32_t PathPointCount(const PathView& path) {
 }
 
 Path PathClose(const PathView& path) {
-  return {.closed = true, .points = CopyPoints(path.points)};
+  return {.closed = true, .points = MapPoints(path.points, std::identity{})};
 }
 
 Path PathOpen(const PathView& path) {
-  return {.closed = false, .points = CopyPoints(path.points)};
+  return {.closed = false, .points = MapPoints(path.points, std::identity{})};
 }
 
 Box PointsBounds(const PointsView& points) {
@@ -1290,7 +1235,7 @@ std::optional<Path> PathConcat(const PathView& p1, const PathView& p2) {
   if (p1.closed || p2.closed) {
     return std::nullopt;
   }
-  auto points = CopyPoints(p1.points);
+  auto points = MapPoints(p1.points, std::identity{});
   points.reserve(p1.points.Size() + p2.points.Size());
   for (duckdb::idx_t i = 0; i < p2.points.Size(); ++i) {
     points.push_back(p2.points[i]);
@@ -1351,7 +1296,7 @@ Polygon PathPolygon(const PathView& path) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("open path cannot be converted to polygon"));
   }
-  return {.points = CopyPoints(path.points)};
+  return {.points = MapPoints(path.points, std::identity{})};
 }
 
 // Polygons.
@@ -1610,7 +1555,7 @@ Point PolygonCenter(const PolygonView& polygon) {
 }
 
 Path PolygonPath(const PolygonView& polygon) {
-  return {.closed = true, .points = CopyPoints(polygon.points)};
+  return {.closed = true, .points = MapPoints(polygon.points, std::identity{})};
 }
 
 Polygon BoxPolygon(const Box& box) {
@@ -2400,11 +2345,12 @@ struct Kind<Geometric::Circle> {
 };
 
 Path ToValue(const PathView& path) {
-  return {.closed = path.closed, .points = CopyPoints(path.points)};
+  return {.closed = path.closed,
+          .points = MapPoints(path.points, std::identity{})};
 }
 
 Polygon ToValue(const PolygonView& polygon) {
-  return {.points = CopyPoints(polygon.points)};
+  return {.points = MapPoints(polygon.points, std::identity{})};
 }
 
 template<typename T>

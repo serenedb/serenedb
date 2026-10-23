@@ -774,64 +774,29 @@ void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
 template<typename T>
 void StoreValue(duckdb::Vector& vector, duckdb::idx_t row,
                 const Multirange<T>& ranges) {
-  const auto offset = duckdb::ListVector::GetListSize(vector);
-  duckdb::ListVector::Reserve(vector, offset + ranges.size());
-  auto& child = duckdb::ListVector::GetChildMutable(vector);
-  for (duckdb::idx_t i = 0; i < ranges.size(); ++i) {
-    StoreValue(child, offset + i, ranges[i]);
-  }
-  duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(vector)[row] = {
-    offset, ranges.size()};
-  duckdb::ListVector::SetListSize(vector, offset + ranges.size());
+  StoreList<Range<T>>(vector, row, ranges);
 }
 
 template<typename T>
-class RangeArg {
- public:
-  explicit RangeArg(const duckdb::Vector& vector) {
-    duckdb::Vector::RecursiveToUnifiedFormat(vector, _format);
+Multirange<T> ReadMultirange(const duckdb::RecursiveUnifiedVectorFormat& format,
+                             duckdb::idx_t index) {
+  const auto entry = duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
+    format.unified)[index];
+  const auto& ranges = format.children[0];
+  Multirange<T> result;
+  result.reserve(entry.length);
+  for (duckdb::idx_t i = 0; i < entry.length; ++i) {
+    result.push_back(
+      ReadRange<T>(ranges, ranges.unified.sel->get_index(entry.offset + i)));
   }
-
-  std::optional<Range<T>> operator[](duckdb::idx_t row) const {
-    const auto index = _format.unified.sel->get_index(row);
-    if (!_format.unified.validity.RowIsValid(index)) {
-      return std::nullopt;
-    }
-    return ReadRange<T>(_format, index);
-  }
-
- private:
-  duckdb::RecursiveUnifiedVectorFormat _format;
-};
+  return result;
+}
 
 template<typename T>
-class MultirangeArg {
- public:
-  explicit MultirangeArg(const duckdb::Vector& vector) {
-    duckdb::Vector::RecursiveToUnifiedFormat(vector, _format);
-  }
+using RangeArg = RecursiveArg<Range<T>, ReadRange<T>>;
 
-  std::optional<Multirange<T>> operator[](duckdb::idx_t row) const {
-    const auto index = _format.unified.sel->get_index(row);
-    if (!_format.unified.validity.RowIsValid(index)) {
-      return std::nullopt;
-    }
-    const auto entry =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
-        _format.unified)[index];
-    const auto& ranges = _format.children[0];
-    Multirange<T> result;
-    result.reserve(entry.length);
-    for (duckdb::idx_t i = 0; i < entry.length; ++i) {
-      result.push_back(
-        ReadRange<T>(ranges, ranges.unified.sel->get_index(entry.offset + i)));
-    }
-    return result;
-  }
-
- private:
-  duckdb::RecursiveUnifiedVectorFormat _format;
-};
+template<typename T>
+using MultirangeArg = RecursiveArg<Multirange<T>, ReadMultirange<T>>;
 
 struct RangeCastData final : duckdb::BoundCastData {
   explicit RangeCastData(duckdb::BoundCastInfo element)

@@ -94,6 +94,51 @@ def parse_lcov(text):
     return files
 
 
+def demangle(names):
+    if not names:
+        return {}
+    res = subprocess.run(["llvm-cxxfilt-23"], input="\n".join(names), capture_output=True,
+                         text=True)
+    out = res.stdout.splitlines() if res.returncode == 0 else names
+    return dict(zip(names, out))
+
+
+def parse_json(text):
+    files = {}
+    data = json.loads(text)["data"][0]
+    for f in data["files"]:
+        files[f["filename"]] = {"mcdc": f.get("mcdc_records", []), "branches": f["branches"],
+                                "functions": []}
+    names = demangle(sorted({fn["name"] for fn in data["functions"]}))
+    for fn in data["functions"]:
+        if not fn["regions"] or not fn["filenames"]:
+            continue
+        body = fn["regions"][0]
+        entry = files.get(fn["filenames"][body[5]])
+        if entry is not None:
+            entry["functions"].append((body[0], body[2], names.get(fn["name"], fn["name"])))
+    return files
+
+
+def enclosing(functions, no):
+    inside = [f for f in functions if f[0] <= no <= f[1]]
+    return min(inside, key=lambda f: f[1] - f[0])[2] if inside else ""
+
+
+def snippet(path, line_start, col_start, line_end, col_end):
+    text = source_line(path, line_start)
+    if line_start == line_end:
+        return text[col_start - 1:col_end - 1]
+    return text[col_start - 1:]
+
+
+def mcdc_conditions(record, branches):
+    start, end = (record[0], record[1]), (record[2], record[3])
+    inside = sorted(b for b in branches
+                    if b[8] == 6 and start <= (b[0], b[1]) and (b[2], b[3]) <= end)
+    return inside
+
+
 def normalize(path):
     p = Path(path)
     if p.is_absolute():
@@ -137,16 +182,19 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     changed = changed_lines(args.base)
     sources = [p for p in changed if (ROOT / p).is_file()]
-    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0]}
+    summary = {"lines": [0, 0], "functions": [0, 0], "branches": [0, 0], "mcdc": [0, 0]}
     details = []
     uncovered_ranges = {}
     if sources:
         report = {normalize(k): v for k, v in parse_lcov(export("lcov", args.profdata, args.objects,
                                                                   sources)).items()}
+        regions = {normalize(k): v for k, v in parse_json(export("text", args.profdata,
+                                                                  args.objects, sources)).items()}
         for path in sorted(sources):
             data = report.get(path)
             if not data:
                 continue
+            spans = regions.get(path, {"mcdc": [], "branches": [], "functions": []})
             touched = changed[path]
             missed = []
             for no in sorted(touched & set(data["lines"])):
@@ -156,6 +204,7 @@ def main():
                 else:
                     missed.append(no)
                     details.append({"kind": "line", "file": path, "line": no,
+                                    "function": enclosing(spans["functions"], no),
                                     "source": source_line(path, no)})
             for no in sorted(touched & set(data["branches"])):
                 for idx, taken in enumerate(data["branches"][no]):
@@ -165,6 +214,7 @@ def main():
                     else:
                         details.append({"kind": "branch", "file": path, "line": no,
                                         "direction": "true" if idx % 2 == 0 else "false",
+                                        "function": enclosing(spans["functions"], no),
                                         "source": source_line(path, no)})
             for name, (start, count) in data["functions"].items():
                 if start in touched:
@@ -173,12 +223,35 @@ def main():
                         summary["functions"][0] += 1
                     else:
                         details.append({"kind": "function", "file": path, "line": start,
-                                        "function": name, "source": source_line(path, start)})
+                                        "function": enclosing(spans["functions"], start) or name,
+                                        "source": source_line(path, start)})
+            seen = set()
+            for record in spans["mcdc"]:
+                decision = tuple(record[:4])
+                if decision in seen or not touched & set(range(record[0], record[2] + 1)):
+                    continue
+                seen.add(decision)
+                conditions = mcdc_conditions(record, spans["branches"])
+                for idx, shown in enumerate(record[9]):
+                    summary["mcdc"][1] += 1
+                    if shown:
+                        summary["mcdc"][0] += 1
+                        continue
+                    where = conditions[idx] if idx < len(conditions) else decision
+                    details.append({
+                        "kind": "mcdc", "file": path, "line": where[0], "column": where[1],
+                        "condition": idx + 1,
+                        "condition_source": snippet(path, *where[:4]),
+                        "decision_source": snippet(path, *decision),
+                        "function": enclosing(spans["functions"], record[0]),
+                        "test_vectors": [v for v in record[10] if v.get("executed")],
+                    })
             if missed:
                 uncovered_ranges[path] = ranges(missed)
     text = (f"{args.label}: lines {summary['lines'][0]}/{summary['lines'][1]}, "
             f"functions {summary['functions'][0]}/{summary['functions'][1]}, "
-            f"branches {summary['branches'][0]}/{summary['branches'][1]}")
+            f"branches {summary['branches'][0]}/{summary['branches'][1]}, "
+            f"MC/DC {summary['mcdc'][0]}/{summary['mcdc'][1]}")
     if uncovered_ranges:
         text += "\nuncovered: " + "  ".join(f"{p}:{r}" for p, r in uncovered_ranges.items())
     (out / "summary.txt").write_text(text + "\n")

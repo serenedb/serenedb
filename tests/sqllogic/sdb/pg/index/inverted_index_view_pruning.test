@@ -195,11 +195,6 @@ QUERY PLAN
 │ Projections: body, unused1         │  │ Order By: unused1 ASC                  │
 │ ~1 row                             │  │ ~4 rows                                │
 ╰────────────────────────────────────╯  ╰────────────────────┬───────────────────╯
-                                        ╭─ PROJECTION ───────┴───────────────────╮
-                                        │ Projections: unused1, file_index,      │
-                                        │              file_row_number           │
-                                        │ ~5 rows                                │
-                                        ╰────────────────────┬───────────────────╯
                                         ╭─ READ_PARQUET ─────┴───────────────────╮
                                         │ Function: READ_PARQUET                 │
                                         │ Projections: unused1                   │

@@ -6,10 +6,7 @@ hash-threshold 100
 # scores are computed from.
 
 statement ok
-SET late_materialization_lookup_max_rows = 0;
-
-statement ok
-SET disabled_optimizers = 'compressed_materialization';
+SET disabled_optimizers = 'compressed_materialization,late_materialization';
 
 
 statement ok

@@ -1206,3 +1206,57 @@ SELECT parse_filename(filename), content FROM lj_v_text_idx WHERE content @@ ts_
 ----
 parse_filename	content
 lj_txt_a.txt	red fox jumps over the lazy dog\nand keeps running\n
+
+statement ok
+CREATE TABLE lj_vec (id INT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX lj_vec_idx ON lj_vec USING inverted(id, emb ivf (metric = 'l2'));
+
+statement count 4
+INSERT INTO lj_vec VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_vec;
+
+query
+EXPLAIN SELECT id FROM lj_vec_idx ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────╮
+│ Projections: #0                 │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+╭─ PROJECTION ───┴────────────────╮
+│ Projections: id,                │
+│              emb <=> [1, 0, 0]  │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+╭─ LOOKUP_JOIN ──┴────────────────╮
+│ Key: iresearch_pk               │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+                 ├─────────────────────────────╮
+╭─ TOP_N ────────┴────────────────╮  ╭─ IRESEARCH_SCAN ──╮
+│ Top: 3                          │  │ Index: lj_vec_idx │
+│ Order By: #0 ASC                │  │ Lookup: table     │
+│ ~3 rows                         │  │ Projections: id   │
+╰────────────────┬────────────────╯  │ ~3 rows           │
+╭─ PROJECTION ───┴────────────────╮  ╰───────────────────╯
+│ Projections: emb <=> [1, 0, 0], │
+│              iresearch_pk, emb  │
+│ ~4 rows                         │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: lj_vec_idx               │
+│ Projections: emb, iresearch_pk  │
+│ ~4 rows                         │
+╰─────────────────────────────────╯
+
+query
+SELECT id FROM lj_vec_idx ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 3;
+----
+id
+1
+3
+2

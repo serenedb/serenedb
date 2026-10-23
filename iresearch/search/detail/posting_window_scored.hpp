@@ -30,8 +30,8 @@
 
 namespace irs::detail {
 
-template<typename InputType, ScoreMergeType MergeType>
-class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
+template<typename InputType, ScoreMergeType MergeType, bool Counts>
+class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
   static_assert(
     MergeType != ScoreMergeType::Noop,
     "a clause of a disjunction is merged into what the others said");
@@ -47,10 +47,16 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
   using Base::kBlock;
   using Base::ReadLeafBelow;
 
-  static constexpr bool kCounts = true;
+  static constexpr bool kCounts = Counts;
 
  public:
-  PostingCountScored() = default;
+  PostingWindowScored() = default;
+
+  PostingWindowScored(const PostingMeta& meta, const IndexInput& doc_in,
+                      bool has_score_bounds, const SubReader& segment,
+                      const TermReader& field, const ScoreArgs& args) {
+    Prepare(meta, doc_in, has_score_bounds, segment, field, args);
+  }
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                bool has_score_bounds, const SubReader& segment,
@@ -69,7 +75,24 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
   }
 
   doc_id_t Count(doc_id_t min, doc_id_t max, uint32_t* IRS_RESTRICT counts,
-                 uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT window) {
+                 uint64_t* IRS_RESTRICT mask, score_t* IRS_RESTRICT window)
+    requires Counts
+  {
+    return Add(min, max, counts, mask, window);
+  }
+
+  doc_id_t Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+                score_t* IRS_RESTRICT window)
+    requires(!Counts)
+  {
+    return Add(min, max, nullptr, mask, window);
+  }
+
+ private:
+  IRS_FORCE_INLINE doc_id_t Add(doc_id_t min, doc_id_t max,
+                                uint32_t* IRS_RESTRICT counts,
+                                uint64_t* IRS_RESTRICT mask,
+                                score_t* IRS_RESTRICT window) {
     SDB_ASSERT(min < max);
     if (!this->Start(min, max)) {
       return _doc;
@@ -115,5 +138,11 @@ class PostingCountScored : public PostingLeaf<InputType, kWindowScoredShape> {
     }
   }
 };
+
+template<typename InputType, ScoreMergeType MergeType>
+using PostingCountScored = PostingWindowScored<InputType, MergeType, true>;
+
+template<typename InputType, ScoreMergeType MergeType>
+using PostingFillScored = PostingWindowScored<InputType, MergeType, false>;
 
 }  // namespace irs::detail

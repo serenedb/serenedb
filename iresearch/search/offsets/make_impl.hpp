@@ -26,9 +26,8 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/ngram_all_slots.hpp"
 #include "iresearch/search/detail/ngram_slots.hpp"
-#include "iresearch/search/detail/phrase_fixed_slots.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
-#include "iresearch/search/detail/phrase_variadic_slots.hpp"
+#include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/impl.hpp"
@@ -58,7 +57,7 @@ offsets::Root::ptr MakeFixedPhraseOffsets(const FixedPhraseQuery& query) {
       using Leaf = detail::PostingPos<Input, Bounds, true>;
       return ResolveMatcherOf<M, 0, kOffsetsCount<M>, true>(
         query, [&]<typename Matcher>(auto&&... args) -> offsets::Root::ptr {
-          using Slots = detail::PhraseFixedSlots<Matcher, Leaf>;
+          using Slots = detail::PhraseSlots<Matcher, Leaf>;
           using Impl = offsets::Impl<offsets::Phrase<Slots>>;
           return memory::make_managed<Impl>(
             metas, std::span<const TermInterval>{query.positions}, *h.doc,
@@ -87,15 +86,12 @@ offsets::Root::ptr MakeVariadicPhraseOffsets(const VariadicPhraseQuery& query) {
         query,
         [&]<typename Matcher, typename Leaf>(
           auto&&... args) -> offsets::Root::ptr {
-          using Slots = detail::PhraseVariadicSlots<Matcher, Leaf>;
+          using Slots =
+            detail::PhraseSlots<Matcher, Leaf, 0, PhraseVariadicPos<Leaf>>;
           using Impl = offsets::Impl<offsets::Phrase<Slots>>;
           return memory::make_managed<Impl>(
-            metas.size(),
-            [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
-            },
-            offsets, std::span<const score_t>{}, intervals,
-            std::forward<decltype(args)>(args)...);
+            metas, offsets, std::span<const score_t>{}, intervals, *h.doc,
+            h.Layout(), *h.pos, h.pay, std::forward<decltype(args)>(args)...);
         });
     });
   });

@@ -59,6 +59,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
 #include "phrase_families.hpp"
+#include "phrase_slop_run.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -1916,6 +1917,56 @@ TEST(TokenPhraseIndexTest, pruned_top_prunes_only_anchor_bounded_phrases) {
       ASSERT_EQ(tests::kTop, full.scores.size());
       ExpectSameTop(full, pruned);
       ExpectSameTop(full, TopOf(index, *positional, scorer, true, filter));
+      if (prunes) {
+        EXPECT_LT(pruned.reached, full.reached);
+      } else {
+        EXPECT_EQ(pruned.reached, full.reached);
+      }
+    }
+  }
+}
+
+TEST(TokenPhraseIndexTest, pruned_top_prunes_unboosted_positional_expansions) {
+  constexpr std::string_view kWords[] = {"ab", "ac", "b", "c", "d"};
+  const auto docs = RandomDocs(kWords, 4000);
+  const irs::BM25 scorer;
+  const Index index{docs, std::type_identity<DenseWords>{}, Bounded(scorer)};
+  const auto prefix = [](irs::ByPhraseOptions& phrase, std::string_view term,
+                         irs::PosAttr::value_t offs_min,
+                         irs::PosAttr::value_t offs_max) {
+    phrase.push_back<irs::ByPrefixOptions>(offs_min, offs_max).term =
+      Bytes(term);
+  };
+  auto term_prefix = Phrase("b");
+  prefix(term_prefix, "a", 1, 1);
+  irs::ByPhraseOptions prefix_set;
+  prefix(prefix_set, "a", 1, 1);
+  auto& terms = prefix_set.push_back<irs::TermSetOptions>().terms;
+  terms.emplace(Bytes("b"));
+  terms.emplace(Bytes("d"));
+  auto gap = Phrase("b");
+  prefix(gap, "a", 1, 3);
+  auto fuzzy = Phrase("b");
+  auto& edit = fuzzy.push_back<irs::ByEditDistanceOptions>();
+  edit.term = Bytes("ab");
+  edit.max_distance = 1;
+  const std::pair<irs::ByPhraseOptions, bool> cases[] = {
+    {std::move(term_prefix), true},
+    {std::move(prefix_set), true},
+    {std::move(gap), true},
+    {std::move(fuzzy), false},
+  };
+  DeadRange table{irs::doc_limits::min(), irs::doc_limits::min() + 100};
+  for (const auto& [options, prunes] : cases) {
+    SCOPED_TRACE(Describe(options));
+    const auto positional = Lowered(PhraseOn(kPositionalId, options));
+    for (auto* filter : {static_cast<irs::detail::TableFilter*>(nullptr),
+                         static_cast<irs::detail::TableFilter*>(&table)}) {
+      SCOPED_TRACE(static_cast<bool>(filter));
+      const auto full = TopOf(index, *positional, scorer, false, filter);
+      const auto pruned = TopOf(index, *positional, scorer, true, filter);
+      ASSERT_EQ(tests::kTop, full.scores.size());
+      ExpectSameTop(full, pruned);
       if (prunes) {
         EXPECT_LT(pruned.reached, full.reached);
       } else {

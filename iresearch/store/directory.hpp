@@ -138,21 +138,21 @@ class RefTracker {
   mutable Refs _tracked ABSL_GUARDED_BY(_mutex);
 };
 
-class IndexFiles {
+class Directory {
  public:
   using Visitor = std::function<bool(std::string_view)>;
 
-  IndexFiles(
+  Directory(
     duckdb::DatabaseInstance& db, std::string_view root,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-  IndexFiles(
+  Directory(
     duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
-  IndexFiles(
+  Directory(
     duckdb::DatabaseInstance& db, std::vector<LinkedFile> files,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
 
-  static IndexFiles PrivateMemory(
+  static Directory PrivateMemory(
     duckdb::DatabaseInstance& db,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
 
@@ -185,9 +185,9 @@ class IndexFiles {
     return _state->rm;
   }
 
-  IndexFiles Tracking(FileTracker& tracker) const noexcept;
-  IndexFiles Tracking(RefTracker& tracker) const noexcept;
-  IndexFiles Untracked() const noexcept;
+  Directory Tracking(FileTracker& tracker) const noexcept;
+  Directory Tracking(RefTracker& tracker) const noexcept;
+  Directory Untracked() const noexcept;
 
  private:
   struct State {
@@ -204,7 +204,7 @@ class IndexFiles {
     std::shared_ptr<FileInfos> infos;
   };
 
-  explicit IndexFiles(std::shared_ptr<State> state) noexcept
+  explicit Directory(std::shared_ptr<State> state) noexcept
     : _state{std::move(state)} {}
 
   bool InBlocks() const noexcept {

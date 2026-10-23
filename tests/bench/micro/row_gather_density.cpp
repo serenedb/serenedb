@@ -31,7 +31,7 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
@@ -115,7 +115,7 @@ std::string Key(uint64_t i) {
 }
 
 struct Column {
-  irs::IndexFiles dir{irs::IndexFiles::PrivateMemory(CsDb())};
+  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;

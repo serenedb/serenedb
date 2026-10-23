@@ -32,7 +32,7 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
@@ -224,7 +224,7 @@ std::filesystem::path BenchDir(Codec codec) {
 struct Seg {
   explicit Seg(Codec codec) : dir{CsDb(), BenchDir(codec).string()} {}
 
-  irs::IndexFiles dir;
+  irs::Directory dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
 };

@@ -32,12 +32,12 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::segment_meta {
 
-void Read(const IndexFiles& dir, SegmentMeta& meta, std::string_view filename) {
+void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
   SDB_ASSERT(!IsNull(filename));
 
   std::string_view segment_name;

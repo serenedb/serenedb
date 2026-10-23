@@ -31,7 +31,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
@@ -54,11 +54,11 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
-    const IndexFiles& dir, const SegmentMeta& meta,
+    const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
-    const IndexFiles& dir, const SegmentMeta& meta) const;
+    const Directory& dir, const SegmentMeta& meta) const;
 
   const SegmentInfo& Meta() const final { return _info; }
 
@@ -88,7 +88,7 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
 
-    void Open(const IndexFiles& dir, const SegmentMeta& meta,
+    void Open(const Directory& dir, const SegmentMeta& meta,
               const IndexReaderOptions& options);
   };
 

@@ -81,7 +81,7 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(const IndexFiles& dir, std::string_view segment_name,
+ColWriter::ColWriter(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
   : _dir{&dir},
     _segment_name{segment_name},

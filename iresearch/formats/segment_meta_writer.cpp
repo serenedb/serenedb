@@ -31,14 +31,14 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/string_utils.hpp"
 
 namespace irs::segment_meta {
 namespace {
 
-std::vector<FileInfo> FileInfosOf(const IndexFiles& dir,
+std::vector<FileInfo> FileInfosOf(const Directory& dir,
                                   const std::vector<std::string>& files) {
   std::vector<FileInfo> infos;
   if (dir.Kind() != StorageKind::Remote) {
@@ -74,7 +74,7 @@ std::string FileName(const SegmentMeta& meta) {
   return irs::FileName(meta.name, meta.version, kExt);
 }
 
-void Write(const IndexFiles& dir, std::string& meta_file, SegmentMeta& meta) {
+void Write(const Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());

@@ -28,14 +28,14 @@
 
 #include "iresearch/formats/index/idx_reader.hpp"  // TermDictMeta, kIdxFormat*
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 class IdxWriter final {
  public:
-  IdxWriter(const IndexFiles& dir, std::string_view segment_name);
+  IdxWriter(const Directory& dir, std::string_view segment_name);
   ~IdxWriter();
 
   IdxWriter(const IdxWriter&) = delete;

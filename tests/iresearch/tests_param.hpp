@@ -25,7 +25,7 @@
 
 #include <array>
 #include <bit>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <memory>
@@ -36,24 +36,24 @@ class TestBase;
 
 namespace tests {
 
-std::shared_ptr<irs::IndexFiles> MemoryDirectory(const TestBase* test);
-std::shared_ptr<irs::IndexFiles> LocalDirectory(const TestBase* test);
-std::shared_ptr<irs::IndexFiles> ObjectStoreDirectory(const TestBase* test);
+std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase* test);
+std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test);
+std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase* test);
 
 irs::SimulatedObjectStore& ObjectStore();
 
-using dir_generator_f = std::shared_ptr<irs::IndexFiles> (*)(const TestBase*);
+using dir_generator_f = std::shared_ptr<irs::Directory> (*)(const TestBase*);
 
 std::string ToString(dir_generator_f generator);
 
 template<dir_generator_f DirectoryGenerator>
-std::pair<std::shared_ptr<irs::IndexFiles>, std::string> Directory(
+std::pair<std::shared_ptr<irs::Directory>, std::string> Directory(
   const TestBase* ctx) {
   return std::make_pair(DirectoryGenerator(ctx), ToString(DirectoryGenerator));
 }
 
 using dir_param_f =
-  std::pair<std::shared_ptr<irs::IndexFiles>, std::string> (*)(const TestBase*);
+  std::pair<std::shared_ptr<irs::Directory>, std::string> (*)(const TestBase*);
 
 enum Types : uint64_t {
   kTypesDefault = 1 << 0,
@@ -101,10 +101,10 @@ class DirectoryTestCaseBase
     TestBase::TearDown();
   }
 
-  irs::IndexFiles& dir() const noexcept { return *_dir; }
+  irs::Directory& dir() const noexcept { return *_dir; }
 
  protected:
-  std::shared_ptr<irs::IndexFiles> _dir;
+  std::shared_ptr<irs::Directory> _dir;
 };
 
 }  // namespace tests

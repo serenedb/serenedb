@@ -85,7 +85,7 @@ struct CompactionTier {
 CompactionPolicy MakePolicy(const CompactionTier& options);
 
 // Writes segment_meta to the supplied directory
-void FlushIndexSegment(const IndexFiles& dir, IndexSegment& segment,
+void FlushIndexSegment(const Directory& dir, IndexSegment& segment,
                        bool increment_version = true);
 
 }  // namespace irs::index_utils

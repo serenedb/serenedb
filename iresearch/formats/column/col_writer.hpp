@@ -38,7 +38,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -50,7 +50,7 @@ struct AnnBuildEnv;
 
 class ColWriter final {
  public:
-  ColWriter(const IndexFiles& dir, std::string_view segment_name,
+  ColWriter(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db);
   ~ColWriter();
 
@@ -106,7 +106,7 @@ class ColWriter final {
                                    duckdb::CompressionType forced,
                                    bool hyperloglog);
 
-  const IndexFiles* _dir;
+  const Directory* _dir;
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;

@@ -28,7 +28,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/debugging.hpp"
 

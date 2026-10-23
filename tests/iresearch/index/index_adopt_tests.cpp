@@ -27,7 +27,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iterator>
@@ -97,7 +97,7 @@ class IndexAdoptTest : public TestBase {
   void Open(irs::OpenMode mode, bool cleanup_on_open = true,
             uint32_t segment_docs_max = 0) {
     _fs = std::make_unique<CountingFileSystem>();
-    _dir = std::make_unique<irs::IndexFiles>(
+    _dir = std::make_unique<irs::Directory>(
       irs::DuckDBEngine::Instance().instance(), *_fs, _path.string(),
       GetResourceManager().options);
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
@@ -106,7 +106,7 @@ class IndexAdoptTest : public TestBase {
     _writer = irs::IndexWriter::Make(*_dir, mode, std::move(options));
   }
 
-  // Drops the IndexFiles too, so no in-memory IndexFileRefs survive.
+  // Drops the Directory too, so no in-memory IndexFileRefs survive.
   void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
@@ -159,7 +159,7 @@ class IndexAdoptTest : public TestBase {
 
   std::filesystem::path _path;
   std::unique_ptr<CountingFileSystem> _fs;
-  std::unique_ptr<irs::IndexFiles> _dir;
+  std::unique_ptr<irs::Directory> _dir;
   irs::IndexWriter::ptr _writer;
 };
 

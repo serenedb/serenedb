@@ -52,7 +52,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
@@ -92,7 +92,7 @@ constexpr Shape kShapes[] = {
 
 // One opened block of ~W rows plus everything keeping it alive.
 struct Blk {
-  irs::IndexFiles dir{irs::IndexFiles::PrivateMemory(CsDb())};
+  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   std::unique_ptr<duckdb::ColumnSegment> block;

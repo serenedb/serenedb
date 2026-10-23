@@ -51,7 +51,7 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -223,7 +223,7 @@ class EmbeddedIndex {
     return options;
   }
 
-  irs::IndexFiles _dir;
+  irs::Directory _dir;
   irs::DirectoryReader _reader;
 };
 

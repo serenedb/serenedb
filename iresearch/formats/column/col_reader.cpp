@@ -42,9 +42,8 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const IndexFiles& dir,
-                            std::string_view segment_name, bool present,
-                            IOAdvice advice) {
+IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
+                            bool present, IOAdvice advice) {
   if (!present) {
     return nullptr;
   }
@@ -146,11 +145,11 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 
 }  // namespace
 
-ColReader::ColReader(const IndexFiles& dir, std::string_view segment_name,
+ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, IOAdvice advice)
   : ColReader{dir, segment_name, db, dir.Has(FileName(segment_name)), advice} {}
 
-ColReader::ColReader(const IndexFiles& dir, std::string_view segment_name,
+ColReader::ColReader(const Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db, bool present,
                      IOAdvice advice)
   : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, present, advice)} {

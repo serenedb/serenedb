@@ -34,7 +34,7 @@
 #include <iresearch/formats/posting_meta.hpp>
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/field_meta.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/bit_packing.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>

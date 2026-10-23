@@ -32,7 +32,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -151,10 +151,10 @@ OpenedDirectory OpenStorageDirectory(
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
-    return {.directory = irs::IndexFiles{db, irs::MemoryIndexRoot(), resources},
+    return {.directory = irs::Directory{db, irs::MemoryIndexRoot(), resources},
             .absent = !in_memory};
   }
-  return {.directory = irs::IndexFiles{db, *path, resources}, .on_disk = true};
+  return {.directory = irs::Directory{db, *path, resources}, .on_disk = true};
 }
 
 InvertedIndexStorage::~InvertedIndexStorage() {

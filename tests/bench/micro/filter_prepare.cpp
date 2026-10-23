@@ -42,7 +42,7 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -152,7 +152,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  std::unique_ptr<irs::IndexFiles> _dir;
+  std::unique_ptr<irs::Directory> _dir;
   std::filesystem::path _dir_path;
   irs::DirectoryReader _reader;
 
@@ -192,7 +192,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::remove_all(_dir_path);
   std::filesystem::create_directories(_dir_path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  _dir = std::make_unique<irs::IndexFiles>(*db, _dir_path.string());
+  _dir = std::make_unique<irs::Directory>(*db, _dir_path.string());
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;

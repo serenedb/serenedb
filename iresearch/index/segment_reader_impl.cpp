@@ -69,7 +69,7 @@ class SegmentAllDocs : public lead::Node {
   doc_id_t _doc = doc_limits::invalid();
 };
 
-FileRefs GetRefs(const IndexFiles& dir, const SegmentMeta& meta) {
+FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
   FileRefs file_refs;
   file_refs.reserve(meta.files.size());
 
@@ -83,7 +83,7 @@ FileRefs GetRefs(const IndexFiles& dir, const SegmentMeta& meta) {
 }  // namespace
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
-  const IndexFiles& dir, const SegmentMeta& meta,
+  const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
@@ -102,7 +102,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
-  const IndexFiles& dir, const SegmentMeta& meta) const {
+  const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   reader->_field_reader = _field_reader;
@@ -155,7 +155,7 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
     });
 }
 
-void SegmentReaderImpl::ColumnData::Open(const IndexFiles& dir,
+void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options) {
   SDB_ASSERT(options.db);

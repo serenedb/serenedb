@@ -50,7 +50,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
@@ -94,7 +94,7 @@ duckdb::DatabaseInstance& CsDb() {
 }
 
 struct Seg {
-  irs::IndexFiles dir{irs::IndexFiles::PrivateMemory(CsDb())};
+  irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -262,7 +262,7 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   const auto type = TypeOf(shape);
   const uint64_t n = Rows();
   for (auto _ : state) {
-    irs::IndexFiles dir{irs::IndexFiles::PrivateMemory(CsDb())};
+    irs::Directory dir{irs::Directory::PrivateMemory(CsDb())};
     irs::ColWriter w{dir, kSeg, CsDb()};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;

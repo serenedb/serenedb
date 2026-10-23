@@ -34,7 +34,7 @@
 namespace irs {
 
 DirectoryReader::DirectoryReader(
-  const IndexFiles& dir,
+  const Directory& dir,
   const IndexReaderOptions& opts /*= directory_reader_options()*/,
   MetaPayloadReader payload)
   : _impl{DirectoryReaderImpl::Open(dir, opts, nullptr, std::move(payload))} {}

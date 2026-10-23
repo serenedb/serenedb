@@ -27,6 +27,6 @@ namespace sdb::connector::highlight {
 
 MemoryIndex::MemoryIndex()
   : _db{&irs::DuckDBEngine::Instance().instance()},
-    _dir{irs::IndexFiles::PrivateMemory(*_db)} {}
+    _dir{irs::Directory::PrivateMemory(*_db)} {}
 
 }  // namespace sdb::connector::highlight

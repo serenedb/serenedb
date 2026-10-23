@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 
 namespace irs {
 
@@ -30,7 +30,7 @@ class IdxReader;
 struct SegmentMeta;
 
 struct ReaderState {
-  const IndexFiles* dir;
+  const Directory* dir;
   const SegmentMeta* meta;
   IdxReader* idx = nullptr;
 };

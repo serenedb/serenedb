@@ -34,14 +34,14 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 
 struct DirectoryReaderImpl::Init {
-  Init(const IndexFiles& dir, const DirectoryMeta& meta,
+  Init(const Directory& dir, const DirectoryMeta& meta,
        const ReadersType& readers);
 
   FileRefs file_refs;
@@ -52,8 +52,7 @@ struct DirectoryReaderImpl::Init {
     column_stats;
 };
 
-DirectoryReaderImpl::Init::Init(const IndexFiles& dir,
-                                const DirectoryMeta& meta,
+DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
                                 const ReadersType& readers) {
   const bool has_segments_file = !meta.filename.empty();
   const auto& segments = meta.index_meta.segments;
@@ -113,7 +112,7 @@ DirectoryReaderImpl::Init::Init(const IndexFiles& dir,
 
 namespace {
 
-IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const IndexFiles& dir,
+IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
                                          MetaPayloadReader payload) {
   IndexFileRefs::ref_t ref;
   std::string filename;
@@ -137,14 +136,14 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const IndexFiles& dir,
 
 }  // namespace
 
-DirectoryReaderImpl::DirectoryReaderImpl(const IndexFiles& dir,
+DirectoryReaderImpl::DirectoryReaderImpl(const Directory& dir,
                                          const IndexReaderOptions& opts,
                                          DirectoryMeta&& meta,
                                          ReadersType&& readers)
   : DirectoryReaderImpl{Init{dir, meta, readers}, dir, opts, std::move(meta),
                         std::move(readers)} {}
 
-DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const IndexFiles& dir,
+DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
                                          const IndexReaderOptions& opts,
                                          DirectoryMeta&& meta,
                                          ReadersType&& readers)
@@ -157,7 +156,7 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const IndexFiles& dir,
     _column_stats{std::move(init.column_stats)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
-  const IndexFiles& dir, const IndexReaderOptions& opts,
+  const Directory& dir, const IndexReaderOptions& opts,
   const std::shared_ptr<const DirectoryReaderImpl>& cached,
   MetaPayloadReader payload) {
   IndexMeta index_meta;

@@ -77,7 +77,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/lead/node.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
@@ -224,7 +224,7 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::IndexFiles> dir;
+  std::unique_ptr<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -244,7 +244,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  index.dir = std::make_unique<irs::IndexFiles>(*db, index.path.string());
+  index.dir = std::make_unique<irs::Directory>(*db, index.path.string());
 
   irs::IndexWriterOptions opts;
   opts.db = db;

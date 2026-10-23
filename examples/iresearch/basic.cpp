@@ -39,7 +39,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -388,7 +388,7 @@ void RemoveDocuments(irs::IndexWriter& writer,
 
 // Compact segments after removal to reclaim space and merge segments.
 // Deleted documents are only physically removed during compaction.
-void CompactIndex(irs::IndexWriter& writer, const irs::IndexFiles& dir) {
+void CompactIndex(irs::IndexWriter& writer, const irs::Directory& dir) {
   std::cout << "=== Compact Index ===\n";
 
   auto before = writer.GetSnapshot();
@@ -425,7 +425,7 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::IndexFiles dir{Db(), irs::MemoryIndexRoot()};
+    irs::Directory dir{Db(), irs::MemoryIndexRoot()};
     irs::IndexWriterOptions options;
     options.db = &Db();
     options.reader_options.db = &Db();

@@ -32,13 +32,13 @@
 
 namespace irs::tests {
 
-std::unique_ptr<ColWriter> MakeCsWriter(const IndexFiles& dir,
+std::unique_ptr<ColWriter> MakeCsWriter(const Directory& dir,
                                         std::string_view segment_name) {
   return std::make_unique<ColWriter>(
     dir, segment_name, ::irs::DuckDBEngine::Instance().instance());
 }
 
-std::unique_ptr<ColReader> MakeCsReader(const IndexFiles& dir,
+std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                         std::string_view segment_name) {
   // Reader ctor throws on a missing file; tests that pattern an
   // "absent column = empty index" probe afterwards via Has*(). Return

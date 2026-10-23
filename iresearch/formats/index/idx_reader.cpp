@@ -31,7 +31,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -50,12 +50,12 @@ struct IdxReader::Impl {
   std::vector<uint64_t> ann_ends;
 };
 
-IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
+IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                      HnswBases* hnsw_bases)
   : IdxReader{dir, segment_name, dir.Has(FileName(segment_name, kIdxFormatExt)),
               hnsw_bases} {}
 
-IdxReader::IdxReader(const IndexFiles& dir, std::string_view segment_name,
+IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                      bool present, HnswBases* hnsw_bases)
   : _impl{std::make_unique<Impl>()} {
   if (!present) {

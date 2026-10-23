@@ -34,7 +34,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
 #include <limits>
@@ -313,7 +313,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
   std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
   std::optional<duckdb::idx_t> _building_index;
-  std::optional<irs::IndexFiles> _dir;
+  std::optional<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;

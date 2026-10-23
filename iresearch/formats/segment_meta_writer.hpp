@@ -26,7 +26,7 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 
 namespace irs {
 
@@ -48,7 +48,7 @@ inline constexpr duckdb::field_id_t kFileInfoFieldETag = 3;
 
 std::string FileName(const SegmentMeta& meta);
 
-void Write(const IndexFiles& dir, std::string& filename, SegmentMeta& meta);
+void Write(const Directory& dir, std::string& filename, SegmentMeta& meta);
 
 }  // namespace segment_meta
 }  // namespace irs

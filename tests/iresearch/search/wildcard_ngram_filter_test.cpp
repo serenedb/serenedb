@@ -23,7 +23,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
@@ -294,8 +294,8 @@ TEST(WildcardNGramFilterTest, query) {
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
 
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
@@ -417,8 +417,8 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
@@ -667,8 +667,8 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
   for (const auto n : {size_t{2}, size_t{3}}) {
     irs::analysis::WildcardTokenizer analyzer{nullptr, n};
-    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                        irs::MemoryIndexRoot()};
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       irs::MemoryIndexRoot()};
     {
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());

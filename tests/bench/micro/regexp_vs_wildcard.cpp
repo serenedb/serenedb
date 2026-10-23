@@ -40,7 +40,7 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -309,7 +309,7 @@ constexpr int kRepetitions = 5;
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::IndexFiles> dir;
+  std::unique_ptr<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -342,7 +342,7 @@ Corpus BuildIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  auto dir = std::make_unique<irs::IndexFiles>(*db, tmp_root.string());
+  auto dir = std::make_unique<irs::Directory>(*db, tmp_root.string());
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;

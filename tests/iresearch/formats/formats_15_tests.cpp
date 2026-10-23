@@ -261,7 +261,7 @@ class Format15TestCase : public tests::FormatTestCase {
     std::unique_ptr<irs::byte_type[]> inline_bytes;
   };
 
-  ReadMeta WriteReadMeta(const irs::IndexFiles& dir, DocsView docs,
+  ReadMeta WriteReadMeta(const irs::Directory& dir, DocsView docs,
                          irs::ScorerPtr scorer, irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
@@ -332,7 +332,7 @@ class Format15TestCase : public tests::FormatTestCase {
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
-  const irs::IndexFiles& dir, DocsView docs, irs::ScorerPtr scorer,
+  const irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
   irs::PostingsWriter writer;

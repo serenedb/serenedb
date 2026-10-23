@@ -33,7 +33,7 @@
 #include <string_view>
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -71,7 +71,7 @@ class IndexMetaWriter final {
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
-  bool prepare(const IndexFiles& dir, IndexMeta& meta,
+  bool prepare(const Directory& dir, IndexMeta& meta,
                std::string& pending_filename, std::string& filename,
                const SourcePosition& position);
   bool commit();
@@ -79,7 +79,7 @@ class IndexMetaWriter final {
 
  private:
   MetaPayloadWriter _payload;
-  std::optional<IndexFiles> _dir;
+  std::optional<Directory> _dir;
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit
 };
 

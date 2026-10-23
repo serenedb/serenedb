@@ -32,7 +32,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"  // IndexInput
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/type_limits.hpp"  // field_limits
@@ -73,9 +73,9 @@ inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
-  IdxReader(const IndexFiles& dir, std::string_view segment_name,
+  IdxReader(const Directory& dir, std::string_view segment_name,
             HnswBases* hnsw_bases);
-  IdxReader(const IndexFiles& dir, std::string_view segment_name, bool present,
+  IdxReader(const Directory& dir, std::string_view segment_name, bool present,
             HnswBases* hnsw_bases);
   ~IdxReader();
 

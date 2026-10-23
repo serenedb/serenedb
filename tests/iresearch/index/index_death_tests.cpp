@@ -26,7 +26,7 @@
 #include <filesystem>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -147,11 +147,11 @@ class FailingFileSystem final : public tests::HookFileSystem {
 
 class IndexDeathTest : public TestBase {
  protected:
-  irs::IndexFiles LocalFiles(duckdb::FileSystem& fs) {
+  irs::Directory LocalFiles(duckdb::FileSystem& fs) {
     const auto path = test_dir() / absl::StrCat("index", ++_roots);
     std::filesystem::create_directories(path);
-    return irs::IndexFiles{irs::DuckDBEngine::Instance().instance(), fs,
-                           path.string()};
+    return irs::Directory{irs::DuckDBEngine::Instance().instance(), fs,
+                          path.string()};
   }
 
   void OpenReader(

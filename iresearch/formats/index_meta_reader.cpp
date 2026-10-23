@@ -32,7 +32,7 @@
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/serialization.hpp"
 
@@ -48,8 +48,7 @@ uint64_t ParseGeneration(std::string_view file,
   return index_gen_limits::invalid();
 }
 
-bool LastFile(const IndexFiles& dir, std::string_view prefix,
-              std::string& out) {
+bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
   uint64_t max_gen = index_gen_limits::invalid();
   dir.Visit([&](std::string_view name) {
     const uint64_t gen = ParseGeneration(name, prefix);
@@ -63,7 +62,7 @@ bool LastFile(const IndexFiles& dir, std::string_view prefix,
   return index_gen_limits::valid(max_gen);
 }
 
-uint64_t ReadFile(const IndexFiles& dir, std::string_view filename,
+uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
   auto in = dir.Open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
@@ -115,15 +114,15 @@ uint64_t ParsePendingGeneration(std::string_view file) noexcept {
   return ParseGeneration(file, kPendingPrefix);
 }
 
-bool LastFile(const IndexFiles& dir, std::string& out) {
+bool LastFile(const Directory& dir, std::string& out) {
   return LastFile(dir, kPrefix, out);
 }
 
-bool LastPendingFile(const IndexFiles& dir, std::string& out) {
+bool LastPendingFile(const Directory& dir, std::string& out) {
   return LastFile(dir, kPendingPrefix, out);
 }
 
-void Read(const IndexFiles& dir, IndexMeta& meta, std::string_view filename,
+void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload) {
   SDB_ASSERT(!IsNull(filename));
 
@@ -143,7 +142,7 @@ void Read(const IndexFiles& dir, IndexMeta& meta, std::string_view filename,
   meta.segments = std::move(segments);
 }
 
-void ReadPayload(const IndexFiles& dir, std::string_view filename,
+void ReadPayload(const Directory& dir, std::string_view filename,
                  MetaPayloadReader payload) {
   std::ignore = ReadFile(dir, filename, payload, nullptr);
 }

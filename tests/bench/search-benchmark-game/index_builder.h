@@ -82,7 +82,7 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::IndexFiles& GetDirectory() { return _dir; }
+  irs::Directory& GetDirectory() { return _dir; }
   irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 
@@ -93,7 +93,7 @@ class IndexBuilder {
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::IndexFiles _dir;
+  irs::Directory _dir;
   irs::IndexWriter::ptr _writer;
 };
 

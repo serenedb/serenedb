@@ -28,7 +28,7 @@
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/formats/segment_meta_writer.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -38,8 +38,8 @@
 using namespace irs;
 
 TEST(index_meta_tests, memory_directory_read_write_15) {
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       EXPECT_EQ(42, position.offset);
@@ -133,8 +133,8 @@ TEST(index_meta_tests, last_generation) {
   }
 
   // populate directory
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   for (auto& name : names) {
     auto out = dir.Create(name);
     ASSERT_FALSE(!out);
@@ -150,8 +150,8 @@ TEST(index_meta_tests, last_generation) {
 }
 
 TEST(index_meta_tests, rejects_unknown_fields) {
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   const auto name = irs::index_meta::FileName(1);
   {
     auto out = dir.Create(name);
@@ -182,8 +182,8 @@ TEST(index_meta_tests, rejects_unknown_fields) {
 }
 
 TEST(index_meta_tests, payload_is_read_whole) {
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::IndexMetaWriter writer{
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       out.WriteProperty<uint64_t>(0, "tick", position.offset);

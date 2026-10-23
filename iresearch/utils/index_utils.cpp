@@ -438,7 +438,7 @@ CompactionPolicy MakePolicy(const CompactionTier& options) {
   };
 }
 
-void FlushIndexSegment(const IndexFiles& dir, IndexSegment& segment,
+void FlushIndexSegment(const Directory& dir, IndexSegment& segment,
                        bool increment_version) {
   PrepareFlush(segment, increment_version);
   segment_meta::Write(dir, segment.filename, segment.meta);

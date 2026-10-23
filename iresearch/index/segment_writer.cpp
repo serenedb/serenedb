@@ -65,7 +65,7 @@ doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
 }
 
 std::unique_ptr<SegmentWriter> SegmentWriter::make(
-  const IndexFiles& dir, const SegmentWriterOptions& options) {
+  const Directory& dir, const SegmentWriterOptions& options) {
   return std::make_unique<SegmentWriter>(ConstructToken{}, dir, options);
 }
 
@@ -89,7 +89,7 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
   return _docs_mask.Add(doc_id);
 }
 
-SegmentWriter::SegmentWriter(ConstructToken, const IndexFiles& dir,
+SegmentWriter::SegmentWriter(ConstructToken, const Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir.Tracking(_tracker)},
     _scorer{options.scorer},

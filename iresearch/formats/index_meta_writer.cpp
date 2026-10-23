@@ -29,7 +29,7 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -48,7 +48,7 @@ std::string index_meta::FileName(uint64_t gen) {
   return irs::FileName(kPrefix, gen);
 }
 
-bool IndexMetaWriter::prepare(const IndexFiles& dir, IndexMeta& meta,
+bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
                               std::string& pending_filename,
                               std::string& filename,
                               const SourcePosition& position) {

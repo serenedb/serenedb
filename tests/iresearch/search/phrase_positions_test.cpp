@@ -30,7 +30,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
@@ -254,8 +254,8 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   WhitespaceTokenizer whitespace;
   ExplicitTokenizer explicit_positions;
   const auto value = dense ? doc.Text() : doc.Explicit();
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());

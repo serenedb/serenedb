@@ -62,7 +62,7 @@ class DatabaseInstance;
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filters/filter.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -448,7 +448,7 @@ class IndexWriter : private util::Noncopyable {
     std::span<const std::string_view> adopted_metas,
     absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
 
-  static IndexWriter::ptr Make(const IndexFiles& dir, OpenMode mode,
+  static IndexWriter::ptr Make(const Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
@@ -483,7 +483,7 @@ class IndexWriter : private util::Noncopyable {
 
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
-  IndexWriter(ConstructToken, const IndexFiles& dir, bool owns_root,
+  IndexWriter(ConstructToken, const Directory& dir, bool owns_root,
               size_t segment_pool_size, const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
@@ -571,7 +571,7 @@ class IndexWriter : private util::Noncopyable {
 
     std::atomic_size_t buffered_docs{0};
     RefTracker refs;
-    IndexFiles dir;
+    Directory dir;
 
     ManagedVector<QueryContext> queries;
     ManagedVector<FlushedSegment> flushed;
@@ -588,10 +588,10 @@ class IndexWriter : private util::Noncopyable {
     IndexSegment writer_meta;
 
     static std::unique_ptr<SegmentContext> make(
-      const IndexFiles& dir, segment_meta_generator_t&& meta_generator,
+      const Directory& dir, segment_meta_generator_t&& meta_generator,
       const SegmentWriterOptions& options);
 
-    SegmentContext(const IndexFiles& dir,
+    SegmentContext(const Directory& dir,
                    segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
@@ -778,7 +778,7 @@ class IndexWriter : private util::Noncopyable {
     CompactingSegments segments;
     uint64_t floor = 0;
   } _compacting;
-  IndexFiles _dir;
+  Directory _dir;
   std::atomic<FlushContext*> _flush_context;
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
   PendingState _pending_state;

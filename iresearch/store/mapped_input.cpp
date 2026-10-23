@@ -20,7 +20,7 @@
 
 #include "iresearch/store/mapped_input.hpp"
 
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/math_utils.hpp"
 
 namespace irs {

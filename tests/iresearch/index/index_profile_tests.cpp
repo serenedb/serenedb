@@ -24,7 +24,7 @@
 #include <absl/synchronization/notification.h>
 
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>

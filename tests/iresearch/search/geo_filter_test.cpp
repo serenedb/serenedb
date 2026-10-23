@@ -28,7 +28,7 @@
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
@@ -264,8 +264,8 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
     {"S", R"({"type": "Point", "coordinates": [37.607, 55.709]})", " "},
   };
 
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
@@ -416,8 +416,8 @@ TEST(GeoFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -794,8 +794,8 @@ TEST(GeoFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
 
   // index data
@@ -1033,8 +1033,8 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.75589,  55.798193 ] } }
   ])");
 
-  irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                      irs::MemoryIndexRoot()};
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     irs::MemoryIndexRoot()};
   irs::DirectoryReader reader;
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,

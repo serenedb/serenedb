@@ -86,7 +86,7 @@ IndexDurability::IndexDurability(duckdb::idx_t db_id, std::string name)
   : _db_id{db_id}, _name{std::move(name)} {}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
-IndexDurability::OpenWriter(const irs::IndexFiles& dir, bool on_disk,
+IndexDurability::OpenWriter(const irs::Directory& dir, bool on_disk,
                             bool is_new, irs::IndexWriterOptions options,
                             ManifestSource manifest) {
   _files = dir;
@@ -120,7 +120,7 @@ IndexDurability::OpenWriter(const irs::IndexFiles& dir, bool on_disk,
 }
 
 std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
-  const irs::IndexFiles& dir, const irs::IndexReaderOptions& options) {
+  const irs::Directory& dir, const irs::IndexReaderOptions& options) {
   IndexStamp stamp;
   irs::DirectoryReader reader{
     dir, options,
@@ -146,7 +146,7 @@ void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                          _pending_checkpoint, 0);
 }
 
-void IndexDurability::ResolvePendingSave(const irs::IndexFiles& dir) const {
+void IndexDurability::ResolvePendingSave(const irs::Directory& dir) const {
   std::string pending;
   if (!irs::index_meta::LastPendingFile(dir, pending)) {
     return;
@@ -425,7 +425,7 @@ void IndexDurability::SyncDirectory() {
   _durable = std::max(_durable, published);
 }
 
-absl::Status IndexDurability::Cleanup(const irs::IndexFiles& dir) {
+absl::Status IndexDurability::Cleanup(const irs::Directory& dir) {
   try {
     SyncDirectory();
     if (dir.Kind() == irs::StorageKind::Remote) {

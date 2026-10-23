@@ -89,13 +89,13 @@ int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
 
 // The index at `path`, or a copy of it in memory: in cache blocks, or with
 // every file compacted into one span.
-irs::IndexFiles OpenIndex(std::string_view path, std::string_view memory) {
+irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles local{db, path};
+  irs::Directory local{db, path};
   if (memory.empty()) {
     return local;
   }
-  irs::IndexFiles copy{db, irs::MemoryIndexRoot()};
+  irs::Directory copy{db, irs::MemoryIndexRoot()};
   std::vector<std::string> names;
   local.Visit([&](std::string_view name) {
     names.emplace_back(name);

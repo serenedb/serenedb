@@ -32,7 +32,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
@@ -77,7 +77,7 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(const IndexFiles& dir,
+  explicit MergeWriter(const Directory& dir,
                        const SegmentWriterOptions& options) noexcept
     : _dir{dir},
       _readers{{options.resource_manager}},
@@ -109,7 +109,7 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  IndexFiles _dir;
+  Directory _dir;
   ManagedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;

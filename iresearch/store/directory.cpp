@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
@@ -118,7 +118,7 @@ class ForEachTask final : public duckdb::BaseExecutorTask {
 
   void ExecuteTask() final { _visit(_index); }
 
-  std::string TaskType() const final { return "IndexFilesForEach"; }
+  std::string TaskType() const final { return "DirectoryForEach"; }
 
  private:
   absl::FunctionRef<void(size_t)> _visit;
@@ -215,7 +215,7 @@ void RefTracker::Clear() const {
   _tracked.clear();
 }
 
-IndexFiles::State::~State() {
+Directory::State::~State() {
   if (kind != StorageKind::Memory) {
     return;
   }
@@ -227,86 +227,85 @@ IndexFiles::State::~State() {
   }
 }
 
-IndexFiles::IndexFiles(duckdb::DatabaseInstance& db, std::string_view root,
-                       const ResourceManagementOptions& rm)
-  : IndexFiles{db, FileSystemOf(db, root), root, rm} {}
+Directory::Directory(duckdb::DatabaseInstance& db, std::string_view root,
+                     const ResourceManagementOptions& rm)
+  : Directory{db, FileSystemOf(db, root), root, rm} {}
 
-IndexFiles::IndexFiles(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-                       std::string_view root,
-                       const ResourceManagementOptions& rm)
+Directory::Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, const ResourceManagementOptions& rm)
   : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root), rm)} {
   if (_state->kind == StorageKind::Remote) {
     _state->infos = std::make_shared<FileInfos>();
   }
 }
 
-IndexFiles::IndexFiles(duckdb::DatabaseInstance& db,
-                       std::vector<LinkedFile> files,
-                       const ResourceManagementOptions& rm)
+Directory::Directory(duckdb::DatabaseInstance& db,
+                     std::vector<LinkedFile> files,
+                     const ResourceManagementOptions& rm)
   : _state{std::make_shared<State>(db, duckdb::FileSystem::GetFileSystem(db),
                                    std::string{}, StorageKind::Linked, rm,
                                    std::move(files))} {}
 
-IndexFiles IndexFiles::PrivateMemory(duckdb::DatabaseInstance& db,
-                                     const ResourceManagementOptions& rm) {
+Directory Directory::PrivateMemory(duckdb::DatabaseInstance& db,
+                                   const ResourceManagementOptions& rm) {
   auto heap = std::make_unique<duckdb::MemoryFileSystem>();
   auto& fs = *heap;
-  return IndexFiles{std::make_shared<State>(
+  return Directory{std::make_shared<State>(
     db, fs, RootPath(MemoryIndexRoot()), StorageKind::Memory, rm,
     std::vector<LinkedFile>{}, std::move(heap))};
 }
 
-const LinkedFile* IndexFiles::FindLinked(std::string_view name) const noexcept {
+const LinkedFile* Directory::FindLinked(std::string_view name) const noexcept {
   const auto it = absl::c_find_if(
     _state->linked, [&](const LinkedFile& file) { return file.name == name; });
   return it == _state->linked.end() ? nullptr : &*it;
 }
 
-std::string IndexFiles::Path(std::string_view name) const {
+std::string Directory::Path(std::string_view name) const {
   return absl::StrCat(_state->root, name);
 }
 
-std::optional<FileInfo> IndexFiles::Info(std::string_view name) const {
+std::optional<FileInfo> Directory::Info(std::string_view name) const {
   if (!_state->infos) {
     return std::nullopt;
   }
   return _state->infos->Find(name);
 }
 
-void IndexFiles::Remember(std::string_view name, FileInfo info) const {
+void Directory::Remember(std::string_view name, FileInfo info) const {
   if (_state->infos) {
     _state->infos->Remember(name, std::move(info));
   }
 }
 
-IndexFiles IndexFiles::Tracking(FileTracker& tracker) const noexcept {
+Directory Directory::Tracking(FileTracker& tracker) const noexcept {
   auto result = *this;
   result._tracker = &tracker;
   return result;
 }
 
-IndexFiles IndexFiles::Tracking(RefTracker& tracker) const noexcept {
+Directory Directory::Tracking(RefTracker& tracker) const noexcept {
   auto result = *this;
   result._ref_tracker = &tracker;
   return result;
 }
 
-IndexFiles IndexFiles::Untracked() const noexcept {
+Directory Directory::Untracked() const noexcept {
   auto result = *this;
   result._tracker = nullptr;
   result._ref_tracker = nullptr;
   return result;
 }
 
-duckdb::BlockCache& IndexFiles::Cache() const {
+duckdb::BlockCache& Directory::Cache() const {
   return duckdb::BlockCache::Get(_state->db);
 }
 
-duckdb::MemoryFileSystem& IndexFiles::MemoryFiles() const {
+duckdb::MemoryFileSystem& Directory::MemoryFiles() const {
   return _state->db.GetMemoryFileSystem();
 }
 
-IndexOutput::ptr IndexFiles::Create(std::string_view name) const try {
+IndexOutput::ptr Directory::Create(std::string_view name) const try {
   if (Kind() == StorageKind::Linked) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -345,7 +344,7 @@ IndexOutput::ptr IndexFiles::Create(std::string_view name) const try {
   ThrowFileError(e);
 }
 
-IndexInput::ptr IndexFiles::Open(std::string_view name, IOAdvice advice) const
+IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const
   try {
   if (Kind() == StorageKind::Linked) {
     const auto* file = FindLinked(name);
@@ -369,8 +368,8 @@ IndexInput::ptr IndexFiles::Open(std::string_view name, IOAdvice advice) const
   ThrowFileError(e);
 }
 
-IndexInput::ptr IndexFiles::ReadWhole(const std::string& path,
-                                      std::string_view name) const {
+IndexInput::ptr Directory::ReadWhole(const std::string& path,
+                                     std::string_view name) const {
   const bool counted = Kind() == StorageKind::Local;
   if (counted) {
     _state->rm.file_descriptors->Increase(1);
@@ -397,8 +396,8 @@ IndexInput::ptr IndexFiles::ReadWhole(const std::string& path,
     std::make_unique<BytesMapping>(path, view, std::move(bytes)), nullptr));
 }
 
-IndexInput::ptr IndexFiles::OpenMapped(const std::string& path,
-                                       IOAdvice advice) const {
+IndexInput::ptr Directory::OpenMapped(const std::string& path,
+                                      IOAdvice advice) const {
   auto* file_descriptors =
     Kind() == StorageKind::Local ? _state->rm.file_descriptors : nullptr;
   if (file_descriptors) {
@@ -426,9 +425,9 @@ IndexInput::ptr IndexFiles::OpenMapped(const std::string& path,
   return std::make_unique<MappedInput>(std::move(file));
 }
 
-IndexInput::ptr IndexFiles::OpenBlocks(const std::string& path,
-                                       std::string_view name,
-                                       IOAdvice advice) const {
+IndexInput::ptr Directory::OpenBlocks(const std::string& path,
+                                      std::string_view name,
+                                      IOAdvice advice) const {
   auto& cache = Cache();
   if (Kind() == StorageKind::Memory) {
     auto blocks = MemoryFiles().GetBlockFile(path);
@@ -452,8 +451,7 @@ IndexInput::ptr IndexFiles::OpenBlocks(const std::string& path,
     known ? known->tail : nullptr);
 }
 
-bool IndexFiles::Exists(bool& result, std::string_view name) const noexcept
-  try {
+bool Directory::Exists(bool& result, std::string_view name) const noexcept try {
   if (Kind() == StorageKind::Linked) {
     result = FindLinked(name) != nullptr;
     return true;
@@ -468,7 +466,7 @@ bool IndexFiles::Exists(bool& result, std::string_view name) const noexcept
   return false;
 }
 
-bool IndexFiles::Has(std::string_view name) const {
+bool Directory::Has(std::string_view name) const {
   bool exists = false;
   if (!Exists(exists, name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
@@ -478,7 +476,7 @@ bool IndexFiles::Has(std::string_view name) const {
   return exists;
 }
 
-bool IndexFiles::RemoveFile(std::string_view name) const noexcept try {
+bool Directory::RemoveFile(std::string_view name) const noexcept try {
   if (Kind() == StorageKind::Linked) {
     return false;
   }
@@ -497,7 +495,7 @@ bool IndexFiles::RemoveFile(std::string_view name) const noexcept try {
   return false;
 }
 
-bool IndexFiles::Remove(std::string_view name) const noexcept try {
+bool Directory::Remove(std::string_view name) const noexcept try {
   if (!RemoveFile(name)) {
     return false;
   }
@@ -509,7 +507,7 @@ bool IndexFiles::Remove(std::string_view name) const noexcept try {
   return false;
 }
 
-void IndexFiles::Rename(std::string_view src, std::string_view dst) const try {
+void Directory::Rename(std::string_view src, std::string_view dst) const try {
   if (Kind() == StorageKind::Linked) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -528,7 +526,7 @@ void IndexFiles::Rename(std::string_view src, std::string_view dst) const try {
   ThrowFileError(e);
 }
 
-void IndexFiles::Sync(std::span<const std::string_view> names) const try {
+void Directory::Sync(std::span<const std::string_view> names) const try {
   if (Kind() != StorageKind::Local) {
     return;
   }
@@ -542,7 +540,7 @@ void IndexFiles::Sync(std::span<const std::string_view> names) const try {
   ThrowFileError(e);
 }
 
-void IndexFiles::SyncDirectory() const try {
+void Directory::SyncDirectory() const try {
   if (Kind() != StorageKind::Local) {
     return;
   }
@@ -552,7 +550,7 @@ void IndexFiles::SyncDirectory() const try {
   ThrowFileError(e);
 }
 
-void IndexFiles::Compact(std::string_view name) const try {
+void Directory::Compact(std::string_view name) const try {
   if (Kind() != StorageKind::Memory || !InBlocks()) {
     return;
   }
@@ -561,7 +559,7 @@ void IndexFiles::Compact(std::string_view name) const try {
   ThrowFileError(e);
 }
 
-IndexFileRefs::ref_t IndexFiles::Reference(std::string_view name) const {
+IndexFileRefs::ref_t Directory::Reference(std::string_view name) const {
   bool exists;
   if (!Exists(exists, name) || !exists) {
     return nullptr;
@@ -573,7 +571,7 @@ IndexFileRefs::ref_t IndexFiles::Reference(std::string_view name) const {
   return ref;
 }
 
-size_t IndexFiles::RemoveUnreferenced(
+size_t Directory::RemoveUnreferenced(
   const std::function<bool(std::string_view)>& acceptor) const {
   size_t removed = 0;
   IndexFileRefs::ref_t retained;
@@ -596,8 +594,8 @@ size_t IndexFiles::RemoveUnreferenced(
   return removed;
 }
 
-size_t IndexFiles::RemoveFiles(
-  std::span<const std::string> names) const noexcept try {
+size_t Directory::RemoveFiles(std::span<const std::string> names) const noexcept
+  try {
   if (names.empty()) {
     return 0;
   }
@@ -620,7 +618,7 @@ size_t IndexFiles::RemoveFiles(
   return 0;
 }
 
-void IndexFiles::RemoveAllUnreferenced() const {
+void Directory::RemoveAllUnreferenced() const {
   duckdb::TaskScheduler::BlockingScope blocking;
   auto& refs = Refs();
   Visit([&](std::string_view name) {
@@ -636,8 +634,8 @@ std::string MemoryIndexRoot() {
     gMemoryIndexCount.fetch_add(1, std::memory_order_relaxed) + 1);
 }
 
-void IndexFiles::ForEach(size_t count,
-                         absl::FunctionRef<void(size_t)> visit) const {
+void Directory::ForEach(size_t count,
+                        absl::FunctionRef<void(size_t)> visit) const {
   if (Kind() != StorageKind::Remote || count < 2) {
     for (size_t i = 0; i != count; ++i) {
       visit(i);
@@ -655,7 +653,7 @@ void IndexFiles::ForEach(size_t count,
   executor.WorkOnTasks();
 }
 
-bool IndexFiles::Visit(const Visitor& visitor) const {
+bool Directory::Visit(const Visitor& visitor) const {
   if (Kind() == StorageKind::Linked) {
     return absl::c_all_of(_state->linked, [&](const LinkedFile& file) {
       return visitor(file.name);

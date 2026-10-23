@@ -53,7 +53,7 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
@@ -70,8 +70,8 @@ namespace {
 // apply to the new cs, so the parameter is unused.
 class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
  protected:
-  irs::IndexFiles _dir{::irs::DuckDBEngine::Instance().instance(),
-                       irs::MemoryIndexRoot()};
+  irs::Directory _dir{::irs::DuckDBEngine::Instance().instance(),
+                      irs::MemoryIndexRoot()};
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
   }
@@ -87,7 +87,7 @@ class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
   }
 };
 
-// Sanity: a fresh in-memory `IndexFiles` has no `.col` file, so `MakeCsReader`
+// Sanity: a fresh in-memory `Directory` has no `.col` file, so `MakeCsReader`
 // returns nullptr (legacy `Reader::prepare` -> empty result). Also covers
 // (d) repeated calls remain stable, (e) probing different non-existent
 // segment names returns nullptr each time, (f) after a real segment is

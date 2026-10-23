@@ -58,9 +58,9 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   return writer_opts;
 }
 
-static irs::IndexFiles MakeIndexFiles(std::string_view path) {
+static irs::Directory MakeDirectory(std::string_view path) {
   std::filesystem::create_directories(path);
-  return irs::IndexFiles{::irs::DuckDBEngine::Instance().instance(), path};
+  return irs::Directory{::irs::DuckDBEngine::Instance().instance(), path};
 }
 
 IndexBuilder::IndexBuilder(std::string_view path,
@@ -68,7 +68,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const BenchConfig& config)
   : _opts{opts},
     _scorer{irs::BM25::Make(irs::BM25::Options{})},
-    _dir{MakeIndexFiles(path)},
+    _dir{MakeDirectory(path)},
     _writer{irs::IndexWriter::Make(
       _dir, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,

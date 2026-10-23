@@ -60,8 +60,8 @@ irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
 
 duckdb::FileSystem& DatabaseFileSystem();
 
-irs::IndexFiles OverFileSystem(const irs::IndexFiles& files,
-                               duckdb::FileSystem& fs);
+irs::Directory OverFileSystem(const irs::Directory& files,
+                              duckdb::FileSystem& fs);
 
 struct BlockingFileSystem : HookFileSystem {
   explicit BlockingFileSystem(const std::string& blocker)
@@ -125,16 +125,16 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     const testing::TestParamInfo<index_test_context>& info);
 
  protected:
-  std::shared_ptr<irs::IndexFiles> get_directory(const TestBase& ctx) const;
+  std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
 
-  irs::IndexFiles& dir() const { return *_dir; }
+  irs::Directory& dir() const { return *_dir; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
   irs::IndexWriter::ptr open_writer(
-    const irs::IndexFiles& dir, irs::OpenMode mode = irs::kOmCreate,
+    const irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
     return irs::IndexWriter::Make(dir, mode,
                                   EnsureWriterDb(std::move(options)));
@@ -204,7 +204,7 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
  private:
   index_t _index;
-  std::shared_ptr<irs::IndexFiles> _dir;
+  std::shared_ptr<irs::Directory> _dir;
 };
 
 }  // namespace tests

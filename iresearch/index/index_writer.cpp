@@ -51,7 +51,7 @@
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/debugging.hpp"
@@ -71,7 +71,7 @@ const ProgressReportCallback kNoProgress =
     // intentionally do nothing
   };
 
-void CompactFiles(const IndexFiles& dir, const SegmentMeta& meta) {
+void CompactFiles(const Directory& dir, const SegmentMeta& meta) {
   for (const auto& file : meta.files) {
     try {
       SDB_IF_FAILURE("IndexWriter::CompactOutOfMemory") {
@@ -442,7 +442,7 @@ void ReleaseWriterRoot(const std::string& root) noexcept {
   writers.roots.erase(root);
 }
 
-uint64_t MaxSegmentId(const IndexFiles& dir) {
+uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.Visit([&max_id](std::string_view name) {
     if (uint64_t id = 0; ParseSegmentId(name, id)) {
@@ -488,7 +488,7 @@ PublishResult UpdateExisting(
   const DirectoryReaderImpl& committed_reader,
   const CompactingSegments& segment_mask,
   std::span<const IndexWriter::QueryContext* const> queries,
-  const IndexFiles& dir, const ProgressReportCallback& progress) {
+  const Directory& dir, const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
   const size_t committed_reader_size = committed_reader.size();
   size_t current_segment_index = 0;
@@ -555,7 +555,7 @@ struct AddIncomingResult : PublishResult {
 AddIncomingResult AddIncoming(
   auto& incoming_segments, std::span<const PublishedSegment> existing,
   std::span<const IndexWriter::QueryContext* const> queries,
-  const IndexFiles& dir, const ProgressReportCallback& progress) {
+  const Directory& dir, const ProgressReportCallback& progress) {
   size_t current_incoming_index = 0;
 
   AddIncomingResult result;
@@ -677,7 +677,7 @@ AddIncomingResult AddIncoming(
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
   std::span<const IndexWriter::QueryContext* const> queries,
-  const IndexFiles& dir, const IndexReaderOptions& reader_options,
+  const Directory& dir, const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
   size_t total_flushed_segments = 0;
@@ -728,7 +728,7 @@ std::vector<FlushedSegmentContext> OpenFlushed(
 }
 
 PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
-                             const IndexFiles& dir,
+                             const Directory& dir,
                              const ProgressReportCallback& progress) {
   PublishResult result;
   // write docs_mask if !empty(), if all docs are masked then remove segment
@@ -1081,7 +1081,7 @@ void IndexWriter::FlushContext::FlushPending() {
 }
 
 IndexWriter::SegmentContext::SegmentContext(
-  const IndexFiles& dir, segment_meta_generator_t&& meta_generator,
+  const Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
   : refs{dir.Refs()},
     dir{dir.Tracking(refs)},
@@ -1130,7 +1130,7 @@ void IndexWriter::SegmentContext::Flush() {
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
-  const IndexFiles& dir, segment_meta_generator_t&& meta_generator,
+  const Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& segment_writer_options) {
   return std::make_unique<SegmentContext>(dir, std::move(meta_generator),
                                           segment_writer_options);
@@ -1246,7 +1246,7 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 }
 
 IndexWriter::IndexWriter(
-  ConstructToken, const IndexFiles& dir, bool owns_root,
+  ConstructToken, const Directory& dir, bool owns_root,
   size_t segment_pool_size, const SegmentOptions& segment_limits,
   MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
@@ -1316,7 +1316,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
   _compacting.segments.clear();
 }
 
-IndexWriter::ptr IndexWriter::Make(const IndexFiles& dir, OpenMode mode,
+IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
                                    IndexWriterOptions options) {
   SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
@@ -1363,7 +1363,7 @@ IndexWriter::ptr IndexWriter::Make(const IndexFiles& dir, OpenMode mode,
 
   auto hnsw_bases = std::make_unique<HnswBases>();
   options.reader_options.hnsw_bases = hnsw_bases.get();
-  auto reader = [](const IndexFiles& dir, DirectoryMeta&& meta,
+  auto reader = [](const Directory& dir, DirectoryMeta&& meta,
                    const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
 

@@ -394,8 +394,8 @@ set(IResearch_core_sources
     ./search/scorers/raw_dl.cpp
     ./store/block_input.cpp
     ./store/data_input.cpp
+    ./store/directory.cpp
     ./store/file_output.cpp
-    ./store/index_files.cpp
     ./store/mapped_input.cpp
     ./store/memory_file.cpp
     ./store/simulated_object_store.cpp

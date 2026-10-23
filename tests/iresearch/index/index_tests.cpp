@@ -39,7 +39,7 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
@@ -309,14 +309,14 @@ duckdb::FileSystem& DatabaseFileSystem() {
     irs::DuckDBEngine::Instance().instance());
 }
 
-irs::IndexFiles OverFileSystem(const irs::IndexFiles& files,
-                               duckdb::FileSystem& fs) {
+irs::Directory OverFileSystem(const irs::Directory& files,
+                              duckdb::FileSystem& fs) {
   SDB_ASSERT(files.Kind() != irs::StorageKind::Memory);
-  return irs::IndexFiles{irs::DuckDBEngine::Instance().instance(), fs,
-                         files.Root(), files.ResourceManager()};
+  return irs::Directory{irs::DuckDBEngine::Instance().instance(), fs,
+                        files.Root(), files.ResourceManager()};
 }
 
-std::shared_ptr<irs::IndexFiles> IndexTestBase::get_directory(
+std::shared_ptr<irs::Directory> IndexTestBase::get_directory(
   const TestBase& ctx) const {
   auto [factory] = GetParam();
 
@@ -527,8 +527,8 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // test creation of an empty writer
     {
-      irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                          irs::MemoryIndexRoot()};
+      irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                         irs::MemoryIndexRoot()};
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
       ASSERT_SQL_ERROR(
@@ -1909,7 +1909,7 @@ TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
                               &tests::GenericJsonFieldFactory);
 
   {
-    std::optional<irs::IndexFiles> synced_dir;
+    std::optional<irs::Directory> synced_dir;
     tests::CallbackFileSystem fs{[&] { synced_dir->RemoveAllUnreferenced(); }};
     synced_dir.emplace(tests::OverFileSystem(dir(), fs));
     auto writer = irs::IndexWriter::Make(*synced_dir, irs::kOmCreate,
@@ -9124,8 +9124,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test default progress (false)
   {
-    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                        irs::MemoryIndexRoot()};
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9158,8 +9158,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test always-false progress
   {
-    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                        irs::MemoryIndexRoot()};
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -9197,8 +9197,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
   // test always-true progress
   {
-    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                        irs::MemoryIndexRoot()};
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
@@ -9244,8 +9244,8 @@ TEST_P(IndexTestCase, compact_progress) {
   // +1 for pre-decrement in 'progress'
   for (size_t i = 1; i < progress_call_count; ++i) {
     size_t call_count = i;
-    irs::IndexFiles dir{irs::DuckDBEngine::Instance().instance(),
-                        irs::MemoryIndexRoot()};
+    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                       irs::MemoryIndexRoot()};
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     for (size_t size = 0; size < max_docs; ++size) {
@@ -11330,7 +11330,7 @@ class IndexTestCase11 : public tests::IndexTestBase {};
 
 namespace {
 
-std::optional<std::string> ReadMetaPayload(const irs::IndexFiles& dir,
+std::optional<std::string> ReadMetaPayload(const irs::Directory& dir,
                                            const irs::DirectoryReader& reader) {
   std::optional<std::string> payload;
   irs::IndexMeta meta;

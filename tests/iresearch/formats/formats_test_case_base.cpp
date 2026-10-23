@@ -46,7 +46,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
@@ -81,7 +81,7 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 namespace tests {
 
 void FormatTestCase::AssertNoDirectoryArtifacts(
-  const irs::IndexFiles& dir,
+  const irs::Directory& dir,
   const std::unordered_set<std::string>& expect_additional /* ={} */) {
   std::vector<std::string> dir_files;
   auto visitor = [&dir_files](std::string_view file) {
@@ -1263,7 +1263,7 @@ template<typename Populate, typename Verify>
 void RoundTrip(std::string_view segment_name, uint64_t row_count,
                Populate&& populate, Verify&& verify) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, segment_name, db};
     populate(w);
@@ -1387,7 +1387,7 @@ TEST_P(FormatTestCase, columns_rw) {
   //  * "wrong column / wrong doc / can't find" lookups,
   //  * visit + partial-visit (early-stop) checks.
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
 
   // Build segment _1 -----------------------------------------------------
   // ids in this segment: 0,1,2 (empty),3,4,5; segment row count = 34.
@@ -1764,7 +1764,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kIntId = 2;
   constexpr irs::field_id kStrId = 3;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_typed", db};
 
@@ -2170,7 +2170,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 200;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_bit_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2341,7 +2341,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 300;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_dense_mask_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2537,7 +2537,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   constexpr size_t kSmallPayloadSize = 1024;
   constexpr irs::field_id kBigId = 400;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "columns_rw_big_document_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -2594,7 +2594,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   //  * a fresh writer at the rolled-back name produces a clean file,
   //  * three independent segments with id+name BLOB columns round-trip.
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
 
   // Rollback path: the eagerly-created `.col` stays on disk as an orphan;
   // the directory cleaner sweeps it later.
@@ -2918,7 +2918,7 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   constexpr irs::field_id kBigIdCol = 500;
   constexpr irs::field_id kBigNameCol = 501;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "same_col_empty_repeat_rg", db};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
@@ -3115,7 +3115,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   constexpr uint64_t kBigRows = 2049;
   constexpr irs::field_id kBigId = 600;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "sparse_dense_block_rg", db};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
@@ -3354,7 +3354,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   constexpr irs::field_id kBigDenseId = 700;
   constexpr irs::field_id kBigSparseId = 701;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "border_case_rg", db};
     auto& dense = w.OpenColumn(
@@ -3556,7 +3556,7 @@ TEST_P(FormatTestCase, columns_issue700) {
   constexpr uint64_t kBigRows = STANDARD_VECTOR_SIZE * 2 + 1;  // 4097
   constexpr irs::field_id kBigColId = 800;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::IndexFiles dir{db, irs::MemoryIndexRoot()};
+  irs::Directory dir{db, irs::MemoryIndexRoot()};
   {
     irs::ColWriter w{dir, "issue700_rg", db};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,

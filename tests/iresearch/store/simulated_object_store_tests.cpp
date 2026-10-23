@@ -31,7 +31,7 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <functional>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/simulated_object_store.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -201,7 +201,7 @@ TEST(SimulatedObjectStoreTest, prefixes_list_move_and_remove) {
 
 TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   auto& store = tests::ObjectStore();
-  irs::IndexFiles files{irs::DuckDBEngine::Instance().instance(), Root()};
+  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
   ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
   {
     auto out = files.Create("segment");
@@ -239,7 +239,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
 
 TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
   tests::ObjectStore();
-  irs::IndexFiles files{irs::DuckDBEngine::Instance().instance(), Root()};
+  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
   ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
   ASSERT_SQL_ERROR(files.ForEach(4,
                                  [](size_t i) {
@@ -256,7 +256,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   auto& store = tests::ObjectStore();
   auto& db = irs::DuckDBEngine::Instance().instance();
   const auto root = Root();
-  irs::IndexFiles files{db, root};
+  irs::Directory files{db, root};
   {
     auto out = files.Create("data");
     for (uint32_t i = 0; i != 100000; ++i) {
@@ -302,7 +302,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   in->Seek(0);
   EXPECT_EQ(whole->Checksum(whole->Length()), in->Checksum(in->Length()));
 
-  irs::IndexFiles restarted{db, root};
+  irs::Directory restarted{db, root};
   store.ResetRequests();
   ASSERT_TRUE(restarted.Exists(exists, "data") && exists);
   auto cold = restarted.Open("data", irs::IOAdvice::NORMAL);

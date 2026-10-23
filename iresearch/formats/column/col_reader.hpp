@@ -33,7 +33,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -58,10 +58,10 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
-  ColReader(const IndexFiles& dir, std::string_view segment_name,
+  ColReader(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db,
             IOAdvice advice = IOAdvice::SEQUENTIAL);
-  ColReader(const IndexFiles& dir, std::string_view segment_name,
+  ColReader(const Directory& dir, std::string_view segment_name,
             duckdb::DatabaseInstance& db, bool present,
             IOAdvice advice = IOAdvice::SEQUENTIAL);
   ~ColReader();

@@ -39,7 +39,7 @@
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/memory_file.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
@@ -81,7 +81,7 @@ const std::vector<uint32_t>& IndexNorms() {
     }
     const char* field = std::getenv("NORM_FIELD");
     auto& db = irs::DuckDBEngine::Instance().instance();
-    irs::IndexFiles dir{db, path};
+    irs::Directory dir{db, path};
     irs::DirectoryReader reader{dir, irs::IndexReaderOptions{.db = &db}};
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {

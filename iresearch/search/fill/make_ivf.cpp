@@ -34,8 +34,7 @@ Node::ptr Make(const RangeVectorQuery& query) {
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
-                                    true>(
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>>(
       query, {.scored = ctx, .merge = merge}, query.Threshold());
   });
 }

@@ -26,14 +26,14 @@ namespace irs::hits {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return irs::detail::MakeVectorScored<
-      Family, irs::detail::RadiusGate<Inclusive>, true>(query, ctx,
-                                                        query.Threshold());
+    return irs::detail::MakeVectorScored<Family,
+                                         irs::detail::RadiusGate<Inclusive>>(
+      query, ctx, query.Threshold());
   });
 }
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
-  return irs::detail::MakeVectorScored<Family, irs::detail::AcceptAll, true>(
+  return irs::detail::MakeVectorScored<Family, irs::detail::AcceptAll>(
     query, ctx, irs::detail::Unbounded());
 }
 

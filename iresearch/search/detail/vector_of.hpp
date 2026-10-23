@@ -636,6 +636,15 @@ probe::Node::ptr InnerProbe(const Query& query) {
   return inner->PlanProbe({}, query.State().estimation);
 }
 
+template<typename Gate, typename Query, typename F>
+auto ResolveRescore(const Query& query, F&& f) {
+  if constexpr (Gate::kAll) {
+    return f.template operator()<false>();
+  } else {
+    return ResolveBool(query.Rescored(), f);
+  }
+}
+
 template<typename Family, typename Gate, typename Query>
 typename Family::Result MakeVectorDocs(const Query& query,
                                        const typename Family::DocsContext& ctx,
@@ -645,7 +654,7 @@ typename Family::Result MakeVectorDocs(const Query& query,
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
-  return ResolveBool(!Gate::kAll && query.Rescored(), [&]<bool Rescore>() {
+  return ResolveRescore<Gate>(query, [&]<bool Rescore>() {
     return ResolveVector<Gate, Rescore>(
       query, edge, std::move(inner),
       [&]<typename Slots>(auto&&... args) -> Result {
@@ -656,7 +665,7 @@ typename Family::Result MakeVectorDocs(const Query& query,
   });
 }
 
-template<typename Family, typename Gate, bool Rescores, typename Query>
+template<typename Family, typename Gate, typename Query>
 typename Family::Result MakeVectorScored(
   const Query& query, const typename Family::ScoredContext& ctx, score_t edge) {
   using Result = typename Family::Result;
@@ -670,7 +679,7 @@ typename Family::Result MakeVectorScored(
                         .stats = record.stats,
                         .fetcher = scoring.fetcher,
                         .boost = query.Boost()};
-  const auto make = [&]<bool Rescore>() {
+  return ResolveRescore<Gate>(query, [&]<bool Rescore>() {
     return ResolveVector<Gate, Rescore>(
       query, edge, std::move(inner),
       [&]<typename Slots>(auto&&... args) -> Result {
@@ -679,12 +688,7 @@ typename Family::Result MakeVectorScored(
           ctx, query.Segment(), *query.State().reader, score,
           std::forward<decltype(args)>(args)...);
       });
-  };
-  if constexpr (Rescores) {
-    return ResolveBool(query.Rescored(), make);
-  } else {
-    return make.template operator()<false>();
-  }
+  });
 }
 
 inline score_t Unbounded() noexcept {

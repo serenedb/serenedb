@@ -33,13 +33,13 @@ Node::ptr Make(const RangeVectorQuery& query) {
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
-                                    true>(query, ctx, query.Threshold());
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>>(
+      query, ctx, query.Threshold());
   });
 }
 
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::MakeVectorScored<Family, detail::AcceptAll, false>(
+  return detail::MakeVectorScored<Family, detail::AcceptAll>(
     query, ctx, detail::Unbounded());
 }
 

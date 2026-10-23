@@ -34,8 +34,7 @@ Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations) {
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
   return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
-                                    true>(
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>>(
       query, {.scored = ctx, .interrogations = interrogations},
       query.Threshold());
   });

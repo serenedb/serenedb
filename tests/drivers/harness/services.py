@@ -369,6 +369,10 @@ class ServiceSet:
             self.network = None
         for d in self.tmp_dirs:
             shutil.rmtree(d, ignore_errors=True)
+            if d.exists():
+                _docker("run", "--rm", *_owner_args(), "-v", f"{d.parent}:/parent", POD_IMAGE,
+                        "rm", "-rf", f"/parent/{d.name}", check=False)
+        self.tmp_dirs.clear()
 
 
 def _azurite_create_container(host, port, container):

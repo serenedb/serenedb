@@ -63,21 +63,16 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : duckdb::DuckCatalog{db, !db.IsTemporary()},
-      _directory{std::move(directory)} {}
+    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
-  const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
-    return _directory;
-  }
-  std::shared_ptr<StorageArea> Area(duckdb::idx_t tablespace) const {
-    return _directory ? _directory->Area(tablespace) : nullptr;
+  std::shared_ptr<StorageDirectory> Directory(duckdb::idx_t tablespace) const {
+    return _directory ? _directory->InTablespace(tablespace) : nullptr;
   }
 
   std::string GetCatalogType() final;
 
   duckdb::SqlCompatibility Compatibility() const final {
-    return GetAttached().IsTemporary() ? duckdb::DuckCatalog::Compatibility()
-                                       : duckdb::SqlCompatibility::POSTGRES;
+    return duckdb::SqlCompatibility::POSTGRES;
   }
 
   bool UsesCatalogLog() const final { return !GetAttached().IsTemporary(); }

@@ -110,7 +110,7 @@ A job can live in any SereneDB database, not only the current one; wherever it l
 
 <SqlLogicTest id="sql/statements/create_job/index/example_006" />
 
-Jobs exist only in SereneDB databases, like text search dictionaries and inverted indexes: `CREATE TEMPORARY JOB`, and jobs in `memory` or in an attached DuckDB file, are rejected with `Jobs are not supported by this catalog`.
+Jobs exist only in SereneDB databases, like text search dictionaries: a job in `memory` or in an attached DuckDB file is rejected with `Jobs are not supported by this catalog`, and `CREATE TEMPORARY JOB` with `a job cannot be temporary`.
 
 ## Dropping a job
 

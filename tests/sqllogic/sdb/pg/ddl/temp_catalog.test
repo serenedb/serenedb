@@ -1,0 +1,147 @@
+# Temporary objects follow the rules of every other schema: one namespace for
+# relations, names matched as written once unquoted ones are folded, the same
+# table options, and only temporary objects in temp.
+
+statement ok
+CREATE TEMP TABLE temp_rel (a INT, b TEXT);
+
+
+statement error
+CREATE TEMP SEQUENCE temp_rel;
+----
+db error: ERROR: Table with name "temp_rel" already exists!
+
+
+statement error
+CREATE TEMP VIEW temp_rel AS SELECT 1 AS x;
+----
+db error: ERROR: Table with name "temp_rel" already exists!
+
+
+statement error
+CREATE INDEX temp_rel ON temp_rel (a);
+----
+db error: ERROR: Table with name "temp_rel" already exists!
+
+
+statement ok
+CREATE TEMP TABLE "TempMixed" (a INT);
+
+
+statement ok
+CREATE TEMP TABLE TempFolded (a INT);
+
+
+statement ok
+INSERT INTO "TempMixed" VALUES (1);
+
+
+statement ok
+INSERT INTO tempfolded VALUES (2);
+
+
+query
+SELECT (SELECT sum(a) FROM "TempMixed") AS mixed, (SELECT sum(a) FROM TEMPFOLDED) AS folded;
+----
+mixed	folded
+1	2
+
+
+statement error
+SELECT * FROM tempmixed;
+----
+db error: ERROR: Table with name tempmixed does not exist!
+Did you mean "TempMixed"?
+
+
+statement ok
+CREATE TEMP SEQUENCE temp_rel_seq;
+
+
+statement error
+CREATE TEMP TABLE temp_rel_seq (a INT);
+----
+db error: ERROR: Sequence with name "temp_rel_seq" already exists!
+
+
+statement error
+CREATE TABLE partitioned (a INT) PARTITIONED BY (a);
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+statement error
+CREATE TABLE sorted (a INT) SORTED BY (a);
+----
+db error: ERROR: SORTED BY is not supported
+
+
+statement error
+CREATE TEMP TABLE temp_partitioned (a INT) PARTITIONED BY (a);
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+statement error
+CREATE TEMP TABLE temp_sorted (a INT) SORTED BY (a);
+----
+db error: ERROR: SORTED BY is not supported
+
+
+statement error
+CREATE TEMP TABLE temp_search (id INT, body TEXT) WITH (storage = 'search');
+----
+db error: ERROR: a temporary table cannot be a search table
+
+
+statement error
+CREATE TEMP TABLE temp_option (a INT) WITH (fillfactor = 10);
+----
+db error: ERROR: unrecognized parameter "fillfactor"
+
+
+statement ok
+CREATE TEMP TABLE temp_transactional (a INT) WITH (storage = 'transactional');
+
+
+statement ok
+INSERT INTO temp_transactional VALUES (1), (2);
+
+
+query
+SELECT sum(a) AS total FROM temp_transactional;
+----
+total
+3
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY temp.main.temp_words AS split_text(case := 'lower');
+----
+db error: ERROR: Only TEMPORARY table names can use the "temp" catalog
+
+
+statement error
+CREATE JOB temp.main.temp_job EVERY 1 HOUR AS SELECT 1;
+----
+db error: ERROR: Only TEMPORARY table names can use the "temp" catalog
+
+
+statement ok
+DROP TABLE temp_transactional;
+
+
+statement ok
+DROP SEQUENCE temp_rel_seq;
+
+
+statement ok
+DROP TABLE "TempMixed";
+
+
+statement ok
+DROP TABLE tempfolded;
+
+
+statement ok
+DROP TABLE temp_rel;

@@ -188,7 +188,7 @@ runs
 statement error
 CREATE TEMPORARY JOB doc_session_job AFTER 1 HOUR AS SELECT 1;
 ----
-db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
+db error: ERROR: a job cannot be temporary
 
 
 # DOCS_TEST: example_007

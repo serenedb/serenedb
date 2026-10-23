@@ -43,7 +43,7 @@ GRANT INSERT ON jt_log TO jt_arelav;
 statement error
 CREATE TEMPORARY JOB jt_deadinside AFTER 1 HOUR AS INSERT INTO jt_log VALUES ('temp');
 ----
-db error: ERROR: <slt:ignore>Jobs are not supported by this catalog<slt:ignore>
+db error: ERROR: a job cannot be temporary
 
 
 statement error

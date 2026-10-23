@@ -243,7 +243,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
       if (path && (Nested(*path, root) || Nested(root, *path))) {
         const auto existing = known.root.lock();
         overlapping = oid;
-        dropped = !existing || existing->Removed();
+        dropped = !existing || existing->Dropped();
       }
     }
   }
@@ -297,8 +297,8 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for tablespace ", name.GetIdentifierName()));
     }
-    auto drop = std::make_shared<bool>();
-    if (!tablespace.Root()->BeginDrop(drop)) {
+    auto drop = tablespace.Root()->BeginDrop();
+    if (!drop) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("tablespace \"", name.GetIdentifierName(),
                               "\" is being used by another transaction"));

@@ -75,7 +75,7 @@ void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 
 void TablespaceCatalogEntry::OnDrop() {
   if (_root) {
-    _root->MarkRemoved();
+    _root->MarkDropped();
   }
 }
 

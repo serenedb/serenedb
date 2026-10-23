@@ -198,7 +198,7 @@ DROP TABLESPACE temp_ts_${__DATABASE__};
 statement error
 CREATE TEMPORARY TABLE temp_search (id INTEGER, body TEXT) WITH (storage = 'search');
 ----
-db error: ERROR: WITH clause is not supported for temporary tables
+db error: ERROR: a temporary table cannot be a search table
 
 
 statement ok

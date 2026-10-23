@@ -192,7 +192,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
-      Area(entry->Tablespace()), GetAttached(), entry->oid,
+      Directory(entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -201,9 +201,6 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateTokenizerInfo& info) {
-  if (GetAttached().IsTemporary()) {
-    return duckdb::DuckCatalog::MakeTokenizerEntry(transaction, schema, info);
-  }
   if (info.config.empty()) {
     pg::CompileTokenizer(transaction.GetContext(), info);
   }
@@ -213,8 +210,9 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
-  if (GetAttached().IsTemporary()) {
-    return duckdb::DuckCatalog::MakeJobEntry(transaction, schema, info);
+  if (info.temporary) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("a job cannot be temporary"));
   }
   VerifySchedule(info.schedule);
   auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
@@ -444,22 +442,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
-  if (GetAttached().IsTemporary()) {
-    const auto& base = info.Base().Cast<duckdb::CreateTableInfo>();
-    const std::string_view clause = !base.partition_keys.empty()
-                                      ? "PARTITIONED BY"
-                                    : !base.sort_keys.empty() ? "SORTED BY"
-                                    : !base.options.empty()   ? "WITH clause"
-                                                              : "";
-    if (clause.empty()) {
-      return {};
-    }
+  const auto& base = info.Base().Cast<duckdb::CreateTableInfo>();
+  if (!base.partition_keys.empty() || !base.sort_keys.empty()) {
     return duckdb::ErrorData{
-      duckdb::ExceptionType::CATALOG,
-      absl::StrCat(clause, " is not supported for temporary tables")};
+      duckdb::ExceptionType::NOT_IMPLEMENTED,
+      absl::StrCat(base.partition_keys.empty() ? "SORTED BY" : "PARTITIONED BY",
+                   " is not supported")};
   }
-  const auto& options = info.Base().options;
+  const auto& options = base.options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (search && GetAttached().IsTemporary()) {
+    return duckdb::ErrorData{duckdb::ExceptionType::NOT_IMPLEMENTED,
+                             "a temporary table cannot be a search table"};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));

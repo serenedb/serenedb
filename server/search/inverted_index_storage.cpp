@@ -54,14 +54,14 @@
 namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
-  std::shared_ptr<catalog::StorageArea> area,
+  std::shared_ptr<catalog::StorageDirectory> parent,
   duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
     _db_id{database.oid},
     _database{database.shared_from_this()},
-    _area{std::move(area)},
+    _parent{std::move(parent)},
     _search{GetSearchEngine()},
     _durability{database.oid, absl::StrCat("inverted index ", index_id)} {
   const bool in_memory = database.GetStorageManager().InMemory();
@@ -76,7 +76,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(_area.get(), index_id, is_new, in_memory,
+  auto opened = OpenStorageDirectory(_parent.get(), index_id, is_new, in_memory,
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
@@ -141,13 +141,13 @@ void InvertedIndexStorage::OpenReader() {
     std::move(reader), std::move(stamp.manifest)));
 }
 
-StorageDirectory OpenStorageDirectory(
-  const catalog::StorageArea* area, duckdb::idx_t oid, bool is_new,
+OpenedDirectory OpenStorageDirectory(
+  const catalog::StorageDirectory* parent, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources) {
-  SDB_ASSERT(area || in_memory);
+  SDB_ASSERT(parent || in_memory);
   std::optional<std::string> path;
   if (!in_memory) {
-    path = is_new ? area->CreateStorage(oid) : area->OpenStorage(oid);
+    path = is_new ? parent->CreateStorage(oid) : parent->OpenStorage(oid);
   }
   auto& db = irs::DuckDBEngine::Instance().instance();
   if (!path) {
@@ -160,8 +160,8 @@ StorageDirectory OpenStorageDirectory(
 InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
-  if (_area && _dropped.load(std::memory_order_acquire)) {
-    catalog::StorageArea::RemoveStorage(std::move(_area), _index_id);
+  if (_parent && _dropped.load(std::memory_order_acquire)) {
+    catalog::StorageDirectory::RemoveStorage(std::move(_parent), _index_id);
   }
 }
 

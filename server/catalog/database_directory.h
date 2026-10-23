@@ -82,43 +82,38 @@ class TablespaceRoot final
 
   void Claim();
   [[nodiscard]] std::shared_ptr<void> Pin();
-  [[nodiscard]] bool BeginDrop(const std::shared_ptr<void>& drop);
-  bool Removed() const noexcept {
-    return _removed.load(std::memory_order_acquire);
-  }
-  void MarkRemoved() noexcept {
-    _removed.store(true, std::memory_order_release);
-  }
-  void Abandon() noexcept {
-    if (_claimed.load(std::memory_order_acquire)) {
-      MarkRemoved();
-    }
-  }
+  [[nodiscard]] std::shared_ptr<void> BeginDrop();
+  bool Dropped() const;
+  void MarkDropped();
+  void Abandon();
 
  private:
-  void Unpin() noexcept;
+  enum class State : uint8_t {
+    Live,
+    Dropping,
+    Dropped,
+  };
 
-  absl::Mutex _mutex;
-  size_t _pins ABSL_GUARDED_BY(_mutex) = 0;
-  std::weak_ptr<void> _drop ABSL_GUARDED_BY(_mutex);
-  std::atomic_bool _claimed{false};
-  std::atomic_bool _removed{false};
+  mutable absl::Mutex _mutex;
+  State _state ABSL_GUARDED_BY(_mutex) = State::Live;
+  uint32_t _pins ABSL_GUARDED_BY(_mutex) = 0;
+  bool _claimed ABSL_GUARDED_BY(_mutex) = false;
   std::shared_ptr<const std::string> _path;
   bool _remote;
 };
 
 class DatabaseDirectory;
 
-class StorageArea final {
+class StorageDirectory final {
  public:
-  StorageArea(std::shared_ptr<DatabaseDirectory> database,
-              std::shared_ptr<TablespaceRoot> root, std::string path);
+  StorageDirectory(std::shared_ptr<DatabaseDirectory> database,
+                   std::shared_ptr<TablespaceRoot> root, std::string path);
 
   std::string StoragePath(duckdb::idx_t oid) const;
 
   std::string CreateStorage(duckdb::idx_t oid) const;
   std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
-  static void RemoveStorage(std::shared_ptr<StorageArea> area,
+  static void RemoveStorage(std::shared_ptr<StorageDirectory> directory,
                             duckdb::idx_t oid);
 
  private:
@@ -143,7 +138,7 @@ class DatabaseDirectory final
   std::string DataFile() const;
 
   void Create() const;
-  std::shared_ptr<StorageArea> Area(duckdb::idx_t tablespace);
+  std::shared_ptr<StorageDirectory> InTablespace(duckdb::idx_t tablespace);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);

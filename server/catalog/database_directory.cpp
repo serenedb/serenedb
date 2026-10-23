@@ -101,6 +101,14 @@ void RunRemoval(Removal&& removal) {
   BackgroundScheduler::instance().Run(std::forward<Removal>(removal)).Detach();
 }
 
+template<typename Release>
+std::shared_ptr<void> Hold(std::shared_ptr<TablespaceRoot> root,
+                           Release release) {
+  auto* held = root.get();
+  return std::shared_ptr<void>{
+    held, [root = std::move(root), release](void*) { release(*root); }};
+}
+
 }  // namespace
 
 void SyncDirectory(const std::filesystem::path& directory) {
@@ -191,7 +199,7 @@ TablespaceRoot::TablespaceRoot(std::string path)
     _remote{IsRemote(*_path)} {}
 
 TablespaceRoot::~TablespaceRoot() {
-  if (!Removed()) {
+  if (_state != State::Dropped) {
     return;
   }
   RunRemoval([path = std::move(_path)] {
@@ -215,7 +223,8 @@ void TablespaceRoot::Claim() {
   } else if (!CreateMarker(absl::StrCat(Path(), "/", kTablespaceMarker))) {
     in_use();
   }
-  _claimed.store(true, std::memory_order_release);
+  absl::MutexLock lock{&_mutex};
+  _claimed = true;
 }
 
 std::string TablespaceRoot::DatabaseDir(duckdb::idx_t oid) const {
@@ -225,48 +234,67 @@ std::string TablespaceRoot::DatabaseDir(duckdb::idx_t oid) const {
 std::shared_ptr<void> TablespaceRoot::Pin() {
   {
     absl::MutexLock lock{&_mutex};
-    if (_removed.load(std::memory_order_acquire) || !_drop.expired()) {
+    if (_state != State::Live) {
       return nullptr;
     }
     ++_pins;
   }
-  auto self = shared_from_this();
-  auto* pinned = self.get();
-  return std::shared_ptr<void>{
-    pinned, [self = std::move(self)](void*) { self->Unpin(); }};
+  return Hold(shared_from_this(), [](TablespaceRoot& root) {
+    absl::MutexLock lock{&root._mutex};
+    --root._pins;
+  });
 }
 
-void TablespaceRoot::Unpin() noexcept {
-  absl::MutexLock lock{&_mutex};
-  --_pins;
-}
-
-bool TablespaceRoot::BeginDrop(const std::shared_ptr<void>& drop) {
-  absl::MutexLock lock{&_mutex};
-  if (_pins != 0 || !_drop.expired() ||
-      _removed.load(std::memory_order_acquire)) {
-    return false;
+std::shared_ptr<void> TablespaceRoot::BeginDrop() {
+  {
+    absl::MutexLock lock{&_mutex};
+    if (_state != State::Live || _pins != 0) {
+      return nullptr;
+    }
+    _state = State::Dropping;
   }
-  _drop = drop;
-  return true;
+  return Hold(shared_from_this(), [](TablespaceRoot& root) {
+    absl::MutexLock lock{&root._mutex};
+    if (root._state == State::Dropping) {
+      root._state = State::Live;
+    }
+  });
 }
 
-StorageArea::StorageArea(std::shared_ptr<DatabaseDirectory> database,
-                         std::shared_ptr<TablespaceRoot> root, std::string path)
+bool TablespaceRoot::Dropped() const {
+  absl::MutexLock lock{&_mutex};
+  return _state == State::Dropped;
+}
+
+void TablespaceRoot::MarkDropped() {
+  absl::MutexLock lock{&_mutex};
+  _state = State::Dropped;
+}
+
+void TablespaceRoot::Abandon() {
+  absl::MutexLock lock{&_mutex};
+  if (_claimed) {
+    _state = State::Dropped;
+  }
+}
+
+StorageDirectory::StorageDirectory(std::shared_ptr<DatabaseDirectory> database,
+                                   std::shared_ptr<TablespaceRoot> root,
+                                   std::string path)
   : _database{std::move(database)},
     _root{std::move(root)},
     _path{std::move(path)},
     _remote{IsRemote(_path)} {}
 
-std::string StorageArea::StoragePath(duckdb::idx_t oid) const {
+std::string StorageDirectory::StoragePath(duckdb::idx_t oid) const {
   return absl::StrCat(_path, "/", oid);
 }
 
-std::string StorageArea::MarkerPath(duckdb::idx_t oid) const {
+std::string StorageDirectory::MarkerPath(duckdb::idx_t oid) const {
   return absl::StrCat(_path, "/", oid, kStorageMarker);
 }
 
-std::string StorageArea::CreateStorage(duckdb::idx_t oid) const {
+std::string StorageDirectory::CreateStorage(duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
   if (!_remote) {
     CreateDirectory(_path);
@@ -281,7 +309,8 @@ std::string StorageArea::CreateStorage(duckdb::idx_t oid) const {
   return path;
 }
 
-std::optional<std::string> StorageArea::OpenStorage(duckdb::idx_t oid) const {
+std::optional<std::string> StorageDirectory::OpenStorage(
+  duckdb::idx_t oid) const {
   auto path = StoragePath(oid);
   auto& fs = StorageFileSystem();
   if (_remote ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
@@ -290,12 +319,12 @@ std::optional<std::string> StorageArea::OpenStorage(duckdb::idx_t oid) const {
   return std::nullopt;
 }
 
-void StorageArea::RemoveStorage(std::shared_ptr<StorageArea> area,
-                                duckdb::idx_t oid) {
-  RunRemoval([area = std::move(area), oid] {
-    RemoveTree(area->StoragePath(oid));
-    if (area->_remote) {
-      RemoveObject(area->MarkerPath(oid));
+void StorageDirectory::RemoveStorage(
+  std::shared_ptr<StorageDirectory> directory, duckdb::idx_t oid) {
+  RunRemoval([directory = std::move(directory), oid] {
+    RemoveTree(directory->StoragePath(oid));
+    if (directory->_remote) {
+      RemoveObject(directory->MarkerPath(oid));
     }
   });
 }
@@ -312,14 +341,15 @@ DatabaseDirectory::~DatabaseDirectory() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  std::vector<std::string> areas;
+  std::vector<std::string> directories;
   const auto add = [&](const std::shared_ptr<TablespaceRoot>& root) {
     if (!root) {
       return;
     }
-    auto area = root->DatabaseDir(_oid);
-    if (area != _path.string() && !absl::c_contains(areas, area)) {
-      areas.push_back(std::move(area));
+    auto directory = root->DatabaseDir(_oid);
+    if (directory != _path.string() &&
+        !absl::c_contains(directories, directory)) {
+      directories.push_back(std::move(directory));
     }
   };
   add(_root);
@@ -329,10 +359,10 @@ DatabaseDirectory::~DatabaseDirectory() {
       add(root.lock());
     }
   }
-  RunRemoval([path = _path.string(), areas = std::move(areas)] {
+  RunRemoval([path = _path.string(), directories = std::move(directories)] {
     RemoveTree(path);
-    for (const auto& area : areas) {
-      RemoveTree(area);
+    for (const auto& directory : directories) {
+      RemoveTree(directory);
     }
   });
 }
@@ -351,10 +381,11 @@ std::shared_ptr<TablespaceRoot> DatabaseDirectory::RootOf(
   return ClusterOf().TablespaceRootOf(tablespace);
 }
 
-std::shared_ptr<StorageArea> DatabaseDirectory::Area(duckdb::idx_t tablespace) {
+std::shared_ptr<StorageDirectory> DatabaseDirectory::InTablespace(
+  duckdb::idx_t tablespace) {
   if (!_root) {
-    return std::make_shared<StorageArea>(shared_from_this(), nullptr,
-                                         _path.string());
+    return std::make_shared<StorageDirectory>(shared_from_this(), nullptr,
+                                              _path.string());
   }
   auto root = RootOf(tablespace);
   if (root != _root) {
@@ -366,8 +397,8 @@ std::shared_ptr<StorageArea> DatabaseDirectory::Area(duckdb::idx_t tablespace) {
     }
   }
   auto path = root->DatabaseDir(_oid);
-  return std::make_shared<StorageArea>(shared_from_this(), std::move(root),
-                                       std::move(path));
+  return std::make_shared<StorageDirectory>(shared_from_this(), std::move(root),
+                                            std::move(path));
 }
 
 }  // namespace sdb::catalog

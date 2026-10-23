@@ -74,14 +74,14 @@ struct InvertedIndexSnapshot {
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
-struct StorageDirectory {
+struct OpenedDirectory {
   std::optional<irs::IndexFiles> directory;
   bool on_disk = false;
   bool absent = false;
 };
 
-StorageDirectory OpenStorageDirectory(
-  const catalog::StorageArea* area, duckdb::idx_t oid, bool is_new,
+OpenedDirectory OpenStorageDirectory(
+  const catalog::StorageDirectory* parent, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
@@ -91,7 +91,7 @@ class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage>,
     public MaintainedStore {
  public:
-  InvertedIndexStorage(std::shared_ptr<catalog::StorageArea> area,
+  InvertedIndexStorage(std::shared_ptr<catalog::StorageDirectory> parent,
                        duckdb::AttachedDatabase& database,
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
@@ -107,19 +107,19 @@ class InvertedIndexStorage final
       _dropped.store(true, std::memory_order_release);
     }
   }
-  std::string Path() const { return _area->StoragePath(_index_id); }
+  std::string Path() const { return _parent->StoragePath(_index_id); }
   bool Absent() const noexcept { return _absent; }
 
   // `database` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    std::shared_ptr<catalog::StorageArea> area,
+    std::shared_ptr<catalog::StorageDirectory> parent,
     duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      std::move(area), database, index_id, options, top_k_scorer, is_new);
+      std::move(parent), database, index_id, options, top_k_scorer, is_new);
   }
 
   bool ReadOnly() const noexcept { return !_writer; }
@@ -271,7 +271,7 @@ class InvertedIndexStorage final
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   duckdb::weak_ptr<duckdb::AttachedDatabase> _database;
-  std::shared_ptr<catalog::StorageArea> _area;
+  std::shared_ptr<catalog::StorageDirectory> _parent;
   bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;

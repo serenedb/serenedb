@@ -591,6 +591,12 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   PrepareWriters(meta);
   _docs.clear();
   _last_state.clear();
+  if (_features.HasVector()) {
+    for (auto pad = -_pay_out->Position() & (alignof(float) - 1); pad != 0;
+         --pad) {
+      _pay_out->WriteByte(0);
+    }
+  }
 
   // It's needed because offsets block should be aligned with positions block.
   // But it's possible that fields have different features set.

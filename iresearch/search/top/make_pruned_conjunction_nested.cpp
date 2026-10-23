@@ -75,7 +75,7 @@ bool BoundedDisjunction(const QueryBuilder& child, NestedClause& out) noexcept {
   }
   const auto& nested = irs::utils::downCast<BooleanQuery>(child);
   const auto& should = nested.Bucket(Occur::Should);
-  if (nested.MergeType() != ScoreMergeType::Sum || nested.Absorbed() != 0 ||
+  if (nested.MergeType() != ScoreMergeType::Sum ||
       nested.MinShouldMatch() != 1 || !nested.Bucket(Occur::Must).empty() ||
       !nested.Bucket(Occur::MustNot).empty() || !should.filters.empty() ||
       !should.all_docs.empty() ||

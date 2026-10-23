@@ -176,7 +176,7 @@ inline IRS_FORCE_INLINE uint32_t FoldAndNot(uint64_t* IRS_RESTRICT dst,
   return card;
 }
 
-inline IRS_FORCE_INLINE uint64_t WordAt(const uint64_t* IRS_RESTRICT src,
+inline IRS_FORCE_INLINE uint64_t WordAt(const UnalignedWord* IRS_RESTRICT src,
                                         uint32_t count, int64_t at) noexcept {
   const int64_t idx = at >> 6;
   const auto shift = static_cast<uint32_t>(at & 63);
@@ -233,7 +233,7 @@ struct AndCursor {
   }
 
   IRS_FORCE_INLINE void And(uint64_t lo, uint64_t hi, int64_t delta,
-                            const uint64_t* IRS_RESTRICT src,
+                            const UnalignedWord* IRS_RESTRICT src,
                             uint32_t count) noexcept {
     Reach(lo);
     words[at] &= keep | (~uint64_t{0} << (lo % kWindowBits));

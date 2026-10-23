@@ -197,6 +197,16 @@ TEST(GeoTokenizerTests, traits_reflect_configuration) {
   }
 }
 
+TEST(GeoTokenizerTests, u32_coding_keeps_the_poles) {
+  for (const double lng : {-180.0, 0.0, 180.0}) {
+    for (const double lat : {-90.0, 90.0}) {
+      auto ll = S2LatLng::FromDegrees(lat, lng);
+      irs::geo::ToLatLngU32(ll);
+      EXPECT_NEAR(lat, ll.lat().degrees(), 1e-6);
+    }
+  }
+}
+
 TEST(GeoTokenizerTests, geojson_point_terms_match_indexer_oracle) {
   auto stream = MakeGeoJson(GeoJsonTokenizer::Type::Point,
                             GeoJsonTokenizer::Coding::S2Point);

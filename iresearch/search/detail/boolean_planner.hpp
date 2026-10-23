@@ -245,7 +245,7 @@ Result<Family> Make(const BooleanQuery& query, const Ctx& ctx,
                     ScoreMergeType merge) {
   score_t absorbed = 0;
   if constexpr (kScoredPlan<Family, Ctx>) {
-    absorbed = query.Absorbed();
+    absorbed = query.Absorbed(ScoredOf(ctx).fetcher);
   }
   if (!query.Terms(Occur::MustNot).empty() ||
       !query.Queries(Occur::MustNot).empty()) {

@@ -76,5 +76,7 @@ docker run --rm \
 	' "$BUILD_DIR"
 
 python3 scripts/ci/ci.py upload out/bundle.tar.zst "$bundle"
+python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$digest" \
+	--archive out/bundle.tar.zst >/dev/null
 rm -f out/bundle.tar.zst
 echo "stored $bundle"

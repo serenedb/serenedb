@@ -1,5 +1,6 @@
 import re
 import subprocess
+import tempfile
 
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Outcome, Unit
 from . import plan, skipped
@@ -11,11 +12,14 @@ BATCH_MAX = 400
 
 
 def list_tests(binary, extra_args, env):
-    out = subprocess.run([str(binary), "--gtest_list_tests", *extra_args], capture_output=True,
-                         text=True, timeout=300, env=env).stdout
+    res = subprocess.run([str(binary), "--gtest_list_tests", *extra_args], capture_output=True,
+                         text=True, timeout=300, env=env)
+    if res.returncode != 0:
+        raise SystemExit(f"{binary} --gtest_list_tests exited with {res.returncode}: "
+                         f"{res.stderr.strip()[-2000:]}")
     tests = []
     suite = None
-    for line in out.splitlines():
+    for line in res.stdout.splitlines():
         if not line.strip() or line.startswith("Running main()"):
             continue
         if not line.startswith(" "):
@@ -74,7 +78,8 @@ class GtestBinary:
     def units(self, skips, test_filter=None):
         env = dict(self.ctx.base_env)
         env.update(self.env)
-        tests = list_tests(self.path, self.extra_args, env)
+        with tempfile.TemporaryDirectory() as tmp:
+            tests = list_tests(self.path, [*self.extra_args, *self.list_args(tmp)], env)
         if test_filter:
             tests = [t for t in tests if test_filter(t)]
         planned = []
@@ -109,6 +114,9 @@ class GtestBinary:
             batch_cost += cost
         flush()
         return units
+
+    def list_args(self, tmp):
+        return []
 
     def run_args(self, r):
         return []
@@ -196,5 +204,8 @@ def iresearch_units(ctx, args, skips):
 
 
 class IresearchBinary(GtestBinary):
+    def list_args(self, tmp):
+        return [f"--ires_output_path={tmp}"]
+
     def run_args(self, r):
         return [f"--ires_output_path={r.tmp}"]

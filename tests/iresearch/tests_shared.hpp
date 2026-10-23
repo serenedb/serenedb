@@ -62,7 +62,7 @@ class TestEnv {
   static uint32_t iteration();
 
  private:
-  static void make_directories();
+  static bool make_directories();
   static void parse_command_line();
   static bool prepare();
 

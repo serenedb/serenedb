@@ -76,11 +76,15 @@ def suite_filter(ctx, suite):
 
 
 def list_tests(ctx, suite, spec=None):
-    res = subprocess.run([str(unittest_binary(ctx)), "--test-dir", str(core_dir(ctx)),
+    binary = unittest_binary(ctx)
+    res = subprocess.run([str(binary), "--test-dir", str(core_dir(ctx)),
                           "--list-test-names-only", spec or suite_filter(ctx, suite)],
                          capture_output=True, text=True, timeout=600, env=ctx.base_env)
     names = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
-    return sorted(n for n in names if not n.startswith("Matching test cases") and " test case" not in n)
+    if res.returncode != min(255, len(names)):
+        raise SystemExit(f"{binary} listed {len(names)} test(s) of {spec or suite} and exited with "
+                         f"{res.returncode}: {res.stderr.strip()[-2000:]}")
+    return sorted(names)
 
 
 def required_fixtures(ctx, path):

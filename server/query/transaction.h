@@ -144,14 +144,6 @@ class Transaction : public Config {
     return it->second.slots;
   }
 
-  void RegisterIndexFlush(duckdb::idx_t index_id) noexcept {
-    for (auto& slot : IndexSlots(index_id)) {
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-      }
-    }
-  }
-
   void RemoveIndexRows(
     duckdb::idx_t index_id,
     std::shared_ptr<search::InvertedIndexStorage> storage,

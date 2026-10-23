@@ -21,6 +21,7 @@
 #include "search/search_table_transaction.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <duckdb/common/error_data.hpp>
@@ -69,6 +70,14 @@ void RecordTruncateForBuild(SearchTable& shard,
       })) {
     shard.RecordTruncateForBuild(position);
   }
+}
+
+void RegisterFlush(SearchShardWrites& w) noexcept {
+  absl::InlinedVector<irs::IndexWriter::Transaction*, 16> transactions;
+  for (const auto& trx : w.transactions) {
+    transactions.push_back(trx.get());
+  }
+  irs::IndexWriter::Transaction::RegisterFlush(transactions);
 }
 
 void ReleaseWriter(SearchShardWrites& w) noexcept {
@@ -127,9 +136,9 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
   }
 
   void WriteToWAL(duckdb::WriteAheadLog& wal) final {
-    for (auto& trx : _writes.transactions) {
-      trx->RegisterFlush();
-    }
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
+    RegisterFlush(_writes);
+    SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     wal.WriteSetTable(_table);
     auto maps = irs::WriteDocMaps(_writes.shard->CopyDocMaps(_segments));
     SDB_IF_FAILURE("search_delete_wal_malformed_maps") { maps.push_back('x'); }
@@ -356,9 +365,9 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     if (w.shard->GetDatabaseId() != database) {
       continue;
     }
+    RegisterFlush(w);
     uint64_t queries = 0;
     for (auto& trx : w.transactions) {
-      trx->RegisterFlush();
       queries += trx->GetQueries();
     }
     w.first_tick = w.shard->NextTick(queries) - queries;

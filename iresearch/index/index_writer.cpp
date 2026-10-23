@@ -845,8 +845,30 @@ void IndexWriter::Transaction::Reset() noexcept {
 }
 
 void IndexWriter::Transaction::RegisterFlush() noexcept {
-  if (_active.Segment() != nullptr && _active.Flush() == nullptr) {
-    _writer->GetFlushContext()->AddToPending(_active);
+  Transaction* self = this;
+  RegisterFlush({&self, 1});
+}
+
+void IndexWriter::Transaction::RegisterFlush(
+  std::span<Transaction* const> transactions) noexcept {
+  FlushContext* target = nullptr;
+  for (auto* trx : transactions) {
+    SDB_ASSERT(trx->_writer == transactions.front()->_writer);
+    if (auto* flush = trx->_active.Flush(); flush != nullptr) {
+      SDB_ASSERT(target == nullptr || target == flush);
+      target = flush;
+    }
+  }
+  FlushContextPtr current{nullptr, nullptr};
+  for (auto* trx : transactions) {
+    if (trx->_active.Segment() == nullptr || trx->_active.Flush() != nullptr) {
+      continue;
+    }
+    if (target == nullptr) {
+      current = trx->_writer->GetFlushContext();
+      target = current.get();
+    }
+    target->AddToPending(trx->_active);
   }
 }
 

@@ -286,6 +286,9 @@ class IndexWriter : private util::Noncopyable {
 
     void RegisterFlush() noexcept;
 
+    static void RegisterFlush(
+      std::span<Transaction* const> transactions) noexcept;
+
     uint64_t FlushGeneration() const noexcept;
 
     bool Commit() noexcept {

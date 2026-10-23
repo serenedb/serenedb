@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -634,22 +635,22 @@ irs::SourcePosition InvertedStoreIndex::ReplayPosition() const {
 void InvertedStoreIndex::CommitReplay(
   std::span<irs::IndexWriter::Transaction* const> trxs,
   const irs::SourcePosition& position) {
+  absl::InlinedVector<irs::IndexWriter::Transaction*, 16> written;
   uint64_t queries = 0;
   for (auto* trx : trxs) {
     if (trx->GetQueries() != 0) {
-      trx->RegisterFlush();
+      written.push_back(trx);
       queries = std::max<uint64_t>(queries, trx->GetQueries());
     }
   }
-  if (queries == 0) {
+  if (written.empty()) {
     return;
   }
+  irs::IndexWriter::Transaction::RegisterFlush(written);
   const auto tick = _storage->NextTick(queries);
-  for (auto* trx : trxs) {
-    if (trx->GetQueries() != 0) {
-      SDB_ENSURE(trx->Commit(tick, position),
-                 "inverted index replay: commit failed for index ", _index_id);
-    }
+  for (auto* trx : written) {
+    SDB_ENSURE(trx->Commit(tick, position),
+               "inverted index replay: commit failed for index ", _index_id);
   }
 }
 
@@ -658,10 +659,12 @@ void InvertedStoreIndex::CommitReplaySlots(
   std::vector<irs::IndexWriter::Transaction*> trxs;
   trxs.reserve(session.slots.size());
   for (auto& slot : session.slots) {
-    slot->trx.RegisterFlush();
+    trxs.push_back(&slot->trx);
+  }
+  irs::IndexWriter::Transaction::RegisterFlush(trxs);
+  for (auto& slot : session.slots) {
     _storage->AddRows(std::exchange(slot->queue.written, {}),
                       slot->trx.FlushGeneration());
-    trxs.push_back(&slot->trx);
   }
   CommitReplay(trxs, position);
 }
@@ -774,13 +777,11 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
       *slot.transaction, *_config,
       [&](irs::field_id id) { return _tokenizers.Acquire(id, context); });
     Feed(*writer, *slot.transaction, results, rows, count, slot.rows);
-    conn->RegisterIndexFlush(_index_id);
     return {};
   }
   if (prepared == 1) {
     Feed(*slots[0].writer, *slots[0].transaction, results, rows, count,
          slots[0].rows);
-    conn->RegisterIndexFlush(_index_id);
   } else if (count != 0) {
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());
@@ -814,7 +815,6 @@ duckdb::ErrorData InvertedStoreIndex::FinishAppend() {
                            std::make_move_iterator(written.begin()),
                            std::make_move_iterator(written.end()));
     }
-    conn->RegisterIndexFlush(_index_id);
   }
   return {};
 }
@@ -915,9 +915,6 @@ bool InvertedStoreIndex::AppendLocal(
                   std::make_move_iterator(batches.end()));
     }
   }
-  for (const auto& [inverted, prepared] : indexes) {
-    conn->RegisterIndexFlush(inverted->_index_id);
-  }
   return true;
 }
 
@@ -968,7 +965,6 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   if (!native.empty()) {
     conn->RemoveIndexRows(_index_id, _storage, _config, native);
   }
-  conn->RegisterIndexFlush(_index_id);
 }
 
 idx_t InvertedStoreIndex::TryDelete(
@@ -1007,8 +1003,12 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
   duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
-  SDB_ENSURE(!_storage->IsOutOfSync(), "inverted index ", _index_id,
-             " is out of sync with its store table; refusing to checkpoint");
+  if (_storage->IsOutOfSync()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("inverted index ", _index_id,
+              " is out of sync with its store table; refusing to checkpoint"));
+  }
   return StorageRecord(*this);
 }
 

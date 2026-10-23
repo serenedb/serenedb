@@ -73,7 +73,7 @@ int16_t ViewAttnum(duckdb::ClientContext& context,
                    const duckdb::Identifier& name) {
   const auto columns = ViewColumns(context, view);
   for (duckdb::idx_t i = 0; columns && i < columns->types.size(); ++i) {
-    if (view.ColumnName(*columns, i) == name) {
+    if (ViewColumnName(view, *columns, i) == name) {
       return static_cast<int16_t>(i + 1);
     }
   }
@@ -157,8 +157,8 @@ IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
   }
   const auto column = static_cast<duckdb::idx_t>(attnum - 1);
   if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
-    return {relation.Cast<duckdb::ViewCatalogEntry>()
-              .ColumnName(*columns, column)
+    return {ViewColumnName(relation.Cast<duckdb::ViewCatalogEntry>(), *columns,
+                           column)
               .GetIdentifierName(),
             columns->types[column]};
   }
@@ -184,7 +184,7 @@ duckdb::LogicalType IndexExpressionType(
     }
     const auto& view = relation.Cast<duckdb::ViewCatalogEntry>();
     for (duckdb::idx_t i = 0; i < columns->types.size(); ++i) {
-      names.push_back(view.ColumnName(*columns, i));
+      names.push_back(ViewColumnName(view, *columns, i));
     }
     types = columns->types;
   } else {

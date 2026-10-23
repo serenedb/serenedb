@@ -345,10 +345,10 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     } else if (auto& target = relation.Cast<duckdb::ViewCatalogEntry>();
                const auto columns = ViewColumns(Context(), target)) {
       for (size_t i = 0; i < columns->types.size(); ++i) {
-        const auto& name = target.ColumnName(*columns, i);
+        const auto& name = ViewColumnName(target, *columns, i);
         if (referenced(name) &&
             absl::c_none_of(std::views::iota(size_t{0}, i), [&](size_t j) {
-              return target.ColumnName(*columns, j) == name;
+              return ViewColumnName(target, *columns, j) == name;
             })) {
           depend(static_cast<int32_t>(i + 1));
         }

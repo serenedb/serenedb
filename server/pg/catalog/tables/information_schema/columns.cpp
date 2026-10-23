@@ -296,7 +296,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .arrays = _arrays,
          .schema = schema,
          .relation = relation,
-         .name = view.ColumnName(*columns, i).GetIdentifierName(),
+         .name = ViewColumnName(view, *columns, i).GetIdentifierName(),
          .position = i + 1,
          .type = columns->types[i]});
     }

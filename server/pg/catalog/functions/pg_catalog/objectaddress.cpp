@@ -144,7 +144,7 @@ std::optional<std::string> ColumnName(const Session& session,
     if (!columns || column >= columns->types.size()) {
       return std::nullopt;
     }
-    return view.ColumnName(*columns, column).GetIdentifierName();
+    return ViewColumnName(view, *columns, column).GetIdentifierName();
   }
   if (entry.type == SEQUENCE_ENTRY) {
     if (NumbersRows(entry) || column >= kSequenceColumns.size()) {

@@ -46,6 +46,11 @@ namespace sdb::pg {
 
 duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
   duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view);
+inline const duckdb::Identifier& ViewColumnName(
+  const duckdb::ViewCatalogEntry& view, const duckdb::ViewColumnInfo& columns,
+  size_t i) {
+  return i < view.aliases.size() ? view.aliases[i] : columns.names[i];
+}
 int16_t ViewAttnum(duckdb::ClientContext& context,
                    duckdb::ViewCatalogEntry& view,
                    const duckdb::Identifier& name);

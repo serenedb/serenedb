@@ -163,7 +163,8 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       return;
     }
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      Emit<kColumn>({view.oid, view.ColumnName(*columns, i).GetIdentifierName(),
+      Emit<kColumn>({view.oid,
+                     ViewColumnName(view, *columns, i).GetIdentifierName(),
                      static_cast<int16_t>(i + 1), columns->types[i]});
     }
   }

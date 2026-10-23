@@ -6,8 +6,6 @@ set -e
 # Use a heredoc to create the env file efficiently
 cat >./docker.env <<EOF
 CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-100G}
-CCACHE_BASEDIR=/serenedb
-CCACHE_NOHASHDIR=1
 BUILDMODE=${BUILDMODE}
 SDB_DEBUG_INFO=${SDB_DEBUG_INFO}
 SDB_DEV=${SDB_DEV}

@@ -32,14 +32,10 @@ jobs:
       SDB_PORT: "7777"
       SDB_SSL_PORT: "7778"
       # ccache tuned for cross-run reuse (see below):
-      #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
-      #    checkout-path changes and the -g3 absolute paths don't bust the hash.
       #  - COMPILERCHECK=content: brew re-lays-down llvm each run with a fresh
       #    mtime; hashing the compiler by content avoids a full cache miss.
       #  - SLOPPINESS: don't invalidate on header timestamps / __DATE__/__TIME__.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_BASEDIR: ${{ github.workspace }}
-      CCACHE_NOHASHDIR: "1"
       CCACHE_COMPILERCHECK: content
       CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,pch_defines
       CCACHE_MAXSIZE: "5G"

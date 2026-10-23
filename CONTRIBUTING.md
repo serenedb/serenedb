@@ -71,7 +71,7 @@ Every binary links most of the server statically, so debug info dominates its si
   ```
 
   lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
-- **Repo-relative paths**: every build maps the checkout to `.` (`-ffile-prefix-map`), so debug info, `.dwo` pointers, `__FILE__` and coverage hold repo-relative paths. Run lldb, gdb, perf and `llvm-symbolizer` from the repo root, or point lldb at the checkout with `settings set target.source-map . <checkout>`. ccache with `base_dir` set to a directory above your checkouts and `hash_dir = false` then shares hits between checkouts and worktrees.
+- **Repo-relative paths**: every build maps the checkout to `.` (`-ffile-prefix-map`), so debug info, `.dwo` pointers, `__FILE__` and coverage hold repo-relative paths. Run lldb, gdb, perf and `llvm-symbolizer` from the repo root, or point lldb at the checkout with `settings set target.source-map . <checkout>`. Leave ccache's `base_dir` unset: it hands the compiler paths relative to the build directory, which the map doesn't cover, so `__FILE__`, debug info and coverage would hold `../` paths.
 - **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
 
 Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](.claude/rules/cpp.md#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.

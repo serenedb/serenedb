@@ -77,6 +77,7 @@ jobs:
 
       - name: Clean the checkout, keeping the build directories
         run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
@@ -170,6 +171,7 @@ jobs:
 
       - name: Clean the checkout, keeping the build directories
         run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"
@@ -245,6 +247,7 @@ jobs:
       - name: Clean the checkout, keeping the build directories
         run: |
           git config --global --add safe.directory '*'
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git fetch -q --no-tags --depth=1000 origin main "$(git rev-parse HEAD)"

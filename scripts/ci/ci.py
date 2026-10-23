@@ -23,6 +23,11 @@ NOT_BUILD_INPUTS = (
     ".github/*", ".claude/*", "packages/*", "serene-ui/*", "apps/*",
     "tests/drivers/*", "tests/duckdb/*", "scripts/ci/testlib/*", "scripts/ci/skips/*",
     "scripts/ci/test.py", "scripts/ci/ci.py", "scripts/ci/steps/*", "scripts/gtest-parallel/*",
+    "scripts/ci/run_shard.sh", "scripts/ci/coverage_report.sh", "scripts/ci/bugfix_check.sh",
+    "scripts/ci/selection_map.sh", "scripts/ci/report.py", "scripts/ci/select_suites.sh",
+    "scripts/ci/classify-changes.sh", "scripts/ci/check_gitlinks.sh", "scripts/ci/config.sh",
+    "scripts/ci/build-image.txt", "scripts/coverage/*", "scripts/land.sh",
+    "scripts/check_submodule_pointers.py",
     "*.md", ".pre-commit-config.yaml", ".clang-format", ".clang-tidy", ".actrc", ".lldbinit",
     "lldb_addons.py", "LICENSE",
 )

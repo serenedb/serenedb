@@ -199,6 +199,7 @@ jobs:
           clean: false
       - name: Clean the checkout, keeping the build directories
         run: |
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
           git clean -ffdxq -e '/build_*/'
           git submodule foreach --quiet --recursive 'git clean -ffdxq'
           git submodule update --init --checkout --depth=1 tests/sqllogic/any/pg/sqlite

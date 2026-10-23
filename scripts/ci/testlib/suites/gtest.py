@@ -89,8 +89,8 @@ class GtestBinary:
             if skip:
                 self.ctx.skips.append((uid, skip))
                 continue
-            cost, _ = plan(self.ctx, uid, 0.4)
-            planned.append((t, cost))
+            cost, timeout = plan(self.ctx, uid, 0.4)
+            planned.append((t, cost, timeout))
         units = []
         batch, batch_cost = [], 0.0
         target = BATCH_SECONDS * self.ctx.config.slowdown
@@ -99,18 +99,19 @@ class GtestBinary:
             nonlocal batch, batch_cost
             if not batch:
                 return
-            members = tuple(t for t, _ in batch)
+            members = tuple(t for t, _, _ in batch)
             uid = f"gtest:{self.label}:batch:{members[0]}+{len(members) - 1}"
-            timeout = max(self.ctx.timeout_floor, 5 * batch_cost + 30 * self.ctx.config.slowdown)
+            timeout = max(self.ctx.timeout_floor, 5 * batch_cost + 30 * self.ctx.config.slowdown,
+                          batch_cost + max(t for _, _, t in batch))
             units.append(Unit(uid, "gtest", self._run(members), cpus=1, mem_gb=1.0,
                               cost=batch_cost, timeout=timeout,
                               members=tuple(f"gtest:{self.label}:{m}" for m in members)))
             batch, batch_cost = [], 0.0
 
-        for t, cost in planned:
+        for t, cost, timeout in planned:
             if batch and (batch_cost + cost > target or len(batch) >= BATCH_MAX):
                 flush()
-            batch.append((t, cost))
+            batch.append((t, cost, timeout))
             batch_cost += cost
         flush()
         return units

@@ -180,8 +180,8 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_
         if skip:
             ctx.skips.append((uid, skip))
             continue
-        cost, _ = plan(ctx, uid, 1.5 if cpp else 30.0 if name.endswith(".test_slow") else 3.0)
-        planned.append((name, cost))
+        cost, timeout = plan(ctx, uid, 1.5 if cpp else 30.0 if name.endswith(".test_slow") else 3.0)
+        planned.append((name, cost, timeout))
     target = BATCH_SECONDS * ctx.config.slowdown
     per_unit = 1 if serial else BATCH_MAX
     units = []
@@ -191,21 +191,22 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_
         nonlocal batch, batch_cost
         if not batch:
             return
-        members = tuple(n for n, _ in batch)
+        members = tuple(n for n, _, _ in batch)
         uid = f"duckdb:{suite}:batch:{members[0]}+{len(members) - 1}"
         jobs = 1 if serial else JOBS
-        expected = max(batch_cost / jobs, max(c for _, c in batch))
-        timeout = max(ctx.timeout_floor, 5 * expected + 60 * ctx.config.slowdown)
+        expected = max(batch_cost / jobs, max(c for _, c, _ in batch))
+        timeout = max(ctx.timeout_floor, 5 * expected + 60 * ctx.config.slowdown,
+                      max(t for _, _, t in batch))
         units.append(Unit(uid, "duckdb", _batch_run(ctx, suite, members, cpp, jobs, may_fail),
                           cpus=jobs, mem_gb=3.0 * jobs, fixtures=fixtures, group=serial,
                           cost=expected, timeout=timeout,
                           members=tuple(f"duckdb:{suite}:{m}" for m in members)))
         batch, batch_cost = [], 0.0
 
-    for name, cost in planned:
+    for name, cost, timeout in planned:
         if batch and (batch_cost + cost > target * JOBS or len(batch) >= per_unit):
             flush()
-        batch.append((name, cost))
+        batch.append((name, cost, timeout))
         batch_cost += cost
     flush()
     return units

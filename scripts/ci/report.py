@@ -37,7 +37,24 @@ def load_coverage(coverage_dir):
     return [p.read_text().strip() for p in sorted(Path(coverage_dir).glob("**/summary.txt"))]
 
 
-def build_report(metas, rows, needs, run_url, coverage=()):
+def load_selection(selection_dir):
+    if not selection_dir:
+        return None
+    found = sorted(Path(selection_dir).glob("**/selection.json"))
+    return json.loads(found[0].read_text()) if found else None
+
+
+def selection_line(sel):
+    if sel["mode"] == "no map":
+        return "no selection map in the store yet"
+    if sel["mode"] == "everything":
+        return f"would run every unit: {', '.join(sel['everything_because'][:3])}"
+    share = 100 * sel["selected_cost"] / sel["cost"] if sel["cost"] else 0
+    return (f"would run {sel['selected']} of {sel['units']} units, "
+            f"{share:.0f}% of the expected test time")
+
+
+def build_report(metas, rows, needs, run_url, coverage=(), selection=None):
     by_config = defaultdict(lambda: defaultdict(int))
     longest = defaultdict(float)
     shards = defaultdict(int)
@@ -78,6 +95,8 @@ def build_report(metas, rows, needs, run_url, coverage=()):
             lines.append(f"- ❌ **{job}**: {result} before any test result")
     if coverage:
         lines += ["", "**Coverage of the change**", "", "```", *coverage, "```"]
+    if selection:
+        lines += ["", f"**Test selection** (report only, every unit ran): {selection_line(selection)}"]
     if signatures:
         lines += ["", "**Sanitizer reports**", ""]
         for sig, where in sorted(signatures.items()):
@@ -97,6 +116,7 @@ def build_report(metas, rows, needs, run_url, coverage=()):
         "failures": failures,
         "sanitizer_signatures": {k: sorted(v) for k, v in signatures.items()},
         "coverage": list(coverage),
+        "selection": selection,
     }
     return "\n".join(lines) + "\n", summary
 
@@ -119,12 +139,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
     ap.add_argument("--coverage", default="")
+    ap.add_argument("--selection", default="")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     metas, rows = load(args.results)
     needs = json.loads(os.environ.get("NEEDS", "{}") or "{}")
     body, summary = build_report(metas, rows, needs, os.environ.get("RUN_URL", ""),
-                                 load_coverage(args.coverage))
+                                 load_coverage(args.coverage), load_selection(args.selection))
     Path(args.out).write_text(body)
     Path(args.out).with_suffix(".json").write_text(json.dumps(summary, indent=1))
     step = os.environ.get("GITHUB_STEP_SUMMARY")

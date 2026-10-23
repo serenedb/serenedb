@@ -258,6 +258,11 @@ jobs:
         with:
           pattern: coverage-*
           path: coverage
+      - name: Fetch the selection report
+        uses: actions/download-artifact@v7
+        with:
+          pattern: selection-*
+          path: selection
       - name: Write the report
         id: report
         env:
@@ -265,7 +270,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           PR_NUMBER: ${{ contains(inputs.BUILD_CONFIG, 'PR_SHA') && inputs.PR_NUMBER || '' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 scripts/ci/report.py --results results --coverage coverage --out report.md
+        run: python3 scripts/ci/report.py --results results --coverage coverage --selection selection --out report.md
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@v7

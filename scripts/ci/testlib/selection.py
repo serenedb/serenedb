@@ -1,0 +1,197 @@
+import json
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+
+from . import store
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts" / "coverage"))
+
+import diff  # noqa: E402
+
+KEEP = 200
+CUTOFF = 25
+CHEAPEST = 3
+BATCH = 200
+TEST_PREFIXES = ("tests/", "resources/tests/")
+
+
+def _llvm_cov(args, profdata, objects):
+    argv = ["llvm-cov-23", "export", *args, f"-instr-profile={profdata}", objects[0]]
+    for o in objects[1:]:
+        argv += ["-object", o]
+    return argv
+
+
+def coverage_objects(bundle):
+    bundle = Path(bundle)
+    found = []
+    for b in [*sorted((bundle / "bin").iterdir()), bundle / "third_party/duckdb/test/unittest"]:
+        if not b.is_file():
+            continue
+        sections = subprocess.run(["llvm-readelf-23", "-S", str(b)], capture_output=True).stdout
+        if b"__llvm_covmap" in sections:
+            found.append(str(b))
+    return found
+
+
+def _functions(profdata, objects, dest):
+    lcov = subprocess.run(_llvm_cov(["-format=lcov", "-summary-only"], profdata, objects),
+                          capture_output=True, text=True, check=True).stdout
+    files = [line[3:] for line in lcov.splitlines() if line.startswith("SF:")]
+    with open(dest, "w") as fh:
+        for i in range(0, len(files), BATCH):
+            out = subprocess.run(_llvm_cov(["-format=text", "-skip-expansions"], profdata, objects)
+                                 + ["-sources", *files[i:i + BATCH]],
+                                 capture_output=True, text=True, check=True).stdout
+            for fn in json.loads(out)["data"][0]["functions"]:
+                if not fn["regions"] or not fn["filenames"]:
+                    continue
+                body = fn["regions"][0]
+                fh.write(json.dumps({"function": fn["name"],
+                                     "file": diff.normalize(fn["filenames"][body[5]]),
+                                     "start": body[0], "end": body[2]}) + "\n")
+
+
+def _listing(path):
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(store.url(path), timeout=60) as r:
+            return [e["name"] for e in json.load(r) if e["type"] == "file"]
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise
+
+
+def build_map(run, config, arch, bundle, work):
+    work = Path(work)
+    prefix = f"{config}-{arch}-"
+    shards = []
+    for name in _listing(f"attribution/{run}/"):
+        if name.startswith(prefix):
+            dest = work / f"attribution-{name}"
+            store.get(f"attribution/{run}/{name}", dest)
+            shards.append(dest)
+    if not shards:
+        raise SystemExit(f"no attribution for {config}/{arch} in run {run}")
+    profiles = [n for n in _listing(f"profdata/{run}/") if n.startswith(prefix)]
+    if not profiles:
+        raise SystemExit(f"no profile for {config}/{arch} in run {run}")
+    profdata = work / "any.profdata"
+    store.get(f"profdata/{run}/{profiles[0]}", profdata)
+    _functions(profdata, coverage_objects(bundle), work / "functions.jsonl")
+    timing = work / "timing.parquet"
+    costs = (f"SELECT unit, p95 FROM read_parquet('{timing}')"
+             if store.get(f"timing/{config}-{arch}.parquet", timing)
+             else "SELECT NULL::VARCHAR AS unit, NULL::DOUBLE AS p95 WHERE false")
+    listed = ", ".join(f"'{p}'" for p in shards)
+    dest = work / "selection.parquet"
+    store.shell(
+        f"COPY (WITH a AS (SELECT DISTINCT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, "
+        f"function FROM read_parquet([{listed}])), "
+        f"f AS (SELECT DISTINCT function, file, start, \"end\" FROM "
+        f"read_json('{work / 'functions.jsonl'}', format = 'newline_delimited')), "
+        f"c AS ({costs}), "
+        f"j AS (SELECT f.file, f.start, f.\"end\", a.function, a.unit, "
+        f"split_part(a.unit, ':', 1) AS suite, coalesce(c.p95, 1e9) AS cost "
+        f"FROM a JOIN f USING (function) LEFT JOIN c USING (unit)), "
+        f"r AS (SELECT *, count(*) OVER (PARTITION BY function) AS covering, "
+        f"row_number() OVER (PARTITION BY function, suite ORDER BY cost, unit) AS in_suite FROM j), "
+        f"o AS (SELECT *, row_number() OVER (PARTITION BY function ORDER BY in_suite > 1, cost, "
+        f"unit) AS rank FROM r) "
+        f"SELECT file, start, \"end\", function, unit, cost, covering, rank FROM o "
+        f"WHERE covering <= {KEEP} OR rank <= {CHEAPEST} ORDER BY file, start, function, rank) "
+        f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", work)
+    stats = store.shell(f"SELECT count(DISTINCT function) AS functions, count(DISTINCT unit) AS "
+                        f"units, count(*) AS rows FROM read_parquet('{dest}')", work)[0]
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    store.put(f"selection/{config}-{arch}.parquet", dest)
+    store.put(f"selection/{day}/{config}-{arch}.parquet", dest)
+    return stats
+
+
+def _is_test(path):
+    return path.startswith(TEST_PREFIXES) or (path.startswith("third_party/") and "/test/" in path)
+
+
+def _failed_before(pr, days=14):
+    files = []
+    now = time.time()
+    for i in range(days):
+        day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
+        files += [f"results/{day}/{n}" for n in _listing(f"results/{day}/") if f"-pr{pr}-" in n]
+    return files
+
+
+def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CUTOFF):
+    work = Path(work)
+    files = diff.changed_lines(base)
+    selected = defaultdict(set)
+    for u in changed_units:
+        selected[u.id.split("#", 1)[0]].add("changed test")
+    if pr:
+        local = []
+        for key in _failed_before(pr):
+            dest = work / key.replace("/", "_")
+            if store.get(key, dest):
+                local.append(dest)
+        if local:
+            listed = ", ".join(f"'{p}'" for p in local)
+            for r in store.shell(f"SELECT DISTINCT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS "
+                                 f"unit FROM read_parquet([{listed}], union_by_name = true) "
+                                 f"WHERE pr = '{pr}' AND status IN ('failed', 'stuck', 'crashed', "
+                                 f"'flaky')", work):
+                selected[r["unit"]].add("failed earlier in this PR")
+    merge_base = subprocess.run(["git", "-C", str(ROOT), "merge-base", base, "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    deleted = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "--diff-filter=D",
+                              merge_base, "HEAD"], capture_output=True, text=True,
+                             check=True).stdout.splitlines()
+    everything = [f"{p} (deleted)" for p in deleted if not _is_test(p)]
+    tests = set()
+    for path in changed:
+        if any(other.startswith(path + "/") for other in changed):
+            continue
+        if _is_test(path):
+            tests.add(path)
+        elif path.endswith(".md") and path.startswith("docs/"):
+            continue
+        elif path not in files:
+            everything.append(path)
+    rows = []
+    sources = sorted(p for p in files if p not in tests)
+    if sources and not everything:
+        listed = ", ".join("'" + p.replace("'", "''") + "'" for p in sources)
+        rows = store.shell(f"SELECT file, start, \"end\", function, unit, covering, rank FROM "
+                           f"read_parquet('{map_path}') WHERE file IN ({listed})", work)
+    by_file = defaultdict(list)
+    for r in rows:
+        by_file[r["file"]].append(r)
+    for path in sources:
+        for line in sorted(files[path]):
+            hits = [r for r in by_file[path] if r["start"] <= line <= r["end"]]
+            if not hits:
+                everything.append(f"{path}:{line}")
+                break
+            inner = max(r["start"] for r in hits)
+            for r in hits:
+                if r["start"] == inner and (r["covering"] <= cutoff or r["rank"] <= CHEAPEST):
+                    selected[r["unit"]].add(f"{path}:{line}")
+    known = {u.id.split("#", 1)[0] for u in units}
+    picked = sorted(u for u in selected if u in known)
+    chosen = set(picked)
+    run = [u for u in units if u.id.split("#", 1)[0] in chosen]
+    return {
+        "mode": "everything" if everything else "selected",
+        "everything_because": everything[:10],
+        "units": len(units),
+        "selected": len(units) if everything else len(run),
+        "cost": sum(u.cost for u in units),
+        "selected_cost": sum(u.cost for u in (units if everything else run)),
+        "reasons": {u: sorted(selected[u])[:5] for u in picked},
+    }

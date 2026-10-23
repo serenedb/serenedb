@@ -90,14 +90,14 @@ jobs:
             cargo-sqllogictest-macos15-
 
       # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
-      # RelWithDebInfo + COLUMNS debug + no IPO + ccache. macOS deltas: Homebrew
+      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: Homebrew
       # LLVM compiler, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
       # (jemalloc unused on macOS; Linux CI uses JE).
       - name: Configure
         run: |
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DSDB_DEBUG_INFO=COLUMNS \
+            -DSDB_DEBUG_INFO=STACK \
             -DSDB_LTO=Off \
             -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
             -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \

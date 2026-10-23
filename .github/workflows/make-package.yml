@@ -97,7 +97,7 @@ jobs:
         run: |
           # Hardcoded release configuration
           echo "BUILDMODE=Release" >> $GITHUB_ENV
-          echo "SDB_DEBUG_INFO=NONE" >> $GITHUB_ENV
+          echo "SDB_DEBUG_INFO=STACK" >> $GITHUB_ENV
           echo "SDB_DEV=Off" >> $GITHUB_ENV
           echo "SDB_GTEST=Off" >> $GITHUB_ENV
           echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
@@ -108,7 +108,7 @@ jobs:
           echo "SDB_VTUNE=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV
-          echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
+          echo "DEBUG_SYMBOLS=true" >> $GITHUB_ENV
           echo "SDB_STATIC=On" >> $GITHUB_ENV
 
           # Version
@@ -151,7 +151,7 @@ jobs:
             --env-file ./docker.env \
             -e SDB_GTEST=Off \
             -e BUILDMODE=Release \
-            -e SDB_DEBUG_INFO=NONE \
+            -e SDB_DEBUG_INFO=STACK \
             -e SDB_DEV=Off \
             -e SDB_FAULT_INJECTION=Off \
             -e SDB_LTO=On \

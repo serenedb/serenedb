@@ -259,7 +259,7 @@ jobs:
           echo "RUN_BIGLAKE=${{ inputs.BIGLAKE }}"     >> $GITHUB_ENV
 
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
-          echo "SDB_DEBUG_INFO=COLUMNS"   >> $GITHUB_ENV
+          echo "SDB_DEBUG_INFO=STACK"     >> $GITHUB_ENV
           echo "SDB_LTO=Off"              >> $GITHUB_ENV
           echo "SDB_ALLOC=JE"             >> $GITHUB_ENV
           echo "SDB_VTUNE=Off"            >> $GITHUB_ENV

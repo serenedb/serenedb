@@ -40,7 +40,7 @@ add_executable(serened rest_server/serened.cpp)
 target_compile_definitions(
     serened
     PRIVATE
-        SDB_REMAP_EXECUTABLE_DEFAULT=$<IF:$<CONFIG:Release,MinSizeRel>,true,false>
+        SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
 )
 target_link_libraries(serened PRIVATE serene_docs_shell)
 sdb_link_duckdb_extensions(serened)

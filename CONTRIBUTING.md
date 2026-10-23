@@ -43,10 +43,22 @@ Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked
-- `bench` -- Release build (`build_bench/`), static linking, ThinLTO (`SDB_LTO`, off by default), configured like the release packages: no debug info or frame pointers, so profile with the `perf` preset
+- `bench` -- Release build (`build_bench/`), static linking, configured like the release packages: ThinLTO, no frame pointers and remapped machine code, so profile with the `perf` preset
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 
 `lldb`, `clangd` and the sanitizer presets build with dev asserts, fault injection and the gtest binaries; `bench` and `perf` build none of them, so recovery tests and anything that sets `sdb_faults` can't run there.
+
+The build type sets the defaults of the codegen options; each can be set on its own:
+
+| | Debug | RelWithDebInfo | Release |
+|---|---|---|---|
+| Optimization | `-O0` | `-O3` | `-O3` |
+| `SDB_FRAME_POINTERS` | on | on | off |
+| `SDB_DEBUG_INFO` | `FULL` | `STACK` | `STACK` |
+| `SDB_LTO` (ThinLTO) | off | off | on |
+| `SDB_REMAP_EXECUTABLE` (serened's `--remap_executable` default) | off | off | on |
+
+`SDB_DEBUG_INFO` is `NONE`, `STACK` (line tables: symbolized stacks and perf, inlined frames included) or `FULL` (variables and types, tuned for lldb). Every preset builds with `FULL`, CI with `STACK`, and the release packages ship their `STACK` debug info separately, in a `-dbgsym` tarball and a `-dbg` package.
 
 ### Debug info and disk use
 

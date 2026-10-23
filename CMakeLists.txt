@@ -7,15 +7,15 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE
         Release
         CACHE STRING
-        "Choose the type of build, options are: Debug Release RelWithDebInfo MinSizeRel."
+        "Choose the type of build, options are: Debug RelWithDebInfo Release."
         FORCE
     )
 endif()
 
-if(NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|Release|RelWithDebInfo|MinSizeRel)$")
+if(NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|RelWithDebInfo|Release)$")
     message(
         FATAL_ERROR
-        "expecting CMAKE_BUILD_TYPE: Debug Release RelWithDebInfo MinSizeRel, got ${CMAKE_BUILD_TYPE}."
+        "expecting CMAKE_BUILD_TYPE: Debug RelWithDebInfo Release, got ${CMAKE_BUILD_TYPE}."
     )
 endif()
 
@@ -177,14 +177,33 @@ option(
     OFF
 )
 
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(SDB_RELEASE_DEFAULT ON)
+else()
+    set(SDB_RELEASE_DEFAULT OFF)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(SDB_DEBUG_INFO_DEFAULT FULL)
+else()
+    set(SDB_DEBUG_INFO_DEFAULT STACK)
+endif()
 set(SDB_DEBUG_INFO
-    "FULL"
+    ${SDB_DEBUG_INFO_DEFAULT}
     CACHE STRING
-    "debug info: NONE, LINES, COLUMNS, SANITIZE, COVERAGE, PROFILE, LLDB, GDB, FULL"
+    "debug info: NONE, STACK (line tables for symbolized stacks) or FULL (variables and types for lldb); FULL in Debug builds, STACK in the others"
 )
-set_property(
-    CACHE SDB_DEBUG_INFO
-    PROPERTY STRINGS NONE LINES COLUMNS SANITIZE COVERAGE PROFILE LLDB GDB FULL
+set_property(CACHE SDB_DEBUG_INFO PROPERTY STRINGS NONE STACK FULL)
+
+if(SDB_RELEASE_DEFAULT)
+    set(SDB_FRAME_POINTERS_DEFAULT OFF)
+else()
+    set(SDB_FRAME_POINTERS_DEFAULT ON)
+endif()
+option(
+    SDB_FRAME_POINTERS
+    "keep frame pointers; off in Release builds"
+    ${SDB_FRAME_POINTERS_DEFAULT}
 )
 
 if(APPLE)
@@ -206,7 +225,17 @@ set(SDB_GEN_CS_PGO
 )
 set(SDB_USE_PGO "" CACHE PATH "PGO profile to optimize with")
 
-option(SDB_LTO "ThinLTO, identical code folding and section GC" OFF)
+option(
+    SDB_LTO
+    "ThinLTO, identical code folding and section GC; on in Release builds"
+    ${SDB_RELEASE_DEFAULT}
+)
+
+option(
+    SDB_REMAP_EXECUTABLE
+    "default of serened's --remap_executable, which copies its machine code into huge pages at startup; on in Release builds"
+    ${SDB_RELEASE_DEFAULT}
+)
 
 option(
     SDB_DEV
@@ -373,44 +402,23 @@ if(SDB_VTUNE)
     )
 endif()
 
-set(SDB_FRAME_POINTERS_OFF "-fomit-frame-pointer -momit-leaf-frame-pointer")
-set(SDB_FRAME_POINTERS_ON
-    "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
-)
+if(SDB_FRAME_POINTERS)
+    set(SDB_FRAME_POINTER_FLAGS
+        "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+    )
+else()
+    set(SDB_FRAME_POINTER_FLAGS
+        "-fomit-frame-pointer -momit-leaf-frame-pointer"
+    )
+endif()
 
 set(SDB_DEBUG_INFO_NONE "-g0")
-# no-limit-debug-info to produce symbols for glibc/libc++/etc
-set(SDB_BASE_DEBUG_INFO "-fno-limit-debug-info")
-# no-standalone-debug to reduce size of debug info
-# eliminate-unused-debug to remove some unused symbols and types (they're can be used in compile time)
-# line-tables-only to remove everything except address => file:line mapping
-# TODO(mbkkt) eliminate-unused-debug-symbols eliminate-unused-debug-types unused for some reason
-set(SDB_DEBUG_INFO_LINES
-    "${SDB_BASE_DEBUG_INFO} -fno-standalone-debug -gline-tables-only"
-)
-# column-info to add column in line info
-# TODO(mbkkt) maybe gz=zstd
-set(SDB_DEBUG_INFO_COLUMNS "${SDB_DEBUG_INFO_LINES} -gcolumn-info")
-# TODO(mbkkt) maybe no-inline and no-optimize-sibling-calls
-set(SDB_DEBUG_INFO_SANITIZE "${SDB_DEBUG_INFO_COLUMNS}")
-set(SDB_DEBUG_INFO_COVERAGE "${SDB_DEBUG_INFO_COLUMNS}")
-set(SDB_DEBUG_INFO_PROFILE
-    "${SDB_DEBUG_INFO_COLUMNS} -fdebug-info-for-profiling"
-)
-# TODO(mbkkt) no-eliminate-unused-debug-symbols no-eliminate-unused-debug-types unused for some reason
-set(SDB_DEBUG_INFO_FULL "${SDB_BASE_DEBUG_INFO} -g3 -fstandalone-debug")
-# -fdebug-macro leads to crash on macOS, see issue
-# https://github.com/llvm/llvm-project/issues/212345
-if(NOT APPLE)
-    string(APPEND SDB_DEBUG_INFO_FULL " -fdebug-macro")
-endif()
-set(SDB_DEBUG_INFO_LLDB "${SDB_DEBUG_INFO_FULL} -glldb")
-set(SDB_DEBUG_INFO_GDB "${SDB_DEBUG_INFO_FULL} -ggdb")
-
+set(SDB_DEBUG_INFO_STACK "-gline-tables-only")
+set(SDB_DEBUG_INFO_FULL "-g -glldb")
 if(NOT DEFINED SDB_DEBUG_INFO_${SDB_DEBUG_INFO})
     message(
         FATAL_ERROR
-        "SDB_DEBUG_INFO=${SDB_DEBUG_INFO}, expecting NONE, LINES, COLUMNS, SANITIZE, COVERAGE, PROFILE, LLDB, GDB or FULL"
+        "SDB_DEBUG_INFO=${SDB_DEBUG_INFO}, expecting NONE, STACK or FULL"
     )
 endif()
 set(SDB_DEBUG_FLAGS "${SDB_DEBUG_INFO_${SDB_DEBUG_INFO}}")
@@ -430,22 +438,17 @@ endif()
 # there is no need to repeat the base flags in the build-type specific flags!
 foreach(lang C CXX)
     set(CMAKE_${lang}_FLAGS_DEBUG
-        "-O0 ${SDB_FRAME_POINTERS_ON} ${SDB_DEBUG_FLAGS}"
-        CACHE INTERNAL
-        ""
-    )
-    set(CMAKE_${lang}_FLAGS_MINSIZEREL
-        "-Os ${SDB_FRAME_POINTERS_OFF} ${SDB_DEBUG_FLAGS}"
-        CACHE INTERNAL
-        ""
-    )
-    set(CMAKE_${lang}_FLAGS_RELEASE
-        "-O3 ${SDB_FRAME_POINTERS_OFF} ${SDB_DEBUG_FLAGS}"
+        "-O0 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
         CACHE INTERNAL
         ""
     )
     set(CMAKE_${lang}_FLAGS_RELWITHDEBINFO
-        "-O3 ${SDB_FRAME_POINTERS_ON} ${SDB_DEBUG_FLAGS}"
+        "-O3 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        CACHE INTERNAL
+        ""
+    )
+    set(CMAKE_${lang}_FLAGS_RELEASE
+        "-O3 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
         CACHE INTERNAL
         ""
     )

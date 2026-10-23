@@ -6,29 +6,19 @@ on:
   workflow_dispatch:
     inputs:
       LOCATION:
-        description: 'Runner label (linux = any of our machines; all = amd64 + arm64 explicitly)'
+        description: 'linux-amd64 = arm64 builds without tests; all = arm64 tests too'
         type: choice
         required: true
         default: 'linux-amd64'
         options:
-          - linux
           - linux-amd64
-          - linux-arm64
           - all
       EVERYTHING:
-        description: 'Scope: run everything regardless of diff'
-        type: boolean
-        default: false
-      EXTRA_ASAN:
-        description: 'Run the full in-scope suite set under ASAN (not just ours + drivers)'
-        type: boolean
-        default: false
-      EXTRA_TSAN:
-        description: 'Run the full in-scope suite set under TSAN (not just ours + drivers)'
+        description: 'Run every suite, regardless of the diff'
         type: boolean
         default: false
       BIGLAKE:
-        description: 'Launch BigLake tests: sqllogic + recovery + stress against the real catalog in the dev build (needs the BIGLAKE_* secrets)'
+        description: 'Also run sqllogic + recovery + stress against the real BigLake catalog in dev (needs the BIGLAKE_* secrets)'
         type: boolean
         default: false
       PR_SHA:
@@ -50,137 +40,178 @@ on:
 permissions:
   statuses: write
   contents: read
+  pull-requests: write
 
 concurrency:
   group: build-manual-${{ inputs.PR_NUMBER && format('pr-{0}', inputs.PR_NUMBER) || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  classify:
-    name: classify changes
-    if: ${{ !inputs.EVERYTHING }}
+  prepare:
+    name: prepare
     runs-on: ubuntu-latest
     outputs:
-      iresearch: ${{ steps.classify.outputs.iresearch }}
-      duckdb_suites: ${{ steps.classify.outputs.duckdb_suites }}
-      re2: ${{ steps.classify.outputs.re2 }}
+      test_args: ${{ steps.select.outputs.test_args }}
       pg_tests: ${{ steps.classify.outputs.pg_tests }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 0
+      - name: Every gitlink can be fetched
+        run: ./scripts/ci/check_gitlinks.sh
       - id: classify
         run: ./scripts/ci/classify-changes.sh origin/main
+      - id: select
+        env:
+          EVERYTHING: ${{ inputs.EVERYTHING }}
+          IRESEARCH: ${{ steps.classify.outputs.iresearch }}
+          RE2: ${{ steps.classify.outputs.re2 }}
+          DUCKDB_SUITES: ${{ steps.classify.outputs.duckdb_suites }}
+        run: echo "test_args=$(./scripts/ci/select_suites.sh)" >> "$GITHUB_OUTPUT"
 
   perf:
-    name: perf (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: prepare
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: perf
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   dev:
-    name: dev (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: prepare
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: dev
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      RE2: ${{ inputs.EVERYTHING || needs.classify.outputs.re2 == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      BIGLAKE: ${{ inputs.BIGLAKE }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   asan:
-    name: asan (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: prepare
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: asan
-      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_ASAN }}
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   tsan:
-    name: tsan (${{ matrix.location }})
-    needs: classify
-    if: ${{ !cancelled() }}
-    strategy:
-      fail-fast: false
-      matrix:
-        location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-    uses: ./.github/workflows/build-reusable.yml
+    needs: prepare
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: ${{ matrix.location }}
       CONFIG: tsan
-      RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_TSAN }}
-      IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop' || needs.classify.outputs.duckdb_suites }}
-      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
-      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+    secrets: inherit
+
+  msan:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: msan
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+    secrets: inherit
+
+  perf-arm64:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: perf
+      LOCATION: linux-arm64
+      TESTS: ${{ inputs.LOCATION == 'all' }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+    secrets: inherit
+
+  dev-arm64:
+    needs: prepare
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: dev
+      LOCATION: linux-arm64
+      TESTS: ${{ inputs.LOCATION == 'all' }}
+      TEST_ARGS: ${{ needs.prepare.outputs.test_args }}
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
+    secrets: inherit
+
+  biglake:
+    needs: [prepare, dev]
+    if: inputs.BIGLAKE
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: dev
+      TEST_ARGS: --biglake --suite sqllogic --suite recovery --suite stress --stress-profile biglake-reindex-smoke
+      PR_SHA: ${{ inputs.PR_SHA }}
+      PR_NUMBER: ${{ inputs.PR_NUMBER }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   validate-pg:
     name: validate pg
-    needs: classify
-    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg_tests != '') }}
+    needs: prepare
+    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.prepare.outputs.pg_tests != '') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
       BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
-      # empty = run all pg tests downstream
-      PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.classify.outputs.pg_tests }}
+      PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.prepare.outputs.pg_tests }}
     secrets: inherit
 
   report:
     name: Report Status
-    needs: [classify, dev, asan, tsan, perf, validate-pg]
+    needs: [prepare, perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, biglake, validate-pg]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (for notify script)
+      - name: Checkout (for the report scripts)
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
+      - name: Fetch the results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: results-*
+          path: results
+      - name: Write the report
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          PR_NUMBER: ${{ contains(inputs.BUILD_CONFIG, 'PR_SHA') && inputs.PR_NUMBER || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/report.py --results results --out report.md
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            report.md
+            report.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}

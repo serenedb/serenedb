@@ -1,0 +1,85 @@
+#!/bin/bash
+# Builds one CI config into its persistent build_<config> and stores the test
+# bundle under its input digest; a digest already in the store builds nothing.
+#
+#   scripts/ci/build_bundle.sh <config>
+#
+# Outputs (also to $GITHUB_OUTPUT): digest, reused.
+
+set -euo pipefail
+
+WORKSPACE="${WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+cd "$WORKSPACE"
+# shellcheck source=scripts/ci/config.sh
+source scripts/ci/config.sh
+sdb_config "$1"
+
+: "${BUILD_IMAGE:=serenedb/serenedb-build-ubuntu:latest}"
+: "${CCACHE_HOST_DIR:=/mnt/data/.ccache}"
+: "${CARGO_HOME_CACHE:=/mnt/data/.cargo-home-sqllogic}"
+: "${CARGO_TARGET_CACHE:=/mnt/data/.cargo-target-sqllogic}"
+: "${SDB_STORE_CCACHE:=http://store-host:8640/ccache|layout=bazel}"
+
+output() {
+	echo "$1=$2"
+	if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+		echo "$1=$2" >>"$GITHUB_OUTPUT"
+	fi
+}
+
+for i in 1 2 3; do
+	docker pull -q "$BUILD_IMAGE" && break
+	sleep 10
+done
+
+digest=$(python3 scripts/ci/ci.py digest --config "$CONFIG" --flags "$BUILD_FLAGS" --image "$BUILD_IMAGE")
+bundle="bundles/${CONFIG}-${ARCH}-${digest}.tar.zst"
+output digest "$digest"
+
+if python3 scripts/ci/ci.py exists "$bundle"; then
+	echo "bundle $bundle is in the store: nothing to build"
+	output reused true
+	exit 0
+fi
+output reused false
+
+remote=()
+if [[ "$ARCH" == x86_64 ]]; then
+	remote=(-e "CCACHE_REMOTE_STORAGE=$SDB_STORE_CCACHE")
+fi
+mkdir -p "$WORKSPACE/out/logs" "$CARGO_HOME_CACHE" "$CARGO_TARGET_CACHE"
+
+docker run --rm \
+	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
+	--user "$(id -u):$(id -g)" \
+	-e HOME=/serenedb/out/home \
+	-e CCACHE_DIR=/.ccache \
+	-e CCACHE_BASEDIR=/serenedb \
+	-e CCACHE_NOHASHDIR=1 \
+	-e CCACHE_MAXSIZE=100G \
+	"${remote[@]}" \
+	-e BUILD_DIR -e BUILDMODE -e SDB_DEBUG_INFO -e SDB_DEV -e SDB_GTEST -e SDB_FAULT_INJECTION \
+	-e SDB_LTO -e SDB_COVERAGE -e SDB_VTUNE -e SDB_ALLOC -e SANITIZERS -e EXTRA_CMAKE_FLAGS \
+	-v "$WORKSPACE:/serenedb" \
+	-v "$CCACHE_HOST_DIR:/.ccache" \
+	"$BUILD_IMAGE" /serenedb/scripts/ci/build.bash "${TARGETS[@]}"
+
+docker run --rm \
+	${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} \
+	--user "$(id -u):$(id -g)" \
+	-e HOME=/serenedb/out/home \
+	-e CARGO_HOME=/cargo-home \
+	-v "$WORKSPACE:/serenedb" \
+	-v "$CARGO_HOME_CACHE:/cargo-home" \
+	-v "$CARGO_TARGET_CACHE:/cargo-target" \
+	-w /serenedb \
+	"$BUILD_IMAGE" bash -c '
+		set -euo pipefail
+		cargo build --release --quiet --manifest-path third_party/sqllogictest-rs/sqllogictest-bin/Cargo.toml --target-dir /cargo-target
+		cp /cargo-target/release/sqllogictest "$0/bin/sqllogictest"
+		python3 scripts/ci/ci.py pack --build-dir "$0" --out "out/bundle.tar.zst"
+	' "$BUILD_DIR"
+
+python3 scripts/ci/ci.py upload out/bundle.tar.zst "$bundle"
+rm -f out/bundle.tar.zst
+echo "stored $bundle"

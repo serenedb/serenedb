@@ -31,7 +31,7 @@ RUN \
   apt-get install -y --no-install-recommends \
       curl wget gnupg \
       ninja-build cmake ccache make \
-      llvm-23 clang-23 lld-23 libclang-rt-23-dev \
+      llvm-23 clang-23 lld-23 lldb-23 libclang-rt-23-dev zstd \
       bison flex libfl-dev \
       dh-make fakeroot \
       python3 python3-dev python3-pip perl \

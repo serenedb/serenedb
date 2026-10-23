@@ -1,0 +1,43 @@
+#!/bin/bash
+# Sourced by the CI job scripts: the build settings of one CI config.
+
+sdb_config() {
+	CONFIG="$1"
+	BUILDMODE=RelWithDebInfo
+	SDB_DEBUG_INFO=STACK
+	SDB_LTO=Off
+	SDB_VTUNE=Off
+	SDB_ALLOC=JE
+	SDB_COVERAGE=Off
+	SANITIZERS=None
+	SDB_DEV=On
+	SDB_GTEST=On
+	SDB_FAULT_INJECTION=On
+	EXTRA_CMAKE_FLAGS="-DSDB_BUILD_DUCKDB_UNITTESTS=ON"
+	TARGETS=(serened iresearch-examples serenedb-bench-micro search-benchmark-game
+		serenedb-tests iresearch-tests iresearch-load-tests unittest re2-tests)
+	case "$CONFIG" in
+	perf)
+		SDB_DEV=Off
+		SDB_GTEST=Off
+		SDB_FAULT_INJECTION=Off
+		EXTRA_CMAKE_FLAGS="-DSDB_BUILD_DUCKDB_UNITTESTS=OFF"
+		TARGETS=(serened iresearch-examples serenedb-bench-micro search-benchmark-game)
+		;;
+	dev) SDB_COVERAGE=On ;;
+	asan) SANITIZERS=UndefinedAddress ;;
+	tsan) SANITIZERS=Thread ;;
+	msan) SANITIZERS=MemoryWithOrigins ;;
+	*)
+		echo "unknown config '$CONFIG'" >&2
+		return 1
+		;;
+	esac
+	BUILD_DIR="build_${CONFIG}"
+	ARCH="$(uname -m)"
+	BUILD_FLAGS="BUILDMODE=$BUILDMODE SDB_DEBUG_INFO=$SDB_DEBUG_INFO SDB_LTO=$SDB_LTO SDB_ALLOC=$SDB_ALLOC"
+	BUILD_FLAGS+=" SDB_COVERAGE=$SDB_COVERAGE SANITIZERS=$SANITIZERS SDB_DEV=$SDB_DEV SDB_GTEST=$SDB_GTEST"
+	BUILD_FLAGS+=" SDB_FAULT_INJECTION=$SDB_FAULT_INJECTION EXTRA=$EXTRA_CMAKE_FLAGS TARGETS=${TARGETS[*]}"
+	export CONFIG BUILDMODE SDB_DEBUG_INFO SDB_LTO SDB_VTUNE SDB_ALLOC SDB_COVERAGE SANITIZERS SDB_DEV
+	export SDB_GTEST SDB_FAULT_INJECTION EXTRA_CMAKE_FLAGS BUILD_DIR ARCH BUILD_FLAGS
+}

@@ -111,7 +111,7 @@ struct LocalTableChangesEntry {
       return;
     }
     if (places.CanHaveNull()) {
-      for (const auto& place : places) {
+      for (const auto place : places) {
         if (!place.IsValid()) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

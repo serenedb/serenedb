@@ -130,6 +130,8 @@ def function_lines(proc, schema, name, superuser, types, constants):
 
 
 REGISTRY = os.path.join(GENERATED_DIR, 'registry.gen.inc')
+TABLE_DECLARATIONS = os.path.join(GENERATED_DIR, 'table_declarations.gen.inc')
+VIEW_DECLARATIONS = os.path.join(GENERATED_DIR, 'view_declarations.gen.inc')
 
 
 def files(kind, folder):
@@ -166,20 +168,24 @@ def registry():
                        for name in files('views', SDB_FOLDER))
     functions = sorted(relation_constant(schema, name)[1:]
                        for schema, name in function_files())
-    return generated(
-      'the files in server/pg/catalog/tables, table_functions and views', [
-        f'extern SystemTable g{name};' for name in coded + functions] +
-        ['constexpr SystemTable* kSystemTables[] = {'] +
+    source = 'the files in server/pg/catalog/tables, table_functions and views'
+    return {
+      TABLE_DECLARATIONS: generated(source, [
+        f'extern SystemTable g{name};' for name in coded + functions]),
+      VIEW_DECLARATIONS: generated(source, [
+        f'extern const std::string_view {const};' for const, _, _ in views] +
+        [f'extern const SystemView {const};' for const in sdb_views]),
+      REGISTRY: generated(source, [
+        'constexpr SystemTable* kSystemTables[] = {'] +
         [f'  &g{name},' for name in coded] + ['};'] +
         ['constexpr SystemTable* kSystemTableFunctions[] = {'] +
         [f'  &g{name},' for name in functions] + ['};'] +
-        [f'extern const std::string_view {const};' for const, _, _ in views] +
         ['const SystemViewSql kSystemViewSql[] = {'] +
         [f'  {{{cpp_str(schema)}, {cpp_str(name)}, {const}}},'
          for const, schema, name in views] + ['};'] +
-        [f'extern const SystemView {const};' for const in sdb_views] +
         ['constexpr const SystemView* kSdbViews[] = {'] +
-        [f'  &{const},' for const in sdb_views] + ['};'])
+        [f'  &{const},' for const in sdb_views] + ['};']),
+    }
 
 
 def named_oids(names, lookup):

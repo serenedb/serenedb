@@ -20,6 +20,8 @@
 
 #include <string_view>
 
+#include "pg/catalog/views/system_views.h"
+
 namespace sdb::pg {
 
 extern constexpr std::string_view kPgStatProgressCreateIndex = R"sql(SELECT

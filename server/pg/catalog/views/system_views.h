@@ -48,4 +48,6 @@ inline constexpr SystemView kExternalViews[] = {
 #include "pg/catalog/generated/system_views.gen.inc"
 };
 
+#include "pg/catalog/generated/view_declarations.gen.inc"
+
 }  // namespace sdb::pg

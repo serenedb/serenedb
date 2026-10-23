@@ -160,7 +160,7 @@ const std::vector<BuiltinCollation>& Collations() {
                               icu ? name : std::string_view{},
                               entry->not_required_for_equality);
     }
-    SDB_ASSERT(next <= kFirstBuiltinFunction);
+    SDB_ASSERT(static_cast<duckdb::idx_t>(next) <= kFirstBuiltinFunction);
     absl::c_sort(collations, kByOid);
     return collations;
   }();

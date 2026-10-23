@@ -24,14 +24,15 @@ views are tables), in server/pg/catalog/table_functions/pg_catalog/<name>.cpp
 server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
 Those outputs are server/pg/catalog/generated/*.gen.inc.
 
-Three outputs come from this repository alone: generated/registry.gen.inc,
+Five outputs come from this repository alone: generated/registry.gen.inc,
 which registers each file in server/pg/catalog/tables, table_functions and
-views, and the sqllogic tests that check the claims of
-docs/compatibility/system-table-compatibility.md and
+views, generated/table_declarations.gen.inc and view_declarations.gen.inc,
+which declare what those files define, and the sqllogic tests that check the
+claims of docs/compatibility/system-table-compatibility.md and
 docs/compatibility/data-type-compatibility.md; the type page must list
 every PostgreSQL type. --check verifies every output is current without
 writing anything; without the third_party/postgres submodule it checks only
-those three, and not whether the type page lists every PostgreSQL type.
+those five, and not whether the type page lists every PostgreSQL type.
 """
 
 import argparse
@@ -44,7 +45,7 @@ from pg_catalog.generator import Generator
 
 
 def outputs():
-    out = {relations.REGISTRY: relations.registry(),
+    out = {**relations.registry(),
            str(claims.TEST): claims.output(),
            str(claims.TYPE_TEST): claims.type_output()}
     if source.available():

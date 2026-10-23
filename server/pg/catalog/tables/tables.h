@@ -32,6 +32,7 @@
 
 namespace sdb::pg {
 
+#include "pg/catalog/generated/table_declarations.gen.inc"
 #include "pg/catalog/generated/tables.gen.inc"
 
 template<typename T>

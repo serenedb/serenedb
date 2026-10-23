@@ -26,10 +26,8 @@
 #include <algorithm>
 #include <cmath>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
-#include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -336,20 +334,6 @@ std::optional<ColumnId> FetchableColumn(
     return std::nullopt;
   }
   return col_id;
-}
-
-bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
-                    duckdb::idx_t col) noexcept {
-  if (col == g.score_output_idx || col == g.tableoid_output_idx ||
-      col == g.doc_address_output_idx) {
-    return true;
-  }
-  if (absl::c_any_of(f.offsets_entries,
-                     [col](const auto& e) { return e.output_idx == col; })) {
-    return true;
-  }
-  return absl::c_any_of(g.cs_projections,
-                        [col](const auto& p) { return p.output_slot == col; });
 }
 
 }  // namespace
@@ -836,48 +820,6 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
   return batch.count;
 }
 
-void FeedHits(irs::HitBatcher& batcher, std::span<const irs::ScoreDoc> hits,
-              bool scored, absl::FunctionRef<void()> on_ready) {
-  size_t at = 0;
-  bool done = false;
-  while (!done) {
-    while (!batcher.Ready()) {
-      if (at == hits.size()) {
-        if (batcher.Empty()) {
-          done = true;
-          break;
-        }
-        batcher.Finalize();
-        if (!batcher.Ready()) {
-          done = true;
-        }
-        break;
-      }
-      const auto row = hits[at].doc - irs::doc_limits::min();
-      const auto span = batcher.OpenWindow(row);
-      if (span == 0) {
-        break;
-      }
-      auto* out_docs = batcher.WindowHead();
-      auto* out_scores = scored ? batcher.ScoreHead() : nullptr;
-      duckdb::idx_t n = 0;
-      while (at != hits.size() &&
-             (hits[at].doc - irs::doc_limits::min()) < row + span) {
-        out_docs[n] = hits[at].doc;
-        if (out_scores != nullptr) {
-          out_scores[n] = hits[at].score;
-        }
-        ++n;
-        ++at;
-      }
-      batcher.CommitWindow(n);
-    }
-    if (batcher.Ready()) {
-      on_ready();
-    }
-  }
-}
-
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected) {
@@ -894,67 +836,6 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
   const auto rows =
     f.index_source->Materialize(ctx, *f.pk_column, collected, output);
   return rows;
-}
-
-void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
-                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
-                 duckdb::idx_t count, duckdb::idx_t offset) {
-  for (duckdb::idx_t c = 0; c < from.ColumnCount(); ++c) {
-    if (g.needs_lookup &&
-        g.lookup_projected_columns[c] != duckdb::DConstants::INVALID_INDEX) {
-      continue;
-    }
-    if (!ProducedColumn(g, f, c)) {
-      into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::ConstantVector::SetNull(into.data[c], true);
-      continue;
-    }
-    duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
-                                   offset);
-  }
-  into.SetChildCardinality(offset + count);
-}
-
-void FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-               FetchLocalState& f, duckdb::DataChunk& tmp, uint32_t seg,
-               std::span<const irs::ScoreDoc> hits, bool rebind,
-               duckdb::DataChunk& into, std::unique_ptr<duckdb::Vector>& pk,
-               duckdb::idx_t& appended) {
-  f.EnsureHitBatcher(g);
-  auto& batcher = *f.hit_batcher;
-  if (rebind || !batcher.Bound(seg)) {
-    batcher.BeginSegment(seg, (*g.reader)[seg].GetColReader(),
-                         g.client_context);
-  }
-  [[maybe_unused]] const auto start = appended;
-  FeedHits(batcher, hits, g.ScanScore(), [&] {
-    const auto count = EmitReadyBatch(ctx, g, f, tmp);
-    if (count != 0) {
-      SDB_ASSERT(appended + count <= into.GetCapacity());
-      CopyFetched(g, f, tmp, into, count, appended);
-      if (g.needs_lookup) {
-        SDB_ASSERT(f.pk_column);
-        if (!pk) {
-          pk = std::make_unique<duckdb::Vector>(f.pk_column->GetType(),
-                                                into.GetCapacity());
-        }
-        duckdb::VectorOperations::Copy(*f.pk_column, *pk, count, 0, appended);
-      }
-      appended += count;
-    }
-    tmp.Reset();
-  });
-  SDB_ASSERT(appended - start == hits.size());
-}
-
-void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
-                       FetchLocalState& f) {
-  if (!f.index_source) {
-    f.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
-  }
 }
 
 }  // namespace sdb::connector

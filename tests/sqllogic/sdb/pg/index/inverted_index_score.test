@@ -6,6 +6,9 @@ hash-threshold 100
 # scores are computed from.
 
 statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+statement ok
 SET disabled_optimizers = 'compressed_materialization';
 
 
@@ -386,25 +389,21 @@ query
 EXPLAIN SELECT id, BM25(docs_idx.tableoid) as score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 3;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ──────────────────────────╮
-│ Key: iresearch_pk                      │
-│ ~3 rows                                │
+╭─ STREAMING_LIMIT ──────────────────────╮
+│ Limit: 3                               │
+│ ~0 rows                                │
 ╰────────────────────┬───────────────────╯
-                     ├────────────────────────────────╮
-╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Limit: 3                               │  │ Index: docs_idx  │
-│ ~0 rows                                │  │ Lookup: table    │
-╰────────────────────┬───────────────────╯  │ Projections: id  │
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~3 rows          │
-│ Index: docs_idx                        │  ╰──────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_idx                        │
+│ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
 │ │ Value: fox          │                │
 │ ╰─────────────────────╯                │
 │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: sdb_inverted_index_score, │
-│              iresearch_pk              │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
 │ ~7 rows                                │
 ╰────────────────────────────────────────╯
 
@@ -708,28 +707,24 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ UNION ────────────┴───────────────────╮
 ╰────────────────────┬───────────────────╯
-                     ├─────────────────────────────────────────────────────────────────╮
-╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮
-│ Key: iresearch_pk                      │                        │ Key: iresearch_pk                      │
-│ ~2 rows                                │                        │ ~2 rows                                │
-╰────────────────────┬───────────────────╯                        ╰────────────────────┬───────────────────╯
-                     ├────────────────────────────────╮                                ├────────────────────────────────╮
-╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Limit: 2                               │  │ Index: docs_idx  │  │ Limit: 2                               │  │ Index: docs_idx  │
-│ ~2 rows                                │  │ Lookup: table    │  │ ~2 rows                                │  │ Lookup: table    │
-╰────────────────────┬───────────────────╯  │ Projections: id  │  ╰────────────────────┬───────────────────╯  │ Projections: id  │
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │
-│ Index: docs_idx                        │  ╰──────────────────╯  │ Index: docs_idx                        │  ╰──────────────────╯
-│ Index Filter:                          │                        │ Index Filter:                          │
-│ ╭─ Term ──────────────╮                │                        │ ╭─ Term ──────────────╮                │
-│ │ Field: body(string) │                │                        │ │ Field: body(string) │                │
-│ │ Value: fox          │                │                        │ │ Value: lazy         │                │
-│ ╰─────────────────────╯                │                        │ ╰─────────────────────╯                │
-│ Score: bm25(k1=1.2, b=0.75)            │                        │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: sdb_inverted_index_score, │                        │ Projections: sdb_inverted_index_score, │
-│              iresearch_pk              │                        │              iresearch_pk              │
-│ ~7 rows                                │                        │ ~7 rows                                │
-╰────────────────────────────────────────╯                        ╰────────────────────────────────────────╯
+                     ├───────────────────────────────────────────╮
+╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮
+│ Limit: 2                               │  │ Limit: 2                               │
+│ ~2 rows                                │  │ ~2 rows                                │
+╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: docs_idx                        │  │ Index: docs_idx                        │
+│ Lookup: table                          │  │ Lookup: table                          │
+│ Index Filter:                          │  │ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │  │ │ Field: body(string) │                │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │
+│ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │  │ Projections: id,                       │
+│              sdb_inverted_index_score  │  │              sdb_inverted_index_score  │
+│ ~7 rows                                │  │ ~7 rows                                │
+╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯
 
 
 query error
@@ -1083,31 +1078,27 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ UNION ────────────┴───────────────────╮
 ╰────────────────────┬───────────────────╯
-                     ├─────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────╮
-╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ UNION ────────────┴───────────────────╮
-│ Key: iresearch_pk                      │                        │ Key: iresearch_pk                      │                        ╰────────────────────┬───────────────────╯
-│ ~2 rows                                │                        │ ~2 rows                                │                                             ├─────────────────────────────────────────────────────────────────╮
-╰────────────────────┬───────────────────╯                        ╰────────────────────┬───────────────────╯                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮
-                     ├────────────────────────────────╮                                ├────────────────────────────────╮           │ Key: iresearch_pk                      │                        │ Key: iresearch_pk                      │
-╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  │ ~2 rows                                │                        │ ~2 rows                                │
-│ Limit: 2                               │  │ Index: docs_idx  │  │ Limit: 2                               │  │ Index: docs_idx  │  ╰────────────────────┬───────────────────╯                        ╰────────────────────┬───────────────────╯
-│ ~2 rows                                │  │ Lookup: table    │  │ ~2 rows                                │  │ Lookup: table    │                       ├────────────────────────────────╮                                ├────────────────────────────────╮
-╰────────────────────┬───────────────────╯  │ Projections: id  │  ╰────────────────────┬───────────────────╯  │ Projections: id  │  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  │ Limit: 2                               │  │ Index: docs_idx  │  │ Limit: 2                               │  │ Index: docs_idx  │
-│ Index: docs_idx                        │  ╰──────────────────╯  │ Index: docs_idx                        │  ╰──────────────────╯  │ ~2 rows                                │  │ Lookup: table    │  │ ~2 rows                                │  │ Lookup: table    │
-│ Index Filter:                          │                        │ Index Filter:                          │                        ╰────────────────────┬───────────────────╯  │ Projections: id  │  ╰────────────────────┬───────────────────╯  │ Projections: id  │
-│ ╭─ Term ──────────────╮                │                        │ ╭─ Term ──────────────╮                │                        ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │
-│ │ Field: body(string) │                │                        │ │ Field: body(string) │                │                        │ Index: docs_idx                        │  ╰──────────────────╯  │ Index: docs_idx                        │  ╰──────────────────╯
-│ │ Value: fox          │                │                        │ │ Value: lazy         │                │                        │ Index Filter:                          │                        │ Index Filter:                          │
-│ ╰─────────────────────╯                │                        │ ╰─────────────────────╯                │                        │ ╭─ Term ──────────────╮                │                        │ ╭─ Term ──────────────╮                │
-│ Score: bm25(k1=1.2, b=0.75)            │                        │ Score: bm25(k1=1.2, b=0.75)            │                        │ │ Field: body(string) │                │                        │ │ Field: body(string) │                │
-│ Projections: sdb_inverted_index_score, │                        │ Projections: sdb_inverted_index_score, │                        │ │ Value: fox          │                │                        │ │ Value: lazy         │                │
-│              iresearch_pk              │                        │              iresearch_pk              │                        │ ╰─────────────────────╯                │                        │ ╰─────────────────────╯                │
-│ ~7 rows                                │                        │ ~7 rows                                │                        │ Score: bm25(k1=1.2, b=0.75)            │                        │ Score: bm25(k1=1.2, b=0.75)            │
-╰────────────────────────────────────────╯                        ╰────────────────────────────────────────╯                        │ Projections: sdb_inverted_index_score, │                        │ Projections: sdb_inverted_index_score, │
-                                                                                                                                    │              iresearch_pk              │                        │              iresearch_pk              │
-                                                                                                                                    │ ~7 rows                                │                        │ ~7 rows                                │
-                                                                                                                                    ╰────────────────────────────────────────╯                        ╰────────────────────────────────────────╯
+                     ├───────────────────────────────────────────┬───────────────────────────────────────────╮
+╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ UNION ────────────┴───────────────────╮
+│ Limit: 2                               │  │ Limit: 2                               │  ╰────────────────────┬───────────────────╯
+│ ~2 rows                                │  │ ~2 rows                                │                       ├───────────────────────────────────────────╮
+╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
+│ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
+│ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
+│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
+│ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
+│ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
+│ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │
+│              sdb_inverted_index_score  │  │              sdb_inverted_index_score  │  │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │
+│ ~7 rows                                │  │ ~7 rows                                │  │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │
+╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯  │ Projections: id,                       │  │ Projections: id,                       │
+                                                                                        │              sdb_inverted_index_score  │  │              sdb_inverted_index_score  │
+                                                                                        │ ~7 rows                                │  │ ~7 rows                                │
+                                                                                        ╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯
 
 
 query error
@@ -1142,31 +1133,27 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ UNION ────────────┴───────────────────╮
 ╰────────────────────┬───────────────────╯
-                     ├─────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────╮
-╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ UNION ────────────┴───────────────────╮
-│ Key: iresearch_pk                      │                        │ Key: iresearch_pk                      │                        ╰────────────────────┬───────────────────╯
-│ ~2 rows                                │                        │ ~2 rows                                │                                             ├─────────────────────────────────────────────────────────────────╮
-╰────────────────────┬───────────────────╯                        ╰────────────────────┬───────────────────╯                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ LOOKUP_JOIN ──────┴───────────────────╮
-                     ├────────────────────────────────╮                                ├────────────────────────────────╮           │ Key: iresearch_pk                      │                        │ Key: iresearch_pk                      │
-╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  │ ~2 rows                                │                        │ ~2 rows                                │
-│ Limit: 2                               │  │ Index: docs_idx  │  │ Limit: 2                               │  │ Index: docs_idx  │  ╰────────────────────┬───────────────────╯                        ╰────────────────────┬───────────────────╯
-│ ~2 rows                                │  │ Lookup: table    │  │ ~2 rows                                │  │ Lookup: table    │                       ├────────────────────────────────╮                                ├────────────────────────────────╮
-╰────────────────────┬───────────────────╯  │ Projections: id  │  ╰────────────────────┬───────────────────╯  │ Projections: id  │  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  │ Limit: 2                               │  │ Index: docs_idx  │  │ Limit: 2                               │  │ Index: docs_idx  │
-│ Index: docs_idx                        │  ╰──────────────────╯  │ Index: docs_idx                        │  ╰──────────────────╯  │ ~2 rows                                │  │ Lookup: table    │  │ ~2 rows                                │  │ Lookup: table    │
-│ Index Filter:                          │                        │ Index Filter:                          │                        ╰────────────────────┬───────────────────╯  │ Projections: id  │  ╰────────────────────┬───────────────────╯  │ Projections: id  │
-│ ╭─ Term ──────────────╮                │                        │ ╭─ Term ──────────────╮                │                        ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~2 rows          │
-│ │ Field: body(string) │                │                        │ │ Field: body(string) │                │                        │ Index: docs_idx                        │  ╰──────────────────╯  │ Index: docs_idx                        │  ╰──────────────────╯
-│ │ Value: fox          │                │                        │ │ Value: lazy         │                │                        │ Index Filter:                          │                        │ Index Filter:                          │
-│ ╰─────────────────────╯                │                        │ ╰─────────────────────╯                │                        │ ╭─ Term ──────────────╮                │                        │ ╭─ Term ──────────────╮                │
-│ Score: bm25(k1=1.2, b=0.75)            │                        │ Score: bm25(k1=1.2, b=0.75)            │                        │ │ Field: body(string) │                │                        │ │ Field: body(string) │                │
-│ Projections: sdb_inverted_index_score, │                        │ Projections: sdb_inverted_index_score, │                        │ │ Value: fox          │                │                        │ │ Value: lazy         │                │
-│              iresearch_pk              │                        │              iresearch_pk              │                        │ ╰─────────────────────╯                │                        │ ╰─────────────────────╯                │
-│ ~7 rows                                │                        │ ~7 rows                                │                        │ Score: bm25(k1=1.2, b=0.75)            │                        │ Score: bm25(k1=1.2, b=0.75)            │
-╰────────────────────────────────────────╯                        ╰────────────────────────────────────────╯                        │ Projections: sdb_inverted_index_score, │                        │ Projections: sdb_inverted_index_score, │
-                                                                                                                                    │              iresearch_pk              │                        │              iresearch_pk              │
-                                                                                                                                    │ ~7 rows                                │                        │ ~7 rows                                │
-                                                                                                                                    ╰────────────────────────────────────────╯                        ╰────────────────────────────────────────╯
+                     ├───────────────────────────────────────────┬───────────────────────────────────────────╮
+╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ UNION ────────────┴───────────────────╮
+│ Limit: 2                               │  │ Limit: 2                               │  ╰────────────────────┬───────────────────╯
+│ ~2 rows                                │  │ ~2 rows                                │                       ├───────────────────────────────────────────╮
+╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯  ╭─ STREAMING_LIMIT ──┴───────────────────╮  ╭─ STREAMING_LIMIT ──┴───────────────────╮
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ Limit: 2                               │  │ Limit: 2                               │
+│ Index: docs_idx                        │  │ Index: docs_idx                        │  │ ~2 rows                                │  │ ~2 rows                                │
+│ Lookup: table                          │  │ Lookup: table                          │  ╰────────────────────┬───────────────────╯  ╰────────────────────┬───────────────────╯
+│ Index Filter:                          │  │ Index Filter:                          │  ╭─ IRESEARCH_SCAN ───┴───────────────────╮  ╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │  │ Index: docs_idx                        │  │ Index: docs_idx                        │
+│ │ Field: body(string) │                │  │ │ Field: body(string) │                │  │ Lookup: table                          │  │ Lookup: table                          │
+│ │ Value: fox          │                │  │ │ Value: lazy         │                │  │ Index Filter:                          │  │ Index Filter:                          │
+│ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │  │ ╭─ Term ──────────────╮                │  │ ╭─ Term ──────────────╮                │
+│ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │  │ │ Field: body(string) │                │  │ │ Field: body(string) │                │
+│ Projections: id,                       │  │ Projections: id,                       │  │ │ Value: fox          │                │  │ │ Value: lazy         │                │
+│              sdb_inverted_index_score  │  │              sdb_inverted_index_score  │  │ ╰─────────────────────╯                │  │ ╰─────────────────────╯                │
+│ ~7 rows                                │  │ ~7 rows                                │  │ Score: bm25(k1=1.2, b=0.75)            │  │ Score: bm25(k1=1.2, b=0.75)            │
+╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯  │ Projections: id,                       │  │ Projections: id,                       │
+                                                                                        │              sdb_inverted_index_score  │  │              sdb_inverted_index_score  │
+                                                                                        │ ~7 rows                                │  │ ~7 rows                                │
+                                                                                        ╰────────────────────────────────────────╯  ╰────────────────────────────────────────╯
 
 
 

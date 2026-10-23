@@ -73,9 +73,13 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
       projected_columns, projected_types, bind_column_ids, pushed_filters);
   }
   SDB_ASSERT(bind_data.relation.table_entry);
+  // The bind data is const, but the entry it points at is the live catalog
+  // object the fetch reads storage from -- non-owning, so the copy of the
+  // pointer is what carries that.
+  auto table = bind_data.relation.table_entry;
   return std::make_unique<NativeIndexSource>(
-    context, ViewFastPath{}, bind_data.relation.table_entry, nullptr,
-    projected_columns, projected_types, bind_column_ids, pushed_filters);
+    context, ViewFastPath{}, table, nullptr, projected_columns,
+    projected_types, bind_column_ids, pushed_filters);
 }
 
 }  // namespace sdb::connector

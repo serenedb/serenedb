@@ -21,6 +21,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <ranges>
 #include <span>
@@ -187,10 +188,9 @@ struct ProjectionEntry {
   bool is_virtual = false;
 };
 
-std::string ProjectionDisplayName(
-  const ScanBindData& bind, const duckdb::virtual_column_map_t& virtual_columns,
-  const duckdb::ColumnIndex& column_index,
-  const duckdb::vector<std::string>& names) {
+std::string ProjectionDisplayName(const ScanBindData& bind,
+                                  const duckdb::ColumnIndex& column_index,
+                                  const duckdb::vector<std::string>& names) {
   const auto col_id = column_index.GetPrimaryIndex();
   if (col_id < names.size()) {
     if (column_index.IsPushdownExtract() && column_index.HasChildren() &&
@@ -201,9 +201,29 @@ std::string ProjectionDisplayName(
     }
     return names[col_id];
   }
-  if (const auto it = virtual_columns.find(col_id);
-      it != virtual_columns.end()) {
-    return it->second.name.GetIdentifierName();
+  if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+    return "row_id";
+  }
+  if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_NUMBER) {
+    return "row_number";
+  }
+  if (col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+    return "file_index";
+  }
+  if (col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+    return "file_row_number";
+  }
+  if (col_id == kColumnIdentifierTableOid) {
+    return "tableoid";
+  }
+  if (col_id == kColumnIdentifierGeneratedPk) {
+    return "pk";
+  }
+  if (col_id == kColumnIdentifierPkRowNumber) {
+    return "row_number";
+  }
+  if (col_id == kColumnIdentifierDocAddress) {
+    return "iresearch_pk";
   }
   return absl::StrCat("column_", col_id);
 }
@@ -249,7 +269,6 @@ std::vector<ProjectionEntry> BuildProjectionEntries(
   }
   const auto& column_ids = *input.projected_column_ids;
   const auto& names = *input.projected_names;
-  const auto virtual_columns = ScanVirtualColumns(bind);
   const auto count =
     input.projected_filter_prune
       ? (input.projection_ids ? input.projection_ids->size() : 0)
@@ -267,7 +286,7 @@ std::vector<ProjectionEntry> BuildProjectionEntries(
       continue;
     }
     entries.push_back({
-      .name = ProjectionDisplayName(bind, virtual_columns, column_index, names),
+      .name = ProjectionDisplayName(bind, column_index, names),
       .from_index = ProjectionIsFromIndex(bind, column_index),
       .is_virtual = ProjectionIsVirtual(bind, column_index),
     });

@@ -568,8 +568,32 @@ bool IResearchConsumeTopN(duckdb::ClientContext&,
   return true;
 }
 
-duckdb::virtual_column_map_t ScanVirtualColumns(const ScanBindData& bind) {
+namespace {
+
+duckdb::BindInfo ScanGetBindInfo(
+  const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  auto& bind = const_cast<ScanBindData&>(bind_data->Cast<ScanBindData>());
+  if (bind.relation.table_entry) {
+    return duckdb::BindInfo(*bind.relation.table_entry);
+  }
+  return duckdb::BindInfo(duckdb::ScanType::TABLE);
+}
+
+duckdb::unique_ptr<duckdb::NodeStatistics> ScanCardinality(
+  duckdb::ClientContext& context, const duckdb::FunctionData* bind_data) {
+  if (!bind_data) {
+    return nullptr;
+  }
+  return bind_data->Cast<ScanBindData>().Cardinality(context);
+}
+
+duckdb::virtual_column_map_t ScanGetVirtualColumns(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
   duckdb::virtual_column_map_t result;
+  if (!bind_p) {
+    return result;
+  }
+  const auto& bind = bind_p->Cast<ScanBindData>();
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
     result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
@@ -594,33 +618,6 @@ duckdb::virtual_column_map_t ScanVirtualColumns(const ScanBindData& bind) {
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
   return result;
-}
-
-namespace {
-
-duckdb::BindInfo ScanGetBindInfo(
-  const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  auto& bind = const_cast<ScanBindData&>(bind_data->Cast<ScanBindData>());
-  if (bind.relation.table_entry) {
-    return duckdb::BindInfo(*bind.relation.table_entry);
-  }
-  return duckdb::BindInfo(duckdb::ScanType::TABLE);
-}
-
-duckdb::unique_ptr<duckdb::NodeStatistics> ScanCardinality(
-  duckdb::ClientContext& context, const duckdb::FunctionData* bind_data) {
-  if (!bind_data) {
-    return nullptr;
-  }
-  return bind_data->Cast<ScanBindData>().Cardinality(context);
-}
-
-duckdb::virtual_column_map_t ScanGetVirtualColumns(
-  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
-  if (!bind_p) {
-    return {};
-  }
-  return ScanVirtualColumns(bind_p->Cast<ScanBindData>());
 }
 
 void ScanSerialize(duckdb::Serializer&,

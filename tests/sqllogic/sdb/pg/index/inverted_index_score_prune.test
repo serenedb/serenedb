@@ -19,6 +19,9 @@ hash-threshold 100
 # ---------------------------------------------------------------------------
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY en_prune AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
     WITH (frequency, position, norm);
@@ -136,18 +139,14 @@ query
 EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+╭─ TOP_N ─────────────────────────────────────────────────╮
+│ Top: 3                                                  │
+│ Order By: #1 ASC                                        │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
-                             ├────────────────────────────────────────────╮
-╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ───────╮
-│ Top: 3                                                  │  │ Index: prune_small_idx │
-│ Order By: #0 ASC                                        │  │ Lookup: table          │
-│ ~1 row                                                  │  │ Projections: id        │
-╰────────────────────────────┬────────────────────────────╯  │ ~1 row                 │
-╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: prune_small_idx                                  │
+│ Lookup: table                                           │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -156,7 +155,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: id, sdb_inverted_index_score               │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 

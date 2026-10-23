@@ -119,6 +119,8 @@ void NativeIndexSource::BindTable(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const ColumnId> bind_column_ids, bool by_id) {
+  // Registers the attached database with the meta transaction, keeping it
+  // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   _source = BindTableScan(
     context, table,
@@ -150,30 +152,34 @@ void NativeIndexSource::BindTable(
             .Name()
             .GetIdentifierName();
         })},
-      [&](duckdb::idx_t column) {
-        SDB_ASSERT(column < columns.LogicalColumnCount());
-        return add_column(duckdb::LogicalIndex(column));
+      [&](duckdb::idx_t table_col_idx) {
+        SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
+        return add_column(duckdb::LogicalIndex(table_col_idx));
       });
     return;
   }
+  // The table is its own storage now -- there is no separate store relation to
+  // resolve -- so physical positions are the entry's own column order minus
+  // the generated PK.
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
   id_to_pos.reserve(columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
-  for (const auto& column : columns.Logical()) {
-    if (TableColumnId(column) == kGeneratedPKId) {
+  for (const auto& col : columns.Logical()) {
+    if (TableColumnId(col) == kGeneratedPKId) {
       continue;
     }
-    id_to_pos.emplace(TableColumnId(column), pos++);
+    id_to_pos.emplace(TableColumnId(col), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [](std::string_view) -> duckdb::idx_t {
-      SDB_ASSERT(false);
+    [&](std::string_view) -> duckdb::idx_t {
+      SDB_ASSERT(false, "table index sources resolve columns by id");
       return 0;
     },
     [&](duckdb::idx_t col_id) {
-      const auto it = id_to_pos.find(col_id);
+      auto it = id_to_pos.find(col_id);
       SDB_ENSURE(it != id_to_pos.end(), "column id is not on the store table");
+      SDB_ASSERT(it->second < columns.LogicalColumnCount());
       return add_column(duckdb::LogicalIndex(it->second));
     });
 }
@@ -363,6 +369,9 @@ void NativeIndexSource::SelectFileKeys(duckdb::ClientContext& context,
     if (files) {
       const auto it = _file_positions.find(files[i]);
       if (it == _file_positions.end()) {
+        // A doc committed by an in-flight (or died) pass: its id is not part
+        // of the published manifest version, so it is not readable until the
+        // pass's Finalize publishes -- reads reflect complete versions only.
         continue;
       }
       file = it->second;

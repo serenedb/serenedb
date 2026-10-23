@@ -7,6 +7,9 @@
 hash-threshold 100
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
   WITH (frequency, position);
 
@@ -157,19 +160,15 @@ query
 EXPLAIN SELECT id FROM tk_idx ORDER BY n DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ────────────────────╮
-│ Key: iresearch_pk                │
+╭─ TOP_N ──────────────────────────╮
+│ Top: 2                           │
+│ Order By: #1 DESC                │
 │ ~2 rows                          │
 ╰─────────────────┬────────────────╯
-                  ├─────────────────────────────╮
-╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ─╮
-│ Top: 2                           │  │ Index: tk_idx    │
-│ Order By: #0 DESC                │  │ Lookup: table    │
-│ ~2 rows                          │  │ Projections: id  │
-╰─────────────────┬────────────────╯  │ ~2 rows          │
-╭─ IRESEARCH_SCAN ┴────────────────╮  ╰──────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: tk_idx                    │
-│ Projections: n, iresearch_pk     │
+│ Lookup: table                    │
+│ Projections: id (l), n (i)       │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (n > ?) │
 │ ~5 rows                          │

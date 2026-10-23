@@ -229,14 +229,73 @@ void Merge(ScanGlobalState& g) {
   PlanFetch(g);
 }
 
+bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
+  return !g.needs_lookup ||
+         g.lookup_projected_columns[col] == duckdb::DConstants::INVALID_INDEX;
+}
+
+bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
+                    duckdb::idx_t col) noexcept {
+  if (col == g.score_output_idx || col == g.tableoid_output_idx ||
+      col == g.doc_address_output_idx) {
+    return true;
+  }
+  if (absl::c_any_of(f.offsets_entries,
+                     [col](const auto& e) { return e.output_idx == col; })) {
+    return true;
+  }
+  return absl::c_any_of(g.cs_projections,
+                        [col](const auto& p) { return p.output_slot == col; });
+}
+
+void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
+                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
+                 duckdb::idx_t count, duckdb::idx_t offset) {
+  for (duckdb::idx_t c = 0; c < from.ColumnCount(); ++c) {
+    if (!FetchedColumn(g, c)) {
+      continue;
+    }
+    if (!ProducedColumn(g, f, c)) {
+      into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::SetNull(into.data[c], true);
+      continue;
+    }
+    duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
+                                   offset);
+  }
+  into.SetChildCardinality(offset + count);
+}
+
+void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                 FetchLocalState& l, duckdb::DataChunk& tmp,
+                 duckdb::DataChunk& into, std::unique_ptr<duckdb::Vector>& pk,
+                 duckdb::idx_t capacity, duckdb::idx_t& appended) {
+  const auto count = EmitReadyBatch(ctx, g, l, tmp);
+  if (count == 0) {
+    tmp.Reset();
+    return;
+  }
+  SDB_ASSERT(appended + count <= capacity);
+  CopyFetched(g, l, tmp, into, count, appended);
+  if (g.needs_lookup) {
+    SDB_ASSERT(l.pk_column != nullptr);
+    if (!pk) {
+      pk = std::make_unique<duckdb::Vector>(l.pk_column->GetType(), capacity);
+    }
+    duckdb::VectorOperations::Copy(*l.pk_column, *pk, count, 0, appended);
+  }
+  appended += count;
+  tmp.Reset();
+}
+
 struct FetchedHits {
   duckdb::unique_ptr<duckdb::DataChunk> chunk;
   std::unique_ptr<duckdb::Vector> pk;
 };
 
-FetchedHits FetchTopKHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                          TopKLocalState& l, uint32_t seg,
-                          std::span<const irs::ScoreDoc> hits, bool rebind) {
+FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                      TopKLocalState& l, uint32_t seg,
+                      std::span<const irs::ScoreDoc> hits, bool rebind) {
   const auto& t = g.topk;
   SDB_IF_FAILURE("TopKFetchBudget") {
     static std::atomic_uint64_t gFetchedRows{0};
@@ -253,21 +312,93 @@ FetchedHits FetchTopKHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
   if (l.fetch_tmp.ColumnCount() == 0) {
     l.fetch_tmp.Initialize(ctx, g.projected_types);
   }
+  auto& tmp = l.fetch_tmp;
   std::unique_ptr<duckdb::Vector> pk;
   duckdb::idx_t appended = 0;
-  FetchHits(ctx, g, l, l.fetch_tmp, seg, hits, rebind, *chunk, pk, appended);
+  AppendHits(ctx, g, l, tmp, seg, hits, rebind, *chunk, pk, appended);
+  SDB_ASSERT(appended == hits.size());
   return {.chunk = std::move(chunk), .pk = std::move(pk)};
 }
+
+}  // namespace
+
+void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
+                std::span<const irs::ScoreDoc> hits, bool rebind,
+                duckdb::DataChunk& chunk, std::unique_ptr<duckdb::Vector>& pk,
+                duckdb::idx_t& appended) {
+  l.EnsureHitBatcher(g);
+  auto& batcher = *l.hit_batcher;
+  if (rebind || !batcher.Bound(seg)) {
+    batcher.BeginSegment(seg, (*g.reader)[seg].GetColReader(),
+                         g.client_context);
+  }
+  const bool scored = g.ScanScore();
+  size_t at = 0;
+  bool done = false;
+  while (!done) {
+    while (!batcher.Ready()) {
+      if (at == hits.size()) {
+        if (batcher.Empty()) {
+          done = true;
+          break;
+        }
+        batcher.Finalize();
+        if (!batcher.Ready()) {
+          done = true;
+        }
+        break;
+      }
+      const auto row = hits[at].doc - irs::doc_limits::min();
+      const auto span = batcher.OpenWindow(row);
+      if (span == 0) {
+        break;
+      }
+      auto* out_docs = batcher.WindowHead();
+      auto* out_scores = scored ? batcher.ScoreHead() : nullptr;
+      duckdb::idx_t n = 0;
+      while (at != hits.size() &&
+             (hits[at].doc - irs::doc_limits::min()) < row + span) {
+        out_docs[n] = hits[at].doc;
+        if (out_scores != nullptr) {
+          out_scores[n] = hits[at].score;
+        }
+        ++n;
+        ++at;
+      }
+      batcher.CommitWindow(n);
+    }
+    if (batcher.Ready()) {
+      AppendBatch(ctx, g, l, tmp, chunk, pk, chunk.GetCapacity(), appended);
+    }
+  }
+}
+
+namespace {
 
 void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
                TopKLocalState& l, uint32_t index) {
   auto& t = g.topk;
   const auto& fu = t.fetch_units[index];
-  auto fetched = FetchTopKHits(ctx, g, l, fu.seg,
-                               {t.answer.data() + fu.first, fu.count}, false);
+  auto fetched =
+    FetchHits(ctx, g, l, fu.seg, {t.answer.data() + fu.first, fu.count}, false);
   t.fetched[index] = std::move(fetched.chunk);
   t.fetched_pk[index] = std::move(fetched.pk);
 }
+
+}  // namespace
+
+void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
+                       FetchLocalState& l) {
+  if (!l.index_source) {
+    l.index_source =
+      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
+                      g.projected_types, g.Bind().columns.ids,
+                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+  }
+}
+
+namespace {
 
 void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      TopKLocalState& l, const duckdb::DataChunk& fetched,
@@ -374,8 +505,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
       const auto& unit = units[u];
       const std::span<const irs::ScoreDoc> part{hits.data() + unit.first,
                                                 unit.count};
-      auto fetched = FetchTopKHits(ctx, g, l, unit.seg, part,
-                                   u == 0 || units[u - 1].seg != unit.seg);
+      auto fetched = FetchHits(ctx, g, l, unit.seg, part,
+                               u == 0 || units[u - 1].seg != unit.seg);
       MaterializeHits(ctx, g, l, *fetched.chunk, *fetched.pk, part, batch,
                       row_hits);
     }

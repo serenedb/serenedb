@@ -10,6 +10,9 @@ hash-threshold 100
 # score top-k (the scan would return top-k by score and starve the real sort).
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TABLE vedernikoff (kostya INTEGER PRIMARY KEY, abramov VARCHAR);
 
 
@@ -257,8 +260,9 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────╮
-│ Projections: #0                        │
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 3                                 │
+│ Order By: #1 DESC                      │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ PROJECTION ───────┴───────────────────╮
@@ -266,32 +270,17 @@ QUERY PLAN
 │ kostya, 2 * sdb_inverted_index_score   │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
-╭─ LOOKUP_JOIN ──────┴───────────────────╮
-│ Key: iresearch_pk                      │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-                     ├──────────────────────────────────────╮
-╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ─────────────╮
-│ Top: 3                                 │  │ Index: vedernikoff_alias_idx │
-│ Order By: #0 DESC                      │  │ Lookup: table                │
-│ ~1 row                                 │  │ Projections: kostya          │
-╰────────────────────┬───────────────────╯  │ ~1 row                       │
-╭─ PROJECTION ───────┴───────────────────╮  ╰──────────────────────────────╯
-│ Projections:                           │
-│ 2 * sdb_inverted_index_score,          │
-│ iresearch_pk, sdb_inverted_index_score │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vedernikoff_alias_idx           │
+│ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ─────────────────╮             │
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
 │ ╰────────────────────────╯             │
 │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: sdb_inverted_index_score, │
-│              iresearch_pk              │
+│ Projections: kostya,                   │
+│              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
 

@@ -98,8 +98,8 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
       absl::c_find_if(hits,
                       [&](const auto& hit) { return hit.segment_idx != seg; }) -
       hits.begin());
-    FetchHits(context.client, g, l, l.tmp, seg, hits.first(in_segment), true,
-              l.fetched, l.pk, appended);
+    AppendHits(context.client, g, l, l.tmp, seg, hits.first(in_segment), true,
+               l.fetched, l.pk, appended);
     hits = hits.subspan(in_segment);
   }
   auto found = count;

@@ -554,26 +554,6 @@ duckdb::unique_ptr<duckdb::LogicalGet> MakeSourceGet(
     std::move(types), std::move(names), std::move(virtual_columns));
 }
 
-}  // namespace
-
-duckdb::unique_ptr<duckdb::LogicalGet> BindTableScan(
-  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
-  const duckdb::EntryLookupInfo& lookup) {
-  duckdb::unique_ptr<duckdb::FunctionData> bind_data;
-  auto function = table.GetScanFunction(context, bind_data, lookup);
-  duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<duckdb::Identifier> names;
-  for (const auto& column : table.GetColumns().Logical()) {
-    types.push_back(column.Type());
-    names.push_back(column.Name());
-  }
-  return MakeSourceGet(context, duckdb::BoundTableFunction{function},
-                       std::move(bind_data), std::move(types),
-                       std::move(names));
-}
-
-namespace {
-
 duckdb::unique_ptr<duckdb::LogicalGet> BindCatalogSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_IF_FAILURE("view_index_source_lookup") {
@@ -663,6 +643,22 @@ duckdb::unique_ptr<duckdb::LogicalGet> BindReaderSource(
 }
 
 }  // namespace
+
+duckdb::unique_ptr<duckdb::LogicalGet> BindTableScan(
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::EntryLookupInfo& lookup) {
+  duckdb::unique_ptr<duckdb::FunctionData> bind_data;
+  auto function = table.GetScanFunction(context, bind_data, lookup);
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<duckdb::Identifier> names;
+  for (const auto& column : table.GetColumns().Logical()) {
+    types.push_back(column.Type());
+    names.push_back(column.Name());
+  }
+  return MakeSourceGet(context, duckdb::BoundTableFunction{function},
+                       std::move(bind_data), std::move(types),
+                       std::move(names));
+}
 
 duckdb::unique_ptr<duckdb::LogicalGet> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {

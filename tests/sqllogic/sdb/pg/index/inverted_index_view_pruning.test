@@ -9,6 +9,9 @@ hash-threshold 100
 
 # Setup: a wide parquet, used by most cases below.
 
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
 statement count 5
 COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS unused2, 'X' AS unused3
       UNION ALL SELECT 2, 'anchin reads manga',     'bravo', 200, 'Y'
@@ -173,25 +176,37 @@ query
 EXPLAIN CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);
 ----
 QUERY PLAN
-╭─ EXTENSION ────────────────────────────╮
-╰────────────────────┬───────────────────╯
-╭─ LOOKUP_JOIN ──────┴───────────────────╮
-│ Key: file_index, file_row_number       │
-│ ~4 rows                                │
-╰────────────────────┬───────────────────╯
-                     ├───────────────────────────────────╮
-╭─ TOP_N ────────────┴───────────────────╮  ╭─ READ_PARQUET ─────────╮
-│ Top: 4                                 │  │ Function: READ_PARQUET │
-│ Order By: unused1 ASC                  │  │ Projections: body      │
-│ ~4 rows                                │  │ ~4 rows                │
-╰────────────────────┬───────────────────╯  ╰────────────────────────╯
-╭─ READ_PARQUET ─────┴───────────────────╮
-│ Function: READ_PARQUET                 │
-│ Projections: unused1                   │
-│ Column Filter:                         │
-│ optional: Dynamic Filter (unused1 < ?) │
-│ ~5 rows                                │
-╰────────────────────────────────────────╯
+╭─ EXTENSION ────────────────────────╮
+╰──────────────────┬─────────────────╯
+╭─ ORDER_BY ───────┴─────────────────╮
+│ Order By: unused1 ASC              │
+│ ~4 rows                            │
+╰──────────────────┬─────────────────╯
+╭─ HASH_JOIN ──────┴─────────────────╮
+│ Join Type: SEMI                    │
+│ Conditions:                        │
+│ file_index = file_index,           │
+│ file_row_number = file_row_number  │
+│ ~4 rows                            │
+╰──────────────────┬─────────────────╯
+                   ├─────────────────────────────────────────╮
+╭─ READ_PARQUET ───┴─────────────────╮  ╭─ TOP_N ────────────┴───────────────────╮
+│ Function: READ_PARQUET             │  │ Top: 4                                 │
+│ Projections: body, unused1         │  │ Order By: unused1 ASC                  │
+│ ~1 row                             │  │ ~4 rows                                │
+╰────────────────────────────────────╯  ╰────────────────────┬───────────────────╯
+                                        ╭─ PROJECTION ───────┴───────────────────╮
+                                        │ Projections: unused1, file_index,      │
+                                        │              file_row_number           │
+                                        │ ~5 rows                                │
+                                        ╰────────────────────┬───────────────────╯
+                                        ╭─ READ_PARQUET ─────┴───────────────────╮
+                                        │ Function: READ_PARQUET                 │
+                                        │ Projections: unused1                   │
+                                        │ Column Filter:                         │
+                                        │ optional: Dynamic Filter (unused1 < ?) │
+                                        │ ~5 rows                                │
+                                        ╰────────────────────────────────────────╯
 
 statement ok
 CREATE INDEX prune_idx5 ON prune_v5 USING inverted(body prune_en);

@@ -83,6 +83,9 @@ class NativeIndexSource final : public ViewIndexSourceBase {
                  std::span<const duckdb::idx_t> projected_columns,
                  std::span<const duckdb::LogicalType> projected_types,
                  std::span<const ColumnId> bind_column_ids);
+  // Re-keys the scan's output-slot-keyed filters onto this reader's projected
+  // columns, dropping non-lookup slots (e.g. the score) that have no source
+  // column -- forwarding those to the reader mismatches column types.
   void BuildPushedFilters(duckdb::ClientContext& context,
                           const duckdb::TableFilterSet* input_filters);
   bool HasDerivedColumns() const noexcept {
@@ -98,6 +101,9 @@ class NativeIndexSource final : public ViewIndexSourceBase {
   duckdb::TableFunction _lookup;
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _global;
   duckdb::unique_ptr<duckdb::LocalTableFunctionState> _local;
+  // Lookup-column filters forwarded to the underlying reader (parquet row-group
+  // pruning + native FilterSelection); the lookup scan compacts to survivors.
+  // Null when none.
   duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
   bool _by_file = false;
   bool _no_files = false;

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
 
@@ -440,19 +439,14 @@ void BuildOffsetsEntries(FetchLocalState& f,
                          const ScanBindData& bd);
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                              FetchLocalState& f, duckdb::DataChunk& output);
-void FeedHits(irs::HitBatcher& batcher, std::span<const irs::ScoreDoc> hits,
-              bool scored, absl::FunctionRef<void()> on_ready);
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);
-void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
-                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
-                 duckdb::idx_t count, duckdb::idx_t offset);
-void FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
-               FetchLocalState& f, duckdb::DataChunk& tmp, uint32_t seg,
-               std::span<const irs::ScoreDoc> hits, bool rebind,
-               duckdb::DataChunk& into, std::unique_ptr<duckdb::Vector>& pk,
-               duckdb::idx_t& appended);
+void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
+                std::span<const irs::ScoreDoc> hits, bool rebind,
+                duckdb::DataChunk& chunk, std::unique_ptr<duckdb::Vector>& pk,
+                duckdb::idx_t& appended);
 void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                        FetchLocalState& f);
 inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {

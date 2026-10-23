@@ -1,9 +1,9 @@
 name: task | serenedb macos build & test
 
 # Native macOS (Apple Silicon) build + test. Unlike the Linux pipeline this does
-# NOT use Docker: it builds with Homebrew LLVM and runs sqllogic against a
-# locally-started serened. Reusable + manually dispatchable; wired into the
-# daily run (jobs-schedule.yml).
+# NOT use Docker: it builds with LLVM's macOS release of LLVM_VERSION and runs
+# sqllogic against a locally-started serened. Reusable + manually dispatchable;
+# wired into the daily run (jobs-schedule.yml).
 on:
   workflow_call:
     inputs:
@@ -31,11 +31,12 @@ jobs:
     env:
       SDB_PORT: "7777"
       SDB_SSL_PORT: "7778"
+      LLVM_VERSION: "23.1.4"
       # ccache tuned for cross-run reuse (see below):
       #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
       #    checkout-path changes; the build's prefix maps keep outputs relative.
-      #  - COMPILERCHECK=content: brew re-lays-down llvm each run with a fresh
-      #    mtime; hashing the compiler by content avoids a full cache miss.
+      #  - COMPILERCHECK=content: the toolchain is unpacked anew on a cache
+      #    miss; hashing the compiler by content keeps the hits.
       #  - SLOPPINESS: don't invalidate on header timestamps / __DATE__/__TIME__.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -53,18 +54,28 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Install toolchain (Homebrew)
+      - name: Cache LLVM
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/llvm-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-macos-arm64
+
+      - name: Install toolchain
         run: |
-          # NOTE: Homebrew's `llvm` formula does NOT include the lld linker --
-          # it's a separate `lld` formula. The build uses -fuse-ld=lld, so both
-          # are required.
-          brew install llvm lld bison bash ninja ccache pkg-config cmake
+          brew install bison bash ninja ccache pkg-config cmake zstd
+          dir="$RUNNER_TOOL_CACHE/llvm-$LLVM_VERSION"
+          if [[ ! -x "$dir/bin/clang++" ]]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 3 "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-macOS-ARM64.tar.zst" |
+              zstd -dc | tar -x -C "$dir" --strip-components=1
+          fi
+          echo "LLVM_DIR=$dir" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
 
       - name: Set up PATH
         run: |
           # keg-only formulae + Homebrew bash 5 (run.sh re-execs to it)
-          echo "/opt/homebrew/opt/llvm/bin"  >> "$GITHUB_PATH"
-          echo "/opt/homebrew/opt/lld/bin"   >> "$GITHUB_PATH"
+          echo "$LLVM_DIR/bin"               >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
 
@@ -90,8 +101,8 @@ jobs:
             cargo-sqllogictest-macos15-
 
       # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
-      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: Homebrew
-      # LLVM compiler, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
+      # RelWithDebInfo + STACK debug + no LTO + ccache. macOS deltas: LLVM's
+      # macOS release, SDB_STATIC=Off (no static libc), SDB_ALLOC=SYS
       # (jemalloc unused on macOS; Linux CI uses JE).
       - name: Configure
         run: |
@@ -99,8 +110,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DSDB_DEBUG_INFO=STACK \
             -DSDB_LTO=Off \
-            -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
-            -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+            -DCMAKE_C_COMPILER="$LLVM_DIR/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_DIR/bin/clang++" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_ASM_COMPILER_LAUNCHER=ccache \

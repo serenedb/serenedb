@@ -72,8 +72,7 @@ docker run --rm \
 	"$BUILD_IMAGE" bash -c '
 		set -euo pipefail
 		cargo build --release --quiet --manifest-path third_party/sqllogictest-rs/sqllogictest-bin/Cargo.toml --target-dir /cargo-target
-		cp /cargo-target/release/sqllogictest "$0/bin/sqllogictest"
-		python3 scripts/ci/ci.py pack --build-dir "$0" --out "out/bundle.tar.zst"
+		python3 scripts/ci/ci.py pack --build-dir "$0" --runner /cargo-target/release/sqllogictest --out "out/bundle.tar.zst"
 	' "$BUILD_DIR"
 
 python3 scripts/ci/ci.py upload out/bundle.tar.zst "$bundle"

@@ -57,6 +57,7 @@ done < <(sed -n 's/^ *LINK_\(LIBRARIES\|FLAGS\) = //p' "$BUILD_DIR/build.ninja" 
 	tr ' ' '\n' | grep -E '^(/usr/|-l)' | sort -u)
 
 while IFS= read -r binary; do
+	ninja -C "$BUILD_DIR" -t query "${binary#"$BUILD_DIR"/}" >/dev/null 2>&1 || continue
 	while IFS= read -r library; do
 		if ! [[ "$library" =~ $ALLOWED_LIBRARIES ]]; then
 			echo "::error::${binary#"$BUILD_DIR"/} needs shared library ${library}"

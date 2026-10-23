@@ -67,38 +67,39 @@ query
 EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
 ----
 QUERY PLAN
-╭─ ORDER_BY ──────────────────────────────╮
-│ Order By: id DESC                       │
-│ ~600 rows                               │
-╰────────────────────┬────────────────────╯
-╭─ PROJECTION ───────┴────────────────────╮
-│ Projections: id, title, body            │
-│ ~600 rows                               │
-╰────────────────────┬────────────────────╯
-╭─ HASH_JOIN ────────┴────────────────────╮
-│ Join Type: SEMI                         │
-│ Conditions: iresearch_pk = iresearch_pk │
-│ ~600 rows                               │
-╰────────────────────┬────────────────────╯
-                     ├─────────────────────────────────────────╮
-╭─ IRESEARCH_SCAN ───┴────────────────────╮  ╭─ TOP_N ─────────┴─────────────────╮
-│ Index: lj_idx                           │  │ Top: 3                            │
-│ Lookup: table                           │  │ Order By: id DESC                 │
-│ Index Filter:                           │  │ ~3 rows                           │
-│ ╭─ Term ──────────────╮                 │  ╰─────────────────┬─────────────────╯
-│ │ Field: body(string) │                 │  ╭─ IRESEARCH_SCAN ┴─────────────────╮
-│ │ Value: fox          │                 │  │ Index: lj_idx                     │
-│ ╰─────────────────────╯                 │  │ Lookup: table                     │
-│ Projections: body, id, title,           │  │ Index Filter:                     │
-│              iresearch_pk               │  │ ╭─ Term ──────────────╮           │
-│ ~600 rows                               │  │ │ Field: body(string) │           │
-╰─────────────────────────────────────────╯  │ │ Value: fox          │           │
-                                             │ ╰─────────────────────╯           │
-                                             │ Column Filter:                    │
-                                             │ optional: Dynamic Filter (id > ?) │
-                                             │ Projections: id, iresearch_pk     │
-                                             │ ~600 rows                         │
-                                             ╰───────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: id DESC         │
+│ ~600 rows                 │
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: id, title,   │
+│              body         │
+│ ~600 rows                 │
+╰─────────────┬─────────────╯
+╭─ HASH_JOIN ─┴─────────────╮
+│ Join Type: SEMI           │
+│ Conditions: rowid = rowid │
+│ ~600 rows                 │
+╰─────────────┬─────────────╯
+              ├──────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──────────╮  ╭─ TOP_N ─────────┴─────────────────╮
+│ Index: lj_idx             │  │ Top: 3                            │
+│ Lookup: table             │  │ Order By: id DESC                 │
+│ Index Filter:             │  │ ~3 rows                           │
+│ ╭─ Term ──────────────╮   │  ╰─────────────────┬─────────────────╯
+│ │ Field: body(string) │   │  ╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ │ Value: fox          │   │  │ Index: lj_idx                     │
+│ ╰─────────────────────╯   │  │ Lookup: table                     │
+│ Projections: body, id,    │  │ Index Filter:                     │
+│              title, rowid │  │ ╭─ Term ──────────────╮           │
+│ ~600 rows                 │  │ │ Field: body(string) │           │
+╰───────────────────────────╯  │ │ Value: fox          │           │
+                               │ ╰─────────────────────╯           │
+                               │ Column Filter:                    │
+                               │ optional: Dynamic Filter (id > ?) │
+                               │ Projections: id, rowid            │
+                               │ ~600 rows                         │
+                               ╰───────────────────────────────────╯
 
 query
 SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
@@ -116,7 +117,7 @@ EXPLAIN SELECT id, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~5 rows                                                 │
 ╰────────────────────────────┬────────────────────────────╯
                              ├──────────────────────────────────────────╮
@@ -135,7 +136,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -157,7 +158,7 @@ QUERY PLAN
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ 5 rows                                              0µs │
 ╰────────────────────────────┬────────────────────────────╯
                              ├──────────────────────────────────────────╮
@@ -176,7 +177,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ 1,000 rows                                          0µs │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -225,7 +226,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
                              ├────────────────────────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                        ╭─ TABLE_SCAN ────────╮
-│ Key: iresearch_pk                                       │                        │ Lookup: table       │
+│ Key: rowid                                              │                        │ Lookup: table       │
 │ 5 rows                                              0µs │                        │ Projections: id,    │
 ╰────────────────────────────┬────────────────────────────╯                        │              title  │
                              ├─────────────────────────────────────────╮           │ 5 rows          0µs │
@@ -244,7 +245,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ 1,000 rows                                          0µs │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -347,7 +348,7 @@ EXPLAIN SELECT n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ─────────────────────╮
-│ Key: iresearch_pk                 │
+│ Key: rowid                        │
 │ ~3 rows                           │
 ╰─────────────────┬─────────────────╯
                   ├──────────────────────────────╮
@@ -366,7 +367,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (id < ?) │
-│ Projections: id, iresearch_pk     │
+│ Projections: id, rowid            │
 │ ~600 rows                         │
 ╰───────────────────────────────────╯
 
@@ -380,7 +381,7 @@ QUERY PLAN
 ╰─────────────────┬─────────────────╯
                   ├────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ───┴─────────────────╮               ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk                 │               │ Lookup: table      │
+│ Key: rowid                        │               │ Lookup: table      │
 │ ~3 rows                           │               │ Projections: title │
 ╰─────────────────┬─────────────────╯               │ ~3 rows            │
                   ├──────────────────────────────╮  ╰────────────────────╯
@@ -399,7 +400,7 @@ QUERY PLAN
 │ ╰─────────────────────╯           │
 │ Column Filter:                    │
 │ optional: Dynamic Filter (id > ?) │
-│ Projections: id, iresearch_pk, pk │
+│ Projections: id, rowid, pk        │
 │ ~600 rows                         │
 ╰───────────────────────────────────╯
 
@@ -443,7 +444,7 @@ QUERY PLAN
 │ ~600 rows                              │
 ╰────────────────────┬───────────────────╯
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮
-│ Key: iresearch_pk                      │
+│ Key: rowid                             │
 │ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
                      ├─────────────────────────────────╮
@@ -464,7 +465,7 @@ QUERY PLAN
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: n,                        │
 │              sdb_inverted_index_score, │
-│              iresearch_pk              │
+│              rowid                     │
 │ ~600 rows                              │
 ╰────────────────────────────────────────╯
 
@@ -495,7 +496,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
                      ├───────────────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ INDEX_SOURCE ──────╮
-│ Key: iresearch_pk                      │                        │ Lookup: table       │
+│ Key: rowid                             │                        │ Lookup: table       │
 │ ~3 rows                                │                        │ Projections: id,    │
 ╰────────────────────┬───────────────────╯                        │              title  │
                      ├────────────────────────────────╮           │ ~3 rows             │
@@ -516,7 +517,7 @@ QUERY PLAN
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: n,                        │
 │              sdb_inverted_index_score, │
-│              iresearch_pk              │
+│              rowid                     │
 │ ~600 rows                              │
 ╰────────────────────────────────────────╯
 
@@ -542,7 +543,7 @@ EXPLAIN SELECT title FROM lj_inc_idx WHERE body @@ ts_phrase('fox') ORDER BY n D
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ────────────────────╮
-│ Key: iresearch_pk                │
+│ Key: rowid                       │
 │ ~3 rows                          │
 ╰─────────────────┬────────────────╯
                   ├──────────────────────────────╮
@@ -560,7 +561,7 @@ QUERY PLAN
 │ ╰─────────────────────╯          │
 │ Column Filter:                   │
 │ optional: Dynamic Filter (n > ?) │
-│ Projections: n, iresearch_pk     │
+│ Projections: n, rowid            │
 │ ~600 rows                        │
 ╰──────────────────────────────────╯
 
@@ -585,7 +586,7 @@ QUERY PLAN
 │ ~600 rows                            │
 ╰───────────────────┬──────────────────╯
 ╭─ LOOKUP_JOIN ─────┴──────────────────╮
-│ Key: iresearch_pk                    │
+│ Key: rowid                           │
 │ ~2 rows                              │
 ╰───────────────────┬──────────────────╯
                     ├───────────────────────────────╮
@@ -606,7 +607,7 @@ QUERY PLAN
 │ Offsets: body                        │
 │ Projections:                         │
 │ n, sdb_inverted_index_offsets$body,  │
-│ iresearch_pk                         │
+│ rowid                                │
 │ ~600 rows                            │
 ╰──────────────────────────────────────╯
 
@@ -634,25 +635,25 @@ query
 EXPLAIN SELECT title FROM lj_idx WHERE body @@ ts_phrase('cat') LIMIT 5;
 ----
 QUERY PLAN
-╭─ LOOKUP_JOIN ─────────────╮
-│ Key: iresearch_pk         │
-│ ~5 rows                   │
-╰─────────────┬─────────────╯
-              ├───────────────────────────╮
-╭─ STREAMING_LIMIT ─────────╮  ╭─ IRESEARCH_SCAN ───╮
-│ Limit: 5                  │  │ Index: lj_idx      │
-│ ~0 rows                   │  │ Lookup: table      │
-╰─────────────┬─────────────╯  │ Projections: title │
-╭─ IRESEARCH_SCAN ──────────╮  │ ~5 rows            │
-│ Index: lj_idx             │  ╰────────────────────╯
-│ Index Filter:             │
-│ ╭─ Term ──────────────╮   │
-│ │ Field: body(string) │   │
-│ │ Value: cat          │   │
-│ ╰─────────────────────╯   │
-│ Projections: iresearch_pk │
-│ ~600 rows                 │
-╰───────────────────────────╯
+╭─ LOOKUP_JOIN ───────────╮
+│ Key: rowid              │
+│ ~5 rows                 │
+╰────────────┬────────────╯
+             ├──────────────────────────╮
+╭─ STREAMING_LIMIT ───────╮  ╭─ IRESEARCH_SCAN ───╮
+│ Limit: 5                │  │ Index: lj_idx      │
+│ ~0 rows                 │  │ Lookup: table      │
+╰────────────┬────────────╯  │ Projections: title │
+╭─ IRESEARCH_SCAN ────────╮  │ ~5 rows            │
+│ Index: lj_idx           │  ╰────────────────────╯
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: cat          │ │
+│ ╰─────────────────────╯ │
+│ Projections: rowid      │
+│ ~600 rows               │
+╰─────────────────────────╯
 
 query
 SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
@@ -753,7 +754,7 @@ EXPLAIN SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMI
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ──────────────────────────────╮
-│ Key: iresearch_pk                          │
+│ Key: rowid                                 │
 │ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
                        ├──────────────────────────────────╮
@@ -765,7 +766,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮  │              c2, │
 │ Index: lj_hits                             │  │              c3  │
 │ Lookup: search                             │  │ ~3 rows          │
-│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Projections: url, event_time, rowid        │  ╰──────────────────╯
 │ Column Filter:                             │
 │ contains(url, 'google'),                   │
 │ optional: Dynamic Filter (event_time < ?)  │
@@ -780,7 +781,7 @@ QUERY PLAN
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────────────────────╮
-│ Key: iresearch_pk                          │
+│ Key: rowid                                 │
 │ 3 rows                                 0µs │
 ╰──────────────────────┬─────────────────────╯
                        ├──────────────────────────────────╮
@@ -792,7 +793,7 @@ QUERY PLAN
 ╭─ TABLE_SCAN ─────────┚┖────────────────────╮  │              c2, │
 │ Index: lj_hits                             │  │              c3  │
 │ Lookup: search                             │  │ 3 rows       0µs │
-│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Projections: url, event_time, rowid        │  ╰──────────────────╯
 │ Column Filter:                             │
 │ contains(url, 'google'),                   │
 │ optional: Dynamic Filter (event_time < ?)  │
@@ -957,7 +958,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
                              ├──────────────────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                  ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk                                       │                  │ Lookup: parquet    │
+│ Key: rowid                                              │                  │ Lookup: parquet    │
 │ ~5 rows                                                 │                  │ Projections: title │
 ╰────────────────────────────┬────────────────────────────╯                  │ ~5 rows            │
                              ├────────────────────────────────────────────╮  ╰────────────────────╯
@@ -976,7 +977,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -990,7 +991,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯
                   ├──────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ───┴────────────────╮                 ╭─ INDEX_SOURCE ───────╮
-│ Key: iresearch_pk                │                 │ Lookup: glob parquet │
+│ Key: rowid                       │                 │ Lookup: glob parquet │
 │ ~2,500 rows                      │                 │ Projections: title   │
 ╰─────────────────┬────────────────╯                 │ ~2,500 rows          │
                   ├───────────────────────────────╮  ╰──────────────────────╯
@@ -1001,7 +1002,7 @@ QUERY PLAN
 ╰─────────────────┬────────────────╯  ╰──────────────────────╯
 ╭─ IRESEARCH_SCAN ┴────────────────╮
 │ Index: lj_v_glob_idx             │
-│ Projections: iresearch_pk        │
+│ Projections: rowid               │
 │ ~3,000 rows                      │
 ╰──────────────────────────────────╯
 
@@ -1015,7 +1016,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
                              ├────────────────────────────────────────────────────────╮
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                ╭─ INDEX_SOURCE ─────╮
-│ Key: iresearch_pk                                       │                │ Lookup: duckdb     │
+│ Key: rowid                                              │                │ Lookup: duckdb     │
 │ ~5 rows                                                 │                │ Projections: title │
 ╰────────────────────────────┬────────────────────────────╯                │ ~5 rows            │
                              ├──────────────────────────────────────────╮  ╰────────────────────╯
@@ -1034,7 +1035,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~600 rows                                               │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -1178,7 +1179,7 @@ QUERY PLAN
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
                              ├────────────────────────────────────────────╮
@@ -1197,7 +1198,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 
@@ -1233,7 +1234,7 @@ QUERY PLAN
 │ ~3 rows                         │
 ╰────────────────┬────────────────╯
 ╭─ LOOKUP_JOIN ──┴────────────────╮
-│ Key: iresearch_pk               │
+│ Key: rowid                      │
 │ ~3 rows                         │
 ╰────────────────┬────────────────╯
                  ├─────────────────────────────╮
@@ -1244,12 +1245,12 @@ QUERY PLAN
 ╰────────────────┬────────────────╯  │ ~3 rows           │
 ╭─ PROJECTION ───┴────────────────╮  ╰───────────────────╯
 │ Projections: emb <=> [1, 0, 0], │
-│              iresearch_pk, emb  │
+│              rowid, emb         │
 │ ~4 rows                         │
 ╰────────────────┬────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: lj_vec_idx               │
-│ Projections: emb, iresearch_pk  │
+│ Projections: emb, rowid         │
 │ ~4 rows                         │
 ╰─────────────────────────────────╯
 

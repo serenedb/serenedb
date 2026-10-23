@@ -603,6 +603,10 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
     result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
+    if (const auto table_row_id = result.find(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        table_row_id != result.end()) {
+      table_row_id->second.name = duckdb::Identifier{};
+    }
   }
   if (bind.IsViewBacked()) {
     result.insert(
@@ -616,9 +620,8 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
     result.insert({kColumnIdentifierGeneratedPk,
                    duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
   }
-  result.insert(
-    {kColumnIdentifierRowPosition,
-     duckdb::TableColumn("iresearch_pk", duckdb::LogicalType::ROW_TYPE)});
+  result.insert({kColumnIdentifierRowPosition,
+                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,

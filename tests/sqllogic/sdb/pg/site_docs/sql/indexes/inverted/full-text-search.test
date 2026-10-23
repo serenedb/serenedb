@@ -65,7 +65,7 @@ LIMIT 1;
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
-│ Key: iresearch_pk                                       │
+│ Key: rowid                                              │
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
                              ├───────────────────────────────────────────╮
@@ -84,7 +84,7 @@ QUERY PLAN
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
 │ Score: bm25(k1=1.2, b=0.75)                             │
-│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ Projections: sdb_inverted_index_score, rowid            │
 │ ~1 row                                                  │
 ╰─────────────────────────────────────────────────────────╯
 

@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
-from testlib import store  # noqa: E402
+from testlib import selection, store  # noqa: E402
 
 DIGEST_VERSION = "1"
 NOT_BUILD_INPUTS = (
@@ -212,7 +212,8 @@ def cmd_update_timing(args):
         listed = ", ".join(f"'{f}'" for f in files)
         runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(duration) AS d "
                 f"FROM read_parquet([{listed}], union_by_name = true) "
-                f"WHERE coalesce(pr, '') = '' AND attempt = 0 AND NOT wrapper "
+                f"WHERE coalesce(pr, '') = '' AND NOT coalesce(attribute, false) "
+                f"AND attempt = 0 AND NOT wrapper "
                 f"AND status IN ('passed', 'failed', 'flaky') "
                 f"GROUP BY 1, coalesce(run, concat(sha, ':', started))")
         fresh = (f"SELECT unit, quantile_cont(d, 0.95) AS p95, count(*) AS n FROM ({runs}) "
@@ -228,15 +229,29 @@ def cmd_update_timing(args):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def cmd_selection_map(args):
+    work = Path(args.work).resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    stats = selection.build_map(args.run, args.config, args.arch, args.bundle, work)
+    print(f"selection/{args.config}-{args.arch}.parquet: {stats['functions']} functions, "
+          f"{stats['units']} units, {stats['rows']} rows")
+
+
 def cmd_results(args):
     src = Path(args.results).resolve()
     meta = json.loads((src.parent / "meta.json").read_text())
     parquet = src.with_suffix(".parquet")
     store.jsonl_to_parquet(src, parquet)
     day = time.strftime("%Y-%m-%d", time.gmtime(meta["started"]))
-    name = f"results/{day}/{args.run}-{meta['config']}-{meta['arch']}-{meta['shard'].replace('/', 'of')}.parquet"
+    shard = f"{meta['config']}-{meta['arch']}-{meta['shard'].replace('/', 'of')}"
+    pr = f"pr{meta['pr']}-" if meta.get("pr") else ""
+    name = f"results/{day}/{args.run}-{pr}{shard}.parquet"
     store.put(name, parquet)
     print(name)
+    attribution = src.parent / "attribution.parquet"
+    if attribution.is_file():
+        store.put(f"attribution/{args.run}/{shard}.parquet", attribution)
+        print(f"attribution/{args.run}/{shard}.parquet")
 
 
 def main(argv):
@@ -285,6 +300,13 @@ def main(argv):
     p.add_argument("--arch", required=True)
     p.add_argument("--days", type=int, default=14)
     p.set_defaults(fn=cmd_update_timing)
+    p = sub.add_parser("selection-map", help="build the test selection map from a run's attribution")
+    p.add_argument("--run", required=True)
+    p.add_argument("--config", default="dev")
+    p.add_argument("--arch", required=True)
+    p.add_argument("--bundle", required=True, help="the unpacked coverage bundle of that run")
+    p.add_argument("--work", required=True)
+    p.set_defaults(fn=cmd_selection_map)
     p = sub.add_parser("results", help="store a shard's results as Parquet")
     p.add_argument("--results", required=True)
     p.add_argument("--run", required=True)

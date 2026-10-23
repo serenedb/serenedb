@@ -100,6 +100,24 @@ jobs:
               --timing out/timing.json --cpus "$(nproc)" -- ${{ inputs.TEST_ARGS }})
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
           echo "shards: $shards"
+          if [[ "$CONFIG" == dev && -n "$SDB_PR" ]]; then
+            docker run --rm --user "$(id -u):$(id -g)" --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+              -e HOME=/tmp -e SDB_PR -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$PWD:$PWD" -w "$PWD" -v "$bundle:$bundle" "$BUILD_IMAGE" \
+              python3 scripts/ci/test.py --build-dir "$bundle" --config dev --timing out/timing.json \
+                --list ${{ inputs.TEST_ARGS }} --changed origin/main \
+                --selection-report out/selection.json >/dev/null ||
+              echo "warning: no selection report"
+          fi
+
+      - name: Keep the test selection report
+        if: inputs.TESTS && inputs.CONFIG == 'dev'
+        uses: actions/upload-artifact@v7
+        with:
+          name: selection-${{ inputs.CONFIG }}-${{ inputs.LOCATION }}
+          path: out/selection.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Keep the timing snapshot for the shards
         if: inputs.TESTS

@@ -1,5 +1,6 @@
 import argparse
 import fnmatch
+import json
 import os
 import platform
 import shutil
@@ -8,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import attribution, report, store
+from . import attribution, report, selection, store
 from .config import CONFIGS, Build, cpu_count, memory_gb
 from .scheduler import Context, Scheduler, install_signal_handlers
 from .suites import load_skips
@@ -60,6 +61,9 @@ def parse_args(argv):
     ap.add_argument("--attribute", action="store_true",
                     help="coverage builds: every unit gets its own server and profile, and the "
                          "functions it runs are recorded for test selection")
+    ap.add_argument("--selection-report", type=Path, default=None,
+                    help="write which units the store's selection map picks for the --changed "
+                         "diff (report only: the run still runs every unit)")
     ap.add_argument("--list", action="store_true", help="print the units and exit")
     ap.add_argument("--keep", action="store_true", help="keep the directories of passed units")
     ap.add_argument("--verbose", action="store_true", help="log every unit")
@@ -145,6 +149,18 @@ def changed_units(units, base):
     return picked
 
 
+def write_selection(args, units, changed, out):
+    work = out / "selection"
+    work.mkdir(parents=True, exist_ok=True)
+    local = work / "map.parquet"
+    if not store.reachable() or not store.get(f"selection/dev-{platform.machine()}.parquet", local):
+        result = {"mode": "no map"}
+    else:
+        result = selection.report(units, args.changed, changed_files(args.changed), changed,
+                                  local, work, pr=os.environ.get("SDB_PR", ""))
+    args.selection_report.write_text(json.dumps(result, indent=1))
+
+
 def shard(units, index, count):
     if count == 1:
         return units
@@ -191,6 +207,10 @@ def main(argv):
     changed = changed_units(units, args.changed) if args.changed else []
     if args.only_changed:
         units = changed
+    if args.selection_report:
+        if not args.changed:
+            raise SystemExit("--selection-report needs --changed")
+        write_selection(args, units, changed, out)
     units = shard(units, index - 1, count)
     changed_ids = {u.id for u in changed}
     changed = [u for u in units if u.id in changed_ids]
@@ -226,7 +246,7 @@ def main(argv):
         "config": config.name, "arch": platform.machine(), "shard": args.shard,
         "started": started, "duration": time.time() - started,
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
-        "run": os.environ.get("SDB_RUN_ID", ""),
+        "run": os.environ.get("SDB_RUN_ID", ""), "attribute": args.attribute,
     }
     report.write(out, meta, results, ctx.skips)
     if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():

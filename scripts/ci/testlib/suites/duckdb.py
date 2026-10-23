@@ -75,9 +75,9 @@ def suite_filter(ctx, suite):
     return f"{ctx.root / SUITE_DIRS[suite]}/test/*"
 
 
-def list_tests(ctx, suite):
+def list_tests(ctx, suite, spec=None):
     res = subprocess.run([str(unittest_binary(ctx)), "--test-dir", str(core_dir(ctx)),
-                          "--list-test-names-only", suite_filter(ctx, suite)],
+                          "--list-test-names-only", spec or suite_filter(ctx, suite)],
                          capture_output=True, text=True, timeout=600, env=ctx.base_env)
     names = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
     return sorted(n for n in names if not n.startswith("Matching test cases") and " test case" not in n)
@@ -139,7 +139,8 @@ def duckdb_units(ctx, args, skips):
             continue
         names = list_tests(ctx, suite)
         if suite == "cpp":
-            units += _batches(ctx, skips, suite, [(n, ()) for n in names], cpp=True)
+            may_fail = frozenset(list_tests(ctx, suite, "[!mayfail]"))
+            units += _batches(ctx, skips, suite, [(n, ()) for n in names], cpp=True, may_fail=may_fail)
             continue
         excluded = config_skips(ctx, suite)
         groups = {}
@@ -170,7 +171,7 @@ def duckdb_units(ctx, args, skips):
     return units
 
 
-def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=()):
+def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_fail=frozenset()):
     planned = []
     for name, _ in tests:
         uid = f"duckdb:{suite}:{name}"
@@ -178,7 +179,7 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=()):
         if skip:
             ctx.skips.append((uid, skip))
             continue
-        cost, _ = plan(ctx, uid, 1.5 if cpp else 3.0)
+        cost, _ = plan(ctx, uid, 1.5 if cpp else 30.0 if name.endswith(".test_slow") else 3.0)
         planned.append((name, cost))
     target = BATCH_SECONDS * ctx.config.slowdown
     per_unit = 1 if serial else BATCH_MAX
@@ -194,7 +195,7 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=()):
         jobs = 1 if serial else JOBS
         expected = max(batch_cost / jobs, max(c for _, c in batch))
         timeout = max(ctx.timeout_floor, 5 * expected + 60 * ctx.config.slowdown)
-        units.append(Unit(uid, "duckdb", _batch_run(ctx, suite, members, cpp, jobs),
+        units.append(Unit(uid, "duckdb", _batch_run(ctx, suite, members, cpp, jobs, may_fail),
                           cpus=jobs, mem_gb=3.0 * jobs, fixtures=fixtures, group=serial,
                           cost=expected, timeout=timeout,
                           members=tuple(f"duckdb:{suite}:{m}" for m in members)))
@@ -271,7 +272,7 @@ def _halt_on_ubsan(r):
     return {"UBSAN_OPTIONS": f"{opts}:halt_on_error=1"} if opts else {}
 
 
-def _batch_run(ctx, suite, members, cpp, jobs):
+def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
     label = f"duckdb:{suite}"
 
     def run(r):
@@ -285,7 +286,7 @@ def _batch_run(ctx, suite, members, cpp, jobs):
         res = r.exec(argv, env={**THREADS, **_halt_on_ubsan(r)}, cwd=core_dir(ctx))
         text = r.log.read_text(errors="replace") if r.log.exists() else ""
         if cpp:
-            member_results, pids = _parse_catch(text, members, label)
+            member_results, pids = _parse_catch(text, members, label, may_fail)
         else:
             member_results, pids = _parse_events(text, members, label)
         if res.stuck:
@@ -321,7 +322,7 @@ def _batch_run(ctx, suite, members, cpp, jobs):
     return run
 
 
-def _parse_catch(text, members, label):
+def _parse_catch(text, members, label, may_fail=frozenset()):
     wanted = set(members)
     rule = "-" * 79
     lines = text.splitlines()
@@ -344,7 +345,7 @@ def _parse_catch(text, members, label):
         if line == rule and i + 1 < len(lines) and lines[i + 1].strip() in wanted:
             current = lines[i + 1].strip()
             continue
-        if current and ": FAILED:" in line and current not in failed:
+        if current and ": FAILED:" in line and current not in failed and current not in may_fail:
             detail = next((ln.strip() for ln in lines[i + 1:i + 6] if ln.strip()), "")
             failed[current] = f"{line.strip()} {detail}"[:300]
     out = {}

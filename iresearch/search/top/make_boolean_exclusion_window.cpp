@@ -25,9 +25,9 @@
 namespace irs::top {
 
 Root::ptr Api::MakeExclusionWindow(const BooleanQuery& query,
-                                   const Context& ctx) {
+                                   const Context& ctx, score_t absorbed) {
   return irs::detail::builder::MakeScoredExclusionWindow<Api>(
-    query, query.Segment(), ctx, query.MergeType(), query.Absorbed());
+    query, query.Segment(), ctx, query.MergeType(), absorbed);
 }
 
 }  // namespace irs::top

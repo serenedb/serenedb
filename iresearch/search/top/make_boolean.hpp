@@ -45,6 +45,8 @@ struct Api {
   using Result = Root::ptr;
   using Context = top::Context;
 
+  static constexpr bool kRoot = true;
+  static constexpr bool kWrapsMerge = false;
   static constexpr bool kPrunes = true;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;
@@ -106,7 +108,8 @@ struct Api {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx,
+                          ScoreMergeType) {
     return child.PlanTop({.scorer = ctx.scorer,
                           .fetcher = ctx.fetcher,
                           .table = ctx.table,
@@ -115,30 +118,27 @@ struct Api {
   }
 
   static Result MakePosting(const irs::detail::PostingClause& posting,
-                            const SubReader& segment, const Context& ctx) {
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType) {
     return top::MakePosting(posting, segment, ctx);
   }
 
   static Result MakeSinglePosting(const irs::detail::PostingClause& posting,
-                                  const SubReader& segment,
-                                  const Context& ctx) {
+                                  const SubReader& segment, const Context& ctx,
+                                  ScoreMergeType) {
     return top::MakeSinglePosting(posting, segment, ctx);
   }
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
-                        score_t absorbed) {
+                        ScoreMergeType, score_t absorbed) {
     return top::MakeAll(segment, ctx, absorbed);
   }
 
-  static Result MakeBoosted(const BooleanQuery&, const SubReader&,
-                            const Context&, ScoreMergeType, score_t) {
-    return {};
-  }
-
   static Result MakeExclusionWindow(const BooleanQuery& query,
-                                    const Context& ctx);
+                                    const Context& ctx, score_t absorbed);
 
-  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 
   static bool Prunes(const Context& ctx, ScoreMergeType merge,
                      score_t absorbed) noexcept {

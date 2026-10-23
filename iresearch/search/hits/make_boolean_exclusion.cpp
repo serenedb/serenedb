@@ -24,9 +24,10 @@
 
 namespace irs::hits {
 
-Root::ptr Api::MakeExclusion(const BooleanQuery& query, const Context& ctx) {
-  return irs::detail::builder::MakeScoredExclusion<Api>(
-    query, query.Segment(), ctx, query.MergeType(), query.Absorbed());
+Root::ptr Api::MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                             ScoreMergeType merge, score_t absorbed) {
+  return irs::detail::builder::MakeScoredExclusion<Api>(query, ctx, merge,
+                                                        absorbed);
 }
 
 }  // namespace irs::hits

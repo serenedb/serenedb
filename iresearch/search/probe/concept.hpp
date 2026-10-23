@@ -38,4 +38,13 @@ concept ScoredType = Type<T> && requires(T& t, uint32_t slot) {
   { t.PrepareScore() } -> std::same_as<ScoreFunction>;
 };
 
+template<typename Optional>
+consteval bool OptionalDecides() {
+  if constexpr (requires { Optional::kDecides; }) {
+    return Optional::kDecides;
+  } else {
+    return true;
+  }
+}
+
 }  // namespace irs::probe

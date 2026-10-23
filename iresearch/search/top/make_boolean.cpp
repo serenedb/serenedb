@@ -26,7 +26,7 @@
 namespace irs::top {
 
 Root::ptr Make(const BooleanQuery& query, const Context& ctx) {
-  return irs::detail::builder::MakeScored<Api>(query, ctx);
+  return irs::detail::builder::MakeScored<Api>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::top

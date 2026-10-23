@@ -28,12 +28,12 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/boolean_window.hpp"
 #include "iresearch/search/fill/impl.hpp"
@@ -123,11 +123,12 @@ struct Api {
 struct ScoredApi {
   using Result = Node::ptr;
   using Context = detail::ScoredCtx;
-  using SparseApi = lead::ScoredApi;
 
-  static constexpr bool kLazyGroups = false;
-  static constexpr bool kSingleClause = false;
+  static constexpr bool kRoot = false;
+  static constexpr bool kPrunes = false;
   static constexpr bool kWrapsMerge = true;
+  static constexpr bool kLazyGroups = false;
+  static constexpr bool kBoostArity = true;
 
   static const detail::ScoredCtx& ChildContext(const Context& ctx) noexcept {
     return ctx;
@@ -139,10 +140,6 @@ struct ScoredApi {
   }
 
   static score_t Base(score_t absorbed) noexcept { return absorbed; }
-
-  static ScoreMergeType Inner(ScoreMergeType) noexcept {
-    return ScoreMergeType::Sum;
-  }
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
            typename Score, typename... Args>
@@ -160,22 +157,30 @@ struct ScoredApi {
       ctx, merge, score, std::forward<Args>(args)...);
   }
 
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx,
+                          ScoreMergeType merge) {
+    return child.PlanFill(ctx, merge);
+  }
+
+  static Result MakePosting(const detail::PostingClause& posting,
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType merge) {
+    return MakePostingScored(posting, segment, ctx, merge);
+  }
+
+  static Result MakeSinglePosting(const detail::PostingClause& posting,
+                                  const SubReader& segment, const Context& ctx,
+                                  ScoreMergeType merge) {
+    return MakeSinglePostingScored(posting, segment, ctx, merge);
+  }
+
   static Result MakeAll(const SubReader& segment, const Context&,
                         ScoreMergeType merge, score_t absorbed) {
     return MakeAllScored(segment, merge, absorbed);
   }
 
-  static Result MakeRequiredWith(
-    std::span<const detail::PostingClause> must,
-    std::span<const QueryBuilder::ptr> must_filters,
-    std::span<const detail::PostingClause> should,
-    std::span<const QueryBuilder::ptr> should_filters, detail::Terms uniformity,
-    uint32_t min_match, const SubReader& segment, const Context& ctx,
-    ScoreMergeType merge, score_t absorbed) {
-    return detail::builder::MakeNodeConjunctionWith<ScoredApi>(
-      must, must_filters, should, should_filters, uniformity, min_match,
-      segment, ctx, merge, absorbed);
-  }
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 
   static Result WrapMerge(ScoreMergeType merge, Result child) {
     return irs::ResolveMergeType(merge, [&]<ScoreMergeType Merge> -> Result {

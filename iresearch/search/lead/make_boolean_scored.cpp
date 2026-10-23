@@ -21,21 +21,13 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/scored_builder.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
-#include "iresearch/search/detail/scored_node_builder.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/make_boolean.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 
 namespace irs::lead {
-
-Node::ptr MakeSparseConjunctionScored(
-  std::span<const detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const detail::ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed) {
-  return detail::builder::MakeNodeConjunction<ScoredApi>(
-    terms, filters, segment, ctx, merge, absorbed);
-}
 
 Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
                              std::span<const QueryBuilder::ptr> must_filters,
@@ -46,13 +38,20 @@ Node::ptr MakeRequiredScored(std::span<const detail::PostingClause> must,
                              const SubReader& segment,
                              const detail::ScoredCtx& ctx, ScoreMergeType merge,
                              score_t absorbed) {
-  return detail::builder::MakeNodeRequired<ScoredApi>(
+  return detail::builder::MakeScoredRequired<ScoredApi>(
     must, must_filters, should, should_filters, should_uniformity,
     min_should_match, segment, ctx, merge, absorbed);
 }
 
+Node::ptr ScoredApi::MakeExclusion(const BooleanQuery& query,
+                                   const Context& ctx, ScoreMergeType merge,
+                                   score_t absorbed) {
+  return detail::builder::MakeScoredExclusion<ScoredApi>(query, ctx, merge,
+                                                         absorbed);
+}
+
 Node::ptr Make(const BooleanQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::builder::MakeNode<ScoredApi>(query, ctx, query.MergeType());
+  return detail::builder::MakeScored<ScoredApi>(query, ctx, query.MergeType());
 }
 
 }  // namespace irs::lead

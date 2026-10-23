@@ -88,11 +88,6 @@ Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeLiveDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
 
-Node::ptr MakeSparseConjunctionScored(
-  std::span<const detail::PostingClause> terms,
-  std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
-  const detail::ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed);
-
 Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
                            std::span<const QueryBuilder::ptr> must_filters,
                            std::span<const detail::PostingClause> should,

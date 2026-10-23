@@ -40,7 +40,10 @@
 
 namespace irs::hits {
 
-Root::ptr MakeBoostedPosting(const BooleanQuery& query,
+Root::ptr MakeBoostedPosting(std::span<const irs::detail::PostingClause> must,
+                             std::span<const QueryBuilder::ptr> must_filters,
+                             std::span<const irs::detail::PostingClause> should,
+                             std::span<const QueryBuilder::ptr> should_filters,
                              const SubReader& segment, const Context& ctx,
                              ScoreMergeType merge, score_t absorbed);
 
@@ -48,6 +51,8 @@ struct Api {
   using Result = Root::ptr;
   using Context = hits::Context;
 
+  static constexpr bool kRoot = true;
+  static constexpr bool kWrapsMerge = false;
   static constexpr bool kPrunes = false;
   static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = false;
@@ -102,36 +107,43 @@ struct Api {
     return {.segment = &segment, .fetcher = &ctx.fetcher};
   }
 
-  static Result PlanChild(const QueryBuilder& child, const Context& ctx) {
+  static Result PlanChild(const QueryBuilder& child, const Context& ctx,
+                          ScoreMergeType) {
     return child.PlanScored(ctx);
   }
 
   static Result MakePosting(const irs::detail::PostingClause& posting,
-                            const SubReader& segment, const Context& ctx) {
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType) {
     return hits::MakePosting(posting, segment, ctx);
   }
 
   static Result MakeSinglePosting(const irs::detail::PostingClause& posting,
-                                  const SubReader& segment,
-                                  const Context& ctx) {
+                                  const SubReader& segment, const Context& ctx,
+                                  ScoreMergeType) {
     return hits::MakeSinglePosting(posting, segment, ctx);
   }
 
   static Result MakeAll(const SubReader& segment, const Context& ctx,
-                        score_t absorbed) {
+                        ScoreMergeType, score_t absorbed) {
     return hits::MakeAll(segment, ctx, absorbed);
   }
 
-  static Result MakeBoosted(const BooleanQuery& query, const SubReader& segment,
-                            const Context& ctx, ScoreMergeType merge,
-                            score_t absorbed) {
-    return MakeBoostedPosting(query, segment, ctx, merge, absorbed);
+  static Result MakeBoosted(std::span<const irs::detail::PostingClause> must,
+                            std::span<const QueryBuilder::ptr> must_filters,
+                            std::span<const irs::detail::PostingClause> should,
+                            std::span<const QueryBuilder::ptr> should_filters,
+                            const SubReader& segment, const Context& ctx,
+                            ScoreMergeType merge, score_t absorbed) {
+    return MakeBoostedPosting(must, must_filters, should, should_filters,
+                              segment, ctx, merge, absorbed);
   }
 
   static Result MakeExclusionWindow(const BooleanQuery& query,
-                                    const Context& ctx);
+                                    const Context& ctx, score_t absorbed);
 
-  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx);
+  static Result MakeExclusion(const BooleanQuery& query, const Context& ctx,
+                              ScoreMergeType merge, score_t absorbed);
 };
 
 template<typename Term>

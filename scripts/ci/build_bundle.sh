@@ -8,7 +8,6 @@ cd "$WORKSPACE"
 source scripts/ci/config.sh
 sdb_config "$1"
 
-: "${BUILD_IMAGE:=serenedb/serenedb-build-ubuntu:latest}"
 : "${CCACHE_HOST_DIR:=/mnt/data/.ccache}"
 : "${CARGO_HOME_CACHE:=/mnt/data/.cargo-home-sqllogic}"
 : "${CARGO_TARGET_CACHE:=/mnt/data/.cargo-target-sqllogic}"

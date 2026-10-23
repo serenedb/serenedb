@@ -69,7 +69,6 @@ on:
         value: ${{ jobs.package.outputs.rta_ok }}
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
@@ -132,6 +131,9 @@ jobs:
           fetch-depth: 1
           submodules: true
           clean: true
+
+      - name: Pick the build image
+        run: echo "BUILD_IMAGE=${BUILD_IMAGE:-$(<scripts/ci/build-image.txt)}" >> "$GITHUB_ENV"
 
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash

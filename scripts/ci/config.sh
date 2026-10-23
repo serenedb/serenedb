@@ -1,5 +1,8 @@
 #!/bin/bash
 
+: "${BUILD_IMAGE:=$(<"$(dirname "${BASH_SOURCE[0]}")/build-image.txt")}"
+export BUILD_IMAGE
+
 sdb_config() {
 	CONFIG="$1"
 	BUILDMODE=RelWithDebInfo

@@ -10,7 +10,6 @@ sdb_config "$1"
 DIGEST="$2"
 RUN="$3"
 BASE="$4"
-: "${BUILD_IMAGE:=serenedb/serenedb-build-ubuntu:latest}"
 
 bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --digest "$DIGEST")
 out="out/coverage-${CONFIG}"

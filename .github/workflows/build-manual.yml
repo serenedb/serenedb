@@ -179,7 +179,7 @@ jobs:
       - linux-amd64
     timeout-minutes: 240
     env:
-      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
       SDB_STORE_RESULTS: "false"
     steps:
       - name: Reap containers left on this runner

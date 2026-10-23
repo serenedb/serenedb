@@ -13,6 +13,7 @@ from . import plan, skipped
 
 ENGINES = ("pg-wire-simple", "pg-wire-extended")
 PLANNED_EXITS = (0, 75)
+STATEFUL_SERVICES = ("minio", "azurite", "iceberg", "postgres", "clickhouse")
 _runner_lock = threading.Lock()
 _runner_path = None
 
@@ -66,6 +67,7 @@ def find_tests(root, fast):
 class ServicesFixture(Fixture):
     def __init__(self, ctx, names):
         self.names = names
+        self.stateful = any(n in STATEFUL_SERVICES for n in names)
         self.services = services.ServiceSet(log_dir=ctx.out_dir / "services")
         self._env = {}
 

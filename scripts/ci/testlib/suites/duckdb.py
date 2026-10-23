@@ -321,54 +321,55 @@ def _parse_catch(text, members, label):
 
 
 def _iceberg_special(ctx, skips, names):
-    units = []
     ice = ctx.root / SUITE_DIRS["iceberg"]
-    setup = [n for n in names if "/test/sql/local/catalog_test_config_setup/" in n]
-    custom = [n for n in names if "/test/sql/local/catalog_custom_setup/" in n]
-    custom += [str(ice / "test/sql/local/partitioning/foldable_expression_filter.test"),
-               str(ice / "test/sql/local/partitioning/in_filter.test")]
-    fixtures = ("duckdb:iceberg", "duckdb:proxies")
-    for key, members, extra, env in (
-        ("catalog_test_config_setup", setup,
-         ["--order", "lex", "--test-config", str(ice / "test/configs/fixture.json")], {}),
-        ("catalog_custom_setup", custom, ["--order", "lex"], {"CATALOG_TEST_CONFIG_SETUP": "fixture"}),
-    ):
-        if not members:
-            continue
-        uid = f"duckdb:iceberg:{key}"
-        if skipped(skips, uid):
-            continue
-        cost, timeout = plan(ctx, uid, 60.0)
-        units.append(Unit(uid, "duckdb", _ordered_run(ctx, tuple(members), extra, env), cpus=2,
-                          mem_gb=4.0, fixtures=fixtures, group="duckdb:iceberg-catalog",
-                          cost=cost, timeout=timeout,
-                          members=tuple(f"duckdb:iceberg:{m}" for m in members)))
-    return units
+    setup = tuple(n for n in names if "/test/sql/local/catalog_test_config_setup/" in n)
+    custom = tuple([n for n in names if "/test/sql/local/catalog_custom_setup/" in n]
+                   + [str(ice / "test/sql/local/partitioning/foldable_expression_filter.test"),
+                      str(ice / "test/sql/local/partitioning/in_filter.test")])
+    steps = tuple(s for s in (
+        ("setup", setup, ["--test-config", str(ice / "test/configs/fixture.json")], {}),
+        ("custom", custom, [], {"CATALOG_TEST_CONFIG_SETUP": "fixture"}),
+    ) if s[1])
+    uid = "duckdb:iceberg:catalog"
+    if not steps or skipped(skips, uid):
+        return []
+    cost, timeout = plan(ctx, uid, 120.0)
+    return [Unit(uid, "duckdb", _ordered_run(ctx, steps), cpus=2, mem_gb=4.0,
+                 fixtures=("duckdb:iceberg", "duckdb:proxies"), cost=cost, timeout=timeout,
+                 members=tuple(f"duckdb:iceberg:{m}" for _, members, _, _ in steps for m in members))]
 
 
-def _ordered_run(ctx, members, extra, env):
+def _ordered_run(ctx, steps):
     label = "duckdb:iceberg"
 
     def run(r):
-        listing = r.dir / "tests.txt"
-        listing.write_text("\n".join(members) + "\n")
-        local_env = dict(THREADS, **env)
-        if env.get("CATALOG_TEST_CONFIG_SETUP") and r.env.get("ICEBERG_HTTP_PROXY"):
-            local_env["HTTP_PROXY_PUBLIC"] = r.env["ICEBERG_HTTP_PROXY"]
-        argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, "iceberg"),
-                *extra, "--emit-test-events", "-f", str(listing)]
-        res = r.exec(argv, env=local_env, cwd=core_dir(ctx))
-        text = r.log.read_text(errors="replace") if r.log.exists() else ""
-        member_results, _ = _parse_events(text, members, label)
-        out = r.outcome(res)
-        if res.stuck:
-            return Outcome(STUCK, "did not finish; stacks saved", signature="stuck",
-                           members=member_results)
+        member_results = {}
+        failure = None
+        for key, members, extra, env in steps:
+            listing = r.dir / f"{key}.txt"
+            listing.write_text("\n".join(members) + "\n")
+            local_env = dict(THREADS, **env)
+            if env.get("CATALOG_TEST_CONFIG_SETUP") and r.env.get("ICEBERG_HTTP_PROXY"):
+                local_env["HTTP_PROXY_PUBLIC"] = r.env["ICEBERG_HTTP_PROXY"]
+            argv = [unittest_binary(ctx), "--test-dir", core_dir(ctx), *config_args(ctx, "iceberg"),
+                    "--order", "lex", *extra, "--emit-test-events", "-f", str(listing)]
+            res = r.exec(argv, env=local_env, cwd=core_dir(ctx))
+            text = r.log.read_text(errors="replace") if r.log.exists() else ""
+            results, _ = _parse_events(text, members, label)
+            member_results.update(results)
+            if res.stuck:
+                return Outcome(STUCK, f"{key} did not finish; stacks saved", signature="stuck",
+                               members=member_results)
+            out = r.outcome(res)
+            if out.status != PASSED and failure is None:
+                failure = out
         bad = [k for k, v in member_results.items() if v[0] in (FAILED, CRASHED)]
-        if bad or out.status != PASSED:
-            return Outcome(FAILED if out.status == PASSED else out.status,
-                           f"{len(bad)} test(s) failed: {', '.join(bad[:3])}" if bad else out.detail,
-                           signature=out.signature, members=member_results)
+        if bad or failure is not None:
+            status = failure.status if failure is not None and failure.status != FAILED else FAILED
+            return Outcome(status,
+                           f"{len(bad)} test(s) failed: {', '.join(bad[:3])}" if bad else failure.detail,
+                           signature=failure.signature if failure is not None else "",
+                           members=member_results)
         return Outcome(PASSED, members=member_results)
 
     return run
@@ -420,6 +421,7 @@ class _DockerFixture(Fixture):
 
 class PostgresFixture(_DockerFixture):
     name = "duckdb:postgres"
+    stateful = True
 
     def start(self, ctx):
         image = f"serenedb/serenedb-test-postgres:{services.fixture_image_tag('postgres')}"
@@ -459,27 +461,52 @@ class PostgresFixture(_DockerFixture):
 
 S3_HOSTS = ("duckdb-minio.com", "test-bucket.duckdb-minio.com", "test-bucket-2.duckdb-minio.com",
             "test-bucket-public.duckdb-minio.com")
+SEAWEEDFS_IMAGE = "chrislusf/seaweedfs:4.47"
+ICEBERG_IDENTITY = {"name": "iceberg", "credentials": [{"accessKey": "admin", "secretKey": "password"}],
+                    "actions": ["Admin", "Read", "Write", "List", "Tagging"]}
+
+
+class SeaweedFixture(_DockerFixture):
+    name = "duckdb:seaweedfs"
+    stateful = True
+
+    def start(self, ctx):
+        try:
+            ips = {socket.gethostbyname(h) for h in S3_HOSTS}
+        except OSError:
+            ips = set()
+        if len(ips) != 1 or not next(iter(ips)).startswith("127.") or "127.0.0.1" in ips:
+            raise RuntimeError("duckdb-minio.com and its bucket names must resolve to one loopback "
+                               "address other than 127.0.0.1 (see tests/duckdb/README.md)")
+        ip = ips.pop()
+        identities = json.loads((ctx.root / SUITE_DIRS["httpfs"] / "scripts" /
+                                 "seaweedfs_s3_config.json").read_text())
+        identities["identities"].append(ICEBERG_IDENTITY)
+        cfg = ctx.out_dir / "services" / "seaweedfs-s3.json"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps(identities))
+        args = ["server", "-dir=/data", "-ip=127.0.0.1", "-ip.bind=0.0.0.0",
+                "-master.volumeSizeLimitMB=1024", "-s3", "-s3.port=9000", "-s3.port.iceberg=0",
+                "-s3.domainName=duckdb-minio.com", "-s3.config=/etc/seaweedfs/s3_config.json"]
+        extra = ["-v", f"{cfg}:/etc/seaweedfs/s3_config.json:ro"]
+        if self.services.netns:
+            self.services.run("seaweedfs", SEAWEEDFS_IMAGE, *args, fixed_ports=(("127.0.0.1", 9000),),
+                              extra=extra)
+        else:
+            self.services.pod("store", ((ip, 9000), ("127.0.0.1", 9000), ("127.0.0.1", 8181)))
+            self.services.run("seaweedfs", SEAWEEDFS_IMAGE, *args, peer="store", extra=extra)
+        services.wait_for("SeaweedFS", lambda: _http_any("http://127.0.0.1:9000"), 60)
+
+    def pod(self):
+        return self.services.pods.get("store")
 
 
 class S3Fixture(_DockerFixture):
     name = "duckdb:s3"
+    stateful = True
+    requires = ("duckdb:seaweedfs",)
 
     def start(self, ctx):
-        try:
-            ip = socket.gethostbyname("duckdb-minio.com")
-            for h in S3_HOSTS[1:]:
-                socket.gethostbyname(h)
-        except OSError:
-            raise RuntimeError("duckdb-minio.com and its bucket names must resolve to a loopback "
-                               "address other than 127.0.0.1 (see tests/duckdb/README.md)")
-        cfg = ctx.root / "third_party" / "duckdb_httpfs" / "scripts" / "seaweedfs_s3_config.json"
-        bind = ip if self.services.netns else "0.0.0.0"
-        args = ["server", "-dir=/data", "-ip=duckdb-minio.com", f"-ip.bind={bind}",
-                "-master.volumeSizeLimitMB=1024", "-s3", "-s3.port=9000", "-s3.port.iceberg=0",
-                "-s3.domainName=duckdb-minio.com", "-s3.config=/etc/seaweedfs/s3_config.json"]
-        hosts = [] if self.services.netns else [a for h in S3_HOSTS for a in ("--add-host", f"{h}:{ip}")]
-        self.services.run("s3", "chrislusf/seaweedfs:4.47", *args, fixed_ports=((ip, 9000),),
-                          extra=["-v", f"{cfg}:/etc/seaweedfs/s3_config.json:ro", *hosts])
         services.wait_for("S3 test server", lambda: _http_ok("http://duckdb-minio.com:9000"), 60)
         data = ctx.out_dir / "services" / "s3-data"
         shutil.rmtree(data, ignore_errors=True)
@@ -530,6 +557,7 @@ class HttpFixture(_DockerFixture):
 
 class AzuriteFixture(_DockerFixture):
     name = "duckdb:azurite"
+    stateful = True
     conn = ("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey="
             + services.AZURITE_KEY + ";BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;")
 
@@ -570,27 +598,29 @@ class ProxiesFixture(_DockerFixture):
 
 class IcebergFixture(_DockerFixture):
     name = "duckdb:iceberg"
+    stateful = True
+    requires = ("duckdb:seaweedfs",)
+    proxy_log = None
+
+    def stop(self):
+        super().stop()
+        if self.proxy_log is not None:
+            self.proxy_log.unlink(missing_ok=True)
 
     def start(self, ctx):
         creds = ["-e", "AWS_ACCESS_KEY_ID=admin", "-e", "AWS_SECRET_ACCESS_KEY=password"]
-        self.services.pod("iceberg", (("127.0.0.1", 9000), ("127.0.0.1", 8181)))
-        bind = "127.0.0.1" if self.services.netns else "0.0.0.0"
-        self.services.run("seaweedfs", "chrislusf/seaweedfs:4.47", "server", "-dir=/data",
-                          "-ip=127.0.0.1", f"-ip.bind={bind}", "-s3", "-s3.port=9000",
-                          "-s3.port.iceberg=0",
-                          extra=creds, peer="iceberg")
-        services.wait_for("SeaweedFS", lambda: _http_any("http://127.0.0.1:9000"), 60)
+        self.services.join("store", ctx.fixtures["duckdb:seaweedfs"].pod())
         self.services.oneshot("s3-init", "amazon/aws-cli:2.36.44", ["-c",
                               "until aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://warehouse; "
                               "do sleep 1; done"],
                               extra=[*creds, "-e", "AWS_REGION=us-east-1", "--entrypoint", "/bin/sh"],
-                              peer="iceberg")
+                              peer="store")
         self.services.run("rest", services.ICEBERG_REST_IMAGE,
                           extra=[*creds, "-e", "AWS_REGION=us-east-1",
                                  "-e", "CATALOG_WAREHOUSE=s3://warehouse/",
                                  "-e", "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO",
                                  "-e", "CATALOG_S3_ENDPOINT=http://127.0.0.1:9000",
-                                 "-e", "CATALOG_S3_PATH__STYLE__ACCESS=true"], peer="iceberg")
+                                 "-e", "CATALOG_S3_PATH__STYLE__ACCESS=true"], peer="store")
         services.wait_for("Iceberg REST", lambda: _http_ok("http://127.0.0.1:8181/v1/config"), 90)
         log = ctx.out_dir / "services" / "iceberg-data.log"
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -604,12 +634,13 @@ class IcebergFixture(_DockerFixture):
         if shutil.which("mitmdump"):
             ice = ctx.root / SUITE_DIRS["iceberg"]
             conf = ctx.out_dir / "services" / "mitmproxy"
-            for port, extra, logname in (
-                (8878, [], "mitmproxy.log"),
+            self.proxy_log = ice / "mitmproxy.log"
+            for port, extra, log in (
+                (8878, [], self.proxy_log),
                 (19133, ["-s", str(ice / "scripts" / "vended_credentials_refresh_proxy.py")],
-                 "vended-credentials-refresh-proxy.log"),
+                 ctx.out_dir / "services" / "vended-credentials-refresh-proxy.log"),
             ):
-                out = open(ctx.out_dir / "services" / logname, "ab")
+                out = open(log, "ab")
                 self.procs.append(subprocess.Popen(
                     ["mitmdump", "--mode", f"regular@{port}", "--flow-detail", "2",
                      "--set", f"confdir={conf}", *extra], stdout=out, stderr=subprocess.STDOUT))
@@ -654,6 +685,7 @@ def _http_any(url):
 
 def fixture_factories(ctx, args):
     return {
+        "duckdb:seaweedfs": SeaweedFixture,
         "duckdb:postgres": PostgresFixture, "duckdb:s3": S3Fixture, "duckdb:http": HttpFixture,
         "duckdb:azurite": AzuriteFixture, "duckdb:proxies": ProxiesFixture,
         "duckdb:iceberg": IcebergFixture, "duckdb:secrets": lambda c: SecretsFixture(),

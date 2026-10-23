@@ -254,9 +254,8 @@ jobs:
         continue-on-error: ${{ inputs.RTA == 'test' }}
         env:
           DOCKER_TEST_IMAGE: serenedb/serenedb:${{ env.DOCKER_TAG }}-${{ steps.prepare.outputs.test_arch }}
-          BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
           WORKSPACE: ${{ github.workspace }}
-        run: ./scripts/ci/steps/08-ci-docker-rta.bash
+        run: BUILD_IMAGE="$(<scripts/ci/build-image.txt)" ./scripts/ci/steps/08-ci-docker-rta.bash
 
       - name: Push Docker images
         if: >-

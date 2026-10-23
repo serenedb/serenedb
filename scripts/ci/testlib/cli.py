@@ -93,12 +93,36 @@ def build_units(ctx, args, suites, skips):
     return units
 
 
+def _git(repo, *args, check=True):
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                          check=check)
+
+
+def changed_files(base):
+    merge_base = _git(ROOT, "merge-base", base, "HEAD").stdout.strip()
+    names = _git(ROOT, "diff", "--name-only", "--diff-filter=AMR", merge_base,
+                 "HEAD").stdout.splitlines()
+    raw = _git(ROOT, "diff", "--raw", "--no-abbrev", merge_base, "HEAD", "--", "third_party")
+    for line in raw.stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        fields = meta.split()
+        if len(fields) < 4 or fields[0] != ":160000" or fields[1] != "160000":
+            continue
+        old, new = fields[2], fields[3]
+        sub = ROOT / path
+        if _git(sub, "cat-file", "-e", f"{old}^{{commit}}", check=False).returncode != 0:
+            _git(sub, "fetch", "-q", "--no-tags", "--depth=1", "origin", old, check=False)
+        diff = _git(sub, "diff", "--name-only", "--diff-filter=AMR", old, new, check=False)
+        if diff.returncode != 0:
+            print(f"cannot diff {path} {old[:12]}..{new[:12]}; its changed tests are not picked",
+                  file=sys.stderr)
+            continue
+        names += [f"{path}/{n}" for n in diff.stdout.splitlines()]
+    return names
+
+
 def changed_units(units, base):
-    merge_base = subprocess.run(["git", "-C", str(ROOT), "merge-base", base, "HEAD"],
-                                capture_output=True, text=True, check=True).stdout.strip()
-    names = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "--diff-filter=AMR",
-                            merge_base, "HEAD"], capture_output=True, text=True,
-                           check=True).stdout.split()
+    names = changed_files(base)
     keys = set()
     for name in names:
         if name.startswith("tests/sqllogic/generators/") and name.endswith(".py"):

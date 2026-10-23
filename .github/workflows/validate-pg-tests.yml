@@ -14,7 +14,7 @@ on:
         required: false
         default: ""
       BUILD_IMAGE:
-        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        description: "Build image (empty = the one scripts/ci/build-image.txt pins)"
         type: string
         required: false
         default: ""
@@ -36,7 +36,7 @@ on:
         required: false
         default: ""
       BUILD_IMAGE:
-        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        description: "Build image (empty = the one scripts/ci/build-image.txt pins)"
         type: string
         required: false
         default: ""
@@ -48,7 +48,7 @@ on:
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
+  BUILD_IMAGE_OVERRIDE: ${{ inputs.BUILD_IMAGE }}
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
@@ -84,8 +84,10 @@ jobs:
         run: |
           mkdir -p out/logs
           mkdir -p "${HOME}/.cache/serenedb-cargo-target"
+          image="${BUILD_IMAGE_OVERRIDE:-$(<scripts/ci/build-image.txt)}"
+          echo "BUILD_IMAGE=$image" >> "$GITHUB_ENV"
           for i in 1 2 3; do
-            docker pull "${BUILD_IMAGE}" && break
+            docker pull "$image" && break
             echo "Pull attempt $i failed, retrying in 10s..."
             sleep 10
           done

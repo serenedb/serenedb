@@ -62,6 +62,8 @@ class Result:
 
 class Fixture:
     name = ""
+    stateful = False
+    requires = ()
 
     def start(self, ctx):
         pass
@@ -199,6 +201,8 @@ class Scheduler:
                 raise RuntimeError(f"fixture {name} failed to start: {self._fixture_errors[name]}")
             if name not in self.ctx.fixtures:
                 fixture = self.factories[name](self.ctx)
+                for required in fixture.requires:
+                    self._fixture(required)
                 t0 = time.monotonic()
                 try:
                     fixture.start(self.ctx)
@@ -347,6 +351,7 @@ class Scheduler:
         for attempt in range(1, attempts + 1):
             if time.monotonic() > deadline:
                 break
+            self._reset_stateful(wanted)
             self.run_pass(wanted, attempt=attempt, deadline=deadline)
         for r in failed:
             later = [x for x in self.results if x.unit == r.unit and x.attempt > 0]
@@ -366,6 +371,7 @@ class Scheduler:
         for k in range(rounds):
             if time.monotonic() > deadline:
                 break
+            self._reset_stateful(candidates)
             self.run_pass(candidates, attempt=100 + k, deadline=deadline)
         for r in list(first.values()):
             reps = [x for x in self.results if x.unit == r.unit and x.attempt >= 100]
@@ -387,18 +393,37 @@ class Scheduler:
                 r.detail = f"fails without the fix, as it should: {r.detail}"
                 r.status = PASSED
 
+    def _stop_fixture(self, name):
+        fixture = self.ctx.fixtures.pop(name)
+        try:
+            findings = fixture.stop()
+        except Exception as e:
+            findings = [Result(f"fixture:{name}", "fixture", FAILED, 0, 0, time.time(),
+                               f"stop failed: {e}", f"fixture: {type(e).__name__}")]
+        for f in findings or ():
+            self.results.append(f)
+            self._report(f)
+
+    def _reset_stateful(self, units):
+        started = self.ctx.fixtures
+        reset = set()
+        todo = [n for u in units for n in u.fixtures]
+        while todo:
+            name = todo.pop()
+            if name in reset or name not in started or not started[name].stateful:
+                continue
+            reset.add(name)
+            todo.extend(started[name].requires)
+        while dependents := {n for n, f in started.items()
+                             if n not in reset and reset.intersection(f.requires)}:
+            reset |= dependents
+        for name in reversed([n for n in started if n in reset]):
+            self._stop_fixture(name)
+
     def stop_fixtures(self):
         shutil.rmtree(self.ctx.tmp_root, ignore_errors=True)
-        for name, fixture in list(self.ctx.fixtures.items()):
-            try:
-                findings = fixture.stop()
-            except Exception as e:
-                findings = [Result(f"fixture:{name}", "fixture", FAILED, 0, 0, time.time(),
-                                   f"stop failed: {e}", f"fixture: {type(e).__name__}")]
-            for f in findings or ():
-                self.results.append(f)
-                self._report(f)
-        self.ctx.fixtures.clear()
+        for name in reversed(list(self.ctx.fixtures)):
+            self._stop_fixture(name)
 
     def interrupt(self):
         with self._cv:

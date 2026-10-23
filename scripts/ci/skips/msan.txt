@@ -21,6 +21,7 @@ duckdb:core:test/sql/storage/encryption/temp_files/encrypted_tmp_file_setting.te
 duckdb:core:test/sql/storage/encryption/temp_files/encrypted_tpch_join.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/encryption/temp_files/temp_directory_enable_external_access.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/evict_unpinned_without_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/parallel/memory_limit_mixed_batches.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/failed_spill_keeps_block_evictable.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/max_swap_space_explicit.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/temp_directory/max_swap_space_inmemory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)

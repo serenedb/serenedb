@@ -34,7 +34,7 @@
 
 #include "gtest/gtest.h"
 #include "test_resources.hpp"
-#include "tests_config.hpp"
+#include "tests_shared.hpp"
 #include "token_sink_asserts.hpp"
 
 namespace {
@@ -92,9 +92,11 @@ irs::analysis::Tokenizer::ptr MakeText(TextOpts opts = {}) {
   return CreateTokenizer(TokenizerConfig{std::move(pipeline)}, tests::Cache());
 }
 
-const std::string kStopwordsDir = IRS_TEST_RESOURCE_DIR "/en";
-const std::string kStopwordsFile =
-  IRS_TEST_RESOURCE_DIR "/en/text_analyzer_stopwords.txt";
+std::string StopwordsDir() { return TestEnv::resource("en").string(); }
+
+std::string StopwordsFile() {
+  return TestEnv::resource("en/text_analyzer_stopwords.txt").string();
+}
 
 }  // namespace
 namespace tests {
@@ -258,14 +260,14 @@ TEST_F(TextAnalyzerParserTestSuite, test_load_stopwords) {
   const std::vector<tests::AnalyzerToken> expected{{"e", 1, 2, 3},
                                                    {"u", 2, 8, 9}};
   {
-    auto stream = MakeText({.stopwords_path = kStopwordsDir});
+    auto stream = MakeText({.stopwords_path = StopwordsDir()});
     ASSERT_NE(nullptr, stream);
     auto tokens = tests::Analyze(*stream, "A E I O U");
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(expected, *tokens);
   }
   {
-    auto stream = MakeText({.stopwords_path = kStopwordsFile});
+    auto stream = MakeText({.stopwords_path = StopwordsFile()});
     ASSERT_NE(nullptr, stream);
     auto tokens = tests::Analyze(*stream, "A E I O U");
     ASSERT_TRUE(tokens.has_value());
@@ -273,7 +275,7 @@ TEST_F(TextAnalyzerParserTestSuite, test_load_stopwords) {
   }
   {
     auto stream =
-      MakeText({.stopwords = {"e"}, .stopwords_path = kStopwordsFile});
+      MakeText({.stopwords = {"e"}, .stopwords_path = StopwordsFile()});
     ASSERT_NE(nullptr, stream);
     auto tokens = tests::Analyze(*stream, "A E I O U");
     ASSERT_TRUE(tokens.has_value());

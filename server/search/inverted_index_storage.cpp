@@ -275,7 +275,7 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
     [&] { PublishSnapshot(); });
   {
     absl::MutexLock lock{&_rows_mutex};
-    PruneRows();
+    _rows.Prune(_writer->CommittedGeneration());
   }
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
@@ -383,55 +383,22 @@ std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
   return rows;
 }
 
-void InvertedIndexStorage::PruneRows() {
-  const auto committed = _writer->CommittedGeneration();
-  while (!_rows_order.empty() && _rows_order.front().first <= committed) {
-    const auto it = _rows.find(_rows_order.front().second);
-    if (it != _rows.end() && it->second.generation <= committed) {
-      _rows.erase(it);
-    }
-    _rows_order.pop_front();
-  }
-}
-
 void InvertedIndexStorage::AddRows(std::vector<RowBatch>&& batches,
                                    uint64_t generation) {
   if (batches.empty()) {
     return;
   }
   absl::MutexLock lock{&_rows_mutex};
-  PruneRows();
-  for (auto& batch : batches) {
-    batch.generation = generation;
-    _rows_order.emplace_back(generation, batch.begin);
-    _rows.insert_or_assign(batch.begin, std::move(batch));
-  }
+  _rows.Prune(_writer->CommittedGeneration());
+  _rows.Add(std::move(batches), generation);
 }
 
 void InvertedIndexStorage::FindRows(std::span<const int64_t> rows,
                                     irs::DocRemovalBuilder& found,
                                     std::vector<int64_t>& missing) {
   absl::MutexLock lock{&_rows_mutex};
-  PruneRows();
-  for (const auto row : rows) {
-    if (const auto next = _rows.upper_bound(row); next != _rows.begin()) {
-      const auto& batch = std::prev(next)->second;
-      const auto offset = static_cast<uint32_t>(row - batch.begin);
-      if (row < batch.end && batch.offsets.empty()) {
-        found.Add(batch.segment, batch.doc + offset);
-        continue;
-      }
-      if (row < batch.end) {
-        const auto it = absl::c_lower_bound(batch.offsets, offset);
-        if (it != batch.offsets.end() && *it == offset) {
-          found.Add(batch.segment, static_cast<irs::doc_id_t>(
-                                     batch.doc + (it - batch.offsets.begin())));
-          continue;
-        }
-      }
-    }
-    missing.push_back(row);
-  }
+  _rows.Prune(_writer->CommittedGeneration());
+  _rows.Find(rows, found, missing);
 }
 
 irs::DirectoryReader InvertedIndexStorage::ResolveRows(
@@ -446,24 +413,51 @@ irs::DirectoryReader InvertedIndexStorage::ResolveRows(
   for (size_t i = 0; i < rows.size(); ++i) {
     connector::primary_key::AppendSigned(keys[i], rows[i]);
   }
+  std::vector<uint8_t> resolved(keys.size());
+  irs::TermPostings::ptr postings;
+  irs::doc_id_t docs[irs::doc_limits::kBlockSize];
   for (size_t s = 0; s < reader.size(); ++s) {
     const auto& segment = reader[s];
     const auto* field = segment.field(connector::term_dict::kPKFieldId);
-    if (field == nullptr) {
-      continue;
-    }
+    SDB_ENSURE(field != nullptr, "inverted index segment ", segment.Meta().name,
+               " has no row ids");
     const auto number = irs::SegmentNumber(segment.Meta().name);
     SDB_ENSURE(number != irs::DocRemoval::kNoSegment, "inverted index segment ",
                segment.Meta().name, " has no position");
     const auto masked = segment.MaskedDocs();
-    for (const auto& key : keys) {
-      field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{key}),
-                      [&](irs::doc_id_t doc) {
-                        if (!masked.Contains(doc)) {
-                          found.Add(number, doc);
-                        }
-                        return true;
-                      });
+    const auto first =
+      absl::c_lower_bound(keys, irs::ViewCast<char>(field->min()));
+    const auto last =
+      std::upper_bound(first, keys.end(), irs::ViewCast<char>(field->max()));
+    auto terms = field->iterator();
+    for (auto key = first; key != last; ++key) {
+      auto& done = resolved[key - keys.begin()];
+      if (done ||
+          !terms->seek(irs::ViewCast<irs::byte_type>(std::string_view{*key}))) {
+        continue;
+      }
+      if (const auto& meta = terms->cookie(); meta.docs_count == 1) {
+        const auto doc = irs::doc_limits::min() + meta.doc_delta;
+        if (!masked.Contains(doc)) {
+          found.Add(number, doc);
+          done = true;
+        }
+        continue;
+      }
+      postings =
+        terms->ReusePostings(irs::IndexFeatures::None, std::move(postings));
+      while (!done) {
+        const auto count = postings->NextDocs(docs, nullptr);
+        if (count == 0) {
+          break;
+        }
+        for (uint32_t i = 0; i < count && !done; ++i) {
+          if (!masked.Contains(docs[i])) {
+            found.Add(number, docs[i]);
+            done = true;
+          }
+        }
+      }
     }
   }
   return reader;

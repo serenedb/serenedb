@@ -22,14 +22,12 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <atomic>
-#include <deque>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -51,6 +49,7 @@
 #include "connector/file_manifest.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
+#include "search/row_batches.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
 
@@ -87,15 +86,6 @@ struct StorageDirectory {
 StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
-
-struct RowBatch {
-  int64_t begin = 0;
-  int64_t end = 0;
-  uint32_t segment = 0;
-  irs::doc_id_t doc = 0;
-  std::vector<uint32_t> offsets;
-  uint64_t generation = 0;
-};
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -141,9 +131,9 @@ class InvertedIndexStorage final
   bool ReadOnly() const noexcept { return !_writer; }
   void OpenReader();
 
-  auto GetTransaction() {
+  auto GetTransaction(bool exclusive_segment = false) {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
@@ -280,7 +270,6 @@ class InvertedIndexStorage final
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
   void PublishSnapshot();
-  void PruneRows() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_rows_mutex);
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
@@ -308,9 +297,7 @@ class InvertedIndexStorage final
   std::vector<std::vector<int64_t>> _delete_log;
 
   absl::Mutex _rows_mutex;
-  absl::btree_map<int64_t, RowBatch> _rows ABSL_GUARDED_BY(_rows_mutex);
-  std::deque<std::pair<uint64_t, int64_t>> _rows_order
-    ABSL_GUARDED_BY(_rows_mutex);
+  RowBatches _rows ABSL_GUARDED_BY(_rows_mutex);
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

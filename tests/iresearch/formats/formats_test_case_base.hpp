@@ -283,7 +283,7 @@ class FormatTestCase : public IndexTestBase {
       ++_value;
       EXPECT_TRUE(irs::pos_limits::valid(_value));
 
-      const auto written = sprintf(_pay_data, "%d", _value);
+      const auto written = sprintf(_pay_data, "%u", _value);
 
       _offs.start = _value;
       _offs.end = _offs.start + written;

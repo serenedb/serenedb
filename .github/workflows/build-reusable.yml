@@ -239,12 +239,12 @@ jobs:
           fi
 
           case "${{ inputs.CONFIG }}" in
-            dev|perf) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
-            asan)     echo "SANITIZERS=Address"           >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
-            tsan)     echo "SANITIZERS=Thread"            >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
-            msan)     echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
-            ubsan)    echo "SANITIZERS=Undefined"         >> $GITHUB_ENV; echo "USE_COVERAGE="            >> $GITHUB_ENV ;;
-            coverage) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV ;;
+            dev|perf) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "SDB_COVERAGE=Off" >> $GITHUB_ENV ;;
+            asan)     echo "SANITIZERS=Address"           >> $GITHUB_ENV; echo "SDB_COVERAGE=Off" >> $GITHUB_ENV ;;
+            tsan)     echo "SANITIZERS=Thread"            >> $GITHUB_ENV; echo "SDB_COVERAGE=Off" >> $GITHUB_ENV ;;
+            msan)     echo "SANITIZERS=MemoryWithOrigins" >> $GITHUB_ENV; echo "SDB_COVERAGE=Off" >> $GITHUB_ENV ;;
+            ubsan)    echo "SANITIZERS=Undefined"         >> $GITHUB_ENV; echo "SDB_COVERAGE=Off" >> $GITHUB_ENV ;;
+            coverage) echo "SANITIZERS="                  >> $GITHUB_ENV; echo "SDB_COVERAGE=On"  >> $GITHUB_ENV ;;
             *) echo "Unknown CONFIG '${{ inputs.CONFIG }}'" >&2; exit 1 ;;
           esac
 
@@ -259,10 +259,10 @@ jobs:
           echo "RUN_BIGLAKE=${{ inputs.BIGLAKE }}"     >> $GITHUB_ENV
 
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
-          echo "USE_DEBUG_INFO=COLUMNS"   >> $GITHUB_ENV
-          echo "USE_IPO=Off"              >> $GITHUB_ENV
+          echo "SDB_DEBUG_INFO=STACK"     >> $GITHUB_ENV
+          echo "SDB_LTO=Off"              >> $GITHUB_ENV
           echo "SDB_ALLOC=JE"             >> $GITHUB_ENV
-          echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
+          echo "SDB_VTUNE=Off"            >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=false"   >> $GITHUB_ENV
           echo "STRIP_TARBALL=false"      >> $GITHUB_ENV
           echo "DEBUG_SYMBOLS=false"      >> $GITHUB_ENV
@@ -277,7 +277,7 @@ jobs:
           clean: true
 
       - name: Set sanitizer options
-        if: env.SANITIZERS != '' || env.USE_COVERAGE != ''
+        if: env.SANITIZERS != '' || env.SDB_COVERAGE == 'On'
         run: ./scripts/ci/steps/01-ci-set-sanitizer-options.bash
 
       - name: Build Docker environment file
@@ -340,12 +340,12 @@ jobs:
             -e BUILD_DIR=build \
             -e SDB_GTEST="$SDB_GTEST" \
             -e BUILDMODE="$BUILDMODE" \
-            -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+            -e SDB_DEBUG_INFO="$SDB_DEBUG_INFO" \
             -e SDB_DEV="$SDB_DEV" \
             -e SDB_FAULT_INJECTION="$SDB_FAULT_INJECTION" \
-            -e USE_IPO="$USE_IPO" \
-            -e USE_COVERAGE="$USE_COVERAGE" \
-            -e ENSURE_VTUNE_SYMBOLS="$ENSURE_VTUNE_SYMBOLS" \
+            -e SDB_LTO="$SDB_LTO" \
+            -e SDB_COVERAGE="$SDB_COVERAGE" \
+            -e SDB_VTUNE="$SDB_VTUNE" \
             ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
             -v "${WORKSPACE}:/serenedb" \
             -v /mnt/data/.ccache:/.ccache \
@@ -374,7 +374,7 @@ jobs:
         run: ./scripts/ci/steps/07-ci-summary.bash
 
       - name: Generate coverage report
-        if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
+        if: steps.build.outcome == 'success' && env.SDB_COVERAGE == 'On'
         run: BUILD_DIR=build ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       - name: Upload artifacts

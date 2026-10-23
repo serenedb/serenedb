@@ -179,6 +179,9 @@ struct TypedTokenStage : TokenStage {
       _emitted = true;
     }
   };
+
+ protected:
+  ~TypedTokenStage() = default;
 };
 
 }  // namespace irs::analysis

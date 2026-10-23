@@ -2,7 +2,6 @@
 set -euo pipefail
 
 # Generate coverage reports inside Docker container
-# Outputs: HTML report + LCOV file
 
 # BUILD_DIR: build directory to collect binaries and profiles from
 # Default to "build" if not set
@@ -18,7 +17,9 @@ echo ":: Build directory: ${BUILD_DIR}"
 ALL_BINARIES=()
 if [ -d "${BUILD_DIR}/bin" ]; then
     while IFS= read -r -d "" bin; do
-        ALL_BINARIES+=("${bin}")
+        if llvm-readelf-23 -S "${bin}" 2>/dev/null | grep -q __llvm_covmap; then
+            ALL_BINARIES+=("${bin}")
+        fi
     done < <(find "${BUILD_DIR}/bin" -type f -executable -print0 2>/dev/null)
 else
     echo "ERROR: Directory ${BUILD_DIR}/bin not found!"
@@ -41,19 +42,17 @@ if [ "${PROFILE_COUNT}" -eq 0 ]; then
     exit 1
 fi
 
-# Generate HTML report
-echo ":: Generating HTML coverage report..."
-./scripts/prepare_coverage.py \
-    --unified-report \
-    --compilation-dir . \
-    llvm-profdata-23 \
-    llvm-cov-23 \
-    ./out/coverage/profiles \
-    ./out/coverage/llvm_html \
-    "${ALL_BINARIES[@]}"
+echo ":: Merging profiles..."
+llvm-profdata-23 merge -sparse -failure-mode=any \
+    -o ./out/coverage/coverage.profdata ./out/coverage/profiles/*.profraw || exit 1
 
-echo ":: Coverage reports generated successfully!"
-echo "   HTML: ./out/coverage/llvm_html"
+OBJECTS=()
+for bin in "${ALL_BINARIES[@]:1}"; do
+    OBJECTS+=(-object "${bin}")
+done
+llvm-cov-23 report -instr-profile=./out/coverage/coverage.profdata \
+    "${ALL_BINARIES[0]}" "${OBJECTS[@]}" >./out/coverage/summary.txt || exit 1
+tail -n 1 ./out/coverage/summary.txt
 '
 
 echo "=========================================="

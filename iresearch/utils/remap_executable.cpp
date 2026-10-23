@@ -20,6 +20,8 @@
 
 #include "iresearch/utils/remap_executable.hpp"
 
+#include <absl/base/config.h>
+#include <absl/debugging/internal/symbolize.h>
 #include <fast_float/fast_float.h>
 
 #include <cerrno>
@@ -27,6 +29,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(__linux__)
@@ -37,18 +40,9 @@
 #include <unistd.h>
 #endif
 
-#if defined(__has_feature)
-#define IRS_REMAP_HAS_FEATURE(x) __has_feature(x)
-#else
-#define IRS_REMAP_HAS_FEATURE(x) 0
-#endif
-
 #if defined(__linux__) && defined(__x86_64__) && defined(__SSE2__) && \
-  defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) &&                \
-  !defined(__SANITIZE_THREAD__) &&                                    \
-  !IRS_REMAP_HAS_FEATURE(address_sanitizer) &&                        \
-  !IRS_REMAP_HAS_FEATURE(thread_sanitizer) &&                         \
-  !IRS_REMAP_HAS_FEATURE(memory_sanitizer)
+  defined(NDEBUG) && !defined(ABSL_HAVE_ADDRESS_SANITIZER) &&         \
+  !defined(ABSL_HAVE_THREAD_SANITIZER) && !defined(ABSL_HAVE_MEMORY_SANITIZER)
 #define IRS_REMAP_EXECUTABLE 1
 #include <emmintrin.h>
 #endif
@@ -70,6 +64,7 @@ namespace {
 struct Mapping {
   uintptr_t begin = 0;
   uintptr_t end = 0;
+  uint64_t offset = 0;
   bool exec = false;
 };
 
@@ -83,9 +78,8 @@ std::string ExecutablePath() {
   return path;
 }
 
-std::vector<Mapping> ExecutableMappings() {
+std::vector<Mapping> ExecutableMappings(std::string_view exe) {
   std::vector<Mapping> mappings;
-  const auto exe = ExecutablePath();
   if (exe.empty()) {
     return mappings;
   }
@@ -107,11 +101,18 @@ std::vector<Mapping> ExecutableMappings() {
     uint64_t end = 0;
     const auto [next, end_ec] =
       fast_float::from_chars(dash + 1, line_end, end, 16);
-    if (end_ec != std::errc{} || *next != ' ' || next[1] != 'r') {
+    if (end_ec != std::errc{} || *next != ' ' || next[1] != 'r' ||
+        line_end - next < 7) {
+      continue;
+    }
+    uint64_t offset = 0;
+    if (fast_float::from_chars(next + 6, line_end, offset, 16).ec !=
+        std::errc{}) {
       continue;
     }
     mappings.push_back({.begin = static_cast<uintptr_t>(begin),
                         .end = static_cast<uintptr_t>(end),
+                        .offset = offset,
                         .exec = next[3] == 'x'});
   }
   return mappings;
@@ -261,7 +262,8 @@ bool RemapText(const Mapping& text) {
 ExecutableRemap RemapExecutable(bool remap_text) {
   ExecutableRemap remap;
 #if defined(__linux__)
-  const auto mappings = ExecutableMappings();
+  const auto exe = ExecutablePath();
+  const auto mappings = ExecutableMappings(exe);
   if (mappings.empty()) {
     remap.skipped = "cannot read the executable's mappings";
     return remap;
@@ -291,6 +293,10 @@ ExecutableRemap RemapExecutable(bool remap_text) {
 #if defined(IRS_REMAP_EXECUTABLE)
     if (remap.skipped.empty()) {
       if (RemapText(mapping)) {
+        absl::debugging_internal::RegisterFileMappingHint(
+          reinterpret_cast<const void*>(mapping.begin),
+          reinterpret_cast<const void*>(mapping.end), mapping.offset,
+          exe.c_str());
         remap.remapped += mapping.end - mapping.begin;
         continue;
       }

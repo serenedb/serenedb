@@ -7,38 +7,26 @@ target_link_libraries(
         search-benchmark-common
         simdutf
         simdjson
-        ${FAISS_LIB}
+        faiss
 )
-sdb_link_duckdb_extensions(serenedb-bench-micro PRIVATE)
+sdb_link_duckdb_extensions(serenedb-bench-micro)
 target_include_directories(
     serenedb-bench-micro
     PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
 )
-target_include_directories(
-    serenedb-bench-micro
-    SYSTEM
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
-        ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
-)
-function(add_bench NAME)
-    set(MODULE ${NAME})
-    if(ARGC GREATER 1)
-        set(MODULE ${ARGV1})
-    endif()
-    target_sources(serenedb-bench-micro PRIVATE ${NAME}.cpp)
+
+function(add_bench name)
+    target_sources(serenedb-bench-micro PRIVATE ${name}.cpp)
     set_property(
-        SOURCE ${NAME}.cpp TARGET_DIRECTORY serenedb-bench-micro
+        SOURCE ${name}.cpp
         APPEND
-        PROPERTY COMPILE_DEFINITIONS "SDB_BENCH_MODULE=\"${MODULE}\""
+        PROPERTY COMPILE_DEFINITIONS "SDB_BENCH_MODULE=\"${name}\""
     )
     set_property(
-        SOURCE ${NAME}.cpp TARGET_DIRECTORY serenedb-bench-micro
+        SOURCE ${name}.cpp
         APPEND
         PROPERTY
-            COMPILE_OPTIONS
-                -include
-                ${CMAKE_SOURCE_DIR}/tests/bench/micro/bench_module.h
+            COMPILE_OPTIONS -include ${CMAKE_CURRENT_SOURCE_DIR}/bench_module.h
     )
 endfunction()
 
@@ -66,7 +54,7 @@ add_bench(term_enumeration)
 add_bench(top_term_selector)
 add_bench(random)
 set_property(
-    SOURCE random.cpp TARGET_DIRECTORY serenedb-bench-micro
+    SOURCE random.cpp
     APPEND
     PROPERTY COMPILE_DEFINITIONS USE_PCG_RANDOM
 )
@@ -84,6 +72,11 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(http_codecs)
 add_bench(http_compression)
+set_property(
+    SOURCE http_compression.cpp
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
+)
 add_bench(http_response)
 add_bench(http_router)
 add_bench(listen_spec)
@@ -120,81 +113,3 @@ if(ARCH_AMD64)
     add_bench(ci_fold128)
     add_bench(rot_bench)
 endif()
-
-set_property(
-    SOURCE http_compression.cpp
-    APPEND
-    PROPERTY COMPILE_DEFINITIONS "SDB_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\""
-)
-
-# Same relaxed FP search/scorers/bm25.cpp is built with, otherwise the kernels here
-# aren't the ones we ship.
-set_property(
-    SOURCE bm25_byte_norm.cpp
-    APPEND
-    PROPERTY
-        COMPILE_OPTIONS
-            -fapprox-func
-            -fno-math-errno
-            -fassociative-math
-            -freciprocal-math
-            -fno-signed-zeros
-            -fno-trapping-math
-            -fno-rounding-math
-            -ffp-contract=fast
-)
-
-set_property(
-    SOURCE vector_distances.cpp
-    APPEND
-    PROPERTY COMPILE_OPTIONS -fassociative-math -fno-signed-zeros
-)
-
-add_library(
-    serenedb-bench-docs-mask-iresearch
-    STATIC
-    ${CMAKE_SOURCE_DIR}/iresearch/index/docs_mask/chunks.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/index/document_mask.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/store/data_input.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/store/store_utils.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/utils/cpu_features.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/utils/crash_handler.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/utils/file_utils_ext.cpp
-    ${CMAKE_SOURCE_DIR}/iresearch/utils/log.cpp
-)
-target_include_directories(
-    serenedb-bench-docs-mask-iresearch
-    PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/third_party/magic_enum
-)
-target_include_directories(
-    serenedb-bench-docs-mask-iresearch
-    SYSTEM
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
-)
-target_link_libraries(
-    serenedb-bench-docs-mask-iresearch
-    PUBLIC
-        absl::failure_signal_handler
-        absl::flat_hash_map
-        absl::flat_hash_set
-        absl::strings
-        duckdb_static
-        re2
-        roaring::roaring
-)
-
-add_executable(
-    serenedb-bench-docs-mask
-    main.cpp
-    docs_mask_kinds.cpp
-    document_mask.cpp
-)
-target_link_libraries(
-    serenedb-bench-docs-mask
-    PRIVATE
-        serenedb-bench-docs-mask-iresearch
-        absl::btree
-        absl::str_format
-        benchmark
-)

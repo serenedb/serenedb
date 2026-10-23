@@ -136,7 +136,12 @@ def cmd_upload(args):
 
 
 def cmd_exists(args):
-    sys.exit(0 if store.exists(args.path) else 1)
+    try:
+        found = store.exists(args.path)
+    except (OSError, RuntimeError) as e:
+        print(f"cannot ask the store about {args.path}: {e}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(0 if found else 1)
 
 
 def cmd_shards(args):

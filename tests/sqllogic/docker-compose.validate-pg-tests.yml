@@ -49,18 +49,18 @@ services:
     labels: *owner
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
-      - "$SQLLOGIC_DIR:/sqllogic"
-      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+      - "$WORKSPACE:$WORKSPACE"
       - "$WORKSPACE/out/logs:/logs"
       - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
+    working_dir: "$SQLLOGIC_DIR"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       - LOG_DIR=/logs
-      - HOME=/sqllogic
+      - HOME=$SQLLOGIC_DIR
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
       - CARGO_HOME=/cargo-home
@@ -70,11 +70,10 @@ services:
       - test-network
     command: >
       sh -c '
-        cd /sqllogic &&
         exec ./run_pg_tests.sh \
           --host postgres \
           --single-port 5432 \
-          --runner=/sqllogictest-rs
+          --runner=$WORKSPACE/third_party/sqllogictest-rs
       '
 
 networks:

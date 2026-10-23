@@ -56,30 +56,14 @@ def _functions(profdata, objects, dest):
                                      "start": body[0], "end": body[2]}) + "\n")
 
 
-def _listing(path):
-    import urllib.error
-    import urllib.request
-    try:
-        with urllib.request.urlopen(store.url(path), timeout=60) as r:
-            return [e["name"] for e in json.load(r) if e["type"] == "file"]
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return []
-        raise
-
-
 def build_map(run, config, arch, bundle, work):
     work = Path(work)
     prefix = f"{config}-{arch}-"
-    shards = []
-    for name in _listing(f"attribution/{run}/"):
-        if name.startswith(prefix):
-            dest = work / f"attribution-{name}"
-            store.get(f"attribution/{run}/{name}", dest)
-            shards.append(dest)
+    shards = store.fetch_all([f"attribution/{run}/{n}" for n in store.files(f"attribution/{run}/")
+                              if n.startswith(prefix)], work)
     if not shards:
         raise SystemExit(f"no attribution for {config}/{arch} in run {run}")
-    profiles = [n for n in _listing(f"profdata/{run}/") if n.startswith(prefix)]
+    profiles = [n for n in store.files(f"profdata/{run}/") if n.startswith(prefix)]
     if not profiles:
         raise SystemExit(f"no profile for {config}/{arch} in run {run}")
     profdata = work / "any.profdata"
@@ -89,11 +73,10 @@ def build_map(run, config, arch, bundle, work):
     costs = (f"SELECT unit, p95 FROM read_parquet('{timing}')"
              if store.get(f"timing/{config}-{arch}.parquet", timing)
              else "SELECT NULL::VARCHAR AS unit, NULL::DOUBLE AS p95 WHERE false")
-    listed = ", ".join(f"'{p}'" for p in shards)
     dest = work / "selection.parquet"
     store.shell(
         f"COPY (WITH a AS (SELECT DISTINCT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, "
-        f"function FROM read_parquet([{listed}])), "
+        f"function FROM read_parquet([{store.quoted(shards)}])), "
         f"f AS (SELECT DISTINCT function, file, start, \"end\" FROM "
         f"read_json('{work / 'functions.jsonl'}', format = 'newline_delimited')), "
         f"c AS ({costs}), "
@@ -119,15 +102,6 @@ def _is_test(path):
     return path.startswith(TEST_PREFIXES) or (path.startswith("third_party/") and "/test/" in path)
 
 
-def _failed_before(pr, days=14):
-    files = []
-    now = time.time()
-    for i in range(days):
-        day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
-        files += [f"results/{day}/{n}" for n in _listing(f"results/{day}/") if f"-pr{pr}-" in n]
-    return files
-
-
 def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CUTOFF):
     work = Path(work)
     files = diff.changed_lines(base)
@@ -135,17 +109,12 @@ def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CU
     for u in changed_units:
         selected[u.id.split("#", 1)[0]].add("changed test")
     if pr:
-        local = []
-        for key in _failed_before(pr):
-            dest = work / key.replace("/", "_")
-            if store.get(key, dest):
-                local.append(dest)
+        local = store.fetch_all([k for k in store.recent("failures", 14) if f"-pr{pr}-" in k],
+                                work)
         if local:
-            listed = ", ".join(f"'{p}'" for p in local)
             for r in store.shell(f"SELECT DISTINCT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS "
-                                 f"unit FROM read_parquet([{listed}], union_by_name = true) "
-                                 f"WHERE pr = '{pr}' AND status IN ('failed', 'stuck', 'crashed', "
-                                 f"'flaky')", work):
+                                 f"unit FROM read_parquet([{store.quoted(local)}], "
+                                 f"union_by_name = true) WHERE pr = {store.quoted([pr])}", work):
                 selected[r["unit"]].add("failed earlier in this PR")
     merge_base = subprocess.run(["git", "-C", str(ROOT), "merge-base", base, "HEAD"],
                                 capture_output=True, text=True, check=True).stdout.strip()
@@ -166,9 +135,9 @@ def report(units, base, changed, changed_units, map_path, work, pr="", cutoff=CU
     rows = []
     sources = sorted(p for p in files if p not in tests)
     if sources and not everything:
-        listed = ", ".join("'" + p.replace("'", "''") + "'" for p in sources)
         rows = store.shell(f"SELECT file, start, \"end\", function, unit, covering, rank FROM "
-                           f"read_parquet('{map_path}') WHERE file IN ({listed})", work)
+                           f"read_parquet('{map_path}') WHERE file IN ({store.quoted(sources)})",
+                           work)
     by_file = defaultdict(list)
     for r in rows:
         by_file[r["file"]].append(r)

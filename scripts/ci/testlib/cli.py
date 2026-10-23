@@ -246,7 +246,8 @@ def main(argv):
         "config": config.name, "arch": platform.machine(), "shard": args.shard,
         "started": started, "duration": time.time() - started,
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
-        "run": os.environ.get("SDB_RUN_ID", ""), "attribute": args.attribute,
+        "branch": os.environ.get("SDB_BRANCH", ""), "run": os.environ.get("SDB_RUN_ID", ""),
+        "attribute": args.attribute,
     }
     report.write(out, meta, results, ctx.skips)
     if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():

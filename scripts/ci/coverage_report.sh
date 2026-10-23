@@ -15,18 +15,7 @@ bundle=$(python3 scripts/ci/ci.py fetch --config "$CONFIG" --arch "$ARCH" --dige
 out="out/coverage-${CONFIG}"
 rm -rf "$out"
 mkdir -p "$out/profiles"
-python3 - "$RUN" "$CONFIG-$ARCH" "$out/profiles" <<'EOF'
-import json, sys, urllib.request
-sys.path.insert(0, "scripts/ci")
-from testlib import store
-run, prefix, dest = sys.argv[1:]
-with urllib.request.urlopen(store.url(f"profdata/{run}/"), timeout=60) as r:
-    entries = json.load(r)
-for e in entries:
-    if e["type"] == "file" and e["name"].startswith(prefix):
-        store.get(f"profdata/{run}/{e['name']}", f"{dest}/{e['name']}")
-        print(e["name"])
-EOF
+python3 scripts/ci/ci.py download "profdata/$RUN/" "$CONFIG-$ARCH-" "$out/profiles"
 
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" -v "$bundle:$bundle" "$BUILD_IMAGE" bash -c '
@@ -41,3 +30,5 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
 			--base "$base" --label "coverage $(basename "$out" | cut -d- -f2)/$(uname -m)" --out "$out"
 	' "$out" "$bundle" "$BASE"
 rm -rf "$out/profiles"
+python3 scripts/ci/ci.py nearest --coverage "$out/coverage.json" --arch "$ARCH" ||
+	echo "warning: no nearest tests for the uncovered lines" >&2

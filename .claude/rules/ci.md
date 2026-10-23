@@ -22,6 +22,7 @@ paths:
 
 - **Trigger Jobs** runs `serenedb | build & test` (`build-manual.yml`): `perf`, `dev` (with coverage), `asan` (address, leak, undefined), `tsan` and `msan` built and tested on amd64, `perf` and `dev` built on arm64. Each config's tests run in shards sized from the timing store; changed tests repeat in `dev` and `tsan` (the flaky check); a `fix:` PR's changed tests must fail on its merge base (the bugfix check); `validate pg` runs when `pg/` or `any/pg/` tests change. `scripts/ci/classify-changes.sh origin/main` prints which gated suites a diff opens, `scripts/ci/select_suites.sh` turns them into `test.py` arguments.
 - A config whose build inputs did not change since a finished build reuses that bundle from the store (`scripts/ci/ci.py digest`), so a tests-only PR builds nothing.
+- `dev` measures the coverage of the change: the PR comment has the summary; `gh run download <id> -n coverage-dev-linux-amd64` fetches `coverage.json` with every uncovered changed line, branch direction, function and MC/DC condition, and the units that run the code nearest to it, where a test for it goes.
 - `main.yml` runs every merge's suites in every config and teaches the timing store.
 - The daily run (`daily.yml`, by hand until it is scheduled) runs every suite in every config with long fuzz and stress budgets, macOS and `validate pg` over everything, attributes coverage to every `dev` unit for test selection, then the release pipeline; with `PUBLISH` it replaces the draft release and pushes the images.
 
@@ -29,12 +30,13 @@ paths:
 
 - The PR comment (it starts with `<!-- serenedb-ci-report -->`) has one line per config, the failures with their first lines, sanitizer report signatures, the coverage of the change and the selection report; `gh run download <id> -n report` fetches `report.json` with every failure.
 - A failed unit reran alone: FLAKY when a rerun passed, deterministic otherwise; the run stays red either way. A crash or a hang (STUCK, with every thread's stack) is critical.
+- A unit that also failed on main or in another PR within a week says where (`also failed in main (asan, 2 run(s), ...)`).
 - `gh run download <id> -n failure-<config>-<location>-<shard>` fetches the failed units' logs, server logs, sanitizer reports and stacks; `gh run view <id> --log-failed` shows each shard's summary.
 - A failure whose fix isn't simple is skipped in that config with an issue: a line in `scripts/ci/skips/<config>.txt` (unit glob, kind, reason with the issue), never a retry or a weaker test.
 
 ## The store
 
-- bulavka (`store-host:8640`) holds the build bundles, results, timings, coverage profiles, attribution and the selection map under `/store/`, and the shared ccache under `/ccache/`; only the CI and dev machines reach it. Results and timings are Parquet, read and written with the release image's `serened shell` (`scripts/ci/ci.py`).
+- bulavka (`store-host:8640`) holds the build bundles, results (and an index of the failures), timings, coverage profiles, attribution and the selection map under `/store/`, and the shared ccache under `/ccache/`; only the CI and dev machines reach it. Results and timings are Parquet, read and written with the release image's `serened shell` (`scripts/ci/ci.py`).
 
 ## CI images
 

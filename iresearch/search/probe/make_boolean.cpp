@@ -18,71 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <algorithm>
-#include <span>
-#include <utility>
-
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/probe/classify.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/plan.hpp"
-#include "iresearch/search/queries/boolean_query.hpp"
-#include "iresearch/utils/empty.hpp"
+#include "iresearch/search/probe/boolean_planner.hpp"
 
 namespace irs::probe {
 
-Node::ptr MakeRequiredDocs(std::span<const detail::PostingClause> must,
-                           std::span<const QueryBuilder::ptr> must_filters,
-                           std::span<const detail::PostingClause> should,
-                           std::span<const QueryBuilder::ptr> should_filters,
-                           uint32_t min_should_match, const SubReader& segment,
-                           uint64_t interrogations) {
-  if (min_should_match == 0) {
-    return MakeSparseConjunctionDocs(must, must_filters, segment,
-                                     interrogations);
-  }
-  if (must.empty() && must_filters.empty()) {
-    return BuildOptionalProbe(should, should_filters, min_should_match, segment,
-                              interrogations);
-  }
-  auto other = BuildOptionalProbe(
-    should, should_filters, min_should_match, segment,
-    std::min(interrogations,
-             detail::IncludeCandidates(must, must_filters, segment)));
-  if (!other) {
-    return {};
-  }
-  return MakeSparseConjunctionWithDocs(must, must_filters, segment,
-                                       interrogations, std::move(other));
-}
-
-struct DocsApi {
-  using Result = Node::ptr;
-  using Context = utils::Empty;
-
-  static constexpr bool kScored = false;
-
-  static Result MakeRequired(const BooleanQuery& query, Context,
-                             uint64_t interrogations,
-                             const BooleanGroups& groups) {
-    return MakeRequiredDocs(groups.must, groups.must_filters, groups.should,
-                            groups.should_filters, groups.min_should_match,
-                            query.Segment(), interrogations);
-  }
-
-  static Result MakeExclusion(const BooleanQuery& query, Context,
-                              uint64_t interrogations,
-                              const BooleanGroups& groups) {
-    return MakeSparseExclusionDocs(
-      groups.must, groups.must_filters, groups.should, groups.should_filters,
-      groups.min_should_match, groups.exclude, groups.exclude_filters,
-      query.Segment(), interrogations);
-  }
-};
-
 Node::ptr Make(const BooleanQuery& query, uint64_t interrogations) {
-  return MakeBoolean<DocsApi>(query, utils::Empty{}, interrogations);
+  return MakeBoolean(query, interrogations, detail::NoScoring{}, {});
 }
 
 }  // namespace irs::probe

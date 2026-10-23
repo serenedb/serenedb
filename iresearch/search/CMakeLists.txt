@@ -74,6 +74,10 @@ target_sources(
         lead/make_boolean_scored.cpp
         lead/make_posting_docs.cpp
         lead/make_posting_scored.cpp
+        make/boolean/probe_exclusion_docs.cpp
+        make/boolean/probe_exclusion_scored.cpp
+        make/boolean/probe_optional_docs.cpp
+        make/boolean/probe_optional_scored.cpp
         make/ngram/count_all.cpp
         make/ngram/count_threshold.cpp
         make/ngram/docs_all.cpp
@@ -183,9 +187,6 @@ target_sources(
         probe/make_all_scored.cpp
         probe/make_boolean.cpp
         probe/make_boolean_scored.cpp
-        probe/make_boolean_sparse.cpp
-        probe/make_boolean_sparse_exclusion.cpp
-        probe/make_boolean_sparse_scored.cpp
         probe/make_posting_docs.cpp
         probe/make_posting_scored.cpp
         probe/make_single_posting_scored.cpp

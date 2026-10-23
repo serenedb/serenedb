@@ -256,16 +256,13 @@ Result<Api> MakeConjunction(std::span<const PostingClause> must,
     });
   }
   const auto candidates = IncludeCandidates(must, must_filters, segment);
-  probe::Node::ptr held;
+  ScoredCtx child;
   if constexpr (Api::kScored) {
-    held = probe::MakeRequiredScored({}, {}, Terms::Mixed, should,
-                                     should_filters, uniformity, min_match,
-                                     segment, Api::Recipe(segment, ctx), merge,
-                                     candidates, Api::ChildContext(ctx));
-  } else {
-    held = probe::BuildOptionalProbe(should, should_filters, min_match, segment,
-                                     candidates);
+    child = Api::ChildContext(ctx);
   }
+  auto held = probe::MakeOptional(
+    should, should_filters, min_match, segment, candidates,
+    ScoringFor<Api>(segment, ctx, merge, uniformity), child, score_t{0});
   if (!held) {
     return {};
   }

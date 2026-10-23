@@ -1853,6 +1853,46 @@ TEST(boolean_conjunction, max_merge_is_the_same_in_lead_and_fill) {
   }
 }
 
+TEST(boolean_exclusion, optional_scores_are_the_same_in_lead_and_probe) {
+  tests::sort::Boost sort;
+  detail::SegmentReaderMock segment{2048};
+
+  irs::BooleanFilter root;
+  AddDocs(root, irs::Occur::Must, {1, 5, 7, 9}, 2);
+  AddDocs(root, irs::Occur::Should, {5, 9}, 4);
+  AddDocs(root, irs::Occur::MustNot, {7}, 1);
+  const std::map<irs::doc_id_t, irs::score_t> expected{{1, 2}, {5, 6}, {9, 6}};
+
+  tests::PreparedFilter prep{root, segment, &sort};
+
+  std::map<irs::doc_id_t, irs::score_t> lead;
+  irs::ColumnArgsFetcher lead_fetcher;
+  auto it = prep.ExecuteScored(0, lead_fetcher);
+  ASSERT_TRUE(bool(it));
+  const auto lead_score = it->PrepareScore();
+  while (!irs::doc_limits::eof(it->Next())) {
+    it->FetchScoreArgs(0);
+    lead.emplace(it->Value(), lead_score.Score());
+  }
+  EXPECT_EQ(expected, lead);
+
+  std::map<irs::doc_id_t, irs::score_t> probe;
+  irs::ColumnArgsFetcher probe_fetcher;
+  auto node =
+    prep.Query(0)->PlanProbe({.scorer = &sort, .fetcher = &probe_fetcher}, 16);
+  ASSERT_TRUE(bool(node));
+  const auto probe_score = node->PrepareScore();
+  for (irs::doc_id_t doc = irs::doc_limits::min(); doc != 16; ++doc) {
+    if (node->Probe(doc) != doc) {
+      continue;
+    }
+    node->FetchScoreArgs(0);
+    probe_fetcher.Fetch(doc);
+    probe.emplace(doc, probe_score.Score());
+  }
+  EXPECT_EQ(expected, probe);
+}
+
 TEST(boolean_exclusion, next) {
   detail::SegmentReaderMock segment{2048};
 

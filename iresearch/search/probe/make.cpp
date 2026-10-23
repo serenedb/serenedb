@@ -84,7 +84,8 @@ Node::ptr Make(const MultiTermQuery& query, uint64_t interrogations) {
     return MakePostingDocs(detail::ClauseOf(terms.front(), field),
                            query.Segment());
   }
-  return MakeDisjunctionDocs(terms, {}, field, query.Segment(), interrogations);
+  return MakeDisjunction(terms, {}, field, query.Segment(), interrogations,
+                         detail::NoScoring{}, {});
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, uint64_t interrogations) {
@@ -137,10 +138,14 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
     return MakePostingScored(
       detail::ClauseOf(terms.front(), field, scorer, boost), segment, recipe);
   }
-  const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  return MakeDisjunctionScored(terms, {}, detail::UniformityOf(*field, scorer),
-                               field, scorer, boost, segment, recipe, merge,
-                               interrogations, clause, ctx);
+  return MakeDisjunction(
+    terms, {}, field, segment, interrogations,
+    detail::TermScoring{.scorer = scorer,
+                        .boost = boost,
+                        .uniformity = detail::UniformityOf(*field, scorer),
+                        .recipe = recipe,
+                        .merge = merge},
+    ctx);
 }
 
 Node::ptr Make(const FixedPhraseQuery& query, const detail::ScoredCtx& ctx,

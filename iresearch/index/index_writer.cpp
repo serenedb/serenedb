@@ -31,6 +31,8 @@
 #include <fast_float/fast_float.h>
 
 #include <cstdint>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <ranges>
 #include <shared_mutex>
@@ -68,6 +70,20 @@ const ProgressReportCallback kNoProgress =
   [](std::string_view /*phase*/, size_t /*current*/, size_t /*total*/) {
     // intentionally do nothing
   };
+
+void CompactFiles(const IndexFiles& dir, const SegmentMeta& meta) {
+  for (const auto& file : meta.files) {
+    try {
+      SDB_IF_FAILURE("IndexWriter::CompactOutOfMemory") {
+        throw duckdb::OutOfMemoryException("intentional debug error");
+      }
+      dir.Compact(file);
+    } catch (const duckdb::OutOfMemoryException& e) {
+      SDB_DEBUG(IRESEARCH, "Keeping '", file,
+                "' in blocks: ", duckdb::ErrorData{e}.RawMessage());
+    }
+  }
+}
 
 struct FlushedSegmentContext {
   FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -1103,6 +1119,7 @@ void IndexWriter::SegmentContext::Flush() {
     return;
   }
   SDB_ASSERT(!writer_meta.meta.files.empty());
+  CompactFiles(dir, writer_meta.meta);
   auto& docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
@@ -1551,9 +1568,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // Nothing to compact or compaction failure
     co_return result;
   }
-  for (const auto& file : compaction_segment.meta.files) {
-    _dir.Compact(file);
-  }
+  CompactFiles(_dir, compaction_segment.meta);
 
   auto opts = committed_reader->Options();
   auto pending_reader =

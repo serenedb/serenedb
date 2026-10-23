@@ -22,6 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -39,6 +40,7 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/async_utils.hpp>
 #include <iresearch/utils/crc.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
@@ -5174,9 +5176,20 @@ TEST(IndexFilesTest, compacted_memory_files_map_in_place) {
             files.Open("file", irs::IOAdvice::NORMAL)->GetType());
 }
 
-TEST(IndexFilesTest, merged_memory_segments_are_compacted) {
+size_t MemoryFilesInBlocks(const irs::IndexFiles& files,
+                           const irs::DirectoryReader& reader) {
+  auto& memory = irs::DuckDBEngine::Instance().instance().GetMemoryFileSystem();
+  size_t count = 0;
+  for (const auto& segment : reader.Meta().index_meta.segments) {
+    for (const auto& file : segment.meta.files) {
+      count += memory.GetBlockFile(files.Path(file)) ? 1 : 0;
+    }
+  }
+  return count;
+}
+
+TEST(IndexFilesTest, memory_segments_are_compacted_when_written) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  auto& memory = db.GetMemoryFileSystem();
   const irs::IndexFiles files{db, irs::MemoryIndexRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
@@ -5188,18 +5201,9 @@ TEST(IndexFilesTest, merged_memory_segments_are_compacted) {
     ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
     writer->RefreshCommit();
   }
-  const auto in_blocks = [&](const irs::DirectoryReader& reader) {
-    size_t count = 0;
-    for (const auto& segment : reader.Meta().index_meta.segments) {
-      for (const auto& file : segment.meta.files) {
-        count += memory.GetBlockFile(files.Path(file)) ? 1 : 0;
-      }
-    }
-    return count;
-  };
   const auto flushed = writer->GetSnapshot();
   ASSERT_EQ(2, flushed.size());
-  EXPECT_LT(0, in_blocks(flushed));
+  EXPECT_EQ(0, MemoryFilesInBlocks(files, flushed));
 
   ASSERT_TRUE(writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -5207,7 +5211,36 @@ TEST(IndexFilesTest, merged_memory_segments_are_compacted) {
   const auto merged = writer->GetSnapshot();
   ASSERT_EQ(1, merged.size());
   EXPECT_EQ(2, merged.live_docs_count());
-  EXPECT_EQ(0, in_blocks(merged));
+  EXPECT_EQ(0, MemoryFilesInBlocks(files, merged));
+}
+
+TEST(IndexFilesTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
+  if (!irs::AddFailurePointDebugging("IndexWriter::CompactOutOfMemory")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup clear = [] { irs::ClearFailurePointsDebugging(); };
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const irs::IndexFiles files{db, irs::MemoryIndexRoot()};
+  ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                                &::tests::GenericJsonFieldFactory);
+  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  const ::tests::Document* doc = gen.next();
+  ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+  writer->RefreshCommit();
+  const auto flushed = writer->GetSnapshot();
+  ASSERT_EQ(1, flushed.size());
+  EXPECT_EQ(1, flushed.live_docs_count());
+  EXPECT_LT(0, MemoryFilesInBlocks(files, flushed));
+
+  irs::ClearFailurePointsDebugging();
+  for (const auto& segment : flushed.Meta().index_meta.segments) {
+    for (const auto& file : segment.meta.files) {
+      files.Compact(file);
+    }
+  }
+  EXPECT_EQ(0, MemoryFilesInBlocks(files, flushed));
 }
 
 TEST(IndexFilesTest, private_memory) {

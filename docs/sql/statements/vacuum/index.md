@@ -61,11 +61,11 @@ Inverted indexes and search tables also compact in the background by default (se
 
 ### Optimizing in-memory indexes — `OPTIMIZE_IN_MEMORY_TABLE`
 
-The inverted indexes of a [temporary table](../create_table/index.md#temporary-tables) are kept in memory. `VACUUM (OPTIMIZE_IN_MEMORY_TABLE) table` publishes the table's pending writes and then lays out the memory of every segment of its indexes so that queries read it as fast as an index on a local disk:
+The inverted indexes of a [temporary table](../create_table/index.md#temporary-tables) are kept in memory. Each segment is laid out when it is written, by a write or a merge, so that queries read it as fast as an index on a local disk; this memory stays in RAM while the index is open. A segment written when the memory limit left no room to lay it out is kept as it was written: queries on it are slower, and under memory pressure its memory is written to the temporary directory. `VACUUM (OPTIMIZE_IN_MEMORY_TABLE) table` publishes the table's pending writes and then lays out every such segment of its indexes:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_012" />
 
-Memory laid out this way stays in RAM while the index is open: under memory pressure it is not written to the temporary directory, as the memory of other segments is. Merged segments of an in-memory index, from background compaction or `COMPACT_*`, are laid out the same way; segments that later writes add are not, until the next `OPTIMIZE_IN_MEMORY_TABLE`. The option takes a table name and applies only to temporary tables:
+The option takes a table name and applies only to temporary tables:
 
 ```text
 ERROR:  "articles" is not an in-memory table

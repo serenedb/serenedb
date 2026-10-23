@@ -277,10 +277,18 @@ bool DocumentMask::Contains(doc_id_t doc) const noexcept {
   return roaring::api::roaring_bitmap_contains(&_set.roaring, doc);
 }
 
-doc_id_t DocumentMask::CountBelow(doc_id_t doc) const noexcept {
-  SDB_ASSERT(doc_limits::valid(doc));
-  return static_cast<doc_id_t>(
-    roaring::api::roaring_bitmap_rank(&_set.roaring, doc - 1));
+void DocumentMask::CountUpTo(std::span<const doc_id_t> docs,
+                             std::span<uint64_t> counts) const noexcept {
+  SDB_ASSERT(docs.size() == counts.size());
+  SDB_ASSERT(std::is_sorted(docs.begin(), docs.end()));
+  roaring::api::roaring_bitmap_rank_many(
+    &_set.roaring, docs.data(), docs.data() + docs.size(), counts.data());
+}
+
+std::vector<doc_id_t> DocumentMask::Docs() const {
+  std::vector<doc_id_t> docs(_count);
+  roaring::api::roaring_bitmap_to_uint32_array(&_set.roaring, docs.data());
+  return docs;
 }
 
 size_t DocumentMask::ByteSize() const noexcept {
@@ -373,6 +381,10 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   SDB_ASSERT(doc_limits::valid(first));
   SDB_ASSERT(first <= last);
   if (first == last) {
+    return;
+  }
+  if (last - first == 1) {
+    Add(first);
     return;
   }
   const auto present = CountInRange(_set, first, last);

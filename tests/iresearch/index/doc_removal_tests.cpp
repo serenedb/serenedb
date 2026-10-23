@@ -60,11 +60,17 @@ irs::DocRemoval Build(std::span<const Row> rows) {
 }
 
 std::vector<irs::doc_id_t> DocsOf(const irs::DocumentMask* docs) {
-  std::vector<irs::doc_id_t> out;
-  if (docs != nullptr) {
-    docs->ForEach([&](irs::doc_id_t doc) { out.push_back(doc); });
+  return docs == nullptr ? std::vector<irs::doc_id_t>{} : docs->Docs();
+}
+
+std::optional<irs::doc_id_t> Absorbed(std::span<const irs::AbsorbedStep> steps,
+                                      irs::doc_id_t doc) {
+  std::vector<irs::doc_id_t> docs{doc};
+  irs::AbsorbedDocs(steps, docs);
+  if (docs.empty()) {
+    return std::nullopt;
   }
-  return out;
+  return docs.front();
 }
 
 class FakeSegment final : public irs::SubReader {
@@ -365,53 +371,105 @@ TEST(DocRemovalTest, FindAmongManySegments) {
   }
 }
 
-TEST(AbsorbedDocTest, NoStepsKeepTheDoc) {
-  EXPECT_EQ(7, irs::AbsorbedDoc({}, 7));
-}
+TEST(AbsorbedDocTest, NoStepsKeepTheDoc) { EXPECT_EQ(7, Absorbed({}, 7)); }
 
 TEST(AbsorbedDocTest, AStepWithoutAMaskShiftsTheDocToItsBase) {
   const std::array<irs::AbsorbedStep, 1> steps{
     {{.rank_begin = 0, .rank_end = 10, .base = 31}}};
-  EXPECT_EQ(31, irs::AbsorbedDoc(steps, 1));
-  EXPECT_EQ(35, irs::AbsorbedDoc(steps, 5));
-  EXPECT_EQ(40, irs::AbsorbedDoc(steps, 10));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 11));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, irs::doc_limits::invalid()));
+  EXPECT_EQ(31, Absorbed(steps, 1));
+  EXPECT_EQ(35, Absorbed(steps, 5));
+  EXPECT_EQ(40, Absorbed(steps, 10));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 11));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, irs::doc_limits::invalid()));
 }
 
 TEST(AbsorbedDocTest, MaskedDocsAreGoneAndTheRestCloseUp) {
   const std::array<irs::AbsorbedStep, 1> steps{
     {{.mask = MaskOf({2, 3, 6}), .rank_begin = 0, .rank_end = 5, .base = 1}}};
-  EXPECT_EQ(1, irs::AbsorbedDoc(steps, 1));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 2));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 3));
-  EXPECT_EQ(2, irs::AbsorbedDoc(steps, 4));
-  EXPECT_EQ(3, irs::AbsorbedDoc(steps, 5));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 6));
-  EXPECT_EQ(4, irs::AbsorbedDoc(steps, 7));
-  EXPECT_EQ(5, irs::AbsorbedDoc(steps, 8));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 9));
+  EXPECT_EQ(1, Absorbed(steps, 1));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 2));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 3));
+  EXPECT_EQ(2, Absorbed(steps, 4));
+  EXPECT_EQ(3, Absorbed(steps, 5));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 6));
+  EXPECT_EQ(4, Absorbed(steps, 7));
+  EXPECT_EQ(5, Absorbed(steps, 8));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 9));
 }
 
 TEST(AbsorbedDocTest, AWindowTakesOnlyItsRanks) {
   const std::array<irs::AbsorbedStep, 1> steps{
     {{.mask = MaskOf({1}), .rank_begin = 3, .rank_end = 6, .base = 1}}};
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 4));
-  EXPECT_EQ(1, irs::AbsorbedDoc(steps, 5));
-  EXPECT_EQ(3, irs::AbsorbedDoc(steps, 7));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 8));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 4));
+  EXPECT_EQ(1, Absorbed(steps, 5));
+  EXPECT_EQ(3, Absorbed(steps, 7));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 8));
 }
 
 TEST(AbsorbedDocTest, StepsChainInOrder) {
   const std::array<irs::AbsorbedStep, 2> steps{
     {{.mask = MaskOf({1}), .rank_begin = 0, .rank_end = 4, .base = 11},
      {.mask = MaskOf({12}), .rank_begin = 0, .rank_end = 20, .base = 101}}};
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 1));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 3));
-  EXPECT_EQ(111, irs::AbsorbedDoc(steps, 2));
-  EXPECT_EQ(112, irs::AbsorbedDoc(steps, 4));
-  EXPECT_EQ(113, irs::AbsorbedDoc(steps, 5));
-  EXPECT_EQ(std::nullopt, irs::AbsorbedDoc(steps, 6));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 1));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 3));
+  EXPECT_EQ(111, Absorbed(steps, 2));
+  EXPECT_EQ(112, Absorbed(steps, 4));
+  EXPECT_EQ(113, Absorbed(steps, 5));
+  EXPECT_EQ(std::nullopt, Absorbed(steps, 6));
+}
+
+TEST(AbsorbedDocTest, ManyDocsMapLikeOneAtATime) {
+  std::mt19937 gen{29};
+  const auto one_at_a_time =
+    [](const std::vector<std::vector<irs::doc_id_t>>& masks,
+       std::span<const irs::AbsorbedStep> steps,
+       irs::doc_id_t doc) -> std::optional<irs::doc_id_t> {
+    for (size_t i = 0; i < steps.size(); ++i) {
+      const auto& masked = masks[i];
+      const auto below = std::lower_bound(masked.begin(), masked.end(), doc);
+      if (below != masked.end() && *below == doc) {
+        return std::nullopt;
+      }
+      const auto rank = static_cast<irs::doc_id_t>(
+        doc - irs::doc_limits::min() - (below - masked.begin()));
+      if (rank < steps[i].rank_begin || rank >= steps[i].rank_end) {
+        return std::nullopt;
+      }
+      doc = steps[i].base + (rank - steps[i].rank_begin);
+    }
+    return doc;
+  };
+  for (int round = 0; round < 30; ++round) {
+    std::vector<std::vector<irs::doc_id_t>> masks(1 + round % 3);
+    std::vector<irs::AbsorbedStep> steps;
+    for (auto& masked : masks) {
+      irs::DocumentMaskBuilder builder;
+      const auto every = 2 + gen() % 40;
+      for (irs::doc_id_t doc = 1; doc < 300000; ++doc) {
+        if (gen() % every == 0) {
+          builder.Add(doc);
+          masked.push_back(doc);
+        }
+      }
+      const irs::doc_id_t begin = gen() % 50000;
+      steps.push_back(
+        {.mask = std::make_shared<const irs::DocumentMask>(
+           std::move(builder).Finish()),
+         .rank_begin = begin,
+         .rank_end = static_cast<irs::doc_id_t>(begin + gen() % 250000),
+         .base = static_cast<irs::doc_id_t>(1 + gen() % 100000)});
+    }
+    std::vector<irs::doc_id_t> docs;
+    std::vector<irs::doc_id_t> expected;
+    for (irs::doc_id_t doc = 1; doc < 400000; doc += 1 + gen() % 9) {
+      docs.push_back(doc);
+      if (const auto mapped = one_at_a_time(masks, steps, doc)) {
+        expected.push_back(*mapped);
+      }
+    }
+    irs::AbsorbedDocs(steps, docs);
+    ASSERT_EQ(expected, docs) << round;
+  }
 }
 
 TEST(DocRemovalResolverTest, RemovalsOfLiveSegmentsAreUsedAsBuilt) {
@@ -627,7 +685,7 @@ TEST(DocMapsTest, AbsorbingAMergedSegmentComposesTheMapsIntoIt) {
             Edges(maps.Of(9)));
   for (const auto& map : maps.Of(5)) {
     if (map->target == 12) {
-      EXPECT_EQ(43, irs::AbsorbedDoc(map->steps, 3));
+      EXPECT_EQ(43, Absorbed(map->steps, 3));
     }
   }
 }

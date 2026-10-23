@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -104,14 +102,13 @@ class DocRemovalBuilder {
   size_t _last = 0;
 };
 
-void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
-                     const DocumentMaskBuilder* pending, doc_id_t end,
-                     absl::FunctionRef<void(doc_id_t)> remove);
+bool RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
+                     DocumentMaskBuilder& removed, doc_id_t end);
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 
-std::optional<doc_id_t> AbsorbedDoc(std::span<const AbsorbedStep> steps,
-                                    doc_id_t doc) noexcept;
+void AbsorbedDocs(std::span<const AbsorbedStep> steps,
+                  std::vector<doc_id_t>& docs);
 
 std::string WriteDocMaps(const DocMapList& maps);
 DocMapList ReadDocMaps(std::string_view bytes);

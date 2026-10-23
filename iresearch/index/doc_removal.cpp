@@ -90,37 +90,40 @@ class ByteReader {
 
 }  // namespace
 
-void RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
-                     const DocumentMaskBuilder* pending, doc_id_t end,
-                     absl::FunctionRef<void(doc_id_t)> remove) {
+bool RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
+                     DocumentMaskBuilder& removed, doc_id_t end) {
   SDB_ASSERT(removal.Keyed());
   const auto* field = segment.field(removal.field);
   if (field == nullptr) {
-    return;
+    return false;
   }
   const auto masked = segment.MaskedDocs();
   auto& keys = removal.keys;
-  for (size_t i = 0; i < keys.size();) {
+  bool modified = false;
+  size_t kept = 0;
+  for (size_t i = 0; i < keys.size(); ++i) {
     auto doc = doc_limits::eof();
     field->ReadDocs(keys[i], [&](doc_id_t found) {
-      if (masked.Contains(found) ||
-          (pending != nullptr && pending->Contains(found))) {
+      if (masked.Contains(found) || removed.Contains(found)) {
         return true;
       }
       doc = found;
       return false;
     });
-    if (doc >= end) {
-      ++i;
+    if (doc < end) {
+      modified |= removed.Add(doc);
       continue;
     }
-    remove(doc);
-    keys[i] = std::move(keys.back());
-    keys.pop_back();
+    if (kept != i) {
+      keys[kept] = std::move(keys[i]);
+    }
+    ++kept;
   }
+  keys.resize(kept);
   if (keys.empty()) {
     keys = {};
   }
+  return modified;
 }
 
 DocumentMaskBuilder& DocRemovalBuilder::Group(uint32_t segment) {
@@ -184,20 +187,30 @@ size_t DocRemoval::Find(uint32_t segment) const noexcept {
   return static_cast<size_t>(it - segments.begin());
 }
 
-std::optional<doc_id_t> AbsorbedDoc(std::span<const AbsorbedStep> steps,
-                                    doc_id_t doc) noexcept {
+void AbsorbedDocs(std::span<const AbsorbedStep> steps,
+                  std::vector<doc_id_t>& docs) {
+  std::vector<uint64_t> masked;
   for (const auto& step : steps) {
-    if (!doc_limits::valid(doc) || (step.mask && step.mask->Contains(doc))) {
-      return std::nullopt;
+    if (step.mask != nullptr) {
+      masked.resize(docs.size());
+      step.mask->CountUpTo(docs, masked);
     }
-    const doc_id_t rank =
-      doc - doc_limits::min() - (step.mask ? step.mask->CountBelow(doc) : 0);
-    if (rank < step.rank_begin || rank >= step.rank_end) {
-      return std::nullopt;
+    size_t kept = 0;
+    for (size_t i = 0; i < docs.size(); ++i) {
+      const auto doc = docs[i];
+      if (!doc_limits::valid(doc) ||
+          (step.mask != nullptr && step.mask->Contains(doc))) {
+        continue;
+      }
+      const auto rank = static_cast<doc_id_t>(
+        doc - doc_limits::min() - (step.mask != nullptr ? masked[i] : 0));
+      if (rank < step.rank_begin || rank >= step.rank_end) {
+        continue;
+      }
+      docs[kept++] = step.base + (rank - step.rank_begin);
     }
-    doc = step.base + (rank - step.rank_begin);
+    docs.resize(kept);
   }
-  return doc;
 }
 
 std::string WriteDocMaps(const DocMapList& maps) {
@@ -387,15 +400,19 @@ void DocRemovalResolver::Prepare(std::span<const DocRemoval* const> removals,
         resolved.Add(segment, docs);
         continue;
       }
+      std::vector<doc_id_t> source;
       const auto map_docs = [&](const DocMap& map) {
         if (!live.contains(map.target)) {
           return;
         }
-        docs.ForEach([&](doc_id_t doc) {
-          if (const auto mapped = AbsorbedDoc(map.steps, doc)) {
-            resolved.Add(map.target, *mapped);
-          }
-        });
+        if (source.empty()) {
+          source = docs.Docs();
+        }
+        auto mapped = source;
+        AbsorbedDocs(map.steps, mapped);
+        for (const auto doc : mapped) {
+          resolved.Add(map.target, doc);
+        }
       };
       if (const auto absorbed = maps.Of(segment); !absorbed.empty()) {
         _used.insert(segment);

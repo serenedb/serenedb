@@ -99,25 +99,6 @@ struct FlushedSegmentContext {
   void RemoveAll(uint64_t tick);
 };
 
-class NewRemovals {
- public:
-  NewRemovals(DocumentMaskBuilder& removed, const SubReader& reader)
-    : _removed{removed}, _masked{reader.MaskedDocs()} {}
-
-  void Add(doc_id_t doc) {
-    if (!_masked.Contains(doc)) {
-      _modified |= _removed.Add(doc);
-    }
-  }
-
-  bool Modified() const noexcept { return _modified; }
-
- private:
-  DocumentMaskBuilder& _removed;
-  DocumentMask::Iterator _masked;
-  bool _modified = false;
-};
-
 bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs, DocRemoval& removal,
                        const SubReader& reader,
                        const DocRemovalResolver& removals) {
@@ -128,10 +109,7 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs, DocRemoval& removal,
                                        reader.docs_mask());
   }
   if (removal.Keyed()) {
-    NewRemovals removed{deleted_docs, reader};
-    RemoveKeyedDocs(removal, reader, &deleted_docs, doc_limits::eof(),
-                    [&](doc_id_t doc) { removed.Add(doc); });
-    return removed.Modified();
+    return RemoveKeyedDocs(removal, reader, deleted_docs, doc_limits::eof());
   }
   const auto* docs = removals.PositionalDocs(removal, reader);
   return docs != nullptr &&
@@ -143,10 +121,8 @@ void FlushedSegmentContext::Remove(DocRemoval& removal) {
   if (bound == 0) {
     return;
   }
-  auto& document_mask = flushed.docs_mask;
-  RemoveKeyedDocs(removal, *reader, &document_mask,
-                  static_cast<doc_id_t>(doc_limits::min() + bound),
-                  [&](doc_id_t doc) { document_mask.Add(doc); });
+  RemoveKeyedDocs(removal, *reader, flushed.docs_mask,
+                  static_cast<doc_id_t>(doc_limits::min() + bound));
 }
 
 void FlushedSegmentContext::RemoveAll(uint64_t tick) {
@@ -542,11 +518,11 @@ bool CarryRemovals(DocumentMaskBuilder& docs_mask,
     if (current == nullptr) {
       continue;
     }
-    current->ForEach([&](doc_id_t doc) {
-      if (const auto mapped = AbsorbedDoc({&step, 1}, doc)) {
-        modified |= docs_mask.Add(*mapped);
-      }
-    });
+    auto docs = current->Docs();
+    AbsorbedDocs({&step, 1}, docs);
+    for (const auto doc : docs) {
+      modified |= docs_mask.Add(doc);
+    }
   }
   return modified;
 }

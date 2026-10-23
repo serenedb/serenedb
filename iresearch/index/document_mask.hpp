@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <memory>
 #include <roaring/roaring.hh>
+#include <span>
+#include <vector>
 
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
@@ -84,7 +86,10 @@ class DocumentMask final {
 
   bool Contains(doc_id_t doc) const noexcept;
 
-  doc_id_t CountBelow(doc_id_t doc) const noexcept;
+  void CountUpTo(std::span<const doc_id_t> docs,
+                 std::span<uint64_t> counts) const noexcept;
+
+  std::vector<doc_id_t> Docs() const;
 
   template<typename Visitor>
   void ForEach(Visitor&& visitor) const {

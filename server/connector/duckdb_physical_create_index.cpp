@@ -651,8 +651,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   auto& inverted_storage = *gstate.index_storage;
   auto delete_log = inverted_storage.TakeDeleteLog();
   if (!delete_log.empty()) {
-    // Sorted rowids encode to lexicographically sorted pk terms, so the
-    // remove filter walks each segment's term dictionary sequentially.
+    // Sorted rowids encode to lexicographically sorted pk terms, so the key
+    // lookups walk each segment's term dictionary sequentially.
     absl::c_sort(delete_log);
     auto trx = inverted_storage.GetTransaction();
     DuckDBSearchSinkDeleteWriter delete_writer{trx};

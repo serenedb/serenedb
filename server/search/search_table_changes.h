@@ -49,8 +49,8 @@ namespace sdb::search {
 
 // Per-search-table, per-transaction write buffer.
 //
-// One collection of rows and the positions of the removed rows, both filled in
-// issue order; nothing reaches iresearch until the buffer is flushed. `ops`
+// One collection of rows, filled in issue order, and the positions each removal
+// names; nothing reaches iresearch until the buffer is flushed. `ops`
 // records only the things that are not rows -- deletes and truncates -- each
 // carrying the number of buffered rows that precede it, so replay can
 // interleave them back into the row stream. Rows between two ops are implicit.
@@ -132,14 +132,9 @@ struct LocalTableChangesEntry {
              static_cast<uint64_t>(places.GetValueUnsafe(i)) == end) {
         ++end;
       }
-      const auto segment = connector::RowPositionSegment(first);
       const auto doc = connector::RowPositionDoc(first);
-      if (end - first == 1) {
-        deletes.Add(segment, doc);
-      } else {
-        deletes.AddRange(segment, doc,
-                         static_cast<irs::doc_id_t>(doc + (end - first)));
-      }
+      deletes.AddRange(connector::RowPositionSegment(first), doc,
+                       static_cast<irs::doc_id_t>(doc + (end - first)));
     }
   }
 

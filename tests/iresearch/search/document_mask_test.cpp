@@ -318,19 +318,30 @@ TEST_P(DocumentMaskTest, contains_and_count) {
   });
 }
 
-TEST_P(DocumentMaskTest, for_each_and_count_below_match_reference) {
+TEST_P(DocumentMaskTest, docs_and_count_up_to_match_reference) {
   std::vector<doc_id_t> visited;
   _mask.ForEach([&](doc_id_t doc) { visited.push_back(doc); });
   std::vector<doc_id_t> expected;
-  doc_id_t below = 0;
+  std::vector<doc_id_t> docs;
+  uint64_t count = 0;
+  for (doc_id_t doc = 1; doc <= kLimit; doc += 1 + doc % 5) {
+    docs.push_back(doc);
+  }
   for (doc_id_t doc = 1; doc <= kLimit; ++doc) {
-    ASSERT_EQ(below, _mask.CountBelow(doc)) << doc;
     if (_ref->Masked(doc)) {
       expected.push_back(doc);
-      ++below;
     }
   }
   ASSERT_EQ(expected, visited);
+  ASSERT_EQ(expected, _mask.Docs());
+  std::vector<uint64_t> counts(docs.size());
+  _mask.CountUpTo(docs, counts);
+  for (size_t i = 0, next = 0; i < docs.size(); ++i) {
+    for (; next < expected.size() && expected[next] <= docs[i]; ++next) {
+      ++count;
+    }
+    ASSERT_EQ(count, counts[i]) << docs[i];
+  }
 }
 
 TEST_P(DocumentMaskTest, probe_test_and_next_live) {

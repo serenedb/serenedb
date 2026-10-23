@@ -358,6 +358,7 @@ set(IResearch_core_sources
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp
+    ./search/top/make_variadic_phrase_pruned.cpp
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp

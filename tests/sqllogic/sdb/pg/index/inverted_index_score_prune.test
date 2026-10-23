@@ -375,6 +375,77 @@ count
 0
 
 
+# === Phrase pruning -- top-K equivalence ===
+#
+# A phrase is pruned on a bound of its frequency in each row. A part that
+# expands to several words (a pattern, `ts_any`) bounds it by the sum of their
+# frequencies: a plain word next to it, all parts expanding, and `[min, max]`
+# gaps all have to keep every top-K row.
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ ts_phrase('fox jumps')
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('fox jumps')
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ ('fox' ## ts_like('%'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ('fox' ## ts_like('%'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ (ts_any(['fox', 'lazy']) ## ts_starts_with('d'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ (ts_any(['fox', 'lazy']) ## ts_starts_with('d'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT id FROM prune_big_idx
+           WHERE body @@ ('fox' ## [0, 2] ## ts_like('%s'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ('fox' ## [0, 2] ## ts_like('%s'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
 # === Non-engaging shapes still correct on the score-bound index ===
 
 # No LIMIT -- whole result set, ordered. Pruning is impossible (no k);

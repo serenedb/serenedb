@@ -30,9 +30,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/node_of.hpp"
-#include "iresearch/search/detail/phrase_fixed_slots.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
-#include "iresearch/search/detail/phrase_variadic_slots.hpp"
+#include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -79,7 +78,7 @@ auto ResolveSlotMatcherOf(const Query& query, F&& f) {
   if constexpr (M == PhraseMatch::Slop) {
     return f.template
     operator()<PhraseSlopMatcher<Slot, Offs, HasFreq, 0, HasBoost>, Leaf>(
-      query.slop, BuildExpectedSteps(query.positions));
+      query.slop);
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
     return f.template operator()<
@@ -92,7 +91,7 @@ template<PhraseMatch M, size_t N, bool HasFreq = false, bool Offs = false,
 auto ResolveMatcherOf(const Query& query, F&& f) {
   if constexpr (M == PhraseMatch::Slop) {
     return f.template operator()<FixedPhraseSlopMatcher<Offs, HasFreq, N>>(
-      query.slop, BuildExpectedSteps(query.positions));
+      query.slop);
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
     return f
@@ -112,7 +111,7 @@ Result MakePhraseNodeOf(const Query& query, std::span<const PostingMeta> metas,
       static constexpr size_t kSlots = N == 1 ? 0 : N;
       return ResolveMatcherOf<M, kSlots, Scored>(
         query, [&]<typename Matcher>(auto&&... args) -> Result {
-          using Slots = detail::PhraseFixedSlots<Matcher, Leaf, kSlots>;
+          using Slots = detail::PhraseSlots<Matcher, Leaf, kSlots>;
           using Node = NodeOf<Wrap, Result, Slots>;
           return memory::make_managed<Impl<Node>>(
             std::forward<Prefix>(prefix)..., metas, intervals, *h.doc,
@@ -163,9 +162,9 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
                         auto&&... args) -> Result {
                         using SlotPositions = std::remove_pointer_t<
                           typename Matcher::TermPosition::first_type>;
-                        using Slots =
-                          detail::PhraseVariadicSlots<Matcher, Leaf,
-                                                      SlotPositions::kHasBoost>;
+                        using Slots = detail::PhraseSlots<
+                          Matcher, Leaf, 0,
+                          PhraseVariadicPos<Leaf, SlotPositions::kHasBoost>>;
                         using Node = NodeOf<Wrap, Result, Slots>;
                         const std::span boosts =
                           SlotPositions::kHasBoost
@@ -173,12 +172,8 @@ Result MakeVariadicPhraseOf(const VariadicPhraseQuery& query,
                                         state.boosts.size()}
                             : std::span<const score_t>{};
                         return memory::make_managed<Impl<Node>>(
-                          std::forward<Prefix>(prefix)..., metas.size(),
-                          [&](Leaf& leaf, size_t i) {
-                            leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos,
-                                         h.pay);
-                          },
-                          offsets, boosts, intervals,
+                          std::forward<Prefix>(prefix)..., metas, offsets,
+                          boosts, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
                           std::forward<decltype(args)>(args)...);
                       });
         });

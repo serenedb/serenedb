@@ -137,6 +137,9 @@ std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
                                               duckdb::idx_t role);
 
+std::shared_ptr<const RoleClosure> SessionClosure(
+  duckdb::ClientContext& context);
+
 void PublishRoles(catalog::ClusterCatalog& cluster);
 
 RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role);

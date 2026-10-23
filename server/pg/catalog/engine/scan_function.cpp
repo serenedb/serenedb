@@ -190,9 +190,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
   if (table.SuperuserOnly()) {
-    const auto* connection = connector::GetSereneDBContextPtr(context);
-    if (connection &&
-        !auth::ClosureFor(&context, connection->GetRoleId())->is_superuser) {
+    if (const auto closure = auth::SessionClosure(context);
+        closure && !closure->is_superuser) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for function ", table.Sql().name));

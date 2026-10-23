@@ -26,6 +26,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/strip.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <array>
@@ -162,7 +163,7 @@ IRS_NO_INLINE uint64_t UserRelationOid(const Session& session,
     return member->oid;
   }
   const auto key = FindKeyIndex(*session.context, schema, name);
-  return key.key_index ? key.key_index->index_oid : kInvalidOid;
+  return key.constraint ? key.constraint->index_oid : kInvalidOid;
 }
 
 uint64_t RelationOid(const Session& session, const SessionSchema& schema,
@@ -979,10 +980,11 @@ std::string_view SqlTypeName(int32_t oid) {
 
 namespace {
 
-OutText BuiltinTypeName(const Session& session, const BuiltinType& builtin) {
-  if (builtin.nsp == kPgCatalogSchema ||
-      FindVisibleType(session, builtin.name) ==
-        static_cast<uint64_t>(builtin.oid)) {
+OutText BuiltinTypeName(const Session& session, const BuiltinType& builtin,
+                        bool qualify) {
+  if (!qualify && (builtin.nsp == kPgCatalogSchema ||
+                   FindVisibleType(session, builtin.name) ==
+                     static_cast<uint64_t>(builtin.oid))) {
     return OutName(builtin.name);
   }
   return QualifiedOutName(
@@ -990,7 +992,8 @@ OutText BuiltinTypeName(const Session& session, const BuiltinType& builtin) {
 }
 
 std::optional<OutText> FormatUserType(const Session& session, uint64_t oid,
-                                      std::optional<int32_t> typmod) {
+                                      std::optional<int32_t> typmod,
+                                      bool qualify) {
   if (!session.context) {
     return std::nullopt;
   }
@@ -1000,7 +1003,7 @@ std::optional<OutText> FormatUserType(const Session& session, uint64_t oid,
   if (!object) {
     return std::nullopt;
   }
-  auto name = FindVisibleType(session, object->name) == element
+  auto name = !qualify && FindVisibleType(session, object->name) == element
                 ? OutName(object->name)
                 : OutText{QualifiedOutName(object->schema, object->name)};
   const std::string_view suffix = array != kInvalidOid ? "[]" : "";
@@ -1013,7 +1016,7 @@ std::optional<OutText> FormatUserType(const Session& session, uint64_t oid,
   return name;
 }
 
-OutText FormatType(const Session& session, uint64_t oid) {
+OutText FormatType(const Session& session, uint64_t oid, bool qualify) {
   if (oid == kInvalidOid) {
     return std::string_view{"-"};
   }
@@ -1024,15 +1027,16 @@ OutText FormatType(const Session& session, uint64_t oid) {
     }
     if (builtin->IsArray()) {
       return absl::StrCat(
-        AsView(FormatType(session, static_cast<uint64_t>(builtin->elem))),
+        AsView(
+          FormatType(session, static_cast<uint64_t>(builtin->elem), qualify)),
         "[]");
     }
     if (const auto name = SqlTypeName(builtin->oid); !name.empty()) {
       return name;
     }
-    return BuiltinTypeName(session, *builtin);
+    return BuiltinTypeName(session, *builtin, qualify);
   }
-  if (auto name = FormatUserType(session, oid, std::nullopt)) {
+  if (auto name = FormatUserType(session, oid, std::nullopt, qualify)) {
     return std::move(*name);
   }
   return absl::StrCat(oid);
@@ -1232,7 +1236,7 @@ std::string ProcOut(const Session& session, uint64_t oid, bool signature) {
     name, "(",
     absl::StrJoin(ArgTypes(info->args), ",",
                   [&](std::string* out, duckdb::idx_t arg) {
-                    out->append(AsView(FormatType(session, arg)));
+                    out->append(AsView(FormatType(session, arg, false)));
                   }),
     ")");
 }
@@ -1554,22 +1558,18 @@ bool IsNumericOid(std::string_view text) {
 
 std::optional<uint64_t> ParseOid(std::string_view text,
                                  irs::pg::SqlErrorData* soft_error) {
-  const uint64_t base = text.size() > 1 && text.front() == '0' ? 8 : 10;
+  const int base = text.size() > 1 && text.front() == '0' ? 8 : 10;
   uint64_t oid = 0;
-  for (const char c : text) {
-    const auto digit = static_cast<uint64_t>(c - '0');
-    if (digit >= base) {
-      return Miss(soft_error, SQL_ERROR_DATA(
-                                ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                                ERR_MSG("invalid input syntax for type oid: \"",
-                                        text, "\"")));
-    }
-    if (oid > (std::numeric_limits<uint64_t>::max() - digit) / base) {
-      break;
-    }
-    oid = oid * base + digit;
+  const auto* end = text.data() + text.size();
+  const auto [ptr, ec] = fast_float::from_chars(text.data(), end, oid, base);
+  if (ec != std::errc::result_out_of_range && ptr != end) {
+    return Miss(soft_error,
+                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                               ERR_MSG("invalid input syntax for type oid: \"",
+                                       text, "\"")));
   }
-  if (oid > std::numeric_limits<uint32_t>::max()) {
+  if (ec == std::errc::result_out_of_range ||
+      oid > std::numeric_limits<uint32_t>::max()) {
     return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                                ERR_MSG("value \"", text,
@@ -1596,28 +1596,7 @@ constexpr std::array kTypmodlessTypes{kBool,   kInt2,   kInt4, kInt8,
 }  // namespace
 
 std::string TypeIdentity(const Session& session, uint64_t oid) {
-  if (oid < kMaxSystem) {
-    const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
-    if (!builtin) {
-      return absl::StrCat(oid);
-    }
-    if (builtin->IsArray()) {
-      return absl::StrCat(
-        TypeIdentity(session, static_cast<uint64_t>(builtin->elem)), "[]");
-    }
-    if (const auto name = SqlTypeName(builtin->oid); !name.empty()) {
-      return std::string{name};
-    }
-    return QualifiedOutName(
-      FindSystemObject(kSystemNamespaces, builtin->nsp)->name, builtin->name);
-  }
-  if (const auto element = ArrayElementOid(session, oid);
-      element != kInvalidOid) {
-    return absl::StrCat(TypeIdentity(session, element), "[]");
-  }
-  const auto object = TypeObject(session, oid);
-  return object ? QualifiedOutName(object->schema, object->name)
-                : absl::StrCat(oid);
+  return std::string{AsView(FormatType(session, oid, true))};
 }
 
 std::string ProcIdentity(const Session& session, uint64_t oid) {
@@ -1637,10 +1616,10 @@ std::string ProcIdentity(const Session& session, uint64_t oid) {
 OutText FormatTypeOut(const Session& session, uint64_t oid,
                       std::optional<int32_t> typmod) {
   if (oid == kInvalidOid) {
-    return FormatType(session, oid);
+    return FormatType(session, oid, false);
   }
   if (oid >= kMaxSystem) {
-    return FormatUserType(session, oid, typmod)
+    return FormatUserType(session, oid, typmod, false)
       .value_or(std::string_view{"???"});
   }
   const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
@@ -1655,7 +1634,7 @@ OutText FormatTypeOut(const Session& session, uint64_t oid,
   }
   if (typmod && *typmod < 0 &&
       (builtin->oid == kBit || builtin->oid == kBpchar)) {
-    return BuiltinTypeName(session, *builtin);
+    return BuiltinTypeName(session, *builtin, false);
   }
   if (typmod && *typmod >= 0) {
     const auto sql = SqlTypeName(builtin->oid);
@@ -1689,9 +1668,10 @@ OutText FormatTypeOut(const Session& session, uint64_t oid,
   }
   if (typmod && *typmod >= 0 &&
       !absl::c_linear_search(kTypmodlessTypes, builtin->oid)) {
-    return absl::StrCat(AsView(FormatType(session, oid)), "(", *typmod, ")");
+    return absl::StrCat(AsView(FormatType(session, oid, false)), "(", *typmod,
+                        ")");
   }
-  return FormatType(session, oid);
+  return FormatType(session, oid, false);
 }
 
 namespace {
@@ -1709,7 +1689,7 @@ OutText RegText(const Session& session, RegKind kind, uint64_t oid) {
     case RegKind::Class:
       return ClassOut(session, oid);
     case RegKind::Type:
-      return FormatType(session, oid);
+      return FormatType(session, oid, false);
     case RegKind::Collation:
       return CollationOut(oid);
     case RegKind::Dictionary:

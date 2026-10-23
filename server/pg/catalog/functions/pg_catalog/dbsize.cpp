@@ -419,9 +419,8 @@ const SystemObject& TablespaceEntry(duckdb::string_t name) {
 int64_t TablespaceBytes(duckdb::ClientContext& context,
                         const SystemObject& tablespace) {
   if (tablespace.oid != kPgDefaultTablespace) {
-    if (const auto* connection = connector::GetSereneDBContextPtr(context);
-        connection &&
-        !auth::ClosureFor(&context, connection->GetRoleId())->Owns(kRootUser)) {
+    if (const auto closure = auth::SessionClosure(context);
+        closure && !closure->Owns(kRootUser)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for tablespace ", tablespace.name));

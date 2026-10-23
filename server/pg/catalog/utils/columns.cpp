@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -268,6 +269,46 @@ SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence) {
   return sequence.tags.contains(catalog::kGeneratedPkSequenceTag);
+}
+
+std::vector<std::string> RelationAttributeNames(const Session& session,
+                                                const Relation& relation) {
+  if (relation.key) {
+    return IndexAttributeNames(
+      *relation.entry, nullptr,
+      KeyAttnums(relation.entry->Cast<duckdb::TableCatalogEntry>().GetColumns(),
+                 *relation.key),
+      {});
+  }
+  std::vector<std::string> names;
+  if (relation.entry->type == duckdb::CatalogType::TYPE_ENTRY) {
+    const auto& type =
+      relation.entry->Cast<duckdb::TypeCatalogEntry>().user_type;
+    const bool tuple = type.id() == duckdb::LogicalTypeId::TUPLE;
+    for (duckdb::idx_t i = 0; i < duckdb::StructType::GetChildCount(type);
+         ++i) {
+      names.emplace_back(
+        tuple ? std::string{duckdb::TupleType::GetChildName(i)}
+              : duckdb::StructType::GetChildName(type, i).GetIdentifierName());
+    }
+    return names;
+  }
+  const auto& index = relation.entry->Cast<duckdb::IndexCatalogEntry>();
+  auto owner =
+    index.GetRelation(index.catalog.GetCatalogTransaction(*session.context));
+  if (!owner) {
+    return names;
+  }
+  const auto columns =
+    owner->type == duckdb::CatalogType::VIEW_ENTRY
+      ? ViewColumns(*session.context, owner->Cast<duckdb::ViewCatalogEntry>())
+      : nullptr;
+  if (owner->type == duckdb::CatalogType::VIEW_ENTRY && !columns) {
+    return names;
+  }
+  return IndexAttributeNames(*owner, columns.get(),
+                             IndexAttnums(*session.context, index, *owner),
+                             IndexExpressions(index));
 }
 
 std::optional<std::string_view> NextvalArgument(

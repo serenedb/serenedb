@@ -310,7 +310,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
   std::string_view _database = Database().GetName().GetIdentifierName();
   ArrayTypeNames _arrays{*this};
-  std::shared_ptr<const auth::RoleClosure> _closure = SessionClosure();
+  std::shared_ptr<const auth::RoleClosure> _closure =
+    auth::SessionClosure(Context());
 };
 
 }  // namespace

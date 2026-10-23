@@ -731,18 +731,15 @@ void WidthBucketThresholdsFunction(duckdb::DataChunk& args,
                         ERR_MSG("thresholds array must not contain NULLs"));
       }
     }
-    duckdb::idx_t left = 0;
-    auto right = entry.length;
-    while (left < right) {
-      const auto middle = (left + right) / 2;
-      if (duckdb::LessThan::Operation(
-            operand.GetValue(), thresholds[entry.offset + middle].GetValue())) {
-        right = middle;
-      } else {
-        left = middle + 1;
-      }
-    }
-    writer.WriteValue(static_cast<int32_t>(left));
+    const auto* first =
+      duckdb::FlatVector::GetData<duckdb::string_t>(threshold_keys) +
+      entry.offset;
+    const auto* bucket = std::upper_bound(
+      first, first + entry.length, operand.GetValue(),
+      [](const duckdb::string_t& left, const duckdb::string_t& right) {
+        return duckdb::LessThan::Operation(left, right);
+      });
+    writer.WriteValue(static_cast<int32_t>(bucket - first));
   }
 }
 
@@ -1251,24 +1248,20 @@ constexpr std::string_view kLogFormats[] = {"stderr", "csvlog", "jsonlog"};
 
 void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
-  auto writer =
-    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
-  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
-    if (args.ColumnCount() != 0) {
-      const auto format = args.data[0].GetValue(row);
-      if (!format.IsNull() &&
-          !absl::c_linear_search(kLogFormats,
-                                 duckdb::StringValue::Get(format))) {
+  if (args.ColumnCount() != 0) {
+    for (const auto format : args.data[0].ValidValues<duckdb::string_t>()) {
+      if (!absl::c_linear_search(kLogFormats, AsView(format.GetValue()))) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("log format \"", duckdb::StringValue::Get(format),
+          ERR_MSG("log format \"", AsView(format.GetValue()),
                   "\" is not supported"),
           ERR_HINT("The supported log formats are \"stderr\", \"csvlog\", "
                    "and \"jsonlog\"."));
       }
     }
-    writer.WriteNull();
   }
+  result.Reference(duckdb::Value{duckdb::LogicalType::VARCHAR},
+                   duckdb::count_t(args.size()));
 }
 
 template<const std::string_view& kKind,
@@ -1359,14 +1352,11 @@ struct StatScalar {
   duckdb::scalar_function_t function;
 };
 
-struct NullScalar {
-  std::string_view name;
-  duckdb::LogicalType type;
-};
-
-struct NullProcedure {
+struct NullFunction {
   std::string_view name;
   duckdb::vector<duckdb::LogicalType> arguments;
+  duckdb::LogicalType result;
+  duckdb::FunctionStability stability;
 };
 
 duckdb::unique_ptr<duckdb::Expression> BindStatisticsNotRestored(
@@ -1632,14 +1622,21 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_column_size", CONSISTENT_WITHIN_QUERY,
                  nullptr,
                  {duckdb::ScalarFunction{{any}, int4, ColumnSizeFunction}});
-  for (const auto& [name, type] : {
-         NullScalar{.name = "pg_column_compression", .type = text},
-         NullScalar{.name = "pg_column_toast_chunk_id", .type = oid},
+  for (const auto& [name, arguments, result, stability] : {
+         NullFunction{
+           "pg_column_compression", {any}, text, CONSISTENT_WITHIN_QUERY},
+         NullFunction{
+           "pg_column_toast_chunk_id", {any}, oid, CONSISTENT_WITHIN_QUERY},
+         NullFunction{
+           "pg_clear_relation_stats", {text, text}, VOID(), VOLATILE},
+         NullFunction{"pg_clear_attribute_stats",
+                      {text, text, text, boolean},
+                      VOID(),
+                      VOLATILE},
        }) {
-    duckdb::ScalarFunction function{{any}, type, nullptr};
+    duckdb::ScalarFunction function{arguments, result, nullptr};
     function.SetBindExpressionCallback(BindNull);
-    RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY, nullptr,
-                   {function});
+    RegisterScalar(loader, pg_catalog, name, stability, nullptr, {function});
   }
 
   for (const auto name :
@@ -1647,16 +1644,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{{any}, boolean, nullptr};
     function.GetSignature().AddArgs("kwargs", any);
     function.SetBindExpressionCallback(BindStatisticsNotRestored);
-    RegisterScalar(loader, pg_catalog, name, VOLATILE, nullptr, {function});
-  }
-  for (const auto& [name, arguments] : {
-         NullProcedure{.name = "pg_clear_relation_stats",
-                       .arguments = {text, text}},
-         NullProcedure{.name = "pg_clear_attribute_stats",
-                       .arguments = {text, text, text, boolean}},
-       }) {
-    duckdb::ScalarFunction function{arguments, VOID(), nullptr};
-    function.SetBindExpressionCallback(BindNull);
     RegisterScalar(loader, pg_catalog, name, VOLATILE, nullptr, {function});
   }
 

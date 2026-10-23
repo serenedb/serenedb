@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 
@@ -180,6 +181,9 @@ SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
                                 const duckdb::Constraint& constraint);
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence);
+
+std::vector<std::string> RelationAttributeNames(const Session& session,
+                                                const Relation& relation);
 
 inline constexpr std::array<std::string_view, 3> kSequenceColumns{
   "last_value", "log_cnt", "is_called"};

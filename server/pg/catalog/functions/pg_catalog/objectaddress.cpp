@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
@@ -111,23 +112,6 @@ const duckdb::ColumnDefinition* TableColumn(const RelationAccess& relation,
   return &columns->GetColumn(duckdb::LogicalIndex(attnum - 1));
 }
 
-template<typename R>
-std::optional<std::string> IndexColumn(
-  duckdb::ClientContext& context, duckdb::CatalogEntry& relation,
-  const R& attnums,
-  std::span<const duckdb::ParsedExpression* const> expressions, size_t column) {
-  const auto view =
-    relation.type == duckdb::CatalogType::VIEW_ENTRY
-      ? ViewColumns(context, relation.Cast<duckdb::ViewCatalogEntry>())
-      : nullptr;
-  if ((relation.type == duckdb::CatalogType::VIEW_ENTRY && !view) ||
-      column >= attnums.size()) {
-    return std::nullopt;
-  }
-  return std::move(
-    IndexAttributeNames(relation, view.get(), attnums, expressions)[column]);
-}
-
 std::optional<std::string> ColumnName(const Session& session,
                                       RelationAccess& relation,
                                       int32_t attnum) {
@@ -143,53 +127,30 @@ std::optional<std::string> ColumnName(const Session& session,
     }
     return std::string{columns[column].name};
   }
-  auto& context = *session.context;
   auto& entry = *relation.entry;
-  if (relation.key) {
-    return IndexColumn(
-      context, entry,
-      KeyAttnums(entry.Cast<duckdb::TableCatalogEntry>().GetColumns(),
-                 *relation.key),
-      {}, column);
+  if (relation.key || entry.type == INDEX_ENTRY || entry.type == TYPE_ENTRY) {
+    auto names = RelationAttributeNames(session, relation);
+    if (column >= names.size()) {
+      return std::nullopt;
+    }
+    return std::move(names[column]);
   }
   if (const auto* definition = TableColumn(relation, attnum)) {
     return definition->Name().GetIdentifierName();
   }
   if (entry.type == VIEW_ENTRY) {
     auto& view = entry.Cast<duckdb::ViewCatalogEntry>();
-    const auto columns = ViewColumns(context, view);
+    const auto columns = ViewColumns(*session.context, view);
     if (!columns || column >= columns->types.size()) {
       return std::nullopt;
     }
     return view.ColumnName(*columns, column).GetIdentifierName();
-  }
-  if (entry.type == INDEX_ENTRY) {
-    const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-    auto table = IsTemporary(relation)
-                   ? TemporaryEntryByOid(session, index.table_oid)
-                   : EntryByOid(session, index.table_oid);
-    if (!table) {
-      return std::nullopt;
-    }
-    return IndexColumn(context, *table, IndexAttnums(context, index, *table),
-                       IndexExpressions(index), column);
   }
   if (entry.type == SEQUENCE_ENTRY) {
     if (NumbersRows(entry) || column >= kSequenceColumns.size()) {
       return std::nullopt;
     }
     return std::string{kSequenceColumns[column]};
-  }
-  if (entry.type == TYPE_ENTRY) {
-    const auto& type = entry.Cast<duckdb::TypeCatalogEntry>().user_type;
-    const auto& children = duckdb::StructType::GetChildTypes(type);
-    if (column >= children.size()) {
-      return std::nullopt;
-    }
-    if (type.id() == duckdb::LogicalTypeId::TUPLE) {
-      return std::string{duckdb::TupleType::GetChildName(column)};
-    }
-    return children[column].first.GetIdentifierName();
   }
   return std::nullopt;
 }
@@ -280,8 +241,8 @@ ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
-  const auto entry = ObjectEntry(session, oid);
-  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+  const auto entry = SchemaByOid(session, oid);
+  if (!entry) {
     return Missing("schema");
   }
   const auto& name = entry->name.GetIdentifierName();
@@ -308,24 +269,23 @@ ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
   if (!table) {
     return Missing("constraint");
   }
-  for (const auto& constraint : table->GetConstraints()) {
-    if (constraint->oid != oid) {
-      continue;
-    }
-    std::string name;
-    for (const auto part : ConstraintName(*table, *constraint).parts) {
-      name.append(part);
-    }
-    const auto [schema, table_name] = NameOf(*session.transaction, *table);
-    return ObjectIdentity{
-      .type = "table constraint",
-      .description = absl::StrCat("constraint ", name, " on table ",
-                                  RegOut(session, RegKind::Class, table->oid)),
-      .schema = std::string{schema},
-      .identity = absl::StrCat(QuoteIdentifier(name), " on ",
-                               QualifiedOutName(schema, table_name))};
+  const auto& constraints = table->GetConstraints();
+  const auto constraint = absl::c_find_if(
+    constraints,
+    [&](const auto& constraint) { return constraint->oid == oid; });
+  if (constraint == constraints.end()) {
+    return Missing("constraint");
   }
-  return Missing("constraint");
+  const auto name =
+    absl::StrJoin(ConstraintName(*table, **constraint).parts, "");
+  const auto [schema, table_name] = NameOf(*session.transaction, *table);
+  return ObjectIdentity{
+    .type = "table constraint",
+    .description = absl::StrCat("constraint ", name, " on table ",
+                                RegOut(session, RegKind::Class, table->oid)),
+    .schema = std::string{schema},
+    .identity = absl::StrCat(QuoteIdentifier(name), " on ",
+                             QualifiedOutName(schema, table_name))};
 }
 
 ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {

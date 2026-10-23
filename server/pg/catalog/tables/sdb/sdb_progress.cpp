@@ -152,7 +152,8 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   }
 
  private:
-  std::shared_ptr<const auth::RoleClosure> _closure = SessionClosure();
+  std::shared_ptr<const auth::RoleClosure> _closure =
+    auth::SessionClosure(Context());
   std::shared_ptr<const auth::RoleGraph> _roles =
     _closure && !_closure->is_superuser ? auth::RolesOf(&Context()) : nullptr;
 };

@@ -27,6 +27,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 
+#include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -155,22 +156,8 @@ class AclReader {
   explicit AclReader(std::string_view text) : _text{text} {}
 
   std::string_view Role() {
-    if (!_text.empty() && _text.front() == '"') {
-      _buffer.clear();
-      size_t pos = 1;
-      while (pos < _text.size()) {
-        if (_text[pos] == '"') {
-          if (pos + 1 < _text.size() && _text[pos + 1] == '"') {
-            _buffer.push_back('"');
-            pos += 2;
-            continue;
-          }
-          ++pos;
-          break;
-        }
-        _buffer.push_back(_text[pos]);
-        ++pos;
-      }
+    if (duckdb::idx_t pos = 0;
+        duckdb::StringUtil::TryParseQuotedString(_text, pos, _buffer)) {
       _text.remove_prefix(pos);
       return _buffer;
     }
@@ -458,43 +445,6 @@ AclMode RelationRights(const Relation& relation) {
            : ~AclMode::NoRights;
 }
 
-std::vector<std::string> OwnerOnlyColumns(const Session& session,
-                                          const Relation& relation) {
-  if (relation.key) {
-    return IndexAttributeNames(
-      *relation.entry, nullptr,
-      KeyAttnums(relation.entry->Cast<duckdb::TableCatalogEntry>().GetColumns(),
-                 *relation.key),
-      {});
-  }
-  std::vector<std::string> names;
-  if (relation.entry->type == CatalogType::TYPE_ENTRY) {
-    const auto& type =
-      relation.entry->Cast<duckdb::TypeCatalogEntry>().user_type;
-    const bool tuple = type.id() == duckdb::LogicalTypeId::TUPLE;
-    for (duckdb::idx_t i = 0; i < duckdb::StructType::GetChildCount(type);
-         ++i) {
-      names.emplace_back(
-        tuple ? std::string{duckdb::TupleType::GetChildName(i)}
-              : duckdb::StructType::GetChildName(type, i).GetIdentifierName());
-    }
-    return names;
-  }
-  const auto& index = relation.entry->Cast<duckdb::IndexCatalogEntry>();
-  auto owner =
-    index.GetRelation(index.catalog.GetCatalogTransaction(*session.context));
-  if (!owner) {
-    return names;
-  }
-  const auto columns =
-    owner->type == CatalogType::VIEW_ENTRY
-      ? ViewColumns(*session.context, owner->Cast<duckdb::ViewCatalogEntry>())
-      : nullptr;
-  return IndexAttributeNames(*owner, columns.get(),
-                             IndexAttnums(*session.context, index, *owner),
-                             IndexExpressions(index));
-}
-
 duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
                            std::string_view name) {
   if (const auto* role = roles.FindByName(name)) {
@@ -618,7 +568,7 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
                                             duckdb::string_t column) {
     const Identifier name{AsView(column)};
     if (OwnerOnly(relation)) {
-      if (absl::c_linear_search(OwnerOnlyColumns(session, relation),
+      if (absl::c_linear_search(RelationAttributeNames(session, relation),
                                 AsView(column))) {
         return ObjectTarget{relation.permissions, {}, true};
       }
@@ -648,7 +598,7 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
     }
     if (OwnerOnly(relation)) {
       if (static_cast<duckdb::idx_t>(attnum) >
-          OwnerOnlyColumns(session, relation).size()) {
+          RelationAttributeNames(session, relation).size()) {
         return std::nullopt;
       }
       return ObjectTarget{relation.permissions, {}, true};
@@ -930,24 +880,27 @@ struct RolePrivileges {
     RolePrivMask mask;
     for (std::string_view tok : absl::StrSplit(text, ',')) {
       const auto stripped = absl::StripAsciiWhitespace(tok);
-      if (absl::EqualsIgnoreCase(stripped, "USAGE")) {
-        mask.usage = true;
-      } else if (absl::EqualsIgnoreCase(stripped, "MEMBER")) {
-        mask.member = true;
-      } else if (absl::EqualsIgnoreCase(stripped, "SET")) {
-        mask.set = true;
-      } else if (absl::EqualsIgnoreCase(stripped, "USAGE WITH GRANT OPTION") ||
-                 absl::EqualsIgnoreCase(stripped, "USAGE WITH ADMIN OPTION") ||
-                 absl::EqualsIgnoreCase(stripped, "MEMBER WITH GRANT OPTION") ||
-                 absl::EqualsIgnoreCase(stripped, "MEMBER WITH ADMIN OPTION") ||
-                 absl::EqualsIgnoreCase(stripped, "SET WITH GRANT OPTION") ||
-                 absl::EqualsIgnoreCase(stripped, "SET WITH ADMIN OPTION")) {
-        mask.admin = true;
-      } else {
+      auto privilege = stripped;
+      const bool option =
+        absl::c_any_of(std::array<std::string_view, 2>{" WITH GRANT OPTION",
+                                                       " WITH ADMIN OPTION"},
+                       [&](std::string_view suffix) {
+                         if (!absl::EndsWithIgnoreCase(privilege, suffix)) {
+                           return false;
+                         }
+                         privilege.remove_suffix(suffix.size());
+                         return true;
+                       });
+      bool* held = absl::EqualsIgnoreCase(privilege, "USAGE")    ? &mask.usage
+                   : absl::EqualsIgnoreCase(privilege, "MEMBER") ? &mask.member
+                   : absl::EqualsIgnoreCase(privilege, "SET")    ? &mask.set
+                                                                 : nullptr;
+      if (!held) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("unrecognized privilege type: \"", stripped, "\""));
       }
+      *(option ? &mask.admin : held) = true;
     }
     return mask;
   }

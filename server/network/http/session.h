@@ -372,6 +372,7 @@ class HttpSession final
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout) vs mid-request (strict header/body timeout).
   std::atomic<bool> _idle{true};
+  bool _peer_is_loopback = false;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -432,6 +433,9 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
+    asio_ns::error_code peer_ec;
+    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+    _peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -679,12 +683,8 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        asio_ns::error_code peer_ec;
-        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        const bool peer_is_loopback =
-          !peer_ec && peer_ep.address().is_loopback();
         auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), peer_is_loopback);
+          request.Header(HttpHeader::Authorization), _peer_is_loopback);
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,

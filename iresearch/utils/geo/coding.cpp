@@ -27,6 +27,8 @@
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 
+#include <algorithm>
+
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/geo/geo_json.hpp"
@@ -57,11 +59,11 @@ void ConvertLatLngToU32(
 
   const auto lat_val = (ll.lat().radians() + M_PI_2) * kMaxValPi;
   SDB_ASSERT(lat_val <= kMaxVal, lat_val);
-  out_lat = static_cast<uint32_t>(lat_val + 0.5);
+  out_lat = static_cast<uint32_t>(std::min(lat_val + 0.5, kMaxVal - 1));
 
   const auto lng_val = (ll.lng().radians() + M_PI) * kMaxVal2Pi;
   SDB_ASSERT(lng_val <= kMaxVal, lng_val);
-  out_lng = static_cast<uint32_t>(lng_val + 0.5);
+  out_lng = static_cast<uint32_t>(std::min(lng_val + 0.5, kMaxVal - 1));
 
   if constexpr (WriteBack) {
     const auto lat_restored = static_cast<double>(out_lat) * kPiMaxVal - M_PI_2;

@@ -21,6 +21,7 @@
 #include "scheduler/job_scheduler.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -71,8 +72,8 @@ bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
 }
 
-int64_t ShortestLength(const duckdb::interval_t& value) {
-  return (value.months * kShortestMonthDays + value.days) *
+absl::int128 ShortestLength(const duckdb::interval_t& value) {
+  return (absl::int128{value.months} * kShortestMonthDays + value.days) *
            duckdb::Interval::MICROS_PER_DAY +
          value.micros;
 }

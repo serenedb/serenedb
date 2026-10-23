@@ -419,7 +419,9 @@ class ScalarQuantizerStats final : public QuantizerStats {
     _sq.trained.assign(ScalarQuantizerWriter::TrainedSize(quant, d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
     SDB_ASSERT(stats.size() >= want);
-    std::memcpy(_sq.trained.data(), stats.data(), want);
+    if (want != 0) {
+      std::memcpy(_sq.trained.data(), stats.data(), want);
+    }
   }
 
   VectorQuantization Kind() const noexcept final { return _quant; }

@@ -12,8 +12,8 @@ SHARD="$3"
 TIMING="$(realpath "$4")"
 shift 4
 
-: "${BUILD_IMAGE:=serenedb/serenedb-build-ubuntu:latest}"
 : "${SDB_RUN_ID:=local-$$}"
+: "${SDB_STORE_RESULTS:=${GITHUB_ACTIONS:-false}}"
 : "${SDB_DOCKER_OWNER:=test-$(id -un)-$$}"
 export SDB_DOCKER_OWNER
 
@@ -66,7 +66,7 @@ docker run --rm --name "$name" \
 	--shard "$SHARD" --timing "$TIMING" --out "$out" "$@"
 rc=$?
 
-if [[ -f "$out/results.jsonl" ]] && [[ "${SDB_STORE_RESULTS:-true}" == true ]]; then
+if [[ -f "$out/results.jsonl" ]] && [[ "$SDB_STORE_RESULTS" == true ]]; then
 	python3 scripts/ci/ci.py results --results "$out/results.jsonl" --run "$SDB_RUN_ID" ||
 		echo "warning: results did not reach the store" >&2
 fi
@@ -74,10 +74,12 @@ fi
 if compgen -G "$out/profiles/*.profraw" >/dev/null; then
 	docker run --rm --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" "$BUILD_IMAGE" \
 		bash -c 'llvm-profdata-23 merge -sparse -failure-mode=any -o "$0/shard.profdata" "$0"/profiles/*.profraw' "$out" &&
+		rm -rf "$out/profiles"
+	if [[ "$SDB_STORE_RESULTS" == true ]]; then
 		python3 scripts/ci/ci.py upload "$out/shard.profdata" \
 			"profdata/${SDB_RUN_ID}/${CONFIG}-${ARCH}-${SHARD/\//of}.profdata" ||
-		echo "warning: the coverage profile did not reach the store" >&2
-	rm -rf "$out/profiles"
+			echo "warning: the coverage profile did not reach the store" >&2
+	fi
 fi
 
 if [[ $rc -ne 0 ]]; then

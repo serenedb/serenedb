@@ -123,11 +123,18 @@ class Server:
 
 
 class ServerPool(Fixture):
+    stateful = True
+
     def __init__(self, ctx, count, threads, name="servers", **server_args):
         self.ctx = ctx
         self.name = name
         server_args.setdefault("listen_ssl", True)
-        self.servers = [Server(ctx, ctx.out_dir / name / str(i), threads=threads, **server_args)
+        home = ctx.out_dir / name
+        instance = 1
+        while home.exists():
+            instance += 1
+            home = ctx.out_dir / f"{name}.{instance}"
+        self.servers = [Server(ctx, home / str(i), threads=threads, **server_args)
                         for i in range(count)]
         self.load = [0] * count
         self.lock = threading.Lock()

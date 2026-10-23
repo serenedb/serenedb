@@ -1,0 +1,1 @@
+serenedb/serenedb-build-ubuntu:26.04.1_clang-23.1.5_commit-1fa476a9e

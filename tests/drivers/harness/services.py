@@ -155,6 +155,10 @@ class ServiceSet:
         self.pods[peer] = name
         self.containers[f"{peer}-pod"] = name
 
+    def join(self, peer, container):
+        if not self.netns:
+            self.pods[peer] = container
+
     def run(self, service, image, *args, ports=(), fixed_ports=(), extra=(), peer=None):
         name = f"{self.name}-{service}"
         if fixed_ports or peer:

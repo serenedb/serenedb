@@ -59,13 +59,17 @@ def bundle_name(config, arch, dig):
     return f"bundles/{config}-{arch}-{dig}.tar.zst"
 
 
+def image_id(image):
+    inspect = ["docker", "image", "inspect", "--format", "{{.Id}}", image]
+    res = subprocess.run(inspect, capture_output=True, text=True)
+    if res.returncode != 0:
+        subprocess.run(["docker", "pull", "-q", image], capture_output=True, check=True)
+        res = subprocess.run(inspect, capture_output=True, text=True, check=True)
+    return res.stdout.strip()
+
+
 def cmd_digest(args):
-    image = args.image
-    if image:
-        res = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
-                             capture_output=True, text=True)
-        image = res.stdout.strip() or image
-    print(digest(args.config, args.flags, image, args.rev))
+    print(digest(args.config, args.flags, image_id(args.image) if args.image else "", args.rev))
 
 
 def cmd_pack(args):

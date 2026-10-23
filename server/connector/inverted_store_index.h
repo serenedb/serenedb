@@ -44,6 +44,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_sink_writer_base.h"
+#include "pg/progress_registry.h"
 #include "query/transaction.h"
 #include "search/inverted_index_storage.h"
 
@@ -90,6 +91,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
   bool RemovalNeedsColumnValues() const final { return false; }
+  bool IsBuilding() const final { return _storage->IsDeleteLogOpen(); }
 
   bool FinishReplay();
 
@@ -199,6 +201,10 @@ PublishedInvertedIndex PublishInvertedIndex(
   duckdb::ClientContext& context, catalog::InvertedIndexEntry& entry,
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& bound_exprs);
+
+void WaitForWritersBeforeBuild(duckdb::ClientContext& context,
+                               duckdb::DataTable& data,
+                               pg::ProgressMetrics* progress);
 
 inline bool IsInvertedIndex(const duckdb::IndexCatalogEntry& entry) {
   return entry.index_type == InvertedStoreIndex::kTypeName;

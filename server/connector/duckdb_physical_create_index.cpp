@@ -260,6 +260,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (auto node = _info->options.extract(kReindexIntervalSetting)) {
       reindex_interval = node.mapped().GetValue<uint32_t>();
     }
+    if (auto* table = DuckTableOrNull()) {
+      const auto undo =
+        duckdb::DuckTransaction::Get(context, table->GetStorage().db)
+          .GetUndoProperties();
+      if (undo.has_updates || undo.has_deletes) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG("CREATE INDEX on \"", _relation.name.GetIdentifierName(),
+                  "\" cannot run in a transaction that has updated or deleted "
+                  "rows"));
+      }
+    }
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
@@ -298,6 +310,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       } else {
         const auto published = PublishInvertedIndex(
           context, index_entry, _relation, _bound_expressions);
+        if (auto* table = DuckTableOrNull()) {
+          WaitForWritersBeforeBuild(context, table->GetStorage(),
+                                    state->progress);
+        }
         published.storage->SetFileManifest(extras ? extras->manifest : nullptr);
         published.storage->StartTasks();
         index_entry.CreateReindexJob(transaction, reindex_interval);

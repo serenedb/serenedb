@@ -450,6 +450,48 @@ def test_deletes_during_an_online_index_build_reach_the_index(
             assert_index_matches_table(conn, [index])
 
 
+def test_a_statement_prepared_before_an_online_build_reaches_the_index(
+    tmp_path: Path,
+) -> None:
+    with make_server(tmp_path) as server:
+        server.start()
+        with psycopg.connect(server.dsn(), autocommit=True) as conn, \
+                psycopg.connect(server.dsn(), autocommit=True) as writer:
+            conn.execute("CREATE TEXT SEARCH DICTIONARY t_words AS split_text()")
+            conn.execute("CREATE TABLE t (id BIGINT, body VARCHAR)")
+            conn.execute("INSERT INTO t SELECT i, 'w' || (i % 4) FROM range(4000) r(i)")
+            update = "UPDATE t SET body = %s WHERE id %% 4 = %s"
+            writer.execute(update, ("w10", 0), prepare=True)
+            conn.execute("SET sdb_faults = 'pause_create_index_before_commit'")
+            errors: list[BaseException] = []
+
+            def build() -> None:
+                try:
+                    with psycopg.connect(server.dsn(), autocommit=True) as builder:
+                        create_index(builder, T_IDX,
+                                     "refresh_interval = 0, compaction_interval = 0")
+                except BaseException as error:
+                    errors.append(error)
+
+            builder = threading.Thread(target=build)
+            builder.start()
+            deadline = time.monotonic() + 120
+            while conn.execute(
+                "SELECT count(*) FROM pg_stat_progress_create_index "
+                "WHERE relid = 't'::regclass AND phase = 'finalizing'"
+            ).fetchone()[0] == 0:
+                assert time.monotonic() < deadline and builder.is_alive()
+                time.sleep(0.05)
+            writer.execute(update, ("w11", 1), prepare=True)
+            conn.execute("SET sdb_faults = '-pause_create_index_before_commit'")
+            builder.join(timeout=600)
+            assert not builder.is_alive()
+            if errors:
+                raise errors[0]
+            assert phrase_count(conn, "w11") == 1000
+            assert_index_matches_table(conn)
+
+
 def test_deletes_of_unpublished_rows_land_with_them(tmp_path: Path) -> None:
     with make_server(tmp_path) as server:
         server.start()

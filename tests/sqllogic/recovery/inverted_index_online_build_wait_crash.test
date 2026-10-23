@@ -1,0 +1,65 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY obx_words AS split_text();
+
+statement ok
+CREATE TABLE obx (id BIGINT, body VARCHAR);
+
+statement ok
+INSERT INTO obx SELECT i, 'w' || (i % 4) FROM range(4000) r(i);
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+UPDATE obx SET body = 'fresh' WHERE id % 4 = 0;
+
+connection builder
+statement async error connection closed
+CREATE INDEX obx_idx ON obx USING inverted(id, body obx_words);
+
+connection default
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT phase FROM pg_stat_progress_create_index WHERE relid = 'obx'::regclass;
+----
+phase
+waiting for writers before build
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_indexes WHERE indexname = 'obx_idx';
+----
+n
+0
+
+connection after_crash
+query
+SELECT count(*) AS n FROM obx WHERE body = 'fresh';
+----
+n
+0
+
+connection after_crash
+statement ok
+CREATE INDEX obx_idx ON obx USING inverted(id, body obx_words);
+
+connection after_crash
+query
+SELECT count(*) AS n FROM obx_idx WHERE body @@ ts_phrase('w0');
+----
+n
+1000

@@ -2194,7 +2194,7 @@ TEST_F(index_death_test_formats_15, fails_in_compact_with_removals) {
 }
 
 TEST_F(index_death_test_formats_15, fails_in_exists) {
-  // Reader::Reader probes `dir.Exists(filename)` before opening the
+  // Reader::Reader probes `dir.Has(filename)` before opening the
   // `.col`. Force the EXISTS failure on consecutive `.col` files to
   // exercise that path. After failures clear, commits and a
   // compaction must still succeed.

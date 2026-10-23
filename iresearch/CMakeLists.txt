@@ -430,7 +430,6 @@ set(IResearch_core_sources
     ./utils/log.cpp
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
-    ./utils/pg/file_error.cpp
     ./utils/remap_executable.cpp
     ./utils/string_utils.cpp
 )

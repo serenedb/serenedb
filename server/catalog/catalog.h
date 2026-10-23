@@ -30,6 +30,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -65,8 +66,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                   std::shared_ptr<DatabaseDirectory> directory)
     : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
 
-  std::shared_ptr<StorageDirectory> Directory(duckdb::idx_t tablespace) const {
-    return _directory ? _directory->InTablespace(tablespace) : nullptr;
+  std::optional<StorageDirectory> Directory(duckdb::idx_t tablespace) const {
+    if (!_directory) {
+      return std::nullopt;
+    }
+    return _directory->InTablespace(tablespace);
   }
 
   std::string GetCatalogType() final;

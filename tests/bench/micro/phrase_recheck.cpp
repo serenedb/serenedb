@@ -181,7 +181,7 @@ struct Field {
 };
 
 struct Index {
-  std::unique_ptr<irs::Directory> dir;
+  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -199,7 +199,7 @@ const Index& IndexOf(size_t dictionary) {
   std::filesystem::create_directories(path);
   index = std::make_unique<Index>();
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  index->dir = std::make_unique<irs::Directory>(*db, path.string());
+  index->dir.emplace(*db, path.string());
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;

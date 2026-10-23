@@ -425,13 +425,14 @@ void IndexDurability::SyncDirectory() {
   _durable = std::max(_durable, published);
 }
 
-absl::Status IndexDurability::Cleanup(const irs::Directory& dir) {
+absl::Status IndexDurability::Cleanup() {
+  SDB_ASSERT(_files);
   try {
     SyncDirectory();
-    if (dir.Kind() == irs::StorageKind::Remote) {
-      dir.RemoveUnreferenced();
+    if (_files->Kind() == irs::StorageKind::Remote) {
+      _files->RemoveUnreferenced();
     } else {
-      dir.RemoveAllUnreferenced();
+      _files->RemoveAllUnreferenced();
     }
   } catch (const std::exception& e) {
     return absl::InternalError(

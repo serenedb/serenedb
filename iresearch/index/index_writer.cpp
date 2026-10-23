@@ -448,7 +448,6 @@ uint64_t MaxSegmentId(const Directory& dir) {
     if (uint64_t id = 0; ParseSegmentId(name, id)) {
       max_id = std::max(max_id, id);
     }
-    return true;
   });
   return max_id;
 }

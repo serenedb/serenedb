@@ -97,10 +97,7 @@ irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
   }
   irs::Directory copy{db, irs::MemoryIndexRoot()};
   std::vector<std::string> names;
-  local.Visit([&](std::string_view name) {
-    names.emplace_back(name);
-    return true;
-  });
+  local.Visit([&](std::string_view name) { names.emplace_back(name); });
   std::vector<irs::byte_type> buffer(1 << 20);
   for (const auto& name : names) {
     auto in = local.Open(name, irs::IOAdvice::SEQUENTIAL);

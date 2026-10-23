@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <duckdb/common/exception.hpp>
 #include <filesystem>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -34,6 +35,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -97,9 +99,8 @@ class IndexAdoptTest : public TestBase {
   void Open(irs::OpenMode mode, bool cleanup_on_open = true,
             uint32_t segment_docs_max = 0) {
     _fs = std::make_unique<CountingFileSystem>();
-    _dir = std::make_unique<irs::Directory>(
-      irs::DuckDBEngine::Instance().instance(), *_fs, _path.string(),
-      GetResourceManager().options);
+    _dir.emplace(irs::DuckDBEngine::Instance().instance(), *_fs, _path.string(),
+                 GetResourceManager().options);
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
@@ -132,10 +133,7 @@ class IndexAdoptTest : public TestBase {
     return by_term;
   }
 
-  bool Exists(std::string_view name) const {
-    bool exists = false;
-    return _dir->Exists(exists, name) && exists;
-  }
+  bool Exists(std::string_view name) const { return _dir->Has(name); }
 
   static std::vector<std::string> MetaFilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
@@ -159,7 +157,7 @@ class IndexAdoptTest : public TestBase {
 
   std::filesystem::path _path;
   std::unique_ptr<CountingFileSystem> _fs;
-  std::unique_ptr<irs::Directory> _dir;
+  std::optional<irs::Directory> _dir;
   irs::IndexWriter::ptr _writer;
 };
 
@@ -1535,8 +1533,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
        "ordering note in search_table_backfill.cpp can be dropped";
   // And the swap correctly refuses rather than adopting a segment whose files
   // are gone.
-  ASSERT_SQL_ERROR(Replace(*_writer, sources, replacement),
-                   ERRCODE_UNDEFINED_FILE);
+  ASSERT_THROW(Replace(*_writer, sources, replacement), duckdb::IOException);
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
 }

@@ -48,17 +48,15 @@ class FileOutput final : public IndexOutput {
   static constexpr size_t kMaxTail = 16 << 10;
 
   static ptr Open(duckdb::FileSystem& fs, const std::string& path,
-                  const ResourceManagementOptions& rm,
-                  std::shared_ptr<FileInfos> infos, std::string_view name,
-                  duckdb::BlockCache* cache);
+                  const ResourceManagementOptions& rm, FileInfos* infos,
+                  std::string_view name, duckdb::BlockCache* cache);
 
   ~FileOutput() final;
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-             const ResourceManagementOptions& rm,
-             std::shared_ptr<FileInfos> infos, std::string_view name,
-             duckdb::BlockCache* cache);
+             const ResourceManagementOptions& rm, FileInfos* infos,
+             std::string_view name, duckdb::BlockCache* cache);
 
   void Flush() final;
   uint32_t Checksum() final;
@@ -77,7 +75,7 @@ class FileOutput final : public IndexOutput {
   std::unique_ptr<duckdb::FileHandle> _handle;
   Crc32c _crc;
   uint64_t _unhinted = 0;
-  std::shared_ptr<FileInfos> _infos;
+  FileInfos* _infos = nullptr;
   std::string _name;
   uint64_t _tail_start = std::numeric_limits<uint64_t>::max();
   bstring _tail;

@@ -85,7 +85,7 @@ struct SearchTable::ReplaySession {
   std::vector<PendingAdopt> adopts;
 };
 
-SearchTable::SearchTable(std::shared_ptr<catalog::StorageDirectory> parent,
+SearchTable::SearchTable(std::optional<catalog::StorageDirectory> parent,
                          bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
@@ -119,13 +119,13 @@ SearchTable::~SearchTable() {
   if (!_parent || !_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  catalog::StorageDirectory::RemoveStorage(std::move(_parent), _table_id);
+  _parent->RemoveStorage(_table_id);
 }
 
 void SearchTable::OpenWriter(bool in_memory) {
   irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(_parent.get(), GetTableId(), _is_new,
-                                     in_memory, resource_manager);
+  auto opened = OpenStorageDirectory(_parent, GetTableId(), _is_new, in_memory,
+                                     resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
@@ -163,8 +163,8 @@ void SearchTable::OpenWriter(bool in_memory) {
 
 void SearchTable::OpenDirectory() {
   irs::ResourceManagementOptions resource_manager;
-  auto opened = OpenStorageDirectory(_parent.get(), GetTableId(), false, false,
-                                     resource_manager);
+  auto opened =
+    OpenStorageDirectory(_parent, GetTableId(), false, false, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 }
@@ -424,7 +424,7 @@ auto SearchTable::CompactUnsafeAsync(
 
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup();
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

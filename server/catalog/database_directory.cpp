@@ -319,12 +319,11 @@ std::optional<std::string> StorageDirectory::OpenStorage(
   return std::nullopt;
 }
 
-void StorageDirectory::RemoveStorage(
-  std::shared_ptr<StorageDirectory> directory, duckdb::idx_t oid) {
-  RunRemoval([directory = std::move(directory), oid] {
-    RemoveTree(directory->StoragePath(oid));
-    if (directory->_remote) {
-      RemoveObject(directory->MarkerPath(oid));
+void StorageDirectory::RemoveStorage(duckdb::idx_t oid) const {
+  RunRemoval([directory = *this, oid] {
+    RemoveTree(directory.StoragePath(oid));
+    if (directory._remote) {
+      RemoveObject(directory.MarkerPath(oid));
     }
   });
 }
@@ -381,11 +380,9 @@ std::shared_ptr<TablespaceRoot> DatabaseDirectory::RootOf(
   return ClusterOf().TablespaceRootOf(tablespace);
 }
 
-std::shared_ptr<StorageDirectory> DatabaseDirectory::InTablespace(
-  duckdb::idx_t tablespace) {
+StorageDirectory DatabaseDirectory::InTablespace(duckdb::idx_t tablespace) {
   if (!_root) {
-    return std::make_shared<StorageDirectory>(shared_from_this(), nullptr,
-                                              _path.string());
+    return {shared_from_this(), nullptr, _path.string()};
   }
   auto root = RootOf(tablespace);
   if (root != _root) {
@@ -397,8 +394,7 @@ std::shared_ptr<StorageDirectory> DatabaseDirectory::InTablespace(
     }
   }
   auto path = root->DatabaseDir(_oid);
-  return std::make_shared<StorageDirectory>(shared_from_this(), std::move(root),
-                                            std::move(path));
+  return {shared_from_this(), std::move(root), std::move(path)};
 }
 
 }  // namespace sdb::catalog

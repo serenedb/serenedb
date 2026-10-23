@@ -86,9 +86,8 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   std::vector<std::string> dir_files;
   auto visitor = [&dir_files](std::string_view file) {
     dir_files.emplace_back(file);
-    return true;
   };
-  ASSERT_TRUE(dir.Visit(visitor));
+  dir.Visit(visitor);
 
   irs::IndexMeta index_meta;
   std::string segment_file;
@@ -138,12 +137,11 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(name);
-    return true;
   };
 
   auto dir = get_directory(*this);
   files.clear();
-  ASSERT_TRUE(dir->Visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on refcount decrement (old files not in use)
@@ -223,7 +221,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   }
 
   files.clear();
-  ASSERT_TRUE(dir->Visit(list_files));
+  dir->Visit(list_files);
 
   // reset directory
   for (auto& file : files) {
@@ -231,7 +229,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   }
 
   files.clear();
-  ASSERT_TRUE(dir->Visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on refcount decrement (old files still in use)
@@ -350,7 +348,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   }
 
   files.clear();
-  ASSERT_TRUE(dir->Visit(list_files));
+  dir->Visit(list_files);
 
   // reset directory
   for (auto& file : files) {
@@ -358,7 +356,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   }
 
   files.clear();
-  ASSERT_TRUE(dir->Visit(list_files));
+  dir->Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // cleanup on writer startup
@@ -399,9 +397,8 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       ASSERT_FALSE(!tmp);
     }
 
-    bool exists;
-    ASSERT_TRUE(dir->Exists(exists, "dummy.file.1") && exists);
-    ASSERT_TRUE(dir->Exists(exists, "dummy.file.2") && exists);
+    ASSERT_TRUE(dir->Has("dummy.file.1"));
+    ASSERT_TRUE(dir->Has("dummy.file.2"));
 
     // open writer
     auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
@@ -409,8 +406,8 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // if directory has files (for fs directory) then ensure only valid
     // meta+segments loaded
-    ASSERT_TRUE(dir->Exists(exists, "dummy.file.1") && !exists);
-    ASSERT_TRUE(dir->Exists(exists, "dummy.file.2") && !exists);
+    ASSERT_FALSE(dir->Has("dummy.file.1"));
+    ASSERT_FALSE(dir->Has("dummy.file.2"));
     AssertNoDirectoryArtifacts(*dir);
   }
 }
@@ -2603,11 +2600,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
-  {
-    bool exists = false;
-    ASSERT_TRUE(dir.Exists(exists, "_rollback_seg.col"));
-    EXPECT_TRUE(exists);
-  }
+  EXPECT_TRUE(dir.Has("_rollback_seg.col"));
 
   // Three sequential segments.
   struct SegSpec {

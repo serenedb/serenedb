@@ -209,8 +209,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
       out->WriteU32(i);
     }
   }
-  bool exists = false;
-  ASSERT_TRUE(files.Exists(exists, "segment") && exists);
+  ASSERT_TRUE(files.Has("segment"));
 
   store.ResetRequests();
   auto in = files.Open("segment", irs::IOAdvice::NORMAL);
@@ -227,14 +226,11 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
 
   files.Rename("segment", "renamed");
   std::vector<std::string> names;
-  ASSERT_TRUE(files.Visit([&](std::string_view name) {
-    names.emplace_back(name);
-    return true;
-  }));
+  files.Visit([&](std::string_view name) { names.emplace_back(name); });
   EXPECT_EQ(std::vector<std::string>{"renamed"}, names);
   ASSERT_TRUE(files.Remove("renamed"));
-  ASSERT_SQL_ERROR(files.Open("renamed", irs::IOAdvice::NORMAL),
-                   ERRCODE_UNDEFINED_FILE);
+  ASSERT_THROW(files.Open("renamed", irs::IOAdvice::NORMAL),
+               duckdb::IOException);
 }
 
 TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
@@ -266,8 +262,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
   }
 
   store.ResetRequests();
-  bool exists = false;
-  ASSERT_TRUE(files.Exists(exists, "data") && exists);
+  ASSERT_TRUE(files.Has("data"));
   auto in = files.Open("data", irs::IOAdvice::NORMAL);
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*in, "data").data_len);
   in->Seek(399996);
@@ -304,7 +299,7 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
 
   irs::Directory restarted{db, root};
   store.ResetRequests();
-  ASSERT_TRUE(restarted.Exists(exists, "data") && exists);
+  ASSERT_TRUE(restarted.Has("data"));
   auto cold = restarted.Open("data", irs::IOAdvice::NORMAL);
   EXPECT_EQ(400000, irs::format_utils::ReadFooter(*cold, "data").data_len);
   EXPECT_EQ(2, store.Requests().head);
@@ -318,11 +313,10 @@ TEST(SimulatedObjectStoreTest, files_written_here_open_without_requests) {
 
   files.Rename("data", "renamed");
   store.ResetRequests();
-  ASSERT_TRUE(files.Exists(exists, "renamed") && exists);
+  ASSERT_TRUE(files.Has("renamed"));
   EXPECT_EQ(0, store.Requests().head);
   ASSERT_TRUE(files.Remove("renamed"));
-  ASSERT_TRUE(files.Exists(exists, "renamed"));
-  EXPECT_FALSE(exists);
+  EXPECT_FALSE(files.Has("renamed"));
 }
 
 TEST(SimulatedObjectStoreTest, injected_failures) {

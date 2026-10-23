@@ -31,7 +31,6 @@
 #include <vector>
 
 #include "iresearch/utils/pg/errcodes.hpp"
-#include "iresearch/utils/pg/file_error.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis::dict {
@@ -54,7 +53,7 @@ void LoadStopwordsFile(duckdb::FileSystem& fs, const std::string& file,
 
 }  // namespace
 
-void LoadStopwords(StringSet<std::string>& buf, std::string_view path) try {
+void LoadStopwords(StringSet<std::string>& buf, std::string_view path) {
   const std::string root{path};
   auto fs = duckdb::FileSystem::CreateLocal();
   if (fs->FileExists(root)) {
@@ -75,8 +74,6 @@ void LoadStopwords(StringSet<std::string>& buf, std::string_view path) try {
   for (const auto& file : files) {
     LoadStopwordsFile(*fs, file, buf);
   }
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 }  // namespace irs::analysis::dict

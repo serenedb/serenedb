@@ -73,7 +73,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(std::shared_ptr<catalog::StorageDirectory> parent, bool in_memory,
+  SearchTable(std::optional<catalog::StorageDirectory> parent, bool in_memory,
               bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id,
               bool is_new, const catalog::SearchTableOptions& options,
               catalog::CompressionByColumn compression);
@@ -82,7 +82,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
-    std::shared_ptr<catalog::StorageDirectory> parent, bool in_memory,
+    std::optional<catalog::StorageDirectory> parent, bool in_memory,
     bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
     catalog::CompressionByColumn compression) {
@@ -301,7 +301,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
-  std::shared_ptr<catalog::StorageDirectory> _parent;
+  std::optional<catalog::StorageDirectory> _parent;
   bool _is_new;
   bool _absent = false;
   uint64_t _segment_memory_max;

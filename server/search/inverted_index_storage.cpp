@@ -54,7 +54,7 @@
 namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
-  std::shared_ptr<catalog::StorageDirectory> parent,
+  std::optional<catalog::StorageDirectory> parent,
   duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
@@ -76,7 +76,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(_parent.get(), index_id, is_new, in_memory,
+  auto opened = OpenStorageDirectory(_parent, index_id, is_new, in_memory,
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
@@ -142,8 +142,9 @@ void InvertedIndexStorage::OpenReader() {
 }
 
 OpenedDirectory OpenStorageDirectory(
-  const catalog::StorageDirectory* parent, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources) {
+  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
+  bool is_new, bool in_memory,
+  const irs::ResourceManagementOptions& resources) {
   SDB_ASSERT(parent || in_memory);
   std::optional<std::string> path;
   if (!in_memory) {
@@ -161,7 +162,7 @@ InvertedIndexStorage::~InvertedIndexStorage() {
   _writer.reset();
   _dir.reset();
   if (_parent && _dropped.load(std::memory_order_acquire)) {
-    catalog::StorageDirectory::RemoveStorage(std::move(_parent), _index_id);
+    _parent->RemoveStorage(_index_id);
   }
 }
 
@@ -243,7 +244,7 @@ StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
 
 ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();

@@ -610,6 +610,10 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
     THROW_SQL_ERROR(ERR_CODE(e.error().errcode),
                     ERR_MSG("failed to flush index '", gstate.index_name,
                             "': ", e.message()));
+  } catch (const duckdb::Exception& e) {
+    lstate.search_trx.reset();
+    duckdb::ErrorData{e}.Throw(
+      absl::StrCat("failed to flush index '", gstate.index_name, "': "));
   } catch (const std::exception& e) {
     lstate.search_trx.reset();
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

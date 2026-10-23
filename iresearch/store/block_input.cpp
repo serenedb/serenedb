@@ -27,7 +27,6 @@
 #include <utility>
 
 #include "iresearch/utils/crc.hpp"
-#include "iresearch/utils/pg/file_error.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -82,7 +81,7 @@ void BlockInput::ReleasePin() {
   _pin.Reset();
 }
 
-bool BlockInput::PinCurrent(bool readahead) try {
+bool BlockInput::PinCurrent(bool readahead) {
   const auto position = Position();
   if (position >= _length) {
     return false;
@@ -108,8 +107,6 @@ bool BlockInput::PinCurrent(bool readahead) try {
   ReleasePin();
   _pin = std::move(pin);
   return Window(block, _pin.Ptr(), _pin.Size(), position);
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 bool BlockInput::Window(uint64_t block, const byte_type* data, uint64_t size,

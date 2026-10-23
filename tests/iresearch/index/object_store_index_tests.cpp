@@ -224,9 +224,7 @@ TEST(ObjectStoreIndexTest, cleanup_removes_files_in_one_request) {
     restarted, irs::kOmAppend, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   EXPECT_EQ(1, store.Requests().remove);
-  bool exists = true;
-  ASSERT_TRUE(restarted.Exists(exists, "segments_1"));
-  EXPECT_FALSE(exists);
+  EXPECT_FALSE(restarted.Has("segments_1"));
 }
 
 TEST(ObjectStoreIndexTest, replace_adopts_segments) {

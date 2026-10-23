@@ -55,13 +55,9 @@ class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
 // Returns true iff `dir` contains a file named `segment_name + ".col"`.
 // Used to assert that Rollback() leaves the directory clean.
 bool HasCsFile(const irs::Directory& dir, std::string_view segment_name) {
-  bool exists = false;
   std::string fn{segment_name};
   fn.append(".col");
-  if (!dir.Exists(exists, fn)) {
-    return false;
-  }
-  return exists;
+  return dir.Has(fn);
 }
 
 void AssertNormReads(const irs::NormColumnReader& col,

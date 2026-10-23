@@ -28,7 +28,6 @@
 #include <duckdb/common/query_context.hpp>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/pg/file_error.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
@@ -47,8 +46,7 @@ PendingUploads CurrentUploads() noexcept {
 IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
                                   const std::string& path,
                                   const ResourceManagementOptions& rm,
-                                  std::shared_ptr<FileInfos> infos,
-                                  std::string_view name,
+                                  FileInfos* infos, std::string_view name,
                                   duckdb::BlockCache* cache) {
   rm.file_descriptors->Increase(1);
   absl::Cleanup release = [&] noexcept { rm.file_descriptors->Decrease(1); };
@@ -59,21 +57,19 @@ IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
   absl::Cleanup untrack = [&] noexcept {
     rm.transactions->Decrease(sizeof(FileOutput));
   };
-  ptr output{
-    new FileOutput{std::move(handle), rm, std::move(infos), name, cache}};
+  ptr output{new FileOutput{std::move(handle), rm, infos, name, cache}};
   std::move(untrack).Cancel();
   std::move(release).Cancel();
   return output;
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       const ResourceManagementOptions& rm,
-                       std::shared_ptr<FileInfos> infos, std::string_view name,
-                       duckdb::BlockCache* cache)
+                       const ResourceManagementOptions& rm, FileInfos* infos,
+                       std::string_view name, duckdb::BlockCache* cache)
   : IndexOutput{_buf, std::end(_buf)},
     _rm{rm},
     _handle{std::move(handle)},
-    _infos{std::move(infos)},
+    _infos{infos},
     _name{_infos ? name : std::string_view{}} {
   SDB_ASSERT(_handle);
   if (_infos) {
@@ -109,7 +105,7 @@ void FileOutput::BeginTail() {
   }
 }
 
-uint64_t FileOutput::CloseImpl() try {
+uint64_t FileOutput::CloseImpl() {
   Flush();
   const auto size = Position();
   absl::Cleanup release = [&] noexcept {
@@ -138,8 +134,6 @@ uint64_t FileOutput::CloseImpl() try {
               .etag = _handle->file_system.GetVersionTag(*_handle)});
   }
   return size;
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 void FileOutput::WriteDirect(const byte_type* b, size_t len) {
@@ -175,7 +169,7 @@ void FileOutput::WriteDirect(const byte_type* b, size_t len) {
   }
 }
 
-void FileOutput::WriteHandle(const byte_type* b, size_t len) try {
+void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   SDB_ASSERT(_handle);
   _handle->Write(duckdb::QueryContext{}, const_cast<byte_type*>(b), len,
                  _offset);
@@ -195,8 +189,6 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) try {
     _handle->HintWriteback(_offset - _unhinted, _unhinted);
     _unhinted = 0;
   }
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 void FileOutput::CacheBytes(const byte_type* b, size_t len) noexcept try {

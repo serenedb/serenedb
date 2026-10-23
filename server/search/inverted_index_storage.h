@@ -75,14 +75,14 @@ struct InvertedIndexSnapshot {
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
 struct OpenedDirectory {
-  std::optional<irs::Directory> directory;
+  irs::Directory directory;
   bool on_disk = false;
   bool absent = false;
 };
 
 OpenedDirectory OpenStorageDirectory(
-  const catalog::StorageDirectory* parent, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources);
+  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
+  bool is_new, bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -91,7 +91,7 @@ class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage>,
     public MaintainedStore {
  public:
-  InvertedIndexStorage(std::shared_ptr<catalog::StorageDirectory> parent,
+  InvertedIndexStorage(std::optional<catalog::StorageDirectory> parent,
                        duckdb::AttachedDatabase& database,
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
@@ -114,7 +114,7 @@ class InvertedIndexStorage final
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    std::shared_ptr<catalog::StorageDirectory> parent,
+    std::optional<catalog::StorageDirectory> parent,
     duckdb::AttachedDatabase& database, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
@@ -271,7 +271,7 @@ class InvertedIndexStorage final
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   duckdb::weak_ptr<duckdb::AttachedDatabase> _database;
-  std::shared_ptr<catalog::StorageDirectory> _parent;
+  std::optional<catalog::StorageDirectory> _parent;
   bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;

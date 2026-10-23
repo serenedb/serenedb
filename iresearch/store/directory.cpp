@@ -39,7 +39,6 @@
 #include "iresearch/store/file_output.hpp"
 #include "iresearch/store/mapped_input.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/pg/file_error.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -235,7 +234,7 @@ Directory::Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                      std::string_view root, const ResourceManagementOptions& rm)
   : _state{std::make_shared<State>(db, fs, RootPath(root), KindOf(root), rm)} {
   if (_state->kind == StorageKind::Remote) {
-    _state->infos = std::make_shared<FileInfos>();
+    _state->infos.emplace();
   }
 }
 
@@ -305,7 +304,7 @@ duckdb::MemoryFileSystem& Directory::MemoryFiles() const {
   return _state->db.GetMemoryFileSystem();
 }
 
-IndexOutput::ptr Directory::Create(std::string_view name) const try {
+IndexOutput::ptr Directory::Create(std::string_view name) const {
   if (Kind() == StorageKind::Linked) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -325,9 +324,9 @@ IndexOutput::ptr Directory::Create(std::string_view name) const try {
     Cache().ForgetFile(path);
     _state->infos->Forget(name);
   }
-  auto output =
-    FileOutput::Open(_state->fs, path, _state->rm, _state->infos, name,
-                     Kind() == StorageKind::Remote ? &Cache() : nullptr);
+  auto output = FileOutput::Open(
+    _state->fs, path, _state->rm, _state->infos ? &*_state->infos : nullptr,
+    name, Kind() == StorageKind::Remote ? &Cache() : nullptr);
   if (_tracker) {
     _tracker->Add(name);
     output->SetOnClose(
@@ -340,12 +339,9 @@ IndexOutput::ptr Directory::Create(std::string_view name) const try {
   }
   std::move(forget).Cancel();
   return output;
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
-IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const
-  try {
+IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const {
   if (Kind() == StorageKind::Linked) {
     const auto* file = FindLinked(name);
     if (!file) {
@@ -364,8 +360,6 @@ IndexInput::ptr Directory::Open(std::string_view name, IOAdvice advice) const
     return OpenBlocks(path, name, advice);
   }
   return OpenMapped(path, advice);
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 IndexInput::ptr Directory::ReadWhole(const std::string& path,
@@ -451,29 +445,14 @@ IndexInput::ptr Directory::OpenBlocks(const std::string& path,
     known ? known->tail : nullptr);
 }
 
-bool Directory::Exists(bool& result, std::string_view name) const noexcept try {
+bool Directory::Has(std::string_view name) const {
   if (Kind() == StorageKind::Linked) {
-    result = FindLinked(name) != nullptr;
-    return true;
+    return FindLinked(name) != nullptr;
   }
   if (_state->infos && _state->infos->Contains(name)) {
-    result = true;
     return true;
   }
-  result = _state->fs.FileExists(Path(name));
-  return true;
-} catch (...) {
-  return false;
-}
-
-bool Directory::Has(std::string_view name) const {
-  bool exists = false;
-  if (!Exists(exists, name)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not check whether file \"", name,
-                            "\" of the index exists"));
-  }
-  return exists;
+  return _state->fs.FileExists(Path(name));
 }
 
 bool Directory::RemoveFile(std::string_view name) const noexcept try {
@@ -507,7 +486,7 @@ bool Directory::Remove(std::string_view name) const noexcept try {
   return false;
 }
 
-void Directory::Rename(std::string_view src, std::string_view dst) const try {
+void Directory::Rename(std::string_view src, std::string_view dst) const {
   if (Kind() == StorageKind::Linked) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -522,11 +501,9 @@ void Directory::Rename(std::string_view src, std::string_view dst) const try {
   if (_ref_tracker) {
     _ref_tracker->Rename(src, dst);
   }
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
-void Directory::Sync(std::span<const std::string_view> names) const try {
+void Directory::Sync(std::span<const std::string_view> names) const {
   if (Kind() != StorageKind::Local) {
     return;
   }
@@ -536,57 +513,46 @@ void Directory::Sync(std::span<const std::string_view> names) const try {
       _state->fs.OpenFile(Path(name), duckdb::FileFlags::FILE_FLAGS_READ);
     handle->Sync();
   }
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
-void Directory::SyncDirectory() const try {
+void Directory::SyncDirectory() const {
   if (Kind() != StorageKind::Local) {
     return;
   }
   duckdb::TaskScheduler::BlockingScope blocking;
   _state->fs.SyncDirectory(_state->root);
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
-void Directory::Compact(std::string_view name) const try {
+void Directory::Compact(std::string_view name) const {
   if (Kind() != StorageKind::Memory || !InBlocks()) {
     return;
   }
   MemoryFiles().Compact(Path(name));
-} catch (const duckdb::IOException& e) {
-  ThrowFileError(e);
 }
 
 IndexFileRefs::ref_t Directory::Reference(std::string_view name) const {
-  bool exists;
-  if (!Exists(exists, name) || !exists) {
+  if (!Has(name)) {
     return nullptr;
   }
   auto ref = Refs().add(name);
-  if (!Exists(exists, name) || !exists) {
+  if (!Has(name)) {
     return nullptr;
   }
   return ref;
 }
 
-size_t Directory::RemoveUnreferenced(
-  const std::function<bool(std::string_view)>& acceptor) const {
+size_t Directory::RemoveUnreferenced() const {
   size_t removed = 0;
-  IndexFileRefs::ref_t retained;
   std::vector<std::string> batch;
-  Refs().refs().visit(
+  Refs().visit(
     [&](const IndexFileRefs::ref_t& ref, size_t count) {
-      const std::string_view name = *ref;
-      if (!acceptor(name)) {
-        retained = ref;
-      } else if (count == 0) {
-        if (Kind() == StorageKind::Remote) {
-          batch.emplace_back(name);
-        } else if (RemoveFile(name)) {
-          ++removed;
-        }
+      if (count != 0) {
+        return true;
+      }
+      if (Kind() == StorageKind::Remote) {
+        batch.emplace_back(*ref);
+      } else if (RemoveFile(*ref)) {
+        ++removed;
       }
       return true;
     },
@@ -621,10 +587,7 @@ size_t Directory::RemoveFiles(std::span<const std::string> names) const noexcept
 void Directory::RemoveAllUnreferenced() const {
   duckdb::TaskScheduler::BlockingScope blocking;
   auto& refs = Refs();
-  Visit([&](std::string_view name) {
-    refs.add(name);
-    return true;
-  });
+  Visit([&](std::string_view name) { refs.add(name); });
   RemoveUnreferenced();
 }
 
@@ -653,49 +616,39 @@ void Directory::ForEach(size_t count,
   executor.WorkOnTasks();
 }
 
-bool Directory::Visit(const Visitor& visitor) const {
+void Directory::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
   if (Kind() == StorageKind::Linked) {
-    return absl::c_all_of(_state->linked, [&](const LinkedFile& file) {
-      return visitor(file.name);
-    });
-  }
-  std::vector<std::string> names;
-  try {
-    if (_state->infos) {
-      _state->fs.ListFiles(
-        _state->root,
-        [&](duckdb::OpenFileInfo& file) {
-          if (duckdb::FileSystem::IsDirectory(file) ||
-              file.path.find('/') != std::string::npos) {
-            return;
-          }
-          duckdb::idx_t size = 0;
-          if (file.extended_info &&
-              file.extended_info->TryGetOption("file_size", size)) {
-            std::string etag;
-            file.extended_info->TryGetOption("etag", etag);
-            _state->infos->Listed(file.path, size, std::move(etag));
-          }
-          names.push_back(std::move(file.path));
-        },
-        nullptr);
-    } else {
-      _state->fs.ListFiles(_state->root,
-                           [&](const std::string& name, bool is_directory) {
-                             if (!is_directory) {
-                               names.push_back(name);
-                             }
-                           });
+    for (const auto& file : _state->linked) {
+      visitor(file.name);
     }
-  } catch (const duckdb::IOException& e) {
-    ThrowFileError(e);
+    return;
   }
-  for (const auto& name : names) {
-    if (!visitor(name)) {
-      return false;
-    }
+  if (!_state->infos) {
+    _state->fs.ListFiles(_state->root,
+                         [&](const std::string& name, bool is_directory) {
+                           if (!is_directory) {
+                             visitor(name);
+                           }
+                         });
+    return;
   }
-  return true;
+  _state->fs.ListFiles(
+    _state->root,
+    [&](duckdb::OpenFileInfo& file) {
+      if (duckdb::FileSystem::IsDirectory(file) ||
+          file.path.find('/') != std::string::npos) {
+        return;
+      }
+      duckdb::idx_t size = 0;
+      if (file.extended_info &&
+          file.extended_info->TryGetOption("file_size", size)) {
+        std::string etag;
+        file.extended_info->TryGetOption("etag", etag);
+        _state->infos->Listed(file.path, size, std::move(etag));
+      }
+      visitor(file.path);
+    },
+    nullptr);
 }
 
 }  // namespace irs

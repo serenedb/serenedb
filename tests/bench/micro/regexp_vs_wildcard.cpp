@@ -309,7 +309,7 @@ constexpr int kRepetitions = 5;
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::Directory> dir;
+  irs::Directory dir;
   irs::DirectoryReader reader;
 };
 
@@ -342,13 +342,13 @@ Corpus BuildIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  auto dir = std::make_unique<irs::Directory>(*db, tmp_root.string());
+  irs::Directory dir{*db, tmp_root.string()};
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -379,7 +379,7 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = irs::DirectoryReader{*dir, irs::IndexReaderOptions{.db = db}};
+  auto rdr = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
   return Corpus{.dir_path = std::move(tmp_root),
                 .dir = std::move(dir),
                 .reader = std::move(rdr)};

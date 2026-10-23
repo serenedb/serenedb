@@ -83,6 +83,7 @@
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -224,7 +225,7 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::Directory> dir;
+  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -244,7 +245,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  index.dir = std::make_unique<irs::Directory>(*db, index.path.string());
+  index.dir.emplace(*db, index.path.string());
 
   irs::IndexWriterOptions opts;
   opts.db = db;

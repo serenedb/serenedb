@@ -152,7 +152,7 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  std::unique_ptr<irs::Directory> _dir;
+  std::optional<irs::Directory> _dir;
   std::filesystem::path _dir_path;
   irs::DirectoryReader _reader;
 
@@ -192,7 +192,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::remove_all(_dir_path);
   std::filesystem::create_directories(_dir_path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  _dir = std::make_unique<irs::Directory>(*db, _dir_path.string());
+  _dir.emplace(*db, _dir_path.string());
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;

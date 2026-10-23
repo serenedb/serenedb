@@ -113,8 +113,7 @@ class StorageDirectory final {
 
   std::string CreateStorage(duckdb::idx_t oid) const;
   std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
-  static void RemoveStorage(std::shared_ptr<StorageDirectory> directory,
-                            duckdb::idx_t oid);
+  void RemoveStorage(duckdb::idx_t oid) const;
 
  private:
   std::string MarkerPath(duckdb::idx_t oid) const;
@@ -138,7 +137,7 @@ class DatabaseDirectory final
   std::string DataFile() const;
 
   void Create() const;
-  std::shared_ptr<StorageDirectory> InTablespace(duckdb::idx_t tablespace);
+  StorageDirectory InTablespace(duckdb::idx_t tablespace);
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);

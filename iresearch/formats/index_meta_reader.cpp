@@ -57,7 +57,6 @@ bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
       out = name;
       max_gen = gen;
     }
-    return true;  // continue iteration
   });
   return index_gen_limits::valid(max_gen);
 }

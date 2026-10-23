@@ -29,7 +29,6 @@
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -66,19 +65,7 @@ struct LinkedFile {
   bytes_view bytes;
 };
 
-class IndexFileRefs final {
- public:
-  using counter_t = RefCounter<std::string>;
-  using ref_t = counter_t::ref_t;
-
-  ref_t add(std::string_view key) { return _refs.add(key); }
-  bool remove(std::string_view key) { return _refs.remove(key); }
-
-  counter_t& refs() noexcept { return _refs; }
-
- private:
-  counter_t _refs;
-};
+using IndexFileRefs = RefCounter<std::string>;
 
 using FileRefs = std::vector<IndexFileRefs::ref_t>;
 
@@ -129,9 +116,8 @@ class RefTracker {
   void Clear() const;
 
  private:
-  using Refs =
-    absl::flat_hash_set<IndexFileRefs::ref_t, IndexFileRefs::counter_t::Hash,
-                        IndexFileRefs::counter_t::EqualTo>;
+  using Refs = absl::flat_hash_set<IndexFileRefs::ref_t, IndexFileRefs::Hash,
+                                   IndexFileRefs::EqualTo>;
 
   IndexFileRefs* _refs;
   mutable absl::Mutex _mutex;
@@ -140,8 +126,6 @@ class RefTracker {
 
 class Directory {
  public:
-  using Visitor = std::function<bool(std::string_view)>;
-
   Directory(
     duckdb::DatabaseInstance& db, std::string_view root,
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault);
@@ -158,23 +142,20 @@ class Directory {
 
   IndexOutput::ptr Create(std::string_view name) const;
   IndexInput::ptr Open(std::string_view name, IOAdvice advice) const;
-  bool Exists(bool& result, std::string_view name) const noexcept;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const noexcept;
   void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
   void Compact(std::string_view name) const;
-  bool Visit(const Visitor& visitor) const;
+  void Visit(absl::FunctionRef<void(std::string_view)> visitor) const;
   void ForEach(size_t count, absl::FunctionRef<void(size_t)> visit) const;
 
   std::optional<FileInfo> Info(std::string_view name) const;
   void Remember(std::string_view name, FileInfo info) const;
 
   IndexFileRefs::ref_t Reference(std::string_view name) const;
-  size_t RemoveUnreferenced(
-    const std::function<bool(std::string_view)>& acceptor =
-      [](std::string_view) { return true; }) const;
+  size_t RemoveUnreferenced() const;
   void RemoveAllUnreferenced() const;
 
   StorageKind Kind() const noexcept { return _state->kind; }
@@ -201,7 +182,7 @@ class Directory {
     std::vector<LinkedFile> linked;
     std::unique_ptr<duckdb::MemoryFileSystem> heap;
     IndexFileRefs refs;
-    std::shared_ptr<FileInfos> infos;
+    std::optional<FileInfos> infos;
   };
 
   explicit Directory(std::shared_ptr<State> state) noexcept

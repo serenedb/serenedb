@@ -40,6 +40,7 @@
 #include <iresearch/utils/string.hpp>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -81,7 +82,7 @@ std::string TermAt(size_t i) {
 
 struct CachedIndex {
   std::filesystem::path path;
-  std::unique_ptr<irs::Directory> dir;
+  std::optional<irs::Directory> dir;
   irs::DirectoryReader reader;
   std::vector<std::string> terms;
 };
@@ -99,7 +100,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  cached.dir = std::make_unique<irs::Directory>(*db, cached.path.string());
+  cached.dir.emplace(*db, cached.path.string());
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {

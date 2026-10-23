@@ -2401,11 +2401,10 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     }
     bool has_pos = false;
     bool has_pay = false;
-    ASSERT_TRUE(dir.Visit([&](std::string_view name) {
+    dir.Visit([&](std::string_view name) {
       has_pos |= name.ends_with(".pos");
       has_pay |= name.ends_with(".pay");
-      return true;
-    }));
+    });
     EXPECT_EQ(text_tokens, has_pos);
     EXPECT_EQ(text_tokens, has_pay);
   };

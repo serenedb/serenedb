@@ -50,9 +50,8 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(name);
-    return true;
   };
-  ASSERT_TRUE(dir.Visit(list_files));
+  dir.Visit(list_files);
   ASSERT_TRUE(files.empty());
 
   // create index metadata and write it into the specified directory
@@ -71,7 +70,7 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   // check that files were successfully
   // written to directory
   files.clear();
-  ASSERT_TRUE(dir.Visit(list_files));
+  dir.Visit(list_files);
   EXPECT_EQ(1, files.size());
   EXPECT_EQ(files[0], std::string_view("pending_segments_1"));
 

@@ -44,12 +44,11 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
   // "absent column = empty index" probe afterwards via Has*(). Return
   // nullptr on a missing .col file so callers see "no exception, empty
   // result".
-  bool exists = false;
   std::string filename;
   filename.reserve(segment_name.size() + 4);
   filename.append(segment_name);
   filename.append(".col");
-  if (!dir.Exists(exists, filename) || !exists) {
+  if (!dir.Has(filename)) {
     return nullptr;
   }
   return std::make_unique<ColReader>(

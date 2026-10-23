@@ -477,10 +477,7 @@ class IndexTestCase : public tests::IndexTestBase {
       }
 
       absl::flat_hash_set<std::string> files;
-      dir().Visit([&files](std::string_view name) -> bool {
-        files.emplace(name);
-        return true;
-      });
+      dir().Visit([&files](std::string_view name) { files.emplace(name); });
 
       writer->Clear();
 
@@ -492,12 +489,11 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
         std::vector<std::string> added;
-        dir().Visit([&](std::string_view name) -> bool {
+        dir().Visit([&](std::string_view name) {
           if (!files.contains(name)) {
             added.emplace_back(name);
           }
           files.emplace(name);
-          return true;
         });
         std::erase_if(added, [&](const std::string& name) {
           return dir().Kind() == irs::StorageKind::Remote &&
@@ -517,9 +513,8 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_EQ(0, reader.docs_count());
         ASSERT_EQ(0, reader.live_docs_count());
         absl::flat_hash_set<std::string> after_commit;
-        dir().Visit([&after_commit](std::string_view name) -> bool {
+        dir().Visit([&after_commit](std::string_view name) {
           after_commit.emplace(name);
-          return true;
         });
         ASSERT_EQ(files, after_commit);
       }
@@ -538,10 +533,7 @@ class IndexTestCase : public tests::IndexTestBase {
       {
         size_t file_count = 0;
 
-        dir.Visit([&file_count](std::string_view) -> bool {
-          ++file_count;
-          return true;
-        });
+        dir.Visit([&file_count](std::string_view) { ++file_count; });
         ASSERT_EQ(0, file_count);  // empty dierctory
       }
 
@@ -550,10 +542,7 @@ class IndexTestCase : public tests::IndexTestBase {
       {
         size_t file_count = 0;
 
-        dir.Visit([&file_count](std::string_view) -> bool {
-          ++file_count;
-          return true;
-        });
+        dir.Visit([&file_count](std::string_view) { ++file_count; });
         ASSERT_EQ(1, file_count);  // +1 file for new empty index meta
       }
 
@@ -574,28 +563,19 @@ class IndexTestCase : public tests::IndexTestBase {
       AssertSnapshotEquality(*writer);
 
       size_t file_count0 = 0;
-      dir().Visit([&file_count0](std::string_view) -> bool {
-        ++file_count0;
-        return true;
-      });
+      dir().Visit([&file_count0](std::string_view) { ++file_count0; });
 
       writer->Clear();
 
       size_t file_count1 = 0;
-      dir().Visit([&file_count1](std::string_view) -> bool {
-        ++file_count1;
-        return true;
-      });
+      dir().Visit([&file_count1](std::string_view) { ++file_count1; });
       ASSERT_EQ(file_count0 + 1,
                 file_count1);  // +1 extra file for new empty index meta
 
       writer->Clear();
 
       size_t file_count2 = 0;
-      dir().Visit([&file_count2](std::string_view) -> bool {
-        ++file_count2;
-        return true;
-      });
+      dir().Visit([&file_count2](std::string_view) { ++file_count2; });
       ASSERT_EQ(file_count1, file_count2);
     }
   }
@@ -1081,10 +1061,7 @@ class IndexTestCase : public tests::IndexTestBase {
       writer->RefreshCommit();
       AssertSnapshotEquality(*writer);  // commit tx #1
       auto file_count = 0;
-      auto dir_visitor = [&file_count](std::string_view) -> bool {
-        ++file_count;
-        return true;
-      };
+      auto dir_visitor = [&file_count](std::string_view) { ++file_count; };
       // clear any unused files before taking count
       dir().RemoveAllUnreferenced();
       dir().Visit(dir_visitor);
@@ -6093,7 +6070,6 @@ TEST_P(IndexTestCase, compact_single_segment) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
 
   // single segment with deletes
@@ -6199,7 +6175,6 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
 
   // long running transaction
@@ -7013,7 +6988,6 @@ TEST_P(IndexTestCase, segment_compact_commit) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
 
   // compact without deletes
@@ -7036,7 +7010,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
       irs::index_utils::CompactionCount())));  // compact
@@ -7127,7 +7101,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -7238,7 +7212,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -7516,7 +7490,6 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
 
   // compact without deletes
@@ -7540,7 +7513,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_FALSE(
       writer
@@ -7646,7 +7619,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -7780,7 +7753,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -7950,7 +7923,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1);
@@ -8094,7 +8067,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1_doc4);
@@ -8237,7 +8210,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1);
@@ -8366,7 +8339,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(*writer);
 
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_TRUE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -8396,7 +8369,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -8453,7 +8426,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // check all data is deleted
     const auto one_segment_count = count;
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
     // files count should be the same as with one segment
     ASSERT_EQ(one_segment_count, count);
   }
@@ -8477,7 +8450,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     // segment 2
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -8539,7 +8512,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // check all data is deleted
     const auto one_segment_count = count;
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
     // files count should be the same as with one segment
     ASSERT_EQ(one_segment_count, count);
   }
@@ -8642,7 +8615,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
     tests::Remove(*writer, *query_doc1_doc4);
@@ -8808,7 +8781,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
@@ -8970,7 +8943,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // segment 2
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
@@ -8980,7 +8953,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     size_t num_files_segment_2 = count;
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
     num_files_segment_2 = count - num_files_segment_2;
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
@@ -8999,7 +8972,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // count number of files in segments
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
 
     ASSERT_TRUE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -9023,7 +8996,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     size_t num_files_compaction_segment = count;
     count = 0;
-    ASSERT_TRUE(dir().Visit(get_number_of_files_in_segments));
+    dir().Visit(get_number_of_files_in_segments);
     num_files_compaction_segment = count - num_files_compaction_segment;
 
     ASSERT_EQ(0, dir().RemoveUnreferenced());
@@ -10964,9 +10937,8 @@ TEST_P(IndexTestCase, writer_close) {
   std::vector<std::string> files;
   auto list_files = [&files](std::string_view name) {
     files.emplace_back(std::move(name));
-    return true;
   };
-  ASSERT_TRUE(directory.Visit(list_files));
+  directory.Visit(list_files);
 
   // file removal should pass for all files (especially valid for Microsoft
   // Windows)
@@ -10976,7 +10948,7 @@ TEST_P(IndexTestCase, writer_close) {
 
   // validate that all files have been removed
   files.clear();
-  ASSERT_TRUE(directory.Visit(list_files));
+  directory.Visit(list_files);
   ASSERT_TRUE(files.empty());
 }
 
@@ -11002,7 +10974,6 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
   directory.Visit(get_number_of_files_in_segments);
   const auto one_segment_files_count = count;
@@ -11063,7 +11034,6 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
   directory.Visit(get_number_of_files_in_segments);
   const auto one_segment_files_count = count;
@@ -11125,7 +11095,6 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
   auto get_number_of_files_in_segments =
     [&count](std::string_view name) noexcept {
       count += size_t(name.size() && '_' == name[0]);
-      return true;
     };
   directory.Visit(get_number_of_files_in_segments);
   ASSERT_GT(count, 0);
@@ -11214,7 +11183,6 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
     auto get_number_of_files_in_segments =
       [&count](std::string_view name) noexcept {
         count += size_t(name.size() && '_' == name[0]);
-        return true;
       };
     directory.Visit(get_number_of_files_in_segments);
     ASSERT_EQ(count, 0);
@@ -11776,10 +11744,8 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
 
   auto mask_files = [&] {
     size_t count = 0;
-    directory.Visit([&](std::string_view file) {
-      count += file.ends_with(".sm");
-      return true;
-    });
+    directory.Visit(
+      [&](std::string_view file) { count += file.ends_with(".sm"); });
     return count;
   };
 

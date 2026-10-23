@@ -133,7 +133,18 @@ def attribution_parquet(src, dest):
           f"TO '{dest}' (FORMAT parquet, COMPRESSION zstd)", dest.parent)
 
 
-def timing_snapshot(parquet, dest):
-    parquet = Path(parquet).resolve()
-    rows = shell(f"SELECT unit, p95 FROM read_parquet('{parquet}')", parquet.parent)
-    Path(dest).write_text(json.dumps({"units": {r["unit"]: r["p95"] for r in rows}}))
+def timing_snapshot(work, scales, own, dest):
+    units, priors = {}, {}
+    if scales:
+        work = Path(work).resolve()
+        files = [work / f"{name}.parquet" for name in scales]
+        rows = shell(f"SELECT unit, p95, parse_filename(filename, true) AS config "
+                     f"FROM read_parquet([{quoted(files)}], filename = true)", work)
+        for r in rows:
+            if r["config"] == own:
+                units[r["unit"]] = r["p95"]
+            else:
+                scaled = r["p95"] * scales[r["config"]]
+                priors[r["unit"]] = max(scaled, priors.get(r["unit"], 0.0))
+    priors = {unit: p95 for unit, p95 in priors.items() if unit not in units}
+    Path(dest).write_text(json.dumps({"units": units, "priors": priors}))

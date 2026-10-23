@@ -34,9 +34,8 @@ def skipped(skips, unit_id):
 
 
 def plan(ctx, unit_id, default_s):
-    known = ctx.timing.expect(unit_id)
-    floor = ctx.timeout_floor
-    if known is not None:
-        return known, max(floor, TIMEOUT_MULT * known)
-    expected = default_s * ctx.config.slowdown
-    return expected, max(floor, UNKNOWN_MULT * expected)
+    expected = ctx.timing.expect(unit_id)
+    if expected is None:
+        expected = default_s * ctx.config.slowdown
+    mult = TIMEOUT_MULT if ctx.timing.measured(unit_id) else UNKNOWN_MULT
+    return expected, max(ctx.timeout_floor, mult * expected)

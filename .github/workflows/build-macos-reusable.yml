@@ -63,7 +63,7 @@ jobs:
       - name: Install toolchain
         run: |
           set -euo pipefail
-          brew install bison bash ninja ccache pkg-config cmake zstd
+          brew install bison flex bash ninja ccache pkg-config cmake zstd
           dir="$RUNNER_TOOL_CACHE/llvm-$LLVM_VERSION"
           if [[ ! -x "$dir/bin/clang++" ]]; then
             mkdir -p "$dir"
@@ -79,6 +79,7 @@ jobs:
           # keg-only formulae + Homebrew bash 5 (run.sh re-execs to it)
           echo "$LLVM_DIR/bin"               >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/flex/bin"  >> "$GITHUB_PATH"
           echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
 
       # Cache rotates every run (unique key) and restores the newest prior match,

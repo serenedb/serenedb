@@ -1,6 +1,4 @@
 #!/bin/bash
-# Prints the scripts/ci/test.py selection for a PR from classify-changes.sh's
-# outputs (IRESEARCH, RE2, DUCKDB_SUITES) or EVERYTHING=true.
 
 set -euo pipefail
 

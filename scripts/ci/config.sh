@@ -1,5 +1,4 @@
 #!/bin/bash
-# Sourced by the CI job scripts: the build settings of one CI config.
 
 sdb_config() {
 	CONFIG="$1"

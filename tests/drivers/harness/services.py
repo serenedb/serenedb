@@ -208,6 +208,9 @@ class ServiceSet:
     def _start_iceberg_data(self):
         subprocess.run([str(REPO / "scripts" / "ensure_iceberg_fixture.sh")], check=True)
 
+    def _start_biglake(self):
+        self.env.update(biglake_env())
+
     def _start_minio(self):
         access, secret, bucket = "minioadmin", "minioadmin", "testbucket"
         name = self._run("minio", MINIO_IMAGE, "server", "/data", "--console-address", ":9001",
@@ -470,6 +473,7 @@ def main(argv):
     up.add_argument("--log-dir")
     up.add_argument("names", nargs="*")
     needs = sub.add_parser("needs", help="print the services the given tests need")
+    needs.add_argument("--biglake", action="store_true", help="iceberg tests use BigLake")
     needs.add_argument("tests", nargs="*")
     down = sub.add_parser("down", help="stop the services in a state file")
     down.add_argument("--state", required=True)
@@ -479,6 +483,8 @@ def main(argv):
         try:
             for t in args.tests:
                 for n in services_for_test(t):
+                    if args.biglake and n == "iceberg":
+                        n = "biglake"
                     if n not in names:
                         names.append(n)
         except ValueError as e:

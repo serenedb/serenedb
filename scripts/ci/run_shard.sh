@@ -1,9 +1,4 @@
 #!/bin/bash
-# Runs one shard of a CI config's tests from its stored bundle, in a container
-# of the build image with its own network namespace: services that need fixed
-# ports join it, the others publish on the docker bridge.
-#
-#   scripts/ci/run_shard.sh <config> <digest or build dir> <shard I/N> <timing.json> [test.py args...]
 
 set -uo pipefail
 

@@ -91,6 +91,47 @@ Result<Api> MakeWindowOfTerms(std::span<const PostingClause> terms,
   });
 }
 
+template<typename Api, typename Term>
+Result<Api> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
+                                         const TermReader* field,
+                                         const IndexInput& doc,
+                                         const Context<Api>& ctx) {
+  SDB_ASSERT(terms.size() > 1);
+  return ResolveInput(doc, [&]<typename Input> -> Result<Api> {
+    using Leaf = PostingFill<Input>;
+    using Optional = OrGroup<fill::SetLeaves<Leaf>>;
+    return Api::template MakeWindow<utils::Empty, utils::Empty, Optional,
+                                    utils::Empty>(
+      ctx, std::forward_as_tuple(), std::forward_as_tuple(),
+      std::forward_as_tuple(terms.size(),
+                            [&](Leaf& leaf, size_t i) {
+                              const auto& own = FieldOf(terms[i], field);
+                              const auto& meta = CookieOf(terms[i]);
+                              SDB_ASSERT(meta.docs_count != 0);
+                              leaf.Prepare(
+                                meta, doc, LayoutOf(own),
+                                meta.docs_count != 1 && BoundsOf(own),
+                                meta.docs_count != 1 && FreqOf(own));
+                            }),
+      std::forward_as_tuple());
+  });
+}
+
+template<typename Api, typename Term>
+Result<Api> MakeDisjunctionOfTerms(std::span<const Term> terms,
+                                   const TermReader* field,
+                                   const IndexInput& doc, doc_id_t docs_count,
+                                   const Context<Api>& ctx) {
+  SDB_ASSERT(terms.size() > 1);
+  if (Api::BitsetSpan(ctx, docs_count) >= docs_count) {
+    if (auto folded = MakeBitsetOf<Result<Api>>(terms, field, doc, docs_count,
+                                                Api::BitsetTable(ctx))) {
+      return folded;
+    }
+  }
+  return MakeWindowDisjunctionOfTerms<Api>(terms, field, doc, ctx);
+}
+
 template<typename Api>
 Result<Api> MakeWindowOfNodes(std::span<const PostingClause> terms,
                               std::span<const QueryBuilder::ptr> filters,

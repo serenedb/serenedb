@@ -28,6 +28,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
@@ -84,9 +85,9 @@ Node::ptr Make(const MultiTermQuery& query) {
              ? MakeSinglePostingDocs(posting)
              : MakePostingDocs(posting, segment);
   }
-  return MakeDisjunctionOfTermsDocs(
+  return detail::builder::MakeDisjunctionOfTerms<Api>(
     terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(segment.docs_count()));
+    static_cast<doc_id_t>(segment.docs_count()), {});
 }
 
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,

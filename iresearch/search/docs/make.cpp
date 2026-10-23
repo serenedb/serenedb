@@ -23,6 +23,7 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/docs/empty.hpp"
@@ -47,7 +48,7 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
     return MakePosting(detail::ClauseOf(terms.front(), field), query.Segment(),
                        ctx);
   }
-  return MakeDisjunctionOfTerms(
+  return detail::builder::MakeDisjunctionOfTerms<Api>(
     terms, field, *detail::DocOf(*field),
     static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
 }

@@ -26,6 +26,7 @@
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
@@ -54,7 +55,7 @@ Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
       return subtracted;
     }
   }
-  return MakeDisjunctionOfTerms(
+  return detail::builder::MakeDisjunctionOfTerms<Api>(
     terms, field, *detail::DocOf(*field),
     static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
 }

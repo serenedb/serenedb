@@ -27,6 +27,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/approx_of.hpp"
+#include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
@@ -71,9 +72,9 @@ Node::ptr Make(const MultiTermQuery& query) {
     return MakePostingDocs(detail::ClauseOf(terms.front(), field),
                            query.Segment());
   }
-  return MakeDisjunctionOfTermsDocs<MultiTermState::Entry>(
+  return detail::builder::MakeDisjunctionOfTerms<Api>(
     terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()));
+    static_cast<doc_id_t>(query.Segment().docs_count()), {});
 }
 
 Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx) {

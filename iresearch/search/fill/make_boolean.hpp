@@ -180,46 +180,6 @@ struct ScoredApi {
 };
 
 template<typename Term>
-Node::ptr MakeWindowDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                           const TermReader* field,
-                                           const IndexInput& doc) {
-  SDB_ASSERT(terms.size() > 1);
-  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-    using Leaf = detail::PostingFill<Input>;
-    using Optional = detail::OrGroup<SetLeaves<Leaf>>;
-    using Node =
-      BooleanWindow<utils::Empty, utils::Empty, Optional, utils::Empty>;
-    return memory::make_managed<Impl<Node>>(
-      std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(),
-      std::forward_as_tuple(
-        terms.size(),
-        [&](Leaf& leaf, size_t i) {
-          const auto& own = detail::FieldOf(terms[i], field);
-          const auto& meta = detail::CookieOf(terms[i]);
-          SDB_ASSERT(meta.docs_count != 0);
-          leaf.Prepare(meta, doc, detail::LayoutOf(own),
-                       meta.docs_count != 1 && detail::BoundsOf(own),
-                       meta.docs_count != 1 && detail::FreqOf(own));
-        }),
-      std::forward_as_tuple());
-  });
-}
-
-template<typename Term>
-Node::ptr MakeDisjunctionOfTermsDocs(std::span<const Term> terms,
-                                     const TermReader* field,
-                                     const IndexInput& doc,
-                                     doc_id_t docs_count) {
-  SDB_ASSERT(terms.size() > 1);
-  if (detail::TakeBitset<Node::ptr>(terms, doc, docs_count)) {
-    return detail::MakeBitsetOf<Node::ptr>(terms, field, doc, docs_count,
-                                           nullptr);
-  }
-  return MakeWindowDisjunctionOfTermsDocs(terms, field, doc);
-}
-
-template<typename Term>
 Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,

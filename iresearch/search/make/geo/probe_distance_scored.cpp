@@ -18,17 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cstdint>
-
 #include "iresearch/search/detail/geo_instantiate.hpp"
-#include "iresearch/search/probe/make_geo_impl.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/probe/family.hpp"
 
-namespace irs::probe {
+namespace irs::detail {
 
-#define IRS_GEO_CASE(Parser, ...)                               \
-  template Node::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, \
-                          const detail::ScoredCtx&, uint64_t);
-IRS_GEO_DISTANCE_ACCEPTORS(IRS_GEO_CASE)
-#undef IRS_GEO_CASE
+IRS_GEO_DISTANCE_ACCEPTORS(IRS_MAKE_GEO_SCORED, probe::Family)
 
-}  // namespace irs::probe
+}  // namespace irs::detail

@@ -21,7 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
 
@@ -48,7 +48,7 @@ Root::ptr Make(const NGramSimilarityQuery& query);
 template<detail::PhraseMatch M, typename Query>
 Root::ptr MakePhrase(const Query& query);
 
+template<detail::NGramMatch M>
 Root::ptr MakeNGram(const NGramSimilarityQuery& query);
-Root::ptr MakeNGramAll(const NGramSimilarityQuery& query);
 
 }  // namespace irs::offsets

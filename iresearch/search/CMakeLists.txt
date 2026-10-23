@@ -280,16 +280,16 @@ target_sources(
         make/geo/top_distance.cpp
         make/geo/top_intersects.cpp
         make/geo/top_is_contained.cpp
+        make/ngram/offsets_all.cpp
+        make/ngram/offsets_threshold.cpp
+        make/phrase/offsets_fixed.cpp
+        make/phrase/offsets_fixed_intervals.cpp
+        make/phrase/offsets_fixed_slop.cpp
+        make/phrase/offsets_variadic.cpp
+        make/phrase/offsets_variadic_intervals.cpp
+        make/phrase/offsets_variadic_slop.cpp
         offsets/make.cpp
-        offsets/make_fixed_phrase.cpp
-        offsets/make_fixed_phrase_intervals.cpp
-        offsets/make_fixed_phrase_slop.cpp
-        offsets/make_ngram.cpp
-        offsets/make_ngram_all.cpp
         offsets/make_posting.cpp
-        offsets/make_variadic_phrase.cpp
-        offsets/make_variadic_phrase_intervals.cpp
-        offsets/make_variadic_phrase_slop.cpp
         probe/make_ivf.cpp
         queries/hnsw_query.cpp
         queries/vector_similarity_query.cpp

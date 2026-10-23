@@ -18,14 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/count/make_geo_impl.hpp"
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/detail/geo_instantiate.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
 
-namespace irs::count {
+namespace irs::detail {
 
-#define IRS_GEO_CASE(Parser, ...) \
-  template Root::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, const Context&);
-IRS_GEO_DISTANCE_ACCEPTORS(IRS_GEO_CASE)
-#undef IRS_GEO_CASE
+IRS_GEO_DISTANCE_ACCEPTORS(IRS_MAKE_GEO_DOCS, count::Family)
 
-}  // namespace irs::count
+}  // namespace irs::detail

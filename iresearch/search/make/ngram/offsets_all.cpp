@@ -18,19 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/offsets/make_impl.hpp"
 
-#include "iresearch/search/detail/geo_of.hpp"
-#include "iresearch/search/detail/make_impl.hpp"
-#include "iresearch/search/hits/family.hpp"
-#include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/queries/geo_query.hpp"
+namespace irs::offsets {
 
-namespace irs::hits {
+IRS_OFFSETS_NGRAM(All);
 
-template<typename Parser, typename Acceptor>
-Root::ptr Make(const GeoQuery<Parser, Acceptor>& query, const Context& ctx) {
-  return irs::detail::MakeScored<Family, irs::detail::GeoKind>(query, ctx);
-}
-
-}  // namespace irs::hits
+}  // namespace irs::offsets

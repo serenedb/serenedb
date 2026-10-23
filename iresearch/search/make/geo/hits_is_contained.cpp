@@ -19,13 +19,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/geo_instantiate.hpp"
-#include "iresearch/search/hits/make_geo_impl.hpp"
+#include "iresearch/search/detail/geo_of.hpp"
+#include "iresearch/search/detail/make_impl.hpp"
+#include "iresearch/search/hits/family.hpp"
 
-namespace irs::hits {
+namespace irs::detail {
 
-#define IRS_GEO_CASE(Parser, ...) \
-  template Root::ptr Make(const GeoQuery<Parser, __VA_ARGS__>&, const Context&);
-IRS_GEO_PARSERS(IRS_GEO_CASE, GeoIsContainedAcceptor)
-#undef IRS_GEO_CASE
+IRS_GEO_PARSERS(IRS_MAKE_GEO_SCORED, hits::Family, GeoIsContainedAcceptor)
 
-}  // namespace irs::hits
+}  // namespace irs::detail

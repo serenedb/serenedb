@@ -21,7 +21,7 @@
 #include "iresearch/search/offsets/make.hpp"
 
 #include "iresearch/formats/term_reader.hpp"
-#include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 
@@ -43,7 +43,8 @@ Root::ptr Make(const VariadicPhraseQuery& query) {
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query) {
-  return query.Every() ? MakeNGramAll(query) : MakeNGram(query);
+  return detail::ResolveNGram(
+    query, [&]<detail::NGramMatch M> { return MakeNGram<M>(query); });
 }
 
 }  // namespace irs::offsets

@@ -452,3 +452,95 @@ pg_class	tinker_edges.tinker_edges_base_b	2	a
 
 statement ok
 DROP SCHEMA tinker_edges CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_paths
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TYPE tinker_paths.mood AS ENUM ('calm', 'storm')
+
+
+statement ok
+CREATE TABLE tinker_paths.blink (id INT, m tinker_paths.mood)
+
+
+statement ok
+CREATE TABLE tinker_paths.blink_log (id INT)
+
+
+statement ok
+CREATE INDEX tinker_paths_blink_id ON tinker_paths.blink (id)
+
+
+statement ok
+CREATE TRIGGER tinker_paths_blink_trg AFTER INSERT ON tinker_paths.blink FOR EACH STATEMENT INSERT INTO tinker_paths.blink_log VALUES (0)
+
+
+query
+SELECT relhasindex, relhastriggers FROM pg_class WHERE oid = 'tinker_paths.blink'::regclass
+----
+relhasindex	relhastriggers
+t	t
+
+
+query
+SELECT relhasindex, relhastriggers FROM (SELECT * FROM pg_class LIMIT 100000000) WHERE oid = 'tinker_paths.blink'::regclass
+----
+relhasindex	relhastriggers
+t	t
+
+
+query
+SELECT objid::regclass::text AS obj, refobjid::regtype::text AS ref, deptype FROM pg_depend WHERE classid = 'pg_class'::regclass AND objid = 'tinker_paths.blink'::regclass AND refclassid = 'pg_type'::regclass ORDER BY 1, 2
+----
+obj	ref	deptype
+tinker_paths.blink	tinker_paths.mood	n
+
+
+query
+SELECT objid::regclass::text AS obj, refobjid::regtype::text AS ref, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE classid = 'pg_class'::regclass AND objid = 'tinker_paths.blink'::regclass AND refclassid = 'pg_type'::regclass ORDER BY 1, 2
+----
+obj	ref	deptype
+tinker_paths.blink	tinker_paths.mood	n
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT relhasindex, relhastriggers FROM pg_class WHERE oid = 'tinker_paths.blink'::regclass
+----
+relhasindex	relhastriggers
+t	t
+
+
+query
+SELECT relhasindex, relhastriggers FROM (SELECT * FROM pg_class LIMIT 100000000) WHERE oid = 'tinker_paths.blink'::regclass
+----
+relhasindex	relhastriggers
+t	t
+
+
+query
+SELECT objid::regclass::text AS obj, refobjid::regtype::text AS ref, deptype FROM pg_depend WHERE classid = 'pg_class'::regclass AND objid = 'tinker_paths.blink'::regclass AND refclassid = 'pg_type'::regclass ORDER BY 1, 2
+----
+obj	ref	deptype
+tinker_paths.blink	tinker_paths.mood	n
+
+
+query
+SELECT objid::regclass::text AS obj, refobjid::regtype::text AS ref, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE classid = 'pg_class'::regclass AND objid = 'tinker_paths.blink'::regclass AND refclassid = 'pg_type'::regclass ORDER BY 1, 2
+----
+obj	ref	deptype
+tinker_paths.blink	tinker_paths.mood	n
+
+
+statement ok
+DROP SCHEMA tinker_paths CASCADE

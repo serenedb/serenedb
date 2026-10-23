@@ -706,9 +706,14 @@ class SystemScan {
     _walked = snapshot;
   }
 
+  const catalog::CatalogSnapshot* Walked(
+    const duckdb::CatalogEntry& entry) const noexcept {
+    return _walked && _walked->set == entry.set.get() ? _walked : nullptr;
+  }
+
   template<typename F>
   void ScanSubjects(duckdb::CatalogEntry& entry, F&& visit) const {
-    if (!_walked) {
+    if (!Walked(entry)) {
       Dependencies().ScanEdges(Transaction(), entry, true, visit);
       return;
     }

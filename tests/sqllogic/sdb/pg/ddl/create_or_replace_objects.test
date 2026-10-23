@@ -2586,6 +2586,25 @@ CREATE OR REPLACE TEXT SEARCH DICTIONARY coro_unused_dict AS keyword();
 db error: ERROR: syntax error at or near "TEXT"
 
 
+# Neither is there one for a database, a role or a foreign server.
+statement error
+CREATE OR REPLACE DATABASE coro_db;
+----
+db error: ERROR: syntax error at or near "DATABASE"
+
+
+statement error
+CREATE OR REPLACE ROLE coro_role;
+----
+db error: ERROR: syntax error at or near "ROLE"
+
+
+statement error
+CREATE OR REPLACE SERVER coro_srv FOREIGN DATA WRAPPER postgres;
+----
+db error: ERROR: syntax error at or near "SERVER"
+
+
 query
 SELECT id FROM coro_inv_idx WHERE body @@ ts_phrase('alpha');
 ----

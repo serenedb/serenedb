@@ -48,6 +48,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -1273,8 +1274,12 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
       record.expression_text = label;
       // Frozen here in the same normalized form a query will produce, so the
       // match later needs nothing but the entry.
-      record.normalized_expression = connector::NormalizedIndexKey(
-        *exprs[i], relation.oid, column_ids, context);
+      connector::NormalizeIndexKey(*exprs[i], relation.oid, column_ids, context,
+                                   record);
+      SDB_IF_FAILURE("inverted_index_key_without_root_signature") {
+        record.root_chain.clear();
+        record.columns.clear();
+      }
       auto [it, fresh] =
         expression_fields.try_emplace(record.normalized_expression, 0);
       if (fresh) {

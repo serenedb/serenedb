@@ -355,8 +355,8 @@ IndexTokenizers::Bound IndexTokenizers::AcquireAll(
 InvertedIndexConfig::InvertedIndexConfig(
   std::vector<InvertedIndexKey> index_keys, InvertedIndexFields index_fields)
   : keys{std::move(index_keys)}, fields{std::move(index_fields)} {
-  const auto stored = [&](uint32_t key) {
-    return FindEntry(keys[key].field_id)->IsStored();
+  const auto stored = [&](const InvertedIndexKey& key) {
+    return FindEntry(key.field_id)->IsStored();
   };
   for (uint32_t i = 0; i < keys.size(); ++i) {
     const auto& key = keys[i];
@@ -367,10 +367,11 @@ InvertedIndexConfig::InvertedIndexConfig(
     if (key.normalized_expression.empty()) {
       continue;
     }
-    auto& slots =
+    _expression_key_types.set(std::to_underlying(key.type.id()));
+    auto& expression =
       _expressions.try_emplace(key.normalized_expression).first->second;
-    if (slots.first == kNoKey) {
-      slots.first = i;
+    if (!expression.first) {
+      expression.first = &key;
     }
     const auto* entry = FindEntry(key.field_id);
     if (!entry) {
@@ -378,14 +379,18 @@ InvertedIndexConfig::InvertedIndexConfig(
     }
     if (entry->IsStored()) {
       _stores_expressions = true;
-      if (slots.stored == kNoKey) {
-        slots.stored = i;
+      if (!expression.stored) {
+        expression.stored = &key;
       }
     }
     if (entry->IsTermDict() &&
-        (slots.term == kNoKey || (entry->IsStored() && !stored(slots.term)))) {
-      slots.term = i;
+        (!expression.term ||
+         (entry->IsStored() && !stored(*expression.term)))) {
+      expression.term = &key;
     }
+  }
+  for (const auto& [_, expression] : _expressions) {
+    IndexRootSignature(expression);
   }
   for (const auto& [owner, field] : fields) {
     for (const auto id : {field.numeric_field_id, field.bool_field_id,
@@ -397,22 +402,39 @@ InvertedIndexConfig::InvertedIndexConfig(
   }
 }
 
-InvertedIndexConfig::ExpressionSlots InvertedIndexConfig::SlotsOf(
-  std::string_view normalized) const noexcept {
-  const auto it = _expressions.find(normalized);
-  return it == _expressions.end() ? ExpressionSlots{} : it->second;
+void InvertedIndexConfig::IndexRootSignature(const ExpressionKeys& expression) {
+  const auto& record = *expression.first;
+  if (record.root_chain.empty() || (!expression.term && !expression.stored)) {
+    return;
+  }
+  auto signature = RootSignatureSeed(record.type.id());
+  for (const auto& level : record.root_chain) {
+    signature = RootSignatureStep(signature, level.expression_class,
+                                  level.expression_type, level.function);
+  }
+  _expressions_by_root_signature[signature].push_back(expression);
+}
+
+std::span<const ExpressionKeys>
+InvertedIndexConfig::ExpressionsWithRootSignature(
+  uint64_t signature) const noexcept {
+  const auto it = _expressions_by_root_signature.find(signature);
+  if (it == _expressions_by_root_signature.end()) {
+    return {};
+  }
+  return {it->second.data(), it->second.size()};
 }
 
 irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
   std::string_view normalized) const noexcept {
-  const auto* key = KeyAt(SlotsOf(normalized).first);
+  const auto* key = FindExpressionKeys(normalized).first;
   return key ? key->field_id : irs::field_limits::invalid();
 }
 
 ExpressionKeys InvertedIndexConfig::FindExpressionKeys(
   std::string_view normalized) const noexcept {
-  const auto slots = SlotsOf(normalized);
-  return {.term = KeyAt(slots.term), .stored = KeyAt(slots.stored)};
+  const auto it = _expressions.find(normalized);
+  return it == _expressions.end() ? ExpressionKeys{} : it->second;
 }
 
 const InvertedIndexKey* InvertedIndexConfig::FindKey(

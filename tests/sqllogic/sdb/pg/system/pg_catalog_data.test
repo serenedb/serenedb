@@ -324,7 +324,7 @@ t
 
 # Should have pg_default and pg_global
 query
-SELECT spcname FROM pg_catalog.pg_tablespace ORDER BY spcname
+SELECT spcname FROM pg_catalog.pg_tablespace WHERE oid < 16384 ORDER BY spcname
 ----
 spcname
 pg_default
@@ -332,7 +332,7 @@ pg_global
 
 
 query
-SELECT count(*) FROM pg_catalog.pg_tablespace
+SELECT count(*) FROM pg_catalog.pg_tablespace WHERE oid < 16384
 ----
 count
 2

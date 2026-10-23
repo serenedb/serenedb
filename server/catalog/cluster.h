@@ -116,10 +116,15 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
   bool HoldsTablespaceObjects(duckdb::idx_t tablespace);
 
+  struct KnownRoot {
+    std::weak_ptr<TablespaceRoot> root;
+    std::weak_ptr<const std::string> path;
+  };
+
   absl::Mutex _tablespace_creation_mutex;
   absl::Mutex _tablespaces_mutex;
-  absl::flat_hash_map<duckdb::idx_t, std::weak_ptr<TablespaceRoot>>
-    _tablespace_roots ABSL_GUARDED_BY(_tablespaces_mutex);
+  absl::flat_hash_map<duckdb::idx_t, KnownRoot> _tablespace_roots
+    ABSL_GUARDED_BY(_tablespaces_mutex);
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
@@ -31,6 +32,7 @@
 #include <duckdb/common/path.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -146,6 +148,30 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
   return found;
 }
 
+uint64_t StorageBytes(const std::string& directory, StorageScope scope) {
+  auto& fs = StorageFileSystem();
+  uint64_t bytes = 0;
+  fs.ListFiles(directory, [&](duckdb::OpenFileInfo& info) {
+    const bool is_directory = duckdb::FileSystem::IsDirectory(info);
+    const bool nested = is_directory || absl::StrContains(info.path, '/');
+    if (scope != StorageScope::All &&
+        nested != (scope == StorageScope::Directories)) {
+      return;
+    }
+    if (is_directory) {
+      bytes +=
+        StorageBytes(fs.JoinPath(directory, info.path), StorageScope::All);
+      return;
+    }
+    duckdb::idx_t size = 0;
+    if (info.extended_info &&
+        info.extended_info->TryGetOption("file_size", size)) {
+      bytes += size;
+    }
+  });
+  return bytes;
+}
+
 void RemoveUnowned(std::span<const StorageEntry> entries,
                    const absl::flat_hash_set<duckdb::idx_t>& owned) {
   for (const auto& entry : entries) {
@@ -161,35 +187,39 @@ void RemoveUnowned(std::span<const StorageEntry> entries,
 }
 
 TablespaceRoot::TablespaceRoot(std::string path)
-  : _path{std::move(path)}, _remote{IsRemote(_path)} {}
+  : _path{std::make_shared<const std::string>(std::move(path))},
+    _remote{IsRemote(*_path)} {}
 
 TablespaceRoot::~TablespaceRoot() {
-  if (!_removed.load(std::memory_order_acquire)) {
+  if (!Removed()) {
     return;
   }
-  RunRemoval([path = std::move(_path)] { RemoveTree(path); });
+  RunRemoval([path = std::move(_path)] {
+    SDB_PARK_ONCE_ON_FAILURE("pause_tablespace_removal");
+    RemoveTree(*path);
+  });
 }
 
 void TablespaceRoot::Claim() {
   const auto in_use = [&] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("directory \"", _path, "\" already in use as a tablespace"));
+      ERR_MSG("directory \"", Path(), "\" already in use as a tablespace"));
   };
   if (!_remote) {
-    const std::filesystem::path path{_path};
+    const std::filesystem::path path{Path()};
     StorageFileSystem().CreateDirectoriesRecursive(path.parent_path().string());
     if (!CreateDirectory(path)) {
       in_use();
     }
-  } else if (!CreateMarker(absl::StrCat(_path, "/", kTablespaceMarker))) {
+  } else if (!CreateMarker(absl::StrCat(Path(), "/", kTablespaceMarker))) {
     in_use();
   }
   _claimed.store(true, std::memory_order_release);
 }
 
 std::string TablespaceRoot::DatabaseDir(duckdb::idx_t oid) const {
-  return absl::StrCat(_path, "/", oid);
+  return absl::StrCat(Path(), "/", oid);
 }
 
 std::shared_ptr<void> TablespaceRoot::Pin() {

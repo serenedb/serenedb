@@ -171,6 +171,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
       indexes.emplace_back(&entry, host_id);
     });
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> relation_owners;
+  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> search_tablespaces;
   // The tables in set order, for the synthetic key-index rows below, and the
   // sequences that feed a synthetic primary key -- serenedb's own machinery,
   // which postgres has no relation for.
@@ -210,6 +211,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
           if (const auto* search =
                 dynamic_cast<const catalog::SearchTableEntry*>(table)) {
             row.reltablespace = search->Tablespace();
+            search_tablespaces.emplace(table->oid, search->Tablespace());
             if (const auto pk_sequence = search->GeneratedPkSequence(context)) {
               generated_pk_sequences.insert(pk_sequence->oid);
             }
@@ -268,7 +270,10 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&*entry)) {
       row.relam = pg::kPgAmInverted;
-      row.reltablespace = inverted->Tablespace();
+      const auto search = search_tablespaces.find(host_id);
+      row.reltablespace = search == search_tablespaces.end()
+                            ? inverted->Tablespace()
+                            : search->second;
       auto& strings = reloptions_storage.emplace_back();
       auto& views = reloptions_views.emplace_back();
       for (const auto name : catalog::kInvertedIndexSettings) {

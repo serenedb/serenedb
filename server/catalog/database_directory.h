@@ -58,6 +58,14 @@ struct StorageEntry {
 
 std::vector<StorageEntry> ListStorages(const std::string& root);
 
+enum class StorageScope : uint8_t {
+  All,
+  Files,
+  Directories,
+};
+
+uint64_t StorageBytes(const std::string& directory, StorageScope scope);
+
 void RemoveUnowned(std::span<const StorageEntry> entries,
                    const absl::flat_hash_set<duckdb::idx_t>& owned);
 
@@ -67,13 +75,17 @@ class TablespaceRoot final
   explicit TablespaceRoot(std::string path);
   ~TablespaceRoot();
 
-  const std::string& Path() const noexcept { return _path; }
+  const std::string& Path() const noexcept { return *_path; }
+  std::weak_ptr<const std::string> HeldPath() const noexcept { return _path; }
   bool Remote() const noexcept { return _remote; }
   std::string DatabaseDir(duckdb::idx_t oid) const;
 
   void Claim();
   [[nodiscard]] std::shared_ptr<void> Pin();
   [[nodiscard]] bool BeginDrop(const std::shared_ptr<void>& drop);
+  bool Removed() const noexcept {
+    return _removed.load(std::memory_order_acquire);
+  }
   void MarkRemoved() noexcept {
     _removed.store(true, std::memory_order_release);
   }
@@ -91,7 +103,7 @@ class TablespaceRoot final
   std::weak_ptr<void> _drop ABSL_GUARDED_BY(_mutex);
   std::atomic_bool _claimed{false};
   std::atomic_bool _removed{false};
-  std::string _path;
+  std::shared_ptr<const std::string> _path;
   bool _remote;
 };
 

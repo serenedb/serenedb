@@ -1,0 +1,268 @@
+control substitution on
+
+# Several tablespaces through crashes: names, owners, grants, locations and
+# the objects placed in each come back, a dropped tablespace stays dropped,
+# and a crash before a drop commits keeps the tablespace whole.
+
+statement ok
+CREATE TABLESPACE fast LOCATION '${__TEST_DIR__}/many/fast';
+
+statement ok
+CREATE TABLESPACE slow LOCATION '${__TEST_DIR__}/many/slow';
+
+statement ok
+CREATE TABLESPACE spare LOCATION '${__TEST_DIR__}/many/spare/';
+
+statement ok
+CREATE TABLESPACE doomed LOCATION '${__TEST_DIR__}/many/doomed';
+
+statement ok
+CREATE ROLE keeper;
+
+statement ok
+CREATE ROLE writer;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE hot (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search') TABLESPACE fast;
+
+statement ok
+CREATE TABLE cold (id INT, body TEXT) WITH (storage = 'search') TABLESPACE slow;
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+statement ok
+CREATE INDEX notes_fast ON notes USING inverted(body words) TABLESPACE fast;
+
+statement ok
+CREATE INDEX notes_slow ON notes USING inverted(body words) TABLESPACE slow;
+
+statement ok
+INSERT INTO hot SELECT i, 'hot fox ' || i FROM range(1, 21) t(i);
+
+statement ok
+INSERT INTO cold SELECT i, 'cold whale ' || i FROM range(1, 31) t(i);
+
+statement ok
+INSERT INTO notes SELECT i, CASE WHEN i % 2 = 0 THEN 'even fox' ELSE 'odd whale' END FROM range(1, 41) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hot;
+
+statement ok
+VACUUM (REFRESH_TABLE) cold;
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+ALTER TABLESPACE slow RENAME TO archive;
+
+statement ok
+ALTER TABLESPACE spare OWNER TO keeper;
+
+statement ok
+GRANT CREATE ON TABLESPACE fast TO writer;
+
+statement ok
+CREATE DATABASE placed TABLESPACE archive;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname, pg_get_userbyid(spcowner) AS owner,
+       replace(pg_tablespace_location(oid), '${__TEST_DIR__}', '<dir>') AS location,
+       coalesce(array_to_string(spcacl, ','), '') AS acl
+FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname;
+----
+spcname	owner	location	acl
+archive	postgres	<dir>/many/slow	(empty)
+doomed	postgres	<dir>/many/doomed	(empty)
+fast	postgres	<dir>/many/fast	postgres=C/postgres,writer=C/postgres
+spare	keeper	<dir>/many/spare	(empty)
+
+connection after_crash
+query
+SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+ORDER BY c.relname;
+----
+relname	spcname
+cold	archive
+hot	fast
+notes_fast	fast
+notes_slow	archive
+
+connection after_crash
+query
+SELECT d.datname, t.spcname FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname = 'placed';
+----
+datname	spcname
+placed	archive
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM hot) AS hot_rows, (SELECT count(*) FROM cold) AS cold_rows,
+       (SELECT count(*) FROM notes_fast WHERE body @@ ts_phrase('fox')) AS fast_foxes,
+       (SELECT count(*) FROM notes_slow WHERE body @@ ts_phrase('whale')) AS slow_whales;
+----
+hot_rows	cold_rows	fast_foxes	slow_whales
+20	30	20	20
+
+connection after_crash
+query
+SELECT has_tablespace_privilege('writer', 'fast', 'CREATE') AS writer_on_fast,
+       has_tablespace_privilege('writer', 'archive', 'CREATE') AS writer_on_archive;
+----
+writer_on_fast	writer_on_archive
+t	f
+
+connection after_crash
+statement ok
+INSERT INTO hot VALUES (100, 'hot fox after the crash');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) hot;
+
+connection after_crash
+query
+SELECT id FROM hot WHERE body = 'hot fox after the crash';
+----
+id
+100
+
+connection after_crash
+statement ok
+DROP DATABASE placed;
+
+connection after_crash
+statement ok
+DROP INDEX notes_slow;
+
+connection after_crash
+statement ok
+DROP TABLE cold;
+
+connection after_crash
+statement ok
+DROP TABLESPACE archive;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_crash
+statement error connection closed
+DROP TABLESPACE doomed;
+
+
+connection after_failed_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname FROM pg_tablespace WHERE spcname IN ('archive', 'doomed') ORDER BY spcname;
+----
+spcname
+doomed
+
+connection after_failed_drop
+query ok retry 40 backoff 250ms
+SELECT count(*) AS archive_files FROM glob('${__TEST_DIR__}/many/slow/**');
+----
+archive_files
+0
+
+connection after_failed_drop
+statement ok
+CREATE TABLE in_doomed (id INT, body TEXT) WITH (storage = 'search') TABLESPACE doomed;
+
+connection after_failed_drop
+statement ok
+INSERT INTO in_doomed VALUES (1, 'still usable');
+
+connection after_failed_drop
+statement ok
+VACUUM (REFRESH_TABLE) in_doomed;
+
+connection after_failed_drop
+query
+SELECT body FROM in_doomed;
+----
+body
+still usable
+
+connection after_failed_drop
+statement ok
+DROP TABLE in_doomed;
+
+connection after_failed_drop
+statement ok
+DROP TABLESPACE doomed;
+
+connection after_failed_drop
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_failed_drop
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname;
+----
+spcname
+fast
+spare
+
+connection after_second_crash
+query
+SELECT (SELECT count(*) FROM hot) AS hot_rows, (SELECT count(*) FROM notes_fast WHERE body @@ ts_phrase('fox')) AS fast_foxes;
+----
+hot_rows	fast_foxes
+21	20
+
+connection after_second_crash
+statement ok
+DROP INDEX notes_fast;
+
+connection after_second_crash
+statement ok
+DROP TABLE notes;
+
+connection after_second_crash
+statement ok
+DROP TABLE hot;
+
+connection after_second_crash
+statement ok
+REVOKE CREATE ON TABLESPACE fast FROM writer;
+
+connection after_second_crash
+statement ok
+DROP TABLESPACE fast;
+
+connection after_second_crash
+statement ok
+DROP TABLESPACE spare;
+
+connection after_second_crash
+statement ok
+DROP ROLE writer;
+
+connection after_second_crash
+statement ok
+DROP ROLE keeper;
+
+connection after_second_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY words;

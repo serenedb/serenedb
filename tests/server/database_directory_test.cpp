@@ -71,6 +71,18 @@ class DatabaseDirectoryTest : public ::testing::Test {
     return true;
   }
 
+  static bool Released(const std::weak_ptr<const std::string>& held) {
+    const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{30};
+    while (!held.expired()) {
+      if (std::chrono::steady_clock::now() > deadline) {
+        return false;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    return true;
+  }
+
   static bool ObjectGone(const std::string& path) {
     const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds{30};
@@ -215,6 +227,7 @@ TEST_F(DatabaseDirectoryTest, AFailedClaimLeavesTheClaimedDirectory) {
 TEST_F(DatabaseDirectoryTest, ADroppedTablespaceGoesAfterItsLastStorage) {
   auto root = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
   root->Claim();
+  const auto held = root->HeldPath();
   auto directory =
     std::make_shared<DatabaseDirectory>(5, root, _root / "default" / "5");
   auto area = directory->Area(0);
@@ -223,8 +236,19 @@ TEST_F(DatabaseDirectoryTest, ADroppedTablespaceGoesAfterItsLastStorage) {
   root.reset();
   directory.reset();
   EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1" / "5"));
+  EXPECT_FALSE(held.expired());
   area.reset();
-  EXPECT_TRUE(Gone(_root / "ts" / "engine_v1"));
+  EXPECT_TRUE(Released(held));
+  EXPECT_FALSE(std::filesystem::exists(_root / "ts" / "engine_v1"));
+}
+
+TEST_F(DatabaseDirectoryTest, AKeptTablespaceReleasesItsPathWithItsRoot) {
+  auto root = std::make_shared<TablespaceRoot>(Path("ts/engine_v1"));
+  root->Claim();
+  const auto held = root->HeldPath();
+  root.reset();
+  EXPECT_TRUE(held.expired());
+  EXPECT_TRUE(std::filesystem::is_directory(_root / "ts" / "engine_v1"));
 }
 
 TEST_F(DatabaseDirectoryTest, ADropWaitsForNoCreationAndBlocksNewOnes) {

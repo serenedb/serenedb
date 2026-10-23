@@ -49,6 +49,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -70,6 +71,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/database_directory.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tablespace.h"
 #include "connector/duckdb_client_state.h"
@@ -800,6 +802,59 @@ void PgTablespaceLocationFunction(duckdb::DataChunk& args,
       }
       return duckdb::StringVector::AddString(
         result, entry->Cast<catalog::TablespaceCatalogEntry>().Location());
+    });
+}
+
+int64_t TablespaceBytes(duckdb::ClientContext& context,
+                        const duckdb::CatalogEntry& tablespace) {
+  duckdb::TaskScheduler::BlockingScope blocking;
+  if (tablespace.oid != pg::kPgDefaultTablespace &&
+      tablespace.oid != pg::kPgGlobalTablespace) {
+    return static_cast<int64_t>(catalog::StorageBytes(
+      tablespace.Cast<catalog::TablespaceCatalogEntry>().Root()->Path(),
+      catalog::StorageScope::All));
+  }
+  const auto data_directory = catalog::ClusterOf(context)
+                                .TablespaceRootOf(pg::kPgDefaultTablespace)
+                                ->Path();
+  return static_cast<int64_t>(catalog::StorageBytes(
+    data_directory, tablespace.oid == pg::kPgGlobalTablespace
+                      ? catalog::StorageScope::Files
+                      : catalog::StorageScope::Directories));
+}
+
+// pg_tablespace_size(name) -> bigint
+void PgTablespaceSizeNameFunction(duckdb::DataChunk& args,
+                                  duckdb::ExpressionState& state,
+                                  duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
+      const std::string_view name{input.GetData(), input.GetSize()};
+      const auto entry =
+        FindClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+      if (!entry) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("tablespace \"", name, "\" does not exist"));
+      }
+      return TablespaceBytes(context, *entry);
+    });
+}
+
+// pg_tablespace_size(oid) -> bigint
+void PgTablespaceSizeOidFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState& state,
+                                 duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) -> duckdb::optional<int64_t> {
+      const auto entry = FindClusterEntryById(
+        context, duckdb::CatalogType::TABLESPACE_ENTRY, pg::OidFromSql(oid));
+      if (!entry) {
+        return duckdb::nullopt;
+      }
+      return TablespaceBytes(context, *entry);
     });
 }
 
@@ -2372,6 +2427,14 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                          {pg::OID()},
                                          duckdb::LogicalType::VARCHAR,
                                          PgTablespaceLocationFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_tablespace_size",
+                                           {duckdb::LogicalType::VARCHAR},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgTablespaceSizeNameFunction});
+  register_volatile(duckdb::ScalarFunction{"pg_tablespace_size",
+                                           {pg::OID()},
+                                           duckdb::LogicalType::BIGINT,
+                                           PgTablespaceSizeOidFunction});
 
   // pg_schema_size(text) and pg_schema_size(oid) -- non-standard helper.
   register_volatile(duckdb::ScalarFunction{"pg_schema_size",

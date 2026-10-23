@@ -1,0 +1,100 @@
+control substitution on
+
+# What pg_catalog reports about a tablespace: its row, its size and the query
+# psql runs for \db+.
+
+statement ok
+CREATE TABLESPACE cat_ts_${__DATABASE__} LOCATION '${__TEST_DIR__}/cat/ts';
+
+query
+SELECT spcname = 'cat_ts_${__DATABASE__}' AS named, spcowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS owned,
+       spcacl IS NULL AS no_acl, spcoptions IS NULL AS no_options
+FROM pg_tablespace WHERE spcname = 'cat_ts_${__DATABASE__}';
+----
+named	owned	no_acl	no_options
+t	t	t	t
+
+query
+SELECT pg_tablespace_size('cat_ts_${__DATABASE__}') AS by_name,
+       pg_tablespace_size((SELECT oid FROM pg_tablespace WHERE spcname = 'cat_ts_${__DATABASE__}')) AS by_oid;
+----
+by_name	by_oid
+0	0
+
+query
+SELECT pg_tablespace_size('pg_default') > 0 AS default_holds_databases,
+       pg_tablespace_size('pg_global') > 0 AS global_holds_the_catalog,
+       pg_tablespace_size(1663) > 0 AS default_by_oid,
+       pg_tablespace_size(1664) > 0 AS global_by_oid;
+----
+default_holds_databases	global_holds_the_catalog	default_by_oid	global_by_oid
+t	t	t	t
+
+query
+SELECT pg_tablespace_size(0::oid) IS NULL AS missing_oid;
+----
+missing_oid
+t
+
+statement error
+SELECT pg_tablespace_size('missing_${__DATABASE__}');
+----
+db error: ERROR: tablespace "<slt:ignore>" does not exist
+
+
+statement ok
+CREATE TABLE cat_docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE cat_ts_${__DATABASE__};
+
+statement ok
+INSERT INTO cat_docs SELECT i, repeat('tablespace size ', 20) || i FROM range(1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cat_docs;
+
+query
+SELECT pg_tablespace_size('cat_ts_${__DATABASE__}') > 0 AS grew;
+----
+grew
+t
+
+query
+SELECT "Name" = 'cat_ts_${__DATABASE__}' AS name, "Owner" = current_user AS owner,
+       "Location" = '${__TEST_DIR__}/cat/ts' AS location, "Access privileges" IS NULL AS no_privileges,
+       "Options" IS NULL AS no_options, "Size" LIKE '% kB' OR "Size" LIKE '% KiB' AS sized, "Description" IS NULL AS no_description
+FROM (
+  SELECT spcname AS "Name",
+    pg_catalog.pg_get_userbyid(spcowner) AS "Owner",
+    pg_catalog.pg_tablespace_location(oid) AS "Location",
+    pg_catalog.array_to_string(spcacl, E'\n') AS "Access privileges",
+    spcoptions AS "Options",
+    pg_catalog.pg_size_pretty(pg_catalog.pg_tablespace_size(oid)) AS "Size",
+    pg_catalog.shobj_description(oid, 'pg_tablespace') AS "Description"
+  FROM pg_catalog.pg_tablespace
+  ORDER BY 1
+) WHERE "Name" = 'cat_ts_${__DATABASE__}';
+----
+name	owner	location	no_privileges	no_options	sized	no_description
+t	t	t	t	t	t	t
+
+query
+SELECT tablename, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM pg_tables WHERE tablename = 'cat_docs';
+----
+tablename	tablespace
+cat_docs	cat_ts
+
+statement ok
+DROP TABLE cat_docs;
+
+query ok retry 40 backoff 250ms
+SELECT pg_tablespace_size('cat_ts_${__DATABASE__}') AS after_drop;
+----
+after_drop
+0
+
+statement ok
+DROP TABLESPACE cat_ts_${__DATABASE__};
+
+statement error
+SELECT pg_tablespace_size('cat_ts_${__DATABASE__}');
+----
+db error: ERROR: tablespace "<slt:ignore>" does not exist

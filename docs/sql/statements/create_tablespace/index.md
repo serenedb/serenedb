@@ -70,6 +70,8 @@ The built-in tablespaces are always there:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_006" />
 
+`pg_tablespace_size(name)` or `pg_tablespace_size(oid)` returns the bytes of a tablespace's files, which psql's `\db+` shows: for `pg_default` the databases' files in the data directory, for `pg_global` the catalog the cluster shares. On an object store each call costs a listing of the location.
+
 ## Placing objects
 
 `TABLESPACE name` places a new object in a tablespace:
@@ -95,7 +97,7 @@ Create a database in a tablespace:
 
 A database created in a tablespace on an object store keeps its database file and write-ahead log in the data directory, and its search tables and indexes in the tablespace.
 
-`pg_class.reltablespace` is the tablespace of a search table or an inverted index, `0` for the tablespace of its database; `pg_database.dattablespace` is the tablespace of a database. An object stays in its tablespace for its whole life: moving it to another tablespace is not supported.
+`pg_class.reltablespace` is the tablespace of a search table or an inverted index, `0` for the tablespace of its database, and an inverted index on a search table, stored with the table, shows the table's; `pg_database.dattablespace` is the tablespace of a database. An object stays in its tablespace for its whole life: moving it to another tablespace is not supported.
 
 ## Privileges
 
@@ -122,7 +124,7 @@ Renaming a tablespace or changing its owner needs ownership of it. The objects i
 DROP TABLESPACE [ IF EXISTS ] name
 ```
 
-Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it. Dropping it removes `engine_v1` at its location; the location itself stays. `DROP TABLESPACE` cannot run inside a transaction block, and a tablespace that another session is placing an object in at that moment is not dropped.
+Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block, and a tablespace that another session is placing an object in at that moment is not dropped.
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_010" />
 

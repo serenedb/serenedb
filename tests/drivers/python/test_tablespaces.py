@@ -46,10 +46,10 @@ class _Server:
                  f"--listen=postgres://127.0.0.1:{self.port}"],
                 stdout=out, stderr=subprocess.STDOUT)
 
-    def connect(self) -> psycopg.Connection:
+    def connect(self, dbname: str = "postgres",
+                user: str = "postgres") -> psycopg.Connection:
         return psycopg.connect(host="127.0.0.1", port=self.port,
-                               user="postgres", dbname="postgres",
-                               autocommit=True)
+                               user=user, dbname=dbname, autocommit=True)
 
     def wait_ready(self, timeout: float = 60.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -163,6 +163,127 @@ def test_moved_data_directory_keeps_its_indexes(
         assert _matches(again) == [1]
     finally:
         again.stop()
+
+
+def _oids(conn: psycopg.Connection, names: list[str]) -> dict[str, int]:
+    return dict(conn.execute(
+        "SELECT relname, oid FROM pg_class WHERE relname = ANY(%s::text[])",
+        (names,)).fetchall())
+
+
+def _placement(conn: psycopg.Connection, names: list[str]) -> dict[str, str]:
+    return dict(conn.execute(
+        "SELECT c.relname, coalesce(t.spcname, '') FROM pg_class c "
+        "LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace "
+        "WHERE c.relname = ANY(%s::text[])", (names,)).fetchall())
+
+
+def test_a_database_in_a_tablespace_keeps_its_objects_there(
+        tmp_path: Path) -> None:
+    datadir = tmp_path / "data"
+    home = tmp_path / "home"
+    other = tmp_path / "other"
+    names = ["docs", "notes_home", "notes_other", "in_default"]
+
+    server = _Server(datadir)
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(f"CREATE TABLESPACE home LOCATION '{home}'")
+            conn.execute(f"CREATE TABLESPACE other LOCATION '{other}'")
+            conn.execute("CREATE DATABASE placed TABLESPACE home")
+            database = conn.execute(
+                "SELECT oid FROM pg_database WHERE datname = 'placed'"
+            ).fetchone()[0]
+        with server.connect("placed") as conn:
+            conn.execute("CREATE TEXT SEARCH DICTIONARY words AS "
+                         "split_text(case := 'lower')")
+            conn.execute("CREATE TABLE docs (id INT, body TEXT) "
+                         "WITH (storage = 'search')")
+            conn.execute("CREATE TABLE notes (id INT, body TEXT)")
+            conn.execute("CREATE INDEX notes_home ON notes "
+                         "USING inverted(body words)")
+            conn.execute("CREATE INDEX notes_other ON notes "
+                         "USING inverted(body words) TABLESPACE other")
+            conn.execute("CREATE TABLE in_default (id INT) "
+                         "WITH (storage = 'search') TABLESPACE pg_default")
+            conn.execute("INSERT INTO docs VALUES (1, 'quick brown fox'), "
+                         "(2, 'lazy dog')")
+            conn.execute("INSERT INTO notes VALUES (1, 'red fox'), "
+                         "(2, 'blue whale')")
+            conn.execute("VACUUM (REFRESH_TABLE) docs")
+            conn.execute("VACUUM (REFRESH_TABLE) notes")
+            assert _placement(conn, names) == {
+                "docs": "", "notes_home": "", "notes_other": "other",
+                "in_default": "pg_default"}
+            oids = _oids(conn, names)
+    finally:
+        server.stop()
+
+    in_home = home / "engine_v1" / str(database)
+    assert (in_home / "data.db").is_file()
+    assert (in_home / str(oids["docs"])).is_dir()
+    assert (in_home / str(oids["notes_home"])).is_dir()
+    assert (other / "engine_v1" / str(database)
+            / str(oids["notes_other"])).is_dir()
+    assert (datadir / "engine_v1" / str(database)
+            / str(oids["in_default"])).is_dir()
+
+    again = _Server(datadir)
+    try:
+        assert again.wait_ready(), again.output()
+        with again.connect("placed") as conn:
+            assert conn.execute(
+                "SELECT id FROM docs WHERE body = 'lazy dog'").fetchall() == [(2,)]
+            assert conn.execute(
+                "SELECT id FROM notes_home WHERE body @@ 'fox' ORDER BY id"
+            ).fetchall() == [(1,)]
+            assert conn.execute(
+                "SELECT id FROM notes_other WHERE body @@ 'whale' ORDER BY id"
+            ).fetchall() == [(2,)]
+        with again.connect() as conn:
+            with pytest.raises(psycopg.Error, match="is not empty"):
+                conn.execute("DROP TABLESPACE home")
+            conn.execute("DROP DATABASE placed")
+            conn.execute("DROP TABLESPACE home")
+            conn.execute("DROP TABLESPACE other")
+    finally:
+        again.stop()
+    assert not (home / "engine_v1").exists()
+    assert not (other / "engine_v1").exists()
+    assert not (datadir / "engine_v1" / str(database)).exists()
+
+
+def test_the_tablespace_of_its_database_needs_no_grant(tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data")
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(f"CREATE TABLESPACE home LOCATION '{tmp_path / 'home'}'")
+            conn.execute(
+                f"CREATE TABLESPACE other LOCATION '{tmp_path / 'other'}'")
+            conn.execute("CREATE ROLE app LOGIN PASSWORD 'app_pw'")
+            conn.execute("CREATE DATABASE appdb TABLESPACE home")
+        with server.connect("appdb") as conn:
+            conn.execute("GRANT ALL ON SCHEMA public TO app")
+        with psycopg.connect(host="127.0.0.1", port=server.port, user="app",
+                             password="app_pw", dbname="appdb",
+                             autocommit=True) as conn:
+            conn.execute("CREATE TABLE implicit (id INT) "
+                         "WITH (storage = 'search')")
+            conn.execute("CREATE TABLE explicit (id INT) "
+                         "WITH (storage = 'search') TABLESPACE home")
+            for tablespace in ("other", "pg_default"):
+                with pytest.raises(psycopg.errors.InsufficientPrivilege,
+                                   match=f"permission denied for tablespace "
+                                         f"{tablespace}"):
+                    conn.execute("CREATE TABLE elsewhere (id INT) "
+                                 "WITH (storage = 'search') "
+                                 f"TABLESPACE {tablespace}")
+            assert _placement(conn, ["implicit", "explicit"]) == {
+                "implicit": "", "explicit": ""}
+    finally:
+        server.stop()
 
 
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",

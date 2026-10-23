@@ -161,7 +161,8 @@ void ClusterCatalog::Initialize(bool load_builtin) {
     ClusterLayout(GetAttached()).EngineDir().string());
   {
     absl::MutexLock lock{&_tablespaces_mutex};
-    _tablespace_roots[pg::kPgDefaultTablespace] = root;
+    _tablespace_roots[pg::kPgDefaultTablespace] = {.root = root,
+                                                   .path = root->HeldPath()};
   }
   GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
     .SetDefaultGenerator(
@@ -180,7 +181,7 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
     absl::MutexLock lock{&_tablespaces_mutex};
     if (const auto it = _tablespace_roots.find(info.oid);
         info.oid != 0 && it != _tablespace_roots.end()) {
-      root = it->second.lock();
+      root = it->second.root.lock();
     }
   }
   if (!root) {
@@ -188,7 +189,7 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
   }
   auto entry = duckdb::make_uniq<TablespaceCatalogEntry>(*this, info, root);
   absl::MutexLock lock{&_tablespaces_mutex};
-  _tablespace_roots[entry->oid] = root;
+  _tablespace_roots[entry->oid] = {.root = root, .path = root->HeldPath()};
   return entry;
 }
 
@@ -198,7 +199,7 @@ std::shared_ptr<TablespaceRoot> ClusterCatalog::TablespaceRootOf(
     absl::MutexLock lock{&_tablespaces_mutex};
     if (const auto it = _tablespace_roots.find(oid);
         it != _tablespace_roots.end()) {
-      if (auto root = it->second.lock()) {
+      if (auto root = it->second.root.lock()) {
         return root;
       }
     }
@@ -231,15 +232,29 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
   const auto root = EngineDirOf(info.location);
   absl::MutexLock creating{&_tablespace_creation_mutex};
   duckdb::idx_t overlapping = 0;
+  bool dropped = false;
   {
     absl::MutexLock lock{&_tablespaces_mutex};
+    absl::erase_if(_tablespace_roots, [](const auto& known) {
+      return known.second.path.expired();
+    });
     for (const auto& [oid, known] : _tablespace_roots) {
-      const auto existing = known.lock();
-      if (existing &&
-          (Nested(existing->Path(), root) || Nested(root, existing->Path()))) {
+      const auto path = known.path.lock();
+      if (path && (Nested(*path, root) || Nested(root, *path))) {
+        const auto existing = known.root.lock();
         overlapping = oid;
+        dropped = !existing || existing->Removed();
       }
     }
+  }
+  if (dropped) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("tablespace location \"", info.location,
+              "\" overlaps a dropped tablespace that still holds it"),
+      ERR_HINT("A dropped tablespace releases its location once the "
+               "transactions that began before the drop have ended and its "
+               "files are removed."));
   }
   if (overlapping != 0) {
     std::string other = "another tablespace";
@@ -298,6 +313,7 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
       connection->HoldUntilEnd(std::move(drop));
     }
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_tablespace_drop");
   duckdb::DuckCatalog::DropTablespace(transaction, info);
 }
 

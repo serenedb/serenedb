@@ -1,0 +1,218 @@
+control substitution on
+
+# A tablespace that another transaction is placing an object in is not
+# dropped, nothing is placed in a tablespace while it is being dropped, and a
+# dropped tablespace keeps its location until the transactions that began
+# before the drop end and its files are removed.
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLESPACE contested LOCATION '${__TEST_DIR__}/contested';
+
+
+statement ok
+CREATE TABLESPACE leaving LOCATION '${__TEST_DIR__}/leaving';
+
+
+statement ok
+SET sdb_faults = 'pause_after_catalog_decision';
+
+
+connection placer
+statement async ok
+CREATE TABLE placed (id INT, body TEXT) WITH (storage = 'search') TABLESPACE contested;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CREATE TABLE placed%';
+----
+n
+1
+
+
+connection default
+statement error
+DROP TABLESPACE contested;
+----
+db error: ERROR: tablespace "contested" is being used by another transaction
+
+
+connection default
+statement ok
+SET sdb_faults = '-pause_after_catalog_decision';
+
+
+connection placer
+wait
+
+
+connection default
+query
+SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname = 'placed';
+----
+relname	spcname
+placed	contested
+
+
+connection default
+statement error
+DROP TABLESPACE contested;
+----
+db error: ERROR: tablespace "contested" is not empty
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_drop';
+
+
+connection dropper
+statement async ok
+DROP TABLESPACE leaving;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_tablespace_drop:parked';
+
+
+connection default
+statement error
+CREATE TABLE late (id INT) WITH (storage = 'search') TABLESPACE leaving;
+----
+db error: ERROR: tablespace "leaving" is being dropped
+
+
+connection default
+statement error
+CREATE DATABASE late_db TABLESPACE leaving;
+----
+db error: ERROR: tablespace "leaving" is being dropped
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_drop:release';
+
+
+connection dropper
+wait
+
+
+connection default
+query
+SELECT count(*) AS left FROM pg_tablespace WHERE spcname = 'leaving';
+----
+left
+0
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/leaving/**');
+----
+files_left
+0
+
+
+connection default
+statement ok
+DROP TABLE placed;
+
+
+connection default
+statement ok
+DROP TABLESPACE contested;
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS tablespaces FROM pg_tablespace WHERE oid < 16384;
+----
+tablespaces
+2
+
+
+connection default
+statement ok
+CREATE TABLESPACE held LOCATION '${__TEST_DIR__}/held';
+
+
+connection default
+statement ok
+DROP TABLESPACE held;
+
+
+connection default
+statement error
+CREATE TABLESPACE held_again LOCATION '${__TEST_DIR__}/held';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps a dropped tablespace that still holds it
+HINT: A dropped tablespace releases its location once the transactions that began before the drop have ended and its files are removed.
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+CREATE TABLESPACE held_again LOCATION '${__TEST_DIR__}/held';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_removal';
+
+
+connection default
+statement ok
+DROP TABLESPACE held_again;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_tablespace_removal:parked';
+
+
+connection default
+statement error
+CREATE TABLESPACE held_once_more LOCATION '${__TEST_DIR__}/held';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps a dropped tablespace that still holds it
+HINT: A dropped tablespace releases its location once the transactions that began before the drop have ended and its files are removed.
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_tablespace_removal:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+CREATE TABLESPACE held_once_more LOCATION '${__TEST_DIR__}/held';
+
+
+connection default
+query
+SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/held' AS reused
+FROM pg_tablespace WHERE spcname = 'held_once_more';
+----
+reused
+t
+
+
+connection default
+statement ok
+DROP TABLESPACE held_once_more;

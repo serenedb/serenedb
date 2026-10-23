@@ -963,10 +963,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
-  auto ann_info =
-    found->bind_data->relation.inverted_config->GetColumnOptions(call_field_id)
-      .ann_info;
-  if (!ann_info || ann_info->metric != info.metric) {
+  const auto* ann_info = found->bind_data->relation.inverted_config->FindAnn(
+    call_field_id, info.metric);
+  if (!ann_info) {
     return nullptr;
   }
 

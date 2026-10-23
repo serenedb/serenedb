@@ -134,6 +134,7 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
@@ -217,6 +218,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;

@@ -1,0 +1,111 @@
+# A vector index stored by a release that keyed it by the column id is read
+# back after a restart, and replacing it with another quantization reads the
+# new index from every segment, before and after a compaction.
+
+control substitution on
+
+statement ok
+CREATE MACRO la_vec(i) AS
+  list_transform(range(16),
+                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+
+statement ok
+CREATE TABLE la_ref (id INTEGER PRIMARY KEY, emb FLOAT[16]);
+
+statement ok
+INSERT INTO la_ref SELECT i, la_vec(i) FROM range(2000) t(i);
+
+statement ok
+CREATE TABLE la (id INTEGER PRIMARY KEY, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+SET sdb_faults = 'legacy_ann_field_id';
+
+statement ok
+CREATE INDEX la_idx ON la
+  USING inverted(id, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+SET sdb_faults = '-legacy_ann_field_id';
+
+statement ok
+INSERT INTO la SELECT * FROM la_ref WHERE id < 1000;
+
+statement ok
+VACUUM (REFRESH_TABLE) la;
+
+statement ok
+INSERT INTO la SELECT * FROM la_ref WHERE id >= 1000;
+
+statement ok
+VACUUM (REFRESH_TABLE) la;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after_restart
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+connection after_restart
+statement ok
+SET sdb_ann_oversample = 8;
+
+connection after_restart
+query
+SELECT count(*) FROM (
+  (SELECT id FROM la ORDER BY emb <-> la_vec(1234.5) LIMIT 10)
+  EXCEPT (SELECT id FROM la_ref ORDER BY emb <-> la_vec(1234.5) LIMIT 10)) t;
+----
+count
+0
+
+connection after_restart
+statement ok
+CREATE OR REPLACE INDEX la_idx ON la
+  USING inverted(id, emb ivf (metric = 'l2', quant = 'pq', pq_m = 8));
+
+connection after_restart
+query
+SELECT count(*) FROM (
+  (SELECT id FROM la ORDER BY emb <-> la_vec(1234.5) LIMIT 10)
+  EXCEPT (SELECT id FROM la_ref ORDER BY emb <-> la_vec(1234.5) LIMIT 10)) t;
+----
+count
+0
+
+connection after_restart
+statement ok
+VACUUM (COMPACT_TABLE) la;
+
+connection after_restart
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('la') WHERE column_name = 'id';
+----
+segments
+1
+
+connection after_restart
+query
+SELECT count(*) FROM (
+  (SELECT id FROM la ORDER BY emb <-> la_vec(777.5) LIMIT 10)
+  EXCEPT (SELECT id FROM la_ref ORDER BY emb <-> la_vec(777.5) LIMIT 10)) t;
+----
+count
+0
+
+connection after_restart
+query
+SELECT count(*) AS n FROM la WHERE emb IS NOT NULL;
+----
+n
+2000

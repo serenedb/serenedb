@@ -131,7 +131,7 @@ inline bool PrepareVectorState(
   }
 
   state.reader = postings;
-  state.vector_column = segment.Column(opts.centroids_id);
+  state.vector_column = segment.Column(opts.column_id);
   state.col_reader = segment.GetColReader();
   state.quant = opts.quant;
   state.d = d;

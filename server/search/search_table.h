@@ -83,7 +83,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
               bool in_memory, bool read_only, duckdb::idx_t db_id,
               duckdb::idx_t table_id, bool is_new,
               const catalog::SearchTableOptions& options,
-              catalog::CompressionByColumn compression);
+              const duckdb::ColumnList& columns);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -92,14 +92,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
     bool read_only, duckdb::idx_t db_id, duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
-    catalog::CompressionByColumn compression) {
+    const duckdb::ColumnList& columns) {
     return std::make_shared<SearchTable>(std::move(directory), in_memory,
                                          read_only, db_id, table_id, is_new,
-                                         options, std::move(compression));
+                                         options, columns);
   }
-
-  static catalog::CompressionByColumn DeclaredCompression(
-    const duckdb::ColumnList& columns);
 
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
@@ -319,6 +316,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
+  irs::containers::FlatHashSet<irs::field_id> _table_columns;
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;

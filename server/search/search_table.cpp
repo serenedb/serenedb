@@ -62,8 +62,9 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
 
-catalog::CompressionByColumn SearchTable::DeclaredCompression(
+catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
@@ -73,6 +74,17 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
   }
   return compression;
 }
+
+irs::containers::FlatHashSet<irs::field_id> TableColumns(
+  const duckdb::ColumnList& columns) {
+  irs::containers::FlatHashSet<irs::field_id> ids;
+  for (const auto& column : columns.Logical()) {
+    ids.insert(connector::TableColumnId(column));
+  }
+  return ids;
+}
+
+}  // namespace
 
 struct SearchTable::ReplaySession {
   struct PendingAdopt {
@@ -89,14 +101,15 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
-                         catalog::CompressionByColumn compression)
+                         const duckdb::ColumnList& columns)
   : _db_id{db_id},
     _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
-    _compression{std::move(compression)},
+    _compression{DeclaredCompression(columns)},
+    _table_columns{TableColumns(columns)},
     _durability{db_id, absl::StrCat("search table ", table_id)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
@@ -308,6 +321,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
+  merged->table_columns = _table_columns;
   for (const auto& weak : _retired) {
     const auto retired = weak.lock();
     if (!retired) {
@@ -315,7 +329,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
     }
     const auto& config = *retired->config;
     const auto retain = [&](irs::field_id id) {
-      if (irs::field_limits::valid(id) && config.KeepsField(id)) {
+      if (irs::field_limits::valid(id)) {
         merged->retained_fields.insert(id);
       }
     };
@@ -327,6 +341,10 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       retain(field.numeric_field_id);
       retain(field.bool_field_id);
       retain(field.null_field_id);
+      retain(field.synthetic_column);
+      if (const auto& ann = field.column_options.ann_info) {
+        merged->retained_anns.push_back(*ann);
+      }
     }
   }
   return merged;

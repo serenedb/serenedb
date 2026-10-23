@@ -78,7 +78,7 @@ An inverted index can be built over a base table or a view (including a view ove
 
 ## Replacing an index
 
-`CREATE OR REPLACE INDEX` rebuilds an inverted index under its name, for example to give a column another dictionary or to add `INCLUDE` columns. The new index indexes every row of the table or view; other connections keep querying the old index until the replacing transaction commits. See [`CREATE OR REPLACE INDEX`](./index.md#create-or-replace-index).
+`CREATE OR REPLACE INDEX` rebuilds an inverted index under its name, for example to give a column another dictionary, to give a vector column another quantization, or to add `INCLUDE` columns. The new index indexes every row of the table or view; other connections keep querying the old index until the replacing transaction commits. See [`CREATE OR REPLACE INDEX`](./index.md#create-or-replace-index).
 
 Switch a column from verbatim matching to a lowercasing dictionary:
 

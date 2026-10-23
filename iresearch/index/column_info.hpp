@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <functional>
@@ -165,8 +167,17 @@ struct AnnInfo {
   uint32_t m = 0;
   uint32_t ef_construction = 0;
 
+  field_id column_id = field_limits::invalid();
+
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
+
+// Compatibility: indexes stored before `column_id` existed keep their vectors
+// in the column with their own id.
+inline field_id AnnVectorColumn(const AnnInfo& info) noexcept {
+  return field_limits::valid(info.column_id) ? info.column_id
+                                             : info.centroids_id;
+}
 
 struct ColumnOptions {
   bool skip_validity = false;
@@ -192,6 +203,14 @@ class IndexFieldOptions {
   virtual field_id GetNormColumnId(field_id id) const = 0;
 
   virtual bool KeepsField(field_id) const noexcept { return true; }
+  virtual bool KeepsColumn(field_id) const noexcept { return true; }
+
+  virtual void ForEachAnn(field_id column,
+                          absl::FunctionRef<void(const AnnInfo&)> visit) const {
+    if (const auto opts = GetColumnOptions(column); opts.ann_info) {
+      visit(*opts.ann_info);
+    }
+  }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --

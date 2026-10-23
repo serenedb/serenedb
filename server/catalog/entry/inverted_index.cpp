@@ -290,14 +290,38 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
 }
 
 bool InvertedIndexConfig::KeepsField(irs::field_id id) const noexcept {
-  if (id == connector::term_dict::kPKFieldId || retained_fields.contains(id)) {
-    return true;
+  return id == connector::term_dict::kPKFieldId ||
+         retained_fields.contains(id) || LookupField(id).entry || FindKey(id);
+}
+
+bool InvertedIndexConfig::KeepsColumn(irs::field_id id) const noexcept {
+  return table_columns.empty() || table_columns.contains(id) || KeepsField(id);
+}
+
+void InvertedIndexConfig::ForEachAnn(
+  irs::field_id column,
+  absl::FunctionRef<void(const irs::AnnInfo&)> visit) const {
+  for (const auto& ann : _anns) {
+    if (irs::AnnVectorColumn(ann) == column) {
+      visit(ann);
+    }
   }
-  if (const auto* entry = LookupField(id).entry) {
-    // IVF field should be rebuilt
-    return !entry->column_options.ann_info;
+  for (const auto& ann : retained_anns) {
+    if (irs::AnnVectorColumn(ann) == column &&
+        absl::c_none_of(_anns, [&](const irs::AnnInfo& live) {
+          return live.centroids_id == ann.centroids_id;
+        })) {
+      visit(ann);
+    }
   }
-  return FindKey(id) != nullptr;
+}
+
+const irs::AnnInfo* InvertedIndexConfig::FindAnn(
+  irs::field_id column, irs::VectorMetric metric) const noexcept {
+  const auto it = absl::c_find_if(_anns, [&](const irs::AnnInfo& ann) {
+    return irs::AnnVectorColumn(ann) == column && ann.metric == metric;
+  });
+  return it == _anns.end() ? nullptr : &*it;
 }
 
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
@@ -370,6 +394,14 @@ InvertedIndexConfig::InvertedIndexConfig(
     _field_keys.try_emplace(key.field_id, i);
     if (irs::field_limits::valid(key.column_id)) {
       _column_fields.try_emplace(key.column_id, key.field_id);
+    }
+    if (const auto* entry = FindEntry(key.field_id)) {
+      const auto& ann = entry->column_options.ann_info;
+      if (ann && absl::c_none_of(_anns, [&](const irs::AnnInfo& added) {
+            return added.centroids_id == ann->centroids_id;
+          })) {
+        _anns.push_back(*ann);
+      }
     }
     if (key.normalized_expression.empty()) {
       continue;

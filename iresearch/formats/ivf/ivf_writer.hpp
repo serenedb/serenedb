@@ -134,8 +134,6 @@ class IvfWriter final : public AnnWriter {
 
   AnnKind Kind() const noexcept final { return AnnKind::Ivf; }
 
-  field_id ColumnId() const noexcept final { return _info.centroids_id; }
-
   bool Empty() const noexcept final { return !_built; }
 
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,

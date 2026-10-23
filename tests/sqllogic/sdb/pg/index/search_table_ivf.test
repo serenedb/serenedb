@@ -2,8 +2,8 @@
 # term posting: the vector value is stored once under its column id and the IVF
 # attaches to that column, so an ANN query through the index scan pushes the
 # distance + top-k INTO the scan (accelerated) rather than computing distances
-# over every row. One IVF per vector column (the store attaches one IVF per data
-# column). Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
+# over every row. Commit-time-only, so rows are observed after
+# VACUUM (REFRESH_TABLE).
 
 statement ok
 CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])

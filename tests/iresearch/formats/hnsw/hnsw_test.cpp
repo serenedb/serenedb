@@ -150,6 +150,7 @@ irs::ByVectorSimilarity MakeKnnFilter(const std::vector<float>& query,
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query = query;
+  opts.column_id = kVec;
   opts.centroids_id = kVec;
   opts.postings_id = kVec;
   opts.metric = metric;

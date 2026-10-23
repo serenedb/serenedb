@@ -97,6 +97,7 @@ def build_units(ctx, args, suites, skips):
         units += fuzz.sqlsmith_units(ctx, args, skips)
     if "stress" in suites:
         units += fuzz.stress_units(ctx, args, skips)
+        units += fuzz.stress_harness_units(ctx, args, skips)
     if "iresearch-load" in suites:
         units += fuzz.iresearch_load_units(ctx, args, skips)
     if args.test:

@@ -714,6 +714,43 @@ TEST(document_mask_test, builder_merges_a_live_range) {
   ASSERT_EQ(100000, builder.Count());
 }
 
+TEST(document_mask_test, builder_counts_the_docs_ranges_add) {
+  std::mt19937 gen{17};
+  for (int round = 0; round < 60; ++round) {
+    irs::DocumentMaskBuilder builder;
+    std::vector<bool> model(kLimit + 70000, false);
+    size_t count = 0;
+    const auto add = [&](doc_id_t first, doc_id_t last) {
+      for (auto doc = first; doc < last; ++doc) {
+        if (!model[doc]) {
+          model[doc] = true;
+          ++count;
+        }
+      }
+    };
+    const uint32_t singles = round % 3 == 0 ? 0 : round % 3 == 1 ? 500 : 20000;
+    for (uint32_t i = 0; i < singles; ++i) {
+      const doc_id_t doc = 1 + gen() % kLimit;
+      builder.Add(doc);
+      add(doc, doc + 1);
+    }
+    ASSERT_EQ(count, builder.Count());
+    for (int step = 0; step < 64; ++step) {
+      const doc_id_t first = 1 + gen() % kLimit;
+      const doc_id_t length =
+        gen() % 8 == 0 ? 1 + gen() % 70000 : 1 + gen() % 40;
+      builder.AddRange(first, first + length);
+      add(first, first + length);
+      ASSERT_EQ(count, builder.Count()) << round << " " << step;
+    }
+    const auto mask = std::move(builder).Finish();
+    ASSERT_EQ(count, mask.Count());
+    for (doc_id_t doc = 1; doc < model.size(); doc += 7) {
+      ASSERT_EQ(model[doc], mask.Contains(doc)) << doc;
+    }
+  }
+}
+
 TEST(document_mask_test, read_frozen_rejects_corruption) {
   const auto blob = FrozenBlob(Build(Join(
     {Every(1, 65536, 3), Every(70000, 70100, 1), Every(140000, 140010, 7)})));

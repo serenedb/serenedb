@@ -22,8 +22,11 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <roaring/bitset_util.h>
 #include <roaring/containers/containers.h>
+#include <roaring/roaring_array.h>
 
+#include <algorithm>
 #include <roaring/roaring.hh>
 #include <utility>
 
@@ -113,6 +116,65 @@ void Densify(roaring_bitmap_t& set, uint32_t bitset_from) noexcept {
       ra.typecodes[i] = BITSET_CONTAINER_TYPE;
     }
   }
+}
+
+uint32_t CountInContainer(const void* container, uint8_t type, uint32_t from,
+                          uint32_t to) noexcept {
+  switch (type) {
+    case ARRAY_CONTAINER_TYPE: {
+      const auto* array =
+        static_cast<const roaring::internal::array_container_t*>(container);
+      const uint16_t* begin = array->array;
+      const auto* end = begin + array->cardinality;
+      const auto* lower = std::lower_bound(begin, end, from);
+      return static_cast<uint32_t>(std::lower_bound(lower, end, to) - lower);
+    }
+    case RUN_CONTAINER_TYPE: {
+      const auto* run =
+        static_cast<const roaring::internal::run_container_t*>(container);
+      const roaring::internal::rle16_t* begin = run->runs;
+      const auto* end = begin + run->n_runs;
+      const auto* it =
+        std::lower_bound(begin, end, from,
+                         [](const roaring::internal::rle16_t& r, uint32_t doc) {
+                           return uint32_t{r.value} + r.length < doc;
+                         });
+      uint32_t count = 0;
+      for (; it != end && it->value < to; ++it) {
+        count += std::min(uint32_t{it->value} + it->length + 1, to) -
+                 std::max(uint32_t{it->value}, from);
+      }
+      return count;
+    }
+    case BITSET_CONTAINER_TYPE:
+      return static_cast<uint32_t>(
+        roaring::internal::bitset_lenrange_cardinality(
+          static_cast<const roaring::internal::bitset_container_t*>(container)
+            ->words,
+          from, to - from - 1));
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+uint64_t CountInRange(const roaring_bitmap_t& set, doc_id_t first,
+                      doc_id_t last) noexcept {
+  const auto& ra = set.high_low_container;
+  const auto high = static_cast<uint16_t>((last - 1) >> 16);
+  auto i =
+    roaring::internal::ra_get_index(&ra, static_cast<uint16_t>(first >> 16));
+  if (i < 0) {
+    i = -i - 1;
+  }
+  uint64_t count = 0;
+  for (; i < ra.size && ra.keys[i] <= high; ++i) {
+    const auto base = uint32_t{ra.keys[i]} << 16;
+    const auto from = std::max(first, base) - base;
+    const auto to = static_cast<uint32_t>(
+      std::min(uint64_t{last}, base + DocumentMask::kChunkDocs) - base);
+    count += CountInContainer(ra.containers[i], ra.typecodes[i], from, to);
+  }
+  return count;
 }
 
 MaskKind KindOf(const roaring_bitmap_t& set) noexcept {
@@ -313,8 +375,7 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   if (first == last) {
     return;
   }
-  const auto present =
-    roaring::api::roaring_bitmap_range_cardinality(&_set, first, last);
+  const auto present = CountInRange(_set, first, last);
   roaring::api::roaring_bitmap_add_range(&_set, first, last);
   _count += (last - first) - present;
 }

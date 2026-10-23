@@ -40,11 +40,9 @@ jobs:
               '### CI Triggers',
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
-              '#### Extra (optional, additive -- ASAN+TSAN functional run by default)',
-              '- [ ] All architectures (amd64 + arm64)',
+              '#### Extra (optional; every config runs every suite the diff selects)',
+              '- [ ] All architectures (arm64 tests too; arm64 always builds)',
               '- [ ] Ignore diff, run everything',
-              '- [ ] Extra ASAN (full suite set under ASAN, not just ours + drivers)',
-              '- [ ] Extra TSAN (full suite set under TSAN, not just ours + drivers)',
               '- [ ] BigLake tests (sqllogic + recovery + stress against the real catalog)',
               '',
               '---',
@@ -105,8 +103,6 @@ jobs:
 
             const allArch = isChecked('All architectures');
             const everything = isChecked('Ignore diff, run everything');
-            const extraAsan = isChecked('Extra ASAN');
-            const extraTsan = isChecked('Extra TSAN');
             const biglake = isChecked('BigLake tests');
 
             const { owner, repo } = context.repo;
@@ -136,8 +132,6 @@ jobs:
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 EVERYTHING: everything.toString(),
-                EXTRA_ASAN: extraAsan.toString(),
-                EXTRA_TSAN: extraTsan.toString(),
                 BIGLAKE: biglake.toString(),
                 PR_SHA: sha,
                 PR_NUMBER: String(context.payload.issue.number),
@@ -175,9 +169,8 @@ jobs:
 
             const opts = [
               everything && 'everything',
-              extraAsan && 'extra-asan',
-              extraTsan && 'extra-tsan',
               allArch && 'all arch',
+              biglake && 'biglake',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';
             const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';

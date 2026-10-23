@@ -29,6 +29,7 @@ target_sources(
         scan/scan_count.cpp
         scan/scan_explain.cpp
         scan/scan_function.cpp
+        scan/scan_lookup.cpp
         scan/scan_plan.cpp
         scan/scan_prepare.cpp
         scan/scan_pushdown.cpp
@@ -42,8 +43,7 @@ target_sources(
         index_source_view.cpp
         inverted_store_index.cpp
         iresearch_replacement_scan.cpp
-        index_source_view_file.cpp
-        index_source_view_table.cpp
+        index_source_native.cpp
         index_source_external_lookup.cpp
         view_fast_path.cpp
         view_index_bind.cpp

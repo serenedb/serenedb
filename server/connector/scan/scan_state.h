@@ -173,6 +173,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t doc_address_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t file_index_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t row_number_output_idx = duckdb::DConstants::INVALID_INDEX;
   bool has_real_column = false;
@@ -424,6 +425,12 @@ irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
 
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output);
+inline int64_t DocAddress(uint32_t seg, irs::doc_id_t doc) noexcept {
+  return static_cast<int64_t>((uint64_t{seg} << 32) | doc);
+}
+void WriteDocAddresses(const ScanGlobalState& g, uint32_t seg,
+                       std::span<const irs::doc_id_t> docs,
+                       duckdb::DataChunk& output);
 void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
                        uint32_t seg, std::span<const irs::doc_id_t> docs,
                        duckdb::DataChunk& output);
@@ -435,6 +442,13 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
                             FetchLocalState& f, duckdb::DataChunk& output,
                             duckdb::idx_t collected);
+void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
+                std::span<const irs::ScoreDoc> hits, bool rebind,
+                duckdb::DataChunk& chunk, std::unique_ptr<duckdb::Vector>& pk,
+                duckdb::idx_t& appended);
+void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
+                       FetchLocalState& f);
 inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
   return g.vector_scorer ? g.vector_scorer->score_emit : ScoreEmit::Identity;
 }

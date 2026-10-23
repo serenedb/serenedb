@@ -20,6 +20,9 @@ hash-threshold 100
 # ---------------------------------------------------------------------------
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR);
 
 

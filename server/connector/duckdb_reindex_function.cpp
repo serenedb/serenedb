@@ -974,7 +974,7 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
     }
   }
   src.fast_path = std::move(*fp);
-  src.bind = BindFastPathSource(context, src.fast_path);
+  src.bind = std::move(BindFastPathSource(context, src.fast_path)->bind_data);
   if (!src.bind) {
     return std::nullopt;
   }

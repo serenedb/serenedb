@@ -152,10 +152,18 @@ Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
   if (query.Stats().stats == nullptr) {
     return MakeUnscored(query, ctx);
   }
-  return irs::detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
-    [&] { return MakeVariadicPhraseIntervals(query, ctx); },
-    [&] { return MakeVariadicPhrase(query, ctx); });
+  const auto match = irs::detail::MatchOf(query);
+  if (match == irs::detail::PhraseMatch::Slop) {
+    return MakeVariadicPhraseSlop(query, ctx);
+  }
+  if (ctx.prune) {
+    if (auto pruned = MakeVariadicPhrasePruned(query, ctx)) {
+      return pruned;
+    }
+  }
+  return match == irs::detail::PhraseMatch::Intervals
+           ? MakeVariadicPhraseIntervals(query, ctx)
+           : MakeVariadicPhrase(query, ctx);
 }
 
 Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {

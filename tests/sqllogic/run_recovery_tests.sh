@@ -39,6 +39,7 @@ export BACKOFF_DURATION="${BACKOFF_DURATION:-500ms}"
 # --- Parse arguments ---
 
 RUNNER_ARGS=()
+SQLLOGIC_RUNNER=""
 EXPLICIT_TESTS=()
 FAST=${SKIP_SLOW_TESTS:-false}
 
@@ -49,7 +50,8 @@ while [[ $# -gt 0 ]]; do
 		shift 2
 		;;
 	--runner)
-		RUNNER_ARGS=(--runner "$2")
+		SQLLOGIC_RUNNER="$2"
+		RUNNER_ARGS+=(--runner "$2")
 		shift 2
 		;;
 	--fast)
@@ -172,7 +174,7 @@ fi
 # under that load and a worker can exit non-zero even when the cached binary
 # is still functional (which then surfaces as a passing test reported as a
 # failure). Workers honour SDB_SKIP_SQLLOGIC_BUILD and skip cargo entirely.
-SQLLOGIC_RUNNER="${RUNNER_ARGS[1]:-$(realpath "$SCRIPT_DIR/../../third_party/sqllogictest-rs")}"
+SQLLOGIC_RUNNER="${SQLLOGIC_RUNNER:-$(realpath "$SCRIPT_DIR/../../third_party/sqllogictest-rs")}"
 SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$SCRIPT_DIR/../../.cache/cargo-target}"
 mkdir -p "$SQLLOGIC_TARGET"
 echo "Pre-building sqllogictest..."

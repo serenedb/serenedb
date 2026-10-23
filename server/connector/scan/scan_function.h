@@ -65,6 +65,9 @@ bool IResearchConsumeTopN(duckdb::ClientContext& context,
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   duckdb::TableFunctionToStringInput& input);
 
+duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
+IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input);
+
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data,
                                       const duckdb::LogicalIndex& col_idx);
 
@@ -79,5 +82,21 @@ bool IResearchPushdownExpression(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext& context,
   duckdb::TableFunctionGetStatisticsInput& input);
+
+duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
+  duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::FunctionData> bind_data);
+
+bool IResearchSupportsLookup(duckdb::ClientContext& context,
+                             const duckdb::LogicalGet& get,
+                             duckdb::TableFunctionLookupInfo& info);
+
+duckdb::TableFunction IResearchGetLookupFunction(
+  duckdb::ClientContext& context, const duckdb::LogicalGet& source);
+
+duckdb::unique_ptr<duckdb::LogicalGet> IResearchGetLookupSource(
+  duckdb::ClientContext& context, const duckdb::LogicalGet& get,
+  const duckdb::vector<duckdb::ProjectionIndex>& columns,
+  duckdb::TableIndex table_index);
 
 }  // namespace sdb::connector

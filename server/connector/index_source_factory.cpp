@@ -28,8 +28,7 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/index_source_external_lookup.h"
-#include "connector/index_source_view_file.h"
-#include "connector/index_source_view_table.h"
+#include "connector/index_source_native.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -64,33 +63,23 @@ std::unique_ptr<irs::IndexSource> MakeIndexSource(
     if (snapshot.file_manifest) {
       fp.pinned_iceberg_snapshot_id = snapshot.file_manifest->version;
     }
-    if (fp.catalog_ref && fp.pk_spec == PkSpec::DuckDBRowId) {
-      return std::make_unique<ViewTableIndexSource>(
-        context, std::move(fp), projected_columns, projected_types,
-        bind_column_ids, pushed_filters);
-    }
     if (fp.catalog_ref && IsExternalPK(fp.pk_spec)) {
       return std::make_unique<ExternalLookupIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
         bind_column_ids);
     }
-    if (IsGlobPK(fp.pk_spec)) {
-      return std::make_unique<ViewFileGlobIndexSource>(
-        context, std::move(fp), projected_columns, projected_types,
-        bind_column_ids, pushed_filters, snapshot.file_manifest);
-    }
-    return std::make_unique<ViewFileSingleFileIndexSource>(
-      context, std::move(fp), projected_columns, projected_types,
-      bind_column_ids, pushed_filters);
+    return std::make_unique<NativeIndexSource>(
+      context, std::move(fp), nullptr, snapshot.file_manifest,
+      projected_columns, projected_types, bind_column_ids, pushed_filters);
   }
   SDB_ASSERT(bind_data.relation.table_entry);
   // The bind data is const, but the entry it points at is the live catalog
   // object the fetch reads storage from -- non-owning, so the copy of the
   // pointer is what carries that.
   auto table = bind_data.relation.table_entry;
-  return std::make_unique<TableRowIdIndexSource>(
-    context, *table, projected_columns, projected_types, bind_column_ids,
-    pushed_filters);
+  return std::make_unique<NativeIndexSource>(
+    context, ViewFastPath{}, table, nullptr, projected_columns, projected_types,
+    bind_column_ids, pushed_filters);
 }
 
 }  // namespace sdb::connector

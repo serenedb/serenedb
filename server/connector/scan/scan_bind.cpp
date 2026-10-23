@@ -491,11 +491,23 @@ duckdb::TableFunction BindSearchTableScan(
   return CreateIResearchScanFunction();
 }
 
+bool LooksUpByPk(const ScanBindData& bind) {
+  return bind.relation.kind == ScanEntryKind::InvertedIndex &&
+         bind.relation.ScannedIndex().pk.column == PkColumnKind::Has &&
+         (!bind.view || bind.view->fast_path);
+}
+
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
   if (bind.relation.IsSearchTable()) {
     return duckdb::LogicalType::ROW_TYPE;
   }
-  return std::nullopt;
+  if (!LooksUpByPk(bind)) {
+    return std::nullopt;
+  }
+  if (bind.view) {
+    return bind.view->fast_path->GeneratedPkType();
+  }
+  return duckdb::LogicalType::ROW_TYPE;
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {

@@ -174,6 +174,7 @@ integer_overflow	ERROR	What integer +, - and * and unary minus do when the resul
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
@@ -295,6 +296,7 @@ sdb_ivf_search_nprobe	-1	Number of IVF cluster lists each segment scans per vect
 sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
 sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
+sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
@@ -519,6 +521,7 @@ integer_overflow	ERROR	What integer +, - and * and unary minus do when the resul
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
@@ -640,6 +643,7 @@ sdb_ivf_search_nprobe	-1	Number of IVF cluster lists each segment scans per vect
 sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
 sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
+sdb_lookup_join_source_hop	off	When true, a LOOKUP_JOIN over an inverted index that returns only source columns reads the row keys from the index in one LOOKUP_JOIN and the source columns in a second one. Default: false.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is always one unit of an inverted-index scan and is never split across workers. Default 1.
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.

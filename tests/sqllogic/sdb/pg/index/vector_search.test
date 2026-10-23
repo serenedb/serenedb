@@ -1,4 +1,7 @@
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TABLE t (id INT, emb FLOAT[3]);
 
 

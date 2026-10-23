@@ -38,10 +38,6 @@ QUERY PLAN
 │ Order By: id ASC                         │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: id, body                    │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dcp_idx                           │
 │ Lookup: table                            │
@@ -59,7 +55,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │ │
 │ │ Verify: table filter                 │ │
 │ ╰──────────────────────────────────────╯ │
-│ Projections: body (i), id (l)            │
+│ Projections: id (l), body (i)            │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 
@@ -100,10 +96,6 @@ QUERY PLAN
 │ Order By: id ASC                                                                 │
 │ ~1 row                                                                           │
 ╰─────────────────────────────────────────┬────────────────────────────────────────╯
-╭─ PROJECTION ────────────────────────────┴────────────────────────────────────────╮
-│ Projections: id, body, tags                                                      │
-│ ~1 row                                                                           │
-╰─────────────────────────────────────────┬────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────────────────┴────────────────────────────────────────╮
 │ Index: dcp_idx                                                                   │
 │ Lookup: table                                                                    │
@@ -125,7 +117,7 @@ QUERY PLAN
 │ │ Term:quick(0, 0); Term:brown(1, 1);  │  │ Term:brown(0, 0); Term:dog(1, 1);  │ │
 │ │ Verify: table filter                 │  │ Verify: table filter               │ │
 │ ╰──────────────────────────────────────╯  ╰────────────────────────────────────╯ │
-│ Projections: body (i), tags (i), id (l)                                          │
+│ Projections: id (l), body (i), tags (i)                                          │
 │ ~1 row                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────────╯
 
@@ -310,10 +302,6 @@ EXPLAIN SELECT id, geo FROM dcp_geo_idx
 WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.601,55.701],[37.605,55.701],[37.605,55.705],[37.601,55.705],[37.601,55.701]]]}')
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: id, geo     │
-│ ~2,000 rows              │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: dcp_geo_idx       │
 │ Lookup: table            │
@@ -331,8 +319,8 @@ QUERY PLAN
 │ │ Shape: S2Polygon     │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo (i),    │
-│              id (l)      │
+│ Projections: id (l),     │
+│              geo (i)     │
 │ ~2,000 rows              │
 ╰──────────────────────────╯
 

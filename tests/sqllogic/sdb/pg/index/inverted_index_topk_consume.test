@@ -7,6 +7,9 @@
 hash-threshold 100
 
 statement ok
+SET disabled_optimizers = 'late_materialization';
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY tk_d AS split_text_csv(' ')
   WITH (frequency, position);
 

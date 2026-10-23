@@ -606,23 +606,17 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
       {kColumnIdentifierPkRowNumber,
        duckdb::TableColumn("row_number", duckdb::LogicalType::BIGINT)});
   }
+  if (LooksUpByPk(bind)) {
+    result.insert({kColumnIdentifierGeneratedPk,
+                   duckdb::TableColumn("pk", *GeneratedPkTypeOf(bind))});
+  }
+  result.insert(
+    {kColumnIdentifierDocAddress,
+     duckdb::TableColumn("iresearch_pk", duckdb::LogicalType::BIGINT)});
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
-  return result;
-}
-
-duckdb::vector<duckdb::column_t> ScanGetRowIdColumns(
-  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
-  duckdb::vector<duckdb::column_t> result;
-  if (!bind_p) {
-    return result;
-  }
-  const auto& bind = bind_p->Cast<ScanBindData>();
-  if (bind.relation.table_entry) {
-    result = bind.relation.table_entry->GetRowIdColumns();
-  }
   return result;
 }
 
@@ -657,7 +651,10 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.table_scan_progress = IResearchScanProgress;
   func.get_bind_info = ScanGetBindInfo;
   func.get_virtual_columns = ScanGetVirtualColumns;
-  func.get_row_id_columns = ScanGetRowIdColumns;
+  func.get_row_id_columns = IResearchGetRowIdColumns;
+  func.supports_lookup = &IResearchSupportsLookup;
+  func.get_lookup_function = &IResearchGetLookupFunction;
+  func.get_lookup_source = &IResearchGetLookupSource;
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;

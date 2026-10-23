@@ -49,6 +49,12 @@ class PostingPos {
 
   PostingPos() = default;
 
+  explicit PostingPos(const PostingMeta& meta, const IndexInput& doc_in,
+                      IndexFeatures layout, const IndexInput& pos_in,
+                      const IndexInput* pay_in) {
+    Prepare(meta, doc_in, layout, pos_in, pay_in);
+  }
+
   PostingPos(const PostingPos&) = delete;
   PostingPos& operator=(const PostingPos&) = delete;
   PostingPos(PostingPos&&) = delete;

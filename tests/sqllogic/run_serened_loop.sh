@@ -18,8 +18,12 @@ if [[ -n "$1" ]]; then
 	mkdir -p "$DATADIR"
 else
 	DATADIR=$(mktemp -d)
-	trap 'rm -rf "$DATADIR"' EXIT INT TERM
+	trap 'rm -rf "$DATADIR"' EXIT
 fi
+
+stopping=false
+serened_pid=
+trap 'stopping=true; [[ -n "$serened_pid" ]] && kill -TERM "$serened_pid" 2>/dev/null' TERM INT
 
 SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
 
@@ -32,9 +36,23 @@ if [[ ! -x "$SERENED" ]]; then
 	exit 1
 fi
 
-while true; do
+while [[ "$stopping" != true ]]; do
 	"$SERENED" "$DATADIR" \
 		--listen "postgres://0.0.0.0:$PORT" \
-		--auth_timeout=600s
-	echo "serened exited with code $?, restarting..."
+		--auth_timeout=600s &
+	serened_pid=$!
+	[[ "$stopping" == true ]] && kill -TERM "$serened_pid"
+	while true; do
+		wait "$serened_pid"
+		rc=$?
+		kill -0 "$serened_pid" 2>/dev/null || break
+	done
+	if [[ -n "${SERENED_EXITS:-}" ]]; then
+		echo "$rc" >>"$SERENED_EXITS"
+	fi
+	if [[ "$stopping" == true ]]; then
+		echo "serened exited with code $rc"
+	else
+		echo "serened exited with code $rc, restarting..."
+	fi
 done

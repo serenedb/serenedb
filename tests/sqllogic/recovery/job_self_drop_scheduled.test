@@ -1,0 +1,159 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE jsds_log (step INT, note TEXT);
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run';
+
+
+statement ok
+CREATE JOB jsds_after AFTER 1 SECOND AS DROP JOB jsds_after;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_after_run:parked';
+
+
+query
+SELECT trigger, success, error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsds_after';
+----
+trigger	success	error
+schedule	t	NULL
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsds_after';
+----
+jobs
+0
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run:release';
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run';
+
+
+statement ok
+CREATE JOB jsds_every EVERY 1 SECOND AS DROP JOB jsds_every;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_after_run:parked';
+
+
+query
+SELECT trigger, success, error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsds_every';
+----
+trigger	success	error
+schedule	t	NULL
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsds_every';
+----
+jobs
+0
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run:release';
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run';
+
+
+statement ok
+CREATE JOB jsds_script AFTER 1 SECOND AS $$BEGIN; INSERT INTO jsds_log VALUES (1, 'scheduled'); DROP JOB jsds_script; COMMIT;$$;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_after_run:parked';
+
+
+query
+SELECT trigger, success, error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsds_script';
+----
+trigger	success	error
+schedule	t	NULL
+
+
+query
+SELECT (SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsds_script') AS jobs,
+       (SELECT string_agg(note, ',') FROM jsds_log) AS log;
+----
+jobs	log
+0	scheduled
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run:release';
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run';
+
+
+statement ok
+CREATE JOB jsds_concurrent EVERY 1 SECOND CONCURRENT AS DROP JOB IF EXISTS jsds_concurrent;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_before_run:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run';
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run';
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run:release';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_after_run:parked';
+
+
+query
+SELECT trigger, success, error FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsds_concurrent';
+----
+trigger	success	error
+schedule	t	NULL
+
+
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'jsds_concurrent';
+----
+jobs
+0
+
+
+statement ok
+SET sdb_faults = 'pause_job_after_run:release';
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_job_before_run:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_job_before_run:release';
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP TABLE jsds_log;

@@ -137,44 +137,6 @@ jsd_suspend	AFTER INTERVAL '01:00:00'	t	1	success
 
 
 statement ok
-CREATE JOB jsd_after AFTER 1 SECOND AS DROP JOB jsd_after;
-
-
-statement ok
-CREATE JOB jsd_every EVERY 1 SECOND AS DROP JOB jsd_every;
-
-
-statement ok
-CREATE JOB jsd_concurrent EVERY 1 SECOND CONCURRENT AS DROP JOB IF EXISTS jsd_concurrent;
-
-
-query ok retry 80 backoff 250ms
-SELECT count(*) AS jobs FROM sdb_jobs() WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every', 'jsd_concurrent');
-----
-jobs
-0
-
-
-query
-SELECT job_name, trigger, count(*) AS runs, bool_and(success) AS succeeded
-FROM sdb_job_runs()
-WHERE database_name = current_database() AND job_name IN ('jsd_after', 'jsd_every')
-GROUP BY ALL
-ORDER BY 1;
-----
-job_name	trigger	runs	succeeded
-jsd_after	schedule	1	t
-jsd_every	schedule	1	t
-
-
-query
-SELECT bool_or(success) AS succeeded FROM sdb_job_runs() WHERE database_name = current_database() AND job_name = 'jsd_concurrent';
-----
-succeeded
-t
-
-
-statement ok
 DROP JOB jsd_replace;
 
 

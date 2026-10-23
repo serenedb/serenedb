@@ -850,7 +850,7 @@ query
 SELECT list_kurtosis_pop([3, 3, 9]) AS list_kurtosis_pop;
 ----
 list_kurtosis_pop
--1.4999999999999978
+-1.4999999999999996
 
 # DOCS_TEST: list_last
 # DOCS_TEST_BODY
@@ -978,7 +978,7 @@ query
 SELECT list_skewness([3, 3, 9]) AS list_skewness;
 ----
 list_skewness
-1.7320508075688796
+1.7320508075688774
 
 # DOCS_TEST: list_slice_3
 # DOCS_TEST_BODY

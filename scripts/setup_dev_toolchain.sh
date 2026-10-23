@@ -55,18 +55,21 @@ is_llvm() {
 for dir in /usr/bin /usr/local/bin; do
 	for link in "$dir"/*; do
 		name=${link##*/}
-		if [[ ! -L "$link" || "$name" =~ -[0-9]+(\.[a-z]+)?$ || "$name" == *clang-format* ]] || ! is_llvm "$link"; then
+		if [[ ! -L "$link" || "$name" =~ -[0-9]+(\.[a-z]+)?$ || "$name" == *clang-format* ]]; then
 			continue
 		fi
-		target=$(readlink "$link")
-		new=$(retarget "$target")
+		new=$(retarget "$(readlink "$link")")
 		if [[ -z "$new" ]]; then
 			continue
 		fi
-		if [[ "$dry_run" == true || -e "$(cd "$dir" && realpath -m "$new")" ]]; then
+		if is_llvm "$link"; then
+			if [[ "$dry_run" == true || -e "$(cd "$dir" && realpath -m "$new")" ]]; then
+				run ln -sfn "$new" "$link"
+			else
+				echo "skip $link: $new is not installed"
+			fi
+		elif [[ ! -e "$link" && "$(cd "$dir" && readlink -f "$new")" =~ ^/usr/lib/llvm-$version/ ]]; then
 			run ln -sfn "$new" "$link"
-		else
-			echo "skip $link: $new is not installed"
 		fi
 	done
 done

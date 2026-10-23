@@ -310,6 +310,7 @@ void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
+  SDB_PARK_ONCE_ON_FAILURE("pause_job_before_run");
   JobDefinition job;
   bool concurrent = false;
   {
@@ -337,6 +338,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
     }
   }
   RunBody(state, std::move(job), nullptr, concurrent ? 0 : timer);
+  SDB_PARK_ONCE_ON_FAILURE("pause_job_after_run");
 }
 
 void JobScheduler::Execute(duckdb::ClientContext& caller,

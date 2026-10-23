@@ -1385,6 +1385,10 @@ if [[ "${SDB_SKIP_SQLLOGIC_BUILD:-0}" != "1" ]]; then
 		exit $build_exit_code
 	fi
 fi
+if [[ ! -x "${SQLLOGIC_TARGET}/${build_type}/sqllogictest" ]]; then
+	echo "ERROR: no sqllogictest in ${SQLLOGIC_TARGET}/${build_type}" >&2
+	exit 1
+fi
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 
 if [[ "$cancellation" == "true" ]]; then

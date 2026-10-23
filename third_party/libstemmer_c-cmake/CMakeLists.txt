@@ -61,5 +61,3 @@ target_include_directories(
     PUBLIC ${LIBRARY_DIR}/include
     PRIVATE ${LIBRARY_DIR}
 )
-
-add_library(stemmer::stemmer ALIAS stemmer-static)

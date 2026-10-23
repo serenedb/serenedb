@@ -1,3 +1,5 @@
+configure_file(build.h.in build.h NEWLINE_STYLE UNIX)
+
 add_library(
     serene
     STATIC
@@ -15,8 +17,4 @@ add_library(
     signals.cpp
 )
 
-target_link_libraries(serene PUBLIC iresearch-static boost_boost simdjson)
-
-target_include_directories(serene PUBLIC ${CMAKE_SOURCE_DIR})
-target_include_directories(serene PUBLIC ${CMAKE_BINARY_DIR})
-target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(serene PUBLIC iresearch boost_boost simdjson)

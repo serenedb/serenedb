@@ -23,14 +23,12 @@
 
 #include "tests_param.hpp"
 
-#include "tests_shared.hpp"
-#ifdef IRESEARCH_URING
-#include <iresearch/store/async_directory.hpp>
-#endif
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
+
+#include "tests_shared.hpp"
 
 namespace tests {
 
@@ -46,12 +44,6 @@ std::string ToString(dir_generator_f generator) {
   if (generator == &MmapDirectory) {
     return "mmap";
   }
-
-#ifdef IRESEARCH_URING
-  if (generator == &AsyncDirectory) {
-    return "async";
-  }
-#endif
 
   return "unknown";
 }
@@ -72,12 +64,5 @@ std::shared_ptr<irs::Directory> MmapDirectory(const TestBase* test,
                                               irs::DirectoryAttributes attrs) {
   return MakePhysicalDirectory<irs::MMapDirectory>(test, std::move(attrs));
 }
-
-#ifdef IRESEARCH_URING
-std::shared_ptr<irs::Directory> AsyncDirectory(const TestBase* test,
-                                               irs::DirectoryAttributes attrs) {
-  return MakePhysicalDirectory<irs::AsyncDirectory>(test, std::move(attrs));
-}
-#endif
 
 }  // namespace tests

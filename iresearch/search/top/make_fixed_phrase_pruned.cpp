@@ -22,9 +22,9 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/phrase_fixed_slots.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/detail/phrase_slots.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
@@ -41,7 +41,7 @@ Root::ptr MakeSlots(const FixedPhraseQuery& query,
                     const irs::detail::PhraseHandles& h, const Context& ctx,
                     Prefix&&... prefix) {
   using Matcher = FixedPhraseMatcher<false, true, false, Slots>;
-  using SlotsType = irs::detail::PhraseFixedSlots<Matcher, Leaf, Slots>;
+  using SlotsType = irs::detail::PhraseSlots<Matcher, Leaf, Slots>;
   return MakeShape<PrunedPhrase, SlotsType>(
     ctx, std::forward<Prefix>(prefix)..., metas, query.positions, *h.doc,
     h.Layout(), *h.pos, h.pay);

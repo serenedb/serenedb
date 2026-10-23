@@ -217,14 +217,13 @@ void Merge(ScanGlobalState& g) {
   }
   std::span<irs::ScoreDoc> all{t.hits.data(), total};
   const auto want = static_cast<size_t>(t.limit);
-  if (!g.has_lookup_filter && all.size() > want) {
-    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
-    all = all.first(want);
-  }
-  absl::c_sort(all, BetterScore);
   if (g.has_lookup_filter) {
+    absl::c_sort(all, BetterScore);
     t.ranked = all;
     all = all.first(std::min<size_t>(all.size(), t.verify_first));
+  } else if (all.size() > want) {
+    std::nth_element(all.begin(), all.begin() + want, all.end(), BetterScore);
+    all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
   PlanFetch(g);
@@ -237,7 +236,8 @@ bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
 
 bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
                     duckdb::idx_t col) noexcept {
-  if (col == g.score_output_idx || col == g.tableoid_output_idx) {
+  if (col == g.score_output_idx || col == g.tableoid_output_idx ||
+      col == g.doc_address_output_idx) {
     return true;
   }
   if (absl::c_any_of(f.offsets_entries,
@@ -267,7 +267,7 @@ void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
 }
 
 void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                 TopKLocalState& l, duckdb::DataChunk& tmp,
+                 FetchLocalState& l, duckdb::DataChunk& tmp,
                  duckdb::DataChunk& into, std::unique_ptr<duckdb::Vector>& pk,
                  duckdb::idx_t capacity, duckdb::idx_t& appended) {
   const auto count = EmitReadyBatch(ctx, g, l, tmp);
@@ -315,7 +315,18 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
   auto& tmp = l.fetch_tmp;
   std::unique_ptr<duckdb::Vector> pk;
   duckdb::idx_t appended = 0;
+  AppendHits(ctx, g, l, tmp, seg, hits, rebind, *chunk, pk, appended);
+  SDB_ASSERT(appended == hits.size());
+  return {.chunk = std::move(chunk), .pk = std::move(pk)};
+}
 
+}  // namespace
+
+void AppendHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
+                FetchLocalState& l, duckdb::DataChunk& tmp, uint32_t seg,
+                std::span<const irs::ScoreDoc> hits, bool rebind,
+                duckdb::DataChunk& chunk, std::unique_ptr<duckdb::Vector>& pk,
+                duckdb::idx_t& appended) {
   l.EnsureHitBatcher(g);
   auto& batcher = *l.hit_batcher;
   if (rebind || !batcher.Bound(seg)) {
@@ -358,12 +369,12 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
       batcher.CommitWindow(n);
     }
     if (batcher.Ready()) {
-      AppendBatch(ctx, g, l, tmp, *chunk, pk, hits.size(), appended);
+      AppendBatch(ctx, g, l, tmp, chunk, pk, chunk.GetCapacity(), appended);
     }
   }
-  SDB_ASSERT(appended == hits.size());
-  return {.chunk = std::move(chunk), .pk = std::move(pk)};
 }
+
+namespace {
 
 void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
                TopKLocalState& l, uint32_t index) {
@@ -375,8 +386,10 @@ void FetchUnit(duckdb::ClientContext& ctx, ScanGlobalState& g,
   t.fetched_pk[index] = std::move(fetched.pk);
 }
 
+}  // namespace
+
 void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
-                       TopKLocalState& l) {
+                       FetchLocalState& l) {
   if (!l.index_source) {
     l.index_source =
       MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
@@ -384,6 +397,8 @@ void EnsureIndexSource(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                       const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
   }
 }
+
+namespace {
 
 void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      TopKLocalState& l, const duckdb::DataChunk& fetched,

@@ -14,7 +14,7 @@ Faceted navigation, distinct-value lists, autocomplete and min/max all ask one q
 For task-oriented walkthroughs see the [Faceted Search](../../../cookbook/search/faceted-search.md), [Autocomplete](../../../cookbook/search/autocomplete.md) and [Spell Correction](../../../cookbook/search/spell-correction.md) cookbook recipes.
 
 :::note Inverted index only
-The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they only work over an inverted index relation (`FROM my_index`). Point one at a base table or any other relation and the query fails with `ts_dict_agg() requires an inverted index scan in the same sub-query`.
+The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they only work over an inverted index relation (`FROM my_index`), optionally filtered by `WHERE`. Point one at a base table or any other relation, or at a subquery over the index that limits, orders, offsets, samples, joins, deduplicates or windows its documents (`FROM (SELECT body FROM my_index ORDER BY id LIMIT 10)`), and the query fails with `ts_dict_agg() requires an inverted index scan in the same sub-query`.
 :::
 
 ## Setup {#setup}

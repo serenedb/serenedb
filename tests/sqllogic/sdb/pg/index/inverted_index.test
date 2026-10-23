@@ -883,10 +883,6 @@ QUERY PLAN
 │ Order By: a ASC                          │
 │ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections: a, b                        │
-│ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: dense_csv_idx                     │
 │ Lookup: csv                              │
@@ -896,7 +892,7 @@ QUERY PLAN
 │ │ Parts:                               │ │
 │ │ Term:shared(0, 0); Term:term(1, 1);  │ │
 │ ╰──────────────────────────────────────╯ │
-│ Projections: b, a                        │
+│ Projections: a, b                        │
 │ ~1 row                                   │
 ╰──────────────────────────────────────────╯
 

@@ -1,0 +1,1262 @@
+control substitution on
+
+hash-threshold 100
+
+statement ok
+CREATE TABLE lj_docs (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR, n INTEGER);
+
+statement ok
+INSERT INTO lj_docs
+SELECT i,
+       'title-' || i || '-long-enough-to-not-inline',
+       CASE WHEN i % 3 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i,
+       i * 10
+FROM generate_series(1, 3000) t(i);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lj_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
+
+statement ok
+CREATE INDEX lj_idx ON lj_docs USING inverted (id, body lj_words, n) INCLUDE (n);
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_docs;
+
+query
+EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: rowid                        │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├───────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ──────╮
+│ Top: 3                            │  │ Lookup: table       │
+│ Order By: id DESC                 │  │ Projections: body,  │
+│ ~3 rows                           │  │              title  │
+╰─────────────────┬─────────────────╯  │ ~3 rows             │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰─────────────────────╯
+│ Index: lj_idx                     │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id > ?) │
+│ Projections: id, pk               │
+│ ~600 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+id	title	body
+3000	title-3000-long-enough-to-not-inline	red fox pad3000
+2997	title-2997-long-enough-to-not-inline	red fox pad2997
+2994	title-2994-long-enough-to-not-inline	red fox pad2994
+
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+query
+EXPLAIN SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────────────────────╮
+│ Order By: id DESC                       │
+│ ~600 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ PROJECTION ───────┴────────────────────╮
+│ Projections: id, title, body            │
+│ ~600 rows                               │
+╰────────────────────┬────────────────────╯
+╭─ HASH_JOIN ────────┴────────────────────╮
+│ Join Type: SEMI                         │
+│ Conditions: iresearch_pk = iresearch_pk │
+│ ~600 rows                               │
+╰────────────────────┬────────────────────╯
+                     ├─────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───┴────────────────────╮  ╭─ TOP_N ─────────┴─────────────────╮
+│ Index: lj_idx                           │  │ Top: 3                            │
+│ Lookup: table                           │  │ Order By: id DESC                 │
+│ Index Filter:                           │  │ ~3 rows                           │
+│ ╭─ Term ──────────────╮                 │  ╰─────────────────┬─────────────────╯
+│ │ Field: body(string) │                 │  ╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ │ Value: fox          │                 │  │ Index: lj_idx                     │
+│ ╰─────────────────────╯                 │  │ Lookup: table                     │
+│ Projections: body, id, title,           │  │ Index Filter:                     │
+│              iresearch_pk               │  │ ╭─ Term ──────────────╮           │
+│ ~600 rows                               │  │ │ Field: body(string) │           │
+╰─────────────────────────────────────────╯  │ │ Value: fox          │           │
+                                             │ ╰─────────────────────╯           │
+                                             │ Column Filter:                    │
+                                             │ optional: Dynamic Filter (id > ?) │
+                                             │ Projections: id, iresearch_pk     │
+                                             │ ~600 rows                         │
+                                             ╰───────────────────────────────────╯
+
+query
+SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+id	title	body
+3000	title-3000-long-enough-to-not-inline	red fox pad3000
+2997	title-2997-long-enough-to-not-inline	red fox pad2997
+2994	title-2994-long-enough-to-not-inline	red fox pad2994
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+query
+EXPLAIN SELECT id, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: iresearch_pk                                       │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├──────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ───╮
+│ Top: 5                                                  │  │ Index: lj_idx      │
+│ Order By: #0 ASC                                        │  │ Lookup: table      │
+│ ~5 rows                                                 │  │ Projections: body, │
+╰────────────────────────────┬────────────────────────────╯  │              id    │
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  │ ~5 rows            │
+│ Index: lj_idx                                           │  ╰────────────────────╯
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~600 rows                                               │
+╰─────────────────────────────────────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE body = 'red fox pad' || id)
+FROM (SELECT id, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+query
+EXPLAIN ANALYZE SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: iresearch_pk                                       │
+│ 5 rows                                              0µs │
+╰────────────────────────────┬────────────────────────────╯
+                             ├──────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ────────╮
+│ Top: 5                                                  │  │ Index: lj_idx       │
+│ Order By: #0 ASC                                        │  │ Lookup: table       │
+│ 5 rows                                              0µs │  │ Projections: body,  │
+╰────────────────────────────┒┎───────────────────────────╯  │              id,    │
+╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮  │              title  │
+│ Index: lj_idx                                           │  │ 5 rows          0µs │
+│ Index Filter:                                           │  ╰─────────────────────╯
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ 1,000 rows                                          0µs │
+╰─────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN ANALYZE SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ LOOKUP_JOIN ────────────────────────────────────────────╮
+│ Key: rowid                                               │
+│ 3 rows                                               0µs │
+╰─────────────────────────────┬────────────────────────────╯
+                              ├──────────────────────────────────────────╮
+╭─ TOP_N ─────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ────────╮
+│ Top: 3                                                   │  │ Lookup: table       │
+│ Order By: #0 DESC, #1 ASC                                │  │ Projections: body,  │
+│ 3 rows                                               0µs │  │              title  │
+╰─────────────────────────────┒┎───────────────────────────╯  │ 3 rows          0µs │
+╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮  ╰─────────────────────╯
+│ Index: lj_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Term ──────────────╮                                  │
+│ │ Field: body(string) │                                  │
+│ │ Value: fox          │                                  │
+│ ╰─────────────────────╯                                  │
+│ Column Filter:                                           │
+│ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
+│ Score: bm25(k1=1.2, b=0.75)                              │
+│ Projections: sdb_inverted_index_score, id, pk            │
+│ 1,000 rows                                           0µs │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN ANALYZE SELECT id, title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: rowid                                              │
+│ 5 rows                                              0µs │
+╰────────────────────────────┬────────────────────────────╯
+                             ├────────────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                        ╭─ TABLE_SCAN ────────╮
+│ Key: iresearch_pk                                       │                        │ Lookup: table       │
+│ 5 rows                                              0µs │                        │ Projections: id,    │
+╰────────────────────────────┬────────────────────────────╯                        │              title  │
+                             ├─────────────────────────────────────────╮           │ 5 rows          0µs │
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ TABLE_SCAN ─────╮  ╰─────────────────────╯
+│ Top: 5                                                  │  │ Index: lj_idx    │
+│ Order By: #0 ASC                                        │  │ Projections: n,  │
+│ 5 rows                                              0µs │  │              pk  │
+╰────────────────────────────┒┎───────────────────────────╯  │ 5 rows       0µs │
+╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮  ╰──────────────────╯
+│ Index: lj_idx                                           │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ 1,000 rows                                          0µs │
+╰─────────────────────────────────────────────────────────╯
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+EXPLAIN ANALYZE SELECT id, title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ─────────────────────────────────────────────────╮
+│ Top: 5                                                  │
+│ Order By: #3 ASC                                        │
+│ 5 rows                                              0µs │
+╰────────────────────────────┒┎───────────────────────────╯
+╭─ TABLE_SCAN ───────────────┚┖───────────────────────────╮
+│ Index: lj_idx                                           │
+│ Lookup: table                                           │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: id, title, body, sdb_inverted_index_score  │
+│ 1,000 rows                                          0µs │
+╰─────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN ANALYZE SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ──────────────────────────────────────────────────╮
+│ Top: 3                                                   │
+│ Order By: #2 DESC, #3 ASC                                │
+│ 3 rows                                               0µs │
+╰─────────────────────────────┒┎───────────────────────────╯
+╭─ TABLE_SCAN ────────────────┚┖───────────────────────────╮
+│ Index: lj_idx                                            │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Term ──────────────╮                                  │
+│ │ Field: body(string) │                                  │
+│ │ Value: fox          │                                  │
+│ ╰─────────────────────╯                                  │
+│ Column Filter:                                           │
+│ optional: Dynamic Filter (sdb_inverted_index_score >= ?) │
+│ Score: bm25(k1=1.2, b=0.75)                              │
+│ Projections: title, body, sdb_inverted_index_score, id   │
+│ 1,000 rows                                           0µs │
+╰──────────────────────────────────────────────────────────╯
+
+statement ok
+RESET disabled_optimizers;
+
+query
+SELECT title, body FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC, id LIMIT 3;
+----
+title	body
+title-3-long-enough-to-not-inline	red fox pad3
+title-6-long-enough-to-not-inline	red fox pad6
+title-9-long-enough-to-not-inline	red fox pad9
+
+query
+SELECT id, title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) ASC, id LIMIT 3;
+----
+id	title	n
+3	title-3-long-enough-to-not-inline	30
+6	title-6-long-enough-to-not-inline	60
+9	title-9-long-enough-to-not-inline	90
+
+query
+EXPLAIN SELECT id, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_idx.tableoid) DESC LIMIT 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: lj_idx               │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Score: bm25(k1=1.2, b=0.75) │
+│ Top: 5                      │
+│ Projections: id, title      │
+│ ~600 rows                   │
+╰─────────────────────────────╯
+
+query
+EXPLAIN SELECT n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: iresearch_pk                 │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├──────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                            │  │ Index: lj_idx    │
+│ Order By: #0 ASC                  │  │ Projections: n   │
+│ ~3 rows                           │  │ ~3 rows          │
+╰─────────────────┬─────────────────╯  ╰──────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: lj_idx                     │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id < ?) │
+│ Projections: id, iresearch_pk     │
+│ ~600 rows                         │
+╰───────────────────────────────────╯
+
+query
+EXPLAIN SELECT n, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: rowid                        │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ───┴─────────────────╮               ╭─ INDEX_SOURCE ─────╮
+│ Key: iresearch_pk                 │               │ Lookup: table      │
+│ ~3 rows                           │               │ Projections: title │
+╰─────────────────┬─────────────────╯               │ ~3 rows            │
+                  ├──────────────────────────────╮  ╰────────────────────╯
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                            │  │ Index: lj_idx    │
+│ Order By: #0 DESC                 │  │ Projections: n   │
+│ ~3 rows                           │  │ ~3 rows          │
+╰─────────────────┬─────────────────╯  ╰──────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: lj_idx                     │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: fox          │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id > ?) │
+│ Projections: id, iresearch_pk, pk │
+│ ~600 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT n, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY id DESC LIMIT 3;
+----
+n	title
+30000	title-3000-long-enough-to-not-inline
+29970	title-2997-long-enough-to-not-inline
+29940	title-2994-long-enough-to-not-inline
+
+query
+EXPLAIN SELECT pk, n FROM lj_idx WHERE body @@ ts_phrase('fox');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: lj_idx           │
+│ Index Filter:           │
+│ ╭─ Term ──────────────╮ │
+│ │ Field: body(string) │ │
+│ │ Value: fox          │ │
+│ ╰─────────────────────╯ │
+│ Projections: pk, n      │
+│ ~600 rows               │
+╰─────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE n = (pk + 1) * 10) FROM (SELECT pk, n FROM lj_idx WHERE body @@ ts_phrase('fox'));
+----
+count	count
+1000	1000
+
+query
+EXPLAIN SELECT id, title, round(BM25(lj_idx.tableoid), 3) FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections:                           │
+│ id, title,                             │
+│ round(sdb_inverted_index_score, 3)     │
+│ ~600 rows                              │
+╰────────────────────┬───────────────────╯
+╭─ LOOKUP_JOIN ──────┴───────────────────╮
+│ Key: iresearch_pk                      │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+                     ├─────────────────────────────────╮
+╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ────╮
+│ Top: 3                                 │  │ Index: lj_idx       │
+│ Order By: n DESC                       │  │ Lookup: table       │
+│ ~3 rows                                │  │ Projections: id,    │
+╰────────────────────┬───────────────────╯  │              title  │
+╭─ IRESEARCH_SCAN ───┴───────────────────╮  │ ~3 rows             │
+│ Index: lj_idx                          │  ╰─────────────────────╯
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (n > ?)       │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: n,                        │
+│              sdb_inverted_index_score, │
+│              iresearch_pk              │
+│ ~600 rows                              │
+╰────────────────────────────────────────╯
+
+query
+SELECT id, title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+id	title	n
+3000	title-3000-long-enough-to-not-inline	30000
+2997	title-2997-long-enough-to-not-inline	29970
+2994	title-2994-long-enough-to-not-inline	29940
+
+statement ok
+SET sdb_lookup_join_source_hop = true;
+
+query
+EXPLAIN SELECT id, title, round(BM25(lj_idx.tableoid), 3) FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections:                           │
+│ id, title,                             │
+│ round(sdb_inverted_index_score, 3)     │
+│ ~600 rows                              │
+╰────────────────────┬───────────────────╯
+╭─ LOOKUP_JOIN ──────┴───────────────────╮
+│ Key: rowid                             │
+│ ~3 rows                                │
+╰────────────────────┬───────────────────╯
+                     ├───────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────┴───────────────────╮                        ╭─ INDEX_SOURCE ──────╮
+│ Key: iresearch_pk                      │                        │ Lookup: table       │
+│ ~3 rows                                │                        │ Projections: id,    │
+╰────────────────────┬───────────────────╯                        │              title  │
+                     ├────────────────────────────────╮           │ ~3 rows             │
+╭─ TOP_N ────────────┴───────────────────╮  ╭─ IRESEARCH_SCAN ─╮  ╰─────────────────────╯
+│ Top: 3                                 │  │ Index: lj_idx    │
+│ Order By: n DESC                       │  │ Projections: pk  │
+│ ~3 rows                                │  │ ~3 rows          │
+╰────────────────────┬───────────────────╯  ╰──────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: lj_idx                          │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Column Filter:                         │
+│ optional: Dynamic Filter (n > ?)       │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: n,                        │
+│              sdb_inverted_index_score, │
+│              iresearch_pk              │
+│ ~600 rows                              │
+╰────────────────────────────────────────╯
+
+query
+SELECT id, title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+id	title	n
+3000	title-3000-long-enough-to-not-inline	30000
+2997	title-2997-long-enough-to-not-inline	29970
+2994	title-2994-long-enough-to-not-inline	29940
+
+statement ok
+RESET sdb_lookup_join_source_hop;
+
+statement ok
+CREATE INDEX lj_inc_idx ON lj_docs USING inverted (body lj_words, n) INCLUDE (n, title);
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_docs;
+
+query
+EXPLAIN SELECT title FROM lj_inc_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: iresearch_pk                │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+                  ├──────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ IRESEARCH_SCAN ───╮
+│ Top: 3                           │  │ Index: lj_inc_idx  │
+│ Order By: #0 DESC                │  │ Projections: title │
+│ ~3 rows                          │  │ ~3 rows            │
+╰─────────────────┬────────────────╯  ╰────────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: lj_inc_idx                │
+│ Index Filter:                    │
+│ ╭─ Term ──────────────╮          │
+│ │ Field: body(string) │          │
+│ │ Value: fox          │          │
+│ ╰─────────────────────╯          │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (n > ?) │
+│ Projections: n, iresearch_pk     │
+│ ~600 rows                        │
+╰──────────────────────────────────╯
+
+query
+SELECT title FROM lj_inc_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title
+title-3000-long-enough-to-not-inline
+title-2997-long-enough-to-not-inline
+title-2994-long-enough-to-not-inline
+
+statement ok
+DROP INDEX lj_inc_idx;
+
+query
+EXPLAIN SELECT n, ts_highlight(body, ts_offsets(body)) FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections: n,                      │
+│              ts_highlight(body, #2)  │
+│ ~600 rows                            │
+╰───────────────────┬──────────────────╯
+╭─ LOOKUP_JOIN ─────┴──────────────────╮
+│ Key: iresearch_pk                    │
+│ ~2 rows                              │
+╰───────────────────┬──────────────────╯
+                    ├───────────────────────────────╮
+╭─ TOP_N ───────────┴──────────────────╮  ╭─ IRESEARCH_SCAN ──╮
+│ Top: 2                               │  │ Index: lj_idx     │
+│ Order By: n DESC                     │  │ Lookup: table     │
+│ ~2 rows                              │  │ Projections: body │
+╰───────────────────┬──────────────────╯  │ ~2 rows           │
+╭─ IRESEARCH_SCAN ──┴──────────────────╮  ╰───────────────────╯
+│ Index: lj_idx                        │
+│ Index Filter:                        │
+│ ╭─ Term ──────────────╮              │
+│ │ Field: body(string) │              │
+│ │ Value: fox          │              │
+│ ╰─────────────────────╯              │
+│ Column Filter:                       │
+│ optional: Dynamic Filter (n > ?)     │
+│ Offsets: body                        │
+│ Projections:                         │
+│ n, sdb_inverted_index_offsets$body,  │
+│ iresearch_pk                         │
+│ ~600 rows                            │
+╰──────────────────────────────────────╯
+
+query
+SELECT n, ts_highlight(body, ts_offsets(body)) FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 2;
+----
+n	ts_highlight
+30000	red <b>fox</b> pad3000
+29970	red <b>fox</b> pad2997
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+SELECT n, ts_highlight(body, ts_offsets(body)) FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 2;
+----
+n	ts_highlight
+30000	red <b>fox</b> pad3000
+29970	red <b>fox</b> pad2997
+
+statement ok
+RESET disabled_optimizers;
+
+query
+EXPLAIN SELECT title FROM lj_idx WHERE body @@ ts_phrase('cat') LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────╮
+│ Key: iresearch_pk         │
+│ ~5 rows                   │
+╰─────────────┬─────────────╯
+              ├───────────────────────────╮
+╭─ STREAMING_LIMIT ─────────╮  ╭─ IRESEARCH_SCAN ───╮
+│ Limit: 5                  │  │ Index: lj_idx      │
+│ ~0 rows                   │  │ Lookup: table      │
+╰─────────────┬─────────────╯  │ Projections: title │
+╭─ IRESEARCH_SCAN ──────────╮  │ ~5 rows            │
+│ Index: lj_idx             │  ╰────────────────────╯
+│ Index Filter:             │
+│ ╭─ Term ──────────────╮   │
+│ │ Field: body(string) │   │
+│ │ Value: cat          │   │
+│ ╰─────────────────────╯   │
+│ Projections: iresearch_pk │
+│ ~600 rows                 │
+╰───────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_idx WHERE body @@ ts_phrase('cat') LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline'), min(n), max(n)
+FROM (SELECT title, n FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n LIMIT 900 OFFSET 7);
+----
+count	count	min	max
+900	900	240	27210
+
+query
+SELECT id, title FROM (
+  SELECT id, title, row_number() OVER (PARTITION BY id % 2 ORDER BY n) AS rn
+  FROM lj_idx WHERE body @@ ts_phrase('fox')
+) WHERE rn <= 2 ORDER BY id;
+----
+id	title
+3	title-3-long-enough-to-not-inline
+6	title-6-long-enough-to-not-inline
+9	title-9-long-enough-to-not-inline
+12	title-12-long-enough-to-not-inline
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE lj_docs SET title = 'changed in transaction' WHERE id = 2997;
+
+query
+SELECT id, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 2;
+----
+id	title
+3000	title-3000-long-enough-to-not-inline
+2997	changed in transaction
+
+statement ok
+ROLLBACK;
+
+statement ok
+DELETE FROM lj_docs WHERE id = 3000;
+
+query
+SELECT id FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+id
+2997
+2994
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+SELECT id FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+id
+2997
+2994
+2991
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_docs;
+
+query
+SELECT id, title FROM lj_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+id	title
+2997	title-2997-long-enough-to-not-inline
+2994	title-2994-long-enough-to-not-inline
+2991	title-2991-long-enough-to-not-inline
+
+statement ok
+CREATE TABLE lj_hits (id INTEGER PRIMARY KEY, url VARCHAR, event_time INTEGER, c1 VARCHAR, c2 BIGINT, c3 VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO lj_hits
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN 'https://google.com/' ELSE 'https://example.com/' END || i,
+       100000 - i,
+       'payload-' || i || '-long-enough-to-not-inline',
+       i * 3,
+       md5(i::VARCHAR)
+FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_hits;
+
+query
+EXPLAIN SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ──────────────────────────────╮
+│ Key: iresearch_pk                          │
+│ ~3 rows                                    │
+╰──────────────────────┬─────────────────────╯
+                       ├──────────────────────────────────╮
+╭─ TOP_N ──────────────┴─────────────────────╮  ╭─ IRESEARCH_SCAN ─╮
+│ Top: 3                                     │  │ Index: lj_hits   │
+│ Order By: event_time ASC                   │  │ Lookup: search   │
+│ ~3 rows                                    │  │ Projections: id, │
+╰──────────────────────┬─────────────────────╯  │              c1, │
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮  │              c2, │
+│ Index: lj_hits                             │  │              c3  │
+│ Lookup: search                             │  │ ~3 rows          │
+│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Column Filter:                             │
+│ contains(url, 'google'),                   │
+│ optional: Dynamic Filter (event_time < ?)  │
+│ ~1,000 rows                                │
+╰────────────────────────────────────────────╯
+
+query
+EXPLAIN ANALYZE SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ LOOKUP_JOIN ──────────────────────────────╮
+│ Key: iresearch_pk                          │
+│ 3 rows                                 0µs │
+╰──────────────────────┬─────────────────────╯
+                       ├──────────────────────────────────╮
+╭─ TOP_N ──────────────┴─────────────────────╮  ╭─ TABLE_SCAN ─────╮
+│ Top: 3                                     │  │ Index: lj_hits   │
+│ Order By: event_time ASC                   │  │ Lookup: search   │
+│ 3 rows                                 0µs │  │ Projections: id, │
+╰──────────────────────┒┎────────────────────╯  │              c1, │
+╭─ TABLE_SCAN ─────────┚┖────────────────────╮  │              c2, │
+│ Index: lj_hits                             │  │              c3  │
+│ Lookup: search                             │  │ 3 rows       0µs │
+│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Column Filter:                             │
+│ contains(url, 'google'),                   │
+│ optional: Dynamic Filter (event_time < ?)  │
+│ <slt:ignore> rows                               0µs │
+╰────────────────────────────────────────────╯
+
+query
+SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
+----
+id	url	event_time	c1	c2	c3
+4998	https://google.com/4998	95002	payload-4998-long-enough-to-not-inline	14994	2cbd9c540641923027adb8ab89decc05
+4991	https://google.com/4991	95009	payload-4991-long-enough-to-not-inline	14973	d4b5b5c16df28e61124e13181db7774c
+4984	https://google.com/4984	95016	payload-4984-long-enough-to-not-inline	14952	f1ababf130ee6a25f12da7478af8f1ac
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+EXPLAIN ANALYZE SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ────────────────────────────────────╮
+│ Top: 3                                     │
+│ Order By: event_time ASC                   │
+│ 3 rows                                 0µs │
+╰──────────────────────┒┎────────────────────╯
+╭─ TABLE_SCAN ─────────┚┖────────────────────╮
+│ Index: lj_hits                             │
+│ Lookup: search                             │
+│ Projections: id, url, event_time, c1, c2,  │
+│              c3                            │
+│ Column Filter:                             │
+│ contains(url, 'google'),                   │
+│ optional: Dynamic Filter (event_time < ?)  │
+│ <slt:ignore> rows                               0µs │
+╰────────────────────────────────────────────╯
+
+query
+SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 3;
+----
+id	url	event_time	c1	c2	c3
+4998	https://google.com/4998	95002	payload-4998-long-enough-to-not-inline	14994	2cbd9c540641923027adb8ab89decc05
+4991	https://google.com/4991	95009	payload-4991-long-enough-to-not-inline	14973	d4b5b5c16df28e61124e13181db7774c
+4984	https://google.com/4984	95016	payload-4984-long-enough-to-not-inline	14952	f1ababf130ee6a25f12da7478af8f1ac
+
+statement ok
+RESET disabled_optimizers;
+
+query
+SELECT count(*), count(*) FILTER (WHERE c1 = 'payload-' || id || '-long-enough-to-not-inline' AND c2 = id * 3 AND c3 = md5(id::VARCHAR))
+FROM (SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 500 OFFSET 3);
+----
+count	count
+500	500
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+query
+SELECT count(*), count(*) FILTER (WHERE c1 = 'payload-' || id || '-long-enough-to-not-inline')
+FROM (SELECT id, c1 FROM lj_hits LIMIT 2100 OFFSET 11);
+----
+count	count
+2100	2100
+
+statement ok
+DELETE FROM lj_hits WHERE id = 4998;
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_hits;
+
+query
+SELECT id, c1 FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMIT 2;
+----
+id	c1
+4991	payload-4991-long-enough-to-not-inline
+4984	payload-4984-long-enough-to-not-inline
+
+statement ok
+COPY (SELECT i AS id, 'title-' || i || '-long-enough-to-not-inline' AS title,
+             CASE WHEN i % 3 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i AS body, i * 10 AS n
+      FROM generate_series(1, 3000) t(i))
+TO '${__TEST_DIR__}/lj_src.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet'))
+TO '${__TEST_DIR__}/lj_src.csv' (FORMAT csv, HEADER);
+
+statement ok
+COPY (SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet'))
+TO '${__TEST_DIR__}/lj_src.json' (FORMAT json);
+
+statement ok
+COPY (SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet') WHERE id <= 1500)
+TO '${__TEST_DIR__}/lj_glob_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet') WHERE id > 1500)
+TO '${__TEST_DIR__}/lj_glob_2.parquet' (FORMAT parquet);
+
+statement ok
+ATTACH '${__TEST_DIR__}/lj_file.duckdb' AS lj_file_${__DATABASE__};
+
+statement ok
+CREATE TABLE lj_file_${__DATABASE__}.main.src AS SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet');
+
+statement ok
+DETACH lj_file_${__DATABASE__};
+
+statement ok
+ATTACH '${__TEST_DIR__}/lj_att.duckdb' AS lj_att_${__DATABASE__};
+
+statement ok
+CREATE TABLE lj_att_${__DATABASE__}.main.src AS SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet');
+
+statement ok
+CREATE VIEW lj_v_parquet AS SELECT * FROM read_parquet('${__TEST_DIR__}/lj_src.parquet');
+
+statement ok
+CREATE VIEW lj_v_csv AS SELECT * FROM read_csv('${__TEST_DIR__}/lj_src.csv');
+
+statement ok
+CREATE VIEW lj_v_json AS SELECT * FROM read_json('${__TEST_DIR__}/lj_src.json');
+
+statement ok
+CREATE VIEW lj_v_glob AS SELECT * FROM read_parquet('${__TEST_DIR__}/lj_glob_*.parquet');
+
+statement ok
+CREATE VIEW lj_v_duckdb AS SELECT * FROM read_duckdb('${__TEST_DIR__}/lj_file.duckdb', table_name='src');
+
+statement ok
+CREATE VIEW lj_v_att AS SELECT * FROM lj_att_${__DATABASE__}.main.src;
+
+statement ok
+CREATE INDEX lj_v_parquet_idx ON lj_v_parquet USING inverted (body lj_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX lj_v_csv_idx ON lj_v_csv USING inverted (body lj_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX lj_v_json_idx ON lj_v_json USING inverted (body lj_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX lj_v_glob_idx ON lj_v_glob USING inverted (body lj_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX lj_v_duckdb_idx ON lj_v_duckdb USING inverted (body lj_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX lj_v_att_idx ON lj_v_att USING inverted (body lj_words, n) INCLUDE (n);
+
+query
+EXPLAIN SELECT title, n FROM lj_v_parquet_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_parquet_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: file_row_number                                    │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├──────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                  ╭─ INDEX_SOURCE ─────╮
+│ Key: iresearch_pk                                       │                  │ Lookup: parquet    │
+│ ~5 rows                                                 │                  │ Projections: title │
+╰────────────────────────────┬────────────────────────────╯                  │ ~5 rows            │
+                             ├────────────────────────────────────────────╮  ╰────────────────────╯
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ────────╮
+│ Top: 5                                                  │  │ Index: lj_v_parquet_idx │
+│ Order By: #0 ASC                                        │  │ Projections: n, pk      │
+│ ~5 rows                                                 │  │ ~5 rows                 │
+╰────────────────────────────┬────────────────────────────╯  ╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: lj_v_parquet_idx                                 │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~600 rows                                               │
+╰─────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT title, n FROM lj_v_glob_idx LIMIT 2500 OFFSET 7;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────────────────╮
+│ Key: file_index, file_row_number │
+│ ~2,500 rows                      │
+╰─────────────────┬────────────────╯
+                  ├──────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ───┴────────────────╮                 ╭─ INDEX_SOURCE ───────╮
+│ Key: iresearch_pk                │                 │ Lookup: glob parquet │
+│ ~2,500 rows                      │                 │ Projections: title   │
+╰─────────────────┬────────────────╯                 │ ~2,500 rows          │
+                  ├───────────────────────────────╮  ╰──────────────────────╯
+╭─ STREAMING_LIMIT ────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
+│ Limit: 2500                      │  │ Index: lj_v_glob_idx │
+│ Offset: 7                        │  │ Projections: n, pk   │
+│ ~0 rows                          │  │ ~2,500 rows          │
+╰─────────────────┬────────────────╯  ╰──────────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Index: lj_v_glob_idx             │
+│ Projections: iresearch_pk        │
+│ ~3,000 rows                      │
+╰──────────────────────────────────╯
+
+query
+EXPLAIN SELECT title, n FROM lj_v_att_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_att_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: rowid                                              │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                ╭─ INDEX_SOURCE ─────╮
+│ Key: iresearch_pk                                       │                │ Lookup: duckdb     │
+│ ~5 rows                                                 │                │ Projections: title │
+╰────────────────────────────┬────────────────────────────╯                │ ~5 rows            │
+                             ├──────────────────────────────────────────╮  ╰────────────────────╯
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ────╮
+│ Top: 5                                                  │  │ Index: lj_v_att_idx │
+│ Order By: #0 ASC                                        │  │ Projections: n, pk  │
+│ ~5 rows                                                 │  │ ~5 rows             │
+╰────────────────────────────┬────────────────────────────╯  ╰─────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: lj_v_att_idx                                     │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~600 rows                                               │
+╰─────────────────────────────────────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_parquet_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_parquet_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_parquet_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_csv_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_csv_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_csv_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_json_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_json_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_json_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_glob_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_glob_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_glob_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_duckdb_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_duckdb_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_duckdb_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM lj_v_att_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(lj_v_att_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM lj_v_att_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+statement ok
+DELETE FROM lj_att_${__DATABASE__}.main.src WHERE id IN (2997, 3000);
+
+query
+SELECT title, n FROM lj_v_att_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-2994-long-enough-to-not-inline	29940
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+SELECT title, n FROM lj_v_att_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-2994-long-enough-to-not-inline	29940
+title-2991-long-enough-to-not-inline	29910
+title-2988-long-enough-to-not-inline	29880
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+DETACH lj_att_${__DATABASE__};
+
+statement ok
+COPY (VALUES ('red fox jumps over the lazy dog'), ('and keeps running'))
+TO '${__TEST_DIR__}/lj_txt_a.txt' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (VALUES ('blue cat sleeps'), ('all day long'))
+TO '${__TEST_DIR__}/lj_txt_b.txt' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (VALUES ('red fox and blue cat'), ('meet at night'))
+TO '${__TEST_DIR__}/lj_txt_c.txt' (FORMAT csv, HEADER false);
+
+statement ok
+CREATE VIEW lj_v_text AS SELECT * FROM read_text('${__TEST_DIR__}/lj_txt_*.txt');
+
+statement ok
+CREATE INDEX lj_v_text_idx ON lj_v_text USING inverted (content lj_words);
+
+query
+EXPLAIN SELECT parse_filename(filename), content FROM lj_v_text_idx WHERE content @@ ts_phrase('fox') ORDER BY BM25(lj_v_text_idx.tableoid) ASC LIMIT 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────╮
+│ Projections: parse_filename(filename), content          │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮
+│ Key: iresearch_pk                                       │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+                             ├────────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ───────╮
+│ Top: 1                                                  │  │ Index: lj_v_text_idx   │
+│ Order By: sdb_inverted_index_score ASC                  │  │ Lookup: glob text      │
+│ ~1 row                                                  │  │ Projections: content,  │
+╰────────────────────────────┬────────────────────────────╯  │              filename  │
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  │ ~1 row                 │
+│ Index: lj_v_text_idx                                    │  ╰────────────────────────╯
+│ Index Filter:                                           │
+│ ╭─ Term ─────────────────╮                              │
+│ │ Field: content(string) │                              │
+│ │ Value: fox             │                              │
+│ ╰────────────────────────╯                              │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
+
+query
+SELECT parse_filename(filename), content FROM lj_v_text_idx WHERE content @@ ts_phrase('fox') ORDER BY BM25(lj_v_text_idx.tableoid) ASC LIMIT 1;
+----
+parse_filename	content
+lj_txt_a.txt	red fox jumps over the lazy dog\nand keeps running\n
+
+statement ok
+CREATE TABLE lj_vec (id INT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX lj_vec_idx ON lj_vec USING inverted(id, emb ivf (metric = 'l2'));
+
+statement count 4
+INSERT INTO lj_vec VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) lj_vec;
+
+query
+EXPLAIN SELECT id FROM lj_vec_idx ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────╮
+│ Projections: #0                 │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+╭─ PROJECTION ───┴────────────────╮
+│ Projections: id,                │
+│              emb <=> [1, 0, 0]  │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+╭─ LOOKUP_JOIN ──┴────────────────╮
+│ Key: iresearch_pk               │
+│ ~3 rows                         │
+╰────────────────┬────────────────╯
+                 ├─────────────────────────────╮
+╭─ TOP_N ────────┴────────────────╮  ╭─ IRESEARCH_SCAN ──╮
+│ Top: 3                          │  │ Index: lj_vec_idx │
+│ Order By: #0 ASC                │  │ Lookup: table     │
+│ ~3 rows                         │  │ Projections: id   │
+╰────────────────┬────────────────╯  │ ~3 rows           │
+╭─ PROJECTION ───┴────────────────╮  ╰───────────────────╯
+│ Projections: emb <=> [1, 0, 0], │
+│              iresearch_pk, emb  │
+│ ~4 rows                         │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: lj_vec_idx               │
+│ Projections: emb, iresearch_pk  │
+│ ~4 rows                         │
+╰─────────────────────────────────╯
+
+query
+SELECT id FROM lj_vec_idx ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 3;
+----
+id
+1
+3
+2

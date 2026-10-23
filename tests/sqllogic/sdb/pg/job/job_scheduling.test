@@ -47,7 +47,7 @@ CREATE JOB js_every EVERY 1 SECOND AS INSERT INTO js_ticks SELECT 'every', now()
 
 
 query ok retry 80 backoff 250ms
-SELECT count(*) >= 2 AS fired FROM js_ticks WHERE source = 'every';
+SELECT count(*) >= 3 AS fired FROM js_ticks WHERE source = 'every';
 ----
 fired
 t

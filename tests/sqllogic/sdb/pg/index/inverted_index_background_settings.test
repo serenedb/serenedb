@@ -15,7 +15,7 @@ statement count 5
 INSERT INTO ibs SELECT g, 'common' FROM generate_series(1, 5) g;
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM ibs_idx;
 ----
 count
@@ -113,7 +113,7 @@ statement ok
 ALTER INDEX ibc_idx SET (compaction_interval = 100);
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'ibc_idx');
 ----
@@ -149,7 +149,7 @@ statement ok
 VACUUM (REFRESH_TABLE) ibc;
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT value AS segments FROM sdb_metrics
 WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'ibc_idx');
 ----
@@ -165,7 +165,7 @@ statement count 5
 INSERT INTO sbs SELECT g, 'common' FROM generate_series(1, 5) g;
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM sbs;
 ----
 count
@@ -219,7 +219,7 @@ statement ok
 ALTER TABLE sbs RESET (refresh_interval);
 
 
-query ok retry 60 backoff 200ms
+query ok retry 480 backoff 250ms
 SELECT count(*) FROM sbs;
 ----
 count

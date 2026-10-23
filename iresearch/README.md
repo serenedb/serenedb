@@ -24,11 +24,11 @@ cmake --build build --target iresearch-examples
 ./build/bin/iresearch-examples basic
 ```
 
-To depend on iresearch from your own CMake project, vendor SereneDB as a submodule and link against the `iresearch-static` target:
+To depend on iresearch from your own CMake project, vendor SereneDB as a submodule and link against the `iresearch` target:
 
 ```cmake
 add_subdirectory(third_party/serenedb)
-target_link_libraries(my_app PRIVATE iresearch-static)
+target_link_libraries(my_app PRIVATE iresearch)
 ```
 
 ## Features

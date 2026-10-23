@@ -214,5 +214,4 @@ query
 EXPLAIN (FORMAT compact) SELECT * FROM tbl WHERE i > 1;
 ----
 QUERY PLAN
-PROJECTION (est=1) Projections: id, name, col1, col2, Some Column Name, i, a, b, c, number, number1, number2
-  SEQ_SCAN (est=1) Table: tbl; Type: Sequential Scan; Projections: i, id, name, col1, col2, Some Column Name, a, b, c, number, number1, number2; Column Filter: (i > 1)
+SEQ_SCAN (est=1) Table: tbl; Type: Sequential Scan; Projections: id, name, col1, col2, Some Column Name, i, a, b, c, number, number1, number2; Column Filter: (i > 1)

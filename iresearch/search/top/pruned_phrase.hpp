@@ -42,6 +42,9 @@ template<typename Slots, typename Table>
 class PrunedPhrase : public Root {
   static_assert(Slots::kHasFreqBound,
                 "a phrase with no bound cannot be pruned");
+  static_assert(
+    !requires(const Slots& slots) { slots.Scale(); },
+    "a bound on the frequency does not bound a scaled score");
 
   static constexpr uint32_t kWindow = 64;
   static constexpr uint32_t kMaxInterval = 64;
@@ -116,13 +119,13 @@ class PrunedPhrase : public Root {
   }
 
   doc_id_t SkipBlocks(doc_id_t doc, score_t threshold) {
-    const auto* const index =
-      _bound_source != nullptr ? _slots.Lead().Blocks() : nullptr;
-    if (index == nullptr) {
+    auto* const leaf = _bound_source ? _slots.BoundLeaf() : nullptr;
+    const auto* const index = leaf ? leaf->Blocks() : nullptr;
+    if (!index) {
       _block_last = doc_limits::eof();
       return doc;
     }
-    const auto first = _slots.Lead().LeafBlock();
+    const auto first = leaf->LeafBlock();
     const auto b = FirstCompetitive(
       *index, first, threshold, [&](uint32_t r) { return RunScore(*index, r); },
       [&](uint32_t k) { return BoundScore(index->Bound(k)); });

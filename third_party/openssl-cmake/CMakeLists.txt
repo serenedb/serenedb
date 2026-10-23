@@ -53,7 +53,7 @@ if(OPENSSL_NO_ASM)
         add_definitions(-DL_ENDIAN)
     endif()
 elseif(ARCH_AMD64)
-    if(OS_DARWIN)
+    if(APPLE)
         set(PLATFORM_DIRECTORY darwin_x86_64)
         add_definitions(-DL_ENDIAN)
     else()
@@ -61,7 +61,7 @@ elseif(ARCH_AMD64)
         add_definitions(-DAES_ASM -DBSAES_ASM -DCMLL_ASM -DECP_NISTZ256_ASM -DGHASH_ASM -DKECCAK1600_ASM -DMD5_ASM -DOPENSSL_BN_ASM_GF2m -DOPENSSL_BN_ASM_MONT -DOPENSSL_BN_ASM_MONT5 -DOPENSSL_CPUID_OBJ -DOPENSSL_IA32_SSE2 -DPOLY1305_ASM -DRC4_ASM -DSHA1_ASM -DSHA256_ASM -DSHA512_ASM -DVPAES_ASM -DWHIRLPOOL_ASM -DX25519_ASM -DL_ENDIAN)
     endif()
 elseif(ARCH_AARCH64)
-    if(OS_DARWIN)
+    if(APPLE)
         set(PLATFORM_DIRECTORY darwin_aarch64)
         add_definitions(-DL_ENDIAN)
     else()
@@ -1116,7 +1116,7 @@ if(OPENSSL_NO_ASM)
         ${OPENSSL_SOURCE_DIR}/crypto/whrlpool/wp_block.c
     )
 elseif(ARCH_AMD64)
-    if (OS_DARWIN)
+    if (APPLE)
         set(CRYPTO_SRC ${CRYPTO_SRC}
             ${OPENSSL_SOURCE_DIR}/crypto/aes/aes_cbc.c
             ${OPENSSL_SOURCE_DIR}/crypto/aes/aes_core.c
@@ -1180,7 +1180,7 @@ elseif(ARCH_AMD64)
         )
     endif()
 elseif(ARCH_AARCH64)
-    if (OS_DARWIN)
+    if (APPLE)
         set(CRYPTO_SRC ${CRYPTO_SRC}
             ${OPENSSL_SOURCE_DIR}/crypto/aes/aes_cbc.c
             ${OPENSSL_SOURCE_DIR}/crypto/aes/aes_core.c

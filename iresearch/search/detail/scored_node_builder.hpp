@@ -30,14 +30,14 @@
 #include "iresearch/search/detail/boolean_builder.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
-#include "iresearch/search/detail/conjunction_scored.hpp"
+#include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/posting_scored.hpp"
@@ -59,8 +59,13 @@ Result<Api> MakeNodeDisjunctionWindow(
   score_t absorbed) {
   SDB_ASSERT(!terms.empty() || !rest.empty());
   const Scored score{merge, absorbed};
-  return BuildScoredWindow<Result<Api>>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+  return BuildWindowSet<Result<Api>>(
+    terms, field, doc, rest,
+    TermScoring{.scorer = scorer,
+                .boost = boost,
+                .uniformity = uniformity,
+                .recipe = recipe,
+                .merge = merge},
     [&]<typename Set>(auto&&... args) -> Result<Api> {
       return Api::template MakeWindow<OrGroup<Set>>(
         score, std::forward_as_tuple(std::forward<decltype(args)>(args)...));
@@ -76,10 +81,10 @@ Result<Api> MakeNodeDisjunction(std::span<const PostingClause> terms,
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const IndexInput* doc = nullptr;
   std::vector<FillNode::ptr> rest;
-  if (!CollectDenseScored(terms, filters, nullptr, doc, rest,
-                          [&](const QueryBuilder& child) {
-                            return child.PlanFill(ctx, merge);
-                          })) {
+  if (!CollectDense(terms, filters, nullptr, doc, rest,
+                    [&](const QueryBuilder& child) {
+                      return child.PlanFill(ctx, merge);
+                    })) {
     return {};
   }
   const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
@@ -108,10 +113,10 @@ Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
   SDB_ASSERT(min_match > 1);
   const IndexInput* doc = nullptr;
   std::vector<FillNode::ptr> rest;
-  if (!CollectDenseScored(terms, filters, nullptr, doc, rest,
-                          [&](const QueryBuilder& child) {
-                            return child.PlanFill(ctx, merge);
-                          })) {
+  if (!CollectDense(terms, filters, nullptr, doc, rest,
+                    [&](const QueryBuilder& child) {
+                      return child.PlanFill(ctx, merge);
+                    })) {
     return {};
   }
   SDB_ASSERT(terms.size() + rest.size() >= min_match);
@@ -122,8 +127,9 @@ Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
     auto counted = ResolveCountScored<Result<Api>>(
       *doc, uniformity >= Terms::Scored, merge,
       [&]<typename Leaf, typename Plain> -> Result<Api> {
-        return BuildScoredTerms<Result<Api>, Leaf, Plain>(
-          terms, nullptr, nullptr, kNoBoost, doc, recipe,
+        return BuildWindowTerms<Result<Api>, Leaf, Plain>(
+          terms, nullptr, doc,
+          TermScoring{.scorer = nullptr, .boost = kNoBoost, .recipe = recipe},
           [&]<typename Set>(auto&&... args) -> Result<Api> {
             return MakeNodeThresholdWindow<Api, TallyGroup, Set>(
               score, min_match, std::forward<decltype(args)>(args)...);
@@ -133,8 +139,13 @@ Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
       return counted;
     }
   }
-  return BuildScoredWindow<Result<Api>>(
-    terms, nullptr, nullptr, kNoBoost, doc, rest, uniformity, recipe, merge,
+  return BuildWindowSet<Result<Api>>(
+    terms, nullptr, doc, rest,
+    TermScoring{.scorer = nullptr,
+                .boost = kNoBoost,
+                .uniformity = uniformity,
+                .recipe = recipe,
+                .merge = merge},
     [&]<typename Set>(auto&&... args) -> Result<Api> {
       return MakeNodeThresholdWindow<Api, ThresholdGroup, Set>(
         score, min_match, std::forward<decltype(args)>(args)...);
@@ -160,8 +171,9 @@ Result<Api> MakeNodeConjunction(std::span<const PostingClause> terms,
   } else {
     SDB_ASSERT(!terms.empty() || !filters.empty());
   }
-  return BuildScoredConjunction<Result<Api>>(
-    terms, filters, nullptr, nullptr, kNoBoost, segment, recipe,
+  return BuildConjunction<Result<Api>>(
+    terms, filters, nullptr, segment,
+    TermScoring{.scorer = nullptr, .boost = kNoBoost, .recipe = recipe},
     probe::ScoredClauseOf(segment, ctx, recipe),
     [&](const QueryBuilder& child) -> lead::Node::ptr {
       return child.PlanLead(ctx);
@@ -269,10 +281,13 @@ Result<Api> MakeNodeBoost(std::span<const PostingClause> must,
   const auto candidates = IncludeCandidates(must, must_filters, segment);
   const auto inner = Api::Inner(merge);
   const auto build = [&]<typename Head>(auto&& head) -> Result<Api> {
-    return BuildOptionalLeaves<Result<Api>>(
-      should, should_filters, uniformity, nullptr, nullptr, kNoBoost, segment,
-      recipe, candidates, clause,
-      [&]<typename Optional>(size_t size, auto&& init) -> Result<Api> {
+    return BuildProbeLeaves<Result<Api>>(
+      should, should_filters, nullptr, segment, candidates, ProbeOrder::Densest,
+      TermScoring{.scorer = nullptr,
+                  .boost = kNoBoost,
+                  .uniformity = uniformity,
+                  .recipe = recipe},
+      clause, [&]<typename Optional>(size_t size, auto&& init) -> Result<Api> {
         return ResolveArity<kTailArity, kTailFloor>(
           size, [&]<size_t N> -> Result<Api> {
             return Api::template MakeSparse<Head, utils::Empty,

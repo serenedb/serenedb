@@ -29,9 +29,9 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"

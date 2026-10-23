@@ -66,7 +66,8 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
   }
   return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, nullptr, segment, interrogations,
-    detail::ProbeOrder::Narrowest,
+    detail::ProbeOrder::Narrowest, detail::NoScoring{},
+    detail::ProbeClauseOf(segment),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {

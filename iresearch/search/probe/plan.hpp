@@ -24,10 +24,10 @@
 
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -64,6 +64,7 @@ Node::ptr MakeSparseDisjunctionDocs(std::span<const Term> terms,
   SDB_ASSERT(terms.size() + filters.size() > 1);
   return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
+    detail::NoScoring{}, detail::ProbeClauseOf(segment),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
@@ -105,10 +106,13 @@ Node::ptr MakeSparseDisjunctionScored(
   ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
   score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
-  return detail::BuildOptionalLeaves<Node::ptr>(
-    terms, filters, uniformity, field, scorer, boost, segment, recipe,
-    interrogations, clause,
-    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
+  return detail::BuildProbeLeaves<Node::ptr>(
+    terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
+    detail::TermScoring{.scorer = scorer,
+                        .boost = boost,
+                        .uniformity = uniformity,
+                        .recipe = recipe},
+    clause, [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           using Node = BooleanSparse<utils::Empty, OrLeaves<Leaf, N, true>,
@@ -118,8 +122,7 @@ Node::ptr MakeSparseDisjunctionScored(
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
             std::forward_as_tuple(), detail::Scored{merge, absorbed});
         });
-    },
-    detail::ProbeOrder::Densest);
+    });
 }
 
 template<typename Term>
@@ -130,14 +133,19 @@ Node::ptr MakeWindowDisjunctionScored(
   ScoreMergeType merge, const detail::ScoredCtx& ctx, score_t absorbed = 0) {
   const IndexInput* doc = nullptr;
   std::vector<detail::FillNode::ptr> rest;
-  if (!detail::CollectDenseScored(terms, filters, field, doc, rest,
-                                  [&](const QueryBuilder& child) {
-                                    return child.PlanFill(ctx, merge);
-                                  })) {
+  if (!detail::CollectDense(terms, filters, field, doc, rest,
+                            [&](const QueryBuilder& child) {
+                              return child.PlanFill(ctx, merge);
+                            })) {
     return {};
   }
-  return detail::BuildScoredWindow<Node::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+  return detail::BuildWindowSet<Node::ptr>(
+    terms, field, doc, rest,
+    detail::TermScoring{.scorer = scorer,
+                        .boost = boost,
+                        .uniformity = uniformity,
+                        .recipe = recipe,
+                        .merge = merge},
     [&]<typename Set>(auto&&... args) -> Node::ptr {
       using Node = BooleanWindow<detail::OrGroup<Set>, detail::Scored>;
       return memory::make_managed<Impl<Node>>(

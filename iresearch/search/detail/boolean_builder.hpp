@@ -33,10 +33,12 @@
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/impl.hpp"
@@ -172,8 +174,8 @@ Result<Api> MakeWindowDisjunction(std::span<const PostingClause> terms,
                                   const IndexInput* doc,
                                   std::vector<FillNode::ptr>& rest,
                                   const Context<Api>& ctx) {
-  return BuildDense<Result<Api>>(
-    terms, nullptr, doc, rest,
+  return BuildWindowSet<Result<Api>>(
+    terms, nullptr, doc, rest, NoScoring{},
     [&]<typename Set>(auto&&... args) -> Result<Api> {
       return Api::template MakeWindow<utils::Empty, utils::Empty, OrGroup<Set>,
                                       utils::Empty>(
@@ -356,8 +358,8 @@ Result<Api> MakeWindowThreshold(std::span<const PostingClause> terms,
         std::forward_as_tuple());
     });
   }
-  return BuildDense<Result<Api>>(
-    terms, nullptr, doc, rest,
+  return BuildWindowSet<Result<Api>>(
+    terms, nullptr, doc, rest, NoScoring{},
     [&]<typename Set>(auto&&... args) -> Result<Api> {
       return Api::template MakeWindow<utils::Empty, utils::Empty,
                                       ThresholdGroup<Set>, utils::Empty>(
@@ -376,7 +378,8 @@ Result<Api> MakeSparseConjunction(std::span<const PostingClause> terms,
                                   const SubReader& segment,
                                   const Context<Api>& ctx) {
   return BuildConjunction<Result<Api>>(
-    terms, filters, nullptr, segment, 0,
+    terms, filters, nullptr, segment, NoScoring{}, ProbeClauseOf(segment),
+    kPlanLeadDocs,
     [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Result<Api> {
       return Api::template MakeSparse<Head, Tail, utils::Empty>(
         ctx, std::forward<decltype(head)>(head),
@@ -463,7 +466,8 @@ Result<Api> MakeSparseExclusion(
                                         ctx);
     }
     return BuildConjunction<Result<Api>>(
-      terms, filters, nullptr, segment, 0,
+      terms, filters, nullptr, segment, NoScoring{}, ProbeClauseOf(segment),
+      kPlanLeadDocs,
       [&]<typename Head, typename Tail>(auto&& head,
                                         auto&& tail) -> Result<Api> {
         return BuildExcludeSide<Result<Api>>(
@@ -508,7 +512,7 @@ Result<Api> MakeDisjunction(std::span<const PostingClause> terms,
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const IndexInput* doc = nullptr;
   std::vector<FillNode::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest)) {
+  if (!CollectDense(terms, filters, nullptr, doc, rest, kPlanFillDocs)) {
     return {};
   }
   if (auto folded = MakeBitset<Api>(
@@ -552,7 +556,7 @@ Result<Api> MakeThreshold(std::span<const PostingClause> terms,
   SDB_ASSERT(min_match != terms.size() + filters.size());
   const IndexInput* doc = nullptr;
   std::vector<FillNode::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest)) {
+  if (!CollectDense(terms, filters, nullptr, doc, rest, kPlanFillDocs)) {
     return {};
   }
   return MakeWindowThreshold<Api>(terms, doc, rest, min_match, ctx);

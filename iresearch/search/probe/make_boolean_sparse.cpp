@@ -76,7 +76,8 @@ Node::ptr MakeSparseThresholdDocs(std::span<const detail::PostingClause> terms,
   SDB_ASSERT(terms.size() + filters.size() >= min_match);
   return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, nullptr, segment, interrogations,
-    detail::ProbeOrder::Densest,
+    detail::ProbeOrder::Densest, detail::NoScoring{},
+    detail::ProbeClauseOf(segment),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {

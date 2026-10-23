@@ -25,10 +25,10 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
@@ -78,10 +78,14 @@ Node::ptr MakeSparseConjunctionScored(
       std::forward_as_tuple(std::move(only)), std::forward_as_tuple(),
       std::forward_as_tuple(), detail::Scored{merge, absorbed});
   }
-  return detail::BuildOptionalLeaves<Node::ptr>(
-    terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
-    interrogations, clause,
-    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
+  return detail::BuildProbeLeaves<Node::ptr>(
+    terms, filters, nullptr, segment, interrogations,
+    detail::ProbeOrder::Narrowest,
+    detail::TermScoring{.scorer = nullptr,
+                        .boost = kNoBoost,
+                        .uniformity = uniformity,
+                        .recipe = recipe},
+    clause, [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparseScored<AndLeaves<Leaf, N>, utils::Empty,
@@ -90,8 +94,7 @@ Node::ptr MakeSparseConjunctionScored(
             std::forward_as_tuple(), std::forward_as_tuple(),
             detail::Scored{merge, absorbed});
         });
-    },
-    detail::ProbeOrder::Narrowest);
+    });
 }
 
 Node::ptr MakeSparseThresholdScored(
@@ -105,10 +108,14 @@ Node::ptr MakeSparseThresholdScored(
     return {};
   }
   const auto clause = ScoredClauseOf(segment, ctx, recipe);
-  return detail::BuildOptionalLeaves<Node::ptr>(
-    terms, filters, uniformity, nullptr, nullptr, kNoBoost, segment, recipe,
-    interrogations, clause,
-    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
+  return detail::BuildProbeLeaves<Node::ptr>(
+    terms, filters, nullptr, segment, interrogations,
+    detail::ProbeOrder::Densest,
+    detail::TermScoring{.scorer = nullptr,
+                        .boost = kNoBoost,
+                        .uniformity = uniformity,
+                        .recipe = recipe},
+    clause, [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
           return MakeSparseScored<utils::Empty, ThresholdLeaves<Leaf, N, true>,
@@ -118,8 +125,7 @@ Node::ptr MakeSparseThresholdScored(
                                   min_match),
             std::forward_as_tuple(), detail::Scored{merge, absorbed});
         });
-    },
-    detail::ProbeOrder::Densest);
+    });
 }
 
 Node::ptr MakeSparseExclusionScored(
@@ -192,10 +198,14 @@ Node::ptr MakeSparseBoostScored(
             : std::min(interrogations,
                        detail::IncludeCandidates(must, must_filters, segment));
   const auto build = [&]<typename Head>(auto&& head) -> Node::ptr {
-    return detail::BuildOptionalLeaves<Node::ptr>(
-      should, should_filters, should_uniformity, nullptr, nullptr, kNoBoost,
-      segment, recipe, reach, clause,
-      [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
+    return detail::BuildProbeLeaves<Node::ptr>(
+      should, should_filters, nullptr, segment, reach,
+      detail::ProbeOrder::Densest,
+      detail::TermScoring{.scorer = nullptr,
+                          .boost = kNoBoost,
+                          .uniformity = should_uniformity,
+                          .recipe = recipe},
+      clause, [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
         return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
           size, [&]<size_t N> -> Node::ptr {
             return MakeSparseScored<Head, BoostLeaves<Leaf, N>, utils::Empty>(

@@ -28,10 +28,10 @@
 #include <vector>
 
 #include "iresearch/search/detail/bitset_of.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/phrase_match.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"

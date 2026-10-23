@@ -25,9 +25,9 @@
 #include <vector>
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/hits/walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"

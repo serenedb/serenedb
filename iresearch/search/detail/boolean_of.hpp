@@ -31,6 +31,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/boolean_bitset.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/conjunction.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -45,15 +46,15 @@ namespace irs::detail {
 template<typename Result, typename Term>
 Result BuildConjunctionOf(std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
-                          const TermReader* field, const SubReader& segment,
-                          uint64_t interrogations) {
+                          const TermReader* field, const SubReader& segment) {
   constexpr bool kFilled = std::is_same_v<Result, FillNode::ptr>;
   if (auto folded = MakeConjunctionBitset<Result>(terms, filters, field,
                                                   segment, nullptr)) {
     return folded;
   }
-  return BuildConjunction<Result, Term>(
-    terms, filters, field, segment, interrogations,
+  return BuildConjunction<Result>(
+    terms, filters, field, segment, NoScoring{}, ProbeClauseOf(segment),
+    kPlanLeadDocs,
     []<typename Lead, typename Others>(auto&& lead, auto&& others) -> Result {
       using Node =
         lead::BooleanSparse<Lead, Others, utils::Empty, utils::Empty>;
@@ -79,7 +80,7 @@ Result BuildRequiredLeadOf(std::span<const Term> terms,
   SDB_ASSERT(!terms.empty() || !filters.empty());
   if (terms.size() + filters.size() > 1) {
     auto node =
-      BuildConjunctionOf<LeadNode::ptr>(terms, filters, field, segment, 0);
+      BuildConjunctionOf<LeadNode::ptr>(terms, filters, field, segment);
     if (!node) {
       return {};
     }

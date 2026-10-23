@@ -53,7 +53,7 @@ docker run --rm --name "$name" \
 	"${hosts[@]}" \
 	-e HOME="$WORKSPACE/out/home" -e CI=true \
 	-e SDB_SERVICE_NETNS="container:$name" -e SDB_SERVICE_BIND="$gateway" -e SDB_SERVICE_HOST="$gateway" \
-	-e SDB_DOCKER_OWNER -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" \
+	-e SDB_DOCKER_OWNER -e SDB_SHA="${SDB_SHA:-}" -e SDB_PR="${SDB_PR:-}" -e SDB_RUN_ID="$SDB_RUN_ID" \
 	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" \
 	"${pass[@]}" \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \

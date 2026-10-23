@@ -205,10 +205,13 @@ def cmd_update_timing(args):
         key = f"timing/{args.config}-{args.arch}.parquet"
         have_old = store.get(key, old)
         listed = ", ".join(f"'{f}'" for f in files)
-        fresh = (f"SELECT unit, quantile_cont(duration, 0.95) AS p95, count(*) AS n "
-                 f"FROM read_parquet([{listed}], union_by_name = true) "
-                 f"WHERE coalesce(pr, '') = '' AND attempt = 0 AND NOT wrapper "
-                 f"AND status IN ('passed', 'failed', 'flaky') GROUP BY unit")
+        runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(duration) AS d "
+                f"FROM read_parquet([{listed}], union_by_name = true) "
+                f"WHERE coalesce(pr, '') = '' AND attempt = 0 AND NOT wrapper "
+                f"AND status IN ('passed', 'failed', 'flaky') "
+                f"GROUP BY 1, coalesce(run, concat(sha, ':', started))")
+        fresh = (f"SELECT unit, quantile_cont(d, 0.95) AS p95, count(*) AS n FROM ({runs}) "
+                 f"GROUP BY unit")
         keep = (f" UNION ALL SELECT unit, p95, n FROM read_parquet('{old}') "
                 f"WHERE unit NOT IN (SELECT unit FROM fresh)") if have_old else ""
         new = tmp / "new.parquet"

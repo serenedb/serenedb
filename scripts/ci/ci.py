@@ -18,7 +18,7 @@ sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "
 
 from testlib import selection, store  # noqa: E402
 
-DIGEST_VERSION = "1"
+DIGEST_VERSION = "2"
 NOT_BUILD_INPUTS = (
     ".github/*", ".claude/*", "packages/*", "serene-ui/*", "apps/*",
     "tests/drivers/*", "tests/duckdb/*", "scripts/ci/testlib/*", "scripts/ci/skips/*",
@@ -34,8 +34,9 @@ NOT_BUILD_INPUTS = (
 BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/sqllogic/recovery/site_docs/*")
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
-    "bin", "third_party/duckdb/test/unittest", "third_party/re2/CTestTestfile.cmake",
-    "CMakeCache.txt",
+    "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
+    "bin/sqllogictest", "third_party/duckdb/test/unittest",
+    "third_party/re2/CTestTestfile.cmake", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
 
@@ -106,7 +107,11 @@ def fetch_bundle(config, arch, dig, dest):
             raise SystemExit(f"no bundle {bundle_name(config, arch, dig)} in the store")
         unpacked = tmp_dir / "unpacked"
         unpacked.mkdir()
-        subprocess.run(["tar", "-C", str(unpacked), "-I", "zstd -T0", "-xf", str(archive)], check=True)
+        owner = os.environ.get("SDB_DOCKER_OWNER")
+        subprocess.run(["docker", "run", "--rm", *(["--label", f"serenedb.owner={owner}"] if owner else []),
+                        "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{BUNDLE_CACHE}:{BUNDLE_CACHE}",
+                        os.environ["BUILD_IMAGE"], "tar", "-C", str(unpacked), "-I", "zstd -T0",
+                        "-xf", str(archive)], check=True)
         (unpacked / ".complete").write_text(dig)
         if dest.exists():
             shutil.rmtree(dest)

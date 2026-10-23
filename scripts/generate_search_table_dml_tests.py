@@ -271,8 +271,8 @@ def outputs():
     return {
         INDEX / "search_table_positional_dml_random.test": DmlTest(11, "pd_a", 80, False).render(),
         INDEX / "search_table_positional_dml_background.test": DmlTest(23, "pd_b", 80, True).render(),
-        INDEX / "search_table_positional_dml_long.test_slow": DmlTest(37, "pd_c", 200, True).render(),
-        RECOVERY / "search_table_positional_removal_load.test_slow": recovery_test(5, 120),
+        INDEX / "search_table_positional_dml_long.test": DmlTest(37, "pd_c", 200, True).render(),
+        RECOVERY / "search_table_positional_removal_load.test": recovery_test(5, 120),
     }
 
 

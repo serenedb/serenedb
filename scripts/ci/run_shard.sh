@@ -25,6 +25,10 @@ fi
 out="out/test-${CONFIG}-${SHARD/\//of}"
 rm -rf "$out"
 mkdir -p "$out" out/home out/sockets
+docker run --rm "$BUILD_IMAGE" cat /etc/passwd >out/passwd
+echo "ci:x:$(id -u):$(id -g)::$WORKSPACE/out/home:/bin/bash" >>out/passwd
+docker run --rm "$BUILD_IMAGE" cat /etc/group >out/group
+grep -q ":$(id -g):" out/group || echo "ci:x:$(id -g):" >>out/group
 
 name="sdbt-${SDB_DOCKER_OWNER//[^A-Za-z0-9_.-]/-}-${CONFIG}-${SHARD/\//of}"
 gateway=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
@@ -53,6 +57,7 @@ docker run --rm --name "$name" \
 	-e SDB_SERVICE_SOCKET_ROOT="$WORKSPACE/out/sockets" \
 	"${pass[@]}" \
 	-v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+	-v "$WORKSPACE/out/passwd:/etc/passwd:ro" -v "$WORKSPACE/out/group:/etc/group:ro" \
 	-v "$bundle:$bundle" \
 	-v "$TIMING:$TIMING:ro" \
 	-v /var/run/docker.sock:/var/run/docker.sock \

@@ -14,14 +14,19 @@ START_TIMEOUT = 300
 
 
 class Server:
-    def __init__(self, ctx, home, *, threads=0, listen_ssl=False, extra_args=()):
+    def __init__(self, ctx, home, *, threads=0, listen_ssl=False, http_apis=(), hba=None,
+                 extra_args=(), extra_env=None):
         self.ctx = ctx
         self.home = Path(home)
         self.threads = threads
         self.listen_ssl = listen_ssl
+        self.http_apis = tuple(http_apis)
+        self.hba = hba
         self.extra_args = list(extra_args)
+        self.extra_env = dict(extra_env or {})
         self.port = None
         self.ssl_port = None
+        self.http_port = None
         self.proc = None
         self.generation = 0
         self.datadir = None
@@ -33,6 +38,7 @@ class Server:
         env = dict(self.ctx.base_env)
         env.update(self.ctx.build.sanitizer_env(self.san_dir))
         env.update(self.ctx.build.coverage_env(self.ctx.out_dir / "profiles"))
+        env.update(self.extra_env)
         return env
 
     def argv(self):
@@ -40,6 +46,8 @@ class Server:
         if self.listen_ssl:
             ca = self.ctx.root / "resources" / "ca.pem"
             listen += f",postgres://127.0.0.1:{self.ssl_port}?sslmode=require&cert={ca}&key={ca}"
+        if self.http_apis:
+            listen += f",http://127.0.0.1:{self.http_port}?" + "&".join(f"api={a}" for a in self.http_apis)
         args = [str(self.ctx.build.bin("serened")), str(self.datadir), f"--listen={listen}",
                 "--auth_timeout=600s"]
         if self.threads:
@@ -55,9 +63,12 @@ class Server:
                 shutil.rmtree(self.datadir, ignore_errors=True)
             self.datadir = self.home / f"data.{self.generation}"
             self.datadir.mkdir()
+            if self.hba is not None:
+                (self.datadir / "pg_hba.conf").write_text(self.hba)
         for _ in range(10):
             self.port = free_port()
             self.ssl_port = free_port() if self.listen_ssl else None
+            self.http_port = free_port() if self.http_apis else None
             self.log = self.home / f"log.{self.generation}.txt"
             self.proc = proc.spawn(self.argv(), env=self.env(), cwd=self.ctx.root,
                                    log_path=self.log)
@@ -112,10 +123,11 @@ class Server:
 
 
 class ServerPool(Fixture):
-    def __init__(self, ctx, count, threads, name="servers"):
+    def __init__(self, ctx, count, threads, name="servers", **server_args):
         self.ctx = ctx
         self.name = name
-        self.servers = [Server(ctx, ctx.out_dir / name / str(i), threads=threads, listen_ssl=True)
+        server_args.setdefault("listen_ssl", True)
+        self.servers = [Server(ctx, ctx.out_dir / name / str(i), threads=threads, **server_args)
                         for i in range(count)]
         self.load = [0] * count
         self.lock = threading.Lock()

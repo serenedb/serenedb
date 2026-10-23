@@ -1,7 +1,9 @@
+import itertools
 import os
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -90,7 +92,16 @@ class Context:
         self.findings = []
         self.skips = []
         self.timeout_floor = 180.0 if config.slowdown <= 2 else 900.0
+        self.tmp_root = Path(tempfile.mkdtemp(prefix="sdbt-", dir="/tmp"))
         self._lock = threading.Lock()
+        self._tmp_ids = itertools.count()
+
+    def unit_tmp(self):
+        with self._lock:
+            n = next(self._tmp_ids)
+        path = self.tmp_root / str(n)
+        path.mkdir()
+        return path
 
     def finding(self, result):
         with self._lock:
@@ -107,8 +118,7 @@ class Run:
         if self.dir.exists():
             shutil.rmtree(self.dir, ignore_errors=True)
         self.dir.mkdir(parents=True)
-        self.tmp = self.dir / "tmp"
-        self.tmp.mkdir()
+        self.tmp = ctx.unit_tmp()
         self.san_dir = self.dir / "san"
         self.san_dir.mkdir()
         self.log = self.dir / "log.txt"
@@ -252,8 +262,10 @@ class Scheduler:
             member_results.append(Result(member, unit.suite, status, seconds, attempt,
                                          started_wall, detail, "", member_of=unit.id,
                                          dir=unit_dir))
-        if out.status == PASSED and run is not None and not self.ctx.verbose:
-            shutil.rmtree(run.dir, ignore_errors=True)
+        if run is not None:
+            shutil.rmtree(run.tmp, ignore_errors=True)
+            if out.status == PASSED and not self.ctx.verbose:
+                shutil.rmtree(run.dir, ignore_errors=True)
         return res, member_results
 
     def _progress(self, total, force=False):
@@ -345,6 +357,7 @@ class Scheduler:
                 r.detail += f" (failed again on {len(later)} rerun(s): deterministic)"
 
     def stop_fixtures(self):
+        shutil.rmtree(self.ctx.tmp_root, ignore_errors=True)
         for name, fixture in list(self.ctx.fixtures.items()):
             try:
                 findings = fixture.stop()

@@ -1,4 +1,4 @@
-import os
+import importlib.util
 import subprocess
 
 from serened import pg_startup_reachable
@@ -65,13 +65,23 @@ def _sqlsmith_run(ctx, seconds):
     return run
 
 
+def _stress_seconds(ctx, profile):
+    path = ctx.root / "tests" / "drivers" / "stress" / "config.py"
+    spec = importlib.util.spec_from_file_location("sdb_stress_config", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    found = module.PROFILES.get(profile)
+    return float(found.seconds) if found else 600.0
+
+
 def stress_units(ctx, args, skips):
     uid = f"stress:{args.stress_profile}"
     if skipped(skips, uid):
         return []
-    cost, timeout = plan(ctx, uid, 600.0)
+    seconds = _stress_seconds(ctx, args.stress_profile)
+    cost, timeout = plan(ctx, uid, seconds + 30.0)
     return [Unit(uid, "stress", _stress_run(ctx, args.stress_profile), cpus=8, mem_gb=12.0,
-                 cost=cost, timeout=max(timeout, 3 * cost), label=False)]
+                 cost=cost, timeout=max(timeout, 3 * seconds + 600), label=False)]
 
 
 def _stress_run(ctx, profile):

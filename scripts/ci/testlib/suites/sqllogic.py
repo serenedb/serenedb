@@ -222,5 +222,6 @@ def _recovery_run(ctx, rel):
 def fixture_factories(ctx, args):
     factories = service_factories(args.biglake)
     factories["servers"] = lambda c: ServerPool(c, count=args.servers or max(
-        1, c.jobs // c.config.units_per_server), threads=0)
+        1, c.jobs // c.config.units_per_server), threads=0,
+        extra_env={"POSTGRES_PASSWORD": "postgres"})
     return factories

@@ -475,7 +475,7 @@ class S3Fixture(_DockerFixture):
         cfg = ctx.root / "third_party" / "duckdb_httpfs" / "scripts" / "seaweedfs_s3_config.json"
         bind = ip if self.services.netns else "0.0.0.0"
         args = ["server", "-dir=/data", "-ip=duckdb-minio.com", f"-ip.bind={bind}",
-                "-master.volumeSizeLimitMB=1024", "-s3", "-s3.port=9000",
+                "-master.volumeSizeLimitMB=1024", "-s3", "-s3.port=9000", "-s3.port.iceberg=0",
                 "-s3.domainName=duckdb-minio.com", "-s3.config=/etc/seaweedfs/s3_config.json"]
         hosts = [] if self.services.netns else [a for h in S3_HOSTS for a in ("--add-host", f"{h}:{ip}")]
         self.services.run("s3", "chrislusf/seaweedfs:4.47", *args, fixed_ports=((ip, 9000),),
@@ -577,6 +577,7 @@ class IcebergFixture(_DockerFixture):
         bind = "127.0.0.1" if self.services.netns else "0.0.0.0"
         self.services.run("seaweedfs", "chrislusf/seaweedfs:4.47", "server", "-dir=/data",
                           "-ip=127.0.0.1", f"-ip.bind={bind}", "-s3", "-s3.port=9000",
+                          "-s3.port.iceberg=0",
                           extra=creds, peer="iceberg")
         services.wait_for("SeaweedFS", lambda: _http_any("http://127.0.0.1:9000"), 60)
         self.services.oneshot("s3-init", "amazon/aws-cli:2.36.44", ["-c",

@@ -121,8 +121,7 @@ Root::ptr Make(const TokenPhraseQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  return irs::detail::MakeApprox<ConstantWalk, Root::ptr>(
-    query, 0, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
+  return irs::detail::MakeApprox<Family>(query, ctx);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

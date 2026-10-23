@@ -37,34 +37,16 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/count/walk.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/search/docs/plan.hpp"
-#include "iresearch/search/docs/walk.hpp"
-#include "iresearch/search/fill/impl.hpp"
-#include "iresearch/search/fill/make.hpp"
-#include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/hits/make.hpp"
-#include "iresearch/search/hits/walk.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/lead/two_phase_scored.hpp"
 #include "iresearch/search/probe/impl.hpp"
-#include "iresearch/search/probe/make.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
-#include "iresearch/search/probe/two_phase_scored.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/search/top/make.hpp"
-#include "iresearch/search/top/walk.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -667,40 +649,6 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
     });
 }
 
-template<template<typename> typename Walk, typename Result, typename Gate,
-         template<typename> typename Two, typename Query, typename... Prefix>
-Result MakeVectorDocs(const Query& query, score_t edge, probe::Node::ptr inner,
-                      Prefix&&... prefix) {
-  return ResolveBool(!Gate::kAll && query.Rescored(),
-                     [&]<bool Rescore>() -> Result {
-                       return ResolveVector<Gate, Rescore>(
-                         query, edge, std::move(inner),
-                         [&]<typename Slots>(auto&&... args) -> Result {
-                           using Node = Two<Slots>;
-                           return memory::make_managed<Walk<Node>>(
-                             std::forward<Prefix>(prefix)...,
-                             std::forward<decltype(args)>(args)...);
-                         });
-                     });
-}
-
-template<template<typename> typename Walk, typename Result, typename Gate,
-         bool Rescore, template<typename> typename Two, typename Query,
-         typename... Prefix>
-Result MakeVectorScored(const Query& query, const TermReader& field,
-                        const detail::ScoreArgs& score, score_t edge,
-                        probe::Node::ptr inner, Prefix&&... prefix) {
-  const auto& segment = query.Segment();
-  return ResolveVector<Gate, Rescore>(
-    query, edge, std::move(inner),
-    [&]<typename Slots>(auto&&... args) -> Result {
-      using Node = Two<Slots>;
-      return memory::make_managed<Walk<Node>>(
-        std::forward<Prefix>(prefix)..., segment, field, score,
-        std::forward<decltype(args)>(args)...);
-    });
-}
-
 template<typename Query>
 probe::Node::ptr InnerProbe(const Query& query) {
   const auto* inner = query.Inner();
@@ -708,6 +656,57 @@ probe::Node::ptr InnerProbe(const Query& query) {
     return {};
   }
   return inner->PlanProbe({}, query.State().estimation);
+}
+
+template<typename Family, typename Gate, typename Query>
+typename Family::Result MakeVectorDocs(const Query& query,
+                                       const typename Family::DocsContext& ctx,
+                                       score_t edge) {
+  using Result = typename Family::Result;
+  auto inner = InnerProbe(query);
+  if (query.Inner() != nullptr && !inner) {
+    return {};
+  }
+  return ResolveBool(!Gate::kAll && query.Rescored(), [&]<bool Rescore>() {
+    return ResolveVector<Gate, Rescore>(
+      query, edge, std::move(inner),
+      [&]<typename Slots>(auto&&... args) -> Result {
+        return Family::template Docs<
+          typename Family::template TwoPhaseDocs<Slots>>(
+          ctx, std::forward<decltype(args)>(args)...);
+      });
+  });
+}
+
+template<typename Family, typename Gate, bool Rescores, typename Query>
+typename Family::Result MakeVectorScored(
+  const Query& query, const typename Family::ScoredContext& ctx, score_t edge) {
+  using Result = typename Family::Result;
+  auto inner = InnerProbe(query);
+  if (query.Inner() != nullptr && !inner) {
+    return {};
+  }
+  const auto& scoring = Family::Scoring(ctx);
+  const auto record = query.Stats(scoring);
+  const ScoreArgs score{.scorer = record.scorer,
+                        .stats = record.stats,
+                        .fetcher = scoring.fetcher,
+                        .boost = query.Boost()};
+  const auto make = [&]<bool Rescore>() {
+    return ResolveVector<Gate, Rescore>(
+      query, edge, std::move(inner),
+      [&]<typename Slots>(auto&&... args) -> Result {
+        return Family::template Scored<
+          typename Family::template TwoPhaseScored<Slots>>(
+          ctx, query.Segment(), *query.State().reader, score,
+          std::forward<decltype(args)>(args)...);
+      });
+  };
+  if constexpr (Rescores) {
+    return ResolveBool(query.Rescored(), make);
+  } else {
+    return make.template operator()<false>();
+  }
 }
 
 inline score_t Unbounded() noexcept {

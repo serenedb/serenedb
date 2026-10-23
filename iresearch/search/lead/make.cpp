@@ -165,8 +165,7 @@ Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
 Node::ptr Make(const ApproxQuery& query) { return query.Approx().PlanLead({}); }
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx) {
-  return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
-    query, 0, detail::AllDocsScoreOf(query, ctx));
+  return detail::MakeApprox<Family>(query, ctx);
 }
 
 }  // namespace irs::lead

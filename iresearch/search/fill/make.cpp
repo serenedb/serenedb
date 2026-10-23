@@ -194,8 +194,7 @@ Node::ptr Make(const ApproxQuery& query) {
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return detail::MakeApprox<WalkConstantScored, Node::ptr>(
-    query, 0, merge, *ctx.fetcher, detail::AllDocsScoreOf(query, ctx));
+  return detail::MakeApprox<Family>(query, {.scored = ctx, .merge = merge});
 }
 
 }  // namespace irs::fill

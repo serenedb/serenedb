@@ -37,6 +37,10 @@ namespace irs::fill {
 
 struct Family {
   using Result = Node::ptr;
+  template<typename Slots>
+  using TwoPhaseDocs = lead::TwoPhaseDocs<Slots>;
+  template<typename Slots>
+  using TwoPhaseScored = lead::TwoPhaseScored<Slots>;
   using DocsContext = utils::Empty;
 
   struct ScoredContext {
@@ -54,26 +58,22 @@ struct Family {
     return ctx.scored;
   }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Docs(const DocsContext&, Args&&... args) {
-    return memory::make_managed<ByWalkDocs<lead::TwoPhaseDocs<Slots>>>(
-      std::forward<Args>(args)...);
+    return memory::make_managed<ByWalkDocs<Node>>(std::forward<Args>(args)...);
   }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Constant(const ScoredContext& ctx, score_t value,
                          Args&&... args) {
-    return memory::make_managed<WalkConstantScored<lead::TwoPhaseDocs<Slots>>>(
+    return memory::make_managed<WalkConstantScored<Node>>(
       ctx.merge, *ctx.scored.fetcher, value, std::forward<Args>(args)...);
   }
 
-  template<typename Slots, typename... Args>
-  static Result Scored(const ScoredContext& ctx, const SubReader& segment,
-                       const TermReader& field, const detail::ScoreArgs& args,
-                       Args&&... rest) {
-    return memory::make_managed<ByWalkScored<lead::TwoPhaseScored<Slots>>>(
-      ctx.merge, *ctx.scored.fetcher, segment, field, args,
-      std::forward<Args>(rest)...);
+  template<typename Node, typename... Args>
+  static Result Scored(const ScoredContext& ctx, Args&&... args) {
+    return memory::make_managed<ByWalkScored<Node>>(
+      ctx.merge, *ctx.scored.fetcher, std::forward<Args>(args)...);
   }
 };
 

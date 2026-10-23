@@ -19,48 +19,22 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/make.hpp"
 
 namespace irs::hits {
 
 Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
-  auto inner = irs::detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs score{.scorer = record.scorer,
-                                     .stats = record.stats,
-                                     .fetcher = &ctx.fetcher,
-                                     .boost = query.Boost()};
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
-    return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
-      return irs::detail::MakeVectorScored<Walk, Root::ptr,
-                                           irs::detail::RadiusGate<Inclusive>,
-                                           Rescore, lead::TwoPhaseScored>(
-        query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), ctx.fetcher);
-    });
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return irs::detail::MakeVectorScored<
+      Family, irs::detail::RadiusGate<Inclusive>, true>(query, ctx,
+                                                        query.Threshold());
   });
 }
 
 Root::ptr Make(const KnnVectorQuery& query, const Context& ctx) {
-  auto inner = irs::detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  const irs::detail::ScoreArgs score{.scorer = record.scorer,
-                                     .stats = record.stats,
-                                     .fetcher = &ctx.fetcher,
-                                     .boost = query.Boost()};
-  const auto& field = *query.State().reader;
-  return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Root::ptr {
-    return irs::detail::MakeVectorScored<
-      Walk, Root::ptr, irs::detail::AcceptAll, Rescore, lead::TwoPhaseScored>(
-      query, field, score, irs::detail::Unbounded(), std::move(inner),
-      ctx.fetcher);
-  });
+  return irs::detail::MakeVectorScored<Family, irs::detail::AcceptAll, true>(
+    query, ctx, irs::detail::Unbounded());
 }
 
 }  // namespace irs::hits

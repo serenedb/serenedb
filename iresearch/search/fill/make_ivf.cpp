@@ -19,41 +19,24 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/fill/family.hpp"
 #include "iresearch/search/fill/make.hpp"
 
 namespace irs::fill {
 
 Node::ptr Make(const RangeVectorQuery& query) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return detail::MakeVectorDocs<
-      ByWalkDocs, Node::ptr, detail::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
-      query, query.Threshold(), std::move(inner));
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
+      query, {}, query.Threshold());
   });
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs score{.scorer = record.scorer,
-                                .stats = record.stats,
-                                .fetcher = ctx.fetcher,
-                                .boost = query.Boost()};
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return detail::MakeVectorScored<ByWalkScored, Node::ptr,
-                                      detail::RadiusGate<Inclusive>, Rescore,
-                                      lead::TwoPhaseScored>(
-        query, *query.State().reader, score, query.Threshold(),
-        std::move(inner), merge, *ctx.fetcher);
-    });
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
+                                    true>(
+      query, {.scored = ctx, .merge = merge}, query.Threshold());
   });
 }
 

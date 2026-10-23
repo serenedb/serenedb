@@ -37,6 +37,10 @@ namespace irs::probe {
 
 struct Family {
   using Result = Node::ptr;
+  template<typename Slots>
+  using TwoPhaseDocs = probe::TwoPhaseDocs<Slots>;
+  template<typename Slots>
+  using TwoPhaseScored = probe::TwoPhaseScored<Slots>;
 
   struct DocsContext {
     uint64_t interrogations = 0;
@@ -63,24 +67,20 @@ struct Family {
     return ctx.scored;
   }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Docs(const DocsContext&, Args&&... args) {
-    return memory::make_managed<Impl<TwoPhaseDocs<Slots>>>(
-      std::forward<Args>(args)...);
+    return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
   }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Constant(const ScoredContext&, score_t value, Args&&... args) {
-    return memory::make_managed<ConstantScoredImpl<TwoPhaseDocs<Slots>>>(
+    return memory::make_managed<ConstantScoredImpl<Node>>(
       value, std::forward<Args>(args)...);
   }
 
-  template<typename Slots, typename... Args>
-  static Result Scored(const ScoredContext&, const SubReader& segment,
-                       const TermReader& field, const detail::ScoreArgs& args,
-                       Args&&... rest) {
-    return memory::make_managed<Impl<TwoPhaseScored<Slots>>>(
-      segment, field, args, std::forward<Args>(rest)...);
+  template<typename Node, typename... Args>
+  static Result Scored(const ScoredContext&, Args&&... args) {
+    return memory::make_managed<Impl<Node>>(std::forward<Args>(args)...);
   }
 };
 

@@ -33,12 +33,14 @@ struct Family {
   using Result = Root::ptr;
   using DocsContext = Context;
 
+  template<typename Slots>
+  using TwoPhaseDocs = lead::TwoPhaseDocs<Slots>;
+
   static uint64_t Interrogations(const Context&) noexcept { return 0; }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Docs(const Context& ctx, Args&&... args) {
-    return MakeShape<Walk, lead::TwoPhaseDocs<Slots>>(
-      ctx, std::forward<Args>(args)...);
+    return MakeShape<Walk, Node>(ctx, std::forward<Args>(args)...);
   }
 };
 

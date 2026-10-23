@@ -19,41 +19,25 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/probe/make.hpp"
 
 namespace irs::probe {
 
-Node::ptr Make(const RangeVectorQuery& query, uint64_t) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return detail::MakeVectorDocs<Impl, Node::ptr,
-                                  detail::RadiusGate<Inclusive>, TwoPhaseDocs>(
-      query, query.Threshold(), std::move(inner));
+Node::ptr Make(const RangeVectorQuery& query, uint64_t interrogations) {
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
+      query, {.interrogations = interrogations}, query.Threshold());
   });
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx,
-               uint64_t) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs score{.scorer = record.scorer,
-                                .stats = record.stats,
-                                .fetcher = ctx.fetcher,
-                                .boost = query.Boost()};
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return detail::MakeVectorScored<Impl, Node::ptr,
-                                      detail::RadiusGate<Inclusive>, Rescore,
-                                      probe::TwoPhaseScored>(
-        query, *query.State().reader, score, query.Threshold(),
-        std::move(inner));
-    });
+               uint64_t interrogations) {
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
+                                    true>(
+      query, {.scored = ctx, .interrogations = interrogations},
+      query.Threshold());
   });
 }
 

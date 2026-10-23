@@ -45,9 +45,4 @@ Root::ptr MakeShape(const Context& ctx, Args&&... args) {
     utils::Empty{}, std::forward<Args>(args)...);
 }
 
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, detail::TableFilter*>;
-
 }  // namespace irs::count

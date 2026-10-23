@@ -19,56 +19,28 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/lead/family.hpp"
 #include "iresearch/search/lead/make.hpp"
 
 namespace irs::lead {
 
 Node::ptr Make(const RangeVectorQuery& query) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return detail::MakeVectorDocs<
-      Impl, Node::ptr, detail::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
-      query, query.Threshold(), std::move(inner));
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
+      query, {}, query.Threshold());
   });
 }
 
 Node::ptr Make(const RangeVectorQuery& query, const detail::ScoredCtx& ctx) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs score{.scorer = record.scorer,
-                                .stats = record.stats,
-                                .fetcher = ctx.fetcher,
-                                .boost = query.Boost()};
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Node::ptr {
-    return ResolveBool(query.Rescored(), [&]<bool Rescore>() -> Node::ptr {
-      return detail::MakeVectorScored<Impl, Node::ptr,
-                                      detail::RadiusGate<Inclusive>, Rescore,
-                                      lead::TwoPhaseScored>(
-        query, *query.State().reader, score, query.Threshold(),
-        std::move(inner));
-    });
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorScored<Family, detail::RadiusGate<Inclusive>,
+                                    true>(query, ctx, query.Threshold());
   });
 }
 
 Node::ptr Make(const KnnVectorQuery& query, const detail::ScoredCtx& ctx) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  const auto record = query.Stats(ctx);
-  const detail::ScoreArgs score{.scorer = record.scorer,
-                                .stats = record.stats,
-                                .fetcher = ctx.fetcher,
-                                .boost = query.Boost()};
-  return detail::MakeVectorScored<Impl, Node::ptr, detail::AcceptAll, false,
-                                  lead::TwoPhaseScored>(
-    query, *query.State().reader, score, detail::Unbounded(), std::move(inner));
+  return detail::MakeVectorScored<Family, detail::AcceptAll, false>(
+    query, ctx, detail::Unbounded());
 }
 
 }  // namespace irs::lead

@@ -77,15 +77,6 @@ Root::ptr MakePrepared(const Context& ctx, Make&& make) {
   return make(utils::Empty{});
 }
 
-template<typename Node>
-using PlainWalk = Walk<Node, utils::Empty>;
-template<typename Node>
-using FilteredWalk = Walk<Node, irs::detail::TableFilter*>;
-template<typename Node>
-using PlainConstantWalk = ConstantWalk<Node, utils::Empty>;
-template<typename Node>
-using FilteredConstantWalk = ConstantWalk<Node, irs::detail::TableFilter*>;
-
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx);
 
 Root::ptr MakeEmpty();

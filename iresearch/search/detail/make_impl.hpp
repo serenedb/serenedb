@@ -33,7 +33,8 @@ typename Family::Result MakeDocs(const Query& query,
   return Build<typename Family::Result, false>(
     Kind{}, query, Family::Interrogations(ctx),
     [&]<typename Slots>(auto&&... args) -> typename Family::Result {
-      return Family::template Docs<Slots>(
+      return Family::template Docs<
+        typename Family::template TwoPhaseDocs<Slots>>(
         ctx, std::forward<decltype(args)>(args)...);
     });
 }
@@ -45,7 +46,8 @@ typename Family::Result MakeConstant(const Query& query,
   return Build<typename Family::Result, false>(
     Kind{}, query, Family::Interrogations(ctx),
     [&]<typename Slots>(auto&&... args) -> typename Family::Result {
-      return Family::template Constant<Slots>(
+      return Family::template Constant<
+        typename Family::template TwoPhaseDocs<Slots>>(
         ctx, value, std::forward<decltype(args)>(args)...);
     });
 }
@@ -69,7 +71,8 @@ typename Family::Result MakeScored(const Query& query,
     return Build<typename Family::Result, true>(
       Kind{}, query, Family::Interrogations(ctx),
       [&]<typename Slots>(auto&&... rest) -> typename Family::Result {
-        return Family::template Scored<Slots>(
+        return Family::template Scored<
+          typename Family::template TwoPhaseScored<Slots>>(
           ctx, query.Segment(), FieldOf(Kind{}, query), args,
           std::forward<decltype(rest)>(rest)...);
       });

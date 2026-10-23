@@ -37,24 +37,26 @@ struct Family {
   using Result = Root::ptr;
   using ScoredContext = Context;
 
+  template<typename Slots>
+  using TwoPhaseDocs = lead::TwoPhaseDocs<Slots>;
+  template<typename Slots>
+  using TwoPhaseScored = lead::TwoPhaseScored<Slots>;
+
   static uint64_t Interrogations(const Context&) noexcept { return 0; }
 
   static irs::detail::ScoredCtx Scoring(const Context& ctx) noexcept {
     return ScoredOf(ctx);
   }
 
-  template<typename Slots, typename... Args>
+  template<typename Node, typename... Args>
   static Result Constant(const Context& ctx, score_t value, Args&&... args) {
-    return MakeShape<ConstantWalk, lead::TwoPhaseDocs<Slots>>(
-      ctx, value, std::forward<Args>(args)...);
+    return MakeShape<ConstantWalk, Node>(ctx, value,
+                                         std::forward<Args>(args)...);
   }
 
-  template<typename Slots, typename... Args>
-  static Result Scored(const Context& ctx, const SubReader& segment,
-                       const TermReader& field,
-                       const irs::detail::ScoreArgs& args, Args&&... rest) {
-    return MakeShape<Walk, lead::TwoPhaseScored<Slots>>(
-      ctx, ctx.fetcher, segment, field, args, std::forward<Args>(rest)...);
+  template<typename Node, typename... Args>
+  static Result Scored(const Context& ctx, Args&&... args) {
+    return MakeShape<Walk, Node>(ctx, ctx.fetcher, std::forward<Args>(args)...);
   }
 };
 

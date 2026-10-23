@@ -19,19 +19,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make.hpp"
 
 namespace irs::docs {
 
-Root::ptr Make(const RangeVectorQuery& query, const Context&) {
-  auto inner = detail::InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
-    return {};
-  }
-  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() -> Root::ptr {
-    return detail::MakeVectorDocs<
-      Walk, Root::ptr, detail::RadiusGate<Inclusive>, lead::TwoPhaseDocs>(
-      query, query.Threshold(), std::move(inner));
+Root::ptr Make(const RangeVectorQuery& query, const Context& ctx) {
+  return ResolveBool(query.Inclusive(), [&]<bool Inclusive>() {
+    return detail::MakeVectorDocs<Family, detail::RadiusGate<Inclusive>>(
+      query, ctx, query.Threshold());
   });
 }
 

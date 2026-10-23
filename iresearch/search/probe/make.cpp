@@ -184,8 +184,8 @@ Node::ptr Make(const ApproxQuery& query, uint64_t interrogations) {
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations) {
-  return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
-    query, interrogations, detail::AllDocsScoreOf(query, ctx));
+  return detail::MakeApprox<Family>(
+    query, {.scored = ctx, .interrogations = interrogations});
 }
 
 }  // namespace irs::probe

@@ -23,21 +23,21 @@
 #include <utility>
 
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::detail {
 
-template<template<typename> typename Impl, typename Result, typename... Prefix>
-Result MakeApprox(const ApproxQuery& query, uint64_t interrogations,
-                  Prefix&&... prefix) {
-  auto node = PlanApprox<Result>(query.Approx(), interrogations);
+template<typename Family>
+typename Family::Result MakeApprox(const ApproxQuery& query,
+                                   const typename Family::ScoredContext& ctx) {
+  using Result = typename Family::Result;
+  auto node = PlanApprox<Result>(query.Approx(), Family::Interrogations(ctx));
   if (!node) {
     return {};
   }
-  return memory::make_managed<Impl<ApproxNode<Result>>>(
-    std::forward<Prefix>(prefix)..., std::move(node));
+  return Family::template Constant<ApproxNode<Result>>(
+    ctx, AllDocsScoreOf(query, Family::Scoring(ctx)), std::move(node));
 }
 
 }  // namespace irs::detail

@@ -210,10 +210,13 @@ def cmd_update_timing(args):
             day = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
             for e in _listing(f"results/{day}/"):
                 name = e["name"]
-                if e["type"] == "file" and f"-{args.config}-{args.arch}-" in name:
-                    dest = tmp / f"{day}-{name}"
-                    if store.get(f"results/{day}/{name}", dest):
-                        files.append(dest)
+                if e["type"] != "file" or f"-{args.config}-{args.arch}-" not in name:
+                    continue
+                if not args.pr and "-pr" in name:
+                    continue
+                dest = tmp / f"{day}-{name}"
+                if store.get(f"results/{day}/{name}", dest):
+                    files.append(dest)
         if not files:
             print("no results to learn timings from")
             return
@@ -223,7 +226,7 @@ def cmd_update_timing(args):
         listed = ", ".join(f"'{f}'" for f in files)
         runs = (f"SELECT regexp_replace(unit, '#[0-9]+/[0-9]+$', '') AS unit, sum(duration) AS d "
                 f"FROM read_parquet([{listed}], union_by_name = true) "
-                f"WHERE coalesce(pr, '') = '' AND NOT coalesce(attribute, false) "
+                f"WHERE coalesce(pr, '') = '{args.pr}' AND NOT coalesce(attribute, false) "
                 f"AND attempt = 0 AND NOT wrapper "
                 f"AND status IN ('passed', 'failed', 'flaky') "
                 f"GROUP BY 1, coalesce(run, concat(sha, ':', started))")
@@ -310,6 +313,7 @@ def main(argv):
     p.add_argument("--config", required=True)
     p.add_argument("--arch", required=True)
     p.add_argument("--days", type=int, default=14)
+    p.add_argument("--pr", default="", help="learn from this PR's runs instead (a calibration PR)")
     p.set_defaults(fn=cmd_update_timing)
     p = sub.add_parser("selection-map", help="build the test selection map from a run's attribution")
     p.add_argument("--run", required=True)

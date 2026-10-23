@@ -31,7 +31,7 @@
 #   3. CTAS the view into a default (transactional) table  -- insert.
 #   4. CTAS the view into a storage='search' table         -- insert + commit.
 #   5. ATTACH a fresh .duckdb file, CTAS the view into it   -- insert + commit.
-#   6. Sanity COUNT("watchid") over each table (one thread; see the scan note).
+#   6. Sanity COUNT("WatchID") over each table (one thread; see the scan note).
 #   7. Report on-disk size: parquet input vs the transactional table's
 #      data.db delta vs the search table's storage directory (with the
 #      iresearch per-extension breakdown) vs the native .duckdb file.
@@ -53,6 +53,8 @@ ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 
 # PARQUET_FILE     : the hits.parquet input (lives in $HOME/data by default).
 # BUILD_DIR        : the perf build tree containing the release serened.
+# SERENED_BIN      : the serened binary; PERF_SERENED_BIN overrides it, e.g. to
+#                    time a saved copy of another revision's build.
 # SERENED_DATA_DIR : where serened stores its catalog/segments at runtime.
 # NATIVE_DB        : the .duckdb file the serened process ATTACHes for the
 #                    native-DuckDB baseline (in results/, gitignored).
@@ -62,7 +64,7 @@ PARQUET_DIR="${PERF_PARQUET_DIR:-${HOME}/data}"
 PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/hits.parquet}"
 SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${RESULTS_DIR}/search_table_perf_data}"
 NATIVE_DB="${PERF_NATIVE_DB:-${RESULTS_DIR}/search_table_perf_native.duckdb}"
-SERENED_BIN="${BUILD_DIR}/bin/serened"
+SERENED_BIN="${PERF_SERENED_BIN:-${BUILD_DIR}/bin/serened}"
 PORT="${PERF_PORT:-6263}"
 LOG="/tmp/${USER}-serened-search-perf.log"
 
@@ -87,6 +89,10 @@ SCAN_THREADS="${PERF_SCAN_THREADS:-1}"
 # to its timing in the log. Turn off with PERF_EXPLAIN=0.
 PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 
+# The first suite: the three-engine CTAS comparison (steps 3-7 above). Off with
+# 0, e.g. to run only the DML suite.
+PERF_SOLE_RUN="${PERF_SOLE_RUN:-1}"
+
 # After the sole-table comparison, run a SECOND suite on a fresh data dir where
 # BOTH the transactional and the search table carry an inverted index over a
 # numeric + a text column, created BEFORE the load. It measures insert +
@@ -96,15 +102,12 @@ PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 # against the search table's single store. Off with 0.
 PERF_INDEXED_RUN="${PERF_INDEXED_RUN:-1}"
 # The columns indexed in the second run. Defaults are hits-dataset columns: a
-# BIGINT (watchid) and a text column (url, keyword-indexed -- whole value as one
-# term, no dictionary needed). Override for other datasets -- the name is folded
-# to lower case, because the server runs with preserve_identifier_case = false,
-# so a CTAS stores the parquet's "WatchID" as "watchid" and a quoted mixed-case
-# reference does not bind.
-PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL:-watchid}"
-PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-url}"
-PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL,,}"
-PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL,,}"
+# BIGINT (WatchID) and a text column (URL, keyword-indexed -- whole value as one
+# term, no dictionary needed). Override for other datasets. The names are quoted
+# in the SQL, so they must match the parquet's spelling, case included: a CTAS
+# keeps the parquet's column names as they are.
+PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL:-WatchID}"
+PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-URL}"
 
 # After the indexed run, a third cold load -- BOTH engines -- that builds the
 # same inverted index AFTER the rows are loaded (the "backfill" path). The load
@@ -113,6 +116,15 @@ PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL,,}"
 # published segments. Phases are timed separately, so the cost of a post-hoc
 # build can be set against the "index before load" numbers. Off with 0.
 PERF_BACKFILL_RUN="${PERF_BACKFILL_RUN:-1}"
+
+# After the backfill run, a fourth cold load -- BOTH engines, no index -- that
+# times a whole-table UPDATE and then a DELETE of about half the rows, each
+# followed by the refresh that publishes it on the search table. The search
+# table is refreshed after the load, as an UPDATE or DELETE only sees published
+# rows. PERF_DML_COL is the BIGINT column the UPDATE decrements and the DELETE
+# filters on (by parity). Off with 0.
+PERF_DML_RUN="${PERF_DML_RUN:-1}"
+PERF_DML_COL="${PERF_DML_COL:-${PERF_INDEX_NUMERIC_COL}}"
 
 # Optional segment_memory_max (BYTES) for the search table's shared iresearch
 # store, injected into its CTAS WITH clause. Empty = server default (256MB).
@@ -158,7 +170,6 @@ start_serened() {
 	# (SELECT 1 failing == nothing serving) before launching.
 	local freed=""
 	for _ in $(seq 1 60); do
-		killall -9 serened >/dev/null 2>&1 || true
 		pkill -9 -f -- "${SERENED_DATA_DIR}" >/dev/null 2>&1 || true
 		if ! psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
 			freed=1
@@ -323,6 +334,47 @@ store_used_bytes() {
 	echo "${v:-0}"
 }
 
+human() {
+	awk -v b="$1" 'BEGIN{
+    split("B KB MB GB TB", u);
+    i=1;
+    while (b >= 1024 && i < 5) { b/=1024; i++ }
+    printf "%.2f %s", b, u[i];
+  }'
+}
+sum_ext() {
+	local dir="$1" ext="$2"
+	find "${dir}" -name "*.${ext}" -printf '%s\n' 2>/dev/null |
+		awk '{s+=$1} END{printf "%d\n", s+0}'
+}
+fmt_ms() {
+	local v="$1"
+	if [[ -z "${v}" ]]; then
+		printf 'n/a'
+		return
+	fi
+	awk -v v="${v}" 'BEGIN{
+    if (v + 0 >= 10000) { printf "%.2f s",  v/1000.0 }
+    else if (v + 0 >= 1) { printf "%.1f ms", v + 0 }
+    else                 { printf "%.3f ms", v + 0 }
+  }'
+}
+ratio() {
+	# ratio A B -> "r.rrx" if both numeric, else "n/a".
+	local a="$1" b="$2"
+	if [[ -z "${a}" || -z "${b}" ]]; then
+		printf 'n/a'
+		return
+	fi
+	awk -v a="${a}" -v b="${b}" 'BEGIN{
+    if (b + 0 == 0) { printf "n/a"; exit }
+    r = a / b;
+    if (r >= 100) printf "%.0fx", r;
+    else if (r >= 10) printf "%.1fx", r;
+    else printf "%.2fx", r;
+  }'
+}
+
 # Recreate the read_parquet view over SRC_PARQUET. Called on each fresh catalog
 # (both runs). SRC_PARQUET is resolved once during setup and persists across the
 # data-dir wipe (it lives next to hits.parquet, not in the serened dir).
@@ -361,186 +413,151 @@ create_view
 
 ENGINE_DIR="${SERENED_DATA_DIR}/engine_v1"
 
-# Baseline catalog/engine footprint before any user table exists. The
-# transactional table's storage is the delta against this.
-TXN_BASELINE=$(du_duckdb_files "${ENGINE_DIR}")
+run_sole_comparison() {
+	# Baseline catalog/engine footprint before any user table exists. The
+	# transactional table's storage is the delta against this.
+	TXN_BASELINE=$(du_duckdb_files "${ENGINE_DIR}")
 
-# --- 2. CTAS: transactional table (insert only; the CTAS txn lands in the
-#        store WAL, durable at statement end) ---------------------------------
-run_sql "transactional_insert" "${BUILD_THREADS}" "
+	# --- 2. CTAS: transactional table (insert only; the CTAS txn lands in the
+	#        store WAL, durable at statement end) ---------------------------------
+	run_sql "transactional_insert" "${BUILD_THREADS}" "
 CREATE TABLE hits_transactional WITH (storage = 'transactional') AS
 SELECT * FROM hits_view;
 "
-TXN_AFTER=$(du_duckdb_files "${ENGINE_DIR}")
-TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
+	TXN_AFTER=$(du_duckdb_files "${ENGINE_DIR}")
+	TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
 
-# --- 3. CTAS: search table (insert, then commit) ------------------------------
-# insert: routes through SereneDBSearchInsert (CTAS mode). The rows are drained
-# into the iresearch writer but the segments are not yet committed to disk.
-run_sql "search_insert" "${BUILD_THREADS}" "
+	# --- 3. CTAS: search table (insert, then commit) ------------------------------
+	# insert: routes through SereneDBSearchInsert (CTAS mode). The rows are drained
+	# into the iresearch writer but the segments are not yet committed to disk.
+	run_sql "search_insert" "${BUILD_THREADS}" "
 CREATE TABLE hits_search
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0${SEARCH_SEG_OPT}) AS
 SELECT * FROM hits_view;
 "
 
-# commit: force the iresearch writer commit so the segments hit disk and the
-# scan can read them (no background commit thread yet).
-run_setup "search_commit" "${BUILD_THREADS}" "
+	# commit: force the iresearch writer commit so the segments hit disk and the
+	# scan can read them (no background commit thread yet).
+	run_setup "search_commit" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search;
 "
-SEARCH_BYTES=$(du_search_committed "${ENGINE_DIR}")
+	SEARCH_BYTES=$(du_search_committed "${ENGINE_DIR}")
 
-# --- 4. ATTACH + CTAS: native DuckDB table (insert, then commit) --------------
-# A genuine DuckDB-native columnar table is reachable ONLY via ATTACH (TYPE
-# duckdb): it spins up a separate DuckCatalog + SingleFileStorageManager in the
-# same process (serened's own catalog has no kDuckDB storage kind). Queries
-# against it run on DuckDB's native operators with no serened code in the
-# per-row path -- the only cross-catalog cost is name resolution at bind time,
-# so it's a fair engine-vs-engine baseline, not a bridged one. The table is
-# fully qualified (native_db.main.*) rather than relying on search_path.
-NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
-run_setup "native_attach" "${BUILD_THREADS}" "
+	# --- 4. ATTACH + CTAS: native DuckDB table (insert, then commit) --------------
+	# A genuine DuckDB-native columnar table is reachable ONLY via ATTACH (TYPE
+	# duckdb): it spins up a separate DuckCatalog + SingleFileStorageManager in the
+	# same process (serened's own catalog has no kDuckDB storage kind). Queries
+	# against it run on DuckDB's native operators with no serened code in the
+	# per-row path -- the only cross-catalog cost is name resolution at bind time,
+	# so it's a fair engine-vs-engine baseline, not a bridged one. The table is
+	# fully qualified (native_db.main.*) rather than relying on search_path.
+	NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
+	run_setup "native_attach" "${BUILD_THREADS}" "
 ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
 "
 
-# insert: native CTAS. The bulk of the data lands in <native_db>.wal until the
-# checkpoint folds it into the main file.
-run_sql "native_insert" "${BUILD_THREADS}" "
+	# insert: native CTAS. The bulk of the data lands in <native_db>.wal until the
+	# checkpoint folds it into the main file.
+	run_sql "native_insert" "${BUILD_THREADS}" "
 CREATE TABLE native_db.main.hits_native AS
 SELECT * FROM hits_view;
 "
 
-# commit: CHECKPOINT collapses native_db's WAL into the main .duckdb file --
-# the analogue of the search writer commit above.
-run_setup "native_commit" "${BUILD_THREADS}" "
+	# commit: CHECKPOINT collapses native_db's WAL into the main .duckdb file --
+	# the analogue of the search writer commit above.
+	run_setup "native_commit" "${BUILD_THREADS}" "
 CHECKPOINT native_db;
 "
-NATIVE_BYTES=$(($(du_bytes "${NATIVE_DB}") + $(du_bytes "${NATIVE_DB}.wal")))
+	NATIVE_BYTES=$(($(du_bytes "${NATIVE_DB}") + $(du_bytes "${NATIVE_DB}.wal")))
 
-# --- 5. Sanity scan -----------------------------------------------------------
-# COUNT(<col>), pinned to one thread. It's COUNT("watchid"), not COUNT(*),
-# because COUNT(*) takes the search table's count-only fast path (answered from
-# segment metadata, no column read) -- counting a real, non-null column instead
-# forces an actual column scan, which is the comparison we want and also
-# verifies every row is accounted for. The search side still reads far less than
-# the transactional/native column stores' full scan.
-run_sql "count_transactional" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM hits_transactional;"
-run_sql "count_search" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM hits_search;"
-run_sql "count_native" "${SCAN_THREADS}" "SELECT COUNT(\"watchid\") FROM native_db.main.hits_native;"
+	# --- 5. Sanity scan -----------------------------------------------------------
+	# COUNT(<col>), pinned to one thread. It's COUNT("WatchID"), not COUNT(*),
+	# because COUNT(*) takes the search table's count-only fast path (answered from
+	# segment metadata, no column read) -- counting a real, non-null column instead
+	# forces an actual column scan, which is the comparison we want and also
+	# verifies every row is accounted for. The search side still reads far less than
+	# the transactional/native column stores' full scan.
+	run_sql "count_transactional" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_transactional;"
+	run_sql "count_search" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_search;"
+	run_sql "count_native" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM native_db.main.hits_native;"
 
-# --- 6. Storage size ----------------------------------------------------------
-human() {
-	awk -v b="$1" 'BEGIN{
-    split("B KB MB GB TB", u);
-    i=1;
-    while (b >= 1024 && i < 5) { b/=1024; i++ }
-    printf "%.2f %s", b, u[i];
-  }'
+	# --- 6. Storage size ----------------------------------------------------------
+	pq=$(du_bytes "${SRC_PARQUET}")
+	total=$(du_bytes "${SERENED_DATA_DIR}")
+
+	{
+		echo
+		echo "=== storage_size ==="
+		printf "parquet input:            %14d bytes (%s)\n" "${pq}" "$(human "${pq}")"
+		printf "transactional (delta):    %14d bytes (%s)\n" \
+			"${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
+		printf "search table:             %14d bytes (%s)\n" \
+			"${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")"
+		printf "native duckdb table:      %14d bytes (%s)\n" \
+			"${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")"
+		printf "serened data dir (total): %14d bytes (%s)\n" "${total}" "$(human "${total}")"
+		# Per-file-type breakdown for the search table. This
+		# iresearch version consolidates a segment into:
+		#   .col typed columnstore (the column values -- the bulk of the data)
+		#   .idx terms + postings index   .doc doc-id stream   .sm segment meta
+		echo "  search table file breakdown:"
+		for ext in col idx doc sm; do
+			s=$(sum_ext "${ENGINE_DIR}" "${ext}")
+			printf "    .%-5s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
+		done
+	} | tee -a "${RUN_LOG}"
+
+	# --- 7. Headline summary ------------------------------------------------------
+	{
+		echo
+		echo "================ SUMMARY ================"
+		echo "parquet:   ${SRC_PARQUET}"
+		echo "row limit: ${PERF_ROW_LIMIT:-(none -- full file)}"
+		echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
+		echo
+		# insert / commit reported separately. transactional has no separate commit
+		# phase here (the CTAS txn is durable in the store WAL; checkpoint deferred).
+		# search commit = the iresearch writer flush; native commit = CHECKPOINT
+		# (WAL -> main .duckdb file). The ratio columns are each engine's
+		# insert+commit total relative to transactional (>1x slower, <1x faster).
+		t_ins="${TIMINGS[transactional_insert]:-}"
+		s_ins="${TIMINGS[search_insert]:-}"
+		s_cmt="${TIMINGS[search_commit]:-}"
+		n_ins="${TIMINGS[native_insert]:-}"
+		n_cmt="${TIMINGS[native_commit]:-}"
+		sum2() { # "a+b" in ms, or empty if either is empty
+			[[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" 'BEGIN{printf "%s", a+b}'
+		}
+		s_total=$(sum2 "${s_ins}" "${s_cmt}")
+		n_total=$(sum2 "${n_ins}" "${n_cmt}")
+		c_t="${TIMINGS[count_transactional]:-}"
+		c_s="${TIMINGS[count_search]:-}"
+		c_n="${TIMINGS[count_native]:-}"
+		row() { printf "%-16s %11s %11s %11s   %7s %7s\n" "$1" "$2" "$3" "$4" "$5" "$6"; }
+		row "phase" "txn" "search" "native" "s/txn" "n/txn"
+		row "----------------" "-----------" "-----------" "-----------" "-------" "-------"
+		row "insert" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_ins}")" "$(fmt_ms "${n_ins}")" "" ""
+		row "commit" "n/a" "$(fmt_ms "${s_cmt}")" "$(fmt_ms "${n_cmt}")" "" ""
+		row "total (ins+cmt)" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_total}")" "$(fmt_ms "${n_total}")" \
+			"$(ratio "${s_total}" "${t_ins}")" "$(ratio "${n_total}" "${t_ins}")"
+		row "count(col)" "$(fmt_ms "${c_t}")" "$(fmt_ms "${c_s}")" "$(fmt_ms "${c_n}")" \
+			"$(ratio "${c_s}" "${c_t}")" "$(ratio "${c_n}" "${c_t}")"
+		echo
+		printf "%-26s %14s   %s\n" "storage" "bytes" "vs txn"
+		printf "%-26s %14s   %s\n" "--------------------------" "--------------" "----------"
+		printf "%-26s %14d (%s)\n" "parquet input" "${pq}" "$(human "${pq}")"
+		printf "%-26s %14d (%s)\n" "transactional table" "${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
+		printf "%-26s %14d (%s)   %s\n" "search table" "${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")" \
+			"$(ratio "${SEARCH_BYTES}" "${TXN_TABLE_BYTES}")"
+		printf "%-26s %14d (%s)   %s\n" "native duckdb table" "${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")" \
+			"$(ratio "${NATIVE_BYTES}" "${TXN_TABLE_BYTES}")"
+		echo "========================================="
+	} | tee -a "${RUN_LOG}"
 }
-sum_ext() {
-	local dir="$1" ext="$2"
-	find "${dir}" -name "*.${ext}" -printf '%s\n' 2>/dev/null |
-		awk '{s+=$1} END{printf "%d\n", s+0}'
-}
 
-pq=$(du_bytes "${SRC_PARQUET}")
-total=$(du_bytes "${SERENED_DATA_DIR}")
-
-{
-	echo
-	echo "=== storage_size ==="
-	printf "parquet input:            %14d bytes (%s)\n" "${pq}" "$(human "${pq}")"
-	printf "transactional (delta):    %14d bytes (%s)\n" \
-		"${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
-	printf "search table:             %14d bytes (%s)\n" \
-		"${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")"
-	printf "native duckdb table:      %14d bytes (%s)\n" \
-		"${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")"
-	printf "serened data dir (total): %14d bytes (%s)\n" "${total}" "$(human "${total}")"
-	# Per-file-type breakdown for the search table. This
-	# iresearch version consolidates a segment into:
-	#   .col typed columnstore (the column values -- the bulk of the data)
-	#   .idx terms + postings index   .doc doc-id stream   .sm segment meta
-	echo "  search table file breakdown:"
-	for ext in col idx doc sm; do
-		s=$(sum_ext "${ENGINE_DIR}" "${ext}")
-		printf "    .%-5s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
-	done
-} | tee -a "${RUN_LOG}"
-
-# --- 7. Headline summary ------------------------------------------------------
-fmt_ms() {
-	local v="$1"
-	if [[ -z "${v}" ]]; then
-		printf 'n/a'
-		return
-	fi
-	awk -v v="${v}" 'BEGIN{
-    if (v + 0 >= 10000) { printf "%.2f s",  v/1000.0 }
-    else if (v + 0 >= 1) { printf "%.1f ms", v + 0 }
-    else                 { printf "%.3f ms", v + 0 }
-  }'
-}
-ratio() {
-	# ratio A B -> "r.rrx" if both numeric, else "n/a".
-	local a="$1" b="$2"
-	if [[ -z "${a}" || -z "${b}" ]]; then
-		printf 'n/a'
-		return
-	fi
-	awk -v a="${a}" -v b="${b}" 'BEGIN{
-    if (b + 0 == 0) { printf "n/a"; exit }
-    r = a / b;
-    if (r >= 100) printf "%.0fx", r;
-    else if (r >= 10) printf "%.1fx", r;
-    else printf "%.2fx", r;
-  }'
-}
-{
-	echo
-	echo "================ SUMMARY ================"
-	echo "parquet:   ${SRC_PARQUET}"
-	echo "row limit: ${PERF_ROW_LIMIT:-(none -- full file)}"
-	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
-	echo
-	# insert / commit reported separately. transactional has no separate commit
-	# phase here (the CTAS txn is durable in the store WAL; checkpoint deferred).
-	# search commit = the iresearch writer flush; native commit = CHECKPOINT
-	# (WAL -> main .duckdb file). The ratio columns are each engine's
-	# insert+commit total relative to transactional (>1x slower, <1x faster).
-	t_ins="${TIMINGS[transactional_insert]:-}"
-	s_ins="${TIMINGS[search_insert]:-}"
-	s_cmt="${TIMINGS[search_commit]:-}"
-	n_ins="${TIMINGS[native_insert]:-}"
-	n_cmt="${TIMINGS[native_commit]:-}"
-	sum2() { # "a+b" in ms, or empty if either is empty
-		[[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" 'BEGIN{printf "%s", a+b}'
-	}
-	s_total=$(sum2 "${s_ins}" "${s_cmt}")
-	n_total=$(sum2 "${n_ins}" "${n_cmt}")
-	c_t="${TIMINGS[count_transactional]:-}"
-	c_s="${TIMINGS[count_search]:-}"
-	c_n="${TIMINGS[count_native]:-}"
-	row() { printf "%-16s %11s %11s %11s   %7s %7s\n" "$1" "$2" "$3" "$4" "$5" "$6"; }
-	row "phase" "txn" "search" "native" "s/txn" "n/txn"
-	row "----------------" "-----------" "-----------" "-----------" "-------" "-------"
-	row "insert" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_ins}")" "$(fmt_ms "${n_ins}")" "" ""
-	row "commit" "n/a" "$(fmt_ms "${s_cmt}")" "$(fmt_ms "${n_cmt}")" "" ""
-	row "total (ins+cmt)" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_total}")" "$(fmt_ms "${n_total}")" \
-		"$(ratio "${s_total}" "${t_ins}")" "$(ratio "${n_total}" "${t_ins}")"
-	row "count(col)" "$(fmt_ms "${c_t}")" "$(fmt_ms "${c_s}")" "$(fmt_ms "${c_n}")" \
-		"$(ratio "${c_s}" "${c_t}")" "$(ratio "${c_n}" "${c_t}")"
-	echo
-	printf "%-26s %14s   %s\n" "storage" "bytes" "vs txn"
-	printf "%-26s %14s   %s\n" "--------------------------" "--------------" "----------"
-	printf "%-26s %14d (%s)\n" "parquet input" "${pq}" "$(human "${pq}")"
-	printf "%-26s %14d (%s)\n" "transactional table" "${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
-	printf "%-26s %14d (%s)   %s\n" "search table" "${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")" \
-		"$(ratio "${SEARCH_BYTES}" "${TXN_TABLE_BYTES}")"
-	printf "%-26s %14d (%s)   %s\n" "native duckdb table" "${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")" \
-		"$(ratio "${NATIVE_BYTES}" "${TXN_TABLE_BYTES}")"
-	echo "========================================="
-} | tee -a "${RUN_LOG}"
+if [[ "${PERF_SOLE_RUN}" == "1" ]]; then
+	run_sole_comparison
+fi
 
 # --- 8. Indexed comparison (guarded by PERF_INDEXED_RUN, default on) ----------
 # A second cold load on a FRESH data dir where BOTH the transactional and the
@@ -781,6 +798,130 @@ VACUUM (COMPACT_TABLE) hits_search_bf;
 
 if [[ "${PERF_BACKFILL_RUN}" == "1" ]]; then
 	run_backfill_comparison
+fi
+
+# --- 10. DML comparison (guarded by PERF_DML_RUN, default on) -----------------
+# Both engines loaded with the same rows, then the same UPDATE and DELETE timed
+# on each. The search side's refresh after each statement is reported on its
+# own row and folded into its total: it is where the removals are applied and
+# the new rows published. Every statement is followed by a CHECKPOINT, timed on
+# its own row and folded into that engine's total: a checkpoint fires on its own
+# at the first commit past checkpoint_threshold, which would otherwise charge
+# one engine's changes to whichever statement commits next. Row counts after the
+# DELETE are compared, so a run that loses or duplicates rows says so next to
+# its timings.
+run_dml_comparison() {
+	printf '\n\n' | tee -a "${RUN_LOG}"
+	{
+		echo "###### DML (UPDATE every row, DELETE about half) ######"
+		echo "column: \"${PERF_DML_COL}\""
+	} | tee -a "${RUN_LOG}"
+
+	start_serened
+	create_view
+
+	local col="\"${PERF_DML_COL}\""
+
+	run_setup "dml_txn_load" "${BUILD_THREADS}" "
+CREATE TABLE hits_txn_dml WITH (storage = 'transactional') AS
+SELECT * FROM hits_view;
+"
+	run_setup "dml_search_load" "${BUILD_THREADS}" "
+CREATE TABLE hits_search_dml
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0${SEARCH_SEG_OPT}) AS
+SELECT * FROM hits_view;
+"
+	run_setup "dml_search_load_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_dml;
+"
+	run_setup "dml_load_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+
+	run_sql "dml_txn_update" "${BUILD_THREADS}" "
+UPDATE hits_txn_dml SET ${col} = ${col} - 1;
+"
+	run_setup "dml_txn_update_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+	run_sql "dml_search_update" "${BUILD_THREADS}" "
+UPDATE hits_search_dml SET ${col} = ${col} - 1;
+"
+	run_setup "dml_search_update_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_dml;
+"
+	run_setup "dml_search_update_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+	# The DELETE's removals are applied segment by segment, so it starts from the
+	# compacted table, whatever segments the UPDATE left behind.
+	local segs_sql="SELECT count(DISTINCT row_group_id) FROM pragma_storage_info('hits_search_dml');"
+	local segs_update segs_compact
+	segs_update=$(psql "${PSQL_CONN}" -tAc "${segs_sql}" 2>&1 | tr -d '[:space:]')
+	run_setup "dml_search_compact" "${BUILD_THREADS}" "
+VACUUM (COMPACT_TABLE) hits_search_dml;
+"
+	segs_compact=$(psql "${PSQL_CONN}" -tAc "${segs_sql}" 2>&1 | tr -d '[:space:]')
+
+	run_sql "dml_txn_delete" "${BUILD_THREADS}" "
+DELETE FROM hits_txn_dml WHERE ${col} % 2 = 0;
+"
+	run_setup "dml_txn_delete_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+	run_sql "dml_search_delete" "${BUILD_THREADS}" "
+DELETE FROM hits_search_dml WHERE ${col} % 2 = 0;
+"
+	run_setup "dml_search_delete_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_dml;
+"
+	run_setup "dml_search_delete_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+
+	local n_txn n_search
+	n_txn=$(psql "${PSQL_CONN}" -tAc "SELECT count(*) FROM hits_txn_dml;" 2>&1 | tr -d '[:space:]')
+	n_search=$(psql "${PSQL_CONN}" -tAc "SELECT count(*) FROM hits_search_dml;" 2>&1 | tr -d '[:space:]')
+
+	local t_upd t_upd_cp s_upd s_upd_ref s_upd_cp t_del t_del_cp s_del s_del_ref s_del_cp
+	local t_upd_total s_upd_total t_del_total s_del_total
+	t_upd="${TIMINGS[dml_txn_update]:-}"
+	t_upd_cp="${TIMINGS[dml_txn_update_checkpoint]:-}"
+	s_upd="${TIMINGS[dml_search_update]:-}"
+	s_upd_ref="${TIMINGS[dml_search_update_refresh]:-}"
+	s_upd_cp="${TIMINGS[dml_search_update_checkpoint]:-}"
+	t_del="${TIMINGS[dml_txn_delete]:-}"
+	t_del_cp="${TIMINGS[dml_txn_delete_checkpoint]:-}"
+	s_del="${TIMINGS[dml_search_delete]:-}"
+	s_del_ref="${TIMINGS[dml_search_delete_refresh]:-}"
+	s_del_cp="${TIMINGS[dml_search_delete_checkpoint]:-}"
+	# Sum of the arguments in ms, or empty if any is empty.
+	dsum() {
+		local v
+		for v in "$@"; do [[ -n "${v}" ]] || return 0; done
+		printf '%s\n' "$@" | awk '{s+=$1} END{printf "%s", s}'
+	}
+	t_upd_total=$(dsum "${t_upd}" "${t_upd_cp}")
+	s_upd_total=$(dsum "${s_upd}" "${s_upd_ref}" "${s_upd_cp}")
+	t_del_total=$(dsum "${t_del}" "${t_del_cp}")
+	s_del_total=$(dsum "${s_del}" "${s_del_ref}" "${s_del_cp}")
+	{
+		echo
+		echo "======== DML SUMMARY ========"
+		echo "column: ${col}    threads: ${BUILD_THREADS}"
+		echo
+		drow() { printf "%-26s %13s %13s   %7s\n" "$1" "$2" "$3" "$4"; }
+		drow "phase" "txn" "search" "s/txn"
+		drow "-------------------------" "-------------" "-------------" "-------"
+		drow "update" "$(fmt_ms "${t_upd}")" "$(fmt_ms "${s_upd}")" "$(ratio "${s_upd}" "${t_upd}")"
+		drow "update refresh" "-" "$(fmt_ms "${s_upd_ref}")" "-"
+		drow "update checkpoint" "$(fmt_ms "${t_upd_cp}")" "$(fmt_ms "${s_upd_cp}")" "-"
+		drow "update total" "$(fmt_ms "${t_upd_total}")" "$(fmt_ms "${s_upd_total}")" "$(ratio "${s_upd_total}" "${t_upd_total}")"
+		drow "compact (settle)" "-" "$(fmt_ms "${TIMINGS[dml_search_compact]:-}")" "-"
+		drow "delete" "$(fmt_ms "${t_del}")" "$(fmt_ms "${s_del}")" "$(ratio "${s_del}" "${t_del}")"
+		drow "delete refresh" "-" "$(fmt_ms "${s_del_ref}")" "-"
+		drow "delete checkpoint" "$(fmt_ms "${t_del_cp}")" "$(fmt_ms "${s_del_cp}")" "-"
+		drow "delete total" "$(fmt_ms "${t_del_total}")" "$(fmt_ms "${s_del_total}")" "$(ratio "${s_del_total}" "${t_del_total}")"
+		echo
+		printf "search segments: %s after update, %s after compact\n" "${segs_update}" "${segs_compact}"
+		printf "rows left: txn %s, search %s%s\n" "${n_txn}" "${n_search}" \
+			"$([[ "${n_txn}" == "${n_search}" ]] && echo "" || echo "   !!! MISMATCH")"
+		echo "============================="
+	} | tee -a "${RUN_LOG}"
+}
+
+if [[ "${PERF_DML_RUN}" == "1" ]]; then
+	run_dml_comparison
 fi
 
 echo

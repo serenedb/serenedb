@@ -109,7 +109,7 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 | Write | Peak memory |
 | :--- | :--- |
 | Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
-| Parallel `INSERT` | ≈ `segment_memory_max` x threads |
+| Parallel `INSERT` / `UPDATE` | ≈ `segment_memory_max` x threads |
 
 Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 

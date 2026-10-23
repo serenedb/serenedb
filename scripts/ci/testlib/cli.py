@@ -1,5 +1,6 @@
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import platform
@@ -211,6 +212,7 @@ def main(argv):
         if not args.changed:
             raise SystemExit("--selection-report needs --changed")
         write_selection(args, units, changed, out)
+    plan = hashlib.sha256("".join(sorted(f"{u.id}\t{u.cost!r}\n" for u in units)).encode()).hexdigest()
     units = shard(units, index - 1, count)
     changed_ids = {u.id for u in changed}
     changed = [u for u in units if u.id in changed_ids]
@@ -247,7 +249,7 @@ def main(argv):
         "started": started, "duration": time.time() - started,
         "sha": os.environ.get("SDB_SHA", ""), "pr": os.environ.get("SDB_PR", ""),
         "branch": os.environ.get("SDB_BRANCH", ""), "run": os.environ.get("SDB_RUN_ID", ""),
-        "attribute": args.attribute,
+        "attribute": args.attribute, "plan": plan,
     }
     report.write(out, meta, results, ctx.skips)
     if args.attribute and (attribution.directory(ctx) / "index.jsonl").is_file():

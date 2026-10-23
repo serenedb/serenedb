@@ -10,6 +10,7 @@ from pathlib import Path
 
 import services
 
+from .. import reports
 from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcome, Unit
 from . import Skip, plan, skipped
 
@@ -43,8 +44,8 @@ JOBS = 2
 THREADS = {"SLURM_CPUS_ON_NODE": str(min(os.cpu_count() or 16, 16))}
 _REQUIRE_ENV = re.compile(r"^require-env\s+([A-Z0-9_]+)", re.M)
 _EVENT = re.compile(r"^\[TEST_EVENT\] (\{.*\})\s*$")
-_SIGNAL = re.compile(r"^(.+) was terminated by signal (\d+)$")
-_EXITED = re.compile(r"^(.+) exited with status (\d+) before reporting its result$")
+_ENDED = re.compile(r"^(.+) \(pid (\d+)\) (was terminated by signal|exited with status) (\d+) "
+                    r"(before|after) reporting its result$")
 _TOOK = re.compile(r"^\[\d+/\d+\] \(\d+%\): (.+) took ([0-9.]+)s\s*$")
 
 
@@ -79,7 +80,7 @@ def list_tests(ctx, suite):
                           "--list-test-names-only", suite_filter(ctx, suite)],
                          capture_output=True, text=True, timeout=600, env=ctx.base_env)
     names = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
-    return [n for n in names if not n.startswith("Matching test cases") and " test case" not in n]
+    return sorted(n for n in names if not n.startswith("Matching test cases") and " test case" not in n)
 
 
 def required_fixtures(ctx, path):
@@ -208,9 +209,19 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=()):
     return units
 
 
+def _ended(line):
+    m = _ENDED.match(line)
+    if not m:
+        return None
+    signal = m.group(3).startswith("was")
+    status = FAILED if not signal and m.group(5) == "after" else CRASHED
+    detail = f"{'signal' if signal else 'exit'} {m.group(4)} {m.group(5)} reporting its result"
+    return m.group(1), m.group(2), status, detail
+
+
 def _parse_events(text, members, label):
     results = {}
-    begun = []
+    pids = {}
     took = {}
     for line in text.splitlines():
         m = _TOOK.match(line)
@@ -222,25 +233,42 @@ def _parse_events(text, members, label):
                 ev = json.loads(m.group(1))
             except json.JSONDecodeError:
                 continue
-            name = ev.get("name", "")
-            if ev.get("event") == "begin":
-                begun.append(name)
-            elif ev.get("event") == "end":
+            if ev.get("event") == "end":
                 status = {"ok": PASSED, "error": FAILED}.get(ev.get("status"), SKIPPED)
                 detail = (ev.get("data") or "").strip().splitlines()
-                results[name] = [status, detail[0][:300] if detail else ""]
+                results[ev.get("name", "")] = [status, detail[0][:300] if detail else ""]
             continue
-        m = _SIGNAL.match(line) or _EXITED.match(line)
-        if m:
-            what = "signal" if "signal" in line else "exit"
-            results[m.group(1)] = [CRASHED, f"{what} {m.group(2)} before reporting its result"]
+        ended = _ended(line)
+        if ended:
+            name, pid, status, detail = ended
+            results[name] = [status, detail]
+            pids[pid] = name
     out = {}
     for name in members:
         key = f"{label}:{name}"
         if name in results:
             status, detail = results[name]
             out[key] = (status, took.get(name, 0.0), detail)
-    return out, begun
+    return out, pids
+
+
+def _attribute(san_dir, pids, member_results, label):
+    unattributed = []
+    for path, found in reports.scan_sanitizer_files(san_dir):
+        if not found:
+            continue
+        key = f"{label}:{pids.get(path.name.rsplit('.', 1)[-1])}"
+        if key not in member_results:
+            unattributed += found
+            continue
+        status, seconds, detail = member_results[key][:3]
+        member_results[key] = (status, seconds, f"{found[0].signature} ({detail})", found[0].signature)
+    return unattributed
+
+
+def _halt_on_ubsan(r):
+    opts = r.env.get("UBSAN_OPTIONS")
+    return {"UBSAN_OPTIONS": f"{opts}:halt_on_error=1"} if opts else {}
 
 
 def _batch_run(ctx, suite, members, cpp, jobs):
@@ -254,18 +282,19 @@ def _batch_run(ctx, suite, members, cpp, jobs):
             listing = r.dir / "tests.txt"
             listing.write_text("\n".join(members) + "\n")
             argv += ["--emit-test-events", "--jobs", str(max(2, jobs)), "-f", str(listing)]
-        res = r.exec(argv, env=THREADS, cwd=core_dir(ctx))
+        res = r.exec(argv, env={**THREADS, **_halt_on_ubsan(r)}, cwd=core_dir(ctx))
         text = r.log.read_text(errors="replace") if r.log.exists() else ""
         if cpp:
-            member_results = _parse_catch(text, members, label)
+            member_results, pids = _parse_catch(text, members, label)
         else:
-            member_results, _ = _parse_events(text, members, label)
+            member_results, pids = _parse_events(text, members, label)
         if res.stuck:
             for m in members:
                 member_results.setdefault(f"{label}:{m}", (STUCK, 0.0, "batch timed out; stacks saved"))
             return Outcome(STUCK, "batch did not finish; stacks saved", signature="stuck",
                            members=member_results)
         out = r.outcome(res)
+        unattributed = _attribute(r.san_dir, pids, member_results, label)
         missing = [m for m in members if f"{label}:{m}" not in member_results]
         if missing:
             reason = out.signature or out.detail or f"exit {res.returncode}"
@@ -276,10 +305,13 @@ def _batch_run(ctx, suite, members, cpp, jobs):
             status = CRASHED if any(v[0] == CRASHED for v in member_results.values()) else FAILED
             return Outcome(status, f"{len(bad)} test(s) failed: {', '.join(bad[:3])}",
                            signature=out.signature, members=member_results)
-        if out.status == FAILED and res.returncode not in (0,):
+        if unattributed:
+            return Outcome(FAILED, unattributed[0].signature, signature=unattributed[0].signature,
+                           members=member_results)
+        if out.status == FAILED:
             return Outcome(FAILED, f"unittest exited {res.returncode} with every test passing",
                            members=member_results)
-        return Outcome(out.status if out.status != FAILED else PASSED, members=member_results)
+        return Outcome(out.status, members=member_results)
 
     return run
 
@@ -290,17 +322,19 @@ def _parse_catch(text, members, label):
     lines = text.splitlines()
     took = {}
     failed = {}
-    crashed = {}
+    ended_with = {}
+    pids = {}
     current = None
     for i, line in enumerate(lines):
         m = _TOOK.match(line)
         if m and m.group(1) in wanted:
             took[m.group(1)] = float(m.group(2))
             continue
-        m = _SIGNAL.match(line) or _EXITED.match(line)
-        if m and m.group(1) in wanted:
-            what = "signal" if "signal" in line else "exit"
-            crashed[m.group(1)] = f"{what} {m.group(2)} before reporting its result"
+        ended = _ended(line)
+        if ended and ended[0] in wanted:
+            name, pid, status, detail = ended
+            ended_with[name] = (status, detail)
+            pids[pid] = name
             continue
         if line == rule and i + 1 < len(lines) and lines[i + 1].strip() in wanted:
             current = lines[i + 1].strip()
@@ -311,13 +345,14 @@ def _parse_catch(text, members, label):
     out = {}
     for name in members:
         key = f"{label}:{name}"
-        if name in crashed:
-            out[key] = (CRASHED, took.get(name, 0.0), crashed[name])
+        if name in ended_with:
+            status, detail = ended_with[name]
+            out[key] = (status, took.get(name, 0.0), detail)
         elif name in failed:
             out[key] = (FAILED, took.get(name, 0.0), failed[name])
         elif name in took:
             out[key] = (PASSED, took[name], "")
-    return out
+    return out, pids
 
 
 def _iceberg_special(ctx, skips, names):

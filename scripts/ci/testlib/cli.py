@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from .suites import drivers, duckdb, fuzz, gtest, sqllogic
 from .timing import Timing
 
 ROOT = Path(__file__).resolve().parents[3]
+_GENERATED = re.compile(r"^(.*?)(?:\.\d+)?\.gen\.test$")
 SUITES = ("sqllogic", "recovery", "gtest", "iresearch", "iresearch-load", "drivers", "re2",
           "duckdb", "sqlsmith", "stress")
 
@@ -132,9 +134,11 @@ def changed_files(base):
 def changed_units(units, base):
     names = changed_files(base)
     keys = set()
+    generated = set()
     for name in names:
-        if name.startswith("tests/sqllogic/generators/") and name.endswith(".py"):
-            name = "tests/sqllogic/" + name[len("tests/sqllogic/generators/"):-3] + ".gen.test"
+        if name.startswith("tests/sqllogic/generators/") and name.endswith((".py", ".recorded")):
+            generated.add(name[len("tests/sqllogic/generators/"):].rsplit(".", 1)[0])
+            continue
         if name.startswith("tests/sqllogic/"):
             keys.add(name[len("tests/sqllogic/"):])
         elif name.startswith("tests/drivers/"):
@@ -145,7 +149,9 @@ def changed_units(units, base):
     picked = []
     for u in units:
         tail = u.id.split(":", 2)[-1].split("#", 1)[0]
-        if tail in keys or u.id in keys or any(m.split(":", 2)[-1] in keys for m in u.members):
+        source = _GENERATED.match(tail)
+        if (tail in keys or u.id in keys or (source and source.group(1) in generated)
+                or any(m.split(":", 2)[-1] in keys for m in u.members)):
             picked.append(u)
     return picked
 

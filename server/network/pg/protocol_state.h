@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/container/node_hash_map.h>
 
 #include <cstdint>
@@ -57,6 +58,22 @@ class WireSinkContext;
 // the statement re-plans, and the old plan has to outlive the last execution
 // still driving it.
 using PlanPtr = std::shared_ptr<duckdb::PreparedStatement>;
+
+inline bool SameColumnType(const duckdb::LogicalType& lhs,
+                           const duckdb::LogicalType& rhs) {
+  if (lhs.id() != rhs.id()) {
+    return false;
+  }
+  if (lhs.id() == duckdb::LogicalTypeId::DECIMAL) {
+    return true;
+  }
+  if (lhs.id() == duckdb::LogicalTypeId::LIST) {
+    return SameColumnType(duckdb::ListType::GetChildType(lhs),
+                          duckdb::ListType::GetChildType(rhs));
+  }
+  return lhs == rhs;
+}
+
 // The catalog identity a bound plan stands on: a plan is revalidated when the
 // session's view has moved since it was bound (see Config::CatalogEpoch).
 using CatalogEpoch = uint64_t;
@@ -66,9 +83,9 @@ using CatalogEpoch = uint64_t;
 // statement entry; the heavy DuckDB plan inside PreparedStatement is already a
 // shared_ptr<PreparedStatementData>, so this adds the one serenedb-level
 // refcount at the whole-plan granularity.
-//   Unbound  -- a fresh slot, or a deferred COPY already consumed at Execute
+//   Unbound  -- a fresh slot
 //   Empty    -- the empty query string (Execute -> EmptyQueryResponse)
-//   Copy     -- COPY ... FROM STDIN / TO STDOUT, run (and consumed) at Execute
+//   Copy     -- COPY ... FROM STDIN / TO STDOUT, run at Execute
 //   Prepared -- a normal prepared statement
 //   Compound -- one user command the parser expanded into several statements,
 //               prepared + run in sequence at Execute (a later sub-statement
@@ -175,8 +192,9 @@ class Statement {
   // fixed_result check, which a protocol-level prepared statement fails with
   // "cached plan must not change result type".
   bool DescribedShapeMatches(duckdb::PreparedStatement& plan) const {
-    return !_described || (plan.GetTypes() == _described_types &&
-                           plan.GetNames() == _described_names);
+    return !_described ||
+           (absl::c_equal(plan.GetTypes(), _described_types, SameColumnType) &&
+            plan.GetNames() == _described_names);
   }
   // One user command the parser expanded into several statements (ALTER TABLE
   // ADD COLUMN ... DEFAULT <volatile> -> [ADD; UPDATE; SET DEFAULT]). The body
@@ -194,33 +212,18 @@ class Statement {
     _kind = Kind::Compound;
   }
 
-  // The unprepared expanded body, consumed statement-by-statement at Execute.
-  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& GetCompound() {
+  // The unprepared expanded body, prepared statement-by-statement at each
+  // Execute.
+  const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& GetCompound()
+    const {
     return _statements;
   }
 
-  // Install the prepared last sub-statement once the leading ones have run, so
-  // ExecutePrepared drives it (command tag, paging, re-Execute) like any plan.
-  void SetCompoundResult(duckdb::unique_ptr<duckdb::PreparedStatement> last,
-                         CatalogEpoch epoch) {
-    _prepared = std::move(last);
-    _epoch = epoch;
-  }
-
-  // The plan that owns the param/result metadata (for a Compound, the last
-  // sub-statement, installed by SetCompoundResult). Bind/Describe go through
-  // here. Deducing-this: one definition serves const and non-const callers.
+  // The plan that owns the param/result metadata; Bind goes through here.
+  // Deducing-this: one definition serves const and non-const callers.
   auto& GetPrepared(this auto& self) { return *self._prepared; }
 
-  // Consume the deferred COPY at Execute (run-once): the plan reverts to
-  // Unbound so a re-Execute, or a second portal bound to it, gets a clean "not
-  // bound".
-  duckdb::unique_ptr<duckdb::SQLStatement> TakeCopy() {
-    _kind = Kind::Unbound;
-    auto copy = std::move(_statements.front());
-    _statements.clear();
-    return copy;
-  }
+  const duckdb::SQLStatement& GetCopy() const { return *_statements.front(); }
 
  private:
   Kind _kind = Kind::Unbound;
@@ -292,10 +295,12 @@ class ClosingPending {
 //   Unstarted -> planned + executed exactly once
 //   Paging    -> executing, fetched in batches (the paged wire ctx is retained)
 //   Exhausted -> result fully drained; must never be fetched again
+//   Done      -> a command without a result ran; it must never run again
 enum class PortalState : uint8_t {
   Unstarted,
   Paging,
   Exhausted,
+  Done,
 };
 
 // A portal's execution progress: filled in when Execute first drives the plan,
@@ -310,9 +315,8 @@ struct PortalExecution {
 };
 
 // A bound portal: a co-owned reference to the statement (so Close / re-Parse
-// cannot pull it out from under the portal) plus the plan and the catalog
-// identity it was bound to, the parameters bound at Bind, and its execution
-// progress.
+// cannot pull it out from under the portal) plus the plan it runs, the
+// parameters bound at Bind, and its execution progress.
 // Holding the plan rather than reaching through stmt is what lets the
 // statement re-plan while this portal is still driving the old one -- PG's
 // portal likewise pins the CachedPlan it got at Bind. stmt is null until the
@@ -320,9 +324,9 @@ struct PortalExecution {
 struct Portal {
   StatementPtr stmt;
   PlanPtr plan;
-  CatalogEpoch epoch = 0;
   BindInfo bind_info;
   PortalExecution exec;
+  bool bound_after_abort = false;
 };
 
 inline bool IsCommit(const duckdb::SQLStatement& statement) {
@@ -373,6 +377,10 @@ class ImplicitTxnState {
   // the COMMIT/ROLLBACK that ends it.
   bool GuardNotAborted(const duckdb::SQLStatement& statement) const {
     return StatusByte() != 'E' || IsTransactionExit(statement);
+  }
+  bool GuardNotAborted(const Statement& statement) const {
+    const auto* unbound = statement.Unbound();
+    return StatusByte() != 'E' || (unbound && IsTransactionExit(*unbound));
   }
 
   // Mark the active (explicit) block aborted so it reads 'E' and later

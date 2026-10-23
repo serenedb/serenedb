@@ -55,6 +55,7 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <iterator>
 
+#include "catalog/catalog.h"
 #include "connector/pg_logical_types.h"
 #include "planning/iceberg_multi_file_list.hpp"
 
@@ -385,7 +386,7 @@ std::optional<ViewFastPath> ResolveTableSource(
   if (cat_type == "duckdb") {
     return AttachedDuckDBFastPath(catalog, std::move(out));
   }
-  if (cat_type == "serenedb") {
+  if (catalog::IsSereneDB(catalog)) {
     return SereneDBFastPath(table, std::move(out));
   }
   if (cat_type == "postgres" || cat_type == "clickhouse") {

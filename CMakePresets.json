@@ -15,8 +15,7 @@
         "USE_DEBUG_INFO": "LLDB",
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
-        "SDB_GTEST": "On",
-        "SDB_IOURING": "On"
+        "SDB_GTEST": "On"
       }
     },
     {
@@ -56,8 +55,7 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "Address",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS",
-        "SDB_IOURING": "Off"
+        "SDB_ALLOC": "SYS"
       }
     },
     {
@@ -71,8 +69,7 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "Thread",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS",
-        "SDB_IOURING": "Off"
+        "SDB_ALLOC": "SYS"
       }
     },
     {
@@ -86,8 +83,7 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "MemoryWithOrigins",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS",
-        "SDB_IOURING": "Off"
+        "SDB_ALLOC": "SYS"
       }
     },
     {

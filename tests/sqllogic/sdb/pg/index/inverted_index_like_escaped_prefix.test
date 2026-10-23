@@ -92,3 +92,145 @@ SELECT id FROM lep_plain_idx WHERE msg @@ ts_like('\%%') ORDER BY id
 ----
 id
 3
+
+statement ok
+CREATE TABLE lep_trail (id INT PRIMARY KEY, msg VARCHAR)
+
+
+statement ok
+CREATE INDEX lep_trail_idx ON lep_trail USING inverted (id, msg lep_kw)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO lep_trail VALUES (1, 'ab'), (2, 'abc'), (3, 'ab\')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) lep_trail
+
+
+statement error
+SELECT id FROM lep_trail WHERE msg LIKE 'ab\'
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab\'
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab%\'
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab#' ESCAPE '#'
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+query
+SELECT id FROM lep_trail WHERE msg LIKE 'ab\\\'
+----
+id
+
+query
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab\\\'
+----
+id
+
+statement error
+SELECT id FROM lep_logs WHERE msg LIKE 'do\'
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+query
+SELECT id FROM lep_trail WHERE msg LIKE 'zz\'
+----
+id
+
+query
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'zz\'
+----
+id
+
+query
+EXPLAIN SELECT id FROM lep_trail_idx WHERE msg LIKE 'zz\'
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────╮
+│ Projections: #1          │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ FILTER ────┴────────────╮
+│ Expression: msg ~~ 'zz\\' │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: lep_trail_idx     │
+│ Lookup: table            │
+│ Projections: msg, id     │
+│ ~3 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab\\' ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab##' ESCAPE '#' ORDER BY id
+----
+id
+
+query
+SELECT id FROM lep_trail_idx WHERE msg LIKE 'ab#\' ESCAPE '#' ORDER BY id
+----
+id
+3
+
+statement ok
+PREPARE lep_trail_like AS SELECT id FROM lep_trail_idx WHERE msg LIKE $1 ORDER BY id
+
+
+statement error
+EXECUTE lep_trail_like('ab\')
+----
+db error: ERROR: cannot build the search filter from the statement's parameters: LIKE pattern must not end with escape character
+
+
+query
+EXECUTE lep_trail_like('ab\\')
+----
+id
+3
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg @@ ts_like('ab\')
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg @@ ts_like('ab%\')
+----
+db error: ERROR: LIKE pattern must not end with escape character
+
+
+query
+SELECT id FROM lep_trail_idx WHERE msg @@ ts_like('ab\\') ORDER BY id
+----
+id
+3
+
+statement error
+SELECT id FROM lep_trail_idx WHERE msg @@ (ts_like('ab\') ## ts_like('%'))
+----
+db error: ERROR: LIKE pattern must not end with escape character

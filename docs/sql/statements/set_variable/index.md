@@ -17,7 +17,7 @@ SereneDB supports two levels of variable scopes:
 | Scope     | Description                                                                                                                                                                                                                                                                                              |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SESSION` | Variables with a `SESSION` scope are local to you and only affect the current session.                                                                                                                                                                                                                   |
-| `GLOBAL`  | Variables with a `GLOBAL` scope are specific [configuration option variables](../../../configuration/overview.md#global-configuration-options) that affect the entire SereneDB instance and all sessions. For example, see [Set a Global Variable](../../statements/set/index.md#set-a-global-variable). |
+| `GLOBAL`  | Variables with a `GLOBAL` scope are specific [configuration option variables](../../../configuration/overview.md#configuration-reference) that affect the entire SereneDB instance and all sessions. For example, see [Set a Global Variable](../../statements/set/index.md#set-a-global-variable). |
 
 ## `SET VARIABLE`
 

@@ -1,0 +1,58 @@
+statement ok
+DROP ROLE IF EXISTS cp_sysoid_reader;
+
+statement ok
+CREATE ROLE cp_sysoid_reader LOGIN PASSWORD 'cp_sysoid_reader_pw';
+
+connection c_cp_sysoid user=cp_sysoid_reader password=cp_sysoid_reader_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_class'::regclass, 'SELECT') AS tbl,
+       has_any_column_privilege('pg_catalog.pg_class'::regclass, 'SELECT') AS any_col,
+       has_any_column_privilege('pg_catalog.pg_class'::regclass, 'INSERT') AS any_col_insert,
+       has_column_privilege('pg_catalog.pg_class'::regclass, 1::int2, 'SELECT') AS col,
+       has_column_privilege('pg_catalog.pg_class'::regclass, 1::int2, 'UPDATE') AS col_update,
+       has_column_privilege('pg_catalog.pg_class'::regclass, 1000::int2, 'SELECT') AS no_col;
+----
+tbl	any_col	any_col_insert	col	col_update	no_col
+t	t	f	t	f	NULL
+
+connection c_cp_sysoid user=cp_sysoid_reader password=cp_sysoid_reader_pw
+query
+SELECT has_any_column_privilege('pg_catalog.pg_subscription'::regclass, 'SELECT') AS sub_any,
+       has_column_privilege('pg_catalog.pg_subscription'::regclass,
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attname = 'subname'), 'SELECT') AS sub_name,
+       has_column_privilege('pg_catalog.pg_subscription'::regclass,
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attname = 'subconninfo'), 'SELECT') AS sub_conninfo;
+----
+sub_any	sub_name	sub_conninfo
+t	t	f
+
+query
+SELECT has_column_privilege(r.oid, 'pg_catalog.pg_subscription'::regclass,
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attname = 'subname'), 'SELECT') AS sub_name,
+       has_column_privilege(r.oid, 'pg_catalog.pg_subscription'::regclass,
+         (SELECT attnum FROM pg_attribute WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attname = 'subconninfo'), 'SELECT') AS sub_conninfo,
+       has_column_privilege(r.oid, 'pg_catalog.pg_class'::regclass, 1::int2, 'SELECT') AS class_col
+FROM pg_roles r WHERE r.rolname = 'cp_sysoid_reader';
+----
+sub_name	sub_conninfo	class_col
+t	f	t
+
+connection c_cp_sysoid user=cp_sysoid_reader password=cp_sysoid_reader_pw
+query
+SELECT count(*) > 0 AND count(*) = (SELECT count(*) FROM pg_attribute WHERE attrelid = 'pg_catalog.pg_class'::regclass AND attnum > 0 AND NOT attisdropped) AS all_listed
+FROM information_schema.columns WHERE table_schema = 'pg_catalog' AND table_name = 'pg_class';
+----
+all_listed
+t
+
+connection c_cp_sysoid user=cp_sysoid_reader password=cp_sysoid_reader_pw
+query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'pg_catalog' AND table_name IN ('pg_class', 'pg_subscription') ORDER BY table_name;
+----
+table_name
+pg_class
+pg_subscription
+
+statement ok
+DROP ROLE cp_sysoid_reader;

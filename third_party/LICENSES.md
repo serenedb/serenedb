@@ -29,7 +29,6 @@
 * [YACLib](https://github.com/YACLib/YACLib)
 * [magic_enum](https://github.com/Neargye/magic_enum)
 * [sse2neon](https://github.com/DLTcollab/sse2neon)
-* [liburing](https://github.com/axboe/liburing)
 * [DuckDB](https://github.com/duckdb/duckdb)
 * [duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)
 * [duckdb-avro](https://github.com/duckdb/duckdb-avro)

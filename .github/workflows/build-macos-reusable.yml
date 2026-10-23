@@ -91,9 +91,8 @@ jobs:
 
       # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
       # RelWithDebInfo + COLUMNS debug + no IPO + ccache. macOS deltas: Homebrew
-      # LLVM compiler, STATIC_EXECUTABLES=Off (no static libc), SDB_IOURING=Off
-      # (forced off under APPLE anyway), SDB_ALLOC=SYS (jemalloc unused on macOS;
-      # Linux CI uses JE).
+      # LLVM compiler, STATIC_EXECUTABLES=Off (no static libc), SDB_ALLOC=SYS
+      # (jemalloc unused on macOS; Linux CI uses JE).
       - name: Configure
         run: |
           cmake -G Ninja -B build \
@@ -113,7 +112,6 @@ jobs:
             -DSDB_FAULT_INJECTION=On \
             -DSDB_ALLOC=SYS \
             -DSTATIC_EXECUTABLES=Off \
-            -DSDB_IOURING=Off \
             -DSDB_SANITIZE=
 
       - name: Build

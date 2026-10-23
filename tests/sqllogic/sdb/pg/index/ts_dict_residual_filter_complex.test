@@ -1062,7 +1062,7 @@ QUERY PLAN
 │ │ Field: body(string) │                   │
 │ │ Value: failed       │                   │
 │ ╰─────────────────────╯                   │
-│ Column Filter: lower(svc) = 'frontend',   │
+│ Column Filter: svc ~~* 'frontend',        │
 │                amount >= 100, flag = true │
 │ TsDict: sev                               │
 │ Projections:                              │

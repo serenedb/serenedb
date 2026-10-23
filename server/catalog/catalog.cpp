@@ -479,7 +479,6 @@ std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(
     return cached;
   }
   auto snapshot = std::make_shared<CatalogSnapshot>();
-  snapshot->set = &set;
   snapshot->entries =
     VisibleEntries(_catalog.GetCatalogTransaction(context), set);
   if (!cache) {

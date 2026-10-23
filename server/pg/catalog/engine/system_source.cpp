@@ -293,7 +293,7 @@ std::span<const catalog::CatalogEdge> SystemScan::WalkedSubjects(
 }
 
 bool SystemScan::Indexed(duckdb::CatalogEntry& relation) const {
-  if (!Walked(relation)) {
+  if (!_walked) {
     bool indexed = false;
     Dependencies().ScanEdges(
       Transaction(), relation, false,
@@ -320,7 +320,7 @@ bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
                         [&](duckdb::CatalogEntry&) { triggered = true; });
     return triggered;
   };
-  if (!Walked(table)) {
+  if (!_walked) {
     return any(table);
   }
   const auto& triggered = _walked->triggered.Get([&](auto& triggered) {

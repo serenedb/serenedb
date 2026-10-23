@@ -145,9 +145,8 @@ class IdField final : public tests::Ifield {
   mutable MixedAnalyzer _analyzer;
 };
 
-irs::DocRemoval MakeByTerm(irs::field_id field, std::string_view value) {
-  return irs::DocRemoval::Keys(
-    field, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+tests::Terms MakeByTerm(irs::field_id field, std::string_view value) {
+  return {field, {std::string{value}}};
 }
 
 class ScorePruneNormMergeCase : public tests::IndexTestBase {

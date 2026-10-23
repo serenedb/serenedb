@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/doc_generator.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -674,8 +675,8 @@ bool FillDocument(const IndexWriter::Document& doc,
   return true;
 }
 
-DocRemoval ByKey(std::string_view key) {
-  return DocRemoval::Keys(kKey, {bstring{irs::ViewCast<byte_type>(key)}});
+DocRemoval ByKey(const DirectoryReader& snapshot, std::string_view key) {
+  return ::tests::RemovalOf(snapshot, {kKey, {std::string{key}}});
 }
 
 double Seconds(Clock::time_point from) {
@@ -900,16 +901,17 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     ASSERT_TRUE(writer->RefreshCommit());
 
     {
+      const auto snapshot = writer->GetSnapshot();
       auto trx = writer->GetBatch();
       for (size_t i = 0; i < values.size(); ++i) {
         if (fate[i] == kRemoved) {
-          trx.Remove(ByKey(keys[i]));
+          trx.Remove(ByKey(snapshot, keys[i]));
           continue;
         }
         if (fate[i] != kReplaced) {
           continue;
         }
-        trx.Remove(ByKey(keys[i]));
+        trx.Remove(ByKey(snapshot, keys[i]));
         auto doc = trx.Insert();
         ASSERT_TRUE(doc);
         std::string error;

@@ -152,7 +152,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                          duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
             duckdb::DataChunk& results, duckdb::Vector& rows,
-            duckdb::idx_t count);
+            duckdb::idx_t count, std::vector<search::RowBatch>& written);
 
   ReplaySession* ReplaySessionForEntry();
   void Enqueue(duckdb::TaskExecutor& executor, FeedQueue& queue,
@@ -173,6 +173,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                     const irs::SourcePosition& position);
   void CommitReplaySlots(ReplaySession& session,
                          const irs::SourcePosition& position);
+  void CommitReplayDeletes(ReplaySession& session,
+                           const irs::SourcePosition& position);
 
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;

@@ -39,8 +39,8 @@ namespace {
 
 using namespace irs;
 
-DocRemoval MakeByTerm(field_id field, std::string_view value) {
-  return DocRemoval::Keys(field, {bstring{ViewCast<byte_type>(value)}});
+::tests::Terms MakeByTerm(field_id field, std::string_view value) {
+  return {field, {std::string{value}}};
 }
 
 template<typename Visitor>

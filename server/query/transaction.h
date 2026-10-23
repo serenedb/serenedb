@@ -127,6 +127,7 @@ class Transaction : public Config {
   struct SearchSlot {
     std::unique_ptr<irs::IndexWriter::Transaction> transaction;
     std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
+    std::vector<search::RowBatch> rows;
   };
 
   SearchSlot& EnsureIndexSlot(
@@ -134,14 +135,6 @@ class Transaction : public Config {
     std::shared_ptr<search::InvertedIndexStorage> storage,
     std::shared_ptr<const catalog::InvertedIndexConfig> config,
     size_t slot = 0);
-
-  irs::IndexWriter::Transaction& EnsureIndexTransaction(
-    duckdb::idx_t index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
-              .transaction;
-  }
 
   std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
     const auto it = _search_transactions.find(index_id);
@@ -158,6 +151,12 @@ class Transaction : public Config {
       }
     }
   }
+
+  void RemoveIndexRows(
+    duckdb::idx_t index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    std::span<const int64_t> rows);
 
   const duckdb::Vector& FeedColumn(const void* database,
                                    duckdb::idx_t table_oid,
@@ -179,9 +178,16 @@ class Transaction : public Config {
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
+  struct RemovedRows {
+    irs::DirectoryReader pinned;
+    irs::DocRemovalBuilder found;
+    std::vector<int64_t> missing;
+  };
+
   struct SearchTransaction {
     std::vector<SearchSlot> slots;
     std::shared_ptr<search::InvertedIndexStorage> storage;
+    std::unique_ptr<RemovedRows> removed;
     uint64_t tick = 0;
     irs::SourcePosition position;
   };

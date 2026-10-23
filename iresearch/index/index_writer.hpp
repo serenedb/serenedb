@@ -179,6 +179,7 @@ class IndexWriter : private util::Noncopyable {
     auto* Segment() const noexcept { return _segment.get(); }
     auto* Segment() noexcept { return _segment.get(); }
     auto* Flush() noexcept { return _flush; }
+    const FlushContext* Flush() const noexcept { return _flush; }
 
    private:
     friend struct FlushContext;
@@ -245,6 +246,8 @@ class IndexWriter : private util::Noncopyable {
 
     doc_id_t DocId() const noexcept { return _doc_id; }
 
+    std::string_view SegmentName() const noexcept { return _writer.name(); }
+
    private:
     void Finish() noexcept;
 
@@ -271,19 +274,19 @@ class IndexWriter : private util::Noncopyable {
       return {*_active.Segment(), _queries, batch_size};
     }
 
-    template<bool TickBound = true>
     void Remove(DocRemoval removal) {
       UpdateSegment(true, nullptr);
-      removal.tick = _queries;
+      removal.tick = _queries++;
       _active.Segment()->removals.emplace_back(std::move(removal));
-      if constexpr (TickBound) {
-        ++_queries;
-      }
     }
+
+    void AcquireSegment() { UpdateSegment(true, nullptr); }
 
     void Reset() noexcept;
 
     void RegisterFlush() noexcept;
+
+    uint64_t FlushGeneration() const noexcept;
 
     bool Commit() noexcept {
       auto* segment = _active.Segment();
@@ -372,6 +375,10 @@ class IndexWriter : private util::Noncopyable {
 
   auto GetSnapshot() const noexcept {
     return DirectoryReader{GetSnapshotImpl()};
+  }
+
+  uint64_t CommittedGeneration() const noexcept {
+    return _committed_generation.load(std::memory_order_acquire);
   }
 
   uint64_t BufferedDocs() const;
@@ -647,6 +654,7 @@ class IndexWriter : private util::Noncopyable {
     RefTrackingDirectory::ptr dir;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
+    std::atomic_uint64_t generation{0};
 
     std::vector<std::shared_ptr<SegmentContext>> segments;
     SourcePosition position;
@@ -693,6 +701,7 @@ class IndexWriter : private util::Noncopyable {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
     uint64_t seq = 0;
+    uint64_t generation = 0;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -766,6 +775,7 @@ class IndexWriter : private util::Noncopyable {
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;
+  std::atomic_uint64_t _committed_generation{0};
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
   struct PublishedReader {
     uint64_t seq;

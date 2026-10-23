@@ -23,7 +23,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,7 +33,6 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
-#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -66,22 +64,15 @@ struct DocRemoval {
 
   static DocRemoval All() { return DocRemoval{.all = true}; }
 
-  static DocRemoval Keys(field_id field, std::vector<bstring> keys) {
-    return DocRemoval{.field = field, .keys = std::move(keys)};
-  }
-
-  bool Keyed() const noexcept { return field != field_limits::invalid(); }
-
   size_t Find(uint32_t segment) const noexcept;
 
   const DocumentMask& Docs(size_t group) const noexcept { return *docs[group]; }
 
   bool all = false;
+  bool unflushed = false;
   std::vector<uint32_t> segments;
   std::vector<std::shared_ptr<const DocumentMask>> docs;
   std::shared_ptr<const DocMapList> maps;
-  field_id field = field_limits::invalid();
-  std::vector<bstring> keys;
   uint64_t tick = 0;
 };
 
@@ -101,9 +92,6 @@ class DocRemovalBuilder {
   std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;
   size_t _last = 0;
 };
-
-bool RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
-                     DocumentMaskBuilder& removed, doc_id_t end);
 
 uint32_t SegmentNumber(std::string_view name) noexcept;
 

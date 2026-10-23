@@ -42,9 +42,8 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 
 using tests::FieldIdFor;
 
-irs::DocRemoval MakeByTerm(irs::field_id id, std::string_view value) {
-  return irs::DocRemoval::Keys(
-    id, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+tests::Terms MakeByTerm(irs::field_id id, std::string_view value) {
+  return {id, {std::string{value}}};
 }
 
 class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {

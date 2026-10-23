@@ -186,6 +186,20 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   return result;
 }
 
+void Transaction::RemoveIndexRows(
+  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config,
+  std::span<const int64_t> rows) {
+  EnsureIndexSlot(index_id, storage, std::move(config))
+    .transaction->AcquireSegment();
+  auto& removed = _search_transactions.find(index_id)->second.removed;
+  if (!removed) {
+    removed = std::make_unique<RemovedRows>();
+    removed->pinned = storage->CommittedReader();
+  }
+  storage->FindRows(rows, removed->found, removed->missing);
+}
+
 void Transaction::StageSearch(const irs::SourcePosition& position,
                               duckdb::idx_t database) noexcept {
   for (auto& [index_id, entry] : _search_transactions) {
@@ -195,10 +209,24 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
       slot.writer.reset();
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
+      if (!slot.transaction) {
+        continue;
       }
+      slot.transaction->RegisterFlush();
+      queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
+      try {
+        entry.storage->AddRows(std::move(slot.rows),
+                               slot.transaction->FlushGeneration());
+      } catch (const std::exception& e) {
+        SDB_ERROR(SEARCH, "recording the rows written to index '", index_id,
+                  "' failed: ", e.what(),
+                  "; the index replays them from the WAL on next boot");
+        entry.storage->MarkOutOfSync();
+      }
+    }
+    if (entry.removed) {
+      queries = std::max<uint64_t>(
+        queries, entry.slots.front().transaction->GetQueries() + 1);
     }
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
@@ -218,6 +246,24 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
     }
     auto& [index_id, entry] = item;
     SDB_ASSERT(entry.tick != 0);
+    irs::DirectoryReader resolved;
+    if (entry.removed) {
+      try {
+        auto& removed = *entry.removed;
+        resolved =
+          entry.storage->ResolveRows(std::move(removed.missing), removed.found);
+        if (!removed.found.Empty()) {
+          auto removal = std::move(removed.found).Finish();
+          removal.unflushed = true;
+          entry.slots.front().transaction->Remove(std::move(removal));
+        }
+      } catch (const std::exception& e) {
+        SDB_ERROR(SEARCH, "removing rows from index '", index_id,
+                  "' failed: ", e.what(),
+                  "; the index replays them from the WAL on next boot");
+        entry.storage->MarkOutOfSync();
+      }
+    }
     for (auto& slot : entry.slots) {
       if (!slot.transaction ||
           slot.transaction->Commit(entry.tick, entry.position)) {

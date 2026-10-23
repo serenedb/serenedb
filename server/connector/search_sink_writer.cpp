@@ -1092,28 +1092,6 @@ void SearchSinkInsertBaseImpl::Field::PrepareForBlockValue(
   keyword = false;
 }
 
-SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
-  irs::IndexWriter::Transaction& trx)
-  : _trx{&trx} {}
-
-void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
-  _keys.emplace_back(irs::ViewCast<irs::byte_type>(row_key));
-}
-
-void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
-  SDB_ASSERT(batch_size > 0);
-  FinishImpl();
-  _keys.reserve(batch_size);
-}
-
-void SearchSinkDeleteBaseImpl::FinishImpl() {
-  if (!_keys.empty()) {
-    _trx->Remove(
-      irs::DocRemoval::Keys(term_dict::kPKFieldId, std::move(_keys)));
-  }
-  _keys = {};
-}
-
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {

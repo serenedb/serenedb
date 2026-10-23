@@ -125,18 +125,23 @@ class IndexAdoptTest : public TestBase {
     return tests::InsertFields(trx.Insert(), &field, &field + 1);
   }
 
-  static irs::DocRemoval ByName(std::string_view value) {
-    return irs::DocRemoval::Keys(
-      kNameFieldId, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+  irs::DocRemoval ByName(std::string_view value) const {
+    return tests::RemovalOf(*_writer, {kNameFieldId, {std::string{value}}});
   }
 
-  static irs::DocRemoval ByNames(std::span<const std::string> values) {
-    std::vector<irs::bstring> keys;
-    keys.reserve(values.size());
-    for (const auto& value : values) {
-      keys.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{value}));
+  irs::DocRemoval ByNames(std::span<const std::string> values) const {
+    return tests::RemovalOf(*_writer,
+                            {kNameFieldId, {values.begin(), values.end()}});
+  }
+
+  static irs::DocRemoval FirstDocOf(
+    std::initializer_list<std::string_view> meta_files) {
+    irs::DocRemovalBuilder builder;
+    for (const auto meta_file : meta_files) {
+      builder.Add(irs::SegmentNumber(meta_file.substr(0, meta_file.find('.'))),
+                  irs::doc_limits::min());
     }
-    return irs::DocRemoval::Keys(kNameFieldId, std::move(keys));
+    return std::move(builder).Finish();
   }
 
   bool Exists(std::string_view name) const {
@@ -405,7 +410,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
   {
     // Removal below the adopted tick: the segment is newer, so it survives.
     auto trx = _writer->GetBatch();
-    trx.Remove(ByName("kept"));
+    trx.Remove(FirstDocOf({adopt.front()}));
     ASSERT_TRUE(trx.Commit(/*last_tick=*/5));
   }
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -439,7 +444,7 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
   _writer->AdoptSegment(after.front(), /*tick=*/21);
   {
     auto trx = _writer->GetBatch();
-    trx.Remove(ByName("target"));
+    trx.Remove(FirstDocOf({before.front(), after.front()}));
     ASSERT_TRUE(trx.Commit(/*last_tick=*/20));
   }
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -472,11 +477,11 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   constexpr uint64_t kMaxTick = 30;
   auto trx = _writer->GetBatch();
   uint64_t queries_before_segment = 0;
-  trx.Remove(ByName("x"));  // record 1
+  trx.Remove(FirstDocOf({adopt.front()}));  // record 1
   queries_before_segment = trx.GetQueries();
   // record 2: the segment is only stashed here; its tick needs the final query
   // count, so the adopt happens after the sweep.
-  trx.Remove(ByName("y"));  // record 3
+  trx.Remove(irs::DocRemoval{});  // record 3
 
   const uint64_t queries = trx.GetQueries();
   ASSERT_EQ(2, queries);
@@ -522,6 +527,7 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   ASSERT_EQ(1, flushed.size());
   const std::string early_meta = flushed.front().filename;
   ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  ASSERT_TRUE(_writer->RefreshCommit());
 
   {
     auto remover = _writer->GetBatch();
@@ -1213,122 +1219,6 @@ TEST_F(IndexAdoptTest, DocRemovalReachesItsSegmentOnceCommitted) {
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, PositionsAndKeysInOneCommit) {
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  for (const auto* value : {"a", "b", "c"}) {
-    ASSERT_TRUE(InsertDoc(trx, value));
-  }
-  ASSERT_TRUE(trx.Commit(10));
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto names = CommittedNames(*_writer);
-
-  auto del = _writer->GetBatch();
-  del.Remove(Positions({{names.front(), {1}}}));
-  del.Remove(ByName("c"));
-  ASSERT_TRUE(del.Commit(20));
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, AKeyOnlyInsertedAfterTheRemovalKeepsTheOtherKeysGoing) {
-  const std::vector<std::string> keys{"a", "b"};
-  auto trx = _writer->GetBatch();
-  ASSERT_TRUE(InsertDoc(trx, "b"));
-  trx.Remove(ByNames(keys));
-  ASSERT_TRUE(InsertDoc(trx, "a"));
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-
-  auto del = _writer->GetBatch();
-  del.Remove(ByName("a"));
-  ASSERT_TRUE(del.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, AKeyReinsertedAfterItsRemovalSurvives) {
-  {
-    auto trx = _writer->GetBatch();
-    ASSERT_TRUE(InsertDoc(trx, "a"));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto old_segment = CommittedNames(*_writer);
-  ASSERT_EQ(1, old_segment.size());
-
-  const std::vector<std::string> keys{"a", "b"};
-  {
-    auto trx = _writer->GetBatch();
-    ASSERT_TRUE(InsertDoc(trx, "b"));
-    trx.Remove(ByNames(keys));
-    ASSERT_TRUE(InsertDoc(trx, "a"));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  const auto names = CommittedNames(*_writer);
-  ASSERT_EQ(1, names.size());
-  EXPECT_NE(old_segment.front(), names.front());
-  auto del = _writer->GetBatch();
-  del.Remove(ByName("a"));
-  ASSERT_TRUE(del.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, KeysSkipMaskedDocs) {
-  {
-    auto trx = _writer->GetBatch();
-    ASSERT_TRUE(InsertDoc(trx, "a"));
-    ASSERT_TRUE(InsertDoc(trx, "x"));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  {
-    auto del = _writer->GetBatch();
-    del.Remove(ByName("a"));
-    ASSERT_TRUE(del.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  {
-    auto trx = _writer->GetBatch();
-    ASSERT_TRUE(InsertDoc(trx, "a"));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-  ASSERT_EQ(2, _writer->GetSnapshot().size());
-
-  auto del = _writer->GetBatch();
-  del.Remove(ByName("a"));
-  ASSERT_TRUE(del.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-  EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-}
-
-TEST_F(IndexAdoptTest, KeysSkipDocsTheirCommitRemovedEarlier) {
-  {
-    auto trx = _writer->GetBatch();
-    ASSERT_TRUE(InsertDoc(trx, "a"));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  auto trx = _writer->GetBatch();
-  trx.Remove(ByName("a"));
-  ASSERT_TRUE(InsertDoc(trx, "a"));
-  trx.Remove(ByName("a"));
-  ASSERT_TRUE(InsertDoc(trx, "a"));
-  ASSERT_TRUE(trx.Commit());
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  const auto snapshot = _writer->GetSnapshot();
-  EXPECT_EQ(1, snapshot.live_docs_count());
-  ASSERT_EQ(1, snapshot.size());
-  EXPECT_EQ(2, snapshot[0].docs_count());
-}
-
 TEST_F(IndexAdoptTest, EmptyDocRemovalKeepsTheSegment) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "a"));
@@ -1382,26 +1272,6 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, KeysOfNoDocRemoveNothing) {
-  auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(trx, "a"));
-  ASSERT_TRUE(trx.Commit(10));
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto before = _writer->GetSnapshot()[0].Meta().version;
-
-  auto del = _writer->GetBatch();
-  del.Remove(ByName("b"));
-  del.Remove(irs::DocRemoval::Keys(
-    tests::FieldIdFor("missing"),
-    {irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"a"})}}));
-  ASSERT_TRUE(del.Commit(20));
-  _writer->RefreshCommit();
-  const auto snapshot = _writer->GetSnapshot();
-  ASSERT_EQ(1, snapshot.size());
-  EXPECT_EQ(before, snapshot[0].Meta().version);
-  EXPECT_EQ(1, snapshot.live_docs_count());
-}
-
 TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   Restart(/*cleanup_on_open=*/false);
 
@@ -1443,46 +1313,11 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   EXPECT_TRUE(synced.front().starts_with("pending_segments_"));
 }
 
-// ReplaceSegments adopts at the floor, so every pending removal is eligible --
-// which is the whole reason it does not take a tick.
-// AdoptTickDecidesRemovalMasking covers the underlying rule where the tick is
-// the caller's.
-TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
-  Restart(/*cleanup_on_open=*/false);
-
-  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(seed, "doomed"));
-  ASSERT_TRUE(seed.Commit(10));
-  ASSERT_TRUE(_writer->RefreshCommit());
-  const auto sources = CommittedNames(*_writer);
-  ASSERT_EQ(1, sources.size());
-
-  // The rebuild copies the row, from a snapshot that predates the delete.
-  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
-  ASSERT_TRUE(InsertDoc(build, "doomed"));
-  const auto replacement = MetaFilesOf(build.FlushAndFsync());
-  build.Abort();
-
-  // A delete lands while the rebuild is in flight, at a higher tick.
-  auto del = _writer->GetBatch();
-  del.Remove(ByName("doomed"));
-  ASSERT_TRUE(del.Commit(20));
-
-  // Adopted at the floor, so the pending removal is above it and must reach
-  // the replacement.
-  Replace(*_writer, sources, replacement);
-  ASSERT_TRUE(_writer->RefreshCommit());
-
-  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
-    << "the row came back through the adopted segment";
-}
-
-// The other half of the rule above: a removal a refresh has already consumed
-// is not pending any more, so nothing carries it to a later adoption by tick,
-// and the rebuilt segment would publish carrying the deleted row. The swap
-// carries what the source lost since the build's snapshot into the rows the
-// replacement took from it, in the generation that adopts it -- there is no
-// published state where the row is back.
+// A removal a refresh has already consumed is not pending any more, and the
+// rebuilt segment would publish carrying the deleted row. The swap carries what
+// the source lost since the build's snapshot into the rows the replacement took
+// from it, in the generation that adopts it -- there is no published state
+// where the row is back.
 TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsAppliedSinceTheSnapshot) {
   Restart(/*cleanup_on_open=*/false);
 

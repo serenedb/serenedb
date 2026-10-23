@@ -94,13 +94,11 @@ struct FlushedSegmentContext {
     return false;
   }
 
-  void Remove(DocRemoval& removal);
-
   void RemoveAll(uint64_t tick);
 };
 
-bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs, DocRemoval& removal,
-                       const SubReader& reader,
+bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs,
+                       const DocRemoval& removal, const SubReader& reader,
                        const DocRemovalResolver& removals) {
   const auto end =
     static_cast<doc_id_t>(doc_limits::min() + reader.docs_count());
@@ -108,21 +106,9 @@ bool RemoveFromSegment(DocumentMaskBuilder& deleted_docs, DocRemoval& removal,
     return deleted_docs.MergeLiveRange(doc_limits::min(), end,
                                        reader.docs_mask());
   }
-  if (removal.Keyed()) {
-    return RemoveKeyedDocs(removal, reader, deleted_docs, doc_limits::eof());
-  }
   const auto* docs = removals.PositionalDocs(removal, reader);
   return docs != nullptr &&
          deleted_docs.MergeLive(*docs, reader.docs_mask(), end);
-}
-
-void FlushedSegmentContext::Remove(DocRemoval& removal) {
-  const auto bound = flushed.docs.UpperBound(removal.tick);
-  if (bound == 0) {
-    return;
-  }
-  RemoveKeyedDocs(removal, *reader, flushed.docs_mask,
-                  static_cast<doc_id_t>(doc_limits::min() + bound));
 }
 
 void FlushedSegmentContext::RemoveAll(uint64_t tick) {
@@ -420,12 +406,12 @@ struct PublishedSegment {
   Sync sync;
 };
 
-std::vector<DocRemoval*> CollectRemovals(
+std::vector<const DocRemoval*> CollectRemovals(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments) {
-  std::vector<DocRemoval*> removals;
+  std::vector<const DocRemoval*> removals;
   for (const auto& segment : segments) {
     SDB_ASSERT(segment != nullptr);
-    for (auto& removal : segment->removals) {
+    for (const auto& removal : segment->removals) {
       removals.emplace_back(&removal);
     }
   }
@@ -439,7 +425,7 @@ struct PublishResult {
 
 PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
                              const CompactingSegments& segment_mask,
-                             std::span<DocRemoval* const> queued,
+                             std::span<const DocRemoval* const> queued,
                              const DocRemovalResolver& removals, Directory& dir,
                              const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
@@ -463,7 +449,7 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
 
     SDB_ASSERT(deleted_docs.Empty());
 
-    for (auto* removal : queued) {
+    for (const auto* removal : queued) {
       RemoveFromSegment(deleted_docs, *removal, existing_segment, removals);
     }
 
@@ -533,7 +519,7 @@ struct AddIncomingResult : PublishResult {
 
 AddIncomingResult AddIncoming(auto& incoming_segments,
                               std::span<const PublishedSegment> existing,
-                              std::span<DocRemoval* const> queued,
+                              std::span<const DocRemoval* const> queued,
                               const DocRemovalResolver& removals,
                               const SegmentsByNumber& committed, Directory& dir,
                               const ProgressReportCallback& progress) {
@@ -598,7 +584,7 @@ AddIncomingResult AddIncoming(auto& incoming_segments,
         result.replaced.emplace(candidate->Meta().name);
       }
     } else {
-      for (auto* removal : queued) {
+      for (const auto* removal : queued) {
         if (incoming.tick <= removal->tick) {
           docs_mask_modified |=
             RemoveFromSegment(docs_mask, *removal, *reader, removals);
@@ -650,8 +636,8 @@ AddIncomingResult AddIncoming(auto& incoming_segments,
 
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  std::span<DocRemoval* const> queued, const Directory& dir,
-  const IndexReaderOptions& reader_options,
+  std::span<const DocRemoval* const> queued, const DocRemovalResolver& removals,
+  const Directory& dir, const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
   size_t total_flushed_segments = 0;
@@ -688,14 +674,15 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       auto& segment_ctx = segment_ctxs.emplace_back(std::move(reader), flushed);
 
       std::optional<uint64_t> all_tick;
-      for (auto* removal : queued) {
-        if (flushed_first_tick > removal->tick) {
-          continue;
-        }
-        if (removal->Keyed()) {
-          segment_ctx.Remove(*removal);
-        } else if (removal->all) {
-          all_tick = std::max(all_tick.value_or(removal->tick), removal->tick);
+      for (const auto* removal : queued) {
+        if (removal->all) {
+          if (flushed_first_tick <= removal->tick) {
+            all_tick =
+              std::max(all_tick.value_or(removal->tick), removal->tick);
+          }
+        } else if (removal->unflushed) {
+          RemoveFromSegment(flushed.docs_mask, *removal, *segment_ctx.reader,
+                            removals);
         }
       }
       if (all_tick) {
@@ -861,6 +848,12 @@ void IndexWriter::Transaction::RegisterFlush() noexcept {
   if (_active.Segment() != nullptr && _active.Flush() == nullptr) {
     _writer->GetFlushContext()->AddToPending(_active);
   }
+}
+
+uint64_t IndexWriter::Transaction::FlushGeneration() const noexcept {
+  const auto* flush = _active.Flush();
+  return flush == nullptr ? 0
+                          : flush->generation.load(std::memory_order_relaxed);
 }
 
 bool IndexWriter::Transaction::CommitImpl(
@@ -1245,6 +1238,7 @@ IndexWriter::IndexWriter(
   _published.emplace_back(_commit_seq, _committed_reader);
 
   _flush_context.store(_flush_contexts.data());
+  _flush_contexts.front().generation.store(1, std::memory_order_relaxed);
 
   // setup round-robin chain
   auto* ctx = _flush_contexts.data();
@@ -1298,7 +1292,12 @@ void IndexWriter::Clear(const SourcePosition& position) {
   }
 
   PendingContext to_commit{
-    PendingBase{.position = position, .seq = ++_commit_seq}, {}, {}, {}};
+    PendingBase{.position = position,
+                .seq = ++_commit_seq,
+                .generation = ctx->generation.load(std::memory_order_relaxed)},
+    {},
+    {},
+    {}};
   InitMeta(to_commit.meta);
   to_commit.ctx = std::move(ctx);
 
@@ -1898,6 +1897,8 @@ IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
   SDB_ASSERT(!_pending_state.Valid());
   auto* ctx = _flush_context.load(std::memory_order_relaxed);
   absl::MutexLock lock{&ctx->context_mutex};
+  ctx->next->generation.store(ctx->generation.load(std::memory_order_relaxed) + 1,
+                              std::memory_order_relaxed);
   _flush_context.store(ctx->next, std::memory_order_relaxed);
   return {ctx, [](FlushContext* ctx) noexcept {
             absl::MutexLock lock{&ctx->context_mutex};
@@ -1978,6 +1979,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
 
 IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   auto ctx = SwitchFlushContext();
+  const auto generation = ctx->generation.load(std::memory_order_relaxed);
   SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
@@ -2021,12 +2023,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
   DocRemovalResolver removals;
-  std::vector<const DocRemoval*> pending_removals;
-  for (const auto* removal : queued) {
-    if (!removal->Keyed()) {
-      pending_removals.emplace_back(removal);
-    }
-  }
   {
     absl::MutexLock maps_lock{&_doc_maps_mutex};
     for (const auto& incoming : ctx->incoming) {
@@ -2037,7 +2033,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         _doc_maps.Committed(replaced.number, seq);
       }
     }
-    if (!pending_removals.empty()) {
+    if (!queued.empty()) {
       std::vector<uint32_t> targets;
       targets.reserve(committed_reader.size() + ctx->incoming.size());
       for (const auto& segment : committed_reader.Meta().index_meta.segments) {
@@ -2050,7 +2046,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
           targets.emplace_back(SegmentNumber(incoming.segment.meta.name));
         }
       }
-      removals.Prepare(pending_removals, targets, _doc_maps);
+      for (const auto& segment : ctx->segments) {
+        for (const auto& flushed : segment->flushed) {
+          targets.emplace_back(SegmentNumber(flushed.meta.name));
+        }
+      }
+      removals.Prepare(queued, targets, _doc_maps);
     }
     _doc_maps.Retire(_published.empty() ? seq : _published.front().seq,
                      removals);
@@ -2082,7 +2083,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 3
   // create new segments
-  auto segment_ctxs = OpenFlushed(ctx->segments, queued, dir,
+  auto segment_ctxs = OpenFlushed(ctx->segments, queued, removals, dir,
                                   committed_reader.Options(), progress);
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
   segments.insert(segments.end(),
@@ -2137,6 +2138,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
                                  std::memory_order_release);
     }
+    _committed_generation.store(generation, std::memory_order_release);
     return {};
   }
 
@@ -2146,7 +2148,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
                 .position = position,
-                .seq = seq},
+                .seq = seq,
+                .generation = generation},
     std::move(pending_meta),  // Retain meta pending flush
     std::move(readers),
     std::move(files_to_sync),
@@ -2248,6 +2251,8 @@ void IndexWriter::Finish() {
   std::atomic_store_explicit(&_committed_reader,
                              std::move(_pending_state.commit),
                              std::memory_order_release);
+  _committed_generation.store(_pending_state.generation,
+                              std::memory_order_release);
   _published.emplace_back(_pending_state.seq, _committed_reader);
   _pending_state.FinishReset();
 }

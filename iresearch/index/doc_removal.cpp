@@ -25,7 +25,6 @@
 
 #include <utility>
 
-#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -89,42 +88,6 @@ class ByteReader {
 };
 
 }  // namespace
-
-bool RemoveKeyedDocs(DocRemoval& removal, const SubReader& segment,
-                     DocumentMaskBuilder& removed, doc_id_t end) {
-  SDB_ASSERT(removal.Keyed());
-  const auto* field = segment.field(removal.field);
-  if (field == nullptr) {
-    return false;
-  }
-  const auto masked = segment.MaskedDocs();
-  auto& keys = removal.keys;
-  bool modified = false;
-  size_t kept = 0;
-  for (size_t i = 0; i < keys.size(); ++i) {
-    auto doc = doc_limits::eof();
-    field->ReadDocs(keys[i], [&](doc_id_t found) {
-      if (masked.Contains(found) || removed.Contains(found)) {
-        return true;
-      }
-      doc = found;
-      return false;
-    });
-    if (doc < end) {
-      modified |= removed.Add(doc);
-      continue;
-    }
-    if (kept != i) {
-      keys[kept] = std::move(keys[i]);
-    }
-    ++kept;
-  }
-  keys.resize(kept);
-  if (keys.empty()) {
-    keys = {};
-  }
-  return modified;
-}
 
 DocumentMaskBuilder& DocRemovalBuilder::Group(uint32_t segment) {
   SDB_ASSERT(segment != DocRemoval::kNoSegment);
@@ -274,7 +237,7 @@ DocMapList ReadDocMaps(std::string_view bytes) {
 }
 
 std::string WriteDocRemoval(const DocRemoval& removal) {
-  SDB_ASSERT(!removal.all && !removal.Keyed());
+  SDB_ASSERT(!removal.all);
   std::string out;
   Put32(out, static_cast<uint32_t>(removal.segments.size()));
   for (size_t group = 0; group < removal.segments.size(); ++group) {

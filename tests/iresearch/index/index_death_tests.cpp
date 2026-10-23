@@ -47,9 +47,8 @@ inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 inline constexpr irs::field_id kSameAnlPayId =
   tests::FieldIdFor("same_anl_pay");
 
-irs::DocRemoval MakeByTerm(irs::field_id field_id, std::string_view value) {
-  return irs::DocRemoval::Keys(
-    field_id, {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+tests::Terms MakeByTerm(irs::field_id field_id, std::string_view value) {
+  return {field_id, {std::string{value}}};
 }
 
 // Insert `doc->indexed` into `writer` and capture the indexed StringField
@@ -303,6 +302,7 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
+    ASSERT_TRUE(writer->RefreshCommit());
 
     tests::Remove(*writer, query_doc2);
 
@@ -1230,6 +1230,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
+    ASSERT_TRUE(writer->RefreshCommit());
 
     tests::Remove(*writer, query_doc2);
 
@@ -2658,6 +2659,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
+    ASSERT_TRUE(writer->RefreshCommit());
     tests::Remove(*writer, query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());

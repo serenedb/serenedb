@@ -820,7 +820,6 @@ TEST(DocRemovalCodecTest, RemovalsSurviveTheirBytes) {
   const auto removal = Build(rows);
   const auto read = irs::ReadDocRemoval(irs::WriteDocRemoval(removal));
   EXPECT_FALSE(read.all);
-  EXPECT_FALSE(read.Keyed());
   EXPECT_EQ(nullptr, read.maps);
   ASSERT_EQ(removal.segments, read.segments);
   ASSERT_EQ(removal.docs.size(), read.docs.size());

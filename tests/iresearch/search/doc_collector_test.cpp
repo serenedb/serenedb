@@ -97,9 +97,8 @@ constexpr irs::field_id kSameFieldId = 4;
 constexpr irs::field_id kValueFieldId = 5;
 constexpr irs::field_id kDuplicatedFieldId = 6;
 
-irs::DocRemoval RemoveByName(std::string_view name) {
-  return irs::DocRemoval::Keys(
-    kNameFieldId, {irs::bstring{irs::ViewCast<irs::byte_type>(name)}});
+tests::Terms RemoveByName(std::string_view name) {
+  return {kNameFieldId, {std::string{name}}};
 }
 
 // Wrap tests::GenericJsonFieldFactory to assign per-name field ids to the

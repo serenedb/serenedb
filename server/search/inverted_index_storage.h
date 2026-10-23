@@ -22,14 +22,17 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
+#include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <atomic>
+#include <deque>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/directory.hpp>
@@ -39,6 +42,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -83,6 +87,15 @@ struct StorageDirectory {
 StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
+
+struct RowBatch {
+  int64_t begin = 0;
+  int64_t end = 0;
+  uint32_t segment = 0;
+  irs::doc_id_t doc = 0;
+  std::vector<uint32_t> offsets;
+  uint64_t generation = 0;
+};
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -134,13 +147,10 @@ class InvertedIndexStorage final
   }
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
-  // once at publish by TakeDeleteLog, then latched forever. It holds removes
-  // for rowids in [begin, end) -- rows whose backfill copy may still be
-  // uncommitted, where a native remove could get lost. Outside the window
-  // removes go native: below begin the copy is already committed, at/above
-  // end the row came through the live writer during the build.
-  //   begin: rises as backfill segments commit (stale read = over-log, safe).
-  //   end:   the rowid allocator at build start, fixed.
+  // once by TakeDeleteLog after the backfill is committed, then latched
+  // forever. It holds removes for rowids below end -- rows the backfill
+  // copies, which have no position until the copy commits. At/above end the
+  // row came through the live writer during the build and removes go native.
   // AppendDeleteLog returns false once latched; the caller then removes
   // natively (a delete racing publish is an ordinary post-publish remove).
   bool IsDeleteLogOpen() const noexcept {
@@ -154,12 +164,16 @@ class InvertedIndexStorage final
   int64_t DeleteLogRowidEnd() const noexcept {
     return _delete_log_rowid_end.load(std::memory_order_relaxed);
   }
-  void SetDeleteLogRowidBegin(int64_t begin) noexcept {
-    _delete_log_rowid_begin.store(begin, std::memory_order_release);
+
+  irs::DirectoryReader CommittedReader() const {
+    return _writer->GetSnapshot();
   }
-  int64_t DeleteLogRowidBegin() const noexcept {
-    return _delete_log_rowid_begin.load(std::memory_order_acquire);
-  }
+
+  void AddRows(std::vector<RowBatch>&& batches, uint64_t generation);
+  void FindRows(std::span<const int64_t> rows, irs::DocRemovalBuilder& found,
+                std::vector<int64_t>& missing);
+  irs::DirectoryReader ResolveRows(std::vector<int64_t> rows,
+                                   irs::DocRemovalBuilder& found) const;
 
   // `field_options` (nullable) is the per-merge per-column encoding config: the
   // compaction task hands the info from its own DDL view so the
@@ -266,6 +280,7 @@ class InvertedIndexStorage final
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
   void PublishSnapshot();
+  void PruneRows() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_rows_mutex);
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
@@ -290,8 +305,12 @@ class InvertedIndexStorage final
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
-  std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
+
+  absl::Mutex _rows_mutex;
+  absl::btree_map<int64_t, RowBatch> _rows ABSL_GUARDED_BY(_rows_mutex);
+  std::deque<std::pair<uint64_t, int64_t>> _rows_order
+    ABSL_GUARDED_BY(_rows_mutex);
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

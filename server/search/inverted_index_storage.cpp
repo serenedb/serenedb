@@ -21,9 +21,11 @@
 
 #include "search/inverted_index_storage.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
+#include <algorithm>
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
 #include <filesystem>
@@ -46,13 +48,16 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
+#include <string>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/term_dict.h"
 #include "query/transaction.h"
 #include "search/scorer_options.h"
+#include "server/utils/primary_key.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -268,6 +273,10 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
         _writer->GetSnapshot(), GetFileManifest()));
     },
     [&] { PublishSnapshot(); });
+  {
+    absl::MutexLock lock{&_rows_mutex};
+    PruneRows();
+  }
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -372,6 +381,92 @@ std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
     rows.insert(rows.end(), batch.begin(), batch.end());
   }
   return rows;
+}
+
+void InvertedIndexStorage::PruneRows() {
+  const auto committed = _writer->CommittedGeneration();
+  while (!_rows_order.empty() && _rows_order.front().first <= committed) {
+    const auto it = _rows.find(_rows_order.front().second);
+    if (it != _rows.end() && it->second.generation <= committed) {
+      _rows.erase(it);
+    }
+    _rows_order.pop_front();
+  }
+}
+
+void InvertedIndexStorage::AddRows(std::vector<RowBatch>&& batches,
+                                   uint64_t generation) {
+  if (batches.empty()) {
+    return;
+  }
+  absl::MutexLock lock{&_rows_mutex};
+  PruneRows();
+  for (auto& batch : batches) {
+    batch.generation = generation;
+    _rows_order.emplace_back(generation, batch.begin);
+    _rows.insert_or_assign(batch.begin, std::move(batch));
+  }
+}
+
+void InvertedIndexStorage::FindRows(std::span<const int64_t> rows,
+                                    irs::DocRemovalBuilder& found,
+                                    std::vector<int64_t>& missing) {
+  absl::MutexLock lock{&_rows_mutex};
+  PruneRows();
+  for (const auto row : rows) {
+    if (const auto next = _rows.upper_bound(row); next != _rows.begin()) {
+      const auto& batch = std::prev(next)->second;
+      const auto offset = static_cast<uint32_t>(row - batch.begin);
+      if (row < batch.end && batch.offsets.empty()) {
+        found.Add(batch.segment, batch.doc + offset);
+        continue;
+      }
+      if (row < batch.end) {
+        const auto it = absl::c_lower_bound(batch.offsets, offset);
+        if (it != batch.offsets.end() && *it == offset) {
+          found.Add(batch.segment, static_cast<irs::doc_id_t>(
+                                     batch.doc + (it - batch.offsets.begin())));
+          continue;
+        }
+      }
+    }
+    missing.push_back(row);
+  }
+}
+
+irs::DirectoryReader InvertedIndexStorage::ResolveRows(
+  std::vector<int64_t> rows, irs::DocRemovalBuilder& found) const {
+  auto reader = _writer->GetSnapshot();
+  if (rows.empty()) {
+    return reader;
+  }
+  absl::c_sort(rows);
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  std::vector<std::string> keys(rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    connector::primary_key::AppendSigned(keys[i], rows[i]);
+  }
+  for (size_t s = 0; s < reader.size(); ++s) {
+    const auto& segment = reader[s];
+    const auto* field = segment.field(connector::term_dict::kPKFieldId);
+    if (field == nullptr) {
+      continue;
+    }
+    const auto number = irs::SegmentNumber(segment.Meta().name);
+    SDB_ENSURE(number != irs::DocRemoval::kNoSegment, "inverted index segment ",
+               segment.Meta().name, " has no position");
+    const auto masked = segment.MaskedDocs();
+    for (const auto& key : keys) {
+      field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{key}),
+                      [&](irs::doc_id_t doc) {
+                        if (!masked.Contains(doc)) {
+                          found.Add(number, doc);
+                        }
+                        return true;
+                      });
+    }
+  }
+  return reader;
 }
 
 void ThrowIfRefreshFailed(const absl::Status& status,

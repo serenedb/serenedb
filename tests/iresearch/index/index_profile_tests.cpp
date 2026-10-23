@@ -263,9 +263,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               auto key_term =
                 csv_doc_template.indexed.get<tests::StringField>(key_name)
                   ->value();
-              auto removal = irs::DocRemoval::Keys(
-                key_id,
-                {irs::bstring{irs::ViewCast<irs::byte_type>(key_term)}});
+              auto removal = tests::RemovalOf(
+                *writer, tests::Terms{key_id, {std::string{key_term}}});
               auto value_name = (++(csv_doc_template.indexed.begin()))->Name();
               auto value_term =
                 csv_doc_template.indexed.get<tests::StringField>(value_name)

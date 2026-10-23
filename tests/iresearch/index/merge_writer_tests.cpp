@@ -74,9 +74,8 @@ inline constexpr irs::field_id kAnotherColumnId =
 
 using tests::FieldIdFor;
 
-irs::DocRemoval MakeByTerm(std::string_view name, std::string_view value) {
-  return irs::DocRemoval::Keys(
-    FieldIdFor(name), {irs::bstring{irs::ViewCast<irs::byte_type>(value)}});
+tests::Terms MakeByTerm(std::string_view name, std::string_view value) {
+  return {FieldIdFor(name), {std::string{value}}};
 }
 
 }  // namespace

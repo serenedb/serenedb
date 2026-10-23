@@ -56,8 +56,13 @@ struct ExpressionDescriptor {
   irs::field_id field_id = irs::field_limits::invalid();
 };
 
+struct BatchStart {
+  uint32_t segment = 0;
+  irs::doc_id_t doc = 0;
+};
+
 // Index sink used by CREATE INDEX and store-index maintenance sessions:
-// one virtual dispatch per column batch / per deleted row.
+// one virtual dispatch per column batch.
 class DuckDBSinkIndexWriter {
  public:
   DuckDBSinkIndexWriter() = default;
@@ -69,6 +74,8 @@ class DuckDBSinkIndexWriter {
   virtual void Finish() = 0;
   virtual void Abort() = 0;
 
+  virtual BatchStart LastBatch() const noexcept = 0;
+
   virtual bool SwitchColumn(const ColumnDescriptor& col,
                             const duckdb::Vector& vec, duckdb::idx_t count) {
     THROW_SQL_ERROR(ERR_MSG("SwitchColumn call not implemented"));
@@ -78,10 +85,6 @@ class DuckDBSinkIndexWriter {
                                 const duckdb::Vector& /*vec*/,
                                 duckdb::idx_t /*count*/) {
     return false;
-  }
-
-  virtual void DeleteRow(std::string_view row_key) {
-    THROW_SQL_ERROR(ERR_MSG("DeleteRow call not implemented"));
   }
 };
 

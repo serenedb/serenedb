@@ -318,23 +318,6 @@ class SearchSinkInsertBaseImpl {
   std::vector<irs::doc_id_t> _null_docs;
 };
 
-class SearchSinkDeleteBaseImpl {
- public:
-  explicit SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
-
-  void InitImpl(size_t batch_size);
-
-  void FinishImpl();
-
-  void DeleteRowImpl(std::string_view row_key);
-
-  void AbortImpl() { _keys.clear(); }
-
- protected:
-  irs::IndexWriter::Transaction* _trx;
-  std::vector<irs::bstring> _keys;
-};
-
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
@@ -350,6 +333,9 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Init(duckdb::idx_t batch_size, const PkChunk& pk,
             irs::CommitOnFlush* commit_on_flush = nullptr) final {
     InitImpl(batch_size, pk, commit_on_flush);
+    _document->NextFieldBatch();
+    _last_batch = {.segment = irs::SegmentNumber(_document->SegmentName()),
+                   .doc = _document->DocId()};
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
@@ -369,27 +355,11 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   void Finish() final { FinishImpl(); }
   void Abort() final { AbortImpl(); }
 
+  BatchStart LastBatch() const noexcept final { return _last_batch; }
+
  private:
   irs::containers::FlatHashSet<ColumnId> _indexed;
-};
-
-class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
-                                           public SearchSinkDeleteBaseImpl {
- public:
-  explicit DuckDBSearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkDeleteBaseImpl{trx} {}
-
-  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/,
-            irs::CommitOnFlush* /*commit_on_flush*/ = nullptr) final {
-    InitImpl(batch_size);
-  }
-
-  void DeleteRow(std::string_view encoded_pk) final {
-    DeleteRowImpl(encoded_pk);
-  }
-
-  void Finish() final { FinishImpl(); }
-  void Abort() final { AbortImpl(); }
+  BatchStart _last_batch;
 };
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

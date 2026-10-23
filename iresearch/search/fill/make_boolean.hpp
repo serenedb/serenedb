@@ -55,27 +55,33 @@ struct Api {
   using Context = utils::Empty;
 
   static constexpr bool kWindowNodes = false;
+  static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = false;
   static constexpr double kSparseLeadCost = 6.0;
   static constexpr bool kWindowLeadRefills = false;
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
-           typename... Args>
-  static Result MakeWindow(const Context&, Args&&... args) {
-    using Window = BooleanWindow<Lead, Others, Optional, Excludes>;
-    return memory::make_managed<Impl<Window>>(std::piecewise_construct,
-                                              std::forward<Args>(args)...);
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeWindow(const Ctx&, ScoreMergeType, Score score,
+                           Args&&... args) {
+    using Window = BooleanWindow<Lead, Others, Optional, Excludes, Score>;
+    return memory::make_managed<Impl<Window>>(
+      std::piecewise_construct, std::forward<Args>(args)..., score);
   }
 
-  template<typename Lead, typename Probes, typename Excludes, typename LeadArgs,
-           typename ProbesArgs, typename ExcludesArgs>
-  static Result MakeSparse(const Context&, LeadArgs&& lead, ProbesArgs&& probes,
-                           ExcludesArgs&& excludes) {
-    using Sparse = lead::BooleanSparse<Lead, Probes, utils::Empty, Excludes>;
-    return memory::make_managed<ByWalkDocs<Sparse>>(
-      std::piecewise_construct, std::forward<LeadArgs>(lead),
-      std::forward<ProbesArgs>(probes), std::forward_as_tuple(),
-      std::forward<ExcludesArgs>(excludes));
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeSparse(const Ctx& ctx, ScoreMergeType merge, Score score,
+                           Args&&... args) {
+    using Sparse = lead::BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
+    if constexpr (std::is_same_v<Score, utils::Empty>) {
+      return memory::make_managed<ByWalkDocs<Sparse>>(
+        std::piecewise_construct, std::forward<Args>(args)..., score);
+    } else {
+      return memory::make_managed<ByWalkScored<Sparse>>(
+        merge, *ctx.fetcher, std::piecewise_construct,
+        std::forward<Args>(args)..., score);
+    }
   }
 
   static Result PlanChild(const QueryBuilder& child, const Context&) {
@@ -123,35 +129,35 @@ struct ScoredApi {
   static constexpr bool kSingleClause = false;
   static constexpr bool kWrapsMerge = true;
 
+  static const detail::ScoredCtx& ChildContext(const Context& ctx) noexcept {
+    return ctx;
+  }
+
+  static detail::ScoreRecipe Recipe(const SubReader& segment,
+                                    const Context& ctx) noexcept {
+    return {.segment = &segment, .fetcher = ctx.fetcher};
+  }
+
   static score_t Base(score_t absorbed) noexcept { return absorbed; }
 
   static ScoreMergeType Inner(ScoreMergeType) noexcept {
     return ScoreMergeType::Sum;
   }
 
-  template<typename Optional, typename OptionalArgs>
-  static Result MakeWindow(detail::Scored score, OptionalArgs&& optional) {
-    using Window = BooleanWindow<utils::Empty, utils::Empty, Optional,
-                                 utils::Empty, detail::Scored>;
-    return memory::make_managed<Impl<Window>>(
-      std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(), std::forward<OptionalArgs>(optional),
-      std::forward_as_tuple(), score);
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename Score, typename... Args>
+  static Result MakeWindow(const Context& ctx, ScoreMergeType merge,
+                           Score score, Args&&... args) {
+    return Api::MakeWindow<Lead, Others, Optional, Excludes>(
+      ctx, merge, score, std::forward<Args>(args)...);
   }
 
   template<typename Lead, typename Probes, typename Optional, typename Excludes,
-           typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
-           typename ExcludesArgs, typename Score>
+           typename Score, typename... Args>
   static Result MakeSparse(const Context& ctx, ScoreMergeType merge,
-                           LeadArgs&& lead, ProbesArgs&& probes,
-                           OptionalArgs&& optional, ExcludesArgs&& excludes,
-                           Score score) {
-    using Sparse = lead::BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
-    return memory::make_managed<ByWalkScored<Sparse>>(
-      merge, *ctx.fetcher, std::piecewise_construct,
-      std::forward<LeadArgs>(lead), std::forward<ProbesArgs>(probes),
-      std::forward<OptionalArgs>(optional),
-      std::forward<ExcludesArgs>(excludes), score);
+                           Score score, Args&&... args) {
+    return Api::MakeSparse<Lead, Probes, Optional, Excludes>(
+      ctx, merge, score, std::forward<Args>(args)...);
   }
 
   static Result MakeAll(const SubReader& segment, const Context&,
@@ -184,10 +190,15 @@ Node::ptr MakeWindowDisjunctionScored(
   std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
   score_t boost, const IndexInput* doc, std::vector<Node::ptr>& rest,
   detail::Terms uniformity, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, score_t absorbed = 0) {
-  return detail::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
-    absorbed);
+  const detail::ScoredCtx& ctx, ScoreMergeType merge, score_t absorbed = 0) {
+  return detail::builder::MakeWindowDisjunction<ScoredApi>(
+    terms, field, doc, rest,
+    detail::TermScoring{.scorer = scorer,
+                        .boost = boost,
+                        .uniformity = uniformity,
+                        .recipe = recipe,
+                        .merge = merge},
+    ctx, absorbed);
 }
 
 }  // namespace irs::fill

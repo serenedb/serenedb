@@ -108,7 +108,7 @@ Node::ptr Make(const MultiTermQuery& query, const detail::ScoredCtx& ctx,
   std::vector<Node::ptr> rest;
   return MakeWindowDisjunctionScored(
     terms, field, scorer, boost, detail::DocOf(*field), rest,
-    detail::UniformityOf(*field, scorer), recipe, merge);
+    detail::UniformityOf(*field, scorer), recipe, ctx, merge);
 }
 
 namespace {

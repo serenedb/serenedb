@@ -46,23 +46,27 @@ struct Api {
   using Context = top::Context;
 
   static constexpr bool kPrunes = true;
+  static constexpr bool kLazyGroups = false;
   static constexpr bool kBoostArity = true;
 
-  template<typename Lead, typename Optional, typename Excludes,
-           typename LeadArgs, typename OptionalArgs, typename ExcludesArgs>
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename LeadArgs, typename OthersArgs, typename OptionalArgs,
+           typename ExcludesArgs>
   static Result MakeWindow(const Context& ctx, ScoreMergeType merge,
-                           score_t absorbed, LeadArgs&& lead,
-                           OptionalArgs&& optional, ExcludesArgs&& excludes) {
+                           irs::detail::Scored score, LeadArgs&& lead,
+                           OthersArgs&&, OptionalArgs&& optional,
+                           ExcludesArgs&& excludes) {
+    static_assert(std::is_same_v<Others, utils::Empty>);
     return MakeShape<BooleanWindow, Lead, Optional, Excludes>(
       ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
       std::forward<OptionalArgs>(optional),
-      std::forward<ExcludesArgs>(excludes), merge, absorbed);
+      std::forward<ExcludesArgs>(excludes), merge, score.absorbed);
   }
 
   template<typename Lead, typename Probes, typename Optional, typename Excludes,
            typename... Args>
-  static Result MakeSparse(const Context& ctx, irs::detail::Scored score,
-                           Args&&... args) {
+  static Result MakeSparse(const Context& ctx, ScoreMergeType,
+                           irs::detail::Scored score, Args&&... args) {
     return MakeShape<BooleanSparse, Lead, Probes, Optional, Excludes>(
       ctx, std::piecewise_construct, ctx.fetcher, score,
       std::forward<Args>(args)...);
@@ -190,9 +194,14 @@ Root::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 score_t boost, const SubReader& segment,
                                 const Context& ctx, ScoreMergeType merge,
                                 score_t absorbed) {
-  return irs::detail::builder::MakeScoredDisjunction<Api, Term>(
-    terms, filters, uniformity, field, scorer, boost, segment, ctx, merge,
-    absorbed);
+  return irs::detail::builder::MakeDisjunction<Api>(
+    terms, filters, field, segment,
+    irs::detail::TermScoring{.scorer = scorer,
+                             .boost = boost,
+                             .uniformity = uniformity,
+                             .recipe = Api::Recipe(segment, ctx),
+                             .merge = merge},
+    ctx, absorbed);
 }
 
 }  // namespace irs::top

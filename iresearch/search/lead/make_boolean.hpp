@@ -48,27 +48,27 @@ struct Api {
   using Context = utils::Empty;
 
   static constexpr bool kWindowNodes = false;
+  static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = true;
   static constexpr double kSparseLeadCost = 1.0;
   static constexpr bool kWindowLeadRefills = true;
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
-           typename... Args>
-  static Result MakeWindow(const Context&, Args&&... args) {
-    using Window = BooleanWindow<Lead, Others, Optional, Excludes>;
-    return memory::make_managed<Impl<Window>>(std::piecewise_construct,
-                                              std::forward<Args>(args)...);
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeWindow(const Ctx&, ScoreMergeType, Score score,
+                           Args&&... args) {
+    using Window = BooleanWindow<Lead, Others, Optional, Excludes, Score>;
+    return memory::make_managed<Impl<Window>>(
+      std::piecewise_construct, std::forward<Args>(args)..., score);
   }
 
-  template<typename Lead, typename Probes, typename Excludes, typename LeadArgs,
-           typename ProbesArgs, typename ExcludesArgs>
-  static Result MakeSparse(const Context&, LeadArgs&& lead, ProbesArgs&& probes,
-                           ExcludesArgs&& excludes) {
-    using Sparse = BooleanSparse<Lead, Probes, utils::Empty, Excludes>;
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename Ctx, typename Score, typename... Args>
+  static Result MakeSparse(const Ctx&, ScoreMergeType, Score score,
+                           Args&&... args) {
+    using Sparse = BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
     return memory::make_managed<Impl<Sparse>>(
-      std::piecewise_construct, std::forward<LeadArgs>(lead),
-      std::forward<ProbesArgs>(probes), std::forward_as_tuple(),
-      std::forward<ExcludesArgs>(excludes));
+      std::piecewise_construct, std::forward<Args>(args)..., score);
   }
 
   static Result PlanChild(const QueryBuilder& child, const Context&) {
@@ -116,31 +116,33 @@ struct ScoredApi {
   static constexpr bool kSingleClause = true;
   static constexpr bool kWrapsMerge = false;
 
+  static const detail::ScoredCtx& ChildContext(const Context& ctx) noexcept {
+    return ctx;
+  }
+
+  static detail::ScoreRecipe Recipe(const SubReader& segment,
+                                    const Context& ctx) noexcept {
+    return {.segment = &segment, .fetcher = ctx.fetcher};
+  }
+
   static score_t Base(score_t) noexcept { return 0; }
 
   static ScoreMergeType Inner(ScoreMergeType merge) noexcept { return merge; }
 
-  template<typename Optional, typename OptionalArgs>
-  static Result MakeWindow(detail::Scored score, OptionalArgs&& optional) {
-    using Window = BooleanWindow<utils::Empty, utils::Empty, Optional,
-                                 utils::Empty, detail::Scored>;
-    return memory::make_managed<Impl<Window>>(
-      std::piecewise_construct, std::forward_as_tuple(),
-      std::forward_as_tuple(), std::forward<OptionalArgs>(optional),
-      std::forward_as_tuple(), score);
+  template<typename Lead, typename Others, typename Optional, typename Excludes,
+           typename Score, typename... Args>
+  static Result MakeWindow(const Context& ctx, ScoreMergeType merge,
+                           Score score, Args&&... args) {
+    return Api::MakeWindow<Lead, Others, Optional, Excludes>(
+      ctx, merge, score, std::forward<Args>(args)...);
   }
 
   template<typename Lead, typename Probes, typename Optional, typename Excludes,
-           typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
-           typename ExcludesArgs, typename Score>
-  static Result MakeSparse(const Context&, ScoreMergeType, LeadArgs&& lead,
-                           ProbesArgs&& probes, OptionalArgs&& optional,
-                           ExcludesArgs&& excludes, Score score) {
-    using Sparse = BooleanSparse<Lead, Probes, Optional, Excludes, Score>;
-    return memory::make_managed<Impl<Sparse>>(
-      std::piecewise_construct, std::forward<LeadArgs>(lead),
-      std::forward<ProbesArgs>(probes), std::forward<OptionalArgs>(optional),
-      std::forward<ExcludesArgs>(excludes), score);
+           typename Score, typename... Args>
+  static Result MakeSparse(const Context& ctx, ScoreMergeType merge,
+                           Score score, Args&&... args) {
+    return Api::MakeSparse<Lead, Probes, Optional, Excludes>(
+      ctx, merge, score, std::forward<Args>(args)...);
   }
 
   static Result MakeAll(const SubReader& segment, const Context&,
@@ -169,9 +171,14 @@ Node::ptr MakeWindowDisjunctionOfTermsScored(
   score_t absorbed) {
   const detail::ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
   std::vector<fill::Node::ptr> rest;
-  return detail::builder::MakeNodeDisjunctionWindow<ScoredApi, Term>(
-    terms, field, scorer, boost, &doc, rest, uniformity, recipe, merge,
-    absorbed);
+  return detail::builder::MakeWindowDisjunction<ScoredApi>(
+    terms, field, &doc, rest,
+    detail::TermScoring{.scorer = scorer,
+                        .boost = boost,
+                        .uniformity = uniformity,
+                        .recipe = recipe,
+                        .merge = merge},
+    ctx, absorbed);
 }
 
 }  // namespace irs::lead

@@ -48,21 +48,29 @@ struct Api {
   using Context = count::Context;
 
   static constexpr bool kWindowNodes = true;
+  static constexpr bool kLazyGroups = false;
   static constexpr bool kWindowLeadDrains = false;
   static constexpr double kSparseLeadCost = 1.0;
   static constexpr bool kWindowLeadRefills = true;
 
   template<typename Lead, typename Others, typename Optional, typename Excludes,
            typename... Args>
-  static Result MakeWindow(const Context& ctx, Args&&... args) {
+  static Result MakeWindow(const Context& ctx, ScoreMergeType, utils::Empty,
+                           Args&&... args) {
     return MakeShape<BooleanWindow, Lead, Others, Optional, Excludes>(
       ctx, std::piecewise_construct, std::forward<Args>(args)...);
   }
 
-  template<typename Lead, typename Probes, typename Excludes, typename... Args>
-  static Result MakeSparse(const Context& ctx, Args&&... args) {
+  template<typename Lead, typename Probes, typename Optional, typename Excludes,
+           typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs>
+  static Result MakeSparse(const Context& ctx, ScoreMergeType, utils::Empty,
+                           LeadArgs&& lead, ProbesArgs&& probes, OptionalArgs&&,
+                           ExcludesArgs&& excludes) {
+    static_assert(std::is_same_v<Optional, utils::Empty>);
     return MakeShape<BooleanSparse, Lead, Probes, Excludes>(
-      ctx, std::piecewise_construct, std::forward<Args>(args)...);
+      ctx, std::piecewise_construct, std::forward<LeadArgs>(lead),
+      std::forward<ProbesArgs>(probes), std::forward<ExcludesArgs>(excludes));
   }
 
   static Result PlanChild(const QueryBuilder& child, const Context& ctx) {

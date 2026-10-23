@@ -99,7 +99,8 @@ Root::ptr Api::MakeNegation(
     }
     if (!excluded) {
       excluded = detail::builder::MakeDisjunction<Api>(
-        exclude_terms, exclude_filters, segment, ctx);
+        exclude_terms, exclude_filters, nullptr, segment, detail::NoScoring{},
+        ctx, 0);
     }
   }
   if (!excluded) {

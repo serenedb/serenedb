@@ -51,107 +51,6 @@
 
 namespace irs::detail::builder {
 
-template<typename Api, typename Term>
-Result<Api> MakeNodeDisjunctionWindow(
-  std::span<const Term> terms, const TermReader* field, const Scorer* scorer,
-  score_t boost, const IndexInput* doc, std::vector<FillNode::ptr>& rest,
-  Terms uniformity, const ScoreRecipe& recipe, ScoreMergeType merge,
-  score_t absorbed) {
-  SDB_ASSERT(!terms.empty() || !rest.empty());
-  const Scored score{merge, absorbed};
-  return BuildWindowSet<Result<Api>>(
-    terms, field, doc, rest,
-    TermScoring{.scorer = scorer,
-                .boost = boost,
-                .uniformity = uniformity,
-                .recipe = recipe,
-                .merge = merge},
-    [&]<typename Set>(auto&&... args) -> Result<Api> {
-      return Api::template MakeWindow<OrGroup<Set>>(
-        score, std::forward_as_tuple(std::forward<decltype(args)>(args)...));
-    });
-}
-
-template<typename Api>
-Result<Api> MakeNodeDisjunction(std::span<const PostingClause> terms,
-                                std::span<const QueryBuilder::ptr> filters,
-                                Terms uniformity, const SubReader& segment,
-                                const Context<Api>& ctx, ScoreMergeType merge,
-                                score_t absorbed) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<FillNode::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest,
-                    [&](const QueryBuilder& child) {
-                      return child.PlanFill(ctx, merge);
-                    })) {
-    return {};
-  }
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  return MakeNodeDisjunctionWindow<Api>(terms, nullptr, nullptr, kNoBoost, doc,
-                                        rest, uniformity, recipe, merge,
-                                        absorbed);
-}
-
-template<typename Api, template<typename, bool> typename Group, typename Set,
-         typename... Args>
-Result<Api> MakeNodeThresholdWindow(Scored score, uint32_t min_match,
-                                    Args&&... args) {
-  return Api::template MakeWindow<Group<Set, Api::kLazyGroups>>(
-    score,
-    std::forward_as_tuple(std::piecewise_construct,
-                          std::forward_as_tuple(std::forward<Args>(args)...),
-                          min_match, Api::Base(score.absorbed)));
-}
-
-template<typename Api>
-Result<Api> MakeNodeThreshold(std::span<const PostingClause> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              Terms uniformity, const SubReader& segment,
-                              const Context<Api>& ctx, ScoreMergeType merge,
-                              uint32_t min_match, score_t absorbed) {
-  SDB_ASSERT(min_match > 1);
-  const IndexInput* doc = nullptr;
-  std::vector<FillNode::ptr> rest;
-  if (!CollectDense(terms, filters, nullptr, doc, rest,
-                    [&](const QueryBuilder& child) {
-                      return child.PlanFill(ctx, merge);
-                    })) {
-    return {};
-  }
-  SDB_ASSERT(terms.size() + rest.size() >= min_match);
-  const ScoreRecipe recipe{.segment = &segment, .fetcher = ctx.fetcher};
-  const Scored score{merge, absorbed};
-  if (min_match > kBitplaneMaxMatch && rest.empty() &&
-      uniformity != Terms::Mixed) {
-    auto counted = ResolveCountScored<Result<Api>>(
-      *doc, uniformity >= Terms::Scored, merge,
-      [&]<typename Leaf, typename Plain> -> Result<Api> {
-        return BuildWindowTerms<Result<Api>, Leaf, Plain>(
-          terms, nullptr, doc,
-          TermScoring{.scorer = nullptr, .boost = kNoBoost, .recipe = recipe},
-          [&]<typename Set>(auto&&... args) -> Result<Api> {
-            return MakeNodeThresholdWindow<Api, TallyGroup, Set>(
-              score, min_match, std::forward<decltype(args)>(args)...);
-          });
-      });
-    if (counted) {
-      return counted;
-    }
-  }
-  return BuildWindowSet<Result<Api>>(
-    terms, nullptr, doc, rest,
-    TermScoring{.scorer = nullptr,
-                .boost = kNoBoost,
-                .uniformity = uniformity,
-                .recipe = recipe,
-                .merge = merge},
-    [&]<typename Set>(auto&&... args) -> Result<Api> {
-      return MakeNodeThresholdWindow<Api, ThresholdGroup, Set>(
-        score, min_match, std::forward<decltype(args)>(args)...);
-    });
-}
-
 template<typename Api>
 Result<Api> MakeNodeConjunction(std::span<const PostingClause> terms,
                                 std::span<const QueryBuilder::ptr> filters,
@@ -171,19 +70,9 @@ Result<Api> MakeNodeConjunction(std::span<const PostingClause> terms,
   } else {
     SDB_ASSERT(!terms.empty() || !filters.empty());
   }
-  return BuildConjunction<Result<Api>>(
-    terms, filters, nullptr, segment,
-    TermScoring{.scorer = nullptr, .boost = kNoBoost, .recipe = recipe},
-    probe::ScoredClauseOf(segment, ctx, recipe),
-    [&](const QueryBuilder& child) -> lead::Node::ptr {
-      return child.PlanLead(ctx);
-    },
-    [&]<typename Head, typename Tail>(auto&& head, auto&& tail) -> Result<Api> {
-      return Api::template MakeSparse<Head, Tail, utils::Empty, utils::Empty>(
-        ctx, merge, std::forward<decltype(head)>(head),
-        std::forward<decltype(tail)>(tail), std::forward_as_tuple(),
-        std::forward_as_tuple(), Scored{Api::Inner(merge), absorbed});
-    });
+  return MakeSparseConjunction<Api>(terms, filters, segment, ctx,
+                                    ScoringOf<Api>(segment, ctx, merge),
+                                    Scored{Api::Inner(merge), absorbed});
 }
 
 template<typename Api>
@@ -210,9 +99,9 @@ Result<Api> MakeNodeConjunctionWith(
   }
   return Api::template MakeSparse<lead::Erased, probe::Erased, utils::Empty,
                                   utils::Empty>(
-    ctx, merge, std::forward_as_tuple(std::move(head)),
+    ctx, merge, Scored{merge, 0}, std::forward_as_tuple(std::move(head)),
     std::forward_as_tuple(std::move(tail)), std::forward_as_tuple(),
-    std::forward_as_tuple(), Scored{merge, 0});
+    std::forward_as_tuple());
 }
 
 template<typename Api>
@@ -242,11 +131,11 @@ Result<Api> MakeNodeExclusion(
         [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
           return Api::template MakeSparse<Include, utils::Empty, utils::Empty,
                                           Exclude>(
-            ctx, merge,
+            ctx, merge, Inherited{},
             std::forward_as_tuple(meta, doc, segment, reader,
                                   recipe.Args(posting.stats, posting.boost)),
             std::forward_as_tuple(), std::forward_as_tuple(),
-            std::forward<decltype(exclude)>(exclude), Inherited{});
+            std::forward<decltype(exclude)>(exclude));
         });
     });
   }
@@ -256,15 +145,9 @@ Result<Api> MakeNodeExclusion(
   if (!include) {
     return {};
   }
-  return BuildExcludeSide<Result<Api>>(
-    excludes, exclude_filters, nullptr, segment, candidates,
-    [&]<typename Exclude>(auto&& exclude) -> Result<Api> {
-      return Api::template MakeSparse<lead::Erased, utils::Empty, utils::Empty,
-                                      Exclude>(
-        ctx, merge, std::forward_as_tuple(std::move(include)),
-        std::forward_as_tuple(), std::forward_as_tuple(),
-        std::forward<decltype(exclude)>(exclude), Inherited{});
-    });
+  return MakeSparseExclusionOf<Api>(std::move(include), excludes,
+                                    exclude_filters, segment, candidates, ctx,
+                                    merge, Inherited{});
 }
 
 template<typename Api>
@@ -293,10 +176,10 @@ Result<Api> MakeNodeBoost(std::span<const PostingClause> must,
             return Api::template MakeSparse<Head, utils::Empty,
                                             probe::BoostLeaves<Optional, N>,
                                             utils::Empty>(
-              ctx, merge, std::forward<decltype(head)>(head),
+              ctx, merge, Scored{inner, 0}, std::forward<decltype(head)>(head),
               std::forward_as_tuple(),
               std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
-              std::forward_as_tuple(), Scored{inner, 0});
+              std::forward_as_tuple());
           });
       });
   };
@@ -341,11 +224,12 @@ Result<Api> MakeNodeRequired(std::span<const PostingClause> must,
     if (!optional) {
       return Api::MakeAll(segment, ctx, merge, absorbed);
     }
+    const auto scoring = ScoringOf<Api>(segment, ctx, merge, uniformity);
     return min_match == 1
-             ? MakeNodeDisjunction<Api>(should, should_filters, uniformity,
-                                        segment, ctx, merge, absorbed)
-             : MakeNodeThreshold<Api>(should, should_filters, uniformity,
-                                      segment, ctx, merge, min_match, absorbed);
+             ? MakeDisjunction<Api>(should, should_filters, nullptr, segment,
+                                    scoring, ctx, absorbed)
+             : MakeThreshold<Api>(should, should_filters, segment, min_match,
+                                  scoring, ctx, absorbed);
   }
   if (min_match != 0) {
     return Api::MakeRequiredWith(must, must_filters, should, should_filters,

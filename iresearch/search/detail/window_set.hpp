@@ -29,19 +29,24 @@
 #include "iresearch/search/detail/fill_posting_scored.hpp"
 #include "iresearch/search/detail/plain_scored.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/detail/posting_window_scored.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/fill/impl.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
+#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace irs::detail {
 
 struct NoScoring {
   static constexpr const Scorer* scorer = nullptr;
   static constexpr score_t boost = kNoBoost;
+  static constexpr Terms uniformity = Terms::Constant;
+  static constexpr ScoreMergeType merge = ScoreMergeType::Noop;
 };
 
 struct TermScoring {
@@ -54,6 +59,29 @@ struct TermScoring {
 
 template<typename Scoring>
 inline constexpr bool kScores = std::is_same_v<Scoring, TermScoring>;
+
+template<typename Scoring>
+auto ScoreOf(const Scoring& scoring, score_t absorbed) noexcept {
+  if constexpr (kScores<Scoring>) {
+    return Scored{scoring.merge, absorbed};
+  } else {
+    return utils::Empty{};
+  }
+}
+
+template<typename Result, typename Scoring, typename Make>
+Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
+                          Make&& make) {
+  if constexpr (kScores<Scoring>) {
+    return ResolveCountScored<Result>(doc, scoring.uniformity >= Terms::Scored,
+                                      scoring.merge, make);
+  } else {
+    return ResolveInput(doc, [&]<typename Input> -> Result {
+      return make
+        .template operator()<PostingCount<Input>, PostingCount<Input>>();
+    });
+  }
+}
 
 template<typename Term>
 bool ScoresOf(const Term& term, const Scorer* scorer) noexcept {
